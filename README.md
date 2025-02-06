@@ -1,3 +1,5 @@
+![AthenaSIP Logo](docs/athenasip_small_white.png)
+
 # AthenaSIP
 
 **Project Status: ALPHA - DO NOT USE**

@@ -63,8 +63,6 @@ int main(int argc, char* argv[]) {
   // Start TCP server
   server.start();
 
-  // Start other server processes...
-
   // Do the SIGINT Wait
   signal_wait_context.run();
 }
