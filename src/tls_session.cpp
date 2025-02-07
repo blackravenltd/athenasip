@@ -44,12 +44,13 @@ void TLSSession::_execute(int id) {
 
   _logger->info("Connected");
 
-  char buffer[65535];
+  char inputbuffer[65535];
+  std::string buffer;
 
   while (_running) {
     boost::system::error_code ec;
 
-    ssize_t len = _read_with_timeout(buffer, 65535, 5000, ec);
+    ssize_t len = _read_with_timeout(inputbuffer, 65535, 5000, ec);
 
     if (ec) {
       if (ec == boost::asio::error::operation_aborted) {
@@ -65,7 +66,26 @@ void TLSSession::_execute(int id) {
         _running = false;
       }
     } else {
+
       _logger->debug("Read " + std::to_string(len) + " bytes");
+
+      // No Input
+      if(len == 0) continue;
+
+      // Add to buffer
+      buffer.append(inputbuffer, len);
+
+      // Look for CRLFCRLF
+      size_t pos;
+      while ((pos = buffer.find("\r\n\r\n")) != std::string::npos) {
+          std::string sip_message = buffer.substr(0, pos + 2);  // Extract full SIP message
+          buffer.erase(0, pos + 4);  // Remove processed message
+
+          _logger->debug(">\n" + sip_message);
+
+          // Process the **entire SIP message**
+          // process_sip_message(sip_message);
+      }
     }
   }
 

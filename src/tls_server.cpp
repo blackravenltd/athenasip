@@ -20,8 +20,7 @@ TLSServer::TLSServer(std::shared_ptr<Logger> logger, short port)
     : _port(port),
       _acceptor(_io_context, ip::tcp::endpoint(ip::tcp::v4(), port)),
       _logger(std::make_shared<LoggerScoped>("server", logger)),
-      ctx(ssl::context::tlsv13) {
-  start_accept();
+      ctx(ssl::context::sslv23) {
 }
 
 TLSServer::~TLSServer() { stop(); }
@@ -35,8 +34,15 @@ void TLSServer::set_certificates(std::string cert, std::string key) {
 
 void TLSServer::start() {
   _logger->debug("Starting...");
+  
+  // Run the IO Context in our thread
   _thread = std::make_shared<std::thread>([this]() { _io_context.run(); });
-  _logger->info("Listening on " + std::to_string(_port)+ " (TLS)");
+
+  // Do the first start_accept on that thread
+  boost::asio::post(_io_context, [this]() {
+    _logger->info("Listening on " + std::to_string(_port)+ " (TLS)");
+    start_accept(); 
+  }); 
 }
 
 void TLSServer::stop() {
@@ -59,32 +65,43 @@ void TLSServer::start_accept() {
 }
 
 void TLSServer::_handle_accept(const boost::system::error_code& error, std::shared_ptr<ip::tcp::socket> new_connection) {
+  boost::system::error_code ec;
+
+  auto remote = new_connection->remote_endpoint();
+  auto remote_addr = remote.address().to_string() + ":" + std::to_string(remote.port());
+
+  _logger->debug("Incoming Connection: " + remote_addr);
+
   if (!error) {
     // Extract the socket from the shared_ptr and move it into the SSL stream
     auto ssl_socket = std::make_shared<ssl::stream<ip::tcp::socket>>(std::move(*new_connection), ctx);
 
     try {
+      // SSL Handshake
       ssl_socket->handshake(ssl::stream_base::server);
 
-      // Add the new connection to the map
+      // Add the new connection to our map
       int id = next_connection_id_++;
       _connections[id] = std::make_shared<TLSSession>(_logger, ssl_socket);
 
-      _logger->info("New Connection #" + std::to_string(id) + " (" + ssl_socket->next_layer().remote_endpoint().address().to_string() + ")");
+      _logger->info("Incoming Connection Accepted: ["+ std::to_string(id)+"] " + remote_addr);
 
     } catch (const std::exception& e) {
-      std::cerr << "TLS error: " << e.what() << std::endl;
+      _logger->error("Incoming Connection TLS Error: " + remote_addr + " "+e.what());
+
+      new_connection->shutdown(ip::tcp::socket::shutdown_both, ec);
+      new_connection->close(ec);
+      new_connection = nullptr;
     }
-
   } else {
-    _logger->error("Error accepting new connection");
+    _logger->error("Incoming Connection Accept Error: " + remote_addr + " "+ec.message());
 
-    boost::system::error_code ec;
     new_connection->shutdown(ip::tcp::socket::shutdown_both, ec);
     new_connection->close(ec);
+    new_connection = nullptr;
   }
 
-  // Start accepting another connection
+  // Start accepting next connection
   start_accept();
 }
 
