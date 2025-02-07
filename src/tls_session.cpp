@@ -10,6 +10,7 @@
 #include <iostream>
 
 #include "logger_scoped.h"
+#include "sip_header.h"
 
 namespace athenasip {
 
@@ -66,11 +67,10 @@ void TLSSession::_execute(int id) {
         _running = false;
       }
     } else {
-
       _logger->debug("Read " + std::to_string(len) + " bytes");
 
       // No Input
-      if(len == 0) continue;
+      if (len == 0) continue;
 
       // Add to buffer
       buffer.append(inputbuffer, len);
@@ -78,13 +78,15 @@ void TLSSession::_execute(int id) {
       // Look for CRLFCRLF
       size_t pos;
       while ((pos = buffer.find("\r\n\r\n")) != std::string::npos) {
-          std::string sip_message = buffer.substr(0, pos + 2);  // Extract full SIP message
-          buffer.erase(0, pos + 4);  // Remove processed message
+        std::string sip_message = buffer.substr(0, pos + 2);
+        buffer.erase(0, pos + 4);
 
-          _logger->debug(">\n" + sip_message);
+        SIPHeader header(sip_message);
 
-          // Process the **entire SIP message**
-          // process_sip_message(sip_message);
+        header.print();
+
+        // Process the **entire SIP message**
+        // process_sip_message(sip_message);
       }
     }
   }

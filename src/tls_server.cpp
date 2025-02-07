@@ -20,29 +20,28 @@ TLSServer::TLSServer(std::shared_ptr<Logger> logger, short port)
     : _port(port),
       _acceptor(_io_context, ip::tcp::endpoint(ip::tcp::v4(), port)),
       _logger(std::make_shared<LoggerScoped>("server", logger)),
-      ctx(ssl::context::sslv23) {
-}
+      ctx(ssl::context::sslv23) {}
 
 TLSServer::~TLSServer() { stop(); }
 
 void TLSServer::set_certificates(std::string cert, std::string key) {
-  _logger->info("Using Certificate PEM: "+cert);
-  _logger->info("Using Key PEM: "+key);
+  _logger->info("Using Certificate PEM: " + cert);
+  _logger->info("Using Key PEM: " + key);
   ctx.use_certificate_chain_file(cert);
   ctx.use_private_key_file(key, ssl::context::pem);
 }
 
 void TLSServer::start() {
   _logger->debug("Starting...");
-  
+
   // Run the IO Context in our thread
   _thread = std::make_shared<std::thread>([this]() { _io_context.run(); });
 
   // Do the first start_accept on that thread
   boost::asio::post(_io_context, [this]() {
-    _logger->info("Listening on " + std::to_string(_port)+ " (TLS)");
-    start_accept(); 
-  }); 
+    _logger->info("Listening on " + std::to_string(_port) + " (TLS)");
+    start_accept();
+  });
 }
 
 void TLSServer::stop() {
@@ -84,17 +83,18 @@ void TLSServer::_handle_accept(const boost::system::error_code& error, std::shar
       int id = next_connection_id_++;
       _connections[id] = std::make_shared<TLSSession>(_logger, ssl_socket);
 
-      _logger->info("Incoming Connection Accepted: ["+ std::to_string(id)+"] " + remote_addr);
+      _logger->info("Incoming Connection Accepted: [" + std::to_string(id) + "] " + remote_addr);
 
     } catch (const std::exception& e) {
-      _logger->error("Incoming Connection TLS Error: " + remote_addr + " "+e.what());
+      _logger->info("Incoming Connection TLS Error: " + remote_addr + " " + e.what());
 
+      ssl_socket = nullptr;
       new_connection->shutdown(ip::tcp::socket::shutdown_both, ec);
       new_connection->close(ec);
       new_connection = nullptr;
     }
   } else {
-    _logger->error("Incoming Connection Accept Error: " + remote_addr + " "+ec.message());
+    _logger->info("Incoming Connection Accept Error: " + remote_addr + " " + ec.message());
 
     new_connection->shutdown(ip::tcp::socket::shutdown_both, ec);
     new_connection->close(ec);

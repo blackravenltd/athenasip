@@ -33,6 +33,9 @@ class TLSSession {
 
   std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> _connection;
 
+  std::string remote_host;
+  uint16_t remote_port;
+
   void _execute(int id);
   ssize_t _read_with_timeout(void* ptr, size_t len, uint32_t timeout_ms, boost::system::error_code& ec);
 
