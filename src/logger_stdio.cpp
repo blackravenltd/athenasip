@@ -53,4 +53,6 @@ const std::string LoggerStdIO::_getDateTime() {
   return oss.str();
 }
 
+std::shared_ptr<Logger> LoggerStdIO::base_logger() { return nullptr; }
+
 }  // namespace athenasip
