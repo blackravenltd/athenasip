@@ -84,9 +84,6 @@ void TLSSession::_execute(int id) {
         SIPHeader header(sip_message);
 
         header.print();
-
-        // Process the **entire SIP message**
-        // process_sip_message(sip_message);
       }
     }
   }

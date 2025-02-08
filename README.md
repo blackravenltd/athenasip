@@ -38,7 +38,7 @@ make
 
 ## Snakeoil Certificate
 
-To ease testing and demonstration, a self-signed certificate is included at `tls/snakeoil.crt|key`.
+To ease testing and demonstration, a self-signed certificate/CA is included in `tls/`.
 
 **CAVEAT: Do Not Use This Certificate In Production.**
 

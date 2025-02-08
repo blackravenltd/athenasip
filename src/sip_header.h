@@ -17,10 +17,10 @@ class SIPHeader {
  public:
   SIPHeader(const std::string& sip_message);
 
-const std::string& method() const;
-const std::string& request_uri() const;
-const std::string& sip_version() const;
-const std::map<std::string, std::string>& headers() const;
+  const std::string& method() const;
+  const std::string& request_uri() const;
+  const std::string& sip_version() const;
+  const std::map<std::string, std::string>& headers() const;
 
   void print() const;
   void parse(const std::string& sip_message);
@@ -29,7 +29,6 @@ const std::map<std::string, std::string>& headers() const;
   std::string trim(const std::string& str);
 
  private:
-  std::string _request_line;
   std::string _method;
   std::string _request_uri;
   std::string _sip_version;

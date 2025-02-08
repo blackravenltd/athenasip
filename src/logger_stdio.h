@@ -22,6 +22,7 @@ class LoggerStdIO : public Logger {
   virtual void warn(const std::string &log);
   virtual void error(const std::string &log);
   virtual void raw(const std::string &log);
+  virtual std::shared_ptr<Logger> base_logger();
 
  private:
   LogLevel _log_level;

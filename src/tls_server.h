@@ -39,8 +39,8 @@ class TLSServer : public Server {
   int next_connection_id_ = 0;
   uint16_t _port;
   std::shared_ptr<std::thread> _thread;
-  boost::asio::ssl::context ctx;  // Use TLS 1.2 or newer
-  std::shared_ptr<Logger> _logger;
+  boost::asio::ssl::context ctx;
+  std::unique_ptr<Logger> _logger;
 };
 
 }  // namespace athenasip

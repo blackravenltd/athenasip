@@ -19,7 +19,7 @@ namespace athenasip {
 TLSServer::TLSServer(std::shared_ptr<Logger> logger, short port)
     : _port(port),
       _acceptor(_io_context, ip::tcp::endpoint(ip::tcp::v4(), port)),
-      _logger(std::make_shared<LoggerScoped>("server", logger)),
+      _logger(std::make_unique<LoggerScoped>("server", logger)),
       ctx(ssl::context::sslv23) {}
 
 TLSServer::~TLSServer() { stop(); }
@@ -81,7 +81,7 @@ void TLSServer::_handle_accept(const boost::system::error_code& error, std::shar
 
       // Add the new connection to our map
       int id = next_connection_id_++;
-      _connections[id] = std::make_shared<TLSSession>(_logger, ssl_socket);
+      _connections[id] = std::make_shared<TLSSession>(_logger->base_logger(), ssl_socket);
 
       _logger->info("Incoming Connection Accepted: [" + std::to_string(id) + "] " + remote_addr);
 
