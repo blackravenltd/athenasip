@@ -9,6 +9,7 @@
 #include <iostream>
 
 #include "logger_stdio.h"
+#include "registrar.h"
 
 using namespace athenasip;
 
@@ -24,6 +25,8 @@ using namespace athenasip;
 #include "url.h"
 #include "util.h"
 #include "version.h"
+
+#include <mysqlx/xdevapi.h>
 
 int main(int argc, char* argv[]) {
   auto mainLogger = std::make_shared<LoggerStdIO>(LogLevel::DEBUG);
@@ -41,6 +44,11 @@ int main(int argc, char* argv[]) {
     mainLogger->error("Invalid Configuration");
     return 99;
   }
+
+  std::shared_ptr<mysqlx::Session> session(std::make_shared<mysqlx::Session>("mysqlx://root@localhost/athenasip"));
+  Registrar reg(mainLogger, session);
+
+  reg.user_exists(SIPIdentity("Tom Cully <sip:tom@sip.blackraven.co.nz>"));
 
   // Create the tlsServer instance with the logger and start it on the specified port
   TLSServer tlsServer(mainLogger, 5061);
