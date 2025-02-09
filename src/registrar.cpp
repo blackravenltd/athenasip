@@ -13,17 +13,18 @@ Registrar::Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<mysqlx::Ses
 
 Registrar::~Registrar() { _session = nullptr; }
 
-bool Registrar::user_exists(const std::string &identity) {
+bool Registrar::user_exists(const SIPIdentity& identity) {
   try {
     // Define the parameterized SQL query
-    std::string query = "SELECT `h1`,`h1b` FROM `subscribers` WHERE `identity` = ? AND `realm` = ?";
+    std::string query = "SELECT `h1`,`h1b` FROM `subscriber` WHERE `username` = ? AND `realm` = ?";
 
     // Prepare the statement
     mysqlx::SqlStatement stmt = _session->sql(query);
 
     // Bind the parameter value
-    std::string parameter_value = "desired_value";
-    stmt.bind(parameter_value);
+    const SIPUri &uri = identity.uri(); 
+    stmt.bind(uri.user().value_or(""));
+    stmt.bind(uri.realm());
 
     // Execute the query
     mysqlx::SqlResult result = stmt.execute();
@@ -44,5 +45,9 @@ bool Registrar::user_exists(const std::string &identity) {
     return 1;
   }
 }
+
+  std::string Registrar::user_get_h1(const SIPIdentity& identity) {}
+  void Registrar::user_register(const SIPIdentity& identity, const SIPUri& location) {}
+  const SIPUri& Registrar::user_get_location(const SIPIdentity& identity) {}
 
 }  // namespace athenasip
