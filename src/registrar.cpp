@@ -16,7 +16,7 @@ Registrar::~Registrar() { _session = nullptr; }
 bool Registrar::user_exists(const SIPIdentity& identity) {
   try {
     // Define the parameterized SQL query
-    std::string query = "SELECT `h1`,`h1b` FROM `subscriber` WHERE `username` = ? AND `realm` = ?";
+    std::string query = "SELECT `h1` FROM `subscriber` WHERE `user` = ? AND `realm` = ?";
 
     // Prepare the statement
     mysqlx::SqlStatement stmt = _session->sql(query);

@@ -1,2 +1,2 @@
 #!/bin/sh
-mysqldump -u root athenasip > sql/create.sql
+mysqldump -u root --routines athenasip > sql/create.sql
