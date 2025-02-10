@@ -28,15 +28,16 @@ class DB {
   virtual std::shared_ptr<DBResult> query(std::string sql, std::vector<std::any> params) = 0;
   virtual void close() = 0;
 
+  // Register a Database Driver
   template <typename T, typename = std::enable_if_t<std::is_base_of<DB, T>::value>>
   static void register_driver(std::string scheme) {
-    std::cout << "Registering " << scheme << std::endl;
     auto &drivers = get_drivers();
     drivers[scheme] = [](std::shared_ptr<Logger> logger, URL &db_url) -> std::shared_ptr<DB> {
       return std::static_pointer_cast<DB>(std::make_shared<T>(logger, db_url));
     };
   }
 
+  // Get a driver instance by name
   static std::shared_ptr<DB> create_driver(std::shared_ptr<Logger> logger, std::string url) {
     URL _url(url);
     auto &drivers = get_drivers();
@@ -44,7 +45,7 @@ class DB {
     if (it != drivers.end()) {
       return it->second(logger, _url);  // Call the stored factory function
     } else {
-      std::cerr << "[DB] Unknown scheme: " << _url.scheme << std::endl;
+      std::cerr << "[DB] create_driver: Unknown scheme: " << _url.scheme << std::endl;
       return nullptr;
     }
   }

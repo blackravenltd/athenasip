@@ -24,8 +24,6 @@ TLSSession::TLSSession(std::shared_ptr<Logger> logger, TLSServer *server, std::s
       _thread(std::make_unique<std::thread>(std::bind(&TLSSession::_execute, this, 0))),
       _rx_timer(_rx_wait_context, boost::asio::chrono::seconds(10)) {}
 
-TLSSession::~TLSSession() { close(); }
-
 void TLSSession::close() {
   if (_running) {
     // Signal Thread
@@ -40,8 +38,6 @@ void TLSSession::close() {
   if (_thread && _thread->get_id() != std::this_thread::get_id() && _thread->joinable()) {
     _thread->join();
   }
-
-  _server->remove_connection(shared_from_this());
 }
 
 void TLSSession::_execute(int id) {
@@ -90,8 +86,6 @@ void TLSSession::_execute(int id) {
       }
     }
   }
-
-  close();
 
   _logger->info("Closed");
 }
