@@ -12,6 +12,7 @@
 #include <memory>
 #include <thread>
 #include <unordered_set>
+#include <shared_mutex>
 
 #include "logger.h"
 
@@ -43,6 +44,7 @@ class TLSServer {
   std::unique_ptr<Logger> _logger;
 
   std::unordered_set<std::shared_ptr<TLSSession>> _connections;
+  std::shared_mutex _connections_mtx;
 };
 
 }  // namespace athenasip

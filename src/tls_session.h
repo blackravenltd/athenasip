@@ -23,7 +23,6 @@ namespace athenasip {
 class TLSSession : public std::enable_shared_from_this<TLSSession> {
  public:
   TLSSession(std::shared_ptr<Logger> logger, TLSServer* server, std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>>);
-  ~TLSSession();
 
   void close();
 

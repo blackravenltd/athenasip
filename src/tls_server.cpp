@@ -35,14 +35,14 @@ void TLSServer::set_certificates(std::string cert, std::string key) {
 void TLSServer::start() {
   _logger->debug("Starting...");
 
-  // Run the IO Context in our thread
-  _thread = std::make_shared<std::thread>([this]() { _io_context.run(); });
-
   // Do the first start_accept on that thread
   boost::asio::post(_io_context, [this]() {
     _logger->info("Listening on " + std::to_string(_port) + " (TLS)");
     start_accept();
   });
+
+  // Run the IO Context in our thread
+  _thread = std::make_shared<std::thread>([this]() { _io_context.run(); });
 }
 
 void TLSServer::stop() {
@@ -84,7 +84,10 @@ void TLSServer::_handle_accept(const boost::system::error_code& error, std::shar
 
       // Add the new connection to our map
       auto new_session = std::make_shared<TLSSession>(_logger->base_logger(), this, ssl_socket);
+
+      std::unique_lock<std::shared_mutex> lock(_connections_mtx);
       _connections.insert(new_session);
+      lock.unlock();
 
       _logger->info("Incoming Connection Accepted: " + remote_addr);
 
@@ -105,6 +108,10 @@ void TLSServer::_handle_accept(const boost::system::error_code& error, std::shar
   start_accept();
 }
 
-void TLSServer::remove_connection(std::shared_ptr<TLSSession> session) { _connections.erase(session); }
+void TLSServer::remove_connection(std::shared_ptr<TLSSession> session) { 
+  if(!session) return;
+  std::lock_guard<std::shared_mutex> lock(_connections_mtx);
+  _connections.erase(session);
+}
 
 }  // namespace athenasip
