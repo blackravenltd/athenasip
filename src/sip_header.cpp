@@ -27,6 +27,20 @@ void SIPHeader::print() const {
   }
 }
 
+std::string SIPHeader::to_string() const {
+  std::string out;
+
+  // Method / URI / Version
+  out += _method + " " + _request_uri + " " + _sip_version + "\r\n";
+
+  // Headers
+  for (const auto& [key, value] : _headers) {
+    out += key + ": " + value + "\r\n";
+  }
+
+  return out;
+}
+
 void SIPHeader::parse(const std::string& sip_message) {
   std::istringstream stream(sip_message);
   std::string line, current_key, current_value;
@@ -43,35 +57,31 @@ void SIPHeader::parse(const std::string& sip_message) {
     // Handle multi-line header continuation
     if (!line.empty() && (line[0] == ' ' || line[0] == '\t')) {
       if (!current_key.empty()) {
-        current_value += " " + trim(line);
+        current_value += " " + Util::trim(line);
       }
       continue;
     }
 
     // Store the previous header
     if (!current_key.empty()) {
-      _headers[current_key] = trim(current_value);
+      _headers[current_key] = Util::trim(current_value);
     }
 
     // Extract new header key and value
     size_t colon_pos = line.find(':');
     if (colon_pos != std::string::npos) {
       current_key = line.substr(0, colon_pos);
-      current_value = trim(line.substr(colon_pos + 1));
+      current_value = Util::trim(line.substr(colon_pos + 1));
     }
   }
 
   // Store the last header
   if (!current_key.empty()) {
-    _headers[current_key] = trim(current_value);
+    _headers[current_key] = Util::trim(current_value);
   }
 }
 
-// Trim leading and trailing whitespace
-std::string SIPHeader::trim(const std::string& str) {
-  size_t first = str.find_first_not_of(" \t\r\n");
-  size_t last = str.find_last_not_of(" \t\r\n");
-  return (first == std::string::npos) ? "" : str.substr(first, last - first + 1);
-}
+std::string operator+(const SIPHeader& header, const std::string& str) { return header.to_string() + str; }
+std::string operator+(const std::string& str, const SIPHeader& header) { return str + header.to_string(); }
 
 }  // namespace athenasip

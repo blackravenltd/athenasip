@@ -16,15 +16,15 @@ URL::URL() = default;
 URL::URL(const std::string& url) { parse(url); }
 
 void URL::parse(const std::string& url) {
-  // USe boost regex to parse the URL
-  boost::regex pattern(R"(^([a-zA-Z][a-zA-Z0-9+.-]*):\/\/(?:([^:\/?#]*):?([^@\/?#]*)@)?([^:\/?#]+)(?::(\d+))?([^?#]*)(?:\?([^#]*))?(?:#(.*))?$)");
-  boost::smatch matches;
+  // Use std::regex to parse the URL
+  static const std::regex pattern(R"(^([a-zA-Z][a-zA-Z0-9+.-]*):\/\/(?:([^:\/?#]*)?:?([^@\/?#]*)?@)?([^:\/?#]+)(?::(\d+))?([^?#]*)(?:\?([^#]*))?(?:#(.*))?$)");
+  std::smatch matches;
 
   // Default is invalid
   _valid = false;
 
   // If the URL matches
-  if (boost::regex_match(url, matches, pattern)) {
+  if (std::regex_match(url, matches, pattern)) {
     try {
       scheme = matches[1];
 
@@ -34,35 +34,25 @@ void URL::parse(const std::string& url) {
       host = matches[4];
 
       // Port is also optional
-      if (matches[5].length() == 0) {
-        // If it isn't explicitly set, attempt to infer it from the scheme
-        auto it = defaultPorts.find(scheme);
-        if (it != defaultPorts.end()) {
-          port = it->second;
-        } else {
-          port = std::nullopt;
-        }
-      } else {
-        // If it is explicitly set check range
-        int _port = std::stoi(matches[5]);
+      if (matches[5].matched && !matches[5].str().empty()) {
+        int _port = std::stoi(matches[5].str());
         if (_port < 0 || _port > std::numeric_limits<uint16_t>::max()) {
           throw std::out_of_range("The value is out of the range for uint16_t.");
         }
         port = static_cast<uint16_t>(_port);
-      }
-
-      if (matches[6].matched) {
-        path = matches[6];
       } else {
-        path = "/";  // Set default path as "/"
+        // Infer port from scheme
+        auto it = defaultPorts.find(scheme);
+        port = (it != defaultPorts.end()) ? std::optional<uint16_t>{it->second} : std::nullopt;
       }
 
-      query = matches[7];
-      fragment = matches[8];
+      path = matches[6].matched ? matches[6].str() : "/";  // Default path is "/"
+      query = matches[7].matched ? matches[7].str() : "";
+      fragment = matches[8].matched ? matches[8].str() : "";
 
-      // If we reaach here the URL is valid.
+      // If we reach here, the URL is valid.
       _valid = true;
-    } catch (const std::exception& e) {
+    } catch (const std::exception&) {
       // Something went wrong. Assume invalid.
     }
   }
@@ -108,7 +98,6 @@ bool operator==(const URL& lhs, const URL& rhs) {
 }
 
 std::string operator+(const URL& url, const std::string& str) { return url.to_string() + str; }
-
 std::string operator+(const std::string& str, const URL& url) { return str + url.to_string(); }
 
 const std::map<std::string, uint16_t> URL::defaultPorts = {{"http", 80},         {"https", 443},       {"ftp", 21},

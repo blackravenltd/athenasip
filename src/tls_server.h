@@ -11,15 +11,15 @@
 #include <boost/bind/bind.hpp>
 #include <memory>
 #include <thread>
-#include <unordered_map>
+#include <unordered_set>
 
 #include "logger.h"
-#include "server.h"
-#include "tls_session.h"
 
 namespace athenasip {
 
-class TLSServer : public Server {
+class TLSSession;
+
+class TLSServer {
  public:
   TLSServer(std::shared_ptr<Logger> logger, short port);
   ~TLSServer();
@@ -29,18 +29,20 @@ class TLSServer : public Server {
   virtual void start();
   virtual void stop();
 
+  virtual void remove_connection(std::shared_ptr<TLSSession> connection);
+
  private:
   void _handle_accept(const boost::system::error_code &error, std::shared_ptr<boost::asio::ip::tcp::socket> new_connection);
   void start_accept();
 
   boost::asio::io_context _io_context;
   boost::asio::ip::tcp::acceptor _acceptor;
-  std::unordered_map<int, std::shared_ptr<TLSSession>> _connections;
-  int next_connection_id_ = 0;
   uint16_t _port;
   std::shared_ptr<std::thread> _thread;
   boost::asio::ssl::context ctx;
   std::unique_ptr<Logger> _logger;
+
+  std::unordered_set<std::shared_ptr<TLSSession>> _connections;
 };
 
 }  // namespace athenasip

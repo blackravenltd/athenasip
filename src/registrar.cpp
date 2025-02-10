@@ -8,46 +8,23 @@
 
 namespace athenasip {
 
-Registrar::Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<mysqlx::Session> session)
-    : _logger(std::make_unique<LoggerScoped>("registrar", logger)), _session(session) {}
+Registrar::Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<DB> db) : _logger(std::make_unique<LoggerScoped>("registrar", logger)), _db(db) {}
 
-Registrar::~Registrar() { _session = nullptr; }
+Registrar::~Registrar() {}
 
 bool Registrar::user_exists(const SIPIdentity& identity) {
-  try {
-    // Define the parameterized SQL query
-    std::string query = "SELECT `h1` FROM `subscriber` WHERE `user` = ? AND `realm` = ?";
+  // Execute the query
+  const SIPUri& uri = identity.uri();
+  std::shared_ptr<DBResult> res = _db->query("SELECT `h1` FROM `subscriber` WHERE `user` = ? AND `realm` = ?", {uri.user().value_or(""), uri.realm()});
 
-    // Prepare the statement
-    mysqlx::SqlStatement stmt = _session->sql(query);
-
-    // Bind the parameter value
-    const SIPUri &uri = identity.uri(); 
-    stmt.bind(uri.user().value_or(""));
-    stmt.bind(uri.realm());
-
-    // Execute the query
-    mysqlx::SqlResult result = stmt.execute();
-
-    // Iterate over the results
-    for (mysqlx::Row row : result) {
-      // Process each row as needed
-      std::cout << "Column Value: " << row[0] << std::endl;
-    }
-  } catch (const mysqlx::Error &err) {
-    std::cerr << "Error: " << err.what() << std::endl;
-    return 1;
-  } catch (std::exception &ex) {
-    std::cerr << "STD Exception: " << ex.what() << std::endl;
-    return 1;
-  } catch (...) {
-    std::cerr << "Unknown exception occurred." << std::endl;
-    return 1;
+  if (res && !res->empty()) {
+    _logger->info("user_exists " + identity + " h1 " + (*res)[0]->at("h1")->get_as<std::string>());
   }
+  return false;
 }
 
-  std::string Registrar::user_get_h1(const SIPIdentity& identity) {}
-  void Registrar::user_register(const SIPIdentity& identity, const SIPUri& location) {}
-  const SIPUri& Registrar::user_get_location(const SIPIdentity& identity) {}
+std::string Registrar::user_get_h1(const SIPIdentity& identity) { return ""; }
+void Registrar::user_register(const SIPIdentity& identity, const SIPUri& location) {}
+const std::shared_ptr<SIPUri> Registrar::user_get_location(const SIPIdentity& identity) { return std::make_shared<SIPUri>(""); }
 
 }  // namespace athenasip

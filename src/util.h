@@ -15,6 +15,7 @@ class Util {
  public:
   static std::string to_hex(const std::vector<uint8_t>& vec);
   static std::string to_hex(const uint8_t arr[], uint16_t len);
+  static std::string trim(const std::string& str);
 };
 
 }  // namespace athenasip

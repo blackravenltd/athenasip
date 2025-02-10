@@ -13,6 +13,7 @@
 #include <sstream>
 #include <string>
 
+#include "db.h"
 #include "logger.h"
 #include "logger_scoped.h"
 #include "sip_identity.h"
@@ -21,17 +22,17 @@ namespace athenasip {
 
 class Registrar {
  public:
-  Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<mysqlx::Session> db);
+  Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<DB> db);
   ~Registrar();
 
   bool user_exists(const SIPIdentity& identity);
   std::string user_get_h1(const SIPIdentity& identity);
   void user_register(const SIPIdentity& identity, const SIPUri& location);
-  const SIPUri& user_get_location(const SIPIdentity& identity);
+  const std::shared_ptr<SIPUri> user_get_location(const SIPIdentity& identity);
 
  private:
   std::unique_ptr<Logger> _logger;
-  std::shared_ptr<mysqlx::Session> _session;
+  std::shared_ptr<DB> _db;
 };
 
 }  // namespace athenasip
