@@ -95,10 +95,10 @@ std::shared_ptr<DBResult> MySQLDB::query(std::string sql, std::vector<std::any> 
     }
 
     // Fetch all rows at once into a vector
-    std::vector<mysqlx::Row> rows = result.fetchAll();  // ✅ Corrected
+    std::vector<mysqlx::Row> rows = result.fetchAll();
 
     // Iterate over the fetched rows
-    for (const mysqlx::Row &row : rows) {  // ✅ Use vector-based iteration
+    for (const mysqlx::Row &row : rows) { 
       auto dbRow = std::make_shared<DBRow>();
 
       // Iterate over columns using stored column names
@@ -106,7 +106,7 @@ std::shared_ptr<DBResult> MySQLDB::query(std::string sql, std::vector<std::any> 
         std::string colName = columnNames[col];
 
         // Map Value
-        (*dbRow)[colName] = _map_value(row[col]);
+        dbRow->insert_or_assign(colName, _map_value(row[col]));
       }
 
       res->push_back(dbRow);
