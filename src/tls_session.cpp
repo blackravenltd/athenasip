@@ -11,11 +11,13 @@
 
 #include "logger_scoped.h"
 #include "sip_header.h"
+#include "tls_server.h"
 
 namespace athenasip {
 
-TLSSession::TLSSession(std::shared_ptr<Logger> logger, std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> connection)
+TLSSession::TLSSession(std::shared_ptr<Logger> logger, TLSServer *server, std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> connection)
     : _connection(connection),
+      _server(server),
       _logger(std::make_unique<LoggerScoped>(
           connection->next_layer().remote_endpoint().address().to_string() + ":" + std::to_string(connection->next_layer().remote_endpoint().port()), logger)),
       _running(false),
@@ -34,10 +36,12 @@ void TLSSession::close() {
     _ssl_close();
   }
 
-  // Wait for thread quit
-  if (_thread->joinable()) {
+  // Wait for thread quit, but avoid joining the current thread
+  if (_thread && _thread->get_id() != std::this_thread::get_id() && _thread->joinable()) {
     _thread->join();
   }
+
+  _server->remove_connection(shared_from_this());
 }
 
 void TLSSession::_execute(int id) {
@@ -82,15 +86,12 @@ void TLSSession::_execute(int id) {
         buffer.erase(0, pos + 4);
 
         SIPHeader header(sip_message);
-
         header.print();
       }
     }
   }
 
-  if (_connection->next_layer().is_open()) {
-    _ssl_close();
-  }
+  close();
 
   _logger->info("Closed");
 }
@@ -135,9 +136,13 @@ ssize_t TLSSession::_read_with_timeout(void *ptr, size_t len, uint32_t timeout_m
 void TLSSession::_ssl_close() {
   boost::system::error_code ec;
 
-  _connection->shutdown(ec);
-  _connection->next_layer().shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
-  _connection->next_layer().close(ec);
+  if (_connection->lowest_layer().is_open()) {
+    // SSL
+    _connection->shutdown(ec);
+    // Underlying TCP
+    _connection->lowest_layer().shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+    _connection->lowest_layer().close(ec);
+  }
 }
 
 }  // namespace athenasip

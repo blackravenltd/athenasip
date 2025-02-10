@@ -7,6 +7,7 @@
 #include "tls_server.h"
 
 #include <iostream>
+#include <unordered_set>
 
 #include "logger_scoped.h"
 #include "tls_session.h"
@@ -66,12 +67,14 @@ void TLSServer::start_accept() {
 void TLSServer::_handle_accept(const boost::system::error_code& error, std::shared_ptr<ip::tcp::socket> new_connection) {
   boost::system::error_code ec;
 
-  auto remote = new_connection->remote_endpoint();
-  auto remote_addr = remote.address().to_string() + ":" + std::to_string(remote.port());
-
-  _logger->debug("Incoming Connection: " + remote_addr);
-
   if (!error) {
+    // Get Remote
+    auto remote = new_connection->remote_endpoint();
+    auto remote_addr = remote.address().to_string() + ":" + std::to_string(remote.port());
+
+    // Log it up
+    _logger->debug("Incoming Connection: " + remote_addr);
+
     // Extract the socket from the shared_ptr and move it into the SSL stream
     auto ssl_socket = std::make_shared<ssl::stream<ip::tcp::socket>>(std::move(*new_connection), ctx);
 
@@ -80,29 +83,28 @@ void TLSServer::_handle_accept(const boost::system::error_code& error, std::shar
       ssl_socket->handshake(ssl::stream_base::server);
 
       // Add the new connection to our map
-      int id = next_connection_id_++;
-      _connections[id] = std::make_shared<TLSSession>(_logger->base_logger(), ssl_socket);
+      auto new_session = std::make_shared<TLSSession>(_logger->base_logger(), this, ssl_socket);
+      _connections.insert(new_session);
 
-      _logger->info("Incoming Connection Accepted: [" + std::to_string(id) + "] " + remote_addr);
+      _logger->info("Incoming Connection Accepted: " + remote_addr);
 
     } catch (const std::exception& e) {
       _logger->info("Incoming Connection TLS Error: " + remote_addr + " " + e.what());
 
-      ssl_socket = nullptr;
       new_connection->shutdown(ip::tcp::socket::shutdown_both, ec);
       new_connection->close(ec);
-      new_connection = nullptr;
     }
   } else {
-    _logger->info("Incoming Connection Accept Error: " + remote_addr + " " + ec.message());
+    _logger->error("Incoming Connection Accept Error: " + ec.message());
 
     new_connection->shutdown(ip::tcp::socket::shutdown_both, ec);
     new_connection->close(ec);
-    new_connection = nullptr;
   }
 
   // Start accepting next connection
   start_accept();
 }
+
+void TLSServer::remove_connection(std::shared_ptr<TLSSession> session) { _connections.erase(session); }
 
 }  // namespace athenasip

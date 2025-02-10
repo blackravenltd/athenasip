@@ -32,4 +32,11 @@ std::string Util::to_hex(const uint8_t arr[], uint16_t len) {
   return oss.str();
 }
 
+// Trim leading and trailing whitespace
+std::string Util::trim(const std::string& str) {
+  size_t first = str.find_first_not_of(" \t\r\n");
+  size_t last = str.find_last_not_of(" \t\r\n");
+  return (first == std::string::npos) ? "" : str.substr(first, last - first + 1);
+}
+
 }  // namespace athenasip

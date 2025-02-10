@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <iostream>
 #include <optional>
+#include <regex>
 #include <string>
 
 namespace athenasip {

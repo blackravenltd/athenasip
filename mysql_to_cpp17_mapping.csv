@@ -1,0 +1,33 @@
+MySQL Data Type,C++17 Equivalent,Description
+TINYINT,int8_t / uint8_t,8-bit signed/unsigned integer
+SMALLINT,int16_t / uint16_t,16-bit signed/unsigned integer
+MEDIUMINT,int32_t / uint32_t,24-bit signed/unsigned integer (mapped to 32-bit)
+INT / INTEGER,int32_t / uint32_t,32-bit signed/unsigned integer
+BIGINT,int64_t / uint64_t,64-bit signed/unsigned integer
+DECIMAL / NUMERIC,std::string / double,Arbitrary precision (stored as string) or double for floating point operations
+FLOAT,float,Single-precision floating-point number
+DOUBLE / DOUBLE PRECISION,double,Double-precision floating-point number
+BIT,std::bitset<N>,Bit field representation
+DATE,std::chrono::system_clock::time_point,Represents a date
+DATETIME,std::chrono::system_clock::time_point,Represents date and time
+TIMESTAMP,std::chrono::system_clock::time_point,Represents a Unix timestamp
+TIME,"std::chrono::duration<int, std::ratio<1>>",Represents a time duration
+YEAR,int16_t,Stores a year (2 or 4 digits)
+CHAR(N),"std::array<char, N>",Fixed-length character array
+VARCHAR(N),std::string,Variable-length character string
+BINARY(N),"std::array<uint8_t, N>",Fixed-length binary data
+VARBINARY(N),std::vector<uint8_t>,Variable-length binary data
+TINYTEXT / TEXT / MEDIUMTEXT / LONGTEXT,std::string,Textual data of varying size
+TINYBLOB / BLOB / MEDIUMBLOB / LONGBLOB,std::vector<uint8_t>,Binary large object
+"ENUM('val1', 'val2', …)",enum class / std::string,"Enumeration, mapped to either an enum class or a string"
+"SET('a', 'b', 'c')",std::bitset<N> / std::set<std::string>,A set of values (bitfield or set)
+GEOMETRY,struct Geometry {},Base type for geometric values
+POINT,"struct Point { double x, y; }",Represents a 2D point
+LINESTRING,std::vector<Point>,Represents a line made of multiple points
+POLYGON,std::vector<std::vector<Point>>,Represents a polygon
+MULTIPOINT,std::vector<Point>,Collection of points
+MULTILINESTRING,std::vector<std::vector<Point>>,Collection of lines
+MULTIPOLYGON,std::vector<std::vector<std::vector<Point>>>,Collection of polygons
+GEOMETRYCOLLECTION,std::vector<Geometry>,Collection of geometric objects
+JSON,nlohmann::json / std::string,JSON stored as a string or parsed using a library like nlohmann::json
+VECTOR(N),"std::array<float, N> / std::vector<float>",Stores N floating-point values

@@ -12,21 +12,24 @@
 #include <boost/bind/bind.hpp>
 #include <cstdint>
 #include <fstream>
+#include <memory>
 #include <thread>
 
 #include "logger.h"
+#include "tls_server.h"
 
 namespace athenasip {
 
-class TLSSession {
+class TLSSession : public std::enable_shared_from_this<TLSSession> {
  public:
-  TLSSession(std::shared_ptr<Logger> logger, std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>>);
+  TLSSession(std::shared_ptr<Logger> logger, TLSServer* server, std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>>);
   ~TLSSession();
 
   void close();
 
  private:
   std::unique_ptr<Logger> _logger;
+  TLSServer* _server;
 
   std::unique_ptr<std::thread> _thread;
   std::atomic<bool> _running;

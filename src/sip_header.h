@@ -11,6 +11,8 @@
 #include <sstream>
 #include <string>
 
+#include "util.h"
+
 namespace athenasip {
 
 class SIPHeader {
@@ -24,9 +26,10 @@ class SIPHeader {
 
   void print() const;
   void parse(const std::string& sip_message);
+  std::string to_string() const;
 
- protected:
-  std::string trim(const std::string& str);
+  friend std::string operator+(const SIPHeader& header, const std::string& str);
+  friend std::string operator+(const std::string& str, const SIPHeader& header);
 
  private:
   std::string _method;
