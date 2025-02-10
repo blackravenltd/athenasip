@@ -12,13 +12,19 @@
 #include <boost/bind/bind.hpp>
 #include <cstdint>
 #include <fstream>
+#include <functional>
+#include <iostream>
 #include <memory>
 #include <thread>
 
 #include "logger.h"
+#include "logger_scoped.h"
+#include "sip_header.h"
 #include "tls_server.h"
 
 namespace athenasip {
+
+class TLSServer;
 
 class TLSSession : public std::enable_shared_from_this<TLSSession> {
  public:

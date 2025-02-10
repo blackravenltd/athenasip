@@ -7,6 +7,8 @@
 #pragma once
 
 #include <optional>
+#include <regex>
+#include <sstream>
 #include <string>
 
 namespace athenasip {

@@ -19,10 +19,12 @@ class DBValue {
   virtual bool is_null() = 0;
   virtual bool is_signed() = 0;
 
-  virtual std::any get_any() const = 0; 
+  virtual std::any get_any() const = 0;
 
   template <typename T>
-  T get_as() const { return std::any_cast<T>(get_any()); }
+  T get_as() const {
+    return std::any_cast<T>(get_any());
+  }
 };
 
 template <typename T>

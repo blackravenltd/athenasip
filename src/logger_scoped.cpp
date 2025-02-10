@@ -6,8 +6,6 @@
 //
 #include "logger_scoped.h"
 
-#include "logger.h"
-
 namespace athenasip {
 
 LoggerScoped::LoggerScoped(std::string scope, std::shared_ptr<Logger> logger) : _scope(scope), _logger(logger) {}

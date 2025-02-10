@@ -6,13 +6,6 @@
 //
 #include "tls_session.h"
 
-#include <functional>
-#include <iostream>
-
-#include "logger_scoped.h"
-#include "sip_header.h"
-#include "tls_server.h"
-
 namespace athenasip {
 
 TLSSession::TLSSession(std::shared_ptr<Logger> logger, TLSServer *server, std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> connection)

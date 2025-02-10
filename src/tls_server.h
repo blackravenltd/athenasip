@@ -9,12 +9,15 @@
 #include <boost/asio.hpp>
 #include <boost/asio/ssl.hpp>
 #include <boost/bind/bind.hpp>
+#include <iostream>
 #include <memory>
+#include <shared_mutex>
 #include <thread>
 #include <unordered_set>
-#include <shared_mutex>
 
 #include "logger.h"
+#include "logger_scoped.h"
+#include "tls_session.h"
 
 namespace athenasip {
 

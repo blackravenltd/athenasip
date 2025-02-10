@@ -11,6 +11,7 @@
 #include <string>
 
 #include "logger.h"
+#include "logger_scoped.h"
 #include "url.h"
 
 namespace athenasip {

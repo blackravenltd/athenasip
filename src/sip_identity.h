@@ -7,6 +7,8 @@
 #pragma once
 
 #include <optional>
+#include <regex>
+#include <sstream>
 #include <string>
 
 #include "sip_uri.h"
@@ -30,9 +32,7 @@ class SIPIdentity {
   friend std::string operator+(const std::string& str, const SIPIdentity& identity);
 
  private:
-
   // SIP URI components
-
 };
 
 }  // namespace athenasip

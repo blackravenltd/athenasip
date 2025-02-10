@@ -6,9 +6,6 @@
 //
 #include "version.h"
 
-#include <sstream>
-#include <string>
-
 namespace athenasip {
 
 Version::Version(uint8_t* ptr, size_t len) : major(0), minor(0), patch(0) {

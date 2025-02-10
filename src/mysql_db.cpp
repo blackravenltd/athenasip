@@ -6,9 +6,6 @@
 //
 #include "mysql_db.h"
 
-#include "db.h"
-#include "url.h"
-
 namespace athenasip {
 
 MySQLDB::MySQLDB(std::shared_ptr<Logger> logger, URL &db_url) : DB(std::make_unique<LoggerScoped>("mysql", logger), db_url) {}
@@ -98,7 +95,7 @@ std::shared_ptr<DBResult> MySQLDB::query(std::string sql, std::vector<std::any> 
     std::vector<mysqlx::Row> rows = result.fetchAll();
 
     // Iterate over the fetched rows
-    for (const mysqlx::Row &row : rows) { 
+    for (const mysqlx::Row &row : rows) {
       auto dbRow = std::make_shared<DBRow>();
 
       // Iterate over columns using stored column names
