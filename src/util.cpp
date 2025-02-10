@@ -6,11 +6,6 @@
 //
 #include "util.h"
 
-#include <iomanip>
-#include <iostream>
-#include <sstream>
-#include <vector>
-
 namespace athenasip {
 
 std::string Util::to_hex(const std::vector<uint8_t>& vec) {

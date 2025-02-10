@@ -6,9 +6,6 @@
 //
 #include "sip_header.h"
 
-#include <iostream>
-#include <sstream>
-
 namespace athenasip {
 
 SIPHeader::SIPHeader(const std::string& sip_message) { parse(sip_message); }

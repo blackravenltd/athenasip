@@ -6,9 +6,6 @@
 //
 #include "url.h"
 
-#include <limits>
-#include <string>
-
 namespace athenasip {
 
 URL::URL() = default;

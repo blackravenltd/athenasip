@@ -6,8 +6,6 @@
 //
 #include "config.h"
 
-#include "logger_scoped.h"
-
 namespace po = boost::program_options;
 
 namespace athenasip {

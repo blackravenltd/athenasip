@@ -4,11 +4,7 @@
 // Copyright (C) 2024 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
-
-#include <regex>
-#include <sstream>
-
-#include "sip_identity.h"
+#include "sip_uri.h"
 
 namespace athenasip {
 

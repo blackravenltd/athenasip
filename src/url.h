@@ -9,6 +9,7 @@
 #include <boost/regex.hpp>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <regex>
 #include <string>

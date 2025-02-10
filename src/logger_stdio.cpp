@@ -6,11 +6,6 @@
 //
 #include "logger_stdio.h"
 
-#include <chrono>
-#include <iomanip>
-#include <iostream>
-#include <sstream>
-
 namespace athenasip {
 
 LoggerStdIO::LoggerStdIO(LogLevel log_level) { _log_level = log_level; }

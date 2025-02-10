@@ -6,12 +6,6 @@
 //
 #include "tls_server.h"
 
-#include <iostream>
-#include <unordered_set>
-
-#include "logger_scoped.h"
-#include "tls_session.h"
-
 using namespace boost::asio;
 using namespace boost::asio::ssl;
 
@@ -108,8 +102,8 @@ void TLSServer::_handle_accept(const boost::system::error_code& error, std::shar
   start_accept();
 }
 
-void TLSServer::remove_connection(std::shared_ptr<TLSSession> session) { 
-  if(!session) return;
+void TLSServer::remove_connection(std::shared_ptr<TLSSession> session) {
+  if (!session) return;
   std::lock_guard<std::shared_mutex> lock(_connections_mtx);
   _connections.erase(session);
 }
