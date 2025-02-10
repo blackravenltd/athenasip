@@ -19,12 +19,10 @@ class DBValue {
   virtual bool is_null() = 0;
   virtual bool is_signed() = 0;
 
-  virtual std::any get_any() const = 0;  // ✅ Virtual method for runtime retrieval
+  virtual std::any get_any() const = 0; 
 
   template <typename T>
-  T get_as() const {
-    return std::any_cast<T>(get_any());  // ✅ Safe conversion
-  }
+  T get_as() const { return std::any_cast<T>(get_any()); }
 };
 
 template <typename T>
@@ -40,10 +38,19 @@ class DBValueImpl : public DBValue {
   bool is_null() override { return is_null_flag; }
   bool is_signed() override { return std::is_signed<T>::value; }
 
-  std::any get_any() const override { return value; }  // ✅ Return value as `std::any`
+  std::any get_any() const override { return value; }
 };
 
-class DBRow : public std::unordered_map<std::string, std::shared_ptr<DBValue>> {};
+class DBRow : public std::unordered_map<std::string, std::shared_ptr<DBValue>> {
+ public:
+  std::shared_ptr<DBValue> operator[](const std::string& key) const {
+    auto it = this->find(key);
+    if (it != this->end()) {
+      return it->second;
+    }
+    return nullptr;  // ✅ Return `nullptr` instead of throwing
+  }
+};
 
 class DBResult : public std::vector<std::shared_ptr<DBRow>> {
  public:
