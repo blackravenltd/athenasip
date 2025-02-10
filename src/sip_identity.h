@@ -20,26 +20,19 @@ class SIPIdentity {
   SIPIdentity();
   explicit SIPIdentity(const std::string& identity);
 
-  // Accessors
-  std::optional<std::string> display_name() const;
-  const SIPUri& uri() const;
+  std::optional<std::string> display_name;
+  SIPUri uri;
 
+  void parse(const std::string& identity);
   std::string to_string() const;
-
-  // Mutators
-  void set_display_name(const std::string& name);
-  void set_uri(const SIPUri& uri);
-  void clear_display_name();
 
   friend std::string operator+(const SIPIdentity& identity, const std::string& str);
   friend std::string operator+(const std::string& str, const SIPIdentity& identity);
 
  private:
-  void parse(const std::string& identity);
 
   // SIP URI components
-  std::optional<std::string> _display_name;
-  SIPUri _uri;
+
 };
 
 }  // namespace athenasip

@@ -14,8 +14,7 @@ Registrar::~Registrar() {}
 
 bool Registrar::user_exists(const SIPIdentity& identity) {
   // Execute the query
-  const SIPUri& uri = identity.uri();
-  std::shared_ptr<DBResult> res = _db->query("SELECT `h1` FROM `subscriber` WHERE `user` = ? AND `realm` = ?", {uri.user().value_or(""), uri.realm()});
+  std::shared_ptr<DBResult> res = _db->query("SELECT `h1` FROM `subscriber` WHERE `user` = ? AND `realm` = ?", {identity.uri.user().value_or(""), identity.uri.realm()});
 
   if (res && !res->empty()) {
     _logger->info("user_exists " + identity + " h1 " + (*res)[0]->at("h1")->get_as<std::string>());

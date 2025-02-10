@@ -13,31 +13,17 @@
 namespace athenasip {
 
 // Default constructor
-SIPIdentity::SIPIdentity() : _uri() {}
+SIPIdentity::SIPIdentity() : uri() {}
 
 // Constructor with parsing
 SIPIdentity::SIPIdentity(const std::string& identity) { parse(identity); }
 
-// Accessors
-std::optional<std::string> SIPIdentity::display_name() const { return _display_name; }
-
-const SIPUri& SIPIdentity::uri() const { return _uri; }
-
 std::string SIPIdentity::to_string() const {
-  std::ostringstream oss;
-  if (_display_name) {
-    oss << *_display_name << " ";
-  }
-  oss << "<" << _uri.to_string() << ">";
-  return oss.str();
+  std::string out;
+  if (display_name) out += display_name.value() + " ";
+  out += "<" + uri.to_string() + ">";
+  return out;
 }
-
-// Mutators
-void SIPIdentity::set_display_name(const std::string& name) { _display_name = name; }
-
-void SIPIdentity::set_uri(const SIPUri& uri) { _uri = uri; }
-
-void SIPIdentity::clear_display_name() { _display_name.reset(); }
 
 // Private parsing function
 void SIPIdentity::parse(const std::string& identity) {
@@ -45,11 +31,11 @@ void SIPIdentity::parse(const std::string& identity) {
   std::smatch match;
 
   if (std::regex_match(identity, match, sip_regex)) {
-    _display_name = match[1].matched ? std::optional<std::string>(Util::trim(match[1].str())) : std::nullopt;
-    _uri = SIPUri(match[2].str());
+    display_name = match[1].matched ? std::optional<std::string>(Util::trim(match[1].str())) : std::nullopt;
+    uri = SIPUri(match[2].str());
   } else {
-    _display_name.reset();
-    _uri = SIPUri(identity);
+    display_name.reset();
+    uri = SIPUri(identity);
   }
 }
 
