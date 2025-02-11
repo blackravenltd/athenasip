@@ -17,7 +17,7 @@ TLSServer::TLSServer(std::shared_ptr<Logger> logger, short port)
       _logger(std::make_unique<LoggerScoped>("server", logger)),
       ctx(ssl::context::sslv23) {}
 
-TLSServer::~TLSServer() { stop(); }
+TLSServer::~TLSServer() {}
 
 void TLSServer::set_certificates(std::string cert, std::string key) {
   _logger->info("Using Certificate PEM: " + cert);
@@ -40,21 +40,34 @@ void TLSServer::start() {
 }
 
 void TLSServer::stop() {
-  if (_thread) {
-    _logger->debug("Stopping...");
-    _io_context.stop();
+  _logger->debug("Stopping...");
 
+  // Close All Connections
+  for (const auto& pair : _connections) {
+    pair.second->close();
+    delete pair.second;
+  }
+
+  // Remove all connections
+  std::unique_lock<std::shared_mutex> lock(_connections_mtx);
+  _connections.clear();
+  lock.unlock();
+
+  // Stop Thread
+  if (_thread) {
+    _io_context.stop();
     if (_thread->joinable()) {
       _thread->join();
       _thread.reset();
     }
     _logger->info("Stopped");
+  } else {
+    _logger->debug("Already Stopped");
   }
 }
 
 void TLSServer::start_accept() {
   auto new_connection = std::make_shared<ip::tcp::socket>(_io_context);
-
   _acceptor.async_accept(*new_connection, boost::bind(&TLSServer::_handle_accept, this, placeholders::error, new_connection));
 }
 
@@ -76,14 +89,10 @@ void TLSServer::_handle_accept(const boost::system::error_code& error, std::shar
       // SSL Handshake
       ssl_socket->handshake(ssl::stream_base::server);
 
-      // Add the new connection to our map
-      auto new_session = std::make_shared<TLSSession>(_logger->base_logger(), this, ssl_socket);
-
-      std::unique_lock<std::shared_mutex> lock(_connections_mtx);
-      _connections.insert(new_session);
-      lock.unlock();
-
+      // Create TLSSession from connection
+      auto new_session = new TLSSession(_logger->base_logger(), this, ssl_socket);
       _logger->info("Incoming Connection Accepted: " + remote_addr);
+      register_connection(new_session);
 
     } catch (const std::exception& e) {
       _logger->info("Incoming Connection TLS Error: " + remote_addr + " " + e.what());
@@ -99,13 +108,20 @@ void TLSServer::_handle_accept(const boost::system::error_code& error, std::shar
   }
 
   // Start accepting next connection
-  start_accept();
+  boost::asio::post(_io_context, [this]() { start_accept(); });
 }
 
-void TLSServer::remove_connection(std::shared_ptr<TLSSession> session) {
-  if (!session) return;
+void TLSServer::register_connection(TLSSession* session) {
   std::lock_guard<std::shared_mutex> lock(_connections_mtx);
-  _connections.erase(session);
+  _connections.insert({session->remote_endpoint, session});
+  _logger->debug("Registering Connection " + session->remote_endpoint);
+}
+
+void TLSServer::unregister_connection(TLSSession* session) {
+  std::lock_guard<std::shared_mutex> lock(_connections_mtx);
+  _connections.erase(session->remote_endpoint);
+  _logger->debug("Unregistering Connection " + session->remote_endpoint);
+  delete session;
 }
 
 }  // namespace athenasip

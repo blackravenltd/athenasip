@@ -9,13 +9,13 @@
 namespace athenasip {
 
 TLSSession::TLSSession(std::shared_ptr<Logger> logger, TLSServer *server, std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> connection)
-    : _connection(connection),
-      _server(server),
-      _logger(std::make_unique<LoggerScoped>(
-          connection->next_layer().remote_endpoint().address().to_string() + ":" + std::to_string(connection->next_layer().remote_endpoint().port()), logger)),
-      _running(false),
-      _thread(std::make_unique<std::thread>(std::bind(&TLSSession::_execute, this, 0))),
-      _rx_timer(_rx_wait_context, boost::asio::chrono::seconds(10)) {}
+    : _connection(connection), _server(server), _running(false), _rx_timer(_rx_wait_context, boost::asio::chrono::seconds(10)) {
+  auto rep = _connection->lowest_layer().remote_endpoint();
+  remote_endpoint = rep.address().to_string() + ":" + std::to_string(rep.port());
+
+  _logger = std::make_unique<LoggerScoped>(remote_endpoint, logger);
+  _thread = std::make_unique<std::thread>(std::bind(&TLSSession::_execute, this, 0));
+}
 
 void TLSSession::close() {
   if (_running) {
@@ -60,10 +60,9 @@ void TLSSession::_execute(int id) {
         _running = false;
       }
     } else {
-      _logger->debug("Read " + std::to_string(len) + " bytes");
-
       // No Input
       if (len == 0) continue;
+      _logger->debug("Read " + std::to_string(len) + " bytes");
 
       // Add to buffer
       buffer.append(inputbuffer, len);
