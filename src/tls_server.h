@@ -13,7 +13,7 @@
 #include <memory>
 #include <shared_mutex>
 #include <thread>
-#include <unordered_set>
+#include <unordered_map>
 
 #include "logger.h"
 #include "logger_scoped.h"
@@ -28,12 +28,13 @@ class TLSServer {
   TLSServer(std::shared_ptr<Logger> logger, short port);
   ~TLSServer();
 
-  virtual void set_certificates(std::string cert, std::string key);
+  void set_certificates(std::string cert, std::string key);
 
-  virtual void start();
-  virtual void stop();
+  void start();
+  void stop();
 
-  virtual void remove_connection(std::shared_ptr<TLSSession> connection);
+  void register_connection(TLSSession *session);
+  void unregister_connection(TLSSession *session);
 
  private:
   void _handle_accept(const boost::system::error_code &error, std::shared_ptr<boost::asio::ip::tcp::socket> new_connection);
@@ -46,7 +47,7 @@ class TLSServer {
   boost::asio::ssl::context ctx;
   std::unique_ptr<Logger> _logger;
 
-  std::unordered_set<std::shared_ptr<TLSSession>> _connections;
+  std::unordered_map<std::string, TLSSession *> _connections;
   std::shared_mutex _connections_mtx;
 };
 
