@@ -16,6 +16,8 @@
 #include <boost/asio.hpp>
 #include <boost/asio/steady_timer.hpp>
 
+#include "global_io_context.h"
+
 namespace athenasip {
 
 // Forward declaration of the internal function that returns a global io_context
@@ -98,36 +100,5 @@ class DelayedTask : public std::enable_shared_from_this<DelayedTask<T>> {
   std::optional<T> _result;
   std::atomic<bool> _has_executed;
 };
-
-// Implementation details for the global io_context and single thread
-namespace detail {
-
-inline boost::asio::io_context& getGlobalIOContext() {
-  // The io_context for the entire process
-  static boost::asio::io_context io_context;
-
-  // The static work guard so the io_context.run() never stops by itself
-  static auto work_guard = boost::asio::make_work_guard(io_context);
-
-  // A single static thread calling io_context.run()
-  // Created once, destroyed on program exit
-  static struct RunThread {
-    RunThread() {
-      t = std::thread([&]() { io_context.run(); });
-    }
-    ~RunThread() {
-      // Release the work guard so run() eventually stops
-      work_guard.reset();
-      if (t.joinable()) {
-        t.join();
-      }
-    }
-    std::thread t;
-  } runThread;
-
-  return io_context;
-}
-
-}  // namespace detail
 
 }  // namespace athenasip
