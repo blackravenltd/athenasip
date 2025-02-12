@@ -43,10 +43,7 @@ void TLSServer::stop() {
   _logger->debug("Stopping...");
 
   // Close All Connections
-  for (const auto& pair : _connections) {
-    pair.second->close();
-    delete pair.second;
-  }
+  for (const auto& pair : _connections) pair.second->close();
 
   // Remove all connections
   std::unique_lock<std::shared_mutex> lock(_connections_mtx);
@@ -90,9 +87,10 @@ void TLSServer::_handle_accept(const boost::system::error_code& error, std::shar
       ssl_socket->handshake(ssl::stream_base::server);
 
       // Create TLSSession from connection
-      auto new_session = new TLSSession(_logger->base_logger(), this, ssl_socket);
+      auto new_session = std::make_shared<TLSSession>(_logger->base_logger(), this, ssl_socket);
       _logger->info("Incoming Connection Accepted: " + remote_addr);
-      register_connection(new_session);
+      // register_connection(new_session);
+      new_session->_start();
 
     } catch (const std::exception& e) {
       _logger->info("Incoming Connection TLS Error: " + remote_addr + " " + e.what());
@@ -100,6 +98,7 @@ void TLSServer::_handle_accept(const boost::system::error_code& error, std::shar
       new_connection->shutdown(ip::tcp::socket::shutdown_both, ec);
       new_connection->close(ec);
     }
+
   } else {
     _logger->error("Incoming Connection Accept Error: " + ec.message());
 
@@ -111,17 +110,16 @@ void TLSServer::_handle_accept(const boost::system::error_code& error, std::shar
   boost::asio::post(_io_context, [this]() { start_accept(); });
 }
 
-void TLSServer::register_connection(TLSSession* session) {
+void TLSServer::register_connection(std::shared_ptr<TLSSession> session) {
   std::lock_guard<std::shared_mutex> lock(_connections_mtx);
   _connections.insert({session->remote_endpoint, session});
-  _logger->debug("Registering Connection " + session->remote_endpoint);
+  _logger->debug("Registered Connection " + session->remote_endpoint);
 }
 
-void TLSServer::unregister_connection(TLSSession* session) {
+void TLSServer::unregister_connection(std::shared_ptr<TLSSession> session) {
   std::lock_guard<std::shared_mutex> lock(_connections_mtx);
   _connections.erase(session->remote_endpoint);
-  _logger->debug("Unregistering Connection " + session->remote_endpoint);
-  delete session;
+  _logger->debug("Unregistered Connection " + session->remote_endpoint);
 }
 
 }  // namespace athenasip

@@ -6,7 +6,6 @@
 //
 #pragma once
 
-#include <boost/program_options.hpp>
 #include <cstdint>
 #include <string>
 
@@ -16,26 +15,18 @@
 
 namespace athenasip {
 
-enum DBMode { FILE, MYSQL, POSTGRESQL };
-
 class Config {
  public:
-  DBMode dbMode;
-  URL dbUrl;
-  uint16_t port;
-
   Config(std::shared_ptr<Logger> logger);
-  Config(std::shared_ptr<Logger> logger, int argc, char* argv[]);
+  
+  std::string database_url;
+  uint32_t registration_timeout;
+  uint32_t babble_limit;
 
-  void parse_cmd_line(int argc, char* argv[]);
-  bool is_valid();
+  bool load_from_yaml(std::string &filename);
 
  private:
   std::unique_ptr<Logger> _logger;
-
-  bool _valid;
-
-  static const std::map<std::string, uint16_t> defaultPorts;
 };
 
 }  // namespace athenasip

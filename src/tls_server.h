@@ -33,8 +33,8 @@ class TLSServer {
   void start();
   void stop();
 
-  void register_connection(TLSSession *session);
-  void unregister_connection(TLSSession *session);
+  void register_connection(std::shared_ptr<TLSSession> session);
+  void unregister_connection(std::shared_ptr<TLSSession> session);
 
  private:
   void _handle_accept(const boost::system::error_code &error, std::shared_ptr<boost::asio::ip::tcp::socket> new_connection);
@@ -47,7 +47,7 @@ class TLSServer {
   boost::asio::ssl::context ctx;
   std::unique_ptr<Logger> _logger;
 
-  std::unordered_map<std::string, TLSSession *> _connections;
+  std::unordered_map<std::string, std::shared_ptr<TLSSession>> _connections;
   std::shared_mutex _connections_mtx;
 };
 

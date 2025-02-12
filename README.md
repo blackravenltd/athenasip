@@ -4,7 +4,8 @@
 
 **Project Status: ALPHA - DO NOT USE**
 
-AthenaSIP is an open-source SIP implementation designed with the following key principles:
+AthenaSIP is an open-source SIP ([RFC3261](https://datatracker.ietf.org/doc/html/rfc3261)) implementation designed around 
+the following principles:
 
 * Security & Privacy – TLS-only, with no support for insecure TCP/UDP.
 * Minimalism – Focused on core SIP functionality without unnecessary features.
@@ -12,7 +13,23 @@ AthenaSIP is an open-source SIP implementation designed with the following key p
 * Cloud-Native Design – Built for deployment in cloud environments.
 * Scalability – Maintains minimal internal state to support efficient scaling.
 
+## Quick Start
+
+Follow the [Quick Start Instructions](docs/quick_start.md) to quickly evaluate AthenaSIP on your local network. 
+
 ## Installation
+
+### Debain (RedHat)
+
+*TODO*
+
+### Linux (RedHat)
+
+*TODO*
+
+### MacOSX
+
+*TODO*
 
 ### Build From Source
 
@@ -36,11 +53,7 @@ cmake ..
 make
 ```
 
-## Snakeoil Certificate
-
-To ease testing and demonstration, a self-signed certificate/CA is included in `tls/`.
-
-**CAVEAT: Do Not Use This Certificate In Production.**
+**CAVEAT: This is provided for ease of demonstration ONLY. Do Not Use This Certificate In Production.**
 
 ## License
 
