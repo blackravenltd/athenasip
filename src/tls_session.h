@@ -6,6 +6,7 @@
 //
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <boost/asio.hpp>
@@ -22,6 +23,7 @@
 #include "logger.h"
 #include "logger_scoped.h"
 #include "sip_header.h"
+#include "sip_message.h"
 #include "tls_server.h"
 
 namespace athenasip {
@@ -30,7 +32,7 @@ class TLSServer;
 
 class TLSSession : public std::enable_shared_from_this<TLSSession> {
  public:
-  TLSSession(std::shared_ptr<Logger> logger, TLSServer* server, std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>>);
+  TLSSession(std::shared_ptr<Logger> logger, std::shared_ptr<TLSServer> server, std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>>);
 
   void write(std::string message);
   void close();
@@ -41,6 +43,7 @@ class TLSSession : public std::enable_shared_from_this<TLSSession> {
 
   enum State {
     Initial,
+    Challenged,
     Registered,
     Error,
     Closing,
@@ -49,7 +52,7 @@ class TLSSession : public std::enable_shared_from_this<TLSSession> {
   State state = State::Initial;
 
  private:
-  TLSServer* _server;
+  std::shared_ptr<TLSServer> _server;
 
   std::unique_ptr<Logger> _logger;
   std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> _connection;
@@ -57,8 +60,11 @@ class TLSSession : public std::enable_shared_from_this<TLSSession> {
   std::array<char, 65535> _read_buffer;
   std::string _buffer;
 
+  std::shared_ptr<SIPMessage> _current_message;
+
   void _schedule_async_read();
   ssize_t _read_async();
+  bool _append_body();
 
   std::shared_ptr<DelayedTask<int>> _register_timeout;
 };

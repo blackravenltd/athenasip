@@ -6,27 +6,23 @@
 //
 #pragma once
 
-#include <cstdint>
-#include <string>
-
 #include "logger.h"
 #include "logger_scoped.h"
-#include "url.h"
+#include "registrar.h"
+#include "sip_message.h"
+#include "tls_session.h"
 
 namespace athenasip {
 
-class Config {
+class SIPCore {
  public:
-  Config(std::shared_ptr<Logger> logger);
+  SIPCore(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> registrar);
 
-  std::string database_url;
-  uint32_t registration_timeout;
-  uint32_t babble_limit;
-
-  bool load_from_yaml(std::string &filename);
+  void process_message(std::shared_ptr<TLSSession> session, std::shared_ptr<SIPMessage> message);
 
  private:
   std::unique_ptr<Logger> _logger;
+  std::shared_ptr<Registrar> _registrar;
 };
 
 }  // namespace athenasip

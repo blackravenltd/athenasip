@@ -23,7 +23,7 @@ namespace athenasip {
 
 class TLSSession;
 
-class TLSServer {
+class TLSServer : public std::enable_shared_from_this<TLSServer> {
  public:
   TLSServer(std::shared_ptr<Logger> logger, short port);
   ~TLSServer();

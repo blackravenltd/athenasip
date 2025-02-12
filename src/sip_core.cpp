@@ -4,12 +4,11 @@
 // Copyright (C) 2024 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
-#include "config.h"
+#include "sip_core.h"
 
 namespace athenasip {
 
-Config::Config(std::shared_ptr<Logger> logger) : _logger(std::make_unique<LoggerScoped>("config", logger)) {}
-
-bool Config::load_from_yaml(std::string &filename) { return true; }
+SIPCore::SIPCore(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> registrar)
+    : _logger(std::make_unique<LoggerScoped>("sipcore", logger)), _registrar(registrar) {}
 
 }  // namespace athenasip

@@ -11,25 +11,23 @@
 #include <sstream>
 #include <string>
 
+#include "sip_header.h"
 #include "util.h"
 
 namespace athenasip {
 
-class SIPHeader {
+class SIPMessage {
  public:
-  SIPHeader();
-  SIPHeader(const std::string& sip_message);
+  SIPMessage();
 
-  std::string method;
-  std::string request_uri;
-  std::string sip_version;
-  std::map<std::string, std::string> headers;
+  std::shared_ptr<SIPHeader> header;
+  std::string body;
+  uint body_length;
 
-  void parse(const std::string& sip_message);
   std::string to_string() const;
 
-  friend std::string operator+(const SIPHeader& header, const std::string& str);
-  friend std::string operator+(const std::string& str, const SIPHeader& header);
+  friend std::string operator+(const SIPMessage& header, const std::string& str);
+  friend std::string operator+(const std::string& str, const SIPMessage& header);
 
   void print() const;
 

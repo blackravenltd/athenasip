@@ -4,8 +4,8 @@
 // Copyright (C) 2024 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
-#include <thread>
 #include <boost/asio.hpp>
+#include <thread>
 
 namespace athenasip::detail {
 
@@ -36,4 +36,3 @@ inline boost::asio::io_context& getGlobalIOContext() {
 }
 
 }  // namespace athenasip::detail
-
