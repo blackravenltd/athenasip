@@ -55,11 +55,7 @@ int main(int argc, char* argv[]) {
   ioc->logger->raw("-----------------------------------");
 
   // Create Config
-  ioc->config = std::make_shared<Config>(ioc->logger, argc, argv);
-  if (!ioc->config->is_valid()) {
-    ioc->logger->error("Invalid Configuration");
-    return -1;
-  }
+  ioc->config = std::make_shared<Config>(ioc->logger);
 
   // DB
   ioc->db = DB::create_driver(ioc->logger, "mysqlx://root@localhost/athenasip");

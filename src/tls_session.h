@@ -6,6 +6,7 @@
 //
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <boost/asio.hpp>
 #include <boost/asio/ssl.hpp>
@@ -17,6 +18,7 @@
 #include <memory>
 #include <thread>
 
+#include "delayed_task.h"
 #include "logger.h"
 #include "logger_scoped.h"
 #include "sip_header.h"
@@ -26,33 +28,39 @@ namespace athenasip {
 
 class TLSServer;
 
-class TLSSession {
+class TLSSession : public std::enable_shared_from_this<TLSSession> {
  public:
   TLSSession(std::shared_ptr<Logger> logger, TLSServer* server, std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>>);
 
+  void write(std::string message);
   void close();
 
   std::string remote_endpoint;
 
+  void _start();
+
+  enum State {
+    Initial,
+    Registered,
+    Error,
+    Closing,
+  };
+
+  State state = State::Initial;
+
  private:
-  std::unique_ptr<Logger> _logger;
   TLSServer* _server;
 
-  std::unique_ptr<std::thread> _thread;
-  std::atomic<bool> _running;
-
+  std::unique_ptr<Logger> _logger;
   std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> _connection;
 
-  std::string remote_host;
-  uint16_t remote_port;
+  std::array<char, 65535> _read_buffer;
+  std::string _buffer;
 
-  void _execute(int id);
-  ssize_t _read_with_timeout(void* ptr, size_t len, uint32_t timeout_ms, boost::system::error_code& ec);
+  void _schedule_async_read();
+  ssize_t _read_async();
 
-  void _ssl_close();
-
-  boost::asio::io_context _rx_wait_context;
-  boost::asio::steady_timer _rx_timer;
+  std::shared_ptr<DelayedTask<int>> _register_timeout;
 };
 
 }  // namespace athenasip

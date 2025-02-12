@@ -13,7 +13,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include(FetchContent)
 
 # Find Boost libraries
-find_package(Boost 1.84 REQUIRED COMPONENTS system thread program_options)
+find_package(Boost 1.84 REQUIRED COMPONENTS system thread)
 
 # Find OpenSSL
 find_package(OpenSSL REQUIRED)
@@ -53,7 +53,6 @@ target_include_directories(athenasip PRIVATE ${Boost_INCLUDE_DIRS} ${MYSQL_INCLU
 target_link_libraries(athenasip PRIVATE 
     Boost::system 
     Boost::thread 
-    Boost::program_options 
     OpenSSL::SSL 
     OpenSSL::Crypto 
     ${MYSQL_CONCPP_LIBRARY} resolv
