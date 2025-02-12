@@ -17,25 +17,23 @@ namespace athenasip {
 
 class SIPHeader {
  public:
+  SIPHeader();
   SIPHeader(const std::string& sip_message);
 
-  const std::string& method() const;
-  const std::string& request_uri() const;
-  const std::string& sip_version() const;
-  const std::map<std::string, std::string>& headers() const;
+  std::string method;
+  std::string request_uri;
+  std::string sip_version;
+  std::map<std::string, std::string> headers;
 
-  void print() const;
   void parse(const std::string& sip_message);
   std::string to_string() const;
 
   friend std::string operator+(const SIPHeader& header, const std::string& str);
   friend std::string operator+(const std::string& str, const SIPHeader& header);
 
+  void print() const;
+
  private:
-  std::string _method;
-  std::string _request_uri;
-  std::string _sip_version;
-  std::map<std::string, std::string> _headers;
 };
 
 }  // namespace athenasip

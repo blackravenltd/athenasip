@@ -10,8 +10,6 @@ namespace athenasip {
 
 Config::Config(std::shared_ptr<Logger> logger) : _logger(std::make_unique<LoggerScoped>("config", logger)) {}
 
-bool Config::load_from_yaml(std::string &filename) {
-  return true;
-}
+bool Config::load_from_yaml(std::string &filename) { return true; }
 
 }  // namespace athenasip

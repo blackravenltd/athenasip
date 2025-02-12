@@ -8,87 +8,49 @@
 //
 #pragma once
 
+#include <array>
 #include <boost/asio.hpp>
 #include <boost/system/error_code.hpp>
 #include <functional>
-#include <memory>
-#include <string>
-#include <array>
 #include <iostream>
+#include <memory>
 #include <mutex>
+#include <string>
 
+#include "global_io_context.h"
 #include "logger.h"
 #include "logger_scoped.h"
 #include "rtp_proxy_response.h"
-#include "global_io_context.h"
 
 namespace athenasip {
 
 class RTPProxyClient : public std::enable_shared_from_this<RTPProxyClient> {
  public:
-  using ResponseCallback = std::function<void(std::shared_ptr<RTPProxyResponse> response,
-                                              const boost::system::error_code &ec)>;
+  using ResponseCallback = std::function<void(std::shared_ptr<RTPProxyResponse> response, const boost::system::error_code &ec)>;
 
-  RTPProxyClient(std::shared_ptr<Logger> logger,
-                      const std::string &rtpproxy_host,
-                      unsigned short rtpproxy_port);
+  RTPProxyClient(std::shared_ptr<Logger> logger, const std::string &rtpproxy_host, unsigned short rtpproxy_port);
 
   ~RTPProxyClient();
 
   bool open();
   void close();
 
-  void commandL(const std::string &cookie,
-                const std::string &call_id,
-                const std::string &from_tag,
-                const std::string &to_tag,
-                int media_idx,
-                const std::string &ip1,
-                int rtp_port1,
-                int rtcp_port1,
-                const std::string &ip2,
-                int rtp_port2,
-                int rtcp_port2,
-                ResponseCallback callback);
+  void commandL(const std::string &cookie, const std::string &call_id, const std::string &from_tag, const std::string &to_tag, int media_idx,
+                const std::string &ip1, int rtp_port1, int rtcp_port1, const std::string &ip2, int rtp_port2, int rtcp_port2, ResponseCallback callback);
 
-  void commandU(const std::string &cookie,
-                const std::string &call_id,
-                const std::string &from_tag,
-                const std::string &to_tag,
-                int media_idx,
-                const std::string &ip1,
-                int rtp_port1,
-                int rtcp_port1,
-                const std::string &ip2,
-                int rtp_port2,
-                int rtcp_port2,
-                ResponseCallback callback);
+  void commandU(const std::string &cookie, const std::string &call_id, const std::string &from_tag, const std::string &to_tag, int media_idx,
+                const std::string &ip1, int rtp_port1, int rtcp_port1, const std::string &ip2, int rtp_port2, int rtcp_port2, ResponseCallback callback);
 
-  void commandR(const std::string &cookie,
-                const std::string &call_id,
-                const std::string &from_tag,
-                const std::string &to_tag,
-                int media_idx,
-                const std::string &ip1,
-                int rtp_port1,
-                int rtcp_port1,
-                const std::string &ip2,
-                int rtp_port2,
-                int rtcp_port2,
-                ResponseCallback callback);
+  void commandR(const std::string &cookie, const std::string &call_id, const std::string &from_tag, const std::string &to_tag, int media_idx,
+                const std::string &ip1, int rtp_port1, int rtcp_port1, const std::string &ip2, int rtp_port2, int rtcp_port2, ResponseCallback callback);
 
-  void commandD(const std::string &cookie,
-                const std::string &call_id,
-                const std::string &from_tag,
-                const std::string &to_tag,
-                ResponseCallback callback);
+  void commandD(const std::string &cookie, const std::string &call_id, const std::string &from_tag, const std::string &to_tag, ResponseCallback callback);
 
   void commandV(ResponseCallback callback);
 
  private:
-
   std::shared_ptr<Logger> _logger;
-  boost::asio::io_context &_io_context; 
+  boost::asio::io_context &_io_context;
   boost::asio::strand<boost::asio::io_context::executor_type> _strand;
 
   boost::asio::ip::udp::socket _socket;

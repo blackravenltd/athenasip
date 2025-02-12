@@ -8,18 +8,15 @@
 
 namespace athenasip {
 
+SIPHeader::SIPHeader() {}
+
 SIPHeader::SIPHeader(const std::string& sip_message) { parse(sip_message); }
 
-const std::string& SIPHeader::method() const { return _method; }
-const std::string& SIPHeader::request_uri() const { return _request_uri; }
-const std::string& SIPHeader::sip_version() const { return _sip_version; }
-const std::map<std::string, std::string>& SIPHeader::headers() const { return _headers; }
-
 void SIPHeader::print() const {
-  std::cout << "Method: " << _method << "\n";
-  std::cout << "Request-URI: " << _request_uri << "\n";
-  std::cout << "SIP Version: " << _sip_version << "\nHeaders:\n";
-  for (const auto& [key, value] : _headers) {
+  std::cout << "Method: " << method << "\n";
+  std::cout << "Request-URI: " << request_uri << "\n";
+  std::cout << "SIP Version: " << sip_version << "\nHeaders:\n";
+  for (const auto& [key, value] : headers) {
     std::cout << key << ": " << value << "\n";
   }
 }
@@ -28,10 +25,10 @@ std::string SIPHeader::to_string() const {
   std::string out;
 
   // Method / URI / Version
-  out += _method + " " + _request_uri + " " + _sip_version + "\r\n";
+  out += method + " " + request_uri + " " + sip_version + "\r\n";
 
   // Headers
-  for (const auto& [key, value] : _headers) {
+  for (const auto& [key, value] : headers) {
     out += key + ": " + value + "\r\n";
   }
 
@@ -45,7 +42,7 @@ void SIPHeader::parse(const std::string& sip_message) {
   // Read the request line (first line)
   if (std::getline(stream, line) && !line.empty()) {
     std::istringstream request_stream(line);
-    request_stream >> _method >> _request_uri >> _sip_version;
+    request_stream >> method >> request_uri >> sip_version;
   }
 
   while (std::getline(stream, line)) {
@@ -61,7 +58,7 @@ void SIPHeader::parse(const std::string& sip_message) {
 
     // Store the previous header
     if (!current_key.empty()) {
-      _headers[current_key] = Util::trim(current_value);
+      headers[current_key] = Util::trim(current_value);
     }
 
     // Extract new header key and value
@@ -74,7 +71,7 @@ void SIPHeader::parse(const std::string& sip_message) {
 
   // Store the last header
   if (!current_key.empty()) {
-    _headers[current_key] = Util::trim(current_value);
+    headers[current_key] = Util::trim(current_value);
   }
 }
 

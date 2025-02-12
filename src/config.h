@@ -18,7 +18,7 @@ namespace athenasip {
 class Config {
  public:
   Config(std::shared_ptr<Logger> logger);
-  
+
   std::string database_url;
   uint32_t registration_timeout;
   uint32_t babble_limit;

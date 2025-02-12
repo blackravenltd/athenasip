@@ -7,23 +7,17 @@
 #pragma once
 
 #include <atomic>
+#include <boost/asio.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <chrono>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 
-#include <boost/asio.hpp>
-#include <boost/asio/steady_timer.hpp>
-
 #include "global_io_context.h"
 
 namespace athenasip {
-
-// Forward declaration of the internal function that returns a global io_context
-namespace detail {
-boost::asio::io_context& getGlobalIOContext();
-}
 
 // A delayed, cancelable task that runs a std::function<T()> after some milliseconds.
 template <typename T>
@@ -35,8 +29,8 @@ class DelayedTask : public std::enable_shared_from_this<DelayedTask<T>> {
   static std::shared_ptr<DelayedTask<T>> schedule(Task task, int delay_ms) {
     auto instance = std::shared_ptr<DelayedTask<T>>(new DelayedTask<T>(std::move(task), delay_ms));
 
-    // schedule the async wait 
-    instance->startTimer();  
+    // schedule the async wait
+    instance->startTimer();
     return instance;
   }
 
@@ -51,7 +45,7 @@ class DelayedTask : public std::enable_shared_from_this<DelayedTask<T>> {
       return true;
     }
     // task was already executed or canceled
-    return false;  
+    return false;
   }
 
   // Checks if the task has executed
@@ -90,7 +84,7 @@ class DelayedTask : public std::enable_shared_from_this<DelayedTask<T>> {
         if (self->_has_executed.compare_exchange_strong(expected, true)) {
           self->_result = self->_task();
         }
-      } 
+      }
     });
   }
 

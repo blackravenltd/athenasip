@@ -8,34 +8,26 @@
 //
 #pragma once
 
-#include <string>
 #include <sstream>
+#include <string>
 #include <vector>
 
 class RTPProxyResponse {
-public:
+ public:
   // Public fields for direct access
-  int status_code;    // The first token (e.g., 0 for success, or error code)
-  std::string ip;     // If present in response
-  int rtp_port;       // If present
-  int rtcp_port;      // If present
-  bool valid;         // True if parsing was successful
+  int status_code;  // The first token (e.g., 0 for success, or error code)
+  std::string ip;   // If present in response
+  int rtp_port;     // If present
+  int rtcp_port;    // If present
+  bool valid;       // True if parsing was successful
 
   /**
    * @brief Constructs and immediately parses the given RTPproxy response line.
    * @param resp_line A line from RTPproxy, e.g. "0 203.0.113.5 40000 40001".
    */
-  explicit RTPProxyResponse(const std::string &resp_line)
-      : status_code(-1),
-        ip(""),
-        rtp_port(-1),
-        rtcp_port(-1),
-        valid(false)
-  {
-    _parse(resp_line);
-  }
+  explicit RTPProxyResponse(const std::string &resp_line) : status_code(-1), ip(""), rtp_port(-1), rtcp_port(-1), valid(false) { _parse(resp_line); }
 
-private:
+ private:
   /**
    * @brief Internal parsing method that extracts tokens and populates fields.
    */
