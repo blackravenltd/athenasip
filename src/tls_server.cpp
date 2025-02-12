@@ -101,9 +101,6 @@ void TLSServer::_handle_accept(const boost::system::error_code& error, std::shar
 
   } else {
     _logger->error("Incoming Connection Accept Error: " + ec.message());
-
-    new_connection->shutdown(ip::tcp::socket::shutdown_both, ec);
-    new_connection->close(ec);
   }
 
   // Start accepting next connection
