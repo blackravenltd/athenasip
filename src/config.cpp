@@ -12,4 +12,12 @@ Config::Config(std::shared_ptr<Logger> logger) : _logger(std::make_unique<Logger
 
 bool Config::load_from_yaml(std::string &filename) { return true; }
 
+std::optional<std::string> Config::get(std::string &path) {
+  if (path == "db:url") {
+    return "mysqlx://root@localhost/athenasip";
+  }
+
+  return nullptr;
+}
+
 }  // namespace athenasip

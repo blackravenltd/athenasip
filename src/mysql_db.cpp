@@ -8,22 +8,21 @@
 
 namespace athenasip {
 
-MySQLDB::MySQLDB(std::shared_ptr<Logger> logger, URL &db_url) : DB(std::make_unique<LoggerScoped>("mysql", logger), db_url) {}
+MySQLDB::MySQLDB(std::shared_ptr<Logger> logger, std::shared_ptr<URL> url) : DB(std::make_shared<LoggerScoped>("mysql", logger)), _url(url) {}
 MySQLDB::~MySQLDB() { close(); }
 
 bool MySQLDB::connect() {
-  auto url = "mysqlx://root@localhost/athenasip";
-  _logger->debug(std::string("MySQL URL ") + url);
+  _logger->debug("MySQL URL: " + _url->to_string());
   try {
-    _session = std::make_shared<mysqlx::Session>(url);
+    _session = std::make_shared<mysqlx::Session>(_url->to_string());
   } catch (const mysqlx::Error &err) {
-    _logger->error(std::string("Error: ") + err.what());
+    _logger->error(std::string("Error while connecting: ") + err.what());
     return false;
   } catch (std::exception &ex) {
-    _logger->error(std::string("Standard Exception: ") + ex.what());
+    _logger->error(std::string("Exception while connecting: ") + ex.what());
     return false;
   } catch (...) {
-    _logger->error("Unknown exception occurred.");
+    _logger->error("Unknown exception occurred while connecting.");
     return false;
   }
   return true;

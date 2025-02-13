@@ -11,13 +11,12 @@ using namespace boost::asio::ssl;
 
 namespace athenasip {
 
-TLSServer::TLSServer(std::shared_ptr<Logger> logger, short port)
-    : _port(port),
+TLSServer::TLSServer(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> registrar, short port)
+    : _logger(std::make_unique<LoggerScoped>("server", logger)),
+      _registrar(registrar),
+      _port(port),
       _acceptor(_io_context, ip::tcp::endpoint(ip::tcp::v4(), port)),
-      _logger(std::make_unique<LoggerScoped>("server", logger)),
       ctx(ssl::context::sslv23) {}
-
-TLSServer::~TLSServer() {}
 
 void TLSServer::set_certificates(std::string cert, std::string key) {
   _logger->info("Using Certificate PEM: " + cert);

@@ -17,6 +17,7 @@
 
 #include "logger.h"
 #include "logger_scoped.h"
+#include "registrar.h"
 #include "tls_session.h"
 
 namespace athenasip {
@@ -25,8 +26,7 @@ class TLSSession;
 
 class TLSServer : public std::enable_shared_from_this<TLSServer> {
  public:
-  TLSServer(std::shared_ptr<Logger> logger, short port);
-  ~TLSServer();
+  TLSServer(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> registrar, short port);
 
   void set_certificates(std::string cert, std::string key);
 
@@ -41,6 +41,8 @@ class TLSServer : public std::enable_shared_from_this<TLSServer> {
  private:
   void _handle_accept(const boost::system::error_code &error, std::shared_ptr<boost::asio::ip::tcp::socket> new_connection);
   void start_accept();
+
+  std::shared_ptr<Registrar> _registrar;
 
   boost::asio::io_context _io_context;
   boost::asio::ip::tcp::acceptor _acceptor;

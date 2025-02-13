@@ -8,12 +8,12 @@
 
 #include <mysqlx/xdevapi.h>
 
+#include <string>
 #include <unordered_map>
 #include <vector>
 
 #include "db.h"
 #include "db_types.h"
-#include "logger.h"
 #include "logger_scoped.h"
 #include "url.h"
 
@@ -21,14 +21,16 @@ namespace athenasip {
 
 class MySQLDB : public DB {
  public:
-  MySQLDB(std::shared_ptr<Logger> logger, URL &db_url);
+  MySQLDB(std::shared_ptr<Logger> logger, std::shared_ptr<URL> url);
   ~MySQLDB();
 
-  virtual bool connect();
-  virtual std::shared_ptr<DBResult> query(std::string sql, std::vector<std::any> params);
-  virtual void close();
+  virtual bool connect() override;
+  virtual std::shared_ptr<DBResult> query(std::string sql, std::vector<std::any> params) override;
+  virtual void close() override;
 
  private:
+  std::shared_ptr<URL> _url;
+
   std::shared_ptr<DBValue> _map_value(const mysqlx::Value &val);
   std::shared_ptr<mysqlx::Session> _session;
 };

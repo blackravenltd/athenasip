@@ -132,8 +132,8 @@ void TLSSession::_schedule_async_read() {
           // Get the header
           _current_message->header = std::make_shared<SIPHeader>(sip_header);
           // Get the Content-Length
-          if (_current_message->header->headers.find("Content-Length") != _current_message->header->headers.end()) {
-            _current_message->body_length = std::stoi(_current_message->header->headers["Content-Length"]);
+          if (_current_message->header->find("Content-Length") != _current_message->header->end()) {
+            _current_message->body_length = std::stoi((*_current_message->header)["Content-Length"]);
           }
           // Process messages with or without bodies.
           if (_current_message->body_length == 0) {
@@ -199,13 +199,13 @@ void TLSSession::_process_message_initial() {
     reply->header->type = SIPHeader::Type::Response;
     reply->header->response_code = 401;
     reply->header->response_message = "Unauthorized";
-    reply->header->headers["WWW-Authenticate"] = authHeader.to_string();
-    reply->header->headers["To"] = _current_message->header->headers["From"];
-    reply->header->headers["From"] = "<sip:server@sip.athenasip.org>;tag=123456";
-    reply->header->headers["Call-ID"] = _current_message->header->headers["Call-ID"];
-    reply->header->headers["CSeq"] = "1 REGISTER";
-    reply->header->headers["Via"] = _current_message->header->headers["Via"];
-    reply->header->headers["Content-Length"] = "0";
+    (*reply->header)["WWW-Authenticate"] = authHeader.to_string();
+    (*reply->header)["To"] = (*_current_message->header)["From"];
+    (*reply->header)["From"] = "<sip:server@sip.athenasip.org>;tag=123456";
+    (*reply->header)["Call-ID"] = (*_current_message->header)["Call-ID"];
+    (*reply->header)["CSeq"] = "1 REGISTER";
+    (*reply->header)["Via"] = (*_current_message->header)["Via"];
+    (*reply->header)["Content-Length"] = "0";
 
     _logger->info("Initial / REGISTER - Sending 401 Challenge");
     write(reply->to_string());
@@ -216,11 +216,10 @@ void TLSSession::_process_message_initial() {
 
 void TLSSession::_process_message_challenged() {
   if (_current_message->header->request_method == "REGISTER") {
-
     auto reply = std::make_shared<SIPMessage>();
     reply->body_length = 0;
 
-    auto incomingAuthHeader = AuthorizationHeader(_current_message->header->headers["Authorization"]);
+    auto incomingAuthHeader = AuthorizationHeader((*_current_message->header)["Authorization"]);
 
     _logger->debug("Challenged / REGISTER - Checking Auth");
 
@@ -231,13 +230,13 @@ void TLSSession::_process_message_challenged() {
     _logger->debug("Challenged / REGISTER - Authorized, Sending 200 OK");
     reply->header->response_code = 200;
     reply->header->response_message = "OK";
-    reply->header->headers["To"] = _current_message->header->headers["From"];
-    reply->header->headers["Contact"] = _current_message->header->headers["Contact"];
-    reply->header->headers["From"] = "<sip:server@sip.athenasip.org>;tag=123456";
-    reply->header->headers["Call-ID"] = _current_message->header->headers["Call-ID"];
-    reply->header->headers["CSeq"] = "1 REGISTER";
-    reply->header->headers["Via"] = _current_message->header->headers["Via"];
-    reply->header->headers["Content-Length"] = "0";
+    (*reply->header)["To"] = (*_current_message->header)["From"];
+    (*reply->header)["Contact"] = (*_current_message->header)["Contact"];
+    (*reply->header)["From"] = "<sip:server@sip.athenasip.org>;tag=123456";
+    (*reply->header)["Call-ID"] = (*_current_message->header)["Call-ID"];
+    (*reply->header)["CSeq"] = "1 REGISTER";
+    (*reply->header)["Via"] = (*_current_message->header)["Via"];
+    (*reply->header)["Content-Length"] = "0";
 
     reply->print();
     write(reply->to_string());
