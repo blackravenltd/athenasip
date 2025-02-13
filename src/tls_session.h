@@ -6,6 +6,10 @@
 //
 #pragma once
 
+#include <openssl/evp.h>
+#include <openssl/hmac.h>
+#include <openssl/rand.h>
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -13,18 +17,24 @@
 #include <boost/asio/ssl.hpp>
 #include <boost/bind/bind.hpp>
 #include <cstdint>
+#include <ctime>
 #include <fstream>
 #include <functional>
+#include <iomanip>
 #include <iostream>
 #include <memory>
+#include <sstream>
+#include <string>
 #include <thread>
 
 #include "delayed_task.h"
+#include "authorization_header.h"
 #include "logger.h"
 #include "logger_scoped.h"
 #include "sip_header.h"
 #include "sip_message.h"
 #include "tls_server.h"
+#include "util.h"
 
 namespace athenasip {
 
@@ -47,7 +57,7 @@ class TLSSession : public std::enable_shared_from_this<TLSSession> {
     Registered,
     Error,
     Closing,
-  };
+  } uint8_t;
 
   State state = State::Initial;
 
@@ -65,6 +75,12 @@ class TLSSession : public std::enable_shared_from_this<TLSSession> {
   void _schedule_async_read();
   ssize_t _read_async();
   bool _append_body();
+
+  void _process_message();
+  void _process_message_initial();
+  void _process_message_challenged();
+  
+  std::string _generate_nonce();
 
   std::shared_ptr<DelayedTask<int>> _register_timeout;
 };

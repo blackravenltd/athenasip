@@ -20,9 +20,23 @@ class SIPHeader {
   SIPHeader();
   SIPHeader(const std::string& sip_message);
 
-  std::string method;
+  enum Type {
+    Request,
+    Response,
+  } uint8_t;
+
+  Type type = Type::Request;
+
+  // Requests
+  std::string request_method;
   std::string request_uri;
-  std::string sip_version;
+
+  // Responses
+  uint16_t response_code;
+  std::string response_message;
+
+  // Common
+  std::string sip_version = "SIP/2.0";
   std::map<std::string, std::string> headers;
 
   void parse(const std::string& sip_message);
