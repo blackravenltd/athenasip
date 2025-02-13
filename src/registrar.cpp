@@ -10,8 +10,6 @@ namespace athenasip {
 
 Registrar::Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<DB> db) : _logger(std::make_unique<LoggerScoped>("registrar", logger)), _db(db) {}
 
-Registrar::~Registrar() {}
-
 bool Registrar::user_exists(const SIPIdentity& identity) {
   // Execute the query
   std::shared_ptr<DBResult> res =

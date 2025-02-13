@@ -6,8 +6,6 @@
 //
 #pragma once
 
-#include <mysqlx/xdevapi.h>
-
 #include <iostream>
 #include <map>
 #include <sstream>
@@ -23,7 +21,6 @@ namespace athenasip {
 class Registrar {
  public:
   Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<DB> db);
-  ~Registrar();
 
   bool user_exists(const SIPIdentity& identity);
   std::string user_get_h1(const SIPIdentity& identity);

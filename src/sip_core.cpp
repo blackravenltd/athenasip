@@ -8,7 +8,9 @@
 
 namespace athenasip {
 
-SIPCore::SIPCore(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> registrar)
-    : _logger(std::make_unique<LoggerScoped>("sipcore", logger)), _registrar(registrar) {}
+SIPCore::SIPCore() {}
+SIPCore::SIPCore(std::shared_ptr<Version> _version, std::shared_ptr<Config> _config, std::shared_ptr<Logger> _logger, std::shared_ptr<DB> _db,
+                 std::shared_ptr<Registrar> _registrar, std::shared_ptr<TLSServer> _server)
+    : version(_version), config(_config), logger(_logger), db(_db), registrar(_registrar), server(_server) {}
 
 }  // namespace athenasip

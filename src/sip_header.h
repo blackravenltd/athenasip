@@ -15,7 +15,7 @@
 
 namespace athenasip {
 
-class SIPHeader {
+class SIPHeader : public std::map<std::string, std::string> {
  public:
   SIPHeader();
   SIPHeader(const std::string& sip_message);
@@ -37,10 +37,11 @@ class SIPHeader {
 
   // Common
   std::string sip_version = "SIP/2.0";
-  std::map<std::string, std::string> headers;
 
   void parse(const std::string& sip_message);
   std::string to_string() const;
+
+  bool contains(std::string& field);
 
   friend std::string operator+(const SIPHeader& header, const std::string& str);
   friend std::string operator+(const std::string& str, const SIPHeader& header);

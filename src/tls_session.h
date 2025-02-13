@@ -27,8 +27,8 @@
 #include <string>
 #include <thread>
 
-#include "delayed_task.h"
 #include "authorization_header.h"
+#include "delayed_task.h"
 #include "logger.h"
 #include "logger_scoped.h"
 #include "sip_header.h"
@@ -79,7 +79,7 @@ class TLSSession : public std::enable_shared_from_this<TLSSession> {
   void _process_message();
   void _process_message_initial();
   void _process_message_challenged();
-  
+
   std::string _generate_nonce();
 
   std::shared_ptr<DelayedTask<int>> _register_timeout;

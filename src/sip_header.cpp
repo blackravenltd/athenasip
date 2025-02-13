@@ -13,7 +13,7 @@ SIPHeader::SIPHeader() {}
 SIPHeader::SIPHeader(const std::string& sip_message) { parse(sip_message); }
 
 void SIPHeader::print() const {
-  switch(type) {
+  switch (type) {
     case Type::Request:
       std::cout << "Request Method: " << request_method << "\n";
       std::cout << "Request URI: " << request_uri << "\n";
@@ -23,10 +23,10 @@ void SIPHeader::print() const {
       std::cout << "Response Message: " << response_message << "\n";
       break;
     default:
-      throw std::runtime_error("SIPHeader::print Unknown Type " + std::to_string(type));     
+      throw std::runtime_error("SIPHeader::print Unknown Type " + std::to_string(type));
   }
   std::cout << "SIP Version: " << sip_version << "\nHeaders:\n";
-  for (const auto& [key, value] : headers) {
+  for (const auto& [key, value] : (*this)) {
     std::cout << key << ": " << value << "\n";
   }
 }
@@ -40,14 +40,14 @@ std::string SIPHeader::to_string() const {
       out += request_method + " " + request_uri + " " + sip_version + "\r\n";
       break;
     case Type::Response:
-      out += sip_version+" "+std::to_string(response_code) + " " + response_message + "\r\n";
+      out += sip_version + " " + std::to_string(response_code) + " " + response_message + "\r\n";
       break;
     default:
       throw std::runtime_error("SIPHeader::to_string Unknown Type " + std::to_string(type));
   }
 
   // Headers
-  for (const auto& [key, value] : headers) {
+  for (const auto& [key, value] : (*this)) {
     out += key + ": " + value + "\r\n";
   }
 
@@ -78,7 +78,7 @@ void SIPHeader::parse(const std::string& sip_message) {
 
     // Store the previous header
     if (!current_key.empty()) {
-      headers[current_key] = Util::trim(current_value);
+      (*this)[current_key] = Util::trim(current_value);
     }
 
     // Extract new header key and value
@@ -91,9 +91,11 @@ void SIPHeader::parse(const std::string& sip_message) {
 
   // Store the last header
   if (!current_key.empty()) {
-    headers[current_key] = Util::trim(current_value);
+    (*this)[current_key] = Util::trim(current_value);
   }
 }
+
+bool SIPHeader::contains(std::string& field) { return (this->find(field) != this->end()); }
 
 std::string operator+(const SIPHeader& header, const std::string& str) { return header.to_string() + str; }
 std::string operator+(const std::string& str, const SIPHeader& header) { return str + header.to_string(); }

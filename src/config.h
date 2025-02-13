@@ -19,11 +19,15 @@ class Config {
  public:
   Config(std::shared_ptr<Logger> logger);
 
+  uint16_t port;
   std::string database_url;
   uint32_t registration_timeout;
   uint32_t babble_limit;
+  std::string nonce_secret;
 
   bool load_from_yaml(std::string &filename);
+
+  std::optional<std::string> get(std::string &path);
 
  private:
   std::unique_ptr<Logger> _logger;
