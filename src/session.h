@@ -6,10 +6,6 @@
 //
 #pragma once
 
-#include <openssl/evp.h>
-#include <openssl/hmac.h>
-#include <openssl/rand.h>
-
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -28,33 +24,43 @@
 #include <thread>
 
 #include "authorization_header.h"
-#include "delayed_task.h"
 #include "logger.h"
 #include "logger_scoped.h"
-#include "server.h"
-#include "session.h"
+#include "sip_header.h"
+#include "sip_message.h"
 #include "util.h"
 
 namespace athenasip {
 
-class TLSSession : public Session {
+class Session : public std::enable_shared_from_this<Session> {
  public:
-  TLSSession(std::shared_ptr<Logger> logger, std::string nonce_secret, std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> connection);
+  Session(std::shared_ptr<Logger> logger, std::string nonce_secret);
 
-  void write(std::string message) override;
-  void start() override;
-  void close() override;
+  virtual void write(std::string message) = 0;
+  virtual void start() = 0;
+  virtual void close() = 0;
 
- private:
-  std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> _connection;
+  enum State {
+    Initial,
+    Challenged,
+    Registered,
+    Error,
+    Closing,
+  } uint8_t;
 
-  std::array<char, 65535> _read_buffer;
-  std::string _buffer;
+  State state = State::Initial;
+  std::string remote_endpoint;
 
-  void _schedule_async_read();
-  bool _append_body();
+ protected:
+  std::shared_ptr<Logger> _logger;
+  std::shared_ptr<SIPMessage> _current_message;
+  std::string _nonce_secret;
 
-  std::shared_ptr<DelayedTask<int>> _register_timeout;
+  void _process_message();
+  void _process_message_initial();
+  void _process_message_challenged();
+
+  std::string _generate_nonce();
 };
 
 }  // namespace athenasip

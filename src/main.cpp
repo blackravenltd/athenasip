@@ -67,10 +67,11 @@ int main(int argc, char* argv[]) {
   core->registrar->user_exists(SIPIdentity("Tom Cully <sip:tom@sip.blackraven.co.nz>"));
 
   // Create the TLSServer instance with the logger and start it on the specified port
-  core->server = std::make_shared<TLSServer>(core->logger, core->registrar, 5061);
+  auto tlsServer = std::make_shared<TLSServer>(core->logger, core->registrar, "tempNonceSecret", 5061);
+  tlsServer->set_certificates("../tls/snakeoil.cer", "../tls/snakeoil.key");
+  core->server = tlsServer;
 
   // Set Certificates, Start TCP Server
-  core->server->set_certificates("../tls/snakeoil.cer", "../tls/snakeoil.key");
   core->server->start();
 
   // Wait for Signals

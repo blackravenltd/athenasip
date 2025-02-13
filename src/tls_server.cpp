@@ -11,9 +11,8 @@ using namespace boost::asio::ssl;
 
 namespace athenasip {
 
-TLSServer::TLSServer(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> registrar, short port)
-    : _logger(std::make_unique<LoggerScoped>("server", logger)),
-      _registrar(registrar),
+TLSServer::TLSServer(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> registrar, std::string nonce_secret, short port)
+    : Server(std::make_unique<LoggerScoped>("server", logger), registrar, nonce_secret),
       _port(port),
       _acceptor(_io_context, ip::tcp::endpoint(ip::tcp::v4(), port)),
       ctx(ssl::context::sslv23) {}
@@ -86,10 +85,10 @@ void TLSServer::_handle_accept(const boost::system::error_code& error, std::shar
       ssl_socket->handshake(ssl::stream_base::server);
 
       // Create TLSSession from connection
-      auto new_session = std::make_shared<TLSSession>(_logger->base_logger(), shared_from_this(), ssl_socket);
+      auto new_session = std::make_shared<TLSSession>(_logger->base_logger(), nonce_secret, ssl_socket);
       _logger->info("Incoming Connection Accepted: " + remote_addr);
-      // register_connection(new_session);
-      new_session->_start();
+      register_connection(new_session);
+      new_session->start();
 
     } catch (const std::exception& e) {
       _logger->info("Incoming Connection TLS Error: " + remote_addr + " " + e.what());
@@ -104,18 +103,6 @@ void TLSServer::_handle_accept(const boost::system::error_code& error, std::shar
 
   // Start accepting next connection
   boost::asio::post(_io_context, [this]() { start_accept(); });
-}
-
-void TLSServer::register_connection(std::shared_ptr<TLSSession> session) {
-  std::lock_guard<std::shared_mutex> lock(_connections_mtx);
-  _connections.insert({session->remote_endpoint, session});
-  _logger->debug("Registered Connection " + session->remote_endpoint);
-}
-
-void TLSServer::unregister_connection(std::shared_ptr<TLSSession> session) {
-  std::lock_guard<std::shared_mutex> lock(_connections_mtx);
-  _connections.erase(session->remote_endpoint);
-  _logger->debug("Unregistered Connection " + session->remote_endpoint);
 }
 
 }  // namespace athenasip
