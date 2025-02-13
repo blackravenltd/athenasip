@@ -36,6 +36,8 @@ class TLSServer : public std::enable_shared_from_this<TLSServer> {
   void register_connection(std::shared_ptr<TLSSession> session);
   void unregister_connection(std::shared_ptr<TLSSession> session);
 
+  std::string nonce_secret = "testing123";
+
  private:
   void _handle_accept(const boost::system::error_code &error, std::shared_ptr<boost::asio::ip::tcp::socket> new_connection);
   void start_accept();
