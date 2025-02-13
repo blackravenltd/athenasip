@@ -6,53 +6,31 @@
 //
 #pragma once
 
-#include <boost/asio.hpp>
-#include <boost/asio/ssl.hpp>
-#include <boost/bind/bind.hpp>
-#include <iostream>
-#include <memory>
-#include <shared_mutex>
-#include <thread>
-#include <unordered_map>
-
-#include "logger.h"
-#include "logger_scoped.h"
-#include "registrar.h"
+#include "server.h"
 #include "tls_session.h"
 
 namespace athenasip {
 
 class TLSSession;
 
-class TLSServer : public std::enable_shared_from_this<TLSServer> {
+class TLSServer : public Server {
  public:
-  TLSServer(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> registrar, short port);
+  TLSServer(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> registrar, std::string nonce_secret, short port);
+
+  void start() override;
+  void stop() override;
 
   void set_certificates(std::string cert, std::string key);
-
-  void start();
-  void stop();
-
-  void register_connection(std::shared_ptr<TLSSession> session);
-  void unregister_connection(std::shared_ptr<TLSSession> session);
-
-  std::string nonce_secret = "testing123";
 
  private:
   void _handle_accept(const boost::system::error_code &error, std::shared_ptr<boost::asio::ip::tcp::socket> new_connection);
   void start_accept();
-
-  std::shared_ptr<Registrar> _registrar;
 
   boost::asio::io_context _io_context;
   boost::asio::ip::tcp::acceptor _acceptor;
   uint16_t _port;
   std::shared_ptr<std::thread> _thread;
   boost::asio::ssl::context ctx;
-  std::unique_ptr<Logger> _logger;
-
-  std::unordered_map<std::string, std::shared_ptr<TLSSession>> _connections;
-  std::shared_mutex _connections_mtx;
 };
 
 }  // namespace athenasip

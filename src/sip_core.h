@@ -14,7 +14,7 @@
 #include "db.h"
 #include "logger.h"
 #include "registrar.h"
-#include "tls_server.h"
+#include "server.h"
 #include "version.h"
 
 namespace athenasip {
@@ -23,7 +23,7 @@ class SIPCore {
  public:
   SIPCore();
   SIPCore(std::shared_ptr<Version> _version, std::shared_ptr<Config> _config, std::shared_ptr<Logger> _logger, std::shared_ptr<DB> _db,
-          std::shared_ptr<Registrar> _registrar, std::shared_ptr<TLSServer> _server);
+          std::shared_ptr<Registrar> _registrar, std::shared_ptr<Server> _server);
 
  public:
   std::shared_ptr<Version> version;
@@ -31,7 +31,7 @@ class SIPCore {
   std::shared_ptr<Logger> logger;
   std::shared_ptr<DB> db;
   std::shared_ptr<Registrar> registrar;
-  std::shared_ptr<TLSServer> server;
+  std::shared_ptr<Server> server;
 };
 
 }  // namespace athenasip

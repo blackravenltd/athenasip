@@ -8,51 +8,16 @@
 
 namespace athenasip {
 
-TLSSession::TLSSession(std::shared_ptr<Logger> logger, std::shared_ptr<TLSServer> server,
+TLSSession::TLSSession(std::shared_ptr<Logger> logger, std::string nonce_secret,
                        std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> connection)
-    : _connection(connection), _server(server) {
+    : Session(logger, nonce_secret), _connection(connection) {
   auto rep = _connection->lowest_layer().remote_endpoint();
   remote_endpoint = rep.address().to_string() + ":" + std::to_string(rep.port());
 
   _logger = std::make_unique<LoggerScoped>(remote_endpoint, logger);
 }
 
-void TLSSession::close() {
-  auto self(shared_from_this());
-
-  boost::system::error_code ec;
-
-  // Register Timeout
-  if (_register_timeout) {
-    _register_timeout->cancel();
-    _register_timeout.reset();
-  }
-
-  // Ensure Connection Closed
-  if (_connection && _connection->lowest_layer().is_open()) {
-    _connection->shutdown(ec);
-    _connection->lowest_layer().shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
-    _connection->lowest_layer().close(ec);
-
-    _connection.reset();
-    _logger->debug("Closed");
-
-    _server->unregister_connection(shared_from_this());
-  }
-}
-
-void TLSSession::write(std::string message) {
-  auto self(shared_from_this());
-
-  boost::asio::async_write(*_connection, boost::asio::buffer(message), [this, self](boost::system::error_code ec, std::size_t) {
-    if (ec) {
-      _logger->error("Write Error ");
-      close();
-    }
-  });
-}
-
-void TLSSession::_start() {
+void TLSSession::start() {
   auto self(shared_from_this());
 
   _logger->info("Connected");
@@ -75,6 +40,39 @@ void TLSSession::_start() {
       5000);
 
   _schedule_async_read();
+}
+
+void TLSSession::close() {
+  auto self(shared_from_this());
+
+  boost::system::error_code ec;
+
+  // Register Timeout
+  if (_register_timeout) {
+    _register_timeout->cancel();
+    _register_timeout.reset();
+  }
+
+  // Ensure Connection Closed
+  if (_connection && _connection->lowest_layer().is_open()) {
+    _connection->shutdown(ec);
+    _connection->lowest_layer().shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
+    _connection->lowest_layer().close(ec);
+
+    _connection.reset();
+    _logger->debug("Closed");
+  }
+}
+
+void TLSSession::write(std::string message) {
+  auto self(shared_from_this());
+
+  boost::asio::async_write(*_connection, boost::asio::buffer(message), [this, self](boost::system::error_code ec, std::size_t) {
+    if (ec) {
+      _logger->error("Write Error ");
+      close();
+    }
+  });
 }
 
 void TLSSession::_schedule_async_read() {
@@ -162,117 +160,6 @@ bool TLSSession::_append_body() {
   _current_message->body += _buffer.substr(0, to_append);
   _buffer.erase(0, to_append);
   return (_current_message->body.size() == _current_message->body_length);
-}
-
-void TLSSession::_process_message() {
-  _current_message->print();
-  switch (state) {
-    case State::Initial:
-      _process_message_initial();
-      break;
-    case State::Challenged:
-      _process_message_challenged();
-    default:
-      _logger->error("Unknown State while processing message: " + std::to_string(state));
-  }
-  _current_message.reset();  // replace with process
-  return;
-}
-
-void TLSSession::_process_message_initial() {
-  if (_current_message->header->request_method == "REGISTER") {
-    // Generate Nonce and send 401 Unauthenticated
-
-    auto reply = std::make_shared<SIPMessage>();
-    reply->body_length = 0;
-
-    // Set up Header
-    auto nonce = _generate_nonce();
-    AuthorizationHeader authHeader;
-
-    authHeader.type = "Digest";
-    authHeader["realm"] = "sip.athenasip.org";
-    authHeader["nonce"] = nonce;
-    authHeader["algorithm"] = "MD5";
-
-    reply->header = std::make_shared<SIPHeader>();
-    reply->header->type = SIPHeader::Type::Response;
-    reply->header->response_code = 401;
-    reply->header->response_message = "Unauthorized";
-    (*reply->header)["WWW-Authenticate"] = authHeader.to_string();
-    (*reply->header)["To"] = (*_current_message->header)["From"];
-    (*reply->header)["From"] = "<sip:server@sip.athenasip.org>;tag=123456";
-    (*reply->header)["Call-ID"] = (*_current_message->header)["Call-ID"];
-    (*reply->header)["CSeq"] = "1 REGISTER";
-    (*reply->header)["Via"] = (*_current_message->header)["Via"];
-    (*reply->header)["Content-Length"] = "0";
-
-    _logger->info("Initial / REGISTER - Sending 401 Challenge");
-    write(reply->to_string());
-
-    state = State::Challenged;
-  }
-}
-
-void TLSSession::_process_message_challenged() {
-  if (_current_message->header->request_method == "REGISTER") {
-    auto reply = std::make_shared<SIPMessage>();
-    reply->body_length = 0;
-
-    auto incomingAuthHeader = AuthorizationHeader((*_current_message->header)["Authorization"]);
-
-    _logger->debug("Challenged / REGISTER - Checking Auth");
-
-    // Set up Header
-    reply->header = std::make_shared<SIPHeader>();
-    reply->header->type = SIPHeader::Type::Response;
-
-    _logger->debug("Challenged / REGISTER - Authorized, Sending 200 OK");
-    reply->header->response_code = 200;
-    reply->header->response_message = "OK";
-    (*reply->header)["To"] = (*_current_message->header)["From"];
-    (*reply->header)["Contact"] = (*_current_message->header)["Contact"];
-    (*reply->header)["From"] = "<sip:server@sip.athenasip.org>;tag=123456";
-    (*reply->header)["Call-ID"] = (*_current_message->header)["Call-ID"];
-    (*reply->header)["CSeq"] = "1 REGISTER";
-    (*reply->header)["Via"] = (*_current_message->header)["Via"];
-    (*reply->header)["Content-Length"] = "0";
-
-    reply->print();
-    write(reply->to_string());
-
-    state = State::Registered;
-  }
-}
-
-std::string TLSSession::_generate_nonce() {
-  std::array<unsigned char, 16> random_bytes;
-
-  // Generate 128-bit (16-byte) secure random data
-  if (RAND_bytes(random_bytes.data(), random_bytes.size()) != 1) {
-    throw std::runtime_error("Failed to generate secure random bytes");
-  }
-
-  // Get the current UNIX timestamp
-  uint64_t timestamp = static_cast<uint64_t>(std::time(nullptr));
-
-  // Concatenate random bytes and timestamp
-  std::ostringstream raw_nonce_stream;
-  raw_nonce_stream << Util::to_hex(random_bytes.data(), random_bytes.size()) << ":" << timestamp;
-  std::string raw_nonce = raw_nonce_stream.str();
-
-  // Compute HMAC-SHA256 using OpenSSL
-  unsigned char hmac_result[EVP_MAX_MD_SIZE];
-  unsigned int hmac_len = 0;
-
-  HMAC(EVP_sha256(), _server->nonce_secret.c_str(), _server->nonce_secret.size(), reinterpret_cast<const unsigned char*>(raw_nonce.c_str()), raw_nonce.size(),
-       hmac_result, &hmac_len);
-
-  // Convert HMAC output to hex
-  std::string hmac_hex = Util::to_hex(hmac_result, hmac_len);
-
-  // Return final nonce in format: "random:timestamp:hmac"
-  return raw_nonce + ":" + hmac_hex;
 }
 
 }  // namespace athenasip
