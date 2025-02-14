@@ -17,7 +17,6 @@
 #include "registrar.h"
 #include "sip_core.h"
 #include "tls_server.h"
-#include "url.h"
 #include "util.h"
 #include "version.h"
 

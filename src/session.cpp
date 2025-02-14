@@ -6,6 +6,8 @@
 //
 #include "session.h"
 
+using namespace athenasip::sipfields;
+
 namespace athenasip {
 
 Session::Session(std::shared_ptr<Logger> logger, std::string nonce_secret) : _logger(logger), _nonce_secret(nonce_secret) {}
@@ -45,15 +47,16 @@ void Session::_process_message_initial() {
     reply->header->type = SIPHeader::Type::Response;
     reply->header->response_code = 401;
     reply->header->response_message = "Unauthorized";
-    (*reply->header)["WWW-Authenticate"] = authHeader.to_string();
-    (*reply->header)["To"] = (*_current_message->header)["From"];
-    (*reply->header)["From"] = "<sip:server@sip.athenasip.org>;tag=123456";
-    (*reply->header)["Call-ID"] = (*_current_message->header)["Call-ID"];
-    (*reply->header)["CSeq"] = "1 REGISTER";
-    (*reply->header)["Via"] = (*_current_message->header)["Via"];
-    (*reply->header)["Content-Length"] = "0";
+    (*reply->header)["WWW-Authenticate"] = std::make_shared<StringFieldValue>(authHeader.to_string());
+    (*reply->header)["To"] = std::make_shared<StringFieldValue>((*_current_message->header)["From"]->to_string());
+    (*reply->header)["From"] = std::make_shared<StringFieldValue>("<sip:server@sip.athenasip.org>;tag=123456");
+    (*reply->header)["Call-ID"] = std::make_shared<StringFieldValue>((*_current_message->header)["Call-ID"]->to_string());
+    (*reply->header)["CSeq"] = std::make_shared<StringFieldValue>("1 REGISTER");
+    (*reply->header)["Via"] = std::make_shared<StringFieldValue>((*_current_message->header)["Via"]->to_string());
+    (*reply->header)["Content-Length"] = std::make_shared<UIntFieldValue>(0);
 
     _logger->info("Initial / REGISTER - Sending 401 Challenge");
+    reply->print();
     write(reply->to_string());
 
     state = State::Challenged;
@@ -65,7 +68,7 @@ void Session::_process_message_challenged() {
     auto reply = std::make_shared<SIPMessage>();
     reply->body_length = 0;
 
-    auto incomingAuthHeader = AuthorizationHeader((*_current_message->header)["Authorization"]);
+    auto incomingAuthHeader = AuthorizationHeader((*_current_message->header)["Authorization"]->to_string());
 
     _logger->debug("Challenged / REGISTER - Checking Auth");
 
@@ -76,13 +79,13 @@ void Session::_process_message_challenged() {
     _logger->debug("Challenged / REGISTER - Authorized, Sending 200 OK");
     reply->header->response_code = 200;
     reply->header->response_message = "OK";
-    (*reply->header)["To"] = (*_current_message->header)["From"];
-    (*reply->header)["Contact"] = (*_current_message->header)["Contact"];
-    (*reply->header)["From"] = "<sip:server@sip.athenasip.org>;tag=123456";
-    (*reply->header)["Call-ID"] = (*_current_message->header)["Call-ID"];
-    (*reply->header)["CSeq"] = "1 REGISTER";
-    (*reply->header)["Via"] = (*_current_message->header)["Via"];
-    (*reply->header)["Content-Length"] = "0";
+    (*reply->header)["To"] = std::make_shared<StringFieldValue>((*_current_message->header)["From"]->to_string());
+    (*reply->header)["From"] = std::make_shared<StringFieldValue>("<sip:server@sip.athenasip.org>;tag=123456");
+    (*reply->header)["Contact"] = std::make_shared<StringFieldValue>((*_current_message->header)["Contact"]->to_string());
+    (*reply->header)["Call-ID"] = std::make_shared<StringFieldValue>((*_current_message->header)["Call-ID"]->to_string());
+    (*reply->header)["CSeq"] = std::make_shared<StringFieldValue>("1 REGISTER");
+    (*reply->header)["Via"] = std::make_shared<StringFieldValue>((*_current_message->header)["Via"]->to_string());
+    (*reply->header)["Content-Length"] = std::make_shared<UIntFieldValue>(0);
 
     reply->print();
     write(reply->to_string());

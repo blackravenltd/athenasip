@@ -6,7 +6,7 @@
 //
 #include "url.h"
 
-namespace athenasip {
+namespace athenasip::siptypes {
 
 URL::URL() = default;
 
@@ -113,4 +113,4 @@ const std::map<std::string, uint16_t> URL::defaultPorts = {{"http", 80},        
                                                            {"rsync", 873},       {"rdp", 3389},        {"elasticsearch", 9200},
                                                            {"kibana", 5601},     {"zookeeper", 2181}};
 
-}  // namespace athenasip
+}  // namespace athenasip::siptypes

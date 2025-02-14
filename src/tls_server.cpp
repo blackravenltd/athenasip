@@ -41,11 +41,11 @@ void TLSServer::stop() {
   _logger->debug("Stopping...");
 
   // Close All Connections
-  for (const auto& pair : _connections) pair.second->close();
+  for (const auto& pair : _sessions) pair.second->close();
 
   // Remove all connections
-  std::unique_lock<std::shared_mutex> lock(_connections_mtx);
-  _connections.clear();
+  std::unique_lock<std::shared_mutex> lock(_sessions_mutex);
+  _sessions.clear();
   lock.unlock();
 
   // Stop Thread
@@ -89,15 +89,11 @@ void TLSServer::_handle_accept(const boost::system::error_code& error, std::shar
       _logger->info("Incoming Connection Accepted: " + remote_addr);
       new_session->start();
 
-      new_session->on_register([this](std::string endpoint, std::shared_ptr<Session> session){
-        register_connection(endpoint, session);
-        return true;
-      });
+      // Set up registration
+      new_session->on_register([this](std::string endpoint, std::shared_ptr<Session> session) { return register_session(endpoint, session); });
 
-      new_session->on_unregister([this](std::string endpoint, std::shared_ptr<Session> session){
-        unregister_connection(endpoint);
-        return true;
-      });
+      // Set up deregistration
+      new_session->on_unregister([this](std::string endpoint, std::shared_ptr<Session> session) { return unregister_session(endpoint, session); });
 
     } catch (const std::exception& e) {
       _logger->info("Incoming Connection TLS Error: " + remote_addr + " " + e.what());

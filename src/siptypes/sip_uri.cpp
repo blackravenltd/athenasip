@@ -6,7 +6,7 @@
 //
 #include "sip_uri.h"
 
-namespace athenasip {
+namespace athenasip::siptypes {
 
 // Default constructor
 SIPUri::SIPUri() : _scheme("sip"), _user(""), _realm(""), _port(std::nullopt), _password(std::nullopt) {}
@@ -97,4 +97,4 @@ void SIPUri::parse(const std::string& uri) {
 std::string operator+(const SIPUri& uri, const std::string& str) { return uri.to_string() + str; }
 std::string operator+(const std::string& str, const SIPUri& uri) { return str + uri.to_string(); }
 
-}  // namespace athenasip
+}  // namespace athenasip::siptypes

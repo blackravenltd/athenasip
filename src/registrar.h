@@ -14,7 +14,9 @@
 #include "db.h"
 #include "logger.h"
 #include "logger_scoped.h"
-#include "sip_identity.h"
+#include "siptypes/sip_identity.h"
+
+using namespace athenasip::siptypes;
 
 namespace athenasip {
 

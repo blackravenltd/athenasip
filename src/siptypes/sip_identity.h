@@ -11,10 +11,10 @@
 #include <sstream>
 #include <string>
 
+#include "../util.h"
 #include "sip_uri.h"
-#include "util.h"
 
-namespace athenasip {
+namespace athenasip::siptypes {
 
 class SIPIdentity {
  public:
@@ -35,4 +35,4 @@ class SIPIdentity {
   // SIP URI components
 };
 
-}  // namespace athenasip
+}  // namespace athenasip::siptypes
