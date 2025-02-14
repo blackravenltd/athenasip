@@ -34,6 +34,8 @@ namespace athenasip {
 
 class Session : public std::enable_shared_from_this<Session> {
  public:
+  using EventFn = std::function<bool(std::string, std::shared_ptr<Session>)>;
+
   Session(std::shared_ptr<Logger> logger, std::string nonce_secret);
 
   virtual void write(std::string message) = 0;
@@ -51,10 +53,16 @@ class Session : public std::enable_shared_from_this<Session> {
   State state = State::Initial;
   std::string remote_endpoint;
 
+  void on_register(EventFn callback);
+  void on_unregister(EventFn callback);
+
  protected:
   std::shared_ptr<Logger> _logger;
   std::shared_ptr<SIPMessage> _current_message;
   std::string _nonce_secret;
+
+  EventFn _on_register;
+  EventFn _on_unregister;
 
   void _process_message();
   void _process_message_initial();

@@ -121,4 +121,8 @@ std::string Session::_generate_nonce() {
   return raw_nonce + ":" + hmac_hex;
 }
 
+void Session::on_register(EventFn callback) { _on_register = callback; }
+
+void Session::on_unregister(EventFn callback) { _on_unregister = callback; }
+
 }  // namespace athenasip

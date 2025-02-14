@@ -23,6 +23,9 @@ void TLSSession::start() {
   _logger->info("Connected");
   state = State::Initial;
 
+  // Register callback
+  if (_on_register) _on_register("tls://" + remote_endpoint, shared_from_this());
+
   // REGISTER timeout.
   _register_timeout = DelayedTask<int>::schedule(
       [this, self] {
@@ -58,10 +61,14 @@ void TLSSession::close() {
     _connection->shutdown(ec);
     _connection->lowest_layer().shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
     _connection->lowest_layer().close(ec);
-
     _connection.reset();
+
+    // Unregister callback
+    if (_on_unregister) _on_unregister("tls://" + remote_endpoint, shared_from_this());
+
     _logger->debug("Closed");
   }
+
 }
 
 void TLSSession::write(std::string message) {
