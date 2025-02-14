@@ -6,6 +6,7 @@
 //
 #include "session.h"
 
+using namespace athenasip::siptypes;
 using namespace athenasip::sipfields;
 
 namespace athenasip {
@@ -36,18 +37,18 @@ void Session::_process_message_initial() {
 
     // Set up Header
     auto nonce = _generate_nonce();
-    AuthorizationHeader authHeader;
+    auto authHeader = std::make_shared<Authorization>();
 
-    authHeader.type = "Digest";
-    authHeader["realm"] = "sip.athenasip.org";
-    authHeader["nonce"] = nonce;
-    authHeader["algorithm"] = "MD5";
+    authHeader->type = "Digest";
+    (*authHeader)["realm"] = "sip.athenasip.org";
+    (*authHeader)["nonce"] = nonce;
+    (*authHeader)["algorithm"] = "MD5";
 
     reply->header = std::make_shared<SIPHeader>();
     reply->header->type = SIPHeader::Type::Response;
     reply->header->response_code = 401;
     reply->header->response_message = "Unauthorized";
-    (*reply->header)["WWW-Authenticate"] = std::make_shared<StringFieldValue>(authHeader.to_string());
+    (*reply->header)["WWW-Authorization"] = std::make_shared<AuthorizationFieldValue>(authHeader);
     (*reply->header)["To"] = std::make_shared<StringFieldValue>((*_current_message->header)["From"]->to_string());
     (*reply->header)["From"] = std::make_shared<StringFieldValue>("<sip:server@sip.athenasip.org>;tag=123456");
     (*reply->header)["Call-ID"] = std::make_shared<StringFieldValue>((*_current_message->header)["Call-ID"]->to_string());
@@ -68,8 +69,7 @@ void Session::_process_message_challenged() {
     auto reply = std::make_shared<SIPMessage>();
     reply->body_length = 0;
 
-    auto incomingAuthHeader = AuthorizationHeader((*_current_message->header)["Authorization"]->to_string());
-
+    auto incomingAuthHeader = (*_current_message->header)["Authorization"]->as<AuthorizationFieldValue>()->value;
     _logger->debug("Challenged / REGISTER - Checking Auth");
 
     // Set up Header

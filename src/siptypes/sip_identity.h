@@ -22,8 +22,9 @@ class SIPIdentity {
   SIPIdentity();
   explicit SIPIdentity(const std::string& identity);
 
+  bool wrapped;
   std::optional<std::string> display_name;
-  SIPUri uri;
+  std::shared_ptr<SIPUri> uri;
 
   void parse(const std::string& identity);
   std::string to_string() const;

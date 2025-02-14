@@ -24,10 +24,10 @@ class Registrar {
  public:
   Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<DB> db);
 
-  bool user_exists(const SIPIdentity& identity);
-  std::string user_get_h1(const SIPIdentity& identity);
-  void user_register(const SIPIdentity& identity, const SIPUri& location);
-  const std::shared_ptr<SIPUri> user_get_location(const SIPIdentity& identity);
+  bool user_exists(std::shared_ptr<SIPIdentity> identity);
+  std::string user_get_h1(std::shared_ptr<SIPIdentity> identity);
+  void user_register(std::shared_ptr<SIPIdentity> identity, std::shared_ptr<SIPUri> location);
+  const std::shared_ptr<SIPUri> user_get_location(std::shared_ptr<SIPIdentity> identity);
 
  private:
   std::unique_ptr<Logger> _logger;

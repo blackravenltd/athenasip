@@ -4,20 +4,20 @@
 #include <string>
 #include <unordered_map>
 
-#include "util.h"
+#include "../util.h"
 
-namespace athenasip {
+namespace athenasip::siptypes {
 
-class AuthorizationHeader : public std::unordered_map<std::string, std::string> {
+class Authorization : public std::unordered_map<std::string, std::string> {
  public:
-  /// The header type (e.g. "Digest")
+  /// The authentication scheme (e.g. "Digest")
   std::string type;
 
-  AuthorizationHeader() = default;
+  Authorization() = default;
 
   /// Constructs and immediately parses the given header string.
   /// If parsing fails, the instance will be empty.
-  explicit AuthorizationHeader(const std::string& input) { parse(input); }
+  explicit Authorization(const std::string& input) { parse(input); }
 
   /// Parses the input header string.
   /// Returns true if parsing was successful, false otherwise.
@@ -37,7 +37,7 @@ class AuthorizationHeader : public std::unordered_map<std::string, std::string> 
       }
     };
 
-    // --- Parse the type ---
+    // --- Parse the type (e.g. "Digest") ---
     skip_whitespace(pos);
     size_t type_start = pos;
     while (pos < len && !std::isspace(static_cast<unsigned char>(input[pos]))) {
@@ -82,16 +82,30 @@ class AuthorizationHeader : public std::unordered_map<std::string, std::string> 
 
       std::string value;
       if (input[pos] == '"') {
-        // Quoted value.
+        // Quoted value with escape support.
         ++pos;  // Skip opening quote.
-        size_t value_start = pos;
-        while (pos < len && input[pos] != '"') {
+        std::string result;
+        while (pos < len) {
+          char c = input[pos];
+          if (c == '\\') {
+            // Escape sequence: include next character literally.
+            if (pos + 1 < len) {
+              ++pos;
+              result.push_back(input[pos]);
+            } else {
+              return false;  // Invalid escape at end of input.
+            }
+          } else if (c == '"') {
+            break;  // Closing quote found.
+          } else {
+            result.push_back(c);
+          }
           ++pos;
         }
-        if (pos >= len) {
+        if (pos >= len || input[pos] != '"') {
           return false;  // Unterminated quoted value.
         }
-        value = input.substr(value_start, pos - value_start);
+        value = result;
         ++pos;  // Skip closing quote.
       } else {
         // Unquoted value: read until comma.
@@ -148,4 +162,4 @@ class AuthorizationHeader : public std::unordered_map<std::string, std::string> 
   }
 };
 
-}  // namespace athenasip
+}  // namespace athenasip::siptypes

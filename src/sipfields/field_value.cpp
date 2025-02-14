@@ -5,9 +5,6 @@
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
 #include "field_value.h"
-
-#include <iostream>
-
 #include "string_field_value.h"
 
 namespace athenasip::sipfields {
@@ -18,14 +15,11 @@ std::shared_ptr<FieldValue> FieldValue::create(const std::string& fieldName, con
   auto it = registry.find(fieldName);
   if (it != registry.end()) {
     // Call the factory to get a new FieldValue instance.
-
-    std::cout << "Found Factory for field " << fieldName << ": " << std::endl;
     auto instance = (it->second)();
     if (instance && instance->parse(value)) {
       return instance;
     }
   }
-  std::cout << "Using default StringFieldValue  Factory for field " << fieldName << ": " << std::endl;
   // Fallback to a default StringFieldValue.
   auto defaultInstance = std::make_shared<StringFieldValue>();
   defaultInstance->parse(value);

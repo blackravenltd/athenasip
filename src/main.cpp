@@ -50,7 +50,6 @@ int main(int argc, char* argv[]) {
   core->config = std::make_shared<Config>(core->logger);
 
   // Create DB
-  core->logger->debug(">> db");
   core->db = DB::create_driver(core->logger, "mysqlx://root@localhost/athenasip");
   if (!core->db) {
     core->logger->error("Unknown database scheme");
@@ -63,7 +62,7 @@ int main(int argc, char* argv[]) {
 
   // Create Registrar
   core->registrar = std::make_shared<Registrar>(core->logger, core->db);
-  core->registrar->user_exists(SIPIdentity("Tom Cully <sip:tom@sip.blackraven.co.nz>"));
+  core->registrar->user_exists(std::make_shared<SIPIdentity>("Tom Cully <sip:tom@sip.blackraven.co.nz>"));
 
   // Create the TLSServer instance with the logger and start it on the specified port
   auto tlsServer = std::make_shared<TLSServer>(core->logger, core->registrar, "tempNonceSecret", 5061);

@@ -10,19 +10,19 @@ namespace athenasip {
 
 Registrar::Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<DB> db) : _logger(std::make_unique<LoggerScoped>("registrar", logger)), _db(db) {}
 
-bool Registrar::user_exists(const SIPIdentity& identity) {
+bool Registrar::user_exists(std::shared_ptr<SIPIdentity> identity) {
   // Execute the query
   std::shared_ptr<DBResult> res =
-      _db->query("SELECT `h1` FROM `subscriber` WHERE `user` = ? AND `realm` = ?", {identity.uri.user().value_or(""), identity.uri.realm()});
+      _db->query("SELECT `h1` FROM `subscriber` WHERE `user` = ? AND `realm` = ?", {identity->uri->user, identity->uri->realm});
 
-  if (res && !res->empty()) {
-    _logger->info("user_exists " + identity + " h1 " + (*(*res)[0])["h1"]->get_as<std::string>());
+  if (res && res->rows.size() != 0) {
+    _logger->info("user_exists " + identity->to_string() + " h1 " + res->rows[0]->values["h1"]->as<std::string>());
   }
   return false;
 }
 
-std::string Registrar::user_get_h1(const SIPIdentity& identity) { return ""; }
-void Registrar::user_register(const SIPIdentity& identity, const SIPUri& location) {}
-const std::shared_ptr<SIPUri> Registrar::user_get_location(const SIPIdentity& identity) { return std::make_shared<SIPUri>(""); }
+std::string Registrar::user_get_h1(std::shared_ptr<SIPIdentity> identity) { return ""; }
+void Registrar::user_register(std::shared_ptr<SIPIdentity> identity, std::shared_ptr<SIPUri> location) {}
+const std::shared_ptr<SIPUri> Registrar::user_get_location(std::shared_ptr<SIPIdentity> identity) { return std::make_shared<SIPUri>(""); }
 
 }  // namespace athenasip

@@ -9,9 +9,12 @@
 #include <any>
 #include <iostream>
 #include <memory>
+#include <string>
 #include <type_traits>
 #include <unordered_map>
+#include <vector>
 
+// Abstract base class for a database value.
 class DBValue {
  public:
   virtual ~DBValue() = default;
@@ -22,11 +25,12 @@ class DBValue {
   virtual std::any get_any() const = 0;
 
   template <typename T>
-  T get_as() const {
+  T as() const {
     return std::any_cast<T>(get_any());
   }
 };
 
+// Template implementation for a database value.
 template <typename T>
 class DBValueImpl : public DBValue {
  private:
@@ -43,19 +47,23 @@ class DBValueImpl : public DBValue {
   std::any get_any() const override { return value; }
 };
 
-class DBRow : public std::unordered_map<std::string, std::shared_ptr<DBValue>> {
+// DBRow now holds its values in a public 'values' field.
+class DBRow {
  public:
+  // Mapping of column name to a shared pointer to a DBValue.
+  std::unordered_map<std::string, std::shared_ptr<DBValue>> values;
+
+  // Provide read-only access to a value by key.
   std::shared_ptr<DBValue> operator[](const std::string& key) const {
-    auto it = this->find(key);
-    if (it != this->end()) {
-      return it->second;
-    }
-    return nullptr;  // ✅ Return `nullptr` instead of throwing
+    auto it = values.find(key);
+    return (it != values.end()) ? it->second : nullptr;
   }
 };
 
-class DBResult : public std::vector<std::shared_ptr<DBRow>> {
+// DBResult now holds its rows in a public 'rows' field as a vector of shared_ptr<DBRow>.
+class DBResult {
  public:
+  std::vector<std::shared_ptr<DBRow>> rows;
   uint32_t rows_affected;
   std::string error;
 };
