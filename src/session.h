@@ -23,15 +23,16 @@
 #include <string>
 #include <thread>
 
-#include "authorization_header.h"
 #include "logger.h"
 #include "logger_scoped.h"
 #include "sip_header.h"
 #include "sip_message.h"
+#include "util.h"
+#include "siptypes/authorization.h"
 #include "sipfields/field_value.h"
 #include "sipfields/string_field_value.h"
 #include "sipfields/uint_field_value.h"
-#include "util.h"
+#include "sipfields/authorization_field_value.h"
 
 namespace athenasip {
 

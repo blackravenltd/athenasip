@@ -102,10 +102,10 @@ std::shared_ptr<DBResult> MySQLDB::query(std::string sql, std::vector<std::any> 
         std::string colName = columnNames[col];
 
         // Map Value
-        dbRow->insert_or_assign(colName, _map_value(row[col]));
+        dbRow->values.insert_or_assign(colName, _map_value(row[col]));
       }
 
-      res->push_back(dbRow);
+      res->rows.push_back(dbRow);
     }
 
   } catch (const mysqlx::Error &err) {

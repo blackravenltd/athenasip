@@ -28,6 +28,8 @@ struct UIntFieldValueRegister {
   UIntFieldValueRegister() {
     auto reg = []() { return std::make_shared<UIntFieldValue>(); };
     FieldValue::register_factory("Content-Length", reg);
+    FieldValue::register_factory("Expires", reg);
+    FieldValue::register_factory("Max-Forwards", reg);
   }
 };
 static UIntFieldValueRegister s_uintFieldValueRegister;

@@ -27,7 +27,6 @@
 #include <string>
 #include <thread>
 
-#include "authorization_header.h"
 #include "delayed_task.h"
 #include "logger.h"
 #include "logger_scoped.h"
