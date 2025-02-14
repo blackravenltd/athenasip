@@ -29,8 +29,8 @@ class Server : public std::enable_shared_from_this<Server> {
   virtual void start() = 0;
   virtual void stop() = 0;
 
-  void register_connection(std::string endpoint, std::shared_ptr<Session> session);
-  void unregister_connection(std::string endpoint);
+  virtual bool register_session(std::string endpoint, std::shared_ptr<Session> session);
+  virtual bool unregister_session(std::string endpoint, std::shared_ptr<Session> session);
 
   std::string nonce_secret = "testing123";
 
@@ -38,8 +38,8 @@ class Server : public std::enable_shared_from_this<Server> {
   std::shared_ptr<Logger> _logger;
   std::shared_ptr<Registrar> _registrar;
 
-  std::unordered_map<std::string, std::shared_ptr<Session>> _connections;
-  std::shared_mutex _connections_mtx;
+  std::unordered_map<std::string, std::shared_ptr<Session>> _sessions;
+  std::shared_mutex _sessions_mutex;
 };
 
 }  // namespace athenasip

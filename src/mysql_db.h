@@ -9,13 +9,10 @@
 #include <mysqlx/xdevapi.h>
 
 #include <string>
-#include <unordered_map>
-#include <vector>
 
 #include "db.h"
-#include "db_types.h"
-#include "logger_scoped.h"
-#include "url.h"
+
+using namespace athenasip::siptypes;
 
 namespace athenasip {
 

@@ -11,7 +11,7 @@
 #include <sstream>
 #include <string>
 
-namespace athenasip {
+namespace athenasip::siptypes {
 
 class SIPUri {
  public:
@@ -58,4 +58,4 @@ class SIPUri {
   bool _valid;
 };
 
-}  // namespace athenasip
+}  // namespace athenasip::siptypes

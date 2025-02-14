@@ -11,11 +11,12 @@
 #include <sstream>
 #include <string>
 
+#include "sipfields/field_value.h"
 #include "util.h"
 
 namespace athenasip {
 
-class SIPHeader : public std::map<std::string, std::string> {
+class SIPHeader : public std::map<std::string, std::shared_ptr<sipfields::FieldValue>> {
  public:
   SIPHeader();
   SIPHeader(const std::string& sip_message);
@@ -41,7 +42,7 @@ class SIPHeader : public std::map<std::string, std::string> {
   void parse(const std::string& sip_message);
   std::string to_string() const;
 
-  bool contains(std::string& field);
+  bool contains(const std::string field);
 
   friend std::string operator+(const SIPHeader& header, const std::string& str);
   friend std::string operator+(const std::string& str, const SIPHeader& header);

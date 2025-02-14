@@ -6,8 +6,6 @@
 //
 #pragma once
 
-#include <mysqlx/xdevapi.h>
-
 #include <any>
 #include <type_traits>
 #include <unordered_map>
@@ -16,7 +14,9 @@
 #include "db_types.h"
 #include "logger.h"
 #include "logger_scoped.h"
-#include "url.h"
+#include "siptypes/url.h"
+
+using namespace athenasip::siptypes;
 
 namespace athenasip {
 

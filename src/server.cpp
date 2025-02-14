@@ -11,16 +11,18 @@ namespace athenasip {
 Server::Server(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> registrar, std::string _nonce_secret)
     : _logger(logger), _registrar(registrar), nonce_secret(_nonce_secret) {}
 
-void Server::register_connection(std::string endpoint, std::shared_ptr<Session> session) {
-  std::lock_guard<std::shared_mutex> lock(_connections_mtx);
-  _connections.insert({endpoint, session});
+bool Server::register_session(std::string endpoint, std::shared_ptr<Session> session) {
+  std::lock_guard<std::shared_mutex> lock(_sessions_mutex);
+  _sessions.insert({endpoint, session});
   _logger->debug("Registered Connection " + endpoint);
+  return true;
 }
 
-void Server::unregister_connection(std::string endpoint) {
-  std::lock_guard<std::shared_mutex> lock(_connections_mtx);
-  _connections.erase(endpoint);
+bool Server::unregister_session(std::string endpoint, std::shared_ptr<Session> session) {
+  std::lock_guard<std::shared_mutex> lock(_sessions_mutex);
+  _sessions.erase(endpoint);
   _logger->debug("Unregistered Connection " + endpoint);
+  return true;
 }
 
 }  // namespace athenasip

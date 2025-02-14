@@ -6,7 +6,7 @@
 */
 #include "sip_identity.h"
 
-namespace athenasip {
+namespace athenasip::siptypes {
 
 // Default constructor
 SIPIdentity::SIPIdentity() : uri() {}
@@ -38,4 +38,4 @@ void SIPIdentity::parse(const std::string& identity) {
 std::string operator+(const SIPIdentity& identity, const std::string& str) { return identity.to_string() + str; }
 std::string operator+(const std::string& str, const SIPIdentity& identity) { return str + identity.to_string(); }
 
-}  // namespace athenasip
+}  // namespace athenasip::siptypes

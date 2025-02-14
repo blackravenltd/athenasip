@@ -6,6 +6,8 @@
 //
 #include "sip_header.h"
 
+using namespace athenasip::sipfields;
+
 namespace athenasip {
 
 SIPHeader::SIPHeader() {}
@@ -48,7 +50,7 @@ std::string SIPHeader::to_string() const {
 
   // Headers
   for (const auto& [key, value] : (*this)) {
-    out += key + ": " + value + "\r\n";
+    out += key + ": " + value->to_string() + "\r\n";
   }
 
   return out;
@@ -78,7 +80,7 @@ void SIPHeader::parse(const std::string& sip_message) {
 
     // Store the previous header
     if (!current_key.empty()) {
-      (*this)[current_key] = Util::trim(current_value);
+      (*this)[current_key] = std::move(FieldValue::create(current_key, Util::trim(current_value)));
     }
 
     // Extract new header key and value
@@ -91,11 +93,11 @@ void SIPHeader::parse(const std::string& sip_message) {
 
   // Store the last header
   if (!current_key.empty()) {
-    (*this)[current_key] = Util::trim(current_value);
+    (*this)[current_key] = FieldValue::create(current_key, Util::trim(current_value));
   }
 }
 
-bool SIPHeader::contains(std::string& field) { return (this->find(field) != this->end()); }
+bool SIPHeader::contains(const std::string field) { return (this->find(field) != this->end()); }
 
 std::string operator+(const SIPHeader& header, const std::string& str) { return header.to_string() + str; }
 std::string operator+(const std::string& str, const SIPHeader& header) { return str + header.to_string(); }

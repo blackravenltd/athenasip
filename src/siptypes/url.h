@@ -14,7 +14,7 @@
 #include <regex>
 #include <string>
 
-namespace athenasip {
+namespace athenasip::siptypes {
 
 class URL {
  public:
@@ -48,4 +48,4 @@ class URL {
   static const std::map<std::string, uint16_t> defaultPorts;
 };
 
-}  // namespace athenasip
+}  // namespace athenasip::siptypes
