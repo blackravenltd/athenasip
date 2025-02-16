@@ -6,6 +6,8 @@
 //
 #include "tls_session.h"
 
+#include <iostream>
+
 using namespace athenasip::headers;
 
 namespace athenasip {
@@ -13,6 +15,7 @@ namespace athenasip {
 TLSSession::TLSSession(std::shared_ptr<Logger> logger, std::string nonce_secret,
                        std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> connection)
     : Session(logger, nonce_secret), _connection(connection) {
+       std::cout << "create" << std::endl;
   auto rep = _connection->lowest_layer().remote_endpoint();
   remote_endpoint = rep.address().to_string() + ":" + std::to_string(rep.port());
 
@@ -64,12 +67,15 @@ void TLSSession::close() {
     _connection->lowest_layer().shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
     _connection->lowest_layer().close(ec);
     _connection.reset();
-
-    // Unregister callback
-    if (_on_unregister) _on_unregister("tls://" + remote_endpoint, shared_from_this());
-
-    _logger->debug("Closed");
   }
+  
+  // Unregister callback
+  if (_on_unregister) {
+    _on_unregister("tls://" + remote_endpoint, shared_from_this());
+    _on_unregister = nullptr;
+  }
+
+  _logger->debug("Closed");
 }
 
 void TLSSession::write(std::string message) {
@@ -86,6 +92,10 @@ void TLSSession::write(std::string message) {
 void TLSSession::_schedule_async_read() {
   auto self(shared_from_this());
 
+  // Are we already closed?
+  if(!_connection) return;
+
+  // Schedule Read
   _connection->async_read_some(boost::asio::buffer(_read_buffer), [this, self](boost::system::error_code ec, std::size_t length) {
     if (ec) {
       if (ec == boost::asio::error::operation_aborted || ec == boost::asio::error::eof) {
@@ -99,7 +109,7 @@ void TLSSession::_schedule_async_read() {
     } else {
       // No Input, schedule read again and exit
       if (length == 0) {
-        _schedule_async_read();
+        if(_connection) _schedule_async_read();
         return;
       };
 
@@ -118,7 +128,6 @@ void TLSSession::_schedule_async_read() {
       }
 
       // Process input
-
       if (_current_message) {
         // We're waiting for the rest of a body for an existing message
         if (_append_body()) {
@@ -158,15 +167,18 @@ void TLSSession::_schedule_async_read() {
       }
 
       // Schedule Next Read
-      _schedule_async_read();
+      if(_connection) _schedule_async_read();
     }
   });
 }
 
 bool TLSSession::_append_body() {
+  // How much do we need to read?
   auto to_append = std::min(_current_message->body_length - _current_message->body.size(), _buffer.size());
+  // Update current message body
   _current_message->body += _buffer.substr(0, to_append);
   _buffer.erase(0, to_append);
+  // Return true if read complete
   return (_current_message->body.size() == _current_message->body_length);
 }
 
