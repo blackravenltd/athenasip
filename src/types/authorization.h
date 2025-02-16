@@ -144,15 +144,7 @@ class Authorization {
       } else {
         result += ", ";
       }
-      result += kv.first;
-      result += "=";
-      if (need_quote(kv.second)) {
-        result += "\"";
-        result += kv.second;
-        result += "\"";
-      } else {
-        result += kv.second;
-      }
+      result += kv.first + "=\"" + kv.second + "\"";
     }
     return result;
   }

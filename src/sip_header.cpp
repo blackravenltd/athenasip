@@ -122,9 +122,11 @@ void SIPHeader::print() const {
     default:
       throw std::runtime_error("SIPHeader::print Unknown Type " + std::to_string(type));
   }
-  std::cout << "SIP Version: " << sip_version << "\nHeaders:\n";
+  std::cout << "SIP Version: " << sip_version << std::endl;
+  std::cout << "Headers:" << std::endl;
+
   for (const auto& header : headers) {
-    std::cout << header.key << ": " << header.value->to_string() << "\n";
+    std::cout << header.key << ": " << header.value->to_string() << std::endl;
   }
 }
 

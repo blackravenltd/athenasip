@@ -34,4 +34,20 @@ std::string Util::trim(const std::string& str) {
   return (first == std::string::npos) ? "" : str.substr(first, last - first + 1);
 }
 
+std::string Util::md5(const std::string &input) {
+    boost::uuids::detail::md5 hasher;
+    boost::uuids::detail::md5::digest_type digest;
+    hasher.process_bytes(input.data(), input.size());
+    hasher.get_digest(digest);
+
+    std::ostringstream oss;
+    oss << std::hex << std::setw(8) << std::setfill('0');
+    // The digest consists of 4 uint32_t values.
+    for (int i = 0; i < 4; ++i) {
+        // Each value printed as 8 hex digits.
+        oss << std::setw(8) << digest[i];
+    }
+    return oss.str();
+}
+
 }  // namespace athenasip

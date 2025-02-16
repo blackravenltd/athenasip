@@ -15,7 +15,6 @@ namespace athenasip {
 TLSSession::TLSSession(std::shared_ptr<Logger> logger, std::string nonce_secret,
                        std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> connection)
     : Session(logger, nonce_secret), _connection(connection) {
-       std::cout << "create" << std::endl;
   auto rep = _connection->lowest_layer().remote_endpoint();
   remote_endpoint = rep.address().to_string() + ":" + std::to_string(rep.port());
 
