@@ -64,7 +64,7 @@ int main(int argc, char* argv[]) {
 
   // Create Registrar
   core->registrar = std::make_shared<Registrar>(core->logger, core->db);
-  // core->registrar->user_exists(std::make_shared<SIPIdentity>("Tom Cully <sip:tom@sip.blackraven.co.nz>"));
+  // core->registrar->subscriber_exists(std::make_shared<SIPIdentity>("Tom Cully <sip:tom@sip.blackraven.co.nz>"));
 
   // Create the TLSServer instance with the logger and start it on the specified port
   auto tlsServer = std::make_shared<TLSServer>(core->logger, core->registrar, core->config->get("sip.nonce_secret").value_or(""), 5061);
