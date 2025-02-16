@@ -21,6 +21,8 @@ find_package(Boost 1.87 REQUIRED COMPONENTS system thread)
 # Find OpenSSL
 find_package(OpenSSL REQUIRED)
 
+# ---- Add MySQL support via mysql-concpp ----
+
 # Workaround so MySQL Connector/C++ can find OpenSSL if it's in a nonstandard location (MacOSX)
 add_library(my_mysql_openssl INTERFACE)
 target_link_libraries(my_mysql_openssl INTERFACE OpenSSL::SSL OpenSSL::Crypto)
@@ -28,6 +30,24 @@ add_library(mysql::openssl ALIAS my_mysql_openssl)
 
 # Find MySQL Connector/C++ dynamic library
 find_package(mysql-concpp CONFIG REQUIRED)
+
+# ---------------------------------------------
+
+# ---- Add PostgreSQL support via libpqxx ----
+
+# Find libpqxx using pkg-config
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(PQXX REQUIRED libpqxx)
+
+# Add libpqxx include directories to the project
+include_directories(${PQXX_INCLUDE_DIRS})
+link_directories(${PQXX_LIBRARY_DIRS})
+add_definitions(${PQXX_CFLAGS_OTHER})
+
+# Suppress pqxx build warnings
+set_source_files_properties(src/postgres_db.cpp PROPERTIES COMPILE_OPTIONS "-Wno-unknown-attributes;-Wno-deprecated-declarations")
+
+# ---------------------------------------------
 
 # YAML: Use yaml-cpp instead of RapidYAML
 FetchContent_Declare(
@@ -63,9 +83,11 @@ target_link_libraries(athenasip PRIVATE
     mysql::concpp-xdevapi
     yaml-cpp::yaml-cpp
     tinyxml2::tinyxml2
+    ${PQXX_LIBRARIES}   # Link PostgreSQL libpqxx
 )
 
 # Output build messages
 message(STATUS "Building AthenaSIP (athenasip) with C++17")
 message(STATUS "Boost Include Directory: ${Boost_INCLUDE_DIRS}")
 message(STATUS "OpenSSL Include Directory: ${OPENSSL_INCLUDE_DIR}")
+message(STATUS "libpqxx Include Directory: ${PQXX_INCLUDE_DIRS}")

@@ -1,4 +1,4 @@
-![AthenaSIP Logo](docs/athenasip_small_white.png)
+![AthenaSIP Logo](docs/logos/athenasip_small_white.png)
 
 # AthenaSIP
 
@@ -19,30 +19,35 @@ Follow the [Quick Start Instructions](docs/quick_start.md) to quickly evaluate A
 
 ## Installation
 
-### Debain (RedHat)
-
-*TODO*
-
-### Linux (RedHat)
-
-*TODO*
-
-### MacOSX
-
-*TODO*
+AthenaSIP is not yet available in pre-built packages.
 
 ### Build From Source
 
 #### Install Dependencies
 
-**Debain**
+**Debain (Ubuntu)**
+
 ```sh
-sudo apt install -y build-essential cmake libboost-all-dev libssl-dev
+sudo apt-get update
+sudo apt-get install -y libboost-system-dev libboost-thread-dev libssl-dev pkg-config libpqxx-dev libmysqlcppconn-dev libyaml-cpp-dev libtinyxml2-dev
 ```
 
-**MacOS**
+**Linux (RedHat - Fedora)**
+
 ```sh
-brew install cmake boost openssl
+sudo dnf install boost-devel openssl-devel pkg-config libpqxx-devel mysql-connector-c++-devel yaml-cpp-devel tinyxml2-devel
+```
+
+**Linux (RedHat - CentOS/RHEL)**
+
+```sh
+sudo yum install boost-devel openssl-devel pkgconfig libpqxx-devel mysql-connector-c++-devel yaml-cpp-devel tinyxml2-devel
+```
+
+**MacOSX**
+
+```sh
+brew install boost openssl pkg-config libpqxx mysql-connector-c++
 ```
 
 #### Compile
@@ -55,7 +60,7 @@ make
 
 ## License
 
-AthenaSIP is liscensed under [GPLv3](https://www.gnu.org/licenses/gpl-3.0.en.html). Please see the [LICENSE](LICENSE) file.
+AthenaSIP is licensed under [GPLv3](https://www.gnu.org/licenses/gpl-3.0.en.html). Please see the [LICENSE](LICENSE) file.
 
 
 

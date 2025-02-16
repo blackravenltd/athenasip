@@ -70,10 +70,7 @@ int main(int argc, char* argv[]) {
   auto tlsServer = std::make_shared<TLSServer>(core->logger, core->registrar, core->config->get("sip.nonce_secret").value_or(""), 5061);
 
   // Set Certificates
-  if(!tlsServer->set_certificates(
-    core->config->get("tls.cert_pem_filename").value_or(""), 
-    core->config->get("tls.key_pem_filename").value_or("")
-  )) {
+  if (!tlsServer->set_certificates(core->config->get("tls.cert_pem_filename").value_or(""), core->config->get("tls.key_pem_filename").value_or(""))) {
     core->logger->error("Cannot load TLS certificates");
     return -4;
   }

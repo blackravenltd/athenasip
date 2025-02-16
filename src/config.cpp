@@ -6,19 +6,15 @@
 //
 #include "config.h"
 
+#include <yaml-cpp/yaml.h>
+
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
 
-#include <yaml-cpp/yaml.h>
-
 namespace athenasip {
 
-Config::Config(std::shared_ptr<Logger> logger)
-    : _logger(logger),
-      port(0),
-      registration_timeout(0),
-      babble_limit(0) {}
+Config::Config(std::shared_ptr<Logger> logger) : _logger(logger), port(0), registration_timeout(0), babble_limit(0) {}
 
 bool Config::load_from_yaml(const std::string &filename) {
   YAML::Node config;
