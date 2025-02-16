@@ -6,14 +6,14 @@
 //
 #pragma once
 
-#include <string>
-#include <unordered_map>
 #include <algorithm>
 #include <cctype>
 #include <sstream>
+#include <string>
+#include <unordered_map>
 
-#include "header.h"
 #include "../util.h"
+#include "header.h"
 
 namespace athenasip::headers {
 
@@ -38,16 +38,15 @@ class ViaHeader : public Header {
 
   // Returns the Via header as a string.
   std::string to_string() const;
-
 };
 
-  // Register this field type
-  struct ViaHeaderRegister {
-    ViaHeaderRegister() {
-      auto reg = []() { return std::make_shared<ViaHeader>(); };
-      Header::register_factory("Via", reg);
-    }
-  };
-  static ViaHeaderRegister s_viaHeaderRegister;
-  
+// Register this field type
+struct ViaHeaderRegister {
+  ViaHeaderRegister() {
+    auto reg = []() { return std::make_shared<ViaHeader>(); };
+    Header::register_factory("Via", reg);
+  }
+};
+static ViaHeaderRegister s_viaHeaderRegister;
+
 }  // namespace athenasip::headers

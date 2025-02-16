@@ -26,9 +26,7 @@ std::shared_ptr<Header> Header::create(const std::string& fieldName, const std::
 }
 
 // Registration method: associates a field name with a factory function.
-void Header::register_factory(const std::string& fieldName, std::function<std::shared_ptr<Header>()> factory) {
-  getRegistry()[fieldName] = std::move(factory);
-}
+void Header::register_factory(const std::string& fieldName, std::function<std::shared_ptr<Header>()> factory) { getRegistry()[fieldName] = std::move(factory); }
 
 // Accessor for the static registry map.
 std::unordered_map<std::string, std::function<std::shared_ptr<Header>()>>& Header::getRegistry() {

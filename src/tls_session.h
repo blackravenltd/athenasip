@@ -39,7 +39,7 @@ namespace athenasip {
 class TLSSession : public Session {
  public:
   TLSSession(std::shared_ptr<Logger> logger, std::string nonce_secret, std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> connection);
-  
+
   void write(std::string message) override;
   void start() override;
   void close() override;

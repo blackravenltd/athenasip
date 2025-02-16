@@ -6,12 +6,12 @@
 //
 #pragma once
 
-#include <memory>
-#include <string>
-#include <unordered_set>
 #include <algorithm>
 #include <cctype>
+#include <memory>
 #include <sstream>
+#include <string>
+#include <unordered_set>
 
 #include "header.h"
 

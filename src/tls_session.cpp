@@ -28,9 +28,9 @@ void TLSSession::start() {
   state = State::Initial;
 
   // Register callback
-  if (_on_register) _on_register("tls://" + remote_endpoint, shared_from_this());
+  if (_on_start) _on_start("tls://" + remote_endpoint, shared_from_this());
 
-  // REGISTER timeout.
+  // REGISTER timeout
   _register_timeout = DelayedTask<int>::schedule(
       [this, self] {
         if (state == State::Registered) return 1;
@@ -67,11 +67,11 @@ void TLSSession::close() {
     _connection->lowest_layer().close(ec);
     _connection.reset();
   }
-  
-  // Unregister callback
-  if (_on_unregister) {
-    _on_unregister("tls://" + remote_endpoint, shared_from_this());
-    _on_unregister = nullptr;
+
+  // OnClose callback
+  if (_on_close) {
+    _on_close("tls://" + remote_endpoint, shared_from_this());
+    _on_close = nullptr;
   }
 
   _logger->debug("Closed");
@@ -92,7 +92,7 @@ void TLSSession::_schedule_async_read() {
   auto self(shared_from_this());
 
   // Are we already closed?
-  if(!_connection) return;
+  if (!_connection) return;
 
   // Schedule Read
   _connection->async_read_some(boost::asio::buffer(_read_buffer), [this, self](boost::system::error_code ec, std::size_t length) {
@@ -108,7 +108,7 @@ void TLSSession::_schedule_async_read() {
     } else {
       // No Input, schedule read again and exit
       if (length == 0) {
-        if(_connection) _schedule_async_read();
+        if (_connection) _schedule_async_read();
         return;
       };
 
@@ -127,7 +127,7 @@ void TLSSession::_schedule_async_read() {
       }
 
       // Process input
-      if (_current_message) {
+      if (_request) {
         // We're waiting for the rest of a body for an existing message
         if (_append_body()) {
           // Message body is complete, process it
@@ -142,15 +142,15 @@ void TLSSession::_schedule_async_read() {
           std::string sip_header = _buffer.substr(0, pos + 2);
           _buffer.erase(0, pos + 4);
           // Create a new SIPMessage
-          _current_message = std::make_shared<SIPMessage>();
+          _request = std::make_shared<SIPMessage>();
           // Get the header
-          _current_message->header = std::make_shared<SIPHeader>(sip_header);
+          _request->header = std::make_shared<SIPHeader>(sip_header);
           // Get the Content-Length
-          if (_current_message->header->contains("Content-Length")) {
-            _current_message->body_length = _current_message->header->headers_map["Content-Length"][0]->as<UIntHeader>()->value;
+          if (_request->header->contains("Content-Length")) {
+            _request->body_length = _request->header->headers_map["Content-Length"][0]->as<UIntHeader>()->value;
           }
           // Process messages with or without bodies.
-          if (_current_message->body_length == 0) {
+          if (_request->body_length == 0) {
             // Message With No Body
             _process_message();
           } else {
@@ -166,19 +166,19 @@ void TLSSession::_schedule_async_read() {
       }
 
       // Schedule Next Read
-      if(_connection) _schedule_async_read();
+      if (_connection) _schedule_async_read();
     }
   });
 }
 
 bool TLSSession::_append_body() {
   // How much do we need to read?
-  auto to_append = std::min(_current_message->body_length - _current_message->body.size(), _buffer.size());
+  auto to_append = std::min(_request->body_length - _request->body.size(), _buffer.size());
   // Update current message body
-  _current_message->body += _buffer.substr(0, to_append);
+  _request->body += _buffer.substr(0, to_append);
   _buffer.erase(0, to_append);
   // Return true if read complete
-  return (_current_message->body.size() == _current_message->body_length);
+  return (_request->body.size() == _request->body_length);
 }
 
 }  // namespace athenasip
