@@ -48,9 +48,11 @@ int main(int argc, char* argv[]) {
 
   // Create Config
   core->config = std::make_shared<Config>(core->logger);
+  // Load from YAML file
+  core->config->load_from_yaml("../config-example.yaml");
 
   // Create DB
-  core->db = DB::create_driver(core->logger, "mysqlx://root@localhost/athenasip");
+  core->db = DB::create_driver(core->logger, core->config->get("db.url").value_or(""));
   if (!core->db) {
     core->logger->error("Unknown database scheme");
     return -2;
@@ -62,14 +64,22 @@ int main(int argc, char* argv[]) {
 
   // Create Registrar
   core->registrar = std::make_shared<Registrar>(core->logger, core->db);
-  core->registrar->user_exists(std::make_shared<SIPIdentity>("Tom Cully <sip:tom@sip.blackraven.co.nz>"));
+  // core->registrar->user_exists(std::make_shared<SIPIdentity>("Tom Cully <sip:tom@sip.blackraven.co.nz>"));
 
   // Create the TLSServer instance with the logger and start it on the specified port
-  auto tlsServer = std::make_shared<TLSServer>(core->logger, core->registrar, "tempNonceSecret", 5061);
-  tlsServer->set_certificates("../tls/snakeoil.cer", "../tls/snakeoil.key");
+  auto tlsServer = std::make_shared<TLSServer>(core->logger, core->registrar, core->config->get("sip.nonce_secret").value_or(""), 5061);
+
+  // Set Certificates
+  if(!tlsServer->set_certificates(
+    core->config->get("tls.cert_pem_filename").value_or(""), 
+    core->config->get("tls.key_pem_filename").value_or("")
+  )) {
+    core->logger->error("Cannot load TLS certificates");
+    return -4;
+  }
   core->server = tlsServer;
 
-  // Set Certificates, Start TCP Server
+  // Start TLS Server
   core->server->start();
 
   // Wait for Signals

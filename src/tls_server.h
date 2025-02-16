@@ -20,7 +20,7 @@ class TLSServer : public Server {
   void start() override;
   void stop() override;
 
-  void set_certificates(std::string cert, std::string key);
+  bool set_certificates(std::string cert, std::string key);
 
  private:
   void _handle_accept(const boost::system::error_code &error, std::shared_ptr<boost::asio::ip::tcp::socket> new_connection);

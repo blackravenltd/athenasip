@@ -112,9 +112,6 @@ void TLSSession::_schedule_async_read() {
         return;
       };
 
-      // Read complete
-      _logger->debug("Read " + std::to_string(length) + " bytes");
-
       // Add to buffer
       _buffer.append(_read_buffer.data(), length);
 

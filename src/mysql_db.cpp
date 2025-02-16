@@ -12,6 +12,8 @@ MySQLDB::MySQLDB(std::shared_ptr<Logger> logger, std::shared_ptr<URL> url) : DB(
 MySQLDB::~MySQLDB() { close(); }
 
 bool MySQLDB::connect() {
+  // No idea why the MySQL team changed this.
+  _url->scheme = "mysqlx";
   _logger->debug("MySQL URL: " + _url->to_string());
   try {
     _session = std::make_shared<mysqlx::Session>(_url->to_string());
@@ -152,6 +154,7 @@ void MySQLDB::close() {
 // Register with DB Drivers
 static bool mysql_registered = [] {
   DB::register_driver<MySQLDB>("mysqlx");
+  DB::register_driver<MySQLDB>("mysql");
   return true;
 }();
 
