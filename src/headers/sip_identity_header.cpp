@@ -1,16 +1,16 @@
 //
 // AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
 //
-// Copyright (C) 2024 Tom Cully <mail@tomcully.com>
+// Copyright (C) 2025 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
-#include "sip_identity_field_value.h"
+#include "sip_identity_header.h"
 
 using namespace athenasip;
 
-namespace athenasip::sipfields {
+namespace athenasip::headers {
 
-bool SIPIdentityFieldValue::parse(const std::string& val) {
+bool SIPIdentityHeader::parse(const std::string& val) {
   try {
     value = std::make_shared<SIPIdentity>(val);
     return true;
@@ -19,6 +19,6 @@ bool SIPIdentityFieldValue::parse(const std::string& val) {
   }
 }
 
-std::string SIPIdentityFieldValue::to_string() const { return value->to_string(); }
+std::string SIPIdentityHeader::to_string() const { return value->to_string(); }
 
-}  // namespace athenasip::sipfields
+}  // namespace athenasip::headers

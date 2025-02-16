@@ -1,7 +1,7 @@
 //
 // AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
 //
-// Copyright (C) 2024 Tom Cully <mail@tomcully.com>
+// Copyright (C) 2025 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
 #pragma once
@@ -14,7 +14,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "sipfields/field_value.h"
+#include "headers/header.h"
 #include "util.h"
 
 namespace athenasip {
@@ -24,7 +24,7 @@ class SIPHeader {
   // A header field holding its key and parsed value.
   struct HeaderField {
     std::string key;
-    std::shared_ptr<sipfields::FieldValue> value;
+    std::shared_ptr<headers::Header> value;
   };
 
   SIPHeader();
@@ -51,9 +51,9 @@ class SIPHeader {
   std::vector<HeaderField> headers;
 
   // Map from header name to vector of values (for quick lookup).
-  std::unordered_map<std::string, std::vector<std::shared_ptr<sipfields::FieldValue>>> headers_map;
+  std::unordered_map<std::string, std::vector<std::shared_ptr<headers::Header>>> headers_map;
 
-  void add(const std::string& field_name, std::shared_ptr<sipfields::FieldValue> value);
+  void add(const std::string& field_name, std::shared_ptr<headers::Header> value);
 
   void parse(const std::string& sip_message);
   std::string to_string() const;

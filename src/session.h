@@ -1,7 +1,7 @@
 //
 // AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
 //
-// Copyright (C) 2024 Tom Cully <mail@tomcully.com>
+// Copyright (C) 2025 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
 #pragma once
@@ -27,12 +27,12 @@
 #include "logger_scoped.h"
 #include "sip_header.h"
 #include "sip_message.h"
-#include "sipfields/authorization_field_value.h"
-#include "sipfields/cseq_field_value.h"
-#include "sipfields/field_value.h"
-#include "sipfields/string_field_value.h"
-#include "sipfields/uint_field_value.h"
-#include "siptypes/authorization.h"
+#include "headers/authorization_header.h"
+#include "headers/cseq_header.h"
+#include "headers/header.h"
+#include "headers/string_header.h"
+#include "headers/uint_header.h"
+#include "types/authorization.h"
 #include "util.h"
 
 namespace athenasip {

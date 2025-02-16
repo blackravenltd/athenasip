@@ -1,7 +1,7 @@
 //
 // AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
 //
-// Copyright (C) 2024 Tom Cully <mail@tomcully.com>
+// Copyright (C) 2025 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
 #pragma once
@@ -14,9 +14,9 @@
 #include "db_types.h"
 #include "logger.h"
 #include "logger_scoped.h"
-#include "siptypes/url.h"
+#include "types/url.h"
 
-using namespace athenasip::siptypes;
+using namespace athenasip::types;
 
 namespace athenasip {
 

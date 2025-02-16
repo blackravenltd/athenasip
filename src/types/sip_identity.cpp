@@ -1,12 +1,12 @@
 /*
 // AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
 //
-// Copyright (C) 2024 Tom Cully <mail@tomcully.com>
+// Copyright (C) 2025 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 */
 #include "sip_identity.h"
 
-namespace athenasip::siptypes {
+namespace athenasip::types {
 
 // Default constructor
 SIPIdentity::SIPIdentity() : uri() {}
@@ -71,4 +71,4 @@ void SIPIdentity::parse(const std::string& identity) {
 std::string operator+(const SIPIdentity& identity, const std::string& str) { return identity.to_string() + str; }
 std::string operator+(const std::string& str, const SIPIdentity& identity) { return str + identity.to_string(); }
 
-}  // namespace athenasip::siptypes
+}  // namespace athenasip::types

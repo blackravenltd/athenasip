@@ -1,12 +1,12 @@
 //
 // AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
 //
-// Copyright (C) 2024 Tom Cully <mail@tomcully.com>
+// Copyright (C) 2025 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
 #include "tls_session.h"
 
-using namespace athenasip::sipfields;
+using namespace athenasip::headers;
 
 namespace athenasip {
 
@@ -139,7 +139,7 @@ void TLSSession::_schedule_async_read() {
           _current_message->header = std::make_shared<SIPHeader>(sip_header);
           // Get the Content-Length
           if (_current_message->header->contains("Content-Length")) {
-            _current_message->body_length = _current_message->header->headers_map["Content-Length"][0]->as<UIntFieldValue>()->value;
+            _current_message->body_length = _current_message->header->headers_map["Content-Length"][0]->as<UIntHeader>()->value;
           }
           // Process messages with or without bodies.
           if (_current_message->body_length == 0) {

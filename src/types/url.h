@@ -1,7 +1,7 @@
 //
 // AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
 //
-// Copyright (C) 2024 Tom Cully <mail@tomcully.com>
+// Copyright (C) 2025 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
 #pragma once
@@ -14,7 +14,7 @@
 #include <regex>
 #include <string>
 
-namespace athenasip::siptypes {
+namespace athenasip::types {
 
 class URL {
  public:
@@ -48,4 +48,4 @@ class URL {
   static const std::map<std::string, uint16_t> defaultPorts;
 };
 
-}  // namespace athenasip::siptypes
+}  // namespace athenasip::types

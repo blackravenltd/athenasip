@@ -1,7 +1,7 @@
 //
 // AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
 //
-// Copyright (C) 2024 Tom Cully <mail@tomcully.com>
+// Copyright (C) 2025 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
 #pragma once
@@ -12,12 +12,12 @@
 #include <cctype>
 #include <sstream>
 
-#include "field_value.h"
+#include "header.h"
 #include "../util.h"
 
-namespace athenasip::sipfields {
+namespace athenasip::headers {
 
-class ViaFieldValue : public FieldValue {
+class ViaHeader : public Header {
  public:
   // Public members representing parts of the SIP Via header.
   // For example, given:
@@ -29,8 +29,8 @@ class ViaFieldValue : public FieldValue {
   std::string host;
   std::unordered_map<std::string, std::string> parameters;
 
-  ViaFieldValue() = default;
-  explicit ViaFieldValue(const std::string& value) { parse(value); }
+  ViaHeader() = default;
+  explicit ViaHeader(const std::string& value) { parse(value); }
 
   // Parses a Via header string into version, host, and parameters.
   // Returns true if parsing is successful.
@@ -40,15 +40,15 @@ class ViaFieldValue : public FieldValue {
   std::string to_string() const;
 
   // Register this field type
-  struct ViaFieldValueRegister {
-    ViaFieldValueRegister() {
-      auto reg = []() { return std::make_shared<ViaFieldValue>(); };
-      FieldValue::register_factory("Via", reg);
+  struct ViaHeaderRegister {
+    ViaHeaderRegister() {
+      auto reg = []() { return std::make_shared<ViaHeader>(); };
+      Header::register_factory("Via", reg);
     }
   };
-  static ViaFieldValueRegister s_viaFieldValueRegister;
+  static ViaHeaderRegister s_viaHeaderRegister;
 
 
 };
 
-}  // namespace athenasip::sipfields
+}  // namespace athenasip::headers

@@ -1,17 +1,17 @@
 //
 // AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
 //
-// Copyright (C) 2024 Tom Cully <mail@tomcully.com>
+// Copyright (C) 2025 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
-#include "cseq_field_value.h"
+#include "cseq_header.h"
 
 #include <sstream>
 #include <stdexcept>
 
-using namespace athenasip::sipfields;
+using namespace athenasip::headers;
 
-bool CSeqFieldValue::parse(const std::string& val) {
+bool CSeqHeader::parse(const std::string& val) {
   // The expected format is: "171 REGISTER"
   std::istringstream iss(val);
 
@@ -34,4 +34,4 @@ bool CSeqFieldValue::parse(const std::string& val) {
   return true;
 }
 
-std::string CSeqFieldValue::to_string() const { return std::to_string(sequence) + " " + method; }
+std::string CSeqHeader::to_string() const { return std::to_string(sequence) + " " + method; }
