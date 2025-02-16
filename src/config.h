@@ -22,19 +22,19 @@ class Config {
   Config(std::shared_ptr<Logger> logger);
 
   // SIP configuration
-  std::string address;             // e.g. "127.0.0.1"
-  uint16_t port;                   // e.g. 5060
-  std::string realm;               // e.g. "example.com"
-  std::string nonce_secret;        // e.g. "your_nonce_secret_here"
-  std::string cert_pem_filename;   // e.g. "./tls/snakeoil.cer"
-  std::string key_pem_filename;    // e.g. "./tls/snakeoil.key"
+  std::string address;            // e.g. "127.0.0.1"
+  uint16_t port;                  // e.g. 5060
+  std::string realm;              // e.g. "example.com"
+  std::string nonce_secret;       // e.g. "your_nonce_secret_here"
+  std::string cert_pem_filename;  // e.g. "./tls/snakeoil.cer"
+  std::string key_pem_filename;   // e.g. "./tls/snakeoil.key"
 
   // DB configuration
-  std::string database_url;        // e.g. "mysql://root@localhost/"
+  std::string database_url;  // e.g. "mysql://root@localhost/"
 
   // Other configuration options
-  uint32_t registration_timeout;   // (set a default or load from YAML)
-  uint32_t babble_limit;           // (set a default or load from YAML)
+  uint32_t registration_timeout;  // (set a default or load from YAML)
+  uint32_t babble_limit;          // (set a default or load from YAML)
 
   // Loads configuration from a YAML file.
   bool load_from_yaml(const std::string &filename);
