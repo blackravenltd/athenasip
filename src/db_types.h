@@ -72,4 +72,4 @@ class DBResult {
   std::string error;
 };
 
-}
+}  // namespace athenasip

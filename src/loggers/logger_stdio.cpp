@@ -50,4 +50,4 @@ const std::string LoggerStdIO::_getDateTime() {
 
 std::shared_ptr<Logger> LoggerStdIO::base_logger() { return nullptr; }
 
-}  // namespace athenasip
+}  // namespace athenasip::loggers

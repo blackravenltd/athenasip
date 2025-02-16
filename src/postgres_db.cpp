@@ -5,23 +5,32 @@
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
 #include "postgres_db.h"
-#include <sstream>
-#include <iomanip>
+
 #include <chrono>
-#include <stdexcept>
+#include <iomanip>
 #include <random>
+#include <sstream>
+#include <stdexcept>
 
 // Helper function to map PostgreSQL type OIDs to type names.
 static std::string oid_to_type(pqxx::oid oid) {
   switch (oid) {
-    case 21:   return "int2";
-    case 23:   return "int4";
-    case 20:   return "int8";
-    case 700:  return "float4";
-    case 701:  return "float8";
-    case 1700: return "numeric";
-    case 16:   return "bool";
-    default:   return "text";
+    case 21:
+      return "int2";
+    case 23:
+      return "int4";
+    case 20:
+      return "int8";
+    case 700:
+      return "float4";
+    case 701:
+      return "float8";
+    case 1700:
+      return "numeric";
+    case 16:
+      return "bool";
+    default:
+      return "text";
   }
 }
 
@@ -37,8 +46,7 @@ std::string generate_unique_stmt_name() {
 }
 }  // namespace
 
-PostgreSQLDB::PostgreSQLDB(std::shared_ptr<Logger> logger, std::shared_ptr<URL> url)
-    : DB(std::make_shared<LoggerScoped>("postgres", logger)), _url(url) {}
+PostgreSQLDB::PostgreSQLDB(std::shared_ptr<Logger> logger, std::shared_ptr<URL> url) : DB(std::make_shared<LoggerScoped>("postgres", logger)), _url(url) {}
 
 PostgreSQLDB::~PostgreSQLDB() { close(); }
 
@@ -132,17 +140,13 @@ std::shared_ptr<DBResult> PostgreSQLDB::query(std::string sql, std::vector<std::
     _connection->unprepare(stmt_name);
 
     // Get timing duration.
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
-                        std::chrono::high_resolution_clock::now() - start)
-                        .count() /
-                    1000.0;
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
 
     // Log SQL
     std::ostringstream oss;
     oss << std::fixed << std::setprecision(3) << duration;
     std::string durationStr = oss.str();
-    _logger->debug("SQL: " + sql + " [" + Util::trim(param_strs, ",") + "] (" +
-                   std::to_string(result.size()) + " rows, " + durationStr + "ms)");
+    _logger->debug("SQL: " + sql + " [" + Util::trim(param_strs, ",") + "] (" + std::to_string(result.size()) + " rows, " + durationStr + "ms)");
 
     // Fetch column names and convert column type OIDs to type names.
     std::vector<std::string> columnNames;
@@ -183,7 +187,7 @@ std::shared_ptr<DBResult> PostgreSQLDB::query(std::string sql, std::vector<std::
 
 void PostgreSQLDB::close() {
   if (_connection && _connection->is_open()) {
-    _connection->close(); // Use close() instead of disconnect()
+    _connection->close();  // Use close() instead of disconnect()
     _connection.reset();
   }
 }

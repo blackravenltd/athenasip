@@ -34,4 +34,4 @@ class LoggerStdIO : public Logger {
   std::mutex mtx;
 };
 
-}  // namespace athenasip
+}  // namespace athenasip::loggers

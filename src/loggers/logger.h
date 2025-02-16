@@ -24,4 +24,4 @@ class Logger {
   virtual std::shared_ptr<Logger> base_logger() = 0;
 };
 
-}  // namespace athenasip
+}  // namespace athenasip::loggers
