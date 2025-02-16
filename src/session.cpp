@@ -49,11 +49,11 @@ void Session::_process_message_initial() {
     reply->header->type = SIPHeader::Type::Response;
     reply->header->response_code = 401;
     reply->header->response_message = "Unauthorized";
-    reply->header->add("WWW-Authorization", std::make_shared<AuthorizationHeader>(authHeader));
+    reply->header->add("WWW-Authenticate", std::make_shared<AuthorizationHeader>(authHeader));
     reply->header->add("To", std::make_shared<StringHeader>(_current_message->header->headers_map["From"][0]->to_string()));
     reply->header->add("From", std::make_shared<StringHeader>("<sip:server@sip.athenasip.org>;tag=123456"));
     reply->header->add("Call-Id", std::make_shared<StringHeader>(_current_message->header->headers_map["Call-ID"][0]->to_string()));
-    reply->header->add("CSeq", std::make_shared<StringHeader>("1 REGISTER"));
+    reply->header->add("CSeq", std::make_shared<CSeqHeader>(_current_message->header->headers_map["CSeq"][0]->to_string()));
     reply->header->add("Via", std::make_shared<StringHeader>(_current_message->header->headers_map["Via"][0]->to_string()));
     reply->header->add("Content-Length", std::make_shared<UIntHeader>(0));
 
@@ -79,7 +79,7 @@ void Session::_process_message_challenged() {
       reply->header->add("To", std::make_shared<StringHeader>(_current_message->header->headers_map["From"][0]->to_string()));
       reply->header->add("From", std::make_shared<StringHeader>("<sip:server@sip.athenasip.org>;tag=123456"));
       reply->header->add("Call-Id", std::make_shared<StringHeader>(_current_message->header->headers_map["Call-ID"][0]->to_string()));
-      reply->header->add("CSeq", std::make_shared<StringHeader>("1 REGISTER"));
+      reply->header->add("CSeq", std::make_shared<CSeqHeader>(_current_message->header->headers_map["CSeq"][0]->to_string()));
       reply->header->add("Via", std::make_shared<StringHeader>(_current_message->header->headers_map["Via"][0]->to_string()));
       reply->header->add("Content-Length", std::make_shared<UIntHeader>(0));
 
@@ -106,7 +106,7 @@ void Session::_process_message_challenged() {
     reply->header->add("From", std::make_shared<StringHeader>("<sip:server@sip.athenasip.org>;tag=123456"));
     reply->header->add("Contact", std::make_shared<StringHeader>(_current_message->header->headers_map["Contact"][0]->to_string()));
     reply->header->add("Call-ID", std::make_shared<StringHeader>(_current_message->header->headers_map["Call-ID"][0]->to_string()));
-    reply->header->add("CSeq", std::make_shared<CSeqHeader>(1, "REGISTER"));
+    reply->header->add("CSeq", std::make_shared<CSeqHeader>(_current_message->header->headers_map["CSeq"][0]->to_string()));
     reply->header->add("Via", std::make_shared<StringHeader>(_current_message->header->headers_map["Via"][0]->to_string()));
     reply->header->add("Content-Length", std::make_shared<UIntHeader>(0));
 
@@ -117,7 +117,7 @@ void Session::_process_message_challenged() {
   }
 }
 
-std::string Session::_generate_nonce() {
+std::string Session::_generate_nonce() const {
   std::array<unsigned char, 16> random_bytes;
 
   // Generate 128-bit (16-byte) secure random data

@@ -19,7 +19,7 @@ std::string SIPMessage::to_string() const {
   return out;
 }
 
-void SIPMessage::print() const { std::cout << to_string() << "\r\n"; }
+void SIPMessage::print() const { std::cout << to_string() << std::endl; }
 
 std::string operator+(const SIPMessage& message, const std::string& str) { return message.to_string() + str; }
 std::string operator+(const std::string& str, const SIPMessage& message) { return str + message.to_string(); }

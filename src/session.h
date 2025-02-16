@@ -12,7 +12,6 @@
 #include <boost/asio.hpp>
 #include <boost/asio/ssl.hpp>
 #include <boost/bind/bind.hpp>
-#include <cstdint>
 #include <ctime>
 #include <fstream>
 #include <functional>
@@ -73,7 +72,7 @@ class Session : public std::enable_shared_from_this<Session> {
   void _process_message_initial();
   void _process_message_challenged();
 
-  std::string _generate_nonce();
+  std::string _generate_nonce() const;
 };
 
 }  // namespace athenasip

@@ -31,7 +31,7 @@ class AuthorizationHeader : public Header {
 struct AuthorizationHeaderRegister {
   AuthorizationHeaderRegister() {
     auto reg = []() -> std::shared_ptr<Header> { return std::make_shared<AuthorizationHeader>(); };
-    Header::register_factory("WWW-Authorization", reg);
+    Header::register_factory("WWW-Authenticate", reg);
     Header::register_factory("Authorization", reg);
   }
 };

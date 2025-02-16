@@ -1,8 +1,3 @@
-# 
-# AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
-# Copyright (C) 2024 Tom Cully <mail@tomcully.com>
-# Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
-# 
 cmake_minimum_required(VERSION 3.14)
 project(athenasip LANGUAGES CXX)
 
@@ -12,14 +7,18 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(FetchContent)
 
-# Find Boost libraries
+# Optionally, set BOOST_ROOT, BOOST_INCLUDEDIR, and BOOST_LIBRARYDIR if Boost is installed in a custom location:
+# set(BOOST_ROOT "/path/to/boost")
+# set(BOOST_INCLUDEDIR "${BOOST_ROOT}/include")
+# set(BOOST_LIBRARYDIR "${BOOST_ROOT}/lib")
+
+# Find Boost libraries, including uuid (without disabling the Boost CMake config)
 find_package(Boost 1.84 REQUIRED COMPONENTS system thread)
 
 # Find OpenSSL
 find_package(OpenSSL REQUIRED)
 
 # Find MySQL Connector/C++
-
 # --- MacOS ---
 find_library(MYSQL_CONCPP_LIBRARY mysqlcppconnx-static
     PATHS /usr/local/mysql/connector-c++-9.2.0/lib64
@@ -27,7 +26,6 @@ find_library(MYSQL_CONCPP_LIBRARY mysqlcppconnx-static
 )
 set(MYSQL_INCLUDE_DIR "/usr/local/mysql/connector-c++-9.2.0/include/")
 # --- End MacOS ---
-
 if(NOT MYSQL_CONCPP_LIBRARY)
     message(FATAL_ERROR "MySQL Connector/C++ static library not found!")
 endif()
@@ -55,7 +53,8 @@ target_link_libraries(athenasip PRIVATE
     Boost::thread 
     OpenSSL::SSL 
     OpenSSL::Crypto 
-    ${MYSQL_CONCPP_LIBRARY} resolv
+    ${MYSQL_CONCPP_LIBRARY} 
+    resolv
     yaml-cpp::yaml-cpp)
 
 # Output build messages
