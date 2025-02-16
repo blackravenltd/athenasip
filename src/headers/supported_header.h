@@ -9,6 +9,9 @@
 #include <memory>
 #include <string>
 #include <unordered_set>
+#include <algorithm>
+#include <cctype>
+#include <sstream>
 
 #include "header.h"
 

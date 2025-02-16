@@ -24,18 +24,17 @@ class SIPIdentityHeader : public Header {
   std::string to_string() const override;
 
   std::shared_ptr<SIPIdentity> value;
-
-  // Register this field type
-  struct Register {
-    Register() {
-      auto reg = []() { return std::make_shared<SIPIdentityHeader>(); };
-      Header::register_factory("To", reg);
-      Header::register_factory("From", reg);
-      Header::register_factory("Contact", reg);
-    }
-  };
-  static Register s_register;
 };
 
+// Register this field type
+struct SIPIdentityHeaderRegister {
+  SIPIdentityHeaderRegister() {
+    auto reg = []() { return std::make_shared<SIPIdentityHeader>(); };
+    Header::register_factory("To", reg);
+    Header::register_factory("From", reg);
+    Header::register_factory("Contact", reg);
+  }
+};
+static SIPIdentityHeaderRegister s_uintHeaderRegister;
 
 }  // namespace athenasip::headers
