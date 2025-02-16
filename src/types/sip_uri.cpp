@@ -1,7 +1,7 @@
 //
 // AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
 //
-// Copyright (C) 2024 Tom Cully <mail@tomcully.com>
+// Copyright (C) 2025 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
 #include "sip_uri.h"
@@ -9,7 +9,7 @@
 #include <regex>
 #include <sstream>
 
-namespace athenasip::siptypes {
+namespace athenasip::types {
 
 // Default constructor: initializes with default values.
 SIPUri::SIPUri() {
@@ -84,4 +84,4 @@ std::string operator+(const SIPUri& uri, const std::string& str) { return uri.to
 
 std::string operator+(const std::string& str, const SIPUri& uri) { return str + uri.to_string(); }
 
-}  // namespace athenasip::siptypes
+}  // namespace athenasip::types

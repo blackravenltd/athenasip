@@ -1,7 +1,7 @@
 //
 // AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
 //
-// Copyright (C) 2024 Tom Cully <mail@tomcully.com>
+// Copyright (C) 2025 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
 #include "sip_header.h"
@@ -12,7 +12,7 @@ SIPHeader::SIPHeader() {}
 
 SIPHeader::SIPHeader(const std::string& sip_message) { parse(sip_message); }
 
-void SIPHeader::add(const std::string& field_name, std::shared_ptr<sipfields::FieldValue> value) {
+void SIPHeader::add(const std::string& field_name, std::shared_ptr<headers::Header> value) {
   // Create a new HeaderField and push it into the vector.
   HeaderField hf{field_name, value};
   headers.push_back(hf);
@@ -52,9 +52,9 @@ void SIPHeader::parse(const std::string& sip_message) {
 
     // If we have a previous header pending, store it.
     if (!current_key.empty()) {
-      auto field_value = sipfields::FieldValue::create(current_key, Util::trim(current_value));
-      headers.push_back({current_key, field_value});
-      headers_map[current_key].push_back(field_value);
+      auto header = headers::Header::create(current_key, Util::trim(current_value));
+      headers.push_back({current_key, header});
+      headers_map[current_key].push_back(header);
       current_key.clear();
       current_value.clear();
     }
@@ -69,9 +69,9 @@ void SIPHeader::parse(const std::string& sip_message) {
 
   // Store the last header if present.
   if (!current_key.empty()) {
-    auto field_value = sipfields::FieldValue::create(current_key, Util::trim(current_value));
-    headers.push_back({current_key, field_value});
-    headers_map[current_key].push_back(field_value);
+    auto header = headers::Header::create(current_key, Util::trim(current_value));
+    headers.push_back({current_key, header});
+    headers_map[current_key].push_back(header);
   }
 }
 

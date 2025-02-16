@@ -1,13 +1,13 @@
 //
 // AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
 //
-// Copyright (C) 2024 Tom Cully <mail@tomcully.com>
+// Copyright (C) 2025 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
 #include "session.h"
 
-using namespace athenasip::siptypes;
-using namespace athenasip::sipfields;
+using namespace athenasip::types;
+using namespace athenasip::headers;
 
 namespace athenasip {
 
@@ -49,13 +49,13 @@ void Session::_process_message_initial() {
     reply->header->type = SIPHeader::Type::Response;
     reply->header->response_code = 401;
     reply->header->response_message = "Unauthorized";
-    reply->header->add("WWW-Authorization", std::make_shared<AuthorizationFieldValue>(authHeader));
-    reply->header->add("To", std::make_shared<StringFieldValue>(_current_message->header->headers_map["From"][0]->to_string()));
-    reply->header->add("From", std::make_shared<StringFieldValue>("<sip:server@sip.athenasip.org>;tag=123456"));
-    reply->header->add("Call-Id", std::make_shared<StringFieldValue>(_current_message->header->headers_map["Call-ID"][0]->to_string()));
-    reply->header->add("CSeq", std::make_shared<StringFieldValue>("1 REGISTER"));
-    reply->header->add("Via", std::make_shared<StringFieldValue>(_current_message->header->headers_map["Via"][0]->to_string()));
-    reply->header->add("Content-Length", std::make_shared<UIntFieldValue>(0));
+    reply->header->add("WWW-Authorization", std::make_shared<AuthorizationHeader>(authHeader));
+    reply->header->add("To", std::make_shared<StringHeader>(_current_message->header->headers_map["From"][0]->to_string()));
+    reply->header->add("From", std::make_shared<StringHeader>("<sip:server@sip.athenasip.org>;tag=123456"));
+    reply->header->add("Call-Id", std::make_shared<StringHeader>(_current_message->header->headers_map["Call-ID"][0]->to_string()));
+    reply->header->add("CSeq", std::make_shared<StringHeader>("1 REGISTER"));
+    reply->header->add("Via", std::make_shared<StringHeader>(_current_message->header->headers_map["Via"][0]->to_string()));
+    reply->header->add("Content-Length", std::make_shared<UIntHeader>(0));
 
     _logger->info("Initial / REGISTER - Sending 401 Challenge");
     reply->print();
@@ -76,12 +76,12 @@ void Session::_process_message_challenged() {
       _logger->debug("Challenged / REGISTER Got Authorization Header ");
       reply->header->response_code = 401;
       reply->header->response_message = "Unauthorized";
-      reply->header->add("To", std::make_shared<StringFieldValue>(_current_message->header->headers_map["From"][0]->to_string()));
-      reply->header->add("From", std::make_shared<StringFieldValue>("<sip:server@sip.athenasip.org>;tag=123456"));
-      reply->header->add("Call-Id", std::make_shared<StringFieldValue>(_current_message->header->headers_map["Call-ID"][0]->to_string()));
-      reply->header->add("CSeq", std::make_shared<StringFieldValue>("1 REGISTER"));
-      reply->header->add("Via", std::make_shared<StringFieldValue>(_current_message->header->headers_map["Via"][0]->to_string()));
-      reply->header->add("Content-Length", std::make_shared<UIntFieldValue>(0));
+      reply->header->add("To", std::make_shared<StringHeader>(_current_message->header->headers_map["From"][0]->to_string()));
+      reply->header->add("From", std::make_shared<StringHeader>("<sip:server@sip.athenasip.org>;tag=123456"));
+      reply->header->add("Call-Id", std::make_shared<StringHeader>(_current_message->header->headers_map["Call-ID"][0]->to_string()));
+      reply->header->add("CSeq", std::make_shared<StringHeader>("1 REGISTER"));
+      reply->header->add("Via", std::make_shared<StringHeader>(_current_message->header->headers_map["Via"][0]->to_string()));
+      reply->header->add("Content-Length", std::make_shared<UIntHeader>(0));
 
       _logger->info("Challenged / REGISTER - Did not receive Authorization Header, Sending 401 Reject and Closing");
       reply->print();
@@ -91,7 +91,7 @@ void Session::_process_message_challenged() {
       return;
     }
 
-    auto incomingAuthHeader = _current_message->header->headers_map["Authorization"][0]->as<AuthorizationFieldValue>()->value;
+    auto incomingAuthHeader = _current_message->header->headers_map["Authorization"][0]->as<AuthorizationHeader>()->value;
     _logger->debug("Challenged / REGISTER - Checking Auth");
 
     // Set up Header
@@ -102,13 +102,13 @@ void Session::_process_message_challenged() {
     reply->header->response_code = 200;
     reply->header->response_message = "OK";
 
-    reply->header->add("To", std::make_shared<StringFieldValue>(_current_message->header->headers_map["From"][0]->to_string()));
-    reply->header->add("From", std::make_shared<StringFieldValue>("<sip:server@sip.athenasip.org>;tag=123456"));
-    reply->header->add("Contact", std::make_shared<StringFieldValue>(_current_message->header->headers_map["Contact"][0]->to_string()));
-    reply->header->add("Call-ID", std::make_shared<StringFieldValue>(_current_message->header->headers_map["Call-ID"][0]->to_string()));
-    reply->header->add("CSeq", std::make_shared<CSeqFieldValue>(1, "REGISTER"));
-    reply->header->add("Via", std::make_shared<StringFieldValue>(_current_message->header->headers_map["Via"][0]->to_string()));
-    reply->header->add("Content-Length", std::make_shared<UIntFieldValue>(0));
+    reply->header->add("To", std::make_shared<StringHeader>(_current_message->header->headers_map["From"][0]->to_string()));
+    reply->header->add("From", std::make_shared<StringHeader>("<sip:server@sip.athenasip.org>;tag=123456"));
+    reply->header->add("Contact", std::make_shared<StringHeader>(_current_message->header->headers_map["Contact"][0]->to_string()));
+    reply->header->add("Call-ID", std::make_shared<StringHeader>(_current_message->header->headers_map["Call-ID"][0]->to_string()));
+    reply->header->add("CSeq", std::make_shared<CSeqHeader>(1, "REGISTER"));
+    reply->header->add("Via", std::make_shared<StringHeader>(_current_message->header->headers_map["Via"][0]->to_string()));
+    reply->header->add("Content-Length", std::make_shared<UIntHeader>(0));
 
     reply->print();
     write(reply->to_string());

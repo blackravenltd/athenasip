@@ -1,12 +1,12 @@
 //
 // AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
 //
-// Copyright (C) 2024 Tom Cully <mail@tomcully.com>
+// Copyright (C) 2025 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
 #include "url.h"
 
-namespace athenasip::siptypes {
+namespace athenasip::types {
 
 URL::URL() = default;
 
@@ -113,4 +113,4 @@ const std::map<std::string, uint16_t> URL::defaultPorts = {{"http", 80},        
                                                            {"rsync", 873},       {"rdp", 3389},        {"elasticsearch", 9200},
                                                            {"kibana", 5601},     {"zookeeper", 2181}};
 
-}  // namespace athenasip::siptypes
+}  // namespace athenasip::types

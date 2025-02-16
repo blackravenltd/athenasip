@@ -1,16 +1,16 @@
 //
 // AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
 //
-// Copyright (C) 2024 Tom Cully <mail@tomcully.com>
+// Copyright (C) 2025 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
-#include "supported_field_value.h"
+#include "supported_header.h"
 
 #include <algorithm>
 #include <cctype>
 #include <sstream>
 
-using namespace athenasip::sipfields;
+using namespace athenasip::headers;
 
 // Helper trim function.
 // If your project already provides a trim utility, you can use that instead.
@@ -26,7 +26,7 @@ static std::string trim(const std::string& s) {
   return std::string(start, end + 1);
 }
 
-bool SupportedFieldValue::parse(const std::string& val) {
+bool SupportedHeader::parse(const std::string& val) {
   features.clear();
   std::istringstream iss(val);
   std::string token;
@@ -39,7 +39,7 @@ bool SupportedFieldValue::parse(const std::string& val) {
   return true;
 }
 
-std::string SupportedFieldValue::to_string() const {
+std::string SupportedHeader::to_string() const {
   std::string result;
   // Note: The order of elements in an unordered_set is unspecified.
   // If order is important, consider storing them in a different container.

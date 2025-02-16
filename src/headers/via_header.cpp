@@ -1,15 +1,14 @@
 //
 // AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
 //
-// Copyright (C) 2024 Tom Cully <mail@tomcully.com>
+// Copyright (C) 2025 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
-#include "via_field_value.h"
+#include "via_header.h"
 
+namespace athenasip::headers {
 
-namespace athenasip::sipfields {
-
-bool ViaFieldValue::parse(const std::string& value) {
+bool ViaHeader::parse(const std::string& value) {
   // Reset members.
   version.clear();
   host.clear();
@@ -63,7 +62,7 @@ bool ViaFieldValue::parse(const std::string& value) {
   return true;
 }
 
-std::string ViaFieldValue::to_string() const {
+std::string ViaHeader::to_string() const {
   std::ostringstream oss;
   oss << version << " " << host;
   for (const auto& param : parameters) {
@@ -75,4 +74,4 @@ std::string ViaFieldValue::to_string() const {
   return oss.str();
 }
 
-}  // namespace athenasip::sipfields
+}  // namespace athenasip::headers
