@@ -15,10 +15,12 @@
 #include <thread>
 #include <unordered_map>
 
-#include "logger.h"
-#include "logger_scoped.h"
+#include "loggers/logger.h"
+#include "loggers/logger_scoped.h"
 #include "registrar.h"
 #include "session.h"
+
+using namespace athenasip::loggers;
 
 namespace athenasip {
 

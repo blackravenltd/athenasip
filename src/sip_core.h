@@ -12,10 +12,12 @@
 
 #include "config.h"
 #include "db.h"
-#include "logger.h"
+#include "loggers/logger.h"
 #include "registrar.h"
 #include "server.h"
 #include "version.h"
+
+using namespace athenasip::loggers;
 
 namespace athenasip {
 

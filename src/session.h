@@ -29,8 +29,8 @@
 #include "headers/sip_identity_header.h"
 #include "headers/string_header.h"
 #include "headers/uint_header.h"
-#include "logger.h"
-#include "logger_scoped.h"
+#include "loggers/logger.h"
+#include "loggers/logger_scoped.h"
 #include "sip_header.h"
 #include "sip_message.h"
 #include "types/authorization.h"
@@ -38,6 +38,7 @@
 #include "util.h"
 
 using namespace athenasip::types;
+using namespace athenasip::loggers;
 
 namespace athenasip {
 

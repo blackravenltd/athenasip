@@ -12,8 +12,8 @@
 #include <string>
 
 #include "config.h"
-#include "logger_scoped.h"
-#include "logger_stdio.h"
+#include "loggers/logger_scoped.h"
+#include "loggers/logger_stdio.h"
 #include "registrar.h"
 #include "sip_core.h"
 #include "tls_server.h"

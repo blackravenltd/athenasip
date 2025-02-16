@@ -18,9 +18,11 @@
 #include <string>
 
 #include "global_io_context.h"
-#include "logger.h"
-#include "logger_scoped.h"
+#include "loggers/logger.h"
+#include "loggers/logger_scoped.h"
 #include "rtp_proxy_response.h"
+
+using namespace athenasip::loggers;
 
 namespace athenasip {
 

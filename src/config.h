@@ -11,9 +11,11 @@
 #include <optional>
 #include <string>
 
-#include "logger.h"
-#include "logger_scoped.h"
+#include "loggers/logger.h"
+#include "loggers/logger_scoped.h"
 #include "types/url.h"
+
+using namespace athenasip::loggers;
 
 namespace athenasip {
 

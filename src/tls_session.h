@@ -28,11 +28,13 @@
 #include <thread>
 
 #include "delayed_task.h"
-#include "logger.h"
-#include "logger_scoped.h"
+#include "loggers/logger.h"
+#include "loggers/logger_scoped.h"
 #include "server.h"
 #include "session.h"
 #include "util.h"
+
+using namespace athenasip::loggers;
 
 namespace athenasip {
 

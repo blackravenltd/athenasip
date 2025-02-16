@@ -13,11 +13,12 @@
 #include <string>
 
 #include "db.h"
-#include "logger.h"
-#include "logger_scoped.h"
+#include "loggers/logger.h"
+#include "loggers/logger_scoped.h"
 #include "types/sip_identity.h"
 
 using namespace athenasip::types;
+using namespace athenasip::loggers;
 
 namespace athenasip {
 

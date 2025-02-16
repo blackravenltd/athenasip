@@ -14,6 +14,8 @@
 
 #include "delayed_task.h"
 
+using namespace athenasip::loggers;
+
 namespace athenasip {
 
 template <typename K, typename V>
