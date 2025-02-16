@@ -39,6 +39,8 @@ class ViaHeader : public Header {
   // Returns the Via header as a string.
   std::string to_string() const;
 
+};
+
   // Register this field type
   struct ViaHeaderRegister {
     ViaHeaderRegister() {
@@ -47,8 +49,5 @@ class ViaHeader : public Header {
     }
   };
   static ViaHeaderRegister s_viaHeaderRegister;
-
-
-};
-
+  
 }  // namespace athenasip::headers

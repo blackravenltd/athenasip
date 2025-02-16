@@ -10,6 +10,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <stdexcept>
 
 #include "header.h"
 

@@ -4,8 +4,6 @@
 // Copyright (C) 2025 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
-#include "header.h"
-
 #include "string_header.h"
 
 namespace athenasip::headers {

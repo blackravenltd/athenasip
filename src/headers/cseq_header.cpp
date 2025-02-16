@@ -6,9 +6,6 @@
 //
 #include "cseq_header.h"
 
-#include <sstream>
-#include <stdexcept>
-
 using namespace athenasip::headers;
 
 bool CSeqHeader::parse(const std::string& val) {
