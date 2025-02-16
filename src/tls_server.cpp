@@ -17,11 +17,18 @@ TLSServer::TLSServer(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> 
       _acceptor(_io_context, ip::tcp::endpoint(ip::tcp::v4(), port)),
       ctx(ssl::context::sslv23) {}
 
-void TLSServer::set_certificates(std::string cert, std::string key) {
-  _logger->info("Using Certificate PEM: " + cert);
-  _logger->info("Using Key PEM: " + key);
-  ctx.use_certificate_chain_file(cert);
-  ctx.use_private_key_file(key, ssl::context::pem);
+bool TLSServer::set_certificates(std::string cert, std::string key) {
+  try {
+    ctx.use_certificate_chain_file(cert);
+    _logger->info("Using Certificate PEM: " + cert);
+    ctx.use_private_key_file(key, ssl::context::pem);
+    _logger->info("Using Key PEM: " + key);
+  } catch (const std::exception& e) {
+    _logger->error("Exception While Loading Certificates: " + std::string(e.what()));
+    return false;
+  }
+
+  return true;
 }
 
 void TLSServer::start() {

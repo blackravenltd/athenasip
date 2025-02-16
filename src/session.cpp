@@ -27,7 +27,7 @@ void Session::_process_message() {
   // Preflight, check basic headers
   if (!_request->header->contains("From") || !_request->header->contains("To") || !_request->header->contains("Call-ID") ||
       !_request->header->contains("CSeq") || !_request->header->contains("Via") || !_request->header->contains("Max-Forwards")) {
-    _logger->info("Challenged / REGISTER - Incomplete Headers, Sending 400 Bad Request and Closing");
+    _logger->info("[Request] - Incomplete Headers, Sending 400 Bad Request and Closing");
     _send_close(400, "Bad Request");
     return;
   }

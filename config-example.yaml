@@ -1,0 +1,12 @@
+sip:
+  address: 127.0.0.1
+  port: 5060
+  realm: "example.com"
+  nonce_secret: "your_nonce_secret_here"
+
+tls:
+  cert_pem_filename: "./tls/snakeoil.cer"
+  key_pem_filename: "./tls/snakeoil.key"
+
+db:
+  url: "mysql://root@localhost/athenasip"
