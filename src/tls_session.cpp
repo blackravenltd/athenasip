@@ -139,7 +139,7 @@ void TLSSession::_schedule_async_read() {
           _current_message->header = std::make_shared<SIPHeader>(sip_header);
           // Get the Content-Length
           if (_current_message->header->contains("Content-Length")) {
-            _current_message->body_length = (*_current_message->header)["Content-Length"]->as<UIntFieldValue>()->value;
+            _current_message->body_length = _current_message->header->headers_map["Content-Length"][0]->as<UIntFieldValue>()->value;
           }
           // Process messages with or without bodies.
           if (_current_message->body_length == 0) {

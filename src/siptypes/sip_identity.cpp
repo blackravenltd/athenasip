@@ -40,8 +40,7 @@ void SIPIdentity::parse(const std::string& identity) {
   //      Group 6: SIP URI (inside angle brackets)
   //    It also allows trailing parameters after the closing '>'
   static const std::regex sip_regex(
-    R"DELIM(^\s*(?:(?:<\s*sip:\s*(?:(?:"([^"<]+)"|([^"<]+))\s*)?<\s*([^>]+)\s*>(?:;[^>]+)*\s*>)|(?:(?:"([^"<]+)"|([^"<]+))\s*)?<\s*([^>]+)\s*>(?:;.*)?)\s*$)DELIM"
-  );
+      R"DELIM(^\s*(?:(?:<\s*sip:\s*(?:(?:"([^"<]+)"|([^"<]+))\s*)?<\s*([^>]+)\s*>(?:;[^>]+)*\s*>)|(?:(?:"([^"<]+)"|([^"<]+))\s*)?<\s*([^>]+)\s*>(?:;.*)?)\s*$)DELIM");
 
   std::smatch match;
   if (std::regex_match(identity, match, sip_regex)) {
@@ -68,7 +67,6 @@ void SIPIdentity::parse(const std::string& identity) {
     uri = std::make_shared<SIPUri>(identity);
   }
 }
-
 
 std::string operator+(const SIPIdentity& identity, const std::string& str) { return identity.to_string() + str; }
 std::string operator+(const std::string& str, const SIPIdentity& identity) { return str + identity.to_string(); }

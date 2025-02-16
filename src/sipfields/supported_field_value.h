@@ -6,10 +6,11 @@
 //
 #pragma once
 
-#include "field_value.h"
-#include <unordered_set>
-#include <string>
 #include <memory>
+#include <string>
+#include <unordered_set>
+
+#include "field_value.h"
 
 namespace athenasip::sipfields {
 
@@ -28,9 +29,7 @@ class SupportedFieldValue : public FieldValue {
 // Register this field type under the "Supported" header name.
 struct SupportedFieldValueRegister {
   SupportedFieldValueRegister() {
-    auto reg = []() -> std::shared_ptr<FieldValue> {
-      return std::make_shared<SupportedFieldValue>();
-    };
+    auto reg = []() -> std::shared_ptr<FieldValue> { return std::make_shared<SupportedFieldValue>(); };
     FieldValue::register_factory("Supported", reg);
   }
 };
