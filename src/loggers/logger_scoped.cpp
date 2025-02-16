@@ -18,4 +18,4 @@ void LoggerScoped::raw(const std::string &str) { _logger->error("(" + _scope + "
 
 std::shared_ptr<Logger> LoggerScoped::base_logger() { return _logger; }
 
-}  // namespace athenasip
+}  // namespace athenasip::loggers

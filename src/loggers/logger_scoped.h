@@ -28,4 +28,4 @@ class LoggerScoped : public Logger {
   std::shared_ptr<Logger> _logger;
 };
 
-}  // namespace athenasip
+}  // namespace athenasip::loggers
