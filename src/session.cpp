@@ -11,10 +11,37 @@ using namespace athenasip::headers;
 
 namespace athenasip {
 
-Session::Session(std::shared_ptr<Logger> logger, std::string nonce_secret) : _logger(logger), _nonce_secret(nonce_secret) {}
+Session::Session(std::shared_ptr<Logger> logger, std::string nonce_secret)
+    : _logger(logger), _nonce_secret(nonce_secret), _nonces(std::make_shared<ExpirySet<std::string>>()) {}
 
 void Session::_process_message() {
-  _current_message->print();
+  // Print Incoming (DEBUG)
+  _request->print();
+
+  // Create Response
+  _response = std::make_shared<SIPMessage>();
+  _response->header = std::make_shared<SIPHeader>();
+  _response->header->type = SIPHeader::Type::Response;
+  _response->body_length = 0;
+
+  // Preflight, check basic headers
+  if (!_request->header->contains("From") || !_request->header->contains("To") || !_request->header->contains("Call-ID") ||
+      !_request->header->contains("CSeq") || !_request->header->contains("Via") || !_request->header->contains("Max-Forwards")) {
+    _logger->info("Challenged / REGISTER - Incomplete Headers, Sending 400 Bad Request and Closing");
+    _send_close(400, "Bad Request");
+    return;
+  }
+
+  // Add From/To Headers
+  _response->header->add("From", std::make_shared<StringHeader>("<sip:server@sip.athenasip.org>;tag=123456"));
+  _response->header->add("To", _request->header->headers_map["From"][0]);
+
+  // Copy Request Headers
+  _response->header->add("Call-Id", _request->header->headers_map["Call-ID"][0]);
+  _response->header->add("CSeq", _request->header->headers_map["CSeq"][0]);
+  _response->header->add("Via", _request->header->headers_map["Via"][0]);
+
+  // Process according to state
   switch (state) {
     case State::Initial:
       _process_message_initial();
@@ -22,99 +49,98 @@ void Session::_process_message() {
     case State::Challenged:
       _process_message_challenged();
       break;
+    case State::Registered:
+      _process_message_challenged();
+      break;
     default:
       _logger->error("Unknown State while processing message: " + std::to_string(state));
   }
-  _current_message.reset();  // replace with process
+  _request.reset();
+  _response.reset();
   return;
 }
 
 void Session::_process_message_initial() {
-  if (_current_message->header->request_method == "REGISTER") {
-    // Generate Nonce and send 401 Unauthenticated
-
-    auto reply = std::make_shared<SIPMessage>();
-    reply->body_length = 0;
-
-    // Set up Header
+  if (_request->header->request_method == "REGISTER") {
+    // Generate and save nonce
     auto nonce = _generate_nonce();
-    auto authHeader = std::make_shared<Authorization>();
+    _nonces->add(nonce, 3600);
 
+    auto authHeader = std::make_shared<Authorization>();
     authHeader->type = "Digest";
     authHeader->fields["realm"] = "sip.athenasip.org";
     authHeader->fields["nonce"] = nonce;
     authHeader->fields["algorithm"] = "MD5";
-
-    reply->header = std::make_shared<SIPHeader>();
-    reply->header->type = SIPHeader::Type::Response;
-    reply->header->response_code = 401;
-    reply->header->response_message = "Unauthorized";
-    reply->header->add("WWW-Authenticate", std::make_shared<AuthorizationHeader>(authHeader));
-    reply->header->add("To", std::make_shared<StringHeader>(_current_message->header->headers_map["From"][0]->to_string()));
-    reply->header->add("From", std::make_shared<StringHeader>("<sip:server@sip.athenasip.org>;tag=123456"));
-    reply->header->add("Call-Id", std::make_shared<StringHeader>(_current_message->header->headers_map["Call-ID"][0]->to_string()));
-    reply->header->add("CSeq", std::make_shared<CSeqHeader>(_current_message->header->headers_map["CSeq"][0]->to_string()));
-    reply->header->add("Via", std::make_shared<StringHeader>(_current_message->header->headers_map["Via"][0]->to_string()));
-    reply->header->add("Content-Length", std::make_shared<UIntHeader>(0));
+    _response->header->add("WWW-Authenticate", std::make_shared<AuthorizationHeader>(authHeader));
 
     _logger->info("Initial / REGISTER - Sending 401 Challenge");
-    reply->print();
-    write(reply->to_string());
-
     state = State::Challenged;
+    _send(401, "Unauthorized");
   }
 }
 
 void Session::_process_message_challenged() {
-  if (_current_message->header->request_method == "REGISTER") {
-    auto reply = std::make_shared<SIPMessage>();
-    reply->header = std::make_shared<SIPHeader>();
-    reply->header->type = SIPHeader::Type::Response;
-    reply->body_length = 0;
-
-    if (!_current_message->header->contains("Authorization")) {
-      _logger->debug("Challenged / REGISTER Got Authorization Header ");
-      reply->header->response_code = 401;
-      reply->header->response_message = "Unauthorized";
-      reply->header->add("To", std::make_shared<StringHeader>(_current_message->header->headers_map["From"][0]->to_string()));
-      reply->header->add("From", std::make_shared<StringHeader>("<sip:server@sip.athenasip.org>;tag=123456"));
-      reply->header->add("Call-Id", std::make_shared<StringHeader>(_current_message->header->headers_map["Call-ID"][0]->to_string()));
-      reply->header->add("CSeq", std::make_shared<CSeqHeader>(_current_message->header->headers_map["CSeq"][0]->to_string()));
-      reply->header->add("Via", std::make_shared<StringHeader>(_current_message->header->headers_map["Via"][0]->to_string()));
-      reply->header->add("Content-Length", std::make_shared<UIntHeader>(0));
-
-      _logger->info("Challenged / REGISTER - Did not receive Authorization Header, Sending 401 Reject and Closing");
-      reply->print();
-      write(reply->to_string());
-
-      close();
+  if (_request->header->request_method == "REGISTER") {
+    // The Authorization must have been sent
+    if (!_request->header->contains("Authorization")) {
+      _logger->info("Challenged / REGISTER - No Authorization Header, Sending 401 Unauthorized and Closing");
+      _send_close(401, "Unauthorized");
       return;
     }
 
-    auto incomingAuthHeader = _current_message->header->headers_map["Authorization"][0]->as<AuthorizationHeader>()->value;
-    _logger->debug("Challenged / REGISTER - Checking Auth");
+    // Process it and the identity
+    auto incomingAuthHeader = _request->header->headers_map["Authorization"][0]->as<AuthorizationHeader>()->value;
+    auto fromIdentity = _request->header->headers_map["From"][0]->as<SIPIdentityHeader>()->value;
 
-    // Set up Header
-    reply->header = std::make_shared<SIPHeader>();
-    reply->header->type = SIPHeader::Type::Response;
+    // Check nonce exists
+    auto nonce = incomingAuthHeader->fields["nonce"];
+    if (!_nonces->contains(nonce)) {
+      _logger->info("Challenged / REGISTER - Nonce not found or expired, Sending 401 Unauthorized and Closing");
+      _send_close(401, "Unauthorized");
+      return;
+    }
 
+    // Get Subscriber
+    auto h1 = _on_authenticate(fromIdentity, shared_from_this());
+    if (!h1) {
+      _logger->info("Challenged / REGISTER - User " + fromIdentity->to_string() + " Not Found, Sending 401 Unauthorized and Closing");
+      _send_close(401, "Unauthorized");
+      return;
+    }
+
+    // Generate H2/H3
+    auto h2 = Util::md5("REGISTER:" + incomingAuthHeader->fields["uri"]);
+    auto const colon = std::string(":");
+    auto h3 = Util::md5(h1.value() + colon + nonce + colon + h2);
+
+    // Check match
+    if (h3 != incomingAuthHeader->fields["response"]) {
+      _logger->info("Challenged / REGISTER - User " + fromIdentity->to_string() + " Digest hash does not match, Sending 401 Unauthorized and Closing");
+      _send_close(401, "Unauthorized");
+      return;
+    }
+
+    // Auth is good
     _logger->debug("Challenged / REGISTER - Authorized, Sending 200 OK");
-    reply->header->response_code = 200;
-    reply->header->response_message = "OK";
-
-    reply->header->add("To", std::make_shared<StringHeader>(_current_message->header->headers_map["From"][0]->to_string()));
-    reply->header->add("From", std::make_shared<StringHeader>("<sip:server@sip.athenasip.org>;tag=123456"));
-    reply->header->add("Contact", std::make_shared<StringHeader>(_current_message->header->headers_map["Contact"][0]->to_string()));
-    reply->header->add("Call-ID", std::make_shared<StringHeader>(_current_message->header->headers_map["Call-ID"][0]->to_string()));
-    reply->header->add("CSeq", std::make_shared<CSeqHeader>(_current_message->header->headers_map["CSeq"][0]->to_string()));
-    reply->header->add("Via", std::make_shared<StringHeader>(_current_message->header->headers_map["Via"][0]->to_string()));
-    reply->header->add("Content-Length", std::make_shared<UIntHeader>(0));
-
-    reply->print();
-    write(reply->to_string());
+    _response->header->add("Contact", _request->header->headers_map["Contact"][0]);
 
     state = State::Registered;
+    _send(200, "OK");
   }
+}
+
+void Session::_send_close(uint16_t code, std::string message) {
+  _send(code, message);
+  close();
+}
+
+void Session::_send(uint16_t code, std::string message) {
+  _response->header->response_code = code;
+  _response->header->response_message = message;
+  _response->header->add("Content-Length", std::make_shared<UIntHeader>(_response->body.size()));
+  _response->print();
+  write(_response->to_string());
+  if (_response->body.size() > 0) write(_response->body);
 }
 
 std::string Session::_generate_nonce() const {
@@ -147,8 +173,8 @@ std::string Session::_generate_nonce() const {
   return raw_nonce + ":" + hmac_hex;
 }
 
-void Session::on_register(EventFn callback) { _on_register = callback; }
-
-void Session::on_unregister(EventFn callback) { _on_unregister = callback; }
+void Session::on_start(StartCloseFn callback) { _on_start = callback; }
+void Session::on_close(StartCloseFn callback) { _on_close = callback; }
+void Session::on_authenticate(AuthenticateFn callback) { _on_authenticate = callback; }
 
 }  // namespace athenasip

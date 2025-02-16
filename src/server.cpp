@@ -25,4 +25,8 @@ bool Server::unregister_session(std::string endpoint, std::shared_ptr<Session> s
   return true;
 }
 
+std::optional<std::string> Server::user_get_h1(std::shared_ptr<SIPIdentity> identity, std::shared_ptr<Session> session) {
+  return _registrar->user_get_h1(identity);
+}
+
 }  // namespace athenasip

@@ -35,6 +35,6 @@ struct SIPIdentityHeaderRegister {
     Header::register_factory("Contact", reg);
   }
 };
-static SIPIdentityHeaderRegister s_uintHeaderRegister;
+static SIPIdentityHeaderRegister s_sipIdentityHeaderRegister;
 
 }  // namespace athenasip::headers

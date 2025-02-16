@@ -11,6 +11,7 @@
 #include <string>
 
 #include "db.h"
+#include "util.h"
 
 using namespace athenasip::types;
 

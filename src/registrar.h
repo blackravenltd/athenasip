@@ -8,6 +8,7 @@
 
 #include <iostream>
 #include <map>
+#include <optional>
 #include <sstream>
 #include <string>
 
@@ -25,7 +26,7 @@ class Registrar {
   Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<DB> db);
 
   bool user_exists(std::shared_ptr<SIPIdentity> identity);
-  std::string user_get_h1(std::shared_ptr<SIPIdentity> identity);
+  std::optional<std::string> user_get_h1(std::shared_ptr<SIPIdentity> identity);
   void user_register(std::shared_ptr<SIPIdentity> identity, std::shared_ptr<SIPUri> location);
   const std::shared_ptr<SIPUri> user_get_location(std::shared_ptr<SIPIdentity> identity);
 

@@ -55,6 +55,11 @@ std::shared_ptr<DBValue> MySQLDB::_map_value(const mysqlx::Value &val) {
 std::shared_ptr<DBResult> MySQLDB::query(std::string sql, std::vector<std::any> params) {
   auto res = std::make_shared<DBResult>();
 
+  std::string param_strs;
+
+  // Get Timing
+  auto start = std::chrono::high_resolution_clock::now();
+
   try {
     // Prepare the statement
     mysqlx::SqlStatement stmt = _session->sql(sql);
@@ -62,11 +67,17 @@ std::shared_ptr<DBResult> MySQLDB::query(std::string sql, std::vector<std::any> 
     // Bind the parameter values
     for (size_t i = 0; i < params.size(); ++i) {
       if (params[i].type() == typeid(std::string)) {
-        stmt.bind(std::any_cast<std::string>(params[i]));
+        auto v = std::any_cast<std::string>(params[i]);
+        stmt.bind(v);
+        param_strs += v + ",";
       } else if (params[i].type() == typeid(int)) {
-        stmt.bind(std::any_cast<int>(params[i]));
+        auto v = std::any_cast<int>(params[i]);
+        stmt.bind(v);
+        param_strs += std::to_string(v) + ",";
       } else if (params[i].type() == typeid(double)) {
-        stmt.bind(std::any_cast<double>(params[i]));
+        auto v = std::any_cast<double>(params[i]);
+        stmt.bind(v);
+        param_strs += std::to_string(v) + ",";
       } else {
         throw std::runtime_error("Unsupported parameter type at index " + std::to_string(i));
       }
@@ -89,6 +100,15 @@ std::shared_ptr<DBResult> MySQLDB::query(std::string sql, std::vector<std::any> 
 
     // Fetch all rows at once into a vector
     std::vector<mysqlx::Row> rows = result.fetchAll();
+
+    // Get Timing
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
+
+    // Log SQL
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(3) << duration;
+    std::string durationStr = oss.str();
+    _logger->debug("SQL: " + sql + " [" + Util::trim(param_strs, ",") + "] (" + std::to_string(rows.size()) + " rows, " + durationStr + "ms)");
 
     // Iterate over the fetched rows
     for (const mysqlx::Row &row : rows) {

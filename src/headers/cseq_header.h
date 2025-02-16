@@ -9,8 +9,8 @@
 #include <cstdint>
 #include <memory>
 #include <sstream>
-#include <string>
 #include <stdexcept>
+#include <string>
 
 #include "header.h"
 

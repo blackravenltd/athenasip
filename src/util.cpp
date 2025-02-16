@@ -28,26 +28,58 @@ std::string Util::to_hex(const uint8_t arr[], uint16_t len) {
 }
 
 // Trim leading and trailing whitespace
-std::string Util::trim(const std::string& str) {
-  size_t first = str.find_first_not_of(" \t\r\n");
-  size_t last = str.find_last_not_of(" \t\r\n");
+std::string Util::trim(const std::string& str) { return trim(str, " \t\r\n"); }
+
+std::string Util::trim(const std::string& str, const std::string& trimmable) {
+  size_t first = str.find_first_not_of(trimmable);
+  size_t last = str.find_last_not_of(trimmable);
   return (first == std::string::npos) ? "" : str.substr(first, last - first + 1);
 }
 
-std::string Util::md5(const std::string &input) {
-    boost::uuids::detail::md5 hasher;
-    boost::uuids::detail::md5::digest_type digest;
-    hasher.process_bytes(input.data(), input.size());
-    hasher.get_digest(digest);
+#include <openssl/evp.h>
 
-    std::ostringstream oss;
-    oss << std::hex << std::setw(8) << std::setfill('0');
-    // The digest consists of 4 uint32_t values.
-    for (int i = 0; i < 4; ++i) {
-        // Each value printed as 8 hex digits.
-        oss << std::setw(8) << digest[i];
-    }
-    return oss.str();
+#include <iomanip>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+
+std::string Util::md5(const std::string& input) {
+  // Buffer to hold the digest. EVP_MAX_MD_SIZE is guaranteed to be large enough.
+  unsigned char digest[EVP_MAX_MD_SIZE];
+  unsigned int digest_len = 0;
+
+  // Create a new digest context.
+  EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+  if (!ctx) throw std::runtime_error("EVP_MD_CTX_new failed");
+
+  // Initialize the digest context for MD5.
+  if (EVP_DigestInit_ex(ctx, EVP_md5(), nullptr) != 1) {
+    EVP_MD_CTX_free(ctx);
+    throw std::runtime_error("EVP_DigestInit_ex failed");
+  }
+
+  // Update the digest with the input data.
+  if (EVP_DigestUpdate(ctx, input.data(), input.size()) != 1) {
+    EVP_MD_CTX_free(ctx);
+    throw std::runtime_error("EVP_DigestUpdate failed");
+  }
+
+  // Finalize the digest and get the result.
+  if (EVP_DigestFinal_ex(ctx, digest, &digest_len) != 1) {
+    EVP_MD_CTX_free(ctx);
+    throw std::runtime_error("EVP_DigestFinal_ex failed");
+  }
+
+  // Clean up the digest context.
+  EVP_MD_CTX_free(ctx);
+
+  // Convert the binary digest to a hexadecimal string.
+  std::ostringstream oss;
+  oss << std::hex << std::setfill('0');
+  for (unsigned int i = 0; i < digest_len; ++i) {
+    oss << std::setw(2) << static_cast<unsigned int>(digest[i]);
+  }
+  return oss.str();
 }
 
 }  // namespace athenasip
