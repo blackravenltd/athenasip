@@ -15,7 +15,7 @@
 
 #include "logger.h"
 
-namespace athenasip {
+namespace athenasip::loggers {
 
 class LoggerStdIO : public Logger {
  public:

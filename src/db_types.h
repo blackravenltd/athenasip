@@ -14,6 +14,8 @@
 #include <unordered_map>
 #include <vector>
 
+namespace athenasip {
+
 // Abstract base class for a database value.
 class DBValue {
  public:
@@ -69,3 +71,5 @@ class DBResult {
   uint32_t rows_affected;
   std::string error;
 };
+
+}

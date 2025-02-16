@@ -14,6 +14,7 @@
 #include "util.h"
 
 using namespace athenasip::types;
+using namespace athenasip::loggers;
 
 namespace athenasip {
 

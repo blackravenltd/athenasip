@@ -6,7 +6,7 @@
 //
 #include "logger_stdio.h"
 
-namespace athenasip {
+namespace athenasip::loggers {
 
 LoggerStdIO::LoggerStdIO(LogLevel log_level) { _log_level = log_level; }
 

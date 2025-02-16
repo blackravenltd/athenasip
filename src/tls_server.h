@@ -9,6 +9,8 @@
 #include "server.h"
 #include "tls_session.h"
 
+using namespace athenasip::loggers;
+
 namespace athenasip {
 
 class TLSSession;

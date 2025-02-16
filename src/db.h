@@ -12,11 +12,12 @@
 #include <vector>
 
 #include "db_types.h"
-#include "logger.h"
-#include "logger_scoped.h"
+#include "loggers/logger.h"
+#include "loggers/logger_scoped.h"
 #include "types/url.h"
 
 using namespace athenasip::types;
+using namespace athenasip::loggers;
 
 namespace athenasip {
 

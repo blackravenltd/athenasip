@@ -10,7 +10,7 @@
 
 #include "logger.h"
 
-namespace athenasip {
+namespace athenasip::loggers {
 
 class LoggerScoped : public Logger {
  public:
