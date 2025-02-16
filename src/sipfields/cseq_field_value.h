@@ -6,19 +6,20 @@
 //
 #pragma once
 
-#include "field_value.h"
 #include <cstdint>
-#include <string>
 #include <memory>
 #include <sstream>
+#include <string>
+
+#include "field_value.h"
 
 namespace athenasip::sipfields {
 
 class CSeqFieldValue : public FieldValue {
  public:
   CSeqFieldValue() = default;
-  // Optionally, a constructor that parses the input string.
   explicit CSeqFieldValue(const std::string& value) { parse(value); }
+  explicit CSeqFieldValue(const uint64_t seq, const std::string& val) : sequence(seq), method(val) {}
 
   bool parse(const std::string& val) override;
   std::string to_string() const override;
@@ -31,9 +32,7 @@ class CSeqFieldValue : public FieldValue {
 // Register this field type under the "CSeq" header name.
 struct CSeqFieldValueRegister {
   CSeqFieldValueRegister() {
-    auto reg = []() -> std::shared_ptr<FieldValue> {
-      return std::make_shared<CSeqFieldValue>();
-    };
+    auto reg = []() -> std::shared_ptr<FieldValue> { return std::make_shared<CSeqFieldValue>(); };
     FieldValue::register_factory("CSeq", reg);
   }
 };

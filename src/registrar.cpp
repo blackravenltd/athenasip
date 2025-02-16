@@ -12,8 +12,7 @@ Registrar::Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<DB> db) : _
 
 bool Registrar::user_exists(std::shared_ptr<SIPIdentity> identity) {
   // Execute the query
-  std::shared_ptr<DBResult> res =
-      _db->query("SELECT `h1` FROM `subscriber` WHERE `user` = ? AND `realm` = ?", {identity->uri->user, identity->uri->realm});
+  std::shared_ptr<DBResult> res = _db->query("SELECT `h1` FROM `subscriber` WHERE `user` = ? AND `realm` = ?", {identity->uri->user, identity->uri->realm});
 
   if (res && res->rows.size() != 0) {
     _logger->info("user_exists " + identity->to_string() + " h1 " + res->rows[0]->values["h1"]->as<std::string>());

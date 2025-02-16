@@ -5,6 +5,7 @@
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
 #include "field_value.h"
+
 #include "string_field_value.h"
 
 namespace athenasip::sipfields {

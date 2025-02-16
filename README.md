@@ -53,8 +53,6 @@ cmake ..
 make
 ```
 
-**CAVEAT: This is provided for ease of demonstration ONLY. Do Not Use This Certificate In Production.**
-
 ## License
 
 AthenaSIP is liscensed under [GPLv3](https://www.gnu.org/licenses/gpl-3.0.en.html). Please see the [LICENSE](LICENSE) file.

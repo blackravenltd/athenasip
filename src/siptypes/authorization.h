@@ -1,3 +1,9 @@
+//
+// AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
+//
+// Copyright (C) 2024 Tom Cully <mail@tomcully.com>
+// Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
+//
 #pragma once
 
 #include <cctype>
@@ -8,10 +14,13 @@
 
 namespace athenasip::siptypes {
 
-class Authorization : public std::unordered_map<std::string, std::string> {
+class Authorization {
  public:
   /// The authentication scheme (e.g. "Digest")
   std::string type;
+
+  /// Public storage for key/value pairs from the header.
+  std::unordered_map<std::string, std::string> fields;
 
   Authorization() = default;
 
@@ -24,7 +33,7 @@ class Authorization : public std::unordered_map<std::string, std::string> {
   /// This function does not throw exceptions.
   bool parse(const std::string& input) {
     // Clear any existing content.
-    this->clear();
+    fields.clear();
     type.clear();
 
     size_t pos = 0;
@@ -116,7 +125,7 @@ class Authorization : public std::unordered_map<std::string, std::string> {
         value = Util::trim(input.substr(value_start, pos - value_start));
       }
       // Insert the key/value pair.
-      (*this)[key] = value;
+      fields[key] = value;
     }
 
     return true;
@@ -128,7 +137,7 @@ class Authorization : public std::unordered_map<std::string, std::string> {
   std::string to_string() const {
     std::string result = type;
     bool first = true;
-    for (const auto& kv : *this) {
+    for (const auto& kv : fields) {
       if (first) {
         result += " ";
         first = false;

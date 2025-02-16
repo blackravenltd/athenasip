@@ -5,6 +5,7 @@
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
 #include "sip_uri.h"
+
 #include <regex>
 #include <sstream>
 
@@ -23,9 +24,7 @@ SIPUri::SIPUri() {
 }
 
 // Constructor with parsing: calls the parse function.
-SIPUri::SIPUri(const std::string& uri) {
-  parse(uri);
-}
+SIPUri::SIPUri(const std::string& uri) { parse(uri); }
 
 // Converts the SIPUri back into a string.
 std::string SIPUri::to_string() const {
@@ -53,8 +52,7 @@ std::string SIPUri::to_string() const {
 
 // Private parsing function using a regular expression.
 void SIPUri::parse(const std::string& uri) {
-  static const std::regex uri_regex(
-      R"((sip|sips):(?:([^:@]+)(?::([^@]+))?@)?([^:;?]+)(?::(\d+))?(;[^?]*)?(\?.*)?)");
+  static const std::regex uri_regex(R"((sip|sips):(?:([^:@]+)(?::([^@]+))?@)?([^:;?]+)(?::(\d+))?(;[^?]*)?(\?.*)?)");
 
   std::smatch match;
   if (std::regex_match(uri, match, uri_regex)) {
@@ -82,12 +80,8 @@ void SIPUri::parse(const std::string& uri) {
 }
 
 // Friend operators for concatenation.
-std::string operator+(const SIPUri& uri, const std::string& str) {
-  return uri.to_string() + str;
-}
+std::string operator+(const SIPUri& uri, const std::string& str) { return uri.to_string() + str; }
 
-std::string operator+(const std::string& str, const SIPUri& uri) {
-  return str + uri.to_string();
-}
+std::string operator+(const std::string& str, const SIPUri& uri) { return str + uri.to_string(); }
 
 }  // namespace athenasip::siptypes

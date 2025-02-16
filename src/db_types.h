@@ -52,6 +52,8 @@ class DBRow {
  public:
   // Mapping of column name to a shared pointer to a DBValue.
   std::unordered_map<std::string, std::shared_ptr<DBValue>> values;
+  // Mapping by column index
+  std::vector<std::shared_ptr<DBValue>> column_values;
 
   // Provide read-only access to a value by key.
   std::shared_ptr<DBValue> operator[](const std::string& key) const {

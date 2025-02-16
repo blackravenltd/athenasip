@@ -1,0 +1,54 @@
+//
+// AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
+//
+// Copyright (C) 2024 Tom Cully <mail@tomcully.com>
+// Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
+//
+#pragma once
+
+#include <string>
+#include <unordered_map>
+#include <algorithm>
+#include <cctype>
+#include <sstream>
+
+#include "field_value.h"
+#include "../util.h"
+
+namespace athenasip::sipfields {
+
+class ViaFieldValue : public FieldValue {
+ public:
+  // Public members representing parts of the SIP Via header.
+  // For example, given:
+  //   "SIP/2.0/TLS client.example.com;branch=z9hG4bK776asdhds"
+  // version  -> "SIP/2.0/TLS"
+  // host     -> "client.example.com"
+  // parameters -> { {"branch", "z9hG4bK776asdhds"} }
+  std::string version;
+  std::string host;
+  std::unordered_map<std::string, std::string> parameters;
+
+  ViaFieldValue() = default;
+  explicit ViaFieldValue(const std::string& value) { parse(value); }
+
+  // Parses a Via header string into version, host, and parameters.
+  // Returns true if parsing is successful.
+  bool parse(const std::string& value);
+
+  // Returns the Via header as a string.
+  std::string to_string() const;
+
+  // Register this field type
+  struct ViaFieldValueRegister {
+    ViaFieldValueRegister() {
+      auto reg = []() { return std::make_shared<ViaFieldValue>(); };
+      FieldValue::register_factory("Via", reg);
+    }
+  };
+  static ViaFieldValueRegister s_viaFieldValueRegister;
+
+
+};
+
+}  // namespace athenasip::sipfields

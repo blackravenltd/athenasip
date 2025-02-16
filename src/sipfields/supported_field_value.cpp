@@ -5,9 +5,10 @@
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
 #include "supported_field_value.h"
-#include <sstream>
+
 #include <algorithm>
 #include <cctype>
+#include <sstream>
 
 using namespace athenasip::sipfields;
 

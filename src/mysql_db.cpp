@@ -75,9 +75,6 @@ std::shared_ptr<DBResult> MySQLDB::query(std::string sql, std::vector<std::any> 
     // Execute the query
     mysqlx::SqlResult result = stmt.execute();
 
-    // // Store affected rows count
-    // res->rows_affected = result.getAffectedItemsCount();
-
     // Ensure query execution is complete before fetching data
     if (!result.hasData()) {
       _logger->debug("Query returned no rows.");
@@ -102,11 +99,16 @@ std::shared_ptr<DBResult> MySQLDB::query(std::string sql, std::vector<std::any> 
         std::string colName = columnNames[col];
 
         // Map Value
-        dbRow->values.insert_or_assign(colName, _map_value(row[col]));
+        auto val = _map_value(row[col]);
+        dbRow->values.insert_or_assign(colName, val);
+        dbRow->column_values.push_back(val);
       }
 
       res->rows.push_back(dbRow);
     }
+
+    // Store affected rows count
+    res->rows_affected = result.getAffectedItemsCount();
 
   } catch (const mysqlx::Error &err) {
     res->error = err.what();

@@ -6,22 +6,19 @@
 //
 #pragma once
 
-#include "../siptypes/authorization.h"
-#include "field_value.h"
 #include <memory>
 #include <string>
+
+#include "../siptypes/authorization.h"
+#include "field_value.h"
 
 namespace athenasip::sipfields {
 
 class AuthorizationFieldValue : public FieldValue {
  public:
   AuthorizationFieldValue() = default;
-  explicit AuthorizationFieldValue(const std::string& value)
-      : value(std::make_shared<athenasip::siptypes::Authorization>()) {
-    parse(value);
-  }
-  explicit AuthorizationFieldValue(std::shared_ptr<athenasip::siptypes::Authorization> val)
-      : value(val) {}
+  explicit AuthorizationFieldValue(const std::string& value) : value(std::make_shared<athenasip::siptypes::Authorization>()) { parse(value); }
+  explicit AuthorizationFieldValue(std::shared_ptr<athenasip::siptypes::Authorization> val) : value(val) {}
 
   bool parse(const std::string& val) override;
   std::string to_string() const override;
@@ -33,9 +30,7 @@ class AuthorizationFieldValue : public FieldValue {
 // Register this field type under the "WWW-Authorization" header name.
 struct AuthorizationFieldValueRegister {
   AuthorizationFieldValueRegister() {
-    auto reg = []() -> std::shared_ptr<FieldValue> {
-      return std::make_shared<AuthorizationFieldValue>();
-    };
+    auto reg = []() -> std::shared_ptr<FieldValue> { return std::make_shared<AuthorizationFieldValue>(); };
     FieldValue::register_factory("WWW-Authorization", reg);
     FieldValue::register_factory("Authorization", reg);
   }
