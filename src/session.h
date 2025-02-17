@@ -35,6 +35,7 @@
 #include "sip_message.h"
 #include "types/authorization.h"
 #include "types/sip_identity.h"
+#include "sdp.h"
 #include "util.h"
 
 using namespace athenasip::types;
@@ -83,6 +84,8 @@ class Session : public std::enable_shared_from_this<Session> {
   void _process_message();
   void _process_message_initial();
   void _process_message_challenged();
+  void _process_message_registered();
+  void _process_message_invite();
 
   void _send(uint16_t code, std::string message);
   void _send_close(uint16_t code, std::string message);
