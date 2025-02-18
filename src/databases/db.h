@@ -7,12 +7,12 @@
 #pragma once
 
 #include <any>
-#include <type_traits>
-#include <unordered_map>
-#include <vector>
 #include <iostream>
 #include <memory>
 #include <string>
+#include <type_traits>
+#include <unordered_map>
+#include <vector>
 
 #include "../loggers/logger.h"
 #include "../loggers/logger_scoped.h"
@@ -65,7 +65,7 @@ class DBRow {
   std::vector<std::shared_ptr<DBValue>> column_values;
 
   // Provide read-only access to a value by key.
-  std::shared_ptr<DBValue> operator[](const std::string& key) const {
+  std::shared_ptr<DBValue> operator[](const std::string &key) const {
     auto it = values.find(key);
     return (it != values.end()) ? it->second : nullptr;
   }
@@ -118,4 +118,4 @@ class DB {
   }
 };
 
-}  // namespace athenasip
+}  // namespace athenasip::databases

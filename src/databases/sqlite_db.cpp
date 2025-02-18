@@ -9,45 +9,44 @@
 
 namespace athenasip::databases {
 
-SQLiteDB::SQLiteDB(std::shared_ptr<Logger> logger, std::shared_ptr<URL> url)
-    : DB(std::make_shared<LoggerScoped>("sqlite", logger)), _url(url), _db(nullptr) {}
+SQLiteDB::SQLiteDB(std::shared_ptr<Logger> logger, std::shared_ptr<URL> url) : DB(std::make_shared<LoggerScoped>("sqlite", logger)), _url(url), _db(nullptr) {}
 
 SQLiteDB::~SQLiteDB() { close(); }
 
 bool SQLiteDB::connect() {
-    std::string dbPath = _url->path;
-    dbPath.erase(0,1);
-    dbPath = Util::expand_path(dbPath);
+  std::string dbPath = _url->path;
+  dbPath.erase(0, 1);
+  dbPath = Util::expand_path(dbPath);
 
-    _logger->debug("Opening SQLite database: " + dbPath);
+  _logger->debug("Opening SQLite database: " + dbPath);
 
-    // Try to open DB
-    int flags = SQLITE_OPEN_READWRITE;
-    int rc = sqlite3_open_v2(dbPath.c_str(), &_db, flags, nullptr);
+  // Try to open DB
+  int flags = SQLITE_OPEN_READWRITE;
+  int rc = sqlite3_open_v2(dbPath.c_str(), &_db, flags, nullptr);
 
-    // If OK, return
-    if (rc == SQLITE_OK) {
-        _logger->info("Opened SQLite database: " + dbPath);
-        return true;
-    }
-
-    // TODO: Check DB create flag in config
-
-    // Create DB if allowed
-    _logger->debug("Creating new database at: " + dbPath);
-    flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
-    rc = sqlite3_open_v2(dbPath.c_str(), &_db, flags, nullptr);
-
-    if (rc != SQLITE_OK) {
-        _logger->error("Failed to create database: " + std::string(sqlite3_errmsg(_db)));
-        sqlite3_close(_db);
-        _db = nullptr;
-        return false;
-    }
-
-    _logger->info("Created SQLite database: " + dbPath);
-
+  // If OK, return
+  if (rc == SQLITE_OK) {
+    _logger->info("Opened SQLite database: " + dbPath);
     return true;
+  }
+
+  // TODO: Check DB create flag in config
+
+  // Create DB if allowed
+  _logger->debug("Creating new database at: " + dbPath);
+  flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
+  rc = sqlite3_open_v2(dbPath.c_str(), &_db, flags, nullptr);
+
+  if (rc != SQLITE_OK) {
+    _logger->error("Failed to create database: " + std::string(sqlite3_errmsg(_db)));
+    sqlite3_close(_db);
+    _db = nullptr;
+    return false;
+  }
+
+  _logger->info("Created SQLite database: " + dbPath);
+
+  return true;
 }
 
 void SQLiteDB::_bind_parameters(sqlite3_stmt* stmt, const std::vector<std::any>& params) {
@@ -88,7 +87,7 @@ std::shared_ptr<DBResult> SQLiteDB::query(std::string sql, std::vector<std::any>
       res->rows.push_back(row);
     }
     res->rows_affected = sqlite3_changes(_db);
-  } catch (const std::exception &ex) {
+  } catch (const std::exception& ex) {
     res->error = ex.what();
     _logger->error("Standard Exception: " + res->error);
   }
@@ -126,4 +125,4 @@ static bool sqlite_registered = [] {
   return true;
 }();
 
-}  // namespace athenasip
+}  // namespace athenasip::databases

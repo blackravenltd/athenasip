@@ -76,27 +76,70 @@ std::string Util::md5(const std::string& input) {
 }
 
 std::filesystem::path Util::expand_path(const std::string& path) {
-    std::filesystem::path p(path);
+  std::filesystem::path p(path);
 
-    // Handle ~ (Home Directory Expansion)
-    if (!path.empty() && path[0] == '~') {
-        const char* home = std::getenv("HOME");
-        if (!home) {
-            #ifdef _WIN32
-            home = std::getenv("USERPROFILE");  // Windows equivalent of $HOME
-            #endif
-        }
-        if (home) {
-            std::string remaining = path.substr(1);  // Strip ~
-            if (!remaining.empty() && remaining[0] == '/') {
-                remaining = remaining.substr(1);  // Strip leading '/'
-            }
-            return std::filesystem::path(home) / remaining;
-        }
+  // Handle ~ (Home Directory Expansion)
+  if (!path.empty() && path[0] == '~') {
+    const char* home = std::getenv("HOME");
+    if (!home) {
+#ifdef _WIN32
+      home = std::getenv("USERPROFILE");  // Windows equivalent of $HOME
+#endif
     }
+    if (home) {
+      std::string remaining = path.substr(1);  // Strip ~
+      if (!remaining.empty() && remaining[0] == '/') {
+        remaining = remaining.substr(1);  // Strip leading '/'
+      }
+      return std::filesystem::path(home) / remaining;
+    }
+  }
 
-    // Convert to absolute path
-    return std::filesystem::absolute(p);
+  // Convert to absolute path
+  return std::filesystem::absolute(p);
+}
+
+bool Util::is_ipv4_private(const std::string& ipv4) {
+  std::istringstream iss(ipv4);
+  std::array<int, 4> parts{};
+  int i = 0;
+  std::string token;
+  while (std::getline(iss, token, '.')) {
+    if (i >= 4) {
+      // More than 4 parts, invalid IPv4
+      return false;
+    }
+    try {
+      int num = std::stoi(token);
+      if (num < 0 || num > 255) {
+        return false;
+      }
+      parts[i++] = num;
+    } catch (...) {
+      return false;
+    }
+  }
+  // Must have exactly 4 parts
+  if (i != 4) {
+    return false;
+  }
+
+  // Check for private IP ranges
+  // 10.0.0.0/8
+  if (parts[0] == 10) return true;
+  // 172.16.0.0/12 (172.16.0.0 - 172.31.255.255)
+  if (parts[0] == 172 && (parts[1] >= 16 && parts[1] <= 31)) return true;
+  // 192.168.0.0/16
+  if (parts[0] == 192 && parts[1] == 168) return true;
+
+  return false;
+}
+
+bool Util::is_ipv4(const std::string& ip) {
+    static const std::regex ipv4Pattern(
+        R"(^(25[0-5]|2[0-4]\d|[0-1]?\d?\d)(\.(25[0-5]|2[0-4]\d|[0-1]?\d?\d)){3}$)"
+    );
+    return std::regex_match(ip, ipv4Pattern);
 }
 
 }  // namespace athenasip

@@ -31,11 +31,13 @@
 #include "headers/uint_header.h"
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
+#include "sdp.h"
 #include "sip_header.h"
 #include "sip_message.h"
 #include "types/authorization.h"
 #include "types/sip_identity.h"
-#include "sdp.h"
+#include "types/sip_uri.h"
+#include "types/subscriber.h"
 #include "util.h"
 
 using namespace athenasip::types;
@@ -46,7 +48,8 @@ namespace athenasip {
 class Session : public std::enable_shared_from_this<Session> {
  public:
   using StartCloseFn = std::function<bool(std::string, std::shared_ptr<Session>)>;
-  using AuthenticateFn = std::function<std::optional<std::string>(std::shared_ptr<SIPIdentity> identity, std::shared_ptr<Session>)>;
+  using AuthenticateFn = std::function<std::shared_ptr<Subscriber>(std::shared_ptr<SIPIdentity>, std::shared_ptr<Session>)>;
+  using RegisterLocationFn = std::function<bool(std::shared_ptr<Subscriber>, std::shared_ptr<SIPUri>, std::shared_ptr<Session>)> ;
 
   Session(std::shared_ptr<Logger> logger, std::string nonce_secret);
 
@@ -68,6 +71,7 @@ class Session : public std::enable_shared_from_this<Session> {
   void on_start(StartCloseFn callback);
   void on_close(StartCloseFn callback);
   void on_authenticate(AuthenticateFn callback);
+  void on_register_location(RegisterLocationFn callback);
 
  protected:
   std::shared_ptr<Logger> _logger;
@@ -80,6 +84,10 @@ class Session : public std::enable_shared_from_this<Session> {
   StartCloseFn _on_start;
   StartCloseFn _on_close;
   AuthenticateFn _on_authenticate;
+  RegisterLocationFn _on_register_location;
+
+  std::shared_ptr<Subscriber> _subscriber;
+  std::shared_ptr<SIPUri> _contact;
 
   void _process_message();
   void _process_message_initial();

@@ -22,8 +22,8 @@ namespace athenasip {
 class SIPCore {
  public:
   SIPCore();
-  SIPCore(std::shared_ptr<Version> _version, std::shared_ptr<Config> _config, std::shared_ptr<athenasip::loggers::Logger> _logger, std::shared_ptr<athenasip::databases::DB> _db,
-          std::shared_ptr<Registrar> _registrar, std::shared_ptr<Server> _server);
+  SIPCore(std::shared_ptr<Version> _version, std::shared_ptr<Config> _config, std::shared_ptr<athenasip::loggers::Logger> _logger,
+          std::shared_ptr<athenasip::databases::DB> _db, std::shared_ptr<Registrar> _registrar, std::shared_ptr<Server> _server);
 
  public:
   std::shared_ptr<Version> version;

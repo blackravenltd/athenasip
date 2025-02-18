@@ -100,7 +100,15 @@ void TLSServer::_handle_accept(const boost::system::error_code& error, std::shar
       new_session->on_start([this](std::string endpoint, std::shared_ptr<Session> session) { return register_session(endpoint, session); });
       new_session->on_close([this](std::string endpoint, std::shared_ptr<Session> session) { return unregister_session(endpoint, session); });
       new_session->on_authenticate(
-          [this](std::shared_ptr<SIPIdentity> identity, std::shared_ptr<Session> session) { return subscriber_get_h1(identity, session); });
+          [this](std::shared_ptr<SIPIdentity> identity, std::shared_ptr<Session> session) { 
+            return _registrar->subscriber_get(identity); 
+          }
+      );
+      new_session->on_register_location(
+        [this](std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Session> session) {
+          return _registrar->subscriber_register(subscriber, contact);
+        }
+      );
 
     } catch (const std::exception& e) {
       _logger->info("Incoming Connection TLS Error: " + remote_addr + " " + e.what());

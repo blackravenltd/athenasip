@@ -9,4 +9,4 @@ tls:
   key_pem_filename: "../tls/snakeoil.key"
 
 db:
-  url: "sqlite://root@localhost/~/athenasip_sqllite.db"
+  url: "mysql://root@localhost/athenasip"

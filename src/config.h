@@ -35,10 +35,10 @@ class Config {
   std::string tls_key_pem_filename;   // e.g. "./tls/snakeoil.key"
 
   // DB configuration
-  std::string db_database_url;        // e.g. "mysql://root@localhost/"
+  std::string db_database_url;  // e.g. "mysql://root@localhost/"
 
   // SQLLite configuration (optional)
-  bool sqlite_create_database;   // sqllite.create_database - True if the database should be created
+  bool sqlite_create_database;  // sqllite.create_database - True if the database should be created
 
   // Loads configuration from a YAML file.
   bool load_from_yaml(const std::string &filename);
