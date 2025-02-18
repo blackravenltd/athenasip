@@ -36,13 +36,6 @@ std::string Util::trim(const std::string& str, const std::string& trimmable) {
   return (first == std::string::npos) ? "" : str.substr(first, last - first + 1);
 }
 
-#include <openssl/evp.h>
-
-#include <iomanip>
-#include <sstream>
-#include <stdexcept>
-#include <string>
-
 std::string Util::md5(const std::string& input) {
   // Buffer to hold the digest. EVP_MAX_MD_SIZE is guaranteed to be large enough.
   unsigned char digest[EVP_MAX_MD_SIZE];
@@ -80,6 +73,30 @@ std::string Util::md5(const std::string& input) {
     oss << std::setw(2) << static_cast<unsigned int>(digest[i]);
   }
   return oss.str();
+}
+
+std::filesystem::path Util::expand_path(const std::string& path) {
+    std::filesystem::path p(path);
+
+    // Handle ~ (Home Directory Expansion)
+    if (!path.empty() && path[0] == '~') {
+        const char* home = std::getenv("HOME");
+        if (!home) {
+            #ifdef _WIN32
+            home = std::getenv("USERPROFILE");  // Windows equivalent of $HOME
+            #endif
+        }
+        if (home) {
+            std::string remaining = path.substr(1);  // Strip ~
+            if (!remaining.empty() && remaining[0] == '/') {
+                remaining = remaining.substr(1);  // Strip leading '/'
+            }
+            return std::filesystem::path(home) / remaining;
+        }
+    }
+
+    // Convert to absolute path
+    return std::filesystem::absolute(p);
 }
 
 }  // namespace athenasip

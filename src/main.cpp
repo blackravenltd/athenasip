@@ -14,6 +14,7 @@
 #include "config.h"
 #include "loggers/logger_scoped.h"
 #include "loggers/logger_stdio.h"
+#include "databases/db.h"
 #include "registrar.h"
 #include "sip_core.h"
 #include "tls_server.h"
@@ -39,7 +40,7 @@ int main(int argc, char* argv[]) {
   core->version = std::make_shared<Version>(0, 1, 0);
 
   // Create Logger
-  core->logger = std::make_shared<LoggerStdIO>(LogLevel::DEBUG);
+  core->logger = std::make_shared<athenasip::loggers::LoggerStdIO>(LogLevel::DEBUG);
 
   // Log Splash
   core->logger->raw("-----------------------------------");
@@ -52,7 +53,7 @@ int main(int argc, char* argv[]) {
   core->config->load_from_yaml("../config-example.yaml");
 
   // Create DB
-  core->db = DB::create_driver(core->logger, core->config->get("db.url").value_or(""));
+  core->db = athenasip::databases::DB::create_driver(core->logger, core->config->db_database_url);
   if (!core->db) {
     core->logger->error("Unknown database scheme");
     return -2;
@@ -67,10 +68,10 @@ int main(int argc, char* argv[]) {
   // core->registrar->subscriber_exists(std::make_shared<SIPIdentity>("Tom Cully <sip:tom@sip.blackraven.co.nz>"));
 
   // Create the TLSServer instance with the logger and start it on the specified port
-  auto tlsServer = std::make_shared<TLSServer>(core->logger, core->registrar, core->config->get("sip.nonce_secret").value_or(""), 5061);
+  auto tlsServer = std::make_shared<TLSServer>(core->logger, core->registrar, core->config->sip_nonce_secret, 5061);
 
   // Set Certificates
-  if (!tlsServer->set_certificates(core->config->get("tls.cert_pem_filename").value_or(""), core->config->get("tls.key_pem_filename").value_or(""))) {
+  if (!tlsServer->set_certificates(core->config->tls_cert_pem_filename, core->config->tls_key_pem_filename)) {
     core->logger->error("Cannot load TLS certificates");
     return -4;
   }

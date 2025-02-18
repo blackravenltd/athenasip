@@ -13,12 +13,12 @@
 #include <vector>
 
 #include "db.h"
-#include "util.h"
+#include "../util.h"
 
 using namespace athenasip::types;
 using namespace athenasip::loggers;
 
-namespace athenasip {
+namespace athenasip::databases {
 
 class PostgreSQLDB : public DB {
  public:

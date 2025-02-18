@@ -12,6 +12,16 @@
 #include <sstream>
 #include <stdexcept>
 
+namespace athenasip::databases {
+
+// Utility to generate a unique prepared statement name.
+std::string generate_unique_stmt_name() {
+  static std::random_device rd;
+  static std::mt19937 mt(rd());
+  static std::uniform_int_distribution<int> dist(0, 1000000);
+  return "stmt_" + std::to_string(dist(mt));
+}  // namespace
+
 // Helper function to map PostgreSQL type OIDs to type names.
 static std::string oid_to_type(pqxx::oid oid) {
   switch (oid) {
@@ -33,18 +43,6 @@ static std::string oid_to_type(pqxx::oid oid) {
       return "text";
   }
 }
-
-namespace athenasip {
-
-namespace {
-// Utility to generate a unique prepared statement name.
-std::string generate_unique_stmt_name() {
-  static std::random_device rd;
-  static std::mt19937 mt(rd());
-  static std::uniform_int_distribution<int> dist(0, 1000000);
-  return "stmt_" + std::to_string(dist(mt));
-}
-}  // namespace
 
 PostgreSQLDB::PostgreSQLDB(std::shared_ptr<Logger> logger, std::shared_ptr<URL> url) : DB(std::make_shared<LoggerScoped>("postgres", logger)), _url(url) {}
 

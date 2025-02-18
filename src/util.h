@@ -14,6 +14,8 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <filesystem>
+#include <cstdlib>
 
 namespace athenasip {
 
@@ -24,6 +26,7 @@ class Util {
   static std::string trim(const std::string& str);
   static std::string trim(const std::string& str, const std::string& trimmable);
   static std::string md5(const std::string& input);
+  static std::filesystem::path expand_path(const std::string& input);
 };
 
 }  // namespace athenasip
