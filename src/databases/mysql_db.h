@@ -9,14 +9,15 @@
 #include <mysqlx/xdevapi.h>
 
 #include <string>
+#include <iomanip>
 
 #include "db.h"
-#include "util.h"
+#include "../util.h"
 
 using namespace athenasip::types;
 using namespace athenasip::loggers;
 
-namespace athenasip {
+namespace athenasip::databases {
 
 class MySQLDB : public DB {
  public:

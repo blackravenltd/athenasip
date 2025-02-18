@@ -1,15 +1,15 @@
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.31)
 project(athenasip LANGUAGES CXX)
 
 # Set C++ Standard
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Use new policy behaviours
+# Use new policy behaviours (if not already default in 3.31.5)
 cmake_policy(SET CMP0177 NEW)
 cmake_policy(SET CMP0167 NEW)
 
-# FetchContent
+# FetchContent module
 include(FetchContent)
 
 # Use /usr/local also
@@ -65,14 +65,22 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(tinyxml2)
 
+# ---- Add SQLite support ----
+find_package(SQLite3 REQUIRED)
+message(STATUS "SQLite3 Include Directory: ${SQLite3_INCLUDE_DIRS}")
+message(STATUS "SQLite3 Libraries: ${SQLite3_LIBRARIES}")
+
 # Collect all source files from the src directory
 file(GLOB_RECURSE ATHENA_SOURCES src/*.cpp)
 
 # Create the executable
 add_executable(athenasip ${ATHENA_SOURCES})
 
-# Include directories (Boost is added via target usage requirements)
-target_include_directories(athenasip PRIVATE ${Boost_INCLUDE_DIRS})
+# Include directories (Boost and SQLite are added here)
+target_include_directories(athenasip PRIVATE 
+    ${Boost_INCLUDE_DIRS}
+    ${SQLite3_INCLUDE_DIRS}
+)
 
 # Link libraries
 target_link_libraries(athenasip PRIVATE 
@@ -84,6 +92,7 @@ target_link_libraries(athenasip PRIVATE
     yaml-cpp::yaml-cpp
     tinyxml2::tinyxml2
     ${PQXX_LIBRARIES}   # Link PostgreSQL libpqxx
+    ${SQLite3_LIBRARIES}  # Link SQLite3 library
 )
 
 # Output build messages

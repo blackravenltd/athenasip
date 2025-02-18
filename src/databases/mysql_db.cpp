@@ -6,7 +6,7 @@
 //
 #include "mysql_db.h"
 
-namespace athenasip {
+namespace athenasip::databases {
 
 MySQLDB::MySQLDB(std::shared_ptr<Logger> logger, std::shared_ptr<URL> url) : DB(std::make_shared<LoggerScoped>("mysql", logger)), _url(url) {}
 MySQLDB::~MySQLDB() { close(); }

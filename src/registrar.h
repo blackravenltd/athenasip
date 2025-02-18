@@ -12,19 +12,18 @@
 #include <sstream>
 #include <string>
 
-#include "db.h"
+#include "databases/db.h"
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
 #include "types/sip_identity.h"
 
 using namespace athenasip::types;
-using namespace athenasip::loggers;
 
 namespace athenasip {
 
 class Registrar {
  public:
-  Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<DB> db);
+  Registrar(std::shared_ptr<athenasip::loggers::Logger> logger, std::shared_ptr<athenasip::databases::DB> db);
 
   bool subscriber_exists(std::shared_ptr<SIPIdentity> identity);
   std::optional<std::string> subscriber_get_h1(std::shared_ptr<SIPIdentity> identity);
@@ -33,7 +32,7 @@ class Registrar {
 
  private:
   std::unique_ptr<Logger> _logger;
-  std::shared_ptr<DB> _db;
+  std::shared_ptr<athenasip::databases::DB> _db;
 };
 
 }  // namespace athenasip

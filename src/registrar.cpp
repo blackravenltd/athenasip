@@ -6,9 +6,11 @@
 //
 #include "registrar.h"
 
+using namespace athenasip::databases;
+
 namespace athenasip {
 
-Registrar::Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<DB> db) : _logger(std::make_unique<LoggerScoped>("registrar", logger)), _db(db) {}
+Registrar::Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<athenasip::databases::DB> db) : _logger(std::make_unique<LoggerScoped>("registrar", logger)), _db(db) {}
 
 bool Registrar::subscriber_exists(std::shared_ptr<SIPIdentity> identity) {
   std::shared_ptr<DBResult> res =

@@ -11,27 +11,25 @@
 #include <string>
 
 #include "config.h"
-#include "db.h"
+#include "databases/db.h"
 #include "loggers/logger.h"
 #include "registrar.h"
 #include "server.h"
 #include "version.h"
-
-using namespace athenasip::loggers;
 
 namespace athenasip {
 
 class SIPCore {
  public:
   SIPCore();
-  SIPCore(std::shared_ptr<Version> _version, std::shared_ptr<Config> _config, std::shared_ptr<Logger> _logger, std::shared_ptr<DB> _db,
+  SIPCore(std::shared_ptr<Version> _version, std::shared_ptr<Config> _config, std::shared_ptr<athenasip::loggers::Logger> _logger, std::shared_ptr<athenasip::databases::DB> _db,
           std::shared_ptr<Registrar> _registrar, std::shared_ptr<Server> _server);
 
  public:
   std::shared_ptr<Version> version;
   std::shared_ptr<Config> config;
-  std::shared_ptr<Logger> logger;
-  std::shared_ptr<DB> db;
+  std::shared_ptr<athenasip::loggers::Logger> logger;
+  std::shared_ptr<athenasip::databases::DB> db;
   std::shared_ptr<Registrar> registrar;
   std::shared_ptr<Server> server;
 };

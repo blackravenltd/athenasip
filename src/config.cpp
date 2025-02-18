@@ -14,7 +14,7 @@
 
 namespace athenasip {
 
-Config::Config(std::shared_ptr<Logger> logger) : _logger(logger), port(0), registration_timeout(0), babble_limit(0) {}
+Config::Config(std::shared_ptr<Logger> logger) : _logger(logger), sip_port(0), sip_registration_timeout(0) {}
 
 bool Config::load_from_yaml(const std::string &filename) {
   YAML::Node config;
@@ -33,7 +33,7 @@ bool Config::load_from_yaml(const std::string &filename) {
   YAML::Node sip = config["sip"];
 
   if (sip["address"])
-    address = sip["address"].as<std::string>();
+    sip_address = sip["address"].as<std::string>();
   else {
     _logger->error("Missing 'sip.address'");
     return false;
@@ -41,7 +41,7 @@ bool Config::load_from_yaml(const std::string &filename) {
 
   if (sip["port"]) {
     try {
-      port = sip["port"].as<uint16_t>();
+      sip_port = sip["port"].as<uint16_t>();
     } catch (const std::exception &e) {
       _logger->error("Invalid value for 'sip.port': " + std::string(e.what()));
       return false;
@@ -52,14 +52,14 @@ bool Config::load_from_yaml(const std::string &filename) {
   }
 
   if (sip["realm"])
-    realm = sip["realm"].as<std::string>();
+    sip_realm = sip["realm"].as<std::string>();
   else {
     _logger->error("Missing 'sip.realm'");
     return false;
   }
 
   if (sip["nonce_secret"])
-    nonce_secret = sip["nonce_secret"].as<std::string>();
+    sip_nonce_secret = sip["nonce_secret"].as<std::string>();
   else {
     _logger->error("Missing 'sip.nonce_secret'");
     return false;
@@ -73,40 +73,28 @@ bool Config::load_from_yaml(const std::string &filename) {
   YAML::Node tls = config["tls"];
 
   if (tls["cert_pem_filename"])
-    cert_pem_filename = tls["cert_pem_filename"].as<std::string>();
+    tls_cert_pem_filename = tls["cert_pem_filename"].as<std::string>();
   else {
     _logger->warn("Missing 'tls.cert_pem_filename'");
-    cert_pem_filename.clear();
+    tls_cert_pem_filename.clear();
   }
 
   if (tls["key_pem_filename"])
-    key_pem_filename = tls["key_pem_filename"].as<std::string>();
+    tls_key_pem_filename = tls["key_pem_filename"].as<std::string>();
   else {
     _logger->warn("Missing 'tls.key_pem_filename'");
-    key_pem_filename.clear();
+    tls_key_pem_filename.clear();
   }
 
   // --- Parse the 'db' section ---
   if (config["db"] && config["db"]["url"])
-    database_url = config["db"]["url"].as<std::string>();
+    db_database_url = config["db"]["url"].as<std::string>();
   else {
     _logger->error("Missing 'db.url'");
     return false;
   }
 
   return true;
-}
-
-std::optional<std::string> Config::get(const std::string &path) {
-  // A very basic implementation for demonstration. Extend as needed.
-  if (path == "sip.address") return address;
-  if (path == "sip.port") return std::to_string(port);
-  if (path == "sip.realm") return realm;
-  if (path == "sip.nonce_secret") return nonce_secret;
-  if (path == "tls.cert_pem_filename") return cert_pem_filename;
-  if (path == "tls.key_pem_filename") return key_pem_filename;
-  if (path == "db.url") return database_url;
-  return std::nullopt;
 }
 
 }  // namespace athenasip
