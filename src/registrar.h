@@ -16,6 +16,7 @@
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
 #include "types/sip_identity.h"
+#include "types/subscriber.h"
 
 using namespace athenasip::types;
 
@@ -26,8 +27,8 @@ class Registrar {
   Registrar(std::shared_ptr<athenasip::loggers::Logger> logger, std::shared_ptr<athenasip::databases::DB> db);
 
   bool subscriber_exists(std::shared_ptr<SIPIdentity> identity);
-  std::optional<std::string> subscriber_get_h1(std::shared_ptr<SIPIdentity> identity);
-  void subscriber_register(std::shared_ptr<SIPIdentity> identity, std::shared_ptr<SIPUri> location);
+  std::shared_ptr<Subscriber> subscriber_get(std::shared_ptr<SIPIdentity> identity);
+  bool subscriber_register(std::shared_ptr<Subscriber> identity, std::shared_ptr<SIPUri> contact);
   const std::shared_ptr<SIPUri> subscriber_get_location(std::shared_ptr<SIPIdentity> identity);
 
  private:

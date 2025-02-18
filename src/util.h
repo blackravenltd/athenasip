@@ -8,14 +8,16 @@
 
 #include <openssl/evp.h>
 
+#include <cstdlib>
+#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
-#include <filesystem>
-#include <cstdlib>
+#include <array>
+#include <regex>
 
 namespace athenasip {
 
@@ -27,6 +29,8 @@ class Util {
   static std::string trim(const std::string& str, const std::string& trimmable);
   static std::string md5(const std::string& input);
   static std::filesystem::path expand_path(const std::string& input);
+  static bool is_ipv4(const std::string& ipv4);
+  static bool is_ipv4_private(const std::string& ipv4);
 };
 
 }  // namespace athenasip

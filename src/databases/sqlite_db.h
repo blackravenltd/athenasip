@@ -7,17 +7,18 @@
 #pragma once
 
 #include <sqlite3.h>
-#include <memory>
-#include <string>
-#include <vector>
-#include <any>
-#include <unordered_map>
-#include <chrono>
-#include <sstream>
-#include <filesystem>
 
-#include "db.h"
+#include <any>
+#include <chrono>
+#include <filesystem>
+#include <memory>
+#include <sstream>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
 #include "../util.h"
+#include "db.h"
 
 using namespace athenasip::types;
 using namespace athenasip::loggers;
@@ -41,4 +42,4 @@ class SQLiteDB : public DB {
   void _bind_parameters(sqlite3_stmt* stmt, const std::vector<std::any>& params);
 };
 
-}  // namespace athenasip
+}  // namespace athenasip::databases

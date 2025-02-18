@@ -33,7 +33,6 @@ class Server : public std::enable_shared_from_this<Server> {
 
   virtual bool register_session(std::string endpoint, std::shared_ptr<Session> session);
   virtual bool unregister_session(std::string endpoint, std::shared_ptr<Session> session);
-  virtual std::optional<std::string> subscriber_get_h1(std::shared_ptr<SIPIdentity> identity, std::shared_ptr<Session> session);
 
   std::string nonce_secret = "testing123";
 

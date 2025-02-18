@@ -121,6 +121,10 @@ std::shared_ptr<DBResult> PostgreSQLDB::query(std::string sql, std::vector<std::
         auto v = std::any_cast<int>(params[i]);
         paramValues.push_back(std::to_string(v));
         param_strs += std::to_string(v) + ",";
+      } else if (params[i].type() == typeid(uint64_t)) {
+        auto v = std::any_cast<uint64_t>(params[i]);
+        paramValues.push_back(std::to_string(v));
+        param_strs += std::to_string(v) + ",";
       } else if (params[i].type() == typeid(double)) {
         auto v = std::any_cast<double>(params[i]);
         paramValues.push_back(std::to_string(v));
@@ -197,4 +201,4 @@ static bool postgres_registered = [] {
   return true;
 }();
 
-}  // namespace athenasip
+}  // namespace athenasip::databases

@@ -12,9 +12,9 @@
 #include <string>
 
 #include "config.h"
+#include "databases/db.h"
 #include "loggers/logger_scoped.h"
 #include "loggers/logger_stdio.h"
-#include "databases/db.h"
 #include "registrar.h"
 #include "sip_core.h"
 #include "tls_server.h"

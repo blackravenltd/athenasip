@@ -8,11 +8,11 @@
 
 #include <mysqlx/xdevapi.h>
 
-#include <string>
 #include <iomanip>
+#include <string>
 
-#include "db.h"
 #include "../util.h"
+#include "db.h"
 
 using namespace athenasip::types;
 using namespace athenasip::loggers;
@@ -35,4 +35,4 @@ class MySQLDB : public DB {
   std::shared_ptr<mysqlx::Session> _session;
 };
 
-}  // namespace athenasip
+}  // namespace athenasip::databases

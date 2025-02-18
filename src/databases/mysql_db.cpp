@@ -72,16 +72,52 @@ std::shared_ptr<DBResult> MySQLDB::query(std::string sql, std::vector<std::any> 
         auto v = std::any_cast<std::string>(params[i]);
         stmt.bind(v);
         param_strs += v + ",";
+      } else if (params[i].type() == typeid(uint8_t)) {
+        auto v = std::any_cast<uint8_t>(params[i]);
+        stmt.bind(v);
+        param_strs += std::to_string(v) + ",";
+      } else if (params[i].type() == typeid(uint16_t)) {
+        auto v = std::any_cast<uint16_t>(params[i]);
+        stmt.bind(v);
+        param_strs += std::to_string(v) + ",";
+      } else if (params[i].type() == typeid(uint32_t)) {
+        auto v = std::any_cast<uint32_t>(params[i]);
+        stmt.bind(v);
+        param_strs += std::to_string(v) + ",";
+      } else if (params[i].type() == typeid(uint64_t)) {
+        auto v = std::any_cast<uint64_t>(params[i]);
+        stmt.bind(v);
+        param_strs += std::to_string(v) + ",";
       } else if (params[i].type() == typeid(int)) {
         auto v = std::any_cast<int>(params[i]);
+        stmt.bind(v);
+        param_strs += std::to_string(v) + ",";
+      } else if (params[i].type() == typeid(int16_t)) {
+        auto v = std::any_cast<int16_t>(params[i]);
+        stmt.bind(v);
+        param_strs += std::to_string(v) + ",";
+      } else if (params[i].type() == typeid(int32_t)) {
+        auto v = std::any_cast<int32_t>(params[i]);
+        stmt.bind(v);
+        param_strs += std::to_string(v) + ",";
+      } else if (params[i].type() == typeid(int64_t)) {
+        auto v = std::any_cast<int64_t>(params[i]);
+        stmt.bind(v);
+        param_strs += std::to_string(v) + ",";
+      } else if (params[i].type() == typeid(float)) {
+        auto v = std::any_cast<float>(params[i]);
         stmt.bind(v);
         param_strs += std::to_string(v) + ",";
       } else if (params[i].type() == typeid(double)) {
         auto v = std::any_cast<double>(params[i]);
         stmt.bind(v);
         param_strs += std::to_string(v) + ",";
+      } else if (params[i].type() == typeid(char)) {
+        auto v = std::any_cast<char>(params[i]);
+        stmt.bind(v);
+        param_strs += std::to_string(v) + ",";
       } else {
-        throw std::runtime_error("Unsupported parameter type at index " + std::to_string(i));
+        throw std::runtime_error("Unsupported parameter type at index " + std::to_string(i)+ " (? Name "+params[i].type().name()+")");
       }
     }
 
@@ -89,10 +125,7 @@ std::shared_ptr<DBResult> MySQLDB::query(std::string sql, std::vector<std::any> 
     mysqlx::SqlResult result = stmt.execute();
 
     // Ensure query execution is complete before fetching data
-    if (!result.hasData()) {
-      _logger->debug("Query returned no rows.");
-      return res;
-    }
+    if (!result.hasData()) return res;
 
     // Fetch column names before iterating over rows
     std::vector<std::string> columnNames;
@@ -134,7 +167,7 @@ std::shared_ptr<DBResult> MySQLDB::query(std::string sql, std::vector<std::any> 
 
   } catch (const mysqlx::Error &err) {
     res->error = err.what();
-    _logger->error(std::string("Error: ") + err.what());
+    _logger->debug("SQL: " + sql + " [" + Util::trim(param_strs, ",") + "] Error: " + err.what());
   } catch (std::exception &ex) {
     res->error = ex.what();
     _logger->error(std::string("Standard Exception: ") + ex.what());
@@ -158,4 +191,4 @@ static bool mysql_registered = [] {
   return true;
 }();
 
-}  // namespace athenasip
+}  // namespace athenasip::databases

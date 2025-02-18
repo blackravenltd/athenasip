@@ -10,11 +10,12 @@ using namespace athenasip::databases;
 
 namespace athenasip {
 
-Registrar::Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<athenasip::databases::DB> db) : _logger(std::make_unique<LoggerScoped>("registrar", logger)), _db(db) {}
+Registrar::Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<athenasip::databases::DB> db)
+    : _logger(std::make_unique<LoggerScoped>("registrar", logger)), _db(db) {}
 
 bool Registrar::subscriber_exists(std::shared_ptr<SIPIdentity> identity) {
   std::shared_ptr<DBResult> res =
-      _db->query("SELECT COUNT(`id`) FROM `subscriber` WHERE `user` = ? AND `realm` = ?", {identity->uri->user, identity->uri->realm});
+      _db->query("SELECT COUNT(*) FROM `subscriber` WHERE `user` = ? AND `realm` = ?", {identity->uri->user, identity->uri->realm});
 
   if (res && res->rows.size() == 0) {
     _logger->warn("DB returned no rows on a COUNT() statement");
@@ -24,14 +25,40 @@ bool Registrar::subscriber_exists(std::shared_ptr<SIPIdentity> identity) {
   }
 }
 
-std::optional<std::string> Registrar::subscriber_get_h1(std::shared_ptr<SIPIdentity> identity) {
-  std::shared_ptr<DBResult> res = _db->query("SELECT `h1` FROM `subscriber` WHERE `user` = ? AND `realm` = ?", {identity->uri->user, identity->uri->realm});
+std::shared_ptr<Subscriber> Registrar::subscriber_get(std::shared_ptr<SIPIdentity> identity) {
+  std::shared_ptr<DBResult> res =
+      _db->query("SELECT `id`,`name`,`h1` FROM `subscriber` WHERE `user` = ? AND `realm` = ?", {identity->uri->user, identity->uri->realm});
 
-  if (res && res->rows.size() == 0) return std::nullopt;
-  return res->rows[0]->values["h1"]->as<std::string>();
+  if (res && res->rows.size() == 0) return nullptr;
+
+  auto obj = std::make_shared<Subscriber>();
+  auto row = res->rows[0];
+  obj->id = row->values["id"]->as<uint64_t>();
+  obj->identity = identity;
+  obj->h1 = row->values["h1"]->as<std::string>();
+  return obj;
 }
 
-void Registrar::subscriber_register(std::shared_ptr<SIPIdentity> identity, std::shared_ptr<SIPUri> location) {}
+bool Registrar::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact) {
+  std::shared_ptr<DBResult> res = _db->query("SELECT COUNT(*) FROM `location` WHERE `subscriber_id` = ? AND `user` = ? AND `host` = ? AND `port` = ?", { subscriber->id, contact->user, contact->realm, contact->port.value_or(0) });
+  if (res && res->rows.size() == 0) {
+    _logger->error("subscriber_register: COUNT(*) returned no rows");
+    return false;
+  };
+
+  std::string is_nat = Util::is_ipv4(contact->realm) && Util::is_ipv4_private(contact->realm) ? "Y" : "N"; 
+
+  if (res->rows[0]->column_values[0]->as<long long>() == 0) {
+    // Insert a row
+    _db->query("INSERT INTO `location` (`subscriber_id`, `user`, `host`, `port`, `registered_at`, `nat`) VALUES (?,?,?,?,NOW(),?)", { subscriber->id, contact->user, contact->realm, contact->port.value_or(0), is_nat });
+  } else {
+    // Update the row
+    _db->query("UPDATE `location` SET `registered_at` = NOW() WHERE `id` = ?) VALUES (?,?,?,?,?,?)", { subscriber->id });
+  }
+
+  return true;
+}
+
 const std::shared_ptr<SIPUri> Registrar::subscriber_get_location(std::shared_ptr<SIPIdentity> identity) { return std::make_shared<SIPUri>(""); }
 
 }  // namespace athenasip

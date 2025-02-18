@@ -12,8 +12,8 @@
 #include <string>
 #include <vector>
 
-#include "db.h"
 #include "../util.h"
+#include "db.h"
 
 using namespace athenasip::types;
 using namespace athenasip::loggers;
@@ -37,4 +37,4 @@ class PostgreSQLDB : public DB {
   std::shared_ptr<DBValue> _map_value(const pqxx::field &field, const std::string &colType);
 };
 
-}  // namespace athenasip
+}  // namespace athenasip::databases

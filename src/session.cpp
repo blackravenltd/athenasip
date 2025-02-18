@@ -16,10 +16,10 @@ Session::Session(std::shared_ptr<Logger> logger, std::string nonce_secret)
 
 void Session::_process_message() {
   // Log Message
-  _logger->info("> "+_request->header->request_method);
-  
+  _logger->info("> " + _request->header->request_method);
+
   // Print Incoming (DEBUG)
-  _request->print();
+  // _request->print();
 
   // Create Response
   _response = std::make_shared<SIPMessage>();
@@ -104,8 +104,10 @@ void Session::_process_message_challenged() {
     }
 
     // Get Subscriber
-    auto h1 = _on_authenticate(fromIdentity, shared_from_this());
-    if (!h1) {
+    _subscriber = _on_authenticate(fromIdentity, shared_from_this());
+
+    // Not Found
+    if (!_subscriber) {
       _logger->info("Challenged / REGISTER - User " + fromIdentity->to_string() + " Not Found, Sending 401 Unauthorized and Closing");
       _send_close(401, "Unauthorized");
       return;
@@ -114,18 +116,24 @@ void Session::_process_message_challenged() {
     // Generate H2/H3
     auto h2 = Util::md5("REGISTER:" + incomingAuthHeader->fields["uri"]);
     auto const colon = std::string(":");
-    auto h3 = Util::md5(h1.value() + colon + nonce + colon + h2);
+    auto h3 = Util::md5(_subscriber->h1 + colon + nonce + colon + h2);
 
     // Check match
     if (h3 != incomingAuthHeader->fields["response"]) {
       _logger->info("Challenged / REGISTER - User " + fromIdentity->to_string() + " Digest hash does not match, Sending 401 Unauthorized and Closing");
       _send_close(401, "Unauthorized");
+      _subscriber = nullptr;
       return;
     }
 
     // Auth is good
+    // _request->print();
     _logger->debug("Challenged / REGISTER - Authorized, Sending 200 OK");
     _response->header->add("Contact", _request->header->headers_map["Contact"][0]);
+
+    _contact = _request->header->headers_map["Contact"][0]->as<SIPIdentityHeader>()->value;
+    _logger->info("Challenged / REGISTER - Authorized, Registering "+_subscriber->identity->to_string()+" To "+_contact->uri->to_string());
+    _on_register_location(_subscriber, _contact->uri, shared_from_this());
 
     state = State::Registered;
     _send(200, "OK");
@@ -133,26 +141,26 @@ void Session::_process_message_challenged() {
 }
 
 void Session::_process_message_registered() {
-    if (_request->header->request_method == "INVITE") {
-      _process_message_invite();
-      return;
-    } 
+  if (_request->header->request_method == "INVITE") {
+    _process_message_invite();
+    return;
+  }
 
-    _logger->debug("Registered / "+_request->header->request_method +" - Unknown Method, Sending 405 Method Not Allowed");
-    _response->header->add("Allow",std::make_shared<StringHeader>("INVITE, ACK, CANCEL, OPTIONS, BYE, REFER, NOTIFY, MESSAGE, INFO"));
-    _send(405, "Method Not Allowed");
+  _logger->debug("Registered / " + _request->header->request_method + " - Unknown Method, Sending 405 Method Not Allowed");
+  _response->header->add("Allow", std::make_shared<StringHeader>("INVITE, ACK, CANCEL, OPTIONS, BYE, REFER, NOTIFY, MESSAGE, INFO"));
+  _send(405, "Method Not Allowed");
 }
 
 void Session::_process_message_invite() {
   _logger->info("> INVITE");
 
-  if(_request->body.empty()) {
+  if (_request->body.empty()) {
     _logger->debug("Registered / INVITE - No Body, Sending 400 Bad Request");
-    _send(400,"Bad Request");
+    _send(400, "Bad Request");
     return;
   }
 
-    // Preflight, check basic headers
+  // Preflight, check basic headers
   if (!_request->header->contains("Content-Type")) {
     _logger->debug("Registered / INVITE - Incomplete Headers, Sending 400 Bad Request");
     _send(400, "Bad Request");
@@ -160,17 +168,17 @@ void Session::_process_message_invite() {
   }
 
   // Check required headers present
-  if(_request->header->headers_map["Content-Type"][0]->as<StringHeader>()->to_string() != "application/sdp") {
+  if (_request->header->headers_map["Content-Type"][0]->as<StringHeader>()->to_string() != "application/sdp") {
     _logger->debug("Registered / INVITE - Incorrect MIME in Content-Type, Sending 415 Unsupported Media Type");
-    _send(415,"Unsupported Media Type");
+    _send(415, "Unsupported Media Type");
     return;
   };
 
   // Parse Session Description Protocol
   auto sdp = std::make_shared<SDP>();
-  if(!sdp->parse(_request->body)) {
+  if (!sdp->parse(_request->body)) {
     _logger->debug("Registered / INVITE - Body Not SDP, Sending 400 Bad Request");
-    _send(400,"Bad Request");
+    _send(400, "Bad Request");
     return;
   };
 
@@ -186,8 +194,8 @@ void Session::_send(uint16_t code, std::string message) {
   _response->header->response_code = code;
   _response->header->response_message = message;
   _response->header->add("Content-Length", std::make_shared<UIntHeader>(_response->body.size()));
-  _response->print();
-  _logger->info("< "+std::to_string(code)+" "+message);
+  // _response->print();
+  _logger->info("< " + std::to_string(code) + " " + message);
   write(_response->to_string());
   if (_response->body.size() > 0) write(_response->body);
 }
@@ -225,5 +233,6 @@ std::string Session::_generate_nonce() const {
 void Session::on_start(StartCloseFn callback) { _on_start = callback; }
 void Session::on_close(StartCloseFn callback) { _on_close = callback; }
 void Session::on_authenticate(AuthenticateFn callback) { _on_authenticate = callback; }
+void Session::on_register_location(RegisterLocationFn callback) { _on_register_location = callback; }
 
 }  // namespace athenasip
