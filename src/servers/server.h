@@ -15,14 +15,14 @@
 #include <thread>
 #include <unordered_map>
 
-#include "loggers/logger.h"
-#include "loggers/logger_scoped.h"
-#include "registrar.h"
-#include "session.h"
+#include "../loggers/logger.h"
+#include "../loggers/logger_scoped.h"
+#include "../registrar.h"
+#include "../session.h"
 
 using namespace athenasip::loggers;
 
-namespace athenasip {
+namespace athenasip::servers {
 
 class Server : public std::enable_shared_from_this<Server> {
  public:
@@ -31,8 +31,8 @@ class Server : public std::enable_shared_from_this<Server> {
   virtual void start() = 0;
   virtual void stop() = 0;
 
-  virtual bool register_session(std::string endpoint, std::shared_ptr<Session> session);
-  virtual bool unregister_session(std::string endpoint, std::shared_ptr<Session> session);
+  virtual bool session_register(std::string endpoint, std::shared_ptr<Session> session);
+  virtual bool session_unregister(std::string endpoint, std::shared_ptr<Session> session);
 
   std::string nonce_secret = "testing123";
 

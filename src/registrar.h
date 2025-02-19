@@ -33,8 +33,8 @@ class Registrar {
   bool subscriber_register(std::shared_ptr<Subscriber> identity, std::shared_ptr<SIPUri> contact);
   const std::shared_ptr<SIPUri> subscriber_get_location(std::shared_ptr<SIPIdentity> identity);
 
-  bool register_session(std::string endpoint, std::shared_ptr<Session> session);
-  bool unregister_session(std::string endpoint, std::shared_ptr<Session> session);
+  bool session_register(std::string endpoint, std::shared_ptr<Session> session);
+  bool session_unregister(std::string endpoint, std::shared_ptr<Session> session);
   void session_close_all();
 
  private:

@@ -26,7 +26,7 @@
 #include <string>
 #include <thread>
 
-#include "connection.h"
+#include "servers/connection.h"
 #include "delayed_task.h"
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
@@ -49,6 +49,7 @@
 
 using namespace athenasip::types;
 using namespace athenasip::loggers;
+using namespace athenasip::servers;
 
 namespace athenasip {
 

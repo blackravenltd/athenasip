@@ -8,11 +8,10 @@
 
 #include "server.h"
 #include "tcp_connection.h"
-#include "session.h"
 
 using namespace athenasip::loggers;
 
-namespace athenasip {
+namespace athenasip::servers {
 
 class TCPServer : public Server {
  public:

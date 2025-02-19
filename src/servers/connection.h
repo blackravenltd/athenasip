@@ -12,7 +12,7 @@
 #include <functional>
 #include <memory>
 
-namespace athenasip {
+namespace athenasip::servers {
 
 class Connection {
  public:
