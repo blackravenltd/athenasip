@@ -15,7 +15,10 @@ void LoggerScoped::info(const std::string &str) { _logger->info("(" + _scope + "
 void LoggerScoped::warn(const std::string &str) { _logger->warn("(" + _scope + ") " + str); }
 void LoggerScoped::error(const std::string &str) { _logger->error("(" + _scope + ") " + str); }
 void LoggerScoped::raw(const std::string &str) { _logger->error("(" + _scope + ") " + str); }
-
 std::shared_ptr<Logger> LoggerScoped::base_logger() { return _logger; }
+void LoggerScoped::set_level(LogLevel level) {
+  auto base = base_logger();
+  if(base) base->set_level(level);
+};
 
 }  // namespace athenasip::loggers

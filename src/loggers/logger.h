@@ -20,6 +20,7 @@ class Logger {
   virtual void warn(const std::string &log) = 0;
   virtual void error(const std::string &log) = 0;
   virtual void raw(const std::string &log) = 0;
+  virtual void set_level(LogLevel level) = 0;
 
   virtual std::shared_ptr<Logger> base_logger() = 0;
 };

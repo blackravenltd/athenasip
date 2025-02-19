@@ -21,12 +21,13 @@ class LoggerStdIO : public Logger {
  public:
   LoggerStdIO(LogLevel log_level);
 
-  virtual void debug(const std::string &log);
-  virtual void info(const std::string &log);
-  virtual void warn(const std::string &log);
-  virtual void error(const std::string &log);
-  virtual void raw(const std::string &log);
-  virtual std::shared_ptr<Logger> base_logger();
+  virtual void debug(const std::string &log) override;
+  virtual void info(const std::string &log) override;
+  virtual void warn(const std::string &log) override;
+  virtual void error(const std::string &log) override;
+  virtual void raw(const std::string &log) override;
+  virtual std::shared_ptr<Logger> base_logger() override;
+  virtual void set_level(LogLevel level) override;
 
  private:
   LogLevel _log_level;
