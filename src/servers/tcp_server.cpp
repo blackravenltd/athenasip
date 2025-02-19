@@ -71,8 +71,8 @@ void TCPServer::_handle_accept(const boost::system::error_code& error, std::shar
     _logger->info("Incoming TCP Connection Accepted: " + new_connection->remote_endpoint_name());
 
     // Set up events
-    new_session->on_start([this](std::string endpoint, std::shared_ptr<Session> session) { return session_register(endpoint, session); });
-    new_session->on_close([this](std::string endpoint, std::shared_ptr<Session> session) { return session_unregister(endpoint, session); });
+    new_session->on_start([this](std::string endpoint, std::shared_ptr<Session> session) { return _registrar->session_register(endpoint, session); });
+    new_session->on_close([this](std::string endpoint, std::shared_ptr<Session> session) { return _registrar->session_unregister(endpoint, session); });
     new_session->on_authenticate(
         [this](std::shared_ptr<SIPIdentity> identity, std::shared_ptr<Session> session) { return _registrar->subscriber_get(identity); });
     new_session->on_register_location([this](std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Session> session) {
