@@ -9,16 +9,16 @@
 #include <iostream>
 #include <map>
 #include <optional>
+#include <shared_mutex>
 #include <sstream>
 #include <string>
-#include <shared_mutex>
 
 #include "databases/db.h"
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
+#include "session.h"
 #include "types/sip_identity.h"
 #include "types/subscriber.h"
-#include "session.h"
 
 using namespace athenasip::types;
 

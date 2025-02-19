@@ -14,8 +14,8 @@
 #include "config.h"
 #include "databases/db.h"
 #include "loggers/logger.h"
-#include "servers/server.h"
 #include "registrar.h"
+#include "servers/server.h"
 #include "version.h"
 
 namespace athenasip {

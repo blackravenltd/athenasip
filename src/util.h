@@ -9,6 +9,7 @@
 #include <openssl/evp.h>
 
 #include <array>
+#include <cctype>
 #include <cstdlib>
 #include <filesystem>
 #include <iomanip>
@@ -18,7 +19,6 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
-#include <cctype>
 
 namespace athenasip {
 

@@ -75,7 +75,7 @@ bool Registrar::session_unregister(std::string endpoint, std::shared_ptr<Session
 }
 
 void Registrar::session_close_all() {
-    // Close All Connections
+  // Close All Connections
   for (const auto& pair : _sessions) pair.second->close();
 
   // Remove all connections

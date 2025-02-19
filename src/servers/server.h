@@ -41,4 +41,4 @@ class Server : public std::enable_shared_from_this<Server> {
   std::shared_ptr<Registrar> _registrar;
 };
 
-}  // namespace athenasip
+}  // namespace athenasip::servers

@@ -26,26 +26,26 @@
 #include <string>
 #include <thread>
 
-#include "servers/connection.h"
 #include "delayed_task.h"
-#include "loggers/logger.h"
-#include "loggers/logger_scoped.h"
-#include "session.h"
-#include "util.h"
 #include "expiry_set.h"
-#include "sdp.h"
-#include "sip_header.h"
-#include "sip_message.h"
 #include "headers/authorization_header.h"
 #include "headers/cseq_header.h"
 #include "headers/header.h"
 #include "headers/sip_identity_header.h"
 #include "headers/string_header.h"
 #include "headers/uint_header.h"
+#include "loggers/logger.h"
+#include "loggers/logger_scoped.h"
+#include "sdp.h"
+#include "servers/connection.h"
+#include "session.h"
+#include "sip_header.h"
+#include "sip_message.h"
 #include "types/authorization.h"
 #include "types/sip_identity.h"
 #include "types/sip_uri.h"
 #include "types/subscriber.h"
+#include "util.h"
 
 using namespace athenasip::types;
 using namespace athenasip::loggers;
@@ -53,7 +53,7 @@ using namespace athenasip::servers;
 
 namespace athenasip {
 
-class Session  : public std::enable_shared_from_this<Session> {
+class Session : public std::enable_shared_from_this<Session> {
  public:
   Session(std::shared_ptr<Logger> logger, std::string nonce_secret, std::shared_ptr<Connection> connection);
 

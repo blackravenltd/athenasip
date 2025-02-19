@@ -17,7 +17,7 @@ namespace athenasip {
 
 Session::Session(std::shared_ptr<Logger> logger, std::string nonce_secret, std::shared_ptr<Connection> connection)
     : _connection(connection), _nonces(std::make_shared<ExpirySet<std::string>>()) {
-  _logger = std::make_unique<LoggerScoped>(_connection->transport_name()+"://" + _connection->remote_endpoint_name(), logger);
+  _logger = std::make_unique<LoggerScoped>(_connection->transport_name() + "://" + _connection->remote_endpoint_name(), logger);
 }
 
 void Session::start() {
@@ -27,7 +27,7 @@ void Session::start() {
   state = State::Initial;
 
   // Register callback
-  if (_on_start) _on_start(_connection->transport_name()+"://" + _connection->remote_endpoint_name(), shared_from_this());
+  if (_on_start) _on_start(_connection->transport_name() + "://" + _connection->remote_endpoint_name(), shared_from_this());
 
   // REGISTER timeout
   _register_timeout = DelayedTask<int>::schedule(
@@ -36,9 +36,9 @@ void Session::start() {
 
         _logger->info("Exceeded REGISTER Timeout (5000ms)");
 
-        write(
-            "SIP/2.0 408 Request Timeout\r\nVia: SIP/2.0/"+Util::to_upper(_connection->transport_name())+" client.example.com;branch=z9hG4bK776asdhds\r\nFrom: <sip:user@example.com>;tag=123456\r\nTo: "
-            "<sip:server@example.com>\r\nCall-ID: abc123@example.com\r\nCSeq: 1 REGISTER\r\nContent-Length: 0\r\n\r\n");
+        write("SIP/2.0 408 Request Timeout\r\nVia: SIP/2.0/" + Util::to_upper(_connection->transport_name()) +
+              " client.example.com;branch=z9hG4bK776asdhds\r\nFrom: <sip:user@example.com>;tag=123456\r\nTo: "
+              "<sip:server@example.com>\r\nCall-ID: abc123@example.com\r\nCSeq: 1 REGISTER\r\nContent-Length: 0\r\n\r\n");
 
         close();
 
@@ -62,7 +62,7 @@ void Session::close() {
   // Ensure Connection Closed
   if (_connection) {
     // Shutdown and close connection
-    if(_connection->is_open()) {
+    if (_connection->is_open()) {
       _connection->shutdown();
       _connection->close();
     }
@@ -71,10 +71,10 @@ void Session::close() {
 
     // OnClose callback
     if (_on_close) {
-      _on_close(_connection->transport_name()+"://" + _connection->remote_endpoint_name(), shared_from_this());
+      _on_close(_connection->transport_name() + "://" + _connection->remote_endpoint_name(), shared_from_this());
       _on_close = nullptr;
     }
-    
+
     _connection.reset();
   }
 }
@@ -84,7 +84,7 @@ void Session::write(std::string message) {
 
   _connection->async_write_some(boost::asio::buffer(message), [this, self](boost::system::error_code ec, std::size_t) {
     if (ec) {
-      _logger->error("Write Error "+ec.to_string());
+      _logger->error("Write Error " + ec.to_string());
       close();
     }
   });
@@ -233,7 +233,6 @@ void Session::_process_message() {
 
 void Session::_process_message_initial() {
   if (_request->header->request_method == "REGISTER") {
-
     // Generate and save nonce
     auto nonce = _generate_nonce();
     _nonces->add(nonce, 3600);
@@ -244,7 +243,7 @@ void Session::_process_message_initial() {
     authHeader->fields["nonce"] = nonce;
     authHeader->fields["algorithm"] = "MD5";
     _response->header->add("WWW-Authenticate", std::make_shared<AuthorizationHeader>(authHeader));
-    
+
     _logger->info("Initial / REGISTER - Sending 401 Challenge");
     state = State::Challenged;
 
