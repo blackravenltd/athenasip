@@ -62,11 +62,10 @@ std::shared_ptr<DBResult> MySQLDB::query(std::string sql, std::vector<std::any> 
   // Get Timing
   auto start = std::chrono::high_resolution_clock::now();
 
+  // Prepare the statement & Bind the parameter values
   try {
-    // Prepare the statement
     mysqlx::SqlStatement stmt = _session->sql(sql);
 
-    // Bind the parameter values
     for (size_t i = 0; i < params.size(); ++i) {
       if (params[i].type() == typeid(std::string)) {
         auto v = std::any_cast<std::string>(params[i]);
@@ -124,9 +123,6 @@ std::shared_ptr<DBResult> MySQLDB::query(std::string sql, std::vector<std::any> 
     // Execute the query
     mysqlx::SqlResult result = stmt.execute();
 
-    // Ensure query execution is complete before fetching data
-    if (!result.hasData()) return res;
-
     // Fetch column names before iterating over rows
     std::vector<std::string> columnNames;
     for (const auto &col : result.getColumns()) {
@@ -145,6 +141,9 @@ std::shared_ptr<DBResult> MySQLDB::query(std::string sql, std::vector<std::any> 
     std::string durationStr = oss.str();
     _logger->debug("SQL: " + sql + " [" + Util::trim(param_strs, ",") + "] (" + std::to_string(rows.size()) + " rows, " + durationStr + "ms)");
 
+    // Store affected rows count
+    res->rows_affected = result.getAffectedItemsCount();
+
     // Iterate over the fetched rows
     for (const mysqlx::Row &row : rows) {
       auto dbRow = std::make_shared<DBRow>();
@@ -161,9 +160,6 @@ std::shared_ptr<DBResult> MySQLDB::query(std::string sql, std::vector<std::any> 
 
       res->rows.push_back(dbRow);
     }
-
-    // Store affected rows count
-    res->rows_affected = result.getAffectedItemsCount();
 
   } catch (const mysqlx::Error &err) {
     res->error = err.what();

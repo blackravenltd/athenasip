@@ -26,9 +26,7 @@ class TCPConnection : public Connection {
     _remote_endpoint_name = rep.address().to_string() + ":" + std::to_string(rep.port());
   }
 
-  virtual bool start() override {
-    return true;
-  }
+  virtual bool start() override { return true; }
 
   virtual void async_read_some(boost::asio::mutable_buffer buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) override {
     _connection->async_read_some(buffer, handler);
@@ -38,9 +36,7 @@ class TCPConnection : public Connection {
     _connection->async_write_some(buffer, handler);
   }
 
-  virtual std::string remote_endpoint_name() override {
-    return _remote_endpoint_name;
-  }
+  virtual std::string remote_endpoint_name() override { return _remote_endpoint_name; }
 
   virtual bool is_open() override { return _connection->is_open(); }
 
@@ -58,4 +54,4 @@ class TCPConnection : public Connection {
   std::string _remote_endpoint_name;
 };
 
-}  // namespace athenasip
+}  // namespace athenasip::servers

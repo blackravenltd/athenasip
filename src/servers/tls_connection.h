@@ -37,22 +37,18 @@ class TLSConnection : public Connection {
 
   virtual void async_read_some(boost::asio::mutable_buffer buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) override {
     _connection->async_read_some(buffer, [this, handler](boost::system::error_code ec, std::size_t length) {
-      if(ec == boost::asio::ssl::error::stream_truncated) {
+      if (ec == boost::asio::ssl::error::stream_truncated) {
         ec = boost::asio::error::operation_aborted;
       }
-      handler(ec,length);
+      handler(ec, length);
     });
   }
 
   virtual void async_write_some(boost::asio::const_buffer buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) override {
-    _connection->async_write_some(buffer, [this, handler](boost::system::error_code ec, std::size_t length) {
-      handler(ec,length);
-    });
+    _connection->async_write_some(buffer, [this, handler](boost::system::error_code ec, std::size_t length) { handler(ec, length); });
   }
 
-  virtual std::string remote_endpoint_name() override {
-    return _remote_endpoint_name;
-  }
+  virtual std::string remote_endpoint_name() override { return _remote_endpoint_name; }
 
   virtual bool is_open() override { return _connection->lowest_layer().is_open(); }
 
@@ -70,4 +66,4 @@ class TLSConnection : public Connection {
   std::string _remote_endpoint_name;
 };
 
-}  // namespace athenasip
+}  // namespace athenasip::servers

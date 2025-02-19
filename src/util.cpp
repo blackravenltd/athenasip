@@ -28,10 +28,9 @@ std::string Util::to_hex(const uint8_t arr[], uint16_t len) {
 }
 
 std::string Util::to_upper(const std::string& input) {
-    std::string result = input;
-    std::transform(result.begin(), result.end(), result.begin(),
-                   [](unsigned char c) { return std::toupper(c); });
-    return result;
+  std::string result = input;
+  std::transform(result.begin(), result.end(), result.begin(), [](unsigned char c) { return std::toupper(c); });
+  return result;
 }
 
 // Trim leading and trailing whitespace

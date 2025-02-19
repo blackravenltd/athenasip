@@ -30,4 +30,4 @@ class TCPServer : public Server {
   std::shared_ptr<std::thread> _thread;
 };
 
-}  // namespace athenasip
+}  // namespace athenasip::servers

@@ -14,8 +14,7 @@ namespace athenasip::servers {
 TCPServer::TCPServer(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> registrar, std::string nonce_secret, short port)
     : Server(std::make_unique<LoggerScoped>("tcp_server", logger), registrar, nonce_secret),
       _port(port),
-      _acceptor(_io_context, ip::tcp::endpoint(ip::tcp::v4(), port))
-{}
+      _acceptor(_io_context, ip::tcp::endpoint(ip::tcp::v4(), port)) {}
 
 void TCPServer::start() {
   _logger->debug("Starting...");
@@ -81,7 +80,7 @@ void TCPServer::_handle_accept(const boost::system::error_code& error, std::shar
     });
 
     new_session->start();
-    
+
   } else {
     _logger->error("Incoming TCP Connection Accept Error: " + ec.message());
   }
@@ -90,4 +89,4 @@ void TCPServer::_handle_accept(const boost::system::error_code& error, std::shar
   boost::asio::post(_io_context, [this]() { start_accept(); });
 }
 
-}  // namespace athenasip
+}  // namespace athenasip::servers

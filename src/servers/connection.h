@@ -35,4 +35,4 @@ class Connection {
   virtual std::string transport_name() const = 0;
 };
 
-}  // namespace athenasip
+}  // namespace athenasip::servers

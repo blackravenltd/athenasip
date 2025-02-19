@@ -97,7 +97,7 @@ void TLSServer::_handle_accept(const boost::system::error_code& error, std::shar
     });
 
     new_session->start();
-    
+
   } else {
     _logger->error("Incoming Connection Accept Error: " + ec.message());
   }
@@ -106,4 +106,4 @@ void TLSServer::_handle_accept(const boost::system::error_code& error, std::shar
   boost::asio::post(_io_context, [this]() { start_accept(); });
 }
 
-}  // namespace athenasip
+}  // namespace athenasip::servers

@@ -33,4 +33,4 @@ class TLSServer : public Server {
   boost::asio::ssl::context ctx;
 };
 
-}  // namespace athenasip
+}  // namespace athenasip::servers
