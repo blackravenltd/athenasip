@@ -47,14 +47,6 @@ void TLSServer::start() {
 void TLSServer::stop() {
   _logger->debug("Stopping...");
 
-  // Close All Connections
-  for (const auto& pair : _sessions) pair.second->close();
-
-  // Remove all connections
-  std::unique_lock<std::shared_mutex> lock(_sessions_mutex);
-  _sessions.clear();
-  lock.unlock();
-
   // Stop Thread
   if (_thread) {
     _io_context.stop();

@@ -39,9 +39,6 @@ class Server : public std::enable_shared_from_this<Server> {
  protected:
   std::shared_ptr<Logger> _logger;
   std::shared_ptr<Registrar> _registrar;
-
-  std::unordered_map<std::string, std::shared_ptr<Session>> _sessions;
-  std::shared_mutex _sessions_mutex;
 };
 
 }  // namespace athenasip

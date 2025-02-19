@@ -23,7 +23,7 @@ class TLSServer : public Server {
 
   bool set_certificates(std::string cert, std::string key);
 
- private:
+ protected:
   void _handle_accept(const boost::system::error_code &error, std::shared_ptr<boost::asio::ip::tcp::socket> new_connection);
   void start_accept();
 
