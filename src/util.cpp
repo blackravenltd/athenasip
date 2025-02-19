@@ -136,10 +136,8 @@ bool Util::is_ipv4_private(const std::string& ipv4) {
 }
 
 bool Util::is_ipv4(const std::string& ip) {
-    static const std::regex ipv4Pattern(
-        R"(^(25[0-5]|2[0-4]\d|[0-1]?\d?\d)(\.(25[0-5]|2[0-4]\d|[0-1]?\d?\d)){3}$)"
-    );
-    return std::regex_match(ip, ipv4Pattern);
+  static const std::regex ipv4Pattern(R"(^(25[0-5]|2[0-4]\d|[0-1]?\d?\d)(\.(25[0-5]|2[0-4]\d|[0-1]?\d?\d)){3}$)");
+  return std::regex_match(ip, ipv4Pattern);
 }
 
 }  // namespace athenasip

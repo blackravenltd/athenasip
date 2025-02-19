@@ -27,6 +27,7 @@
 #include <string>
 #include <thread>
 
+#include "connection.h"
 #include "delayed_task.h"
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
@@ -40,14 +41,14 @@ namespace athenasip {
 
 class TLSSession : public Session {
  public:
-  TLSSession(std::shared_ptr<Logger> logger, std::string nonce_secret, std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> connection);
+  TLSSession(std::shared_ptr<Logger> logger, std::string nonce_secret, std::shared_ptr<Connection> connection);
 
   void write(std::string message) override;
   void start() override;
   void close() override;
 
  private:
-  std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> _connection;
+  std::shared_ptr<Connection> _connection;
 
   std::array<char, 65535> _read_buffer;
   std::string _buffer;

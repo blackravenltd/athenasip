@@ -117,7 +117,7 @@ std::shared_ptr<DBResult> MySQLDB::query(std::string sql, std::vector<std::any> 
         stmt.bind(v);
         param_strs += std::to_string(v) + ",";
       } else {
-        throw std::runtime_error("Unsupported parameter type at index " + std::to_string(i)+ " (? Name "+params[i].type().name()+")");
+        throw std::runtime_error("Unsupported parameter type at index " + std::to_string(i) + " (? Name " + params[i].type().name() + ")");
       }
     }
 
@@ -167,7 +167,7 @@ std::shared_ptr<DBResult> MySQLDB::query(std::string sql, std::vector<std::any> 
 
   } catch (const mysqlx::Error &err) {
     res->error = err.what();
-    _logger->debug("SQL: " + sql + " [" + Util::trim(param_strs, ",") + "] Error: " + err.what());
+    _logger->error("SQL: " + sql + " [" + Util::trim(param_strs, ",") + "] Error: " + err.what());
   } catch (std::exception &ex) {
     res->error = ex.what();
     _logger->error(std::string("Standard Exception: ") + ex.what());

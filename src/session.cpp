@@ -131,9 +131,9 @@ void Session::_process_message_challenged() {
     _logger->debug("Challenged / REGISTER - Authorized, Sending 200 OK");
     _response->header->add("Contact", _request->header->headers_map["Contact"][0]);
 
-    _contact = _request->header->headers_map["Contact"][0]->as<SIPIdentityHeader>()->value;
-    _logger->info("Challenged / REGISTER - Authorized, Registering "+_subscriber->identity->to_string()+" To "+_contact->uri->to_string());
-    _on_register_location(_subscriber, _contact->uri, shared_from_this());
+    _contact = _request->header->headers_map["Contact"][0]->as<SIPIdentityHeader>()->value->uri;
+    _logger->info("Challenged / REGISTER - Authorized, Registering " + _subscriber->identity->to_string() + " To " + _contact->to_string());
+    _on_register_location(_subscriber, _contact, shared_from_this());
 
     state = State::Registered;
     _send(200, "OK");

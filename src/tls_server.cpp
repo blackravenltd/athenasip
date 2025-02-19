@@ -73,49 +73,40 @@ void TLSServer::start_accept() {
   _acceptor.async_accept(*new_connection, boost::bind(&TLSServer::_handle_accept, this, placeholders::error, new_connection));
 }
 
-void TLSServer::_handle_accept(const boost::system::error_code& error, std::shared_ptr<ip::tcp::socket> new_connection) {
+void TLSServer::_handle_accept(const boost::system::error_code& error, std::shared_ptr<ip::tcp::socket> socket) {
   boost::system::error_code ec;
 
   if (!error) {
     // Get Remote
-    auto remote = new_connection->remote_endpoint();
+    auto remote = socket->remote_endpoint();
     auto remote_addr = remote.address().to_string() + ":" + std::to_string(remote.port());
 
-    // Log it up
     _logger->debug("Incoming Connection: " + remote_addr);
 
-    // Extract the socket from the shared_ptr and move it into the SSL stream
-    auto ssl_socket = std::make_shared<ssl::stream<ip::tcp::socket>>(std::move(*new_connection), ctx);
+    // Generate new TLSConnection
+    std::shared_ptr<Connection> new_connection = std::make_shared<TLSConnection>(std::make_shared<ssl::stream<ip::tcp::socket>>(std::move(*socket), ctx));
 
-    try {
-      // SSL Handshake
-      ssl_socket->handshake(ssl::stream_base::server);
+    if (!new_connection->start()) {
+      _logger->info("Incoming Connection TLS Error: " + remote_addr);
 
-      // Create TLSSession from connection
-      auto new_session = std::make_shared<TLSSession>(_logger->base_logger(), nonce_secret, ssl_socket);
-      _logger->info("Incoming Connection Accepted: " + remote_addr);
-      new_session->start();
-
-      // Set up events
-      new_session->on_start([this](std::string endpoint, std::shared_ptr<Session> session) { return register_session(endpoint, session); });
-      new_session->on_close([this](std::string endpoint, std::shared_ptr<Session> session) { return unregister_session(endpoint, session); });
-      new_session->on_authenticate(
-          [this](std::shared_ptr<SIPIdentity> identity, std::shared_ptr<Session> session) { 
-            return _registrar->subscriber_get(identity); 
-          }
-      );
-      new_session->on_register_location(
-        [this](std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Session> session) {
-          return _registrar->subscriber_register(subscriber, contact);
-        }
-      );
-
-    } catch (const std::exception& e) {
-      _logger->info("Incoming Connection TLS Error: " + remote_addr + " " + e.what());
-
-      new_connection->shutdown(ip::tcp::socket::shutdown_both, ec);
-      new_connection->close(ec);
+      new_connection->shutdown();
+      new_connection->close();
+      return;
     }
+
+    // Create TLSSession from connection
+    auto new_session = std::make_shared<TLSSession>(_logger->base_logger(), nonce_secret, new_connection);
+    _logger->info("Incoming Connection Accepted: " + remote_addr);
+    new_session->start();
+
+    // Set up events
+    new_session->on_start([this](std::string endpoint, std::shared_ptr<Session> session) { return register_session(endpoint, session); });
+    new_session->on_close([this](std::string endpoint, std::shared_ptr<Session> session) { return unregister_session(endpoint, session); });
+    new_session->on_authenticate(
+        [this](std::shared_ptr<SIPIdentity> identity, std::shared_ptr<Session> session) { return _registrar->subscriber_get(identity); });
+    new_session->on_register_location([this](std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Session> session) {
+      return _registrar->subscriber_register(subscriber, contact);
+    });
 
   } else {
     _logger->error("Incoming Connection Accept Error: " + ec.message());

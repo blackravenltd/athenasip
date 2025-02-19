@@ -14,8 +14,7 @@ Registrar::Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<athenasip::
     : _logger(std::make_unique<LoggerScoped>("registrar", logger)), _db(db) {}
 
 bool Registrar::subscriber_exists(std::shared_ptr<SIPIdentity> identity) {
-  std::shared_ptr<DBResult> res =
-      _db->query("SELECT COUNT(*) FROM `subscriber` WHERE `user` = ? AND `realm` = ?", {identity->uri->user, identity->uri->realm});
+  std::shared_ptr<DBResult> res = _db->query("SELECT COUNT(*) FROM `subscriber` WHERE `user` = ? AND `realm` = ?", {identity->uri->user, identity->uri->realm});
 
   if (res && res->rows.size() == 0) {
     _logger->warn("DB returned no rows on a COUNT() statement");
@@ -40,20 +39,22 @@ std::shared_ptr<Subscriber> Registrar::subscriber_get(std::shared_ptr<SIPIdentit
 }
 
 bool Registrar::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact) {
-  std::shared_ptr<DBResult> res = _db->query("SELECT COUNT(*) FROM `location` WHERE `subscriber_id` = ? AND `user` = ? AND `host` = ? AND `port` = ?", { subscriber->id, contact->user, contact->realm, contact->port.value_or(0) });
+  std::shared_ptr<DBResult> res = _db->query("SELECT COUNT(*) FROM `location` WHERE `subscriber_id` = ? AND `user` = ? AND `host` = ? AND `port` = ?",
+                                             {subscriber->id, contact->user, contact->realm, contact->port.value_or(0)});
   if (res && res->rows.size() == 0) {
     _logger->error("subscriber_register: COUNT(*) returned no rows");
     return false;
   };
 
-  std::string is_nat = Util::is_ipv4(contact->realm) && Util::is_ipv4_private(contact->realm) ? "Y" : "N"; 
+  std::string is_nat = Util::is_ipv4(contact->realm) && Util::is_ipv4_private(contact->realm) ? "Y" : "N";
 
   if (res->rows[0]->column_values[0]->as<long long>() == 0) {
     // Insert a row
-    _db->query("INSERT INTO `location` (`subscriber_id`, `user`, `host`, `port`, `registered_at`, `nat`) VALUES (?,?,?,?,NOW(),?)", { subscriber->id, contact->user, contact->realm, contact->port.value_or(0), is_nat });
+    _db->query("INSERT INTO `location` (`subscriber_id`, `user`, `host`, `port`, `registered_at`, `nat`) VALUES (?,?,?,?,NOW(),?)",
+               {subscriber->id, contact->user, contact->realm, contact->port.value_or(0), is_nat});
   } else {
     // Update the row
-    _db->query("UPDATE `location` SET `registered_at` = NOW() WHERE `id` = ?) VALUES (?,?,?,?,?,?)", { subscriber->id });
+    _db->query("UPDATE `location` SET `registered_at` = NOW() WHERE `id` = ?) VALUES (?,?,?,?,?,?)", {subscriber->id});
   }
 
   return true;

@@ -12,13 +12,9 @@ using namespace athenasip::headers;
 
 namespace athenasip {
 
-TLSSession::TLSSession(std::shared_ptr<Logger> logger, std::string nonce_secret,
-                       std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> connection)
+TLSSession::TLSSession(std::shared_ptr<Logger> logger, std::string nonce_secret, std::shared_ptr<Connection> connection)
     : Session(logger, nonce_secret), _connection(connection) {
-  auto rep = _connection->lowest_layer().remote_endpoint();
-  remote_endpoint = rep.address().to_string() + ":" + std::to_string(rep.port());
-
-  _logger = std::make_unique<LoggerScoped>(remote_endpoint, logger);
+  _logger = std::make_unique<LoggerScoped>(connection->remote_endpoint_name(), logger);
 }
 
 void TLSSession::start() {
@@ -52,8 +48,6 @@ void TLSSession::start() {
 void TLSSession::close() {
   auto self(shared_from_this());
 
-  boost::system::error_code ec;
-
   // Register Timeout
   if (_register_timeout) {
     _register_timeout->cancel();
@@ -61,11 +55,9 @@ void TLSSession::close() {
   }
 
   // Ensure Connection Closed
-  if (_connection && _connection->lowest_layer().is_open()) {
-    _connection->shutdown(ec);
-    _connection->lowest_layer().shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
-    _connection->lowest_layer().close(ec);
-    _connection.reset();
+  if (_connection && _connection->is_open()) {
+    _connection->shutdown();
+    _connection->close();
   }
 
   // OnClose callback
@@ -80,7 +72,7 @@ void TLSSession::close() {
 void TLSSession::write(std::string message) {
   auto self(shared_from_this());
 
-  boost::asio::async_write(*_connection, boost::asio::buffer(message), [this, self](boost::system::error_code ec, std::size_t) {
+  _connection->async_write_some(boost::asio::buffer(message), [this, self](boost::system::error_code ec, std::size_t) {
     if (ec) {
       _logger->error("Write Error ");
       close();
@@ -115,7 +107,7 @@ void TLSSession::_schedule_async_read() {
       // Add to buffer
       _buffer.append(_read_buffer.data(), length);
 
-      // Reject Crap (No register, more than 16k data sent)
+      // Reject Crap (No register, more than 64k data sent)
       if (state != State::Registered && _buffer.size() > 65535) {
         _logger->info("Client did not send REGISTER request within 65535 bytes)");
         write("SIP/2.0 400 Bad Request\r\nContent-Length: 0\r\n\r\n");

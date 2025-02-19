@@ -7,6 +7,7 @@
 #pragma once
 
 #include "server.h"
+#include "tls_connection.h"
 #include "tls_session.h"
 
 using namespace athenasip::loggers;
