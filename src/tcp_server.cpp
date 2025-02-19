@@ -4,39 +4,25 @@
 // Copyright (C) 2025 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
-#include "tls_server.h"
+#include "tcp_server.h"
 
 using namespace boost::asio;
 using namespace boost::asio::ssl;
 
 namespace athenasip {
 
-TLSServer::TLSServer(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> registrar, std::string nonce_secret, short port)
-    : Server(std::make_unique<LoggerScoped>("tls_server", logger), registrar, nonce_secret),
+TCPServer::TCPServer(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> registrar, std::string nonce_secret, short port)
+    : Server(std::make_unique<LoggerScoped>("tcp_server", logger), registrar, nonce_secret),
       _port(port),
-      _acceptor(_io_context, ip::tcp::endpoint(ip::tcp::v4(), port)),
-      ctx(ssl::context::sslv23) {}
+      _acceptor(_io_context, ip::tcp::endpoint(ip::tcp::v4(), port))
+{}
 
-bool TLSServer::set_certificates(std::string cert, std::string key) {
-  try {
-    ctx.use_certificate_chain_file(cert);
-    _logger->info("Using Certificate PEM: " + cert);
-    ctx.use_private_key_file(key, ssl::context::pem);
-    _logger->info("Using Key PEM: " + key);
-  } catch (const std::exception& e) {
-    _logger->error("Exception While Loading Certificates: " + std::string(e.what()));
-    return false;
-  }
-
-  return true;
-}
-
-void TLSServer::start() {
+void TCPServer::start() {
   _logger->debug("Starting...");
 
   // Do the first start_accept on that thread
   boost::asio::post(_io_context, [this]() {
-    _logger->info("Listening on " + std::to_string(_port) + " (TLS)");
+    _logger->info("Listening on " + std::to_string(_port) + " (TCP)");
     start_accept();
   });
 
@@ -44,7 +30,7 @@ void TLSServer::start() {
   _thread = std::make_shared<std::thread>([this]() { _io_context.run(); });
 }
 
-void TLSServer::stop() {
+void TCPServer::stop() {
   _logger->debug("Stopping...");
 
   // Stop Thread
@@ -60,23 +46,21 @@ void TLSServer::stop() {
   }
 }
 
-void TLSServer::start_accept() {
+void TCPServer::start_accept() {
   auto new_connection = std::make_shared<ip::tcp::socket>(_io_context);
-  _acceptor.async_accept(*new_connection, boost::bind(&TLSServer::_handle_accept, this, placeholders::error, new_connection));
+  _acceptor.async_accept(*new_connection, boost::bind(&TCPServer::_handle_accept, this, placeholders::error, new_connection));
 }
 
-void TLSServer::_handle_accept(const boost::system::error_code& error, std::shared_ptr<ip::tcp::socket> socket) {
+void TCPServer::_handle_accept(const boost::system::error_code& error, std::shared_ptr<ip::tcp::socket> socket) {
   boost::system::error_code ec;
 
   if (!error) {
-    // Generate new Connection
-    auto ssl_socket = std::make_shared<ssl::stream<ip::tcp::socket>>(std::move(*socket), ctx);
-    std::shared_ptr<Connection> new_connection = std::make_shared<TLSConnection>(ssl_socket);
+    std::shared_ptr<Connection> new_connection = std::make_shared<TCPConnection>(socket);
 
-    _logger->debug("Starting TLS Connection: " + new_connection->remote_endpoint_name());
+    _logger->debug("Starting TCP Connection: " + new_connection->remote_endpoint_name());
 
     if (!new_connection->start()) {
-      _logger->info("Incoming TLS Connection Error: " + new_connection->remote_endpoint_name());
+      _logger->info("Incoming TCP Connection Error: " + new_connection->remote_endpoint_name());
 
       new_connection->shutdown();
       new_connection->close();
@@ -85,7 +69,7 @@ void TLSServer::_handle_accept(const boost::system::error_code& error, std::shar
 
     // Create TLSSession from connection
     auto new_session = std::make_shared<Session>(_logger->base_logger(), nonce_secret, new_connection);
-    _logger->info("Incoming TLS Connection Accepted: " + new_connection->remote_endpoint_name());
+    _logger->info("Incoming TCP Connection Accepted: " + new_connection->remote_endpoint_name());
 
     // Set up events
     new_session->on_start([this](std::string endpoint, std::shared_ptr<Session> session) { return register_session(endpoint, session); });
@@ -99,7 +83,7 @@ void TLSServer::_handle_accept(const boost::system::error_code& error, std::shar
     new_session->start();
     
   } else {
-    _logger->error("Incoming Connection Accept Error: " + ec.message());
+    _logger->error("Incoming TCP Connection Accept Error: " + ec.message());
   }
 
   // Start accepting next connection

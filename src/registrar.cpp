@@ -60,6 +60,30 @@ bool Registrar::subscriber_register(std::shared_ptr<Subscriber> subscriber, std:
   return true;
 }
 
+bool Registrar::register_session(std::string endpoint, std::shared_ptr<Session> session) {
+  std::lock_guard<std::shared_mutex> lock(_sessions_mutex);
+  _sessions.insert({endpoint, session});
+  _logger->debug("Registered Connection " + endpoint);
+  return true;
+}
+
+bool Registrar::unregister_session(std::string endpoint, std::shared_ptr<Session> session) {
+  std::lock_guard<std::shared_mutex> lock(_sessions_mutex);
+  // _sessions.erase(endpoint);
+  _logger->debug("Unregistered Connection " + endpoint);
+  return true;
+}
+
+void Registrar::session_close_all() {
+    // Close All Connections
+  for (const auto& pair : _sessions) pair.second->close();
+
+  // Remove all connections
+  std::unique_lock<std::shared_mutex> lock(_sessions_mutex);
+  _sessions.clear();
+  lock.unlock();
+}
+
 const std::shared_ptr<SIPUri> Registrar::subscriber_get_location(std::shared_ptr<SIPIdentity> identity) { return std::make_shared<SIPUri>(""); }
 
 }  // namespace athenasip

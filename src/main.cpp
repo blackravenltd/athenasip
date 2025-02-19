@@ -18,6 +18,7 @@
 #include "registrar.h"
 #include "sip_core.h"
 #include "tls_server.h"
+#include "tcp_server.h"
 #include "util.h"
 #include "version.h"
 
@@ -65,20 +66,21 @@ int main(int argc, char* argv[]) {
 
   // Create Registrar
   core->registrar = std::make_shared<Registrar>(core->logger, core->db);
-  // core->registrar->subscriber_exists(std::make_shared<SIPIdentity>("Tom Cully <sip:tom@sip.blackraven.co.nz>"));
 
   // Create the TLSServer instance with the logger and start it on the specified port
   auto tlsServer = std::make_shared<TLSServer>(core->logger, core->registrar, core->config->sip_nonce_secret, 5061);
-
   // Set Certificates
   if (!tlsServer->set_certificates(core->config->tls_cert_pem_filename, core->config->tls_key_pem_filename)) {
     core->logger->error("Cannot load TLS certificates");
     return -4;
   }
-  core->server = tlsServer;
+  core->servers.push_back(tlsServer);
+  tlsServer->start();
 
-  // Start TLS Server
-  core->server->start();
+  // Create the TLSServer instance with the logger and start it on the specified port
+  auto tcpServer = std::make_shared<TCPServer>(core->logger, core->registrar, core->config->sip_nonce_secret, 5060);
+  core->servers.push_back(tcpServer);
+  tcpServer->start();
 
   // Wait for Signals
   boost::asio::io_context signal_wait_context;
@@ -91,7 +93,8 @@ int main(int argc, char* argv[]) {
       case SIGINT:
         core->logger->raw("Received Signal SIGINT");
         signal_wait_context.stop();
-        core->server->stop();
+        core->registrar->session_close_all();
+        for (const auto& server : core->servers) server->stop();
         return;
       default:
         core->logger->raw("Received Unknown Signal " + std::to_string(signal_number));

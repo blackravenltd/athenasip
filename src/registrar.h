@@ -11,12 +11,14 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <shared_mutex>
 
 #include "databases/db.h"
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
 #include "types/sip_identity.h"
 #include "types/subscriber.h"
+#include "session.h"
 
 using namespace athenasip::types;
 
@@ -31,9 +33,16 @@ class Registrar {
   bool subscriber_register(std::shared_ptr<Subscriber> identity, std::shared_ptr<SIPUri> contact);
   const std::shared_ptr<SIPUri> subscriber_get_location(std::shared_ptr<SIPIdentity> identity);
 
+  bool register_session(std::string endpoint, std::shared_ptr<Session> session);
+  bool unregister_session(std::string endpoint, std::shared_ptr<Session> session);
+  void session_close_all();
+
  private:
   std::unique_ptr<Logger> _logger;
   std::shared_ptr<athenasip::databases::DB> _db;
+
+  std::unordered_map<std::string, std::shared_ptr<Session>> _sessions;
+  std::shared_mutex _sessions_mutex;
 };
 
 }  // namespace athenasip

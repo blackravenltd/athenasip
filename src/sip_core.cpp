@@ -10,7 +10,7 @@ namespace athenasip {
 
 SIPCore::SIPCore() {}
 SIPCore::SIPCore(std::shared_ptr<Version> _version, std::shared_ptr<Config> _config, std::shared_ptr<athenasip::loggers::Logger> _logger,
-                 std::shared_ptr<athenasip::databases::DB> _db, std::shared_ptr<Registrar> _registrar, std::shared_ptr<Server> _server)
-    : version(_version), config(_config), logger(_logger), db(_db), registrar(_registrar), server(_server) {}
+                 std::shared_ptr<athenasip::databases::DB> _db, std::shared_ptr<Registrar> _registrar)
+    : version(_version), config(_config), logger(_logger), db(_db), registrar(_registrar) {}
 
 }  // namespace athenasip

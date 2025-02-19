@@ -7,21 +7,19 @@
 #pragma once
 
 #include "server.h"
-#include "tls_connection.h"
+#include "tcp_connection.h"
 #include "session.h"
 
 using namespace athenasip::loggers;
 
 namespace athenasip {
 
-class TLSServer : public Server {
+class TCPServer : public Server {
  public:
-  TLSServer(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> registrar, std::string nonce_secret, short port);
+  TCPServer(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> registrar, std::string nonce_secret, short port);
 
   void start() override;
   void stop() override;
-
-  bool set_certificates(std::string cert, std::string key);
 
  protected:
   void _handle_accept(const boost::system::error_code &error, std::shared_ptr<boost::asio::ip::tcp::socket> new_connection);
@@ -31,7 +29,6 @@ class TLSServer : public Server {
   boost::asio::ip::tcp::acceptor _acceptor;
   uint16_t _port;
   std::shared_ptr<std::thread> _thread;
-  boost::asio::ssl::context ctx;
 };
 
 }  // namespace athenasip
