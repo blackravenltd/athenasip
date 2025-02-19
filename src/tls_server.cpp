@@ -12,7 +12,7 @@ using namespace boost::asio::ssl;
 namespace athenasip {
 
 TLSServer::TLSServer(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> registrar, std::string nonce_secret, short port)
-    : Server(std::make_unique<LoggerScoped>("server", logger), registrar, nonce_secret),
+    : Server(std::make_unique<LoggerScoped>("tls_server", logger), registrar, nonce_secret),
       _port(port),
       _acceptor(_io_context, ip::tcp::endpoint(ip::tcp::v4(), port)),
       ctx(ssl::context::sslv23) {}
@@ -77,17 +77,14 @@ void TLSServer::_handle_accept(const boost::system::error_code& error, std::shar
   boost::system::error_code ec;
 
   if (!error) {
-    // Get Remote
-    auto remote = socket->remote_endpoint();
-    auto remote_addr = remote.address().to_string() + ":" + std::to_string(remote.port());
+    // Generate new Connection
+    auto ssl_socket = std::make_shared<ssl::stream<ip::tcp::socket>>(std::move(*socket), ctx);
+    std::shared_ptr<Connection> new_connection = std::make_shared<TLSConnection>(ssl_socket);
 
-    _logger->debug("Incoming Connection: " + remote_addr);
-
-    // Generate new TLSConnection
-    std::shared_ptr<Connection> new_connection = std::make_shared<TLSConnection>(std::make_shared<ssl::stream<ip::tcp::socket>>(std::move(*socket), ctx));
+    _logger->debug("Starting TLS Connection: " + new_connection->remote_endpoint_name());
 
     if (!new_connection->start()) {
-      _logger->info("Incoming Connection TLS Error: " + remote_addr);
+      _logger->info("Incoming TLS Connection Error: " + new_connection->remote_endpoint_name());
 
       new_connection->shutdown();
       new_connection->close();
@@ -95,9 +92,8 @@ void TLSServer::_handle_accept(const boost::system::error_code& error, std::shar
     }
 
     // Create TLSSession from connection
-    auto new_session = std::make_shared<TLSSession>(_logger->base_logger(), nonce_secret, new_connection);
-    _logger->info("Incoming Connection Accepted: " + remote_addr);
-    new_session->start();
+    auto new_session = std::make_shared<Session>(_logger->base_logger(), nonce_secret, new_connection);
+    _logger->info("Incoming TLS Connection Accepted: " + new_connection->remote_endpoint_name());
 
     // Set up events
     new_session->on_start([this](std::string endpoint, std::shared_ptr<Session> session) { return register_session(endpoint, session); });
@@ -108,6 +104,8 @@ void TLSServer::_handle_accept(const boost::system::error_code& error, std::shar
       return _registrar->subscriber_register(subscriber, contact);
     });
 
+    new_session->start();
+    
   } else {
     _logger->error("Incoming Connection Accept Error: " + ec.message());
   }

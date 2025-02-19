@@ -27,6 +27,13 @@ std::string Util::to_hex(const uint8_t arr[], uint16_t len) {
   return oss.str();
 }
 
+std::string Util::to_upper(const std::string& input) {
+    std::string result = input;
+    std::transform(result.begin(), result.end(), result.begin(),
+                   [](unsigned char c) { return std::toupper(c); });
+    return result;
+}
+
 // Trim leading and trailing whitespace
 std::string Util::trim(const std::string& str) { return trim(str, " \t\r\n"); }
 

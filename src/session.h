@@ -6,12 +6,16 @@
 //
 #pragma once
 
+#include <openssl/evp.h>
+#include <openssl/hmac.h>
+#include <openssl/rand.h>
+
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <boost/asio.hpp>
-#include <boost/asio/ssl.hpp>
 #include <boost/bind/bind.hpp>
+#include <cstdint>
 #include <ctime>
 #include <fstream>
 #include <functional>
@@ -22,40 +26,35 @@
 #include <string>
 #include <thread>
 
+#include "connection.h"
+#include "delayed_task.h"
+#include "loggers/logger.h"
+#include "loggers/logger_scoped.h"
+#include "session.h"
+#include "util.h"
 #include "expiry_set.h"
+#include "sdp.h"
+#include "sip_header.h"
+#include "sip_message.h"
 #include "headers/authorization_header.h"
 #include "headers/cseq_header.h"
 #include "headers/header.h"
 #include "headers/sip_identity_header.h"
 #include "headers/string_header.h"
 #include "headers/uint_header.h"
-#include "loggers/logger.h"
-#include "loggers/logger_scoped.h"
-#include "sdp.h"
-#include "sip_header.h"
-#include "sip_message.h"
 #include "types/authorization.h"
 #include "types/sip_identity.h"
 #include "types/sip_uri.h"
 #include "types/subscriber.h"
-#include "util.h"
 
 using namespace athenasip::types;
 using namespace athenasip::loggers;
 
 namespace athenasip {
 
-class Session : public std::enable_shared_from_this<Session> {
+class Session  : public std::enable_shared_from_this<Session> {
  public:
-  using StartCloseFn = std::function<bool(std::string, std::shared_ptr<Session>)>;
-  using AuthenticateFn = std::function<std::shared_ptr<Subscriber>(std::shared_ptr<SIPIdentity>, std::shared_ptr<Session>)>;
-  using RegisterLocationFn = std::function<bool(std::shared_ptr<Subscriber>, std::shared_ptr<SIPUri>, std::shared_ptr<Session>)>;
-
-  Session(std::shared_ptr<Logger> logger, std::string nonce_secret);
-
-  virtual void write(std::string message) = 0;
-  virtual void start() = 0;
-  virtual void close() = 0;
+  Session(std::shared_ptr<Logger> logger, std::string nonce_secret, std::shared_ptr<Connection> connection);
 
   enum State {
     Initial,
@@ -65,8 +64,15 @@ class Session : public std::enable_shared_from_this<Session> {
     Closing,
   } uint8_t;
 
+  void write(std::string message);
+  void start();
+  void close();
+
+  using StartCloseFn = std::function<bool(std::string, std::shared_ptr<Session>)>;
+  using AuthenticateFn = std::function<std::shared_ptr<Subscriber>(std::shared_ptr<SIPIdentity>, std::shared_ptr<Session>)>;
+  using RegisterLocationFn = std::function<bool(std::shared_ptr<Subscriber>, std::shared_ptr<SIPUri>, std::shared_ptr<Session>)>;
+
   State state = State::Initial;
-  std::string remote_endpoint;
 
   void on_start(StartCloseFn callback);
   void on_close(StartCloseFn callback);
@@ -75,11 +81,14 @@ class Session : public std::enable_shared_from_this<Session> {
 
  protected:
   std::shared_ptr<Logger> _logger;
+
+  std::shared_ptr<Connection> _connection;
   std::shared_ptr<SIPMessage> _request;
   std::shared_ptr<SIPMessage> _response;
-  std::string _nonce_secret;
 
+  std::string _nonce_secret;
   std::shared_ptr<ExpirySet<std::string>> _nonces;
+  std::string _generate_nonce() const;
 
   StartCloseFn _on_start;
   StartCloseFn _on_close;
@@ -98,7 +107,13 @@ class Session : public std::enable_shared_from_this<Session> {
   void _send(uint16_t code, std::string message);
   void _send_close(uint16_t code, std::string message);
 
-  std::string _generate_nonce() const;
+  std::array<char, 65535> _read_buffer;
+  std::string _buffer;
+
+  void _schedule_async_read();
+  bool _append_body();
+
+  std::shared_ptr<DelayedTask<int>> _register_timeout;
 };
 
 }  // namespace athenasip

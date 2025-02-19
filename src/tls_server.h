@@ -8,13 +8,11 @@
 
 #include "server.h"
 #include "tls_connection.h"
-#include "tls_session.h"
+#include "session.h"
 
 using namespace athenasip::loggers;
 
 namespace athenasip {
-
-class TLSSession;
 
 class TLSServer : public Server {
  public:

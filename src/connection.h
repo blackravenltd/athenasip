@@ -31,6 +31,8 @@ class Connection {
   virtual void shutdown() = 0;
 
   virtual void close() = 0;
+
+  virtual std::string transport_name() const = 0;
 };
 
 }  // namespace athenasip

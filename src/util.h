@@ -18,6 +18,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <cctype>
 
 namespace athenasip {
 
@@ -25,6 +26,7 @@ class Util {
  public:
   static std::string to_hex(const std::vector<uint8_t>& vec);
   static std::string to_hex(const uint8_t arr[], uint16_t len);
+  static std::string to_upper(const std::string& str);
   static std::string trim(const std::string& str);
   static std::string trim(const std::string& str, const std::string& trimmable);
   static std::string md5(const std::string& input);
