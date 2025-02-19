@@ -60,14 +60,14 @@ bool Registrar::subscriber_register(std::shared_ptr<Subscriber> subscriber, std:
   return true;
 }
 
-bool Registrar::register_session(std::string endpoint, std::shared_ptr<Session> session) {
+bool Registrar::session_register(std::string endpoint, std::shared_ptr<Session> session) {
   std::lock_guard<std::shared_mutex> lock(_sessions_mutex);
   _sessions.insert({endpoint, session});
   _logger->debug("Registered Connection " + endpoint);
   return true;
 }
 
-bool Registrar::unregister_session(std::string endpoint, std::shared_ptr<Session> session) {
+bool Registrar::session_unregister(std::string endpoint, std::shared_ptr<Session> session) {
   std::lock_guard<std::shared_mutex> lock(_sessions_mutex);
   // _sessions.erase(endpoint);
   _logger->debug("Unregistered Connection " + endpoint);

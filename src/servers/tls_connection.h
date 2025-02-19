@@ -17,7 +17,7 @@
 using namespace boost::asio;
 using namespace boost::asio::ssl;
 
-namespace athenasip {
+namespace athenasip::servers {
 
 class TLSConnection : public Connection {
  public:

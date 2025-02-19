@@ -11,6 +11,7 @@
 using namespace athenasip::headers;
 using namespace athenasip::types;
 using namespace athenasip::loggers;
+using namespace athenasip::servers;
 
 namespace athenasip {
 
