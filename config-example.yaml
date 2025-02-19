@@ -1,10 +1,16 @@
 sip:
-  address: 127.0.0.1
-  port: 5060
-  realm: "example.com"
+  realm: "sip.athenasip.org"
   nonce_secret: "your_nonce_secret_here"
 
+tcp:
+  enable: true
+  address: 127.0.0.1
+  port: 5060
+
 tls:
+  enable: true
+  address: 127.0.0.1
+  port: 5061
   cert_pem_filename: "../tls/snakeoil.cer"
   key_pem_filename: "../tls/snakeoil.key"
 

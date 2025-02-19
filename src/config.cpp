@@ -14,7 +14,7 @@
 
 namespace athenasip {
 
-Config::Config(std::shared_ptr<Logger> logger) : _logger(logger), sip_port(0), sip_registration_timeout(0) {}
+Config::Config(std::shared_ptr<Logger> logger) : _logger(logger) {}
 
 bool Config::load_from_yaml(const std::string &filename) {
   YAML::Node config;
@@ -32,25 +32,6 @@ bool Config::load_from_yaml(const std::string &filename) {
   }
   YAML::Node sip = config["sip"];
 
-  if (sip["address"])
-    sip_address = sip["address"].as<std::string>();
-  else {
-    _logger->error("Missing 'sip.address'");
-    return false;
-  }
-
-  if (sip["port"]) {
-    try {
-      sip_port = sip["port"].as<uint16_t>();
-    } catch (const std::exception &e) {
-      _logger->error("Invalid value for 'sip.port': " + std::string(e.what()));
-      return false;
-    }
-  } else {
-    _logger->error("Missing 'sip.port'");
-    return false;
-  }
-
   if (sip["realm"])
     sip_realm = sip["realm"].as<std::string>();
   else {
@@ -66,24 +47,63 @@ bool Config::load_from_yaml(const std::string &filename) {
   }
 
   // --- Parse the 'tls' section ---
-  if (!config["tls"]) {
-    _logger->error("YAML file missing 'sip' section");
-    return false;
-  }
   YAML::Node tls = config["tls"];
+  if (tls) {
+    if (tls["address"])
+      tls_address = tls["address"].as<std::string>();
+    else {
+      _logger->error("Missing 'tls.address'");
+      return false;
+    }
 
-  if (tls["cert_pem_filename"])
-    tls_cert_pem_filename = tls["cert_pem_filename"].as<std::string>();
-  else {
-    _logger->warn("Missing 'tls.cert_pem_filename'");
-    tls_cert_pem_filename.clear();
+    if (tls["port"]) {
+      try {
+        tls_port = tls["port"].as<uint16_t>();
+      } catch (const std::exception &e) {
+        _logger->error("Invalid value for 'tls.port': " + std::string(e.what()));
+        return false;
+      }
+    } else {
+      _logger->error("Missing 'tls.port'");
+      return false;
+    }
+
+    if (tls["cert_pem_filename"])
+      tls_cert_pem_filename = tls["cert_pem_filename"].as<std::string>();
+    else {
+      _logger->warn("Missing 'tls.cert_pem_filename'");
+      tls_cert_pem_filename.clear();
+    }
+
+    if (tls["key_pem_filename"])
+      tls_key_pem_filename = tls["key_pem_filename"].as<std::string>();
+    else {
+      _logger->warn("Missing 'tls.key_pem_filename'");
+      tls_key_pem_filename.clear();
+    }
   }
 
-  if (tls["key_pem_filename"])
-    tls_key_pem_filename = tls["key_pem_filename"].as<std::string>();
-  else {
-    _logger->warn("Missing 'tls.key_pem_filename'");
-    tls_key_pem_filename.clear();
+  // --- Parse the 'tls' section ---
+  YAML::Node tcp = config["tcp"];
+  if (tcp) {
+    if (tcp["address"])
+      tcp_address = tcp["address"].as<std::string>();
+    else {
+      _logger->error("Missing 'tcp.address'");
+      return false;
+    }
+
+    if (tcp["port"]) {
+      try {
+        tcp_port = tcp["port"].as<uint16_t>();
+      } catch (const std::exception &e) {
+        _logger->error("Invalid value for 'tcp.port': " + std::string(e.what()));
+        return false;
+      }
+    } else {
+      _logger->error("Missing 'tcp.port'");
+      return false;
+    }
   }
 
   // --- Parse the 'db' section ---

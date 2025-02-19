@@ -31,14 +31,11 @@ class Server : public std::enable_shared_from_this<Server> {
   virtual void start() = 0;
   virtual void stop() = 0;
 
-  virtual bool session_register(std::string endpoint, std::shared_ptr<Session> session);
-  virtual bool session_unregister(std::string endpoint, std::shared_ptr<Session> session);
-
   std::string nonce_secret = "testing123";
 
  protected:
-  std::shared_ptr<Logger> _logger;
   std::shared_ptr<Registrar> _registrar;
+  std::shared_ptr<Logger> _logger;
 };
 
 }  // namespace athenasip::servers

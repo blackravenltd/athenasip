@@ -24,15 +24,19 @@ class Config {
   Config(std::shared_ptr<Logger> logger);
 
   // SIP configuration
-  std::string sip_address;            // e.g. "127.0.0.1"
-  uint16_t sip_port;                  // e.g. 5060
-  std::string sip_realm;              // e.g. "example.com"
-  std::string sip_nonce_secret;       // e.g. "your_nonce_secret_here"
-  uint32_t sip_registration_timeout;  // (set a default or load from YAML)
+  std::string sip_realm;                     // e.g. "example.com"
+  std::string sip_nonce_secret;              // e.g. "your_nonce_secret_here"
+  uint32_t sip_registration_timeout = 5000;  // (set a default or load from YAML)
 
   // TLS Configuration
+  std::string tls_address;            // e.g. "127.0.0.1"
+  uint16_t tls_port = 0;              // e.g. 5061
   std::string tls_cert_pem_filename;  // e.g. "./tls/snakeoil.cer"
   std::string tls_key_pem_filename;   // e.g. "./tls/snakeoil.key"
+
+  // TCP Configuration
+  std::string tcp_address;  // e.g. "127.0.0.1"
+  uint16_t tcp_port = 0;    // e.g. 5060
 
   // DB configuration
   std::string db_database_url;  // e.g. "mysql://root@localhost/"
