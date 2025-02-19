@@ -16,7 +16,7 @@ namespace athenasip {
 
 Session::Session(std::shared_ptr<Logger> logger, std::string nonce_secret, std::shared_ptr<Connection> connection)
     : _connection(connection), _nonces(std::make_shared<ExpirySet<std::string>>()) {
-  _logger = std::make_unique<LoggerScoped>(connection->remote_endpoint_name(), logger);
+  _logger = std::make_unique<LoggerScoped>(_connection->transport_name()+"://" + _connection->remote_endpoint_name(), logger);
 }
 
 void Session::start() {
@@ -40,6 +40,8 @@ void Session::start() {
             "<sip:server@example.com>\r\nCall-ID: abc123@example.com\r\nCSeq: 1 REGISTER\r\nContent-Length: 0\r\n\r\n");
 
         close();
+
+        _register_timeout.reset();
         return 0;
       },
       5000);
@@ -50,26 +52,30 @@ void Session::start() {
 void Session::close() {
   auto self(shared_from_this());
 
-  // Register Timeout
+  // Cancel Register Timeout
   if (_register_timeout) {
     _register_timeout->cancel();
     _register_timeout.reset();
   }
 
   // Ensure Connection Closed
-  if (_connection && _connection->is_open()) {
-    _connection->shutdown();
-    _connection->close();
+  if (_connection) {
+    // Shutdown and close connection
+    if(_connection->is_open()) {
+      _connection->shutdown();
+      _connection->close();
+    }
+
+    _logger->info("Closed");
+
+    // OnClose callback
+    if (_on_close) {
+      _on_close(_connection->transport_name()+"://" + _connection->remote_endpoint_name(), shared_from_this());
+      _on_close = nullptr;
+    }
+    
     _connection.reset();
   }
-
-  // OnClose callback
-  if (_on_close) {
-    _on_close(_connection->transport_name()+"://" + _connection->remote_endpoint_name(), shared_from_this());
-    _on_close = nullptr;
-  }
-
-  _logger->debug("Closed");
 }
 
 void Session::write(std::string message) {
@@ -92,10 +98,12 @@ void Session::_schedule_async_read() {
   // Schedule Read
   _connection->async_read_some(boost::asio::buffer(_read_buffer), [this, self](boost::system::error_code ec, std::size_t length) {
     if (ec) {
-      if (ec == boost::asio::error::operation_aborted || ec == boost::asio::error::eof) {
-        _logger->info("Closed Connection");
+      if (ec == boost::asio::error::operation_aborted) {
+        // Normal (We closed the connection)
+      } else if (ec == boost::asio::error::eof) {
+        _logger->info("Remote Disconnected");
       } else {
-        _logger->error("Error during read: " + ec.what());
+        _logger->error("Read Error (" + ec.what() + ")");
       }
       close();
     } else {
@@ -176,7 +184,7 @@ void Session::_process_message() {
   _logger->info("> " + _request->header->request_method);
 
   // Print Incoming (DEBUG)
-  _request->print();
+  // _request->print();
 
   // Create Response
   _response = std::make_shared<SIPMessage>();
@@ -287,7 +295,7 @@ void Session::_process_message_challenged() {
       return;
     }
 
-    // Auth is good
+    // Authorized
     // _request->print();
     _logger->debug("Challenged / REGISTER - Authorized, Sending 200 OK");
     _response->header->add("Contact", _request->header->headers_map["Contact"][0]);

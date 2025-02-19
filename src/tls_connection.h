@@ -36,11 +36,18 @@ class TLSConnection : public Connection {
   }
 
   virtual void async_read_some(boost::asio::mutable_buffer buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) override {
-    _connection->async_read_some(buffer, handler);
+    _connection->async_read_some(buffer, [this, handler](boost::system::error_code ec, std::size_t length) {
+      if(ec == boost::asio::ssl::error::stream_truncated) {
+        ec = boost::asio::error::operation_aborted;
+      }
+      handler(ec,length);
+    });
   }
 
   virtual void async_write_some(boost::asio::const_buffer buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) override {
-    _connection->async_write_some(buffer, handler);
+    _connection->async_write_some(buffer, [this, handler](boost::system::error_code ec, std::size_t length) {
+      handler(ec,length);
+    });
   }
 
   virtual std::string remote_endpoint_name() override {
