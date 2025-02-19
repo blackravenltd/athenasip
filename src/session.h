@@ -49,7 +49,7 @@ class Session : public std::enable_shared_from_this<Session> {
  public:
   using StartCloseFn = std::function<bool(std::string, std::shared_ptr<Session>)>;
   using AuthenticateFn = std::function<std::shared_ptr<Subscriber>(std::shared_ptr<SIPIdentity>, std::shared_ptr<Session>)>;
-  using RegisterLocationFn = std::function<bool(std::shared_ptr<Subscriber>, std::shared_ptr<SIPUri>, std::shared_ptr<Session>)> ;
+  using RegisterLocationFn = std::function<bool(std::shared_ptr<Subscriber>, std::shared_ptr<SIPUri>, std::shared_ptr<Session>)>;
 
   Session(std::shared_ptr<Logger> logger, std::string nonce_secret);
 

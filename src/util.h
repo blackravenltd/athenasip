@@ -8,16 +8,16 @@
 
 #include <openssl/evp.h>
 
+#include <array>
 #include <cstdlib>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <regex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
-#include <array>
-#include <regex>
 
 namespace athenasip {
 
