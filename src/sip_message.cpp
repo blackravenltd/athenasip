@@ -14,12 +14,12 @@ SIPMessage::SIPMessage() {}
 std::string SIPMessage::to_string() const {
   std::string out;
   out += header->to_string();
-  out += "\r\n\r\n";
-  out += body;
+  out += "\r\n";
+  if (body.size() != 0) out += body;
   return out;
 }
 
-void SIPMessage::print() const { std::cout << to_string() << std::endl; }
+void SIPMessage::print() const { std::cout << Util::trim(to_string()) << std::endl; }
 
 std::string operator+(const SIPMessage& message, const std::string& str) { return message.to_string() + str; }
 std::string operator+(const std::string& str, const SIPMessage& message) { return str + message.to_string(); }

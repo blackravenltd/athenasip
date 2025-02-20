@@ -18,7 +18,7 @@ void LoggerScoped::raw(const std::string &str) { _logger->error("(" + _scope + "
 std::shared_ptr<Logger> LoggerScoped::base_logger() { return _logger; }
 void LoggerScoped::set_level(LogLevel level) {
   auto base = base_logger();
-  if(base) base->set_level(level);
+  if (base) base->set_level(level);
 };
 
 }  // namespace athenasip::loggers

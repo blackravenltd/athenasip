@@ -50,8 +50,6 @@ const std::string LoggerStdIO::_getDateTime() {
 
 std::shared_ptr<Logger> LoggerStdIO::base_logger() { return nullptr; }
 
-void LoggerStdIO::set_level(LogLevel level) {
-  _log_level = level;
-};
+void LoggerStdIO::set_level(LogLevel level) { _log_level = level; };
 
 }  // namespace athenasip::loggers

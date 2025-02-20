@@ -38,7 +38,7 @@ std::shared_ptr<Subscriber> Registrar::subscriber_get(std::shared_ptr<SIPIdentit
   return obj;
 }
 
-bool Registrar::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact) {
+bool Registrar::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Session> session) {
   std::shared_ptr<DBResult> res = _db->query("SELECT COUNT(*) FROM `location` WHERE `subscriber_id` = ? AND `user` = ? AND `host` = ? AND `port` = ?",
                                              {subscriber->id, contact->user, contact->realm, contact->port.value_or(0)});
   if (res && res->rows.size() == 0) {
@@ -57,8 +57,21 @@ bool Registrar::subscriber_register(std::shared_ptr<Subscriber> subscriber, std:
     _db->query("UPDATE `location` SET `registered_at` = NOW() WHERE `id` = ?) VALUES (?,?,?,?,?,?)", {subscriber->id});
   }
 
+  _sessions_by_subscriber[subscriber->id] = session;
+
   return true;
 }
+
+bool Registrar::subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Session> session) {
+  _db->query("DELETE FROM `location` WHERE `subscriber_id` = ? AND `user` = ? AND `host` = ? AND `port` = ?",
+             {subscriber->id, contact->user, contact->realm, contact->port.value_or(0)});
+
+  _sessions_by_subscriber.erase(subscriber->id);
+
+  return true;
+}
+
+std::shared_ptr<Session> Registrar::subscriber_get_session(std::shared_ptr<Subscriber> subscriber) { return _sessions_by_subscriber[subscriber->id]; }
 
 bool Registrar::session_register(std::string endpoint, std::shared_ptr<Session> session) {
   std::lock_guard<std::shared_mutex> lock(_sessions_mutex);

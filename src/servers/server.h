@@ -33,6 +33,8 @@ class Server : public std::enable_shared_from_this<Server> {
 
   std::string nonce_secret = "testing123";
 
+  void set_session_events(std::shared_ptr<Session> new_session);
+
  protected:
   std::shared_ptr<Registrar> _registrar;
   std::shared_ptr<Logger> _logger;
