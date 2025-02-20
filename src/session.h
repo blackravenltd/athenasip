@@ -61,8 +61,11 @@ class Session : public std::enable_shared_from_this<Session> {
     Initial,
     Challenged,
     Registered,
+    InCall,
+    Bye,
     Error,
     Closing,
+    Closed,
   } uint8_t;
 
   void write(std::string message);
@@ -72,13 +75,21 @@ class Session : public std::enable_shared_from_this<Session> {
   using StartCloseFn = std::function<bool(std::string, std::shared_ptr<Session>)>;
   using AuthenticateFn = std::function<std::shared_ptr<Subscriber>(std::shared_ptr<SIPIdentity>, std::shared_ptr<Session>)>;
   using RegisterLocationFn = std::function<bool(std::shared_ptr<Subscriber>, std::shared_ptr<SIPUri>, std::shared_ptr<Session>)>;
+  using GetSubscriberSessionFn = std::function<std::shared_ptr<Session>(std::shared_ptr<Subscriber>)>;
 
   State state = State::Initial;
+
+  // The other session when Caller/Callee
+  std::shared_ptr<Session> other_session;
+
+  void send(std::shared_ptr<SIPMessage> message);
 
   void on_start(StartCloseFn callback);
   void on_close(StartCloseFn callback);
   void on_authenticate(AuthenticateFn callback);
   void on_register_location(RegisterLocationFn callback);
+  void on_unregister_location(RegisterLocationFn callback);
+  void on_get_subscriber_session(GetSubscriberSessionFn callback);
 
  protected:
   std::shared_ptr<Logger> _logger;
@@ -95,6 +106,8 @@ class Session : public std::enable_shared_from_this<Session> {
   StartCloseFn _on_close;
   AuthenticateFn _on_authenticate;
   RegisterLocationFn _on_register_location;
+  RegisterLocationFn _on_unregister_location;
+  GetSubscriberSessionFn _on_get_subscriber_session;
 
   std::shared_ptr<Subscriber> _subscriber;
   std::shared_ptr<SIPUri> _contact;
@@ -104,6 +117,8 @@ class Session : public std::enable_shared_from_this<Session> {
   void _process_message_challenged();
   void _process_message_registered();
   void _process_message_invite();
+  void _process_message_incall();
+  void _process_message_bye();
 
   void _send(uint16_t code, std::string message);
   void _send_close(uint16_t code, std::string message);

@@ -30,12 +30,15 @@ class Registrar {
 
   bool subscriber_exists(std::shared_ptr<SIPIdentity> identity);
   std::shared_ptr<Subscriber> subscriber_get(std::shared_ptr<SIPIdentity> identity);
-  bool subscriber_register(std::shared_ptr<Subscriber> identity, std::shared_ptr<SIPUri> contact);
+  bool subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Session> session);
+  bool subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Session> session);
   const std::shared_ptr<SIPUri> subscriber_get_location(std::shared_ptr<SIPIdentity> identity);
 
   bool session_register(std::string endpoint, std::shared_ptr<Session> session);
   bool session_unregister(std::string endpoint, std::shared_ptr<Session> session);
   void session_close_all();
+
+  std::shared_ptr<Session> subscriber_get_session(std::shared_ptr<Subscriber> subscriber);
 
  private:
   std::unique_ptr<Logger> _logger;
@@ -43,6 +46,8 @@ class Registrar {
 
   std::unordered_map<std::string, std::shared_ptr<Session>> _sessions;
   std::shared_mutex _sessions_mutex;
+
+  std::unordered_map<uint64_t, std::shared_ptr<Session>> _sessions_by_subscriber;
 };
 
 }  // namespace athenasip

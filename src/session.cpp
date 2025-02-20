@@ -53,6 +53,10 @@ void Session::start() {
 void Session::close() {
   auto self(shared_from_this());
 
+  if (state == State::Closing || state == State::Closed) return;
+
+  state = State::Closing;
+
   // Cancel Register Timeout
   if (_register_timeout) {
     _register_timeout->cancel();
@@ -67,6 +71,11 @@ void Session::close() {
       _connection->close();
     }
 
+    if (_on_unregister_location && _subscriber) {
+      _on_unregister_location(_subscriber, _contact, shared_from_this());
+      _on_unregister_location = nullptr;
+    }
+
     _logger->info("Closed");
 
     // OnClose callback
@@ -77,6 +86,8 @@ void Session::close() {
 
     _connection.reset();
   }
+
+  state = State::Closed;
 }
 
 void Session::write(std::string message) {
@@ -135,30 +146,39 @@ void Session::_schedule_async_read() {
           // Wait for more body
         }
       } else {
-        // Look for header of a new message
-        size_t pos;
-        while ((pos = _buffer.find("\r\n\r\n")) != std::string::npos) {
-          std::string sip_header = _buffer.substr(0, pos + 2);
-          _buffer.erase(0, pos + 4);
-          // Create a new SIPMessage
-          _request = std::make_shared<SIPMessage>();
-          // Get the header
-          _request->header = std::make_shared<SIPHeader>(sip_header);
-          // Get the Content-Length
-          if (_request->header->contains("Content-Length")) {
-            _request->body_length = _request->header->headers_map["Content-Length"][0]->as<UIntHeader>()->value;
-          }
-          // Process messages with or without bodies.
-          if (_request->body_length == 0) {
-            // Message With No Body
-            _process_message();
-          } else {
-            // Message has a body.
-            if (_append_body()) {
-              // Message body is complete, process it
+        // Skip whitespace
+        while (_buffer.size() >= 2 && _buffer.substr(0, 2) == "\r\n") _buffer.erase(0, 2);
+
+        // Null message?
+        if (_buffer.size() != 0) {
+          // Look for header of a new message
+          size_t pos;
+          while ((pos = _buffer.find("\r\n\r\n")) != std::string::npos) {
+            std::string sip_header = _buffer.substr(0, pos);
+            _buffer.erase(0, pos + 4);
+            // Create a new SIPMessage
+            _request = std::make_shared<SIPMessage>();
+
+            // Get the header
+            _request->header = std::make_shared<SIPHeader>(sip_header);
+
+            // Get the Content-Length
+            if (_request->header->contains("Content-Length")) {
+              _request->body_length = _request->header->headers_map["Content-Length"][0]->as<UIntHeader>()->value;
+            }
+
+            // Process messages with or without bodies.
+            if (_request->body_length == 0) {
+              // Message With No Body
               _process_message();
             } else {
-              // Wait for more body
+              // Message has a body.
+              if (_append_body()) {
+                // Message body is complete, process it
+                _process_message();
+              } else {
+                // Wait for more body
+              }
             }
           }
         }
@@ -182,10 +202,11 @@ bool Session::_append_body() {
 
 void Session::_process_message() {
   // Log Message
-  _logger->info("> " + _request->header->request_method);
+  _logger->info("> " + _request->header->first_line());
 
-  // Print Incoming (DEBUG)
-  // _request->print();
+  // cout Incoming (DEBUG)
+  std::cout << ">>>>> ";
+  _request->print();
 
   // Create Response
   _response = std::make_shared<SIPMessage>();
@@ -193,12 +214,22 @@ void Session::_process_message() {
   _response->header->type = SIPHeader::Type::Response;
   _response->body_length = 0;
 
-  // Preflight, check basic headers
-  if (!_request->header->contains("From") || !_request->header->contains("To") || !_request->header->contains("Call-ID") ||
-      !_request->header->contains("CSeq") || !_request->header->contains("Via") || !_request->header->contains("Max-Forwards")) {
-    _logger->info("[Request] - Incomplete Headers, Sending 400 Bad Request and Closing");
-    _send_close(400, "Bad Request");
-    return;
+  if (_request->header->type == SIPHeader::Type::Request) {
+    // Preflight, check basic headers for a request
+    if (!_request->header->contains("From") || !_request->header->contains("To") || !_request->header->contains("Call-ID") ||
+        !_request->header->contains("CSeq") || !_request->header->contains("Via") || !_request->header->contains("Max-Forwards")) {
+      _logger->info("[Request] - Incomplete Headers, Sending 400 Bad Request");
+      _send(400, "Bad Request");
+      return;
+    }
+  } else {
+    // Preflight, check basic headers for a response based on SIP RFCs (RFC 3261)
+    // A SIP response must include: Via, From, To, Call-ID, CSeq, and Content-Length.
+    if (!_request->header->contains("Via") || !_request->header->contains("From") || !_request->header->contains("To") ||
+        !_request->header->contains("Call-ID") || !_request->header->contains("CSeq") || !_request->header->contains("Content-Length")) {
+      _logger->info("[Response] - Incomplete Headers, Sending 400 Bad Response");
+      return;
+    }
   }
 
   // Add From/To Headers
@@ -220,6 +251,12 @@ void Session::_process_message() {
       break;
     case State::Registered:
       _process_message_registered();
+      break;
+    case State::InCall:
+      _process_message_incall();
+      break;
+    case State::Bye:
+      _process_message_bye();
       break;
     default:
       _logger->error("Unknown State while processing message: " + std::to_string(state));
@@ -296,7 +333,6 @@ void Session::_process_message_challenged() {
     }
 
     // Authorized
-    // _request->print();
     _logger->debug("Challenged / REGISTER - Authorized, Sending 200 OK");
     _response->header->add("Contact", _request->header->headers_map["Contact"][0]);
 
@@ -321,8 +357,6 @@ void Session::_process_message_registered() {
 }
 
 void Session::_process_message_invite() {
-  _logger->info("> INVITE");
-
   if (_request->body.empty()) {
     _logger->debug("Registered / INVITE - No Body, Sending 400 Bad Request");
     _send(400, "Bad Request");
@@ -351,7 +385,74 @@ void Session::_process_message_invite() {
     return;
   };
 
-  sdp->print();
+  auto toIdentity = _request->header->headers_map["To"][0]->as<SIPIdentityHeader>()->value;
+
+  // Is To: a subscriber?
+  auto to_subscriber = _on_authenticate(toIdentity, shared_from_this());
+
+  // Not Found TODO:Forwarding?
+  if (!to_subscriber) {
+    _logger->debug("Registered / INVITE - To: " + toIdentity->to_string() + " Not Found, Sending 404 Not Found");
+    _send(404, "Not Found");
+    return;
+  }
+
+  _logger->debug("Registered / INVITE - Found To: " + toIdentity->to_string() + " Subscriber: " + std::to_string(to_subscriber->id));
+
+  // Is Subscriber Online? TODO: This should query other AthenaSIP Instances if not.
+  auto to_session = _on_get_subscriber_session(to_subscriber);
+
+  // Not Found TODO:Forwarding?
+  if (!to_session) {
+    _logger->debug("Registered / INVITE - To: " + toIdentity->to_string() + " Session Not Found, Sending 404 Not Found");
+    _send(404, "Not Found");
+    return;
+  }
+
+  // Send Trying
+  // _send(100,"Trying");
+
+  if (to_session->state != State::Registered) {
+    _logger->debug("Registered / INVITE - To: " + toIdentity->to_string() + " Session State not State::Registered, Sending 486 Busy Here");
+    _send(486, "Busy Here");
+    return;
+  }
+
+  // Set States
+  state = State::InCall;
+  to_session->state = State::InCall;
+
+  // Set Other session
+  other_session = to_session;
+  to_session->other_session = shared_from_this();
+
+  // Blank Params/Headers
+  _request->header->request_uri->parameters = "";
+  _request->header->request_uri->headers = "";
+
+  // Forward INVITE to other party
+  other_session->send(_request);
+}
+
+void Session::_process_message_incall() {
+  // Dumbly relay messages unless "BYE"
+  other_session->send(_request);
+
+  if (_request->header->type == SIPHeader::Type::Request && _request->header->request_method == "BYE") {
+    state = State::Bye;
+    other_session->state = State::Bye;
+  }
+}
+
+void Session::_process_message_bye() {
+  // Relay one message then close.
+  other_session->send(_request);
+
+  state = State::Registered;
+  other_session->state = State::Registered;
+
+  other_session->other_session = nullptr;
+  other_session = nullptr;
 }
 
 void Session::_send_close(uint16_t code, std::string message) {
@@ -363,10 +464,17 @@ void Session::_send(uint16_t code, std::string message) {
   _response->header->response_code = code;
   _response->header->response_message = message;
   _response->header->add("Content-Length", std::make_shared<UIntHeader>(_response->body.size()));
-  // _response->print();
-  _logger->info("< " + std::to_string(code) + " " + message);
-  write(_response->to_string());
-  if (_response->body.size() > 0) write(_response->body);
+  send(_response);
+}
+
+void Session::send(std::shared_ptr<SIPMessage> message) {
+  _logger->info("< " + message->header->first_line());
+
+  // cout Outgoing (DEBUG)
+  std::cout << "<<<<< ";
+  message->print();
+
+  write(message->to_string());
 }
 
 std::string Session::_generate_nonce() const {
@@ -403,5 +511,7 @@ void Session::on_start(StartCloseFn callback) { _on_start = callback; }
 void Session::on_close(StartCloseFn callback) { _on_close = callback; }
 void Session::on_authenticate(AuthenticateFn callback) { _on_authenticate = callback; }
 void Session::on_register_location(RegisterLocationFn callback) { _on_register_location = callback; }
+void Session::on_unregister_location(RegisterLocationFn callback) { _on_unregister_location = callback; }
+void Session::on_get_subscriber_session(GetSubscriberSessionFn callback) { _on_get_subscriber_session = callback; }
 
 }  // namespace athenasip

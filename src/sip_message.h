@@ -22,7 +22,7 @@ class SIPMessage {
 
   std::shared_ptr<SIPHeader> header;
   std::string body;
-  uint body_length;
+  uint body_length = 0;
 
   std::string to_string() const;
 

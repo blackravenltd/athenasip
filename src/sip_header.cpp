@@ -27,14 +27,28 @@ void SIPHeader::parse(const std::string& sip_message) {
   headers_map.clear();
 
   std::istringstream stream(sip_message);
-  std::string line, current_key, current_value;
+  std::string line, current_key, current_value, request_uri_str;
 
   // Read the request/response line (first line)
   if (std::getline(stream, line) && !line.empty()) {
-    std::istringstream request_stream(line);
-    // Assume request line for now (TODO: add response support if needed)
-    request_stream >> request_method >> request_uri >> sip_version;
-    // In a complete implementation you might set type = Response if the line starts with "SIP/2.0"
+    std::istringstream first_line_stream(line);
+    std::string token;
+    first_line_stream >> token;
+
+    if (token == "SIP/2.0") {
+      // This is a SIP response.
+      type = Type::Response;
+      sip_version = token;  // "SIP/2.0"
+      first_line_stream >> response_code;
+      std::getline(first_line_stream, response_message);
+      response_message = Util::trim(response_message);
+    } else {
+      // This is a SIP request.
+      type = Type::Request;
+      request_method = token;
+      first_line_stream >> request_uri_str >> sip_version;
+      request_uri = std::make_shared<SIPUri>(request_uri_str);
+    }
   }
 
   // Process header lines
@@ -76,19 +90,7 @@ void SIPHeader::parse(const std::string& sip_message) {
 }
 
 std::string SIPHeader::to_string() const {
-  std::string out;
-
-  // Build the start-line (request or response)
-  switch (type) {
-    case Type::Request:
-      out += request_method + " " + request_uri + " " + sip_version + "\r\n";
-      break;
-    case Type::Response:
-      out += sip_version + " " + std::to_string(response_code) + " " + response_message + "\r\n";
-      break;
-    default:
-      throw std::runtime_error("SIPHeader::to_string Unknown Type " + std::to_string(type));
-  }
+  std::string out = first_line();
 
   // Add headers in order.
   for (const auto& header : headers) {
@@ -96,6 +98,17 @@ std::string SIPHeader::to_string() const {
   }
 
   return out;
+}
+
+std::string SIPHeader::first_line() const {
+  switch (type) {
+    case Type::Request:
+      return request_method + " " + request_uri->to_string() + " " + sip_version + "\r\n";
+    case Type::Response:
+      return sip_version + " " + std::to_string(response_code) + " " + response_message + "\r\n";
+    default:
+      throw std::runtime_error("SIPHeader::first_line Unknown Type " + std::to_string(type));
+  }
 }
 
 bool SIPHeader::contains(const std::string& field) const {

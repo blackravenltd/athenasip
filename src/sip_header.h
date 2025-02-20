@@ -15,7 +15,10 @@
 #include <vector>
 
 #include "headers/header.h"
+#include "types/sip_uri.h"
 #include "util.h"
+
+using namespace athenasip::types;
 
 namespace athenasip {
 
@@ -38,7 +41,7 @@ class SIPHeader {
 
   // For requests
   std::string request_method;
-  std::string request_uri;
+  std::shared_ptr<SIPUri> request_uri;
 
   // For responses
   uint16_t response_code = 0;
@@ -57,6 +60,7 @@ class SIPHeader {
 
   void parse(const std::string& sip_message);
   std::string to_string() const;
+  std::string first_line() const;
 
   // Returns true if there is at least one header with the given field name.
   bool contains(const std::string& field) const;
