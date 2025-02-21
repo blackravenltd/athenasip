@@ -57,6 +57,7 @@ class SIPHeader {
   std::unordered_map<std::string, std::vector<std::shared_ptr<headers::Header>>> headers_map;
 
   void add(const std::string& field_name, std::shared_ptr<headers::Header> value);
+  void clear(const std::string& field_name);
 
   void parse(const std::string& sip_message);
   std::string to_string() const;

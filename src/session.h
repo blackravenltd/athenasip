@@ -112,6 +112,7 @@ class Session : public std::enable_shared_from_this<Session> {
   std::shared_ptr<Subscriber> _subscriber;
   std::shared_ptr<SIPUri> _contact;
 
+  void _process_buffer();
   void _process_message();
   void _process_message_initial();
   void _process_message_challenged();

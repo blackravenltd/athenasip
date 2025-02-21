@@ -21,6 +21,12 @@ void SIPHeader::add(const std::string& field_name, std::shared_ptr<headers::Head
   headers_map[field_name].push_back(value);
 }
 
+void SIPHeader::clear(const std::string& field_name) {
+  auto newEnd = std::remove_if(headers.begin(), headers.end(), [field_name](const auto& item) { return item.key == field_name; });
+  headers.erase(newEnd, headers.end());
+  headers_map.erase(field_name);
+}
+
 void SIPHeader::parse(const std::string& sip_message) {
   // Clear any previous state.
   headers.clear();
