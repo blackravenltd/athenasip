@@ -26,6 +26,7 @@
 #include <string>
 #include <thread>
 
+#include "call.h"
 #include "delayed_task.h"
 #include "expiry_set.h"
 #include "headers/authorization_header.h"
@@ -36,9 +37,9 @@
 #include "headers/uint_header.h"
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
+#include "registrar.h"
 #include "sdp.h"
 #include "servers/connection.h"
-#include "session.h"
 #include "sip_header.h"
 #include "sip_message.h"
 #include "types/authorization.h"
@@ -55,12 +56,10 @@ namespace athenasip {
 
 class Session : public std::enable_shared_from_this<Session> {
  public:
-  Session(std::shared_ptr<Logger> logger, std::string nonce_secret, std::shared_ptr<Connection> connection);
+  Session(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar>, std::string nonce_secret, std::shared_ptr<Connection> connection);
 
   enum State {
     Normal,
-    InCall,
-    Bye,
     Error,
     Closing,
     Closed,
@@ -70,27 +69,14 @@ class Session : public std::enable_shared_from_this<Session> {
   void start();
   void close();
 
-  using StartCloseFn = std::function<bool(std::string, std::shared_ptr<Session>)>;
-  using AuthenticateFn = std::function<std::shared_ptr<Subscriber>(std::shared_ptr<SIPIdentity>, std::shared_ptr<Session>)>;
-  using RegisterLocationFn = std::function<bool(std::shared_ptr<Subscriber>, std::shared_ptr<SIPUri>, std::shared_ptr<Session>)>;
-  using GetSubscriberSessionFn = std::function<std::shared_ptr<Session>(std::shared_ptr<Subscriber>)>;
-
   State state = State::Normal;
-
-  // The other session when Caller/Callee
-  std::shared_ptr<Session> other_session;
 
   void send(std::shared_ptr<SIPMessage> message);
 
-  void on_start(StartCloseFn callback);
-  void on_close(StartCloseFn callback);
-  void on_authenticate(AuthenticateFn callback);
-  void on_register_location(RegisterLocationFn callback);
-  void on_unregister_location(RegisterLocationFn callback);
-  void on_get_subscriber_session(GetSubscriberSessionFn callback);
-
  protected:
   std::shared_ptr<Logger> _logger;
+
+  std::shared_ptr<Registrar> _registrar;
 
   std::shared_ptr<Connection> _connection;
   std::shared_ptr<SIPMessage> _request;
@@ -99,13 +85,6 @@ class Session : public std::enable_shared_from_this<Session> {
   std::string _nonce_secret;
   std::shared_ptr<ExpirySet<std::string>> _nonces;
   std::string _generate_nonce() const;
-
-  StartCloseFn _on_start;
-  StartCloseFn _on_close;
-  AuthenticateFn _on_authenticate;
-  RegisterLocationFn _on_register_location;
-  RegisterLocationFn _on_unregister_location;
-  GetSubscriberSessionFn _on_get_subscriber_session;
 
   std::shared_ptr<Subscriber> _subscriber;
   std::shared_ptr<SIPUri> _contact;

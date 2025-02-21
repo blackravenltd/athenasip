@@ -15,8 +15,8 @@ using namespace athenasip::servers;
 
 namespace athenasip {
 
-Session::Session(std::shared_ptr<Logger> logger, std::string nonce_secret, std::shared_ptr<Connection> connection)
-    : _connection(connection), _nonces(std::make_shared<ExpirySet<std::string>>()) {
+Session::Session(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> registrar, std::string nonce_secret, std::shared_ptr<Connection> connection)
+    : _connection(connection), _registrar(registrar), _nonces(std::make_shared<ExpirySet<std::string>>()) {
   _logger = std::make_unique<LoggerScoped>(_connection->transport_name() + "://" + _connection->remote_endpoint_name(), logger);
 }
 
@@ -27,7 +27,7 @@ void Session::start() {
   state = State::Normal;
 
   // Register callback
-  if (_on_start) _on_start(_connection->transport_name() + "://" + _connection->remote_endpoint_name(), shared_from_this());
+  _registrar->session_register(_connection->transport_name() + "://" + _connection->remote_endpoint_name(), shared_from_this());
 
   // REGISTER timeout
   // TODO: Make rational
@@ -39,7 +39,7 @@ void Session::start() {
 
   //       write("SIP/2.0 408 Request Timeout\r\nVia: SIP/2.0/" + Util::to_upper(_connection->transport_name()) +
   //             " client.example.com;branch=z9hG4bK776asdhds\r\nFrom: <sip:user@example.com>;tag=123456\r\nTo: "
-  //             "<sip:server@example.com>\r\nCall-ID: abc123@example.com\r\nCSeq: 1 REGISTER\r\nContent-Length: 0\r\n\r\n");
+  //             "<sip:server@example.com>\r\nCall-Id: abc123@example.com\r\nCSeq: 1 REGISTER\r\nContent-Length: 0\r\n\r\n");
 
   //       close();
 
@@ -72,18 +72,15 @@ void Session::close() {
       _connection->close();
     }
 
-    if (_on_unregister_location && _subscriber) {
-      _on_unregister_location(_subscriber, _contact, shared_from_this());
-      _on_unregister_location = nullptr;
+    // Clear subscriber if exists
+    if (_subscriber) {
+      _registrar->subscriber_unregister(_subscriber, _contact, shared_from_this());
     }
 
     _logger->info("Closed");
 
-    // OnClose callback
-    if (_on_close) {
-      _on_close(_connection->transport_name() + "://" + _connection->remote_endpoint_name(), shared_from_this());
-      _on_close = nullptr;
-    }
+    // Unregister Connection
+    _registrar->session_unregister(_connection->transport_name() + "://" + _connection->remote_endpoint_name(), shared_from_this());
 
     _connection.reset();
   }
@@ -206,8 +203,8 @@ void Session::_process_message() {
   _logger->info("> " + _request->header->first_line());
 
   // cout Incoming (DEBUG)
-  // std::cout << ">>>>> ";
-  // _request->print();
+  std::cout << ">>>>> ";
+  _request->print();
 
   // Create Response
   _response = std::make_shared<SIPMessage>();
@@ -225,7 +222,7 @@ void Session::_process_message() {
     }
   } else {
     // Preflight, check basic headers for a response based on SIP RFCs (RFC 3261)
-    // A SIP response must include: Via, From, To, Call-ID, CSeq, and Content-Length.
+    // A SIP response must include: Via, From, To, Call-Id, CSeq, and Content-Length.
     if (!_request->header->contains("Via") || !_request->header->contains("From") || !_request->header->contains("To") ||
         !_request->header->contains("Call-ID") || !_request->header->contains("CSeq") || !_request->header->contains("Content-Length")) {
       _logger->info("[Response] - Incomplete Headers, Sending 400 Bad Response");
@@ -238,32 +235,48 @@ void Session::_process_message() {
   _response->header->add("To", _request->header->headers_map["From"][0]);
 
   // Copy Request Headers
-  _response->header->add("Call-Id", _request->header->headers_map["Call-ID"][0]);
+  _response->header->add("Call-ID", _request->header->headers_map["Call-ID"][0]);
   _response->header->add("CSeq", _request->header->headers_map["CSeq"][0]);
   _response->header->add("Via", _request->header->headers_map["Via"][0]);
 
   // Tell the client what is allowed
   _response->header->add("Allow", std::make_shared<StringHeader>("INVITE, ACK, CANCEL, OPTIONS, BYE, REFER, NOTIFY, MESSAGE, INFO"));
 
-  // Process according to state
-  switch (state) {
-    case State::Normal:
-      _process_message_normal();
-      break;
-    case State::InCall:
-      _process_message_incall();
-      break;
-    case State::Bye:
-      _process_message_bye();
-      break;
-    default:
-      _logger->error("Unknown State while processing message: " + std::to_string(state));
+  // Are we in a call?
+  auto callId = _request->header->headers_map["Call-ID"][0]->as<StringHeader>()->to_string();
+  auto call = _registrar->call_get(callId);
+
+  if (call) {
+    _logger->debug("In Call " + call->id);
+  } else {
+    _logger->debug("Not In Call " + callId);
+  }
+
+  if (call) {
+    if (!call->contains_session(shared_from_this())) {
+      _logger->info("Adding to Call " + call->id);
+      call->add_session(shared_from_this());
+    }
+
+    // Forward messages to other sessions
+    call->with_all_sessions_except(
+        [this, call](std::shared_ptr<Session> other_session) {
+          other_session->_logger->info("FORWARDED FROM " + call->id);
+          other_session->send(_request);
+        },
+        shared_from_this());
+  } else if (_request->header->request_method == "REGISTER") {
+    _process_message_register();
+  } else if (_request->header->request_method == "INVITE") {
+    _process_message_invite();
+  } else {
+    _logger->debug("" + _request->header->request_method + " - Unknown Method, Sending 405 Method Not Allowed");
+    _send(405, "Method Not Allowed");
   }
 
   // Free up request/response
   _request.reset();
   _response.reset();
-  return;
 }
 
 void Session::_send_auth_challenge() {
@@ -303,7 +316,7 @@ void Session::_process_message_register() {
   }
 
   // Get Subscriber
-  _subscriber = _on_authenticate(fromIdentity, shared_from_this());
+  _subscriber = _registrar->subscriber_get(fromIdentity);
 
   // Not Found
   if (!_subscriber) {
@@ -331,7 +344,7 @@ void Session::_process_message_register() {
 
   _contact = _request->header->headers_map["Contact"][0]->as<SIPIdentityHeader>()->value->uri;
   _logger->info("REGISTER - Authorized, Registering " + _subscriber->identity->to_string() + " To " + _contact->to_string());
-  _on_register_location(_subscriber, _contact, shared_from_this());
+  _registrar->subscriber_register(_subscriber, _contact, shared_from_this());
 
   _send(200, "OK");
 }
@@ -365,85 +378,60 @@ void Session::_process_message_invite() {
     return;
   };
 
-  auto toIdentity = _request->header->headers_map["To"][0]->as<SIPIdentityHeader>()->value;
+  // Create a new Call
+  auto call = std::make_shared<Call>(_request->header->headers_map["Call-ID"][0]->as<StringHeader>()->to_string());
+  call->from = _request->header->headers_map["From"][0]->as<SIPIdentityHeader>()->value;
+  call->to = _request->header->headers_map["To"][0]->as<SIPIdentityHeader>()->value;
+  call->add_session(shared_from_this());
 
   // Is To: a subscriber?
-  auto to_subscriber = _on_authenticate(toIdentity, shared_from_this());
+  auto to_subscriber = _registrar->subscriber_get(call->to);
 
   // Not Found TODO:Forwarding?
   if (!to_subscriber) {
-    _logger->debug("INVITE - To: " + toIdentity->to_string() + " Not Found, Sending 404 Not Found");
+    _logger->debug("INVITE - To: " + call->to->to_string() + " Not Found, Sending 404 Not Found");
     _send(404, "Not Found");
     return;
   }
 
-  _logger->debug("INVITE - Found To: " + toIdentity->to_string() + " Subscriber: " + std::to_string(to_subscriber->id));
+  _logger->debug("INVITE - Found To: " + call->to->to_string() + " Subscriber: " + std::to_string(to_subscriber->id));
 
   // Is Subscriber Online? TODO: This should query other AthenaSIP Instances if not.
-  auto to_session = _on_get_subscriber_session(to_subscriber);
+  auto other_session = _registrar->subscriber_get_session(to_subscriber);
 
   // Not Found TODO:Forwarding?
-  if (!to_session) {
-    _logger->debug("INVITE - To: " + toIdentity->to_string() + " Session Not Found, Sending 404 Not Found");
+  if (!other_session) {
+    call->add_session(other_session);
+    _logger->debug("INVITE - To: " + call->to->to_string() + " Session Not Found, Sending 404 Not Found");
     _send(404, "Not Found");
     return;
   }
 
-  // Check other session state
-  if (to_session->state != State::Normal) {
-    _logger->debug("INVITE - To: " + toIdentity->to_string() + " Session State not State::Registered, Sending 486 Busy Here");
-    _send(486, "Busy Here");
-    return;
-  }
+  // TODO: Check if callee is busy
+  // if (to_session->state != State::Normal) {
+  //   _logger->debug("INVITE - To: " + toIdentity->to_string() + " Session State not State::Registered, Sending 486 Busy Here");
+  //   _send(486, "Busy Here");
+  //   return;
+  // }
 
-  // Set States
-  state = State::InCall;
-  to_session->state = State::InCall;
-
-  // Set Other session
-  other_session = to_session;
-  to_session->other_session = shared_from_this();
-
-  // Blank Params/Headers
-  _request->header->clear("Allow");
-  _request->header->add("Allow", std::make_shared<StringHeader>("INVITE, ACK, CANCEL, OPTIONS, BYE, REFER, NOTIFY, MESSAGE, INFO"));
+  _logger->info("Registering Call " + call->id);
+  _registrar->call_register(call->id, call);
 
   // Forward INVITE to other party
   other_session->send(_request);
 }
 
-void Session::_process_message_normal() {
-  if (_request->header->request_method == "REGISTER") {
-    _process_message_register();
-    return;
-  } else if (_request->header->request_method == "INVITE") {
-    _process_message_invite();
-    return;
-  }
-
-  _logger->debug("" + _request->header->request_method + " - Unknown Method, Sending 405 Method Not Allowed");
-  _send(405, "Method Not Allowed");
-}
-
-void Session::_process_message_incall() {
-  // Dumbly relay messages unless "BYE"
-  other_session->send(_request);
-
-  if (_request->header->type == SIPHeader::Type::Request && _request->header->request_method == "BYE") {
-    state = State::Bye;
-    other_session->state = State::Bye;
-  }
-}
-
 void Session::_process_message_bye() {
-  // Relay one message then return to Registered
-  other_session->send(_request);
+  // // Relay one message then return to Registered
+  // other_session->send(_request);
 
-  state = State::Normal;
-  other_session->state = State::Normal;
+  // state = State::Normal;
+  // _logger->info("state -> State::Normal");
+  // other_session->state = State::Normal;
+  // other_session->_logger->info("state -> State::Normal");
 
-  other_session->other_session = nullptr;
-  other_session = nullptr;
+  // other_session->other_session = nullptr;
+  // other_session = nullptr;
 }
 
 void Session::_send_close(uint16_t code, std::string message) {
@@ -501,12 +489,5 @@ std::string Session::_generate_nonce() const {
   // Return final nonce in format: "random:timestamp:hmac"
   return raw_nonce + ":" + hmac_hex;
 }
-
-void Session::on_start(StartCloseFn callback) { _on_start = callback; }
-void Session::on_close(StartCloseFn callback) { _on_close = callback; }
-void Session::on_authenticate(AuthenticateFn callback) { _on_authenticate = callback; }
-void Session::on_register_location(RegisterLocationFn callback) { _on_register_location = callback; }
-void Session::on_unregister_location(RegisterLocationFn callback) { _on_unregister_location = callback; }
-void Session::on_get_subscriber_session(GetSubscriberSessionFn callback) { _on_get_subscriber_session = callback; }
 
 }  // namespace athenasip
