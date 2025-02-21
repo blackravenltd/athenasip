@@ -26,7 +26,8 @@ namespace athenasip::servers {
 
 class Server : public std::enable_shared_from_this<Server> {
  public:
-  Server(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> registrar, std::string _nonce_secret);
+  Server(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> registrar, std::string _nonce_secret)
+      : _logger(logger), _registrar(registrar), nonce_secret(_nonce_secret) {}
 
   virtual void start() = 0;
   virtual void stop() = 0;

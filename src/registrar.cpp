@@ -54,7 +54,7 @@ bool Registrar::subscriber_register(std::shared_ptr<Subscriber> subscriber, std:
                {subscriber->id, contact->user, contact->realm, contact->port.value_or(0), is_nat});
   } else {
     // Update the row
-    _db->query("UPDATE `location` SET `registered_at` = NOW() WHERE `id` = ?) VALUES (?,?,?,?,?,?)", {subscriber->id});
+    _db->query("UPDATE `location` SET `registered_at` = NOW() WHERE `id` = ?", {subscriber->id});
   }
 
   _sessions_by_subscriber[subscriber->id] = session;
@@ -89,7 +89,7 @@ bool Registrar::session_unregister(std::string endpoint, std::shared_ptr<Session
 
 void Registrar::session_close_all() {
   // Close All Connections
-  for (const auto& pair : _sessions) pair.second->close();
+  // for (const auto& pair : _sessions) pair.second->close();
 
   // Remove all connections
   std::unique_lock<std::shared_mutex> lock(_sessions_mutex);
@@ -97,6 +97,16 @@ void Registrar::session_close_all() {
   lock.unlock();
 }
 
-const std::shared_ptr<SIPUri> Registrar::subscriber_get_location(std::shared_ptr<SIPIdentity> identity) { return std::make_shared<SIPUri>(""); }
+bool Registrar::call_register(std::string callId, std::shared_ptr<Call> call) {
+  _calls[callId] = call;
+  return true;
+}
+
+bool Registrar::call_unregister(std::string callId, std::shared_ptr<Call> call) {
+  _calls.erase(callId);
+  return true;
+}
+
+std::shared_ptr<Call> Registrar::call_get(std::string callId) { return _calls[callId]; }
 
 }  // namespace athenasip
