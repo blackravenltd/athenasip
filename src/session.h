@@ -58,9 +58,7 @@ class Session : public std::enable_shared_from_this<Session> {
   Session(std::shared_ptr<Logger> logger, std::string nonce_secret, std::shared_ptr<Connection> connection);
 
   enum State {
-    Initial,
-    Challenged,
-    Registered,
+    Normal,
     InCall,
     Bye,
     Error,
@@ -77,7 +75,7 @@ class Session : public std::enable_shared_from_this<Session> {
   using RegisterLocationFn = std::function<bool(std::shared_ptr<Subscriber>, std::shared_ptr<SIPUri>, std::shared_ptr<Session>)>;
   using GetSubscriberSessionFn = std::function<std::shared_ptr<Session>(std::shared_ptr<Subscriber>)>;
 
-  State state = State::Initial;
+  State state = State::Normal;
 
   // The other session when Caller/Callee
   std::shared_ptr<Session> other_session;
@@ -112,12 +110,13 @@ class Session : public std::enable_shared_from_this<Session> {
   std::shared_ptr<Subscriber> _subscriber;
   std::shared_ptr<SIPUri> _contact;
 
+  void _process_message_register();
+  void _process_message_invite();
+  void _send_auth_challenge();
+
   void _process_buffer();
   void _process_message();
-  void _process_message_initial();
-  void _process_message_challenged();
-  void _process_message_registered();
-  void _process_message_invite();
+  void _process_message_normal();
   void _process_message_incall();
   void _process_message_bye();
 

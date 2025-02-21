@@ -96,7 +96,7 @@ void SIPHeader::parse(const std::string& sip_message) {
 }
 
 std::string SIPHeader::to_string() const {
-  std::string out = first_line();
+  std::string out = first_line() + "\r\n";
 
   // Add headers in order.
   for (const auto& header : headers) {
@@ -109,9 +109,9 @@ std::string SIPHeader::to_string() const {
 std::string SIPHeader::first_line() const {
   switch (type) {
     case Type::Request:
-      return request_method + " " + request_uri->to_string() + " " + sip_version + "\r\n";
+      return request_method + " " + request_uri->to_string() + " " + sip_version;
     case Type::Response:
-      return sip_version + " " + std::to_string(response_code) + " " + response_message + "\r\n";
+      return sip_version + " " + std::to_string(response_code) + " " + response_message;
     default:
       throw std::runtime_error("SIPHeader::first_line Unknown Type " + std::to_string(type));
   }
