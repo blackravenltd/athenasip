@@ -24,28 +24,29 @@ void Session::start() {
   auto self(shared_from_this());
 
   _logger->info("Connected");
-  state = State::Initial;
+  state = State::Normal;
 
   // Register callback
   if (_on_start) _on_start(_connection->transport_name() + "://" + _connection->remote_endpoint_name(), shared_from_this());
 
   // REGISTER timeout
-  _register_timeout = DelayedTask<int>::schedule(
-      [this, self] {
-        if (state != State::Initial && state != State::Challenged) return 1;
+  // TODO: Make rational
+  // _register_timeout = DelayedTask<int>::schedule(
+  //     [this, self] {
+  //       if (state != State::Initial && state != State::Challenged) return 1;
 
-        _logger->info("Exceeded REGISTER Timeout (5000ms)");
+  //       _logger->info("Exceeded REGISTER Timeout (5000ms)");
 
-        write("SIP/2.0 408 Request Timeout\r\nVia: SIP/2.0/" + Util::to_upper(_connection->transport_name()) +
-              " client.example.com;branch=z9hG4bK776asdhds\r\nFrom: <sip:user@example.com>;tag=123456\r\nTo: "
-              "<sip:server@example.com>\r\nCall-ID: abc123@example.com\r\nCSeq: 1 REGISTER\r\nContent-Length: 0\r\n\r\n");
+  //       write("SIP/2.0 408 Request Timeout\r\nVia: SIP/2.0/" + Util::to_upper(_connection->transport_name()) +
+  //             " client.example.com;branch=z9hG4bK776asdhds\r\nFrom: <sip:user@example.com>;tag=123456\r\nTo: "
+  //             "<sip:server@example.com>\r\nCall-ID: abc123@example.com\r\nCSeq: 1 REGISTER\r\nContent-Length: 0\r\n\r\n");
 
-        close();
+  //       close();
 
-        _register_timeout.reset();
-        return 0;
-      },
-      5000);
+  //       _register_timeout.reset();
+  //       return 0;
+  //     },
+  //     5000);
 
   _schedule_async_read();
 }
@@ -129,7 +130,7 @@ void Session::_schedule_async_read() {
       _buffer.append(_read_buffer.data(), length);
 
       // Reject Crap (No register, more than 64k data sent)
-      if (state != State::Registered && _buffer.size() > 65535) {
+      if (!_subscriber && _buffer.size() > 65535) {
         _logger->info("Client did not send REGISTER request within 65535 bytes)");
         write("SIP/2.0 400 Bad Request\r\nContent-Length: 0\r\n\r\n");
         close();
@@ -205,8 +206,8 @@ void Session::_process_message() {
   _logger->info("> " + _request->header->first_line());
 
   // cout Incoming (DEBUG)
-  std::cout << ">>>>> ";
-  _request->print();
+  // std::cout << ">>>>> ";
+  // _request->print();
 
   // Create Response
   _response = std::make_shared<SIPMessage>();
@@ -246,14 +247,8 @@ void Session::_process_message() {
 
   // Process according to state
   switch (state) {
-    case State::Initial:
-      _process_message_initial();
-      break;
-    case State::Challenged:
-      _process_message_challenged();
-      break;
-    case State::Registered:
-      _process_message_registered();
+    case State::Normal:
+      _process_message_normal();
       break;
     case State::InCall:
       _process_message_incall();
@@ -271,110 +266,93 @@ void Session::_process_message() {
   return;
 }
 
-void Session::_process_message_initial() {
-  if (_request->header->request_method == "REGISTER") {
-    // Generate and save nonce
-    auto nonce = _generate_nonce();
-    _nonces->add(nonce, 3600);
+void Session::_send_auth_challenge() {
+  auto nonce = _generate_nonce();
+  _nonces->add(nonce, 3600);
 
-    auto authHeader = std::make_shared<Authorization>();
-    authHeader->type = "Digest";
-    authHeader->fields["realm"] = "sip.athenasip.org";
-    authHeader->fields["nonce"] = nonce;
-    authHeader->fields["algorithm"] = "MD5";
-    _response->header->add("WWW-Authenticate", std::make_shared<AuthorizationHeader>(authHeader));
+  auto authHeader = std::make_shared<Authorization>();
+  authHeader->type = "Digest";
+  authHeader->fields["realm"] = "sip.athenasip.org";
+  authHeader->fields["nonce"] = nonce;
+  authHeader->fields["algorithm"] = "MD5";
+  authHeader->fields["stale"] = "true";
+  _response->header->add("WWW-Authenticate", std::make_shared<AuthorizationHeader>(authHeader));
 
-    _logger->info("Initial / REGISTER - Sending 401 Challenge");
-    state = State::Challenged;
-
-    _send(401, "Unauthorized");
-  }
+  _logger->info("REGISTER - Sending 401 Challenge");
+  _send(401, "Unauthorized");
 }
 
-void Session::_process_message_challenged() {
-  if (_request->header->request_method == "REGISTER") {
-    // The Authorization must have been sent
-    if (!_request->header->contains("Authorization")) {
-      _logger->info("Challenged / REGISTER - No Authorization Header, Sending 401 Unauthorized and Closing");
-      _send_close(401, "Unauthorized");
-      return;
-    }
-
-    // Process it and the identity
-    auto incomingAuthHeader = _request->header->headers_map["Authorization"][0]->as<AuthorizationHeader>()->value;
-    auto fromIdentity = _request->header->headers_map["From"][0]->as<SIPIdentityHeader>()->value;
-
-    // Check nonce exists
-    auto nonce = incomingAuthHeader->fields["nonce"];
-    if (!_nonces->contains(nonce)) {
-      _logger->info("Challenged / REGISTER - Nonce not found or expired, Sending 401 Unauthorized and Closing");
-      _send_close(401, "Unauthorized");
-      return;
-    }
-
-    // Get Subscriber
-    _subscriber = _on_authenticate(fromIdentity, shared_from_this());
-
-    // Not Found
-    if (!_subscriber) {
-      _logger->info("Challenged / REGISTER - User " + fromIdentity->to_string() + " Not Found, Sending 401 Unauthorized and Closing");
-      _send_close(401, "Unauthorized");
-      return;
-    }
-
-    // Generate H2/H3
-    auto h2 = Util::md5("REGISTER:" + incomingAuthHeader->fields["uri"]);
-    auto const colon = std::string(":");
-    auto h3 = Util::md5(_subscriber->h1 + colon + nonce + colon + h2);
-
-    // Check match
-    if (h3 != incomingAuthHeader->fields["response"]) {
-      _logger->info("Challenged / REGISTER - User " + fromIdentity->to_string() + " Digest hash does not match, Sending 401 Unauthorized and Closing");
-      _send_close(401, "Unauthorized");
-      _subscriber = nullptr;
-      return;
-    }
-
-    // Authorized
-    _logger->debug("Challenged / REGISTER - Authorized, Sending 200 OK");
-    _response->header->add("Contact", _request->header->headers_map["Contact"][0]);
-
-    _contact = _request->header->headers_map["Contact"][0]->as<SIPIdentityHeader>()->value->uri;
-    _logger->info("Challenged / REGISTER - Authorized, Registering " + _subscriber->identity->to_string() + " To " + _contact->to_string());
-    _on_register_location(_subscriber, _contact, shared_from_this());
-
-    state = State::Registered;
-    _send(200, "OK");
-  }
-}
-
-void Session::_process_message_registered() {
-  if (_request->header->request_method == "INVITE") {
-    _process_message_invite();
+void Session::_process_message_register() {
+  // The Authorization must have been sent
+  if (!_request->header->contains("Authorization")) {
+    _logger->info("REGISTER - No Authorization Header, Sending 401 Unauthorized");
+    _send_auth_challenge();
     return;
   }
 
-  _logger->debug("Registered / " + _request->header->request_method + " - Unknown Method, Sending 405 Method Not Allowed");
-  _send(405, "Method Not Allowed");
+  // Process it and the identity
+  auto incomingAuthHeader = _request->header->headers_map["Authorization"][0]->as<AuthorizationHeader>()->value;
+  auto fromIdentity = _request->header->headers_map["From"][0]->as<SIPIdentityHeader>()->value;
+
+  // Check nonce exists
+  auto nonce = incomingAuthHeader->fields["nonce"];
+  if (!_nonces->contains(nonce)) {
+    _logger->info("REGISTER - Nonce not found or expired, Sending 401 Unauthorized");
+    _send_auth_challenge();
+    return;
+  }
+
+  // Get Subscriber
+  _subscriber = _on_authenticate(fromIdentity, shared_from_this());
+
+  // Not Found
+  if (!_subscriber) {
+    _logger->info("REGISTER - User " + fromIdentity->to_string() + " Not Found, Sending 401 Unauthorized");
+    _send_auth_challenge();
+    return;
+  }
+
+  // Generate H2/H3
+  auto h2 = Util::md5("REGISTER:" + incomingAuthHeader->fields["uri"]);
+  auto const colon = std::string(":");
+  auto h3 = Util::md5(_subscriber->h1 + colon + nonce + colon + h2);
+
+  // Check match
+  if (h3 != incomingAuthHeader->fields["response"]) {
+    _logger->info("REGISTER - User " + fromIdentity->to_string() + " Digest hash does not match, Sending 401 Unauthorized and Closing");
+    _send_auth_challenge();
+    _subscriber = nullptr;
+    return;
+  }
+
+  // Authorized
+  _logger->debug("REGISTER - Authorized, Sending 200 OK");
+  _response->header->add("Contact", _request->header->headers_map["Contact"][0]);
+
+  _contact = _request->header->headers_map["Contact"][0]->as<SIPIdentityHeader>()->value->uri;
+  _logger->info("REGISTER - Authorized, Registering " + _subscriber->identity->to_string() + " To " + _contact->to_string());
+  _on_register_location(_subscriber, _contact, shared_from_this());
+
+  _send(200, "OK");
 }
 
 void Session::_process_message_invite() {
   if (_request->body.empty()) {
-    _logger->debug("Registered / INVITE - No Body, Sending 400 Bad Request");
+    _logger->debug("INVITE - No Body, Sending 400 Bad Request");
     _send(400, "Bad Request");
     return;
   }
 
   // Preflight, check basic headers
   if (!_request->header->contains("Content-Type")) {
-    _logger->debug("Registered / INVITE - Incomplete Headers, Sending 400 Bad Request");
+    _logger->debug("INVITE - Incomplete Headers, Sending 400 Bad Request");
     _send(400, "Bad Request");
     return;
   }
 
   // Check required headers present
   if (_request->header->headers_map["Content-Type"][0]->as<StringHeader>()->to_string() != "application/sdp") {
-    _logger->debug("Registered / INVITE - Incorrect MIME in Content-Type, Sending 415 Unsupported Media Type");
+    _logger->debug("INVITE - Incorrect MIME in Content-Type, Sending 415 Unsupported Media Type");
     _send(415, "Unsupported Media Type");
     return;
   };
@@ -382,7 +360,7 @@ void Session::_process_message_invite() {
   // Parse Session Description Protocol
   auto sdp = std::make_shared<SDP>();
   if (!sdp->parse(_request->body)) {
-    _logger->debug("Registered / INVITE - Body Not SDP, Sending 400 Bad Request");
+    _logger->debug("INVITE - Body Not SDP, Sending 400 Bad Request");
     _send(400, "Bad Request");
     return;
   };
@@ -394,28 +372,26 @@ void Session::_process_message_invite() {
 
   // Not Found TODO:Forwarding?
   if (!to_subscriber) {
-    _logger->debug("Registered / INVITE - To: " + toIdentity->to_string() + " Not Found, Sending 404 Not Found");
+    _logger->debug("INVITE - To: " + toIdentity->to_string() + " Not Found, Sending 404 Not Found");
     _send(404, "Not Found");
     return;
   }
 
-  _logger->debug("Registered / INVITE - Found To: " + toIdentity->to_string() + " Subscriber: " + std::to_string(to_subscriber->id));
+  _logger->debug("INVITE - Found To: " + toIdentity->to_string() + " Subscriber: " + std::to_string(to_subscriber->id));
 
   // Is Subscriber Online? TODO: This should query other AthenaSIP Instances if not.
   auto to_session = _on_get_subscriber_session(to_subscriber);
 
   // Not Found TODO:Forwarding?
   if (!to_session) {
-    _logger->debug("Registered / INVITE - To: " + toIdentity->to_string() + " Session Not Found, Sending 404 Not Found");
+    _logger->debug("INVITE - To: " + toIdentity->to_string() + " Session Not Found, Sending 404 Not Found");
     _send(404, "Not Found");
     return;
   }
 
-  // Send Trying
-  // _send(100,"Trying");
-
-  if (to_session->state != State::Registered) {
-    _logger->debug("Registered / INVITE - To: " + toIdentity->to_string() + " Session State not State::Registered, Sending 486 Busy Here");
+  // Check other session state
+  if (to_session->state != State::Normal) {
+    _logger->debug("INVITE - To: " + toIdentity->to_string() + " Session State not State::Registered, Sending 486 Busy Here");
     _send(486, "Busy Here");
     return;
   }
@@ -436,6 +412,19 @@ void Session::_process_message_invite() {
   other_session->send(_request);
 }
 
+void Session::_process_message_normal() {
+  if (_request->header->request_method == "REGISTER") {
+    _process_message_register();
+    return;
+  } else if (_request->header->request_method == "INVITE") {
+    _process_message_invite();
+    return;
+  }
+
+  _logger->debug("" + _request->header->request_method + " - Unknown Method, Sending 405 Method Not Allowed");
+  _send(405, "Method Not Allowed");
+}
+
 void Session::_process_message_incall() {
   // Dumbly relay messages unless "BYE"
   other_session->send(_request);
@@ -447,11 +436,11 @@ void Session::_process_message_incall() {
 }
 
 void Session::_process_message_bye() {
-  // Relay one message then close.
+  // Relay one message then return to Registered
   other_session->send(_request);
 
-  state = State::Registered;
-  other_session->state = State::Registered;
+  state = State::Normal;
+  other_session->state = State::Normal;
 
   other_session->other_session = nullptr;
   other_session = nullptr;
@@ -477,8 +466,8 @@ void Session::send(std::shared_ptr<SIPMessage> message) {
   _logger->info("< " + message->header->first_line());
 
   // cout Outgoing (DEBUG)
-  std::cout << "<<<<< ";
-  message->print();
+  // std::cout << "<<<<< ";
+  // message->print();
 
   write(message->to_string());
 }
