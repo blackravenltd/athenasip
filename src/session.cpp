@@ -32,7 +32,7 @@ void Session::start() {
   // REGISTER timeout
   _register_timeout = DelayedTask<int>::schedule(
       [this, self] {
-        if (state == State::Registered) return 1;
+        if (state != State::Initial && state != State::Challenged) return 1;
 
         _logger->info("Exceeded REGISTER Timeout (5000ms)");
 
@@ -241,6 +241,9 @@ void Session::_process_message() {
   _response->header->add("CSeq", _request->header->headers_map["CSeq"][0]);
   _response->header->add("Via", _request->header->headers_map["Via"][0]);
 
+  // Tell the client what is allowed
+  _response->header->add("Allow", std::make_shared<StringHeader>("INVITE, ACK, CANCEL, OPTIONS, BYE, REFER, NOTIFY, MESSAGE, INFO"));
+
   // Process according to state
   switch (state) {
     case State::Initial:
@@ -352,7 +355,6 @@ void Session::_process_message_registered() {
   }
 
   _logger->debug("Registered / " + _request->header->request_method + " - Unknown Method, Sending 405 Method Not Allowed");
-  _response->header->add("Allow", std::make_shared<StringHeader>("INVITE, ACK, CANCEL, OPTIONS, BYE, REFER, NOTIFY, MESSAGE, INFO"));
   _send(405, "Method Not Allowed");
 }
 
@@ -427,8 +429,8 @@ void Session::_process_message_invite() {
   to_session->other_session = shared_from_this();
 
   // Blank Params/Headers
-  _request->header->request_uri->parameters = "";
-  _request->header->request_uri->headers = "";
+  _request->header->clear("Allow");
+  _request->header->add("Allow", std::make_shared<StringHeader>("INVITE, ACK, CANCEL, OPTIONS, BYE, REFER, NOTIFY, MESSAGE, INFO"));
 
   // Forward INVITE to other party
   other_session->send(_request);
@@ -463,11 +465,15 @@ void Session::_send_close(uint16_t code, std::string message) {
 void Session::_send(uint16_t code, std::string message) {
   _response->header->response_code = code;
   _response->header->response_message = message;
-  _response->header->add("Content-Length", std::make_shared<UIntHeader>(_response->body.size()));
   send(_response);
 }
 
 void Session::send(std::shared_ptr<SIPMessage> message) {
+  // Reset Length to body length
+  message->header->clear("Content-Length");
+  message->header->add("Content-Length", std::make_shared<UIntHeader>(message->body.size()));
+
+  // Log Message
   _logger->info("< " + message->header->first_line());
 
   // cout Outgoing (DEBUG)
