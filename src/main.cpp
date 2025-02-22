@@ -68,7 +68,8 @@ int main(int argc, char* argv[]) {
   core->registrar = std::make_shared<Registrar>(core->logger, core->db);
 
   // Create the TLSServer instance with the logger and start it on the specified port
-  auto tlsServer = std::make_shared<athenasip::servers::TLSServer>(core->logger, core->registrar, core->config->sip_nonce_secret, core->config->tls_port);
+  auto tlsServer =
+      std::make_shared<athenasip::servers::TLSServer>(core->logger, core->registrar, core->config->sip_nonce_secret, "192.168.18.51", core->config->tls_port);
   // Set Certificates
   if (!tlsServer->set_certificates(core->config->tls_cert_pem_filename, core->config->tls_key_pem_filename)) {
     core->logger->error("Cannot load TLS certificates");
@@ -78,7 +79,8 @@ int main(int argc, char* argv[]) {
   tlsServer->start();
 
   // Create the TCPServer instance with the logger and start it on the specified port
-  auto tcpServer = std::make_shared<athenasip::servers::TCPServer>(core->logger, core->registrar, core->config->sip_nonce_secret, core->config->tcp_port);
+  auto tcpServer =
+      std::make_shared<athenasip::servers::TCPServer>(core->logger, core->registrar, core->config->sip_nonce_secret, "192.168.18.51", core->config->tcp_port);
   core->servers.push_back(tcpServer);
   tcpServer->start();
 
