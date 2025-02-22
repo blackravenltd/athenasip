@@ -6,15 +6,20 @@
 //
 #include "tcp_server.h"
 
+#include <boost/asio/ip/address.hpp>  // For ip::make_address
+
 using namespace boost::asio;
 using namespace boost::asio::ssl;
 
 namespace athenasip::servers {
 
-TCPServer::TCPServer(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> registrar, std::string nonce_secret, short port)
+// Modified constructor now takes a bind address parameter
+TCPServer::TCPServer(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> registrar, std::string nonce_secret, const std::string &bind_address,
+                     short port)
     : Server(std::make_unique<LoggerScoped>("tcp_server", logger), registrar, nonce_secret),
       _port(port),
-      _acceptor(_io_context, ip::tcp::endpoint(ip::tcp::v4(), port)) {}
+      // Bind to the specific IP address instead of all interfaces.
+      _acceptor(_io_context, ip::tcp::endpoint(ip::make_address(bind_address), port)) {}
 
 void TCPServer::start() {
   _logger->debug("Starting...");
@@ -50,7 +55,7 @@ void TCPServer::start_accept() {
   _acceptor.async_accept(*new_connection, boost::bind(&TCPServer::_handle_accept, this, placeholders::error, new_connection));
 }
 
-void TCPServer::_handle_accept(const boost::system::error_code& error, std::shared_ptr<ip::tcp::socket> socket) {
+void TCPServer::_handle_accept(const boost::system::error_code &error, std::shared_ptr<ip::tcp::socket> socket) {
   boost::system::error_code ec;
 
   if (!error) {

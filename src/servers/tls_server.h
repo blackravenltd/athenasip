@@ -15,7 +15,7 @@ namespace athenasip::servers {
 
 class TLSServer : public Server {
  public:
-  TLSServer(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> registrar, std::string nonce_secret, short port);
+  TLSServer(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> registrar, std::string nonce_secret, const std::string &bind_address, short port);
 
   void start() override;
   void stop() override;

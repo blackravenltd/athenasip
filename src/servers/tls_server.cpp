@@ -11,10 +11,11 @@ using namespace boost::asio::ssl;
 
 namespace athenasip::servers {
 
-TLSServer::TLSServer(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> registrar, std::string nonce_secret, short port)
+TLSServer::TLSServer(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> registrar, std::string nonce_secret, const std::string& bind_address,
+                     short port)
     : Server(std::make_unique<LoggerScoped>("tls_server", logger), registrar, nonce_secret),
       _port(port),
-      _acceptor(_io_context, ip::tcp::endpoint(ip::tcp::v4(), port)),
+      _acceptor(_io_context, ip::tcp::endpoint(ip::make_address(bind_address), port)),
       ctx(ssl::context::sslv23) {}
 
 bool TLSServer::set_certificates(std::string cert, std::string key) {
