@@ -19,11 +19,14 @@
 #include "util.h"
 
 using namespace athenasip::types;
+using namespace athenasip::headers;
 
 namespace athenasip {
 
 class SIPHeader {
  public:
+  using RemoveFn = std::function<bool(std::shared_ptr<Header> header)>;
+
   // A header field holding its key and parsed value.
   struct HeaderField {
     std::string key;
@@ -57,6 +60,8 @@ class SIPHeader {
   std::unordered_map<std::string, std::vector<std::shared_ptr<headers::Header>>> headers_map;
 
   void add(const std::string& field_name, std::shared_ptr<headers::Header> value);
+  void add_start(const std::string& field_name, std::shared_ptr<headers::Header> value);
+  void remove_value(const std::string& field_name, RemoveFn);
   void clear(const std::string& field_name);
 
   void parse(const std::string& sip_message);

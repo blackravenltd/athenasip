@@ -75,7 +75,7 @@ std::shared_ptr<Session> Registrar::subscriber_get_session(std::shared_ptr<Subsc
 
 bool Registrar::session_register(std::string endpoint, std::shared_ptr<Session> session) {
   std::lock_guard<std::shared_mutex> lock(_sessions_mutex);
-  _sessions.insert({endpoint, session});
+  _sessions[endpoint] = session;
   _logger->debug("Registered Connection " + endpoint);
   return true;
 }
@@ -102,7 +102,7 @@ bool Registrar::call_register(std::string callId, std::shared_ptr<Call> call) {
   return true;
 }
 
-bool Registrar::call_unregister(std::string callId, std::shared_ptr<Call> call) {
+bool Registrar::call_unregister(std::string callId) {
   _calls.erase(callId);
   return true;
 }

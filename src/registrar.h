@@ -45,7 +45,7 @@ class Registrar {
 
   // Calls
   bool call_register(std::string callId, std::shared_ptr<Call> call);
-  bool call_unregister(std::string callId, std::shared_ptr<Call> call);
+  bool call_unregister(std::string callId);
   std::shared_ptr<Call> call_get(std::string callId);
 
  private:

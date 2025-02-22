@@ -13,11 +13,19 @@ SIPHeader::SIPHeader() {}
 SIPHeader::SIPHeader(const std::string& sip_message) { parse(sip_message); }
 
 void SIPHeader::add(const std::string& field_name, std::shared_ptr<headers::Header> value) {
-  // Create a new HeaderField and push it into the vector.
   HeaderField hf{field_name, value};
   headers.push_back(hf);
+  headers_map[field_name].push_back(value);
+}
+
+void SIPHeader::add_start(const std::string& field_name, std::shared_ptr<headers::Header> value) {
+  // Create a new HeaderField and push it into the vector.
+  HeaderField hf{field_name, value};
+  headers.insert(headers.begin(), hf);
 
   // Update the lookup map.
+  auto vec = headers_map[field_name];
+  vec.insert(vec.begin(), value);
   headers_map[field_name].push_back(value);
 }
 
@@ -25,6 +33,17 @@ void SIPHeader::clear(const std::string& field_name) {
   auto newEnd = std::remove_if(headers.begin(), headers.end(), [field_name](const auto& item) { return item.key == field_name; });
   headers.erase(newEnd, headers.end());
   headers_map.erase(field_name);
+}
+
+void SIPHeader::remove_value(const std::string& field_name, std::function<bool(std::shared_ptr<Header> header)> callback) {
+  auto newEnd =
+      std::remove_if(headers.begin(), headers.end(), [field_name, callback](const auto& item) { return item.key == field_name && callback(item.value); });
+
+  headers.erase(newEnd, headers.end());
+  headers_map[field_name].clear();
+  for (auto& item : headers) {
+    if (item.key == field_name) headers_map[field_name].push_back(item.value);
+  }
 }
 
 void SIPHeader::parse(const std::string& sip_message) {
