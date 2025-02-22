@@ -24,6 +24,8 @@ class SIPMessage {
   std::string body;
   uint body_length = 0;
 
+  uint16_t source_port;
+
   std::string to_string() const;
 
   friend std::string operator+(const SIPMessage& header, const std::string& str);

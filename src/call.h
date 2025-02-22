@@ -35,8 +35,6 @@ class Call {
   std::shared_ptr<SIPIdentity> from;
   std::shared_ptr<SIPIdentity> to;
 
-  std::shared_ptr<Header> invite_via;
-
   void add_session(std::shared_ptr<Session> session) { _sessions[session] = true; }
 
   bool contains_session(std::shared_ptr<Session> session) { return _sessions[session]; }

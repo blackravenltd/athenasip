@@ -21,10 +21,7 @@ namespace athenasip::servers {
 
 class TLSConnection : public Connection {
  public:
-  TLSConnection(std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> connection) : _connection(connection) {
-    auto rep = _connection->lowest_layer().remote_endpoint();
-    _remote_endpoint_name = rep.address().to_string() + ":" + std::to_string(rep.port());
-  }
+  TLSConnection(std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> connection) : _connection(connection) {}
 
   virtual bool start() override {
     try {
@@ -48,7 +45,8 @@ class TLSConnection : public Connection {
     _connection->async_write_some(buffer, [this, handler](boost::system::error_code ec, std::size_t length) { handler(ec, length); });
   }
 
-  virtual std::string remote_endpoint_name() override { return _remote_endpoint_name; }
+  virtual boost::asio::ip::tcp::endpoint remote_endpoint() override { return _connection->lowest_layer().remote_endpoint(); }
+  virtual boost::asio::ip::tcp::endpoint local_endpoint() override { return _connection->lowest_layer().local_endpoint(); }
 
   virtual bool is_open() override { return _connection->lowest_layer().is_open(); }
 
@@ -63,7 +61,6 @@ class TLSConnection : public Connection {
 
  protected:
   std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> _connection;
-  std::string _remote_endpoint_name;
 };
 
 }  // namespace athenasip::servers

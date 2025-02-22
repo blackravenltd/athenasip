@@ -156,6 +156,7 @@ void Session::_schedule_async_read() {
             _buffer.erase(0, pos + 4);
             // Create a new SIPMessage
             _request = std::make_shared<SIPMessage>();
+            _request->source_port = _connection->remote_endpoint().port();
 
             // Get the header
             _request->header = std::make_shared<SIPHeader>(sip_header);
@@ -230,6 +231,12 @@ void Session::_process_message() {
     }
   }
 
+  // Update Existing Top Via rport if empty
+  auto via = _request->header->headers_map["Via"][0]->as<ViaHeader>();
+  if (via->parameters["rport"] == "") {
+    via->parameters["rport"] = std::to_string(_request->source_port);
+  }
+
   // Add From/To Headers
   _response->header->add("From", std::make_shared<StringHeader>("<sip:server@sip.athenasip.org>;tag=123456"));
   _response->header->add("To", _request->header->headers_map["From"][0]);
@@ -253,15 +260,10 @@ void Session::_process_message() {
   }
 
   if (call) {
+    // Add session to call if there is one
     if (!call->contains_session(shared_from_this())) {
       _logger->info("Adding to Call " + call->id);
       call->add_session(shared_from_this());
-    }
-
-    if (_request->header->type == SIPHeader::Type::Response && _request->header->response_code == 200) {
-      _logger->info("SETTING VIA TO ORIGINAL " + call->invite_via->to_string());
-      _request->header->clear("Via");
-      _request->header->add("Via", call->invite_via);
     }
 
     // Forward messages to other sessions
@@ -271,6 +273,14 @@ void Session::_process_message() {
           other_session->send(_request);
         },
         shared_from_this());
+
+    if(_request->header->type == SIPHeader::Type::Request && _request->header->request_method == "BYE") {
+        // Relay one message then return to Registered
+        _logger->info("Ended Call "+ call->id);
+        state = State::Normal;
+        _registrar->call_unregister(call->id);
+        call.reset();
+    }
 
   } else if (_request->header->request_method == "REGISTER") {
     _process_message_register();
@@ -358,7 +368,11 @@ void Session::_process_message_register() {
   _send(200, "OK");
 }
 
-void Session::_process_message_publish() { _send(200, "OK"); }
+void Session::_process_message_publish() { 
+  // TODO: Implement PUBLISH
+
+  _send(200, "OK");
+}
 
 void Session::_process_message_invite() {
   if (_request->body.empty()) {
@@ -393,8 +407,6 @@ void Session::_process_message_invite() {
   auto call = std::make_shared<Call>(_request->header->headers_map["Call-ID"][0]->as<StringHeader>()->to_string());
   call->from = _request->header->headers_map["From"][0]->as<SIPIdentityHeader>()->value;
   call->to = _request->header->headers_map["To"][0]->as<SIPIdentityHeader>()->value;
-  call->invite_via = _request->header->headers_map["Via"][0];
-  _logger->debug("SAVING VIA --- " + call->invite_via->to_string());
   call->add_session(shared_from_this());
 
   // Is To: a subscriber?
@@ -420,31 +432,11 @@ void Session::_process_message_invite() {
     return;
   }
 
-  // TODO: Check if callee is busy
-  // if (to_session->state != State::Normal) {
-  //   _logger->debug("INVITE - To: " + toIdentity->to_string() + " Session State not State::Registered, Sending 486 Busy Here");
-  //   _send(486, "Busy Here");
-  //   return;
-  // }
-
   _logger->info("Registering Call " + call->id);
   _registrar->call_register(call->id, call);
 
   // Forward INVITE to other party
   other_session->send(_request);
-}
-
-void Session::_process_message_bye() {
-  // // Relay one message then return to Registered
-  // other_session->send(_request);
-
-  // state = State::Normal;
-  // _logger->info("state -> State::Normal");
-  // other_session->state = State::Normal;
-  // other_session->_logger->info("state -> State::Normal");
-
-  // other_session->other_session = nullptr;
-  // other_session = nullptr;
 }
 
 void Session::_send_close(uint16_t code, std::string message) {
@@ -459,6 +451,26 @@ void Session::_send(uint16_t code, std::string message) {
 }
 
 void Session::send(std::shared_ptr<SIPMessage> message) {
+  auto lep = _connection->local_endpoint();
+  auto serverendpoint = lep.address().to_string() + ":" + std::to_string(lep.port());
+  auto viaString = "SIP/2.0/TCP " + serverendpoint + ";branch=z9hG4bK.123456789";
+
+  if (message->header->type == SIPHeader::Type::Request) {
+    // Add Via Header for this server
+    auto via = std::make_shared<ViaHeader>(viaString);
+    message->header->add_start("Via", via);
+  } else {
+    // Strip Our Via Header
+    int x = message->header->headers.size();
+    message->header->remove_value("Via", [this, serverendpoint](std::shared_ptr<Header> header) {
+      auto via = header->as<ViaHeader>();
+      return via->host == serverendpoint;
+    });
+  }
+
+  // Add Record-Route so we stay in the dialog (ACK)
+  message->header->add("Record-Route", std::make_shared<StringHeader>("<sip:"+serverendpoint+";transport="+_connection->transport_name()+";lr>"));
+
   // Reset Length to body length
   message->header->clear("Content-Length");
   message->header->add("Content-Length", std::make_shared<UIntHeader>(message->body.size()));
