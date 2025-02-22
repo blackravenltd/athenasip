@@ -67,22 +67,26 @@ int main(int argc, char* argv[]) {
   // Create Registrar
   core->registrar = std::make_shared<Registrar>(core->logger, core->db);
 
-  // Create the TLSServer instance with the logger and start it on the specified port
-  auto tlsServer =
-      std::make_shared<athenasip::servers::TLSServer>(core->logger, core->registrar, core->config->sip_nonce_secret, "192.168.18.51", core->config->tls_port);
-  // Set Certificates
-  if (!tlsServer->set_certificates(core->config->tls_cert_pem_filename, core->config->tls_key_pem_filename)) {
-    core->logger->error("Cannot load TLS certificates");
-    return -4;
+  if (core->config->tls_enable) {
+    // Create the TLSServer instance with the logger and start it on the specified port
+    auto tlsServer = std::make_shared<athenasip::servers::TLSServer>(core->logger, core->registrar, core->config->sip_nonce_secret, core->config->tls_address,
+                                                                     core->config->tls_port);
+    // Set Certificates
+    if (!tlsServer->set_certificates(core->config->tls_cert_pem_filename, core->config->tls_key_pem_filename)) {
+      core->logger->error("Cannot load TLS certificates");
+      return -4;
+    }
+    core->servers.push_back(tlsServer);
+    tlsServer->start();
   }
-  core->servers.push_back(tlsServer);
-  tlsServer->start();
 
-  // Create the TCPServer instance with the logger and start it on the specified port
-  auto tcpServer =
-      std::make_shared<athenasip::servers::TCPServer>(core->logger, core->registrar, core->config->sip_nonce_secret, "192.168.18.51", core->config->tcp_port);
-  core->servers.push_back(tcpServer);
-  tcpServer->start();
+  if (core->config->tcp_enable) {
+    // Create the TCPServer instance with the logger and start it on the specified port
+    auto tcpServer = std::make_shared<athenasip::servers::TCPServer>(core->logger, core->registrar, core->config->sip_nonce_secret, core->config->tcp_address,
+                                                                     core->config->tcp_port);
+    core->servers.push_back(tcpServer);
+    tcpServer->start();
+  }
 
   // Wait for Signals
   boost::asio::io_context signal_wait_context;
