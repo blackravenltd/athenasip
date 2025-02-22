@@ -4,12 +4,12 @@ sip:
 
 tcp:
   enable: true
-  address: 127.0.0.1
+  #address: 127.0.0.1
   port: 5060
 
 tls:
   enable: true
-  address: 127.0.0.1
+  #address: 127.0.0.1
   port: 5061
   cert_pem_filename: "../tls/snakeoil.cer"
   key_pem_filename: "../tls/snakeoil.key"

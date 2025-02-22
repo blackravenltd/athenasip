@@ -49,12 +49,15 @@ bool Config::load_from_yaml(const std::string &filename) {
   // --- Parse the 'tls' section ---
   YAML::Node tls = config["tls"];
   if (tls) {
+    if (tls["enable"])
+      tls_enable = tls["enable"].as<bool>();
+    else
+      tls_enable = true;
+
     if (tls["address"])
       tls_address = tls["address"].as<std::string>();
-    else {
-      _logger->error("Missing 'tls.address'");
-      return false;
-    }
+    else
+      tls_address = "0.0.0.0";
 
     if (tls["port"]) {
       try {
@@ -86,12 +89,15 @@ bool Config::load_from_yaml(const std::string &filename) {
   // --- Parse the 'tls' section ---
   YAML::Node tcp = config["tcp"];
   if (tcp) {
+    if (tcp["enable"])
+      tcp_enable = tcp["enable"].as<bool>();
+    else
+      tcp_enable = true;
+
     if (tcp["address"])
       tcp_address = tcp["address"].as<std::string>();
-    else {
-      _logger->error("Missing 'tcp.address'");
-      return false;
-    }
+    else
+      tcp_address = "0.0.0.0";
 
     if (tcp["port"]) {
       try {

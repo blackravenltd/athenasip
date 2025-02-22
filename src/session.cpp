@@ -203,8 +203,8 @@ void Session::_process_message() {
   _logger->info("> " + _request->header->first_line());
 
   // cout Incoming (DEBUG)
-  std::cout << ">>>>> ";
-  _request->print();
+  // std::cout << ">>>>> ";
+  // _request->print();
 
   // Create Response
   _response = std::make_shared<SIPMessage>();
@@ -258,6 +258,12 @@ void Session::_process_message() {
       call->add_session(shared_from_this());
     }
 
+    if (_request->header->type == SIPHeader::Type::Response && _request->header->response_code == 200) {
+      _logger->info("SETTING VIA TO ORIGINAL " + call->invite_via->to_string());
+      _request->header->clear("Via");
+      _request->header->add("Via", call->invite_via);
+    }
+
     // Forward messages to other sessions
     call->with_all_sessions_except(
         [this, call](std::shared_ptr<Session> other_session) {
@@ -265,18 +271,21 @@ void Session::_process_message() {
           other_session->send(_request);
         },
         shared_from_this());
+
   } else if (_request->header->request_method == "REGISTER") {
     _process_message_register();
   } else if (_request->header->request_method == "INVITE") {
     _process_message_invite();
+  } else if (_request->header->request_method == "PUBLISH") {
+    _process_message_publish();
   } else {
     _logger->debug("" + _request->header->request_method + " - Unknown Method, Sending 405 Method Not Allowed");
     _send(405, "Method Not Allowed");
   }
 
   // Free up request/response
-  _request.reset();
   _response.reset();
+  _request.reset();
 }
 
 void Session::_send_auth_challenge() {
@@ -349,6 +358,8 @@ void Session::_process_message_register() {
   _send(200, "OK");
 }
 
+void Session::_process_message_publish() { _send(200, "OK"); }
+
 void Session::_process_message_invite() {
   if (_request->body.empty()) {
     _logger->debug("INVITE - No Body, Sending 400 Bad Request");
@@ -382,6 +393,8 @@ void Session::_process_message_invite() {
   auto call = std::make_shared<Call>(_request->header->headers_map["Call-ID"][0]->as<StringHeader>()->to_string());
   call->from = _request->header->headers_map["From"][0]->as<SIPIdentityHeader>()->value;
   call->to = _request->header->headers_map["To"][0]->as<SIPIdentityHeader>()->value;
+  call->invite_via = _request->header->headers_map["Via"][0];
+  _logger->debug("SAVING VIA --- " + call->invite_via->to_string());
   call->add_session(shared_from_this());
 
   // Is To: a subscriber?

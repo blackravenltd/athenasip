@@ -35,6 +35,7 @@
 #include "headers/sip_identity_header.h"
 #include "headers/string_header.h"
 #include "headers/uint_header.h"
+#include "headers/via_header.h"
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
 #include "registrar.h"
@@ -90,6 +91,7 @@ class Session : public std::enable_shared_from_this<Session> {
   std::shared_ptr<SIPUri> _contact;
 
   void _process_message_register();
+  void _process_message_publish();
   void _process_message_invite();
   void _send_auth_challenge();
 

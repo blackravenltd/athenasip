@@ -29,12 +29,14 @@ class Config {
   uint32_t sip_registration_timeout = 5000;  // (set a default or load from YAML)
 
   // TLS Configuration
+  bool tls_enable;
   std::string tls_address;            // e.g. "127.0.0.1"
   uint16_t tls_port = 0;              // e.g. 5061
   std::string tls_cert_pem_filename;  // e.g. "./tls/snakeoil.cer"
   std::string tls_key_pem_filename;   // e.g. "./tls/snakeoil.key"
 
   // TCP Configuration
+  bool tcp_enable;
   std::string tcp_address;  // e.g. "127.0.0.1"
   uint16_t tcp_port = 0;    // e.g. 5060
 
