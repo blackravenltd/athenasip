@@ -101,6 +101,8 @@ class Session : public std::enable_shared_from_this<Session> {
   void _process_message_incall();
   void _process_message_bye();
 
+  void _process_call_state(std::shared_ptr<Call> call);
+
   void _send(uint16_t code, std::string message);
   void _send_close(uint16_t code, std::string message);
 
