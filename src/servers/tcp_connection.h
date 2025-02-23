@@ -21,7 +21,8 @@ namespace athenasip::servers {
 
 class TCPConnection : public Connection {
  public:
-  TCPConnection(std::shared_ptr<boost::asio::ip::tcp::socket> connection) : _connection(connection) {}
+  TCPConnection(std::shared_ptr<boost::asio::ip::tcp::socket> connection)
+      : _connection(connection), _local_endpoint(_connection->local_endpoint()), _remote_endpoint(_connection->remote_endpoint()) {}
 
   virtual bool start() override { return true; }
 
@@ -33,8 +34,8 @@ class TCPConnection : public Connection {
     _connection->async_write_some(buffer, handler);
   }
 
-  virtual boost::asio::ip::tcp::endpoint remote_endpoint() override { return _connection->remote_endpoint(); }
-  virtual boost::asio::ip::tcp::endpoint local_endpoint() override { return _connection->local_endpoint(); }
+  virtual boost::asio::ip::tcp::endpoint local_endpoint() override { return _local_endpoint; }
+  virtual boost::asio::ip::tcp::endpoint remote_endpoint() override { return _remote_endpoint; }
 
   virtual bool is_open() override { return _connection->is_open(); }
 
@@ -49,6 +50,8 @@ class TCPConnection : public Connection {
 
  protected:
   std::shared_ptr<boost::asio::ip::tcp::socket> _connection;
+  boost::asio::ip::tcp::endpoint _local_endpoint;
+  boost::asio::ip::tcp::endpoint _remote_endpoint;
 };
 
 }  // namespace athenasip::servers

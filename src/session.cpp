@@ -254,33 +254,17 @@ void Session::_process_message() {
   auto call = _registrar->call_get(callId);
 
   if (call) {
-    _logger->debug("In Call " + call->id);
-  } else {
-    _logger->debug("Not In Call " + callId);
-  }
-
-  if (call) {
     // Add session to call if there is one
     if (!call->contains_session(shared_from_this())) {
-      _logger->info("Adding to Call " + call->id);
+      _logger->info("[Call " + call->id + "] Adding This Session");
       call->add_session(shared_from_this());
     }
 
     // Forward messages to other sessions
-    call->with_all_sessions_except(
-        [this, call](std::shared_ptr<Session> other_session) {
-          other_session->_logger->info("FORWARDED FROM " + call->id);
-          other_session->send(_request);
-        },
-        shared_from_this());
+    call->with_all_sessions_except([this, call](std::shared_ptr<Session> other_session) { other_session->send(_request); }, shared_from_this());
 
-    if(_request->header->type == SIPHeader::Type::Request && _request->header->request_method == "BYE") {
-        // Relay one message then return to Registered
-        _logger->info("Ended Call "+ call->id);
-        state = State::Normal;
-        _registrar->call_unregister(call->id);
-        call.reset();
-    }
+    // Process Call State
+    _process_call_state(call);
 
   } else if (_request->header->request_method == "REGISTER") {
     _process_message_register();
@@ -296,6 +280,52 @@ void Session::_process_message() {
   // Free up request/response
   _response.reset();
   _request.reset();
+}
+
+void Session::_process_call_state(std::shared_ptr<Call> call) {
+  if (_request->header->type == SIPHeader::Type::Request) {
+    // Request
+    if (_request->header->request_method == "BYE") {
+      if (call->state != Call::State::Closing) {
+        _logger->debug("[Call " + call->id + "] Received BYE, Closing...");
+        call->state = Call::State::Closing;
+      }
+    } else if (_request->header->request_method == "ACK") {
+      if (call->state == Call::State::Closing) {
+        _logger->debug("[Call " + call->id + "] Received ACK, Closed");
+        state = State::Normal;
+        _registrar->call_unregister(call->id);
+        call.reset();
+        return;
+      }
+    }
+  } else {
+    // Response
+    if (_request->header->response_code == 200) {
+      if (call->state == Call::State::Closing) {
+        _logger->info("[Call " + call->id + "] Completed");
+        state = State::Normal;
+        _registrar->call_unregister(call->id);
+        call.reset();
+        return;
+      } else if (call->state == Call::State::Ringing) {
+        _logger->info("[Call " + call->id + "] Connected");
+        call->state = Call::State::Connected;
+      }
+    } else if (_request->header->response_code == 100) {
+      _logger->info("[Call " + call->id + "] Trying");
+      call->state = Call::State::Trying;
+    } else if (_request->header->response_code == 180) {
+      _logger->info("[Call " + call->id + "] Ringing");
+      call->state = Call::State::Ringing;
+    } else if (_request->header->response_code == 603) {
+      _logger->info("[Call " + call->id + "] Declined");
+      call->state = Call::State::Closing;
+    } else if (_request->header->response_code == 487) {
+      _logger->info("[Call " + call->id + "] Request terminated");
+      call->state = Call::State::Closing;
+    }
+  }
 }
 
 void Session::_send_auth_challenge() {
@@ -317,7 +347,7 @@ void Session::_send_auth_challenge() {
 void Session::_process_message_register() {
   // The Authorization must have been sent
   if (!_request->header->contains("Authorization")) {
-    _logger->info("REGISTER - No Authorization Header, Sending 401 Unauthorized");
+    _logger->debug("REGISTER - No Authorization Header, Sending 401 Unauthorized");
     _send_auth_challenge();
     return;
   }
@@ -329,7 +359,7 @@ void Session::_process_message_register() {
   // Check nonce exists
   auto nonce = incomingAuthHeader->fields["nonce"];
   if (!_nonces->contains(nonce)) {
-    _logger->info("REGISTER - Nonce not found or expired, Sending 401 Unauthorized");
+    _logger->debug("REGISTER - Nonce not found or expired, Sending 401 Unauthorized");
     _send_auth_challenge();
     return;
   }
@@ -339,7 +369,7 @@ void Session::_process_message_register() {
 
   // Not Found
   if (!_subscriber) {
-    _logger->info("REGISTER - User " + fromIdentity->to_string() + " Not Found, Sending 401 Unauthorized");
+    _logger->debug("REGISTER - User " + fromIdentity->to_string() + " Not Found, Sending 401 Unauthorized");
     _send_auth_challenge();
     return;
   }
@@ -368,7 +398,7 @@ void Session::_process_message_register() {
   _send(200, "OK");
 }
 
-void Session::_process_message_publish() { 
+void Session::_process_message_publish() {
   // TODO: Implement PUBLISH
 
   _send(200, "OK");
@@ -469,7 +499,7 @@ void Session::send(std::shared_ptr<SIPMessage> message) {
   }
 
   // Add Record-Route so we stay in the dialog (ACK)
-  message->header->add("Record-Route", std::make_shared<StringHeader>("<sip:"+serverendpoint+";transport="+_connection->transport_name()+";lr>"));
+  message->header->add("Record-Route", std::make_shared<StringHeader>("<sip:" + serverendpoint + ";transport=" + _connection->transport_name() + ";lr>"));
 
   // Reset Length to body length
   message->header->clear("Content-Length");
