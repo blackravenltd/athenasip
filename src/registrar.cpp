@@ -110,12 +110,8 @@ bool Registrar::call_unregister(std::string callId) {
 
 std::shared_ptr<Call> Registrar::call_get(std::string callId) { return _calls[callId]; }
 
-std::shared_ptr<RTPRelayPair> Registrar::rtprelay_allocate() {
-  return _rtprelay->allocate_relay_pair();
-}
+std::shared_ptr<RTPRelayPair> Registrar::rtprelay_allocate() { return _rtprelay->allocate_relay_pair(); }
 
-void Registrar::rtprelay_release(std::shared_ptr<RTPRelayPair> relay) {
-  _rtprelay->release_relay_pair(relay);
-}
+void Registrar::rtprelay_release(std::shared_ptr<RTPRelayPair> relay) { _rtprelay->release_relay_pair(relay); }
 
 }  // namespace athenasip

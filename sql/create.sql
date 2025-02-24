@@ -32,15 +32,6 @@ CREATE TABLE `calls` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Dumping data for table `calls`
---
-
-LOCK TABLES `calls` WRITE;
-/*!40000 ALTER TABLE `calls` DISABLE KEYS */;
-/*!40000 ALTER TABLE `calls` ENABLE KEYS */;
-UNLOCK TABLES;
-
---
 -- Table structure for table `location`
 --
 
@@ -59,16 +50,6 @@ CREATE TABLE `location` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Dumping data for table `location`
---
-
-LOCK TABLES `location` WRITE;
-/*!40000 ALTER TABLE `location` DISABLE KEYS */;
-INSERT INTO `location` VALUES (3357471922339220480,'tom','127.0.0.1',55868,'2025-02-18 15:33:23','N'),(3357471922339220480,'tom','127.0.0.1',55871,'2025-02-18 15:33:58','N'),(3357471922339220480,'tom','127.0.0.1',55874,'2025-02-18 15:34:58','N'),(3357471922339220480,'tom','127.0.0.1',55876,'2025-02-18 15:36:29','N'),(3357471922339220480,'tom','127.0.0.1',55879,'2025-02-18 15:37:29','N'),(3357471922339220480,'tom','127.0.0.1',55881,'2025-02-18 15:38:29','N'),(3357471922339220480,'tom','127.0.0.1',57087,'2025-02-18 16:33:03','N'),(3357471922339220480,'tom','127.0.0.1',57101,'2025-02-18 16:34:01','N'),(3357471922339220480,'tom','127.0.0.1',57110,'2025-02-18 16:35:01','N'),(3357471922339220480,'tom','127.0.0.1',57147,'2025-02-18 16:36:01','N'),(3357471922339220480,'tom','127.0.0.1',58020,'2025-02-18 17:23:56','N'),(3357471922339220480,'tom','127.0.0.1',58192,'2025-02-18 17:37:52','N'),(3357471922339220480,'tom','127.0.0.1',58195,'2025-02-18 17:38:17','N'),(3357471922339220480,'tom','127.0.0.1',58210,'2025-02-18 17:39:58','N');
-/*!40000 ALTER TABLE `location` ENABLE KEYS */;
-UNLOCK TABLES;
-
---
 -- Table structure for table `participant`
 --
 
@@ -84,15 +65,6 @@ CREATE TABLE `participant` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Dumping data for table `participant`
---
-
-LOCK TABLES `participant` WRITE;
-/*!40000 ALTER TABLE `participant` DISABLE KEYS */;
-/*!40000 ALTER TABLE `participant` ENABLE KEYS */;
-UNLOCK TABLES;
-
---
 -- Table structure for table `realm`
 --
 
@@ -105,15 +77,6 @@ CREATE TABLE `realm` (
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
-
---
--- Dumping data for table `realm`
---
-
-LOCK TABLES `realm` WRITE;
-/*!40000 ALTER TABLE `realm` DISABLE KEYS */;
-/*!40000 ALTER TABLE `realm` ENABLE KEYS */;
-UNLOCK TABLES;
 
 --
 -- Table structure for table `subscriber`
@@ -132,16 +95,6 @@ CREATE TABLE `subscriber` (
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
-
---
--- Dumping data for table `subscriber`
---
-
-LOCK TABLES `subscriber` WRITE;
-/*!40000 ALTER TABLE `subscriber` DISABLE KEYS */;
-INSERT INTO `subscriber` VALUES (3357471922339220480,'Tom Cully','tom','sip.athenasip.org','a635ef6e07ca917e6d2cb84e0717735a',NULL);
-/*!40000 ALTER TABLE `subscriber` ENABLE KEYS */;
-UNLOCK TABLES;
 
 --
 -- Dumping routines for database 'athenasip'
@@ -174,4 +127,4 @@ DELIMITER ;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2025-02-19 10:14:19
+-- Dump completed on 2025-02-24 18:05:43

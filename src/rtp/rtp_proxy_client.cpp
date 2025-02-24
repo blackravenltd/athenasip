@@ -149,7 +149,7 @@ void RTPProxyClient::doSendCommand(std::string command, ResponseCallback callbac
     return;
   }
 
-  _logger->info("> "+command);
+  _logger->info("> " + command);
 
   // Store the command in _send_buffer so it lives throughout the async calls
   _send_buffer = std::move(command);
@@ -178,11 +178,10 @@ void RTPProxyClient::handleSend(const boost::system::error_code &ec, std::size_t
   _recv_buffer.fill('\0');
 
   // Async receive
-  _socket.async_receive_from(
-      boost::asio::buffer(_recv_buffer), _sender_endpoint,
-      boost::asio::bind_executor(_strand, [this, self, callback](const boost::system::error_code &ec2, std::size_t bytes_recvd) mutable {
-        handleReceive(ec2, bytes_recvd, std::move(callback));
-      }));
+  _socket.async_receive_from(boost::asio::buffer(_recv_buffer), _sender_endpoint,
+                             boost::asio::bind_executor(_strand, [this, self, callback](const boost::system::error_code &ec2, std::size_t bytes_recvd) mutable {
+                               handleReceive(ec2, bytes_recvd, std::move(callback));
+                             }));
 }
 
 /**
@@ -197,9 +196,9 @@ void RTPProxyClient::handleReceive(const boost::system::error_code &ec, std::siz
   }
 
   std::string response(_recv_buffer.data(), bytes_recvd);
-  _logger->info("< "+response);
+  _logger->info("< " + response);
 
   // Notify caller of success
   if (callback) callback(std::make_shared<RTPProxyResponse>(response), ec);
 }
-}  // namespace athenasip
+}  // namespace athenasip::clients

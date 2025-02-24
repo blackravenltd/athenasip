@@ -16,9 +16,9 @@
 #include "loggers/logger_scoped.h"
 #include "loggers/logger_stdio.h"
 #include "registrar.h"
+#include "rtp/rtp_relay.h"
 #include "servers/tcp_server.h"
 #include "servers/tls_server.h"
-#include "rtp/rtp_relay.h"
 #include "sip_core.h"
 #include "util.h"
 #include "version.h"
@@ -66,13 +66,11 @@ int main(int argc, char* argv[]) {
   }
 
   // Start RTPRelay
-  if(core->config->rtprelay_enable) {
-    core->rtprelay = std::make_shared<rtp::RTPRelay>(core->logger, core->config->rtprelay_address, core->config->rtprelay_min_port, core->config->rtprelay_max_port);
+  if (core->config->rtprelay_enable) {
+    core->rtprelay =
+        std::make_shared<rtp::RTPRelay>(core->logger, core->config->rtprelay_address, core->config->rtprelay_min_port, core->config->rtprelay_max_port);
     core->rtprelay->start();
   }
-
-  auto pair = core->rtprelay->allocate_relay_pair();
-  pair->start();
 
   // Create Registrar
   core->registrar = std::make_shared<Registrar>(core->logger, core->db, core->rtprelay);
@@ -111,7 +109,7 @@ int main(int argc, char* argv[]) {
         signal_wait_context.stop();
         core->registrar->session_close_all();
         for (const auto& server : core->servers) server->stop();
-        if(core->rtprelay) core->rtprelay->stop();
+        if (core->rtprelay) core->rtprelay->stop();
         return;
       default:
         core->logger->raw("Received Unknown Signal " + std::to_string(signal_number));

@@ -68,4 +68,4 @@ class RTPProxyClient : public std::enable_shared_from_this<RTPProxyClient> {
   void handleReceive(const boost::system::error_code &ec, std::size_t bytes_recvd, ResponseCallback callback);
 };
 
-}  // namespace athenasip
+}  // namespace athenasip::clients
