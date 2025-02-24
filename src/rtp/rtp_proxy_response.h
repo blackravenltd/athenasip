@@ -29,9 +29,7 @@ class RTPProxyResponse {
    */
   explicit RTPProxyResponse(const std::string &resp_line) : status_code(-1), ip(""), rtp_port(-1), rtcp_port(-1), valid(false) { _parse(resp_line); }
 
-  const std::string to_string() const {
-    return std::to_string(status_code)+" "+ip+" "+std::to_string(rtp_port)+" "+std::to_string(rtcp_port);
-  }
+  const std::string to_string() const { return std::to_string(status_code) + " " + ip + " " + std::to_string(rtp_port) + " " + std::to_string(rtcp_port); }
 
  private:
   /**
@@ -86,6 +84,5 @@ class RTPProxyResponse {
     // If we've reached here, we consider it valid
     valid = true;
   }
-}
-;
-}
+};
+}  // namespace athenasip::clients

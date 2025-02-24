@@ -17,9 +17,9 @@
 #include "databases/db.h"
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
+#include "rtp/rtp_relay.h"
 #include "types/sip_identity.h"
 #include "types/subscriber.h"
-#include "rtp/rtp_relay.h"
 
 using namespace athenasip::types;
 
@@ -29,7 +29,8 @@ class Session;
 
 class Registrar {
  public:
-  Registrar(std::shared_ptr<athenasip::loggers::Logger> logger, std::shared_ptr<athenasip::databases::DB> db, std::shared_ptr<athenasip::rtp::RTPRelay> rtprelay);
+  Registrar(std::shared_ptr<athenasip::loggers::Logger> logger, std::shared_ptr<athenasip::databases::DB> db,
+            std::shared_ptr<athenasip::rtp::RTPRelay> rtprelay);
 
   // SUbscribers
   bool subscriber_exists(std::shared_ptr<SIPIdentity> identity);

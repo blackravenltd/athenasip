@@ -6,11 +6,12 @@
 //
 #pragma once
 
+#include <boost/asio.hpp>
 #include <memory>
-#include <string>
 #include <set>
 #include <sstream>
-#include <boost/asio.hpp>
+#include <string>
+
 #include "../global_io_context.h"
 #include "../loggers/logger.h"
 #include "../loggers/logger_scoped.h"
@@ -18,22 +19,17 @@
 
 namespace athenasip::rtp {
 class RTPRelay : public std::enable_shared_from_this<RTPRelay> {
-
-public:
-  RTPRelay(std::shared_ptr<Logger> logger, const std::string &bind_address, uint16_t min_port, uint16_t max_port) : 
-    _logger(std::make_shared<LoggerScoped>("rtprelay", logger)),
-    _bind_address(bind_address),
-    _min_port(min_port),
-    _max_port(max_port) {
-    }
+ public:
+  RTPRelay(std::shared_ptr<Logger> logger, const std::string& bind_address, uint16_t min_port, uint16_t max_port)
+      : _logger(std::make_shared<LoggerScoped>("rtprelay", logger)), _bind_address(bind_address), _min_port(min_port), _max_port(max_port) {}
 
   void start() {
-    for(int i = _min_port; i<_max_port; i++) _available_ports.insert(i);
-    _logger->info("Started on "+_bind_address+", Available Ports "+std::to_string(_min_port)+" - "+std::to_string(_max_port));
+    for (int i = _min_port; i < _max_port; i++) _available_ports.insert(i);
+    _logger->info("Started on " + _bind_address + ", Available Ports " + std::to_string(_min_port) + " - " + std::to_string(_max_port));
   }
 
   void stop() {
-    for(auto& relay : _relays) {
+    for (auto& relay : _relays) {
       relay->stop();
     }
     _relays.clear();
@@ -46,7 +42,7 @@ public:
     auto port_a = _allocate_port();
     auto port_b = _allocate_port();
 
-    if(port_a == 0 || port_b == 0) {
+    if (port_a == 0 || port_b == 0) {
       _release_port(port_a);
       _release_port(port_b);
       _logger->error("Available ports exhausted");
@@ -65,28 +61,28 @@ public:
     _relays.erase(relay);
   }
 
-private:
-    std::shared_ptr<Logger> _logger;
-    std::string _bind_address;
+ private:
+  std::shared_ptr<Logger> _logger;
+  std::string _bind_address;
 
-    uint16_t _min_port, _max_port;
-    std::set<uint16_t> _available_ports;
-    std::set<uint16_t> _allocated_ports;
+  uint16_t _min_port, _max_port;
+  std::set<uint16_t> _available_ports;
+  std::set<uint16_t> _allocated_ports;
 
-    std::set<std::shared_ptr<RTPRelayPair>> _relays;
+  std::set<std::shared_ptr<RTPRelayPair>> _relays;
 
-    uint16_t _allocate_port() {
-      if(_available_ports.size() == 0) return 0;
-      auto node = _available_ports.extract(_available_ports.begin());
-      _allocated_ports.insert(node.value());
-      return node.value();
-    }
+  uint16_t _allocate_port() {
+    if (_available_ports.size() == 0) return 0;
+    auto node = _available_ports.extract(_available_ports.begin());
+    _allocated_ports.insert(node.value());
+    return node.value();
+  }
 
-    void _release_port(uint16_t port) {
-      if(port==0) return;
-      _allocated_ports.erase(port);
-      _available_ports.insert(port);
-    }
+  void _release_port(uint16_t port) {
+    if (port == 0) return;
+    _allocated_ports.erase(port);
+    _available_ports.insert(port);
+  }
 };
 
 }  // namespace athenasip::rtp

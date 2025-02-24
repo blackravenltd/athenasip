@@ -15,8 +15,8 @@
 #include "databases/db.h"
 #include "loggers/logger.h"
 #include "registrar.h"
-#include "servers/server.h"
 #include "rtp/rtp_relay.h"
+#include "servers/server.h"
 #include "version.h"
 
 namespace athenasip {

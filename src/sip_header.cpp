@@ -18,6 +18,8 @@ void SIPHeader::add(const std::string& field_name, std::shared_ptr<headers::Head
   headers_map[field_name].push_back(value);
 }
 
+void SIPHeader::add(const std::string& field_name, const std::string& value) { add(field_name, std::make_shared<StringHeader>(value)); }
+
 void SIPHeader::add_start(const std::string& field_name, std::shared_ptr<headers::Header> value) {
   // Create a new HeaderField and push it into the vector.
   HeaderField hf{field_name, value};

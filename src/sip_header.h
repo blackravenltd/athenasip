@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "headers/header.h"
+#include "headers/string_header.h"
 #include "types/sip_uri.h"
 #include "util.h"
 
@@ -60,6 +61,7 @@ class SIPHeader {
   std::unordered_map<std::string, std::vector<std::shared_ptr<headers::Header>>> headers_map;
 
   void add(const std::string& field_name, std::shared_ptr<headers::Header> value);
+  void add(const std::string& field_name, const std::string& value);
   void add_start(const std::string& field_name, std::shared_ptr<headers::Header> value);
   void remove_value(const std::string& field_name, RemoveFn);
   void clear(const std::string& field_name);

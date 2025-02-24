@@ -13,8 +13,8 @@
 #include <unordered_map>
 
 #include "headers/header.h"
-#include "types/sip_identity.h"
 #include "rtp/rtp_relay_pair.h"
+#include "types/sip_identity.h"
 
 using namespace athenasip::types;
 using namespace athenasip::headers;

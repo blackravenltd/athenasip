@@ -213,6 +213,7 @@ void Session::_process_message() {
     if (!_request->header->contains("From") || !_request->header->contains("To") || !_request->header->contains("Call-ID") ||
         !_request->header->contains("CSeq") || !_request->header->contains("Via") || !_request->header->contains("Max-Forwards")) {
       _logger->info("[Request] - Incomplete Headers, Sending 400 Bad Request");
+      _response->header->add("Reason", "SIP ;cause=400 ;text=\"Incomplete Headers (Needs From, To, Call-ID, CSeq, Via, Max-Forwards)\"");
       _send(400, "Bad Request");
       return;
     }
@@ -221,7 +222,9 @@ void Session::_process_message() {
     // A SIP response must include: Via, From, To, Call-Id, CSeq, and Content-Length.
     if (!_request->header->contains("Via") || !_request->header->contains("From") || !_request->header->contains("To") ||
         !_request->header->contains("Call-ID") || !_request->header->contains("CSeq") || !_request->header->contains("Content-Length")) {
+      _response->header->add("Reason", "SIP ;cause=400 ;text=\"Incomplete Headers (Needs From, To, Call-ID, CSeq, Via, Content-Length)\"");
       _logger->info("[Response] - Incomplete Headers, Sending 400 Bad Response");
+      _send(400, "Bad Request");
       return;
     }
   }
@@ -247,15 +250,17 @@ void Session::_process_message() {
     _process_call_state(call);
 
     // Forward messages to other sessions
-    call->with_all_sessions_except([this, call](std::shared_ptr<Session> other_session) { 
-      // Forward message to this session
-      other_session->send(_request); 
-    }, shared_from_this());
+    call->with_all_sessions_except(
+        [this, call](std::shared_ptr<Session> other_session) {
+          // Forward message to this session
+          other_session->send(_request);
+        },
+        shared_from_this());
 
     // Free up request/response
     _request.reset();
     return;
-  } 
+  }
 
   // Create Response
   _response = std::make_shared<SIPMessage>();
@@ -295,6 +300,15 @@ void Session::_process_message() {
 void Session::_process_call_state(std::shared_ptr<Call> call) {
   if (_request->header->type == SIPHeader::Type::Request) {
     // Request
+    if (_request->header->request_method == "INVITE") {
+      auto sdp = std::make_shared<SDP>();
+      if (sdp->parse(_request->body)) {
+        auto server_address = _connection->local_endpoint().address().to_string();
+        _rewrite_sdp(sdp, server_address, call->rtp_pair->port_b, call->rtp_pair->port_a);
+        _logger->debug("[Call " + call->id + "] Modifed SFP for RTPRelay (INVITE)");
+        _request->body = sdp->to_string();
+      }
+    }
     if (_request->header->request_method == "BYE") {
       if (call->state != Call::State::Closing) {
         _logger->debug("[Call " + call->id + "] Received BYE, Closing...");
@@ -328,22 +342,14 @@ void Session::_process_call_state(std::shared_ptr<Call> call) {
       }
 
       // Rewrite SDP if required
-      if(call->state == Call::State::Ringing || call->state == Call::State::Connected) {
+      if (call->state == Call::State::Ringing || call->state == Call::State::Connected) {
         // Parse SDP
         auto sdp = std::make_shared<SDP>();
         if (sdp->parse(_request->body)) {
           // Rewrite SDP
           auto server_address = _connection->local_endpoint().address().to_string();
-          sdp->connection.address = server_address;
-          for(auto& media : sdp->mediaDescriptions) {
-            media.description.port =  call->rtp_pair->port_b;
-            for (auto& a : media.attributes) {
-              if(a.substr(0,5) == "rtcp:") {
-                a = "rtcp:"+std::to_string(call->rtcp_pair->port_b);
-              }
-            }
-          }
-          sdp->print();
+          _rewrite_sdp(sdp, server_address, call->rtp_pair->port_b, call->rtp_pair->port_a);
+          _logger->debug("[Call " + call->id + "] Modifed SFP for RTPRelay (200)");
           _request->body = sdp->to_string();
         }
       }
@@ -383,6 +389,7 @@ void Session::_process_message_register() {
   // The Authorization must have been sent
   if (!_request->header->contains("Authorization")) {
     _logger->debug("REGISTER - No Authorization Header, Sending 401 Unauthorized");
+    _response->header->add("Reason", "No Authorization header");
     _send_auth_challenge();
     return;
   }
@@ -395,6 +402,7 @@ void Session::_process_message_register() {
   auto nonce = incomingAuthHeader->fields["nonce"];
   if (!_nonces->contains(nonce)) {
     _logger->debug("REGISTER - Nonce not found or expired, Sending 401 Unauthorized");
+    _response->header->add("Reason", "Nonce not found or expired");
     _send_auth_challenge();
     return;
   }
@@ -442,6 +450,7 @@ void Session::_process_message_publish() {
 void Session::_process_message_invite() {
   if (_request->body.empty()) {
     _logger->debug("INVITE - No Body, Sending 400 Bad Request");
+    _response->header->add("Reason", "Missing or zero-length body");
     _send(400, "Bad Request");
     return;
   }
@@ -449,6 +458,7 @@ void Session::_process_message_invite() {
   // Preflight, check basic headers
   if (!_request->header->contains("Content-Type")) {
     _logger->debug("INVITE - Incomplete Headers, Sending 400 Bad Request");
+    _response->header->add("Reason", "Incomplete headers (Needs Content-Type)");
     _send(400, "Bad Request");
     return;
   }
@@ -464,6 +474,7 @@ void Session::_process_message_invite() {
   auto sdp = std::make_shared<SDP>();
   if (!sdp->parse(_request->body)) {
     _logger->debug("INVITE - Body Not SDP, Sending 400 Bad Request");
+    _response->header->add("Reason", "Parsing application/sdp body failed");
     _send(400, "Bad Request");
     return;
   };
@@ -482,16 +493,8 @@ void Session::_process_message_invite() {
 
   // Rewrite SDP
   auto server_address = _connection->local_endpoint().address().to_string();
-  sdp->connection.address = server_address;
-  for(auto& media : sdp->mediaDescriptions) {
-    media.description.port =  call->rtp_pair->port_a;
-    for (auto& a : media.attributes) {
-      if(a.substr(0,5) == "rtcp:") {
-        a = "rtcp:"+std::to_string(call->rtcp_pair->port_a);
-      }
-    }
-  }
-  sdp->print();
+  _rewrite_sdp(sdp, server_address, call->rtp_pair->port_a, call->rtcp_pair->port_a);
+  _logger->debug("[Call " + call->id + "] Modifed SFP for RTPRelay (INVITE)");
   _request->body = sdp->to_string();
 
   // Is To: a subscriber?
@@ -523,6 +526,18 @@ void Session::_process_message_invite() {
   other_session->send(_request);
 }
 
+void Session::_rewrite_sdp(std::shared_ptr<SDP> sdp, std::string server_address, uint16_t rtp_port, uint16_t rtcp_port) {
+  sdp->connection.address = server_address;
+  for (auto& media : sdp->mediaDescriptions) {
+    media.description.port = rtp_port;
+    for (auto& a : media.attributes) {
+      if (a.substr(0, 5) == "rtcp:") {
+        a = "rtcp:" + std::to_string(rtcp_port);
+      }
+    }
+  }
+}
+
 void Session::_send_close(uint16_t code, std::string message) {
   _send(code, message);
   close();
@@ -536,8 +551,8 @@ void Session::_send(uint16_t code, std::string message) {
 
 void Session::send(std::shared_ptr<SIPMessage> message) {
   // Get Server Endpoint
-    auto lep = _connection->local_endpoint();
-    auto server_endpoint = lep.address().to_string() + ":" + std::to_string(lep.port());
+  auto lep = _connection->local_endpoint();
+  auto server_endpoint = lep.address().to_string() + ":" + std::to_string(lep.port());
 
   // Add or Remove Via
   if (message->header->type == SIPHeader::Type::Request) {
@@ -549,13 +564,11 @@ void Session::send(std::shared_ptr<SIPMessage> message) {
   } else {
     // Remove Our Via Header
     int x = message->header->headers.size();
-    message->header->remove_value("Via", [this, server_endpoint](std::shared_ptr<Header> header) {
-      return header->as<ViaHeader>()->host == server_endpoint;
-    });
+    message->header->remove_value("Via", [this, server_endpoint](std::shared_ptr<Header> header) { return header->as<ViaHeader>()->host == server_endpoint; });
   }
 
   // Add Record-Route so we stay in the dialog (ACK)
-  message->header->add("Record-Route", std::make_shared<StringHeader>("<sip:" + server_endpoint + ";transport=" + _connection->transport_name() + ";lr>"));
+  message->header->add("Record-Route", "<sip:" + server_endpoint + ";transport=" + _connection->transport_name() + ";lr>");
 
   // Reset Length to body length
   message->header->clear("Content-Length");
