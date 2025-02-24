@@ -8,7 +8,7 @@
 //
 #include "rtp_proxy_client.h"
 
-namespace athenasip {
+namespace athenasip::clients {
 
 RTPProxyClient::RTPProxyClient(std::shared_ptr<Logger> logger, const std::string &rtpproxy_host, unsigned short rtpproxy_port)
     : _logger(std::make_unique<LoggerScoped>("rtpproxy", logger)),
@@ -18,10 +18,6 @@ RTPProxyClient::RTPProxyClient(std::shared_ptr<Logger> logger, const std::string
       _socket(_strand),
       _rtpproxy_endpoint(boost::asio::ip::make_address(rtpproxy_host), rtpproxy_port) {}
 
-RTPProxyClient::~RTPProxyClient() {
-  close();  // ensure we close the socket
-}
-
 /**
  * @brief Opens (binds) the UDP socket so we can send and receive commands.
  * @return true on success, false otherwise (logs error).
@@ -30,9 +26,10 @@ bool RTPProxyClient::open() {
   boost::system::error_code ec;
   _socket.open(boost::asio::ip::udp::v4(), ec);
   if (ec) {
-    _logger->error("open() failed: " + ec.message());
+    _logger->error("Open Failed: " + ec.message());
     return false;
   }
+  _logger->info("Opened");
   return true;
 }
 
@@ -40,13 +37,17 @@ bool RTPProxyClient::open() {
  * @brief Closes the underlying socket. Safe to call multiple times.
  */
 void RTPProxyClient::close() {
-  boost::asio::dispatch(_strand, [self = shared_from_this()]() {
-    if (self->_socket.is_open()) {
+  auto self = shared_from_this();
+
+  boost::asio::dispatch(_strand, [this, self]() {
+    if (_socket.is_open()) {
       boost::system::error_code ec;
-      self->_socket.close(ec);
+      _socket.close(ec);
       if (ec) {
-        self->_logger->error("close() failed: " + ec.message());
+        _logger->error("close() failed: " + ec.message());
+        return;
       }
+      _logger->info("Closed");
     }
   });
 }
@@ -148,6 +149,8 @@ void RTPProxyClient::doSendCommand(std::string command, ResponseCallback callbac
     return;
   }
 
+  _logger->info("> "+command);
+
   // Store the command in _send_buffer so it lives throughout the async calls
   _send_buffer = std::move(command);
 
@@ -160,6 +163,8 @@ void RTPProxyClient::doSendCommand(std::string command, ResponseCallback callbac
 }
 
 void RTPProxyClient::handleSend(const boost::system::error_code &ec, std::size_t bytes_sent, ResponseCallback callback) {
+  auto self = shared_from_this();
+
   if (ec) {
     // Notify callback of error
     if (callback) callback(nullptr, ec);
@@ -175,8 +180,8 @@ void RTPProxyClient::handleSend(const boost::system::error_code &ec, std::size_t
   // Async receive
   _socket.async_receive_from(
       boost::asio::buffer(_recv_buffer), _sender_endpoint,
-      boost::asio::bind_executor(_strand, [self = shared_from_this(), callback](const boost::system::error_code &ec2, std::size_t bytes_recvd) mutable {
-        self->handleReceive(ec2, bytes_recvd, std::move(callback));
+      boost::asio::bind_executor(_strand, [this, self, callback](const boost::system::error_code &ec2, std::size_t bytes_recvd) mutable {
+        handleReceive(ec2, bytes_recvd, std::move(callback));
       }));
 }
 
@@ -192,7 +197,7 @@ void RTPProxyClient::handleReceive(const boost::system::error_code &ec, std::siz
   }
 
   std::string response(_recv_buffer.data(), bytes_recvd);
-  _logger->info("Received response [" + response + "]");
+  _logger->info("< "+response);
 
   // Notify caller of success
   if (callback) callback(std::make_shared<RTPProxyResponse>(response), ec);

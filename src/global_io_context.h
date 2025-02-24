@@ -4,6 +4,8 @@
 // Copyright (C) 2025 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
+#pragma once
+
 #include <boost/asio.hpp>
 #include <thread>
 

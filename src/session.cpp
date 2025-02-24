@@ -207,12 +207,7 @@ void Session::_process_message() {
   // std::cout << ">>>>> ";
   // _request->print();
 
-  // Create Response
-  _response = std::make_shared<SIPMessage>();
-  _response->header = std::make_shared<SIPHeader>();
-  _response->header->type = SIPHeader::Type::Response;
-  _response->body_length = 0;
-
+  // Header Checking
   if (_request->header->type == SIPHeader::Type::Request) {
     // Preflight, check basic headers for a request
     if (!_request->header->contains("From") || !_request->header->contains("To") || !_request->header->contains("Call-ID") ||
@@ -237,18 +232,6 @@ void Session::_process_message() {
     via->parameters["rport"] = std::to_string(_request->source_port);
   }
 
-  // Add From/To Headers
-  _response->header->add("From", std::make_shared<StringHeader>("<sip:server@sip.athenasip.org>;tag=123456"));
-  _response->header->add("To", _request->header->headers_map["From"][0]);
-
-  // Copy Request Headers
-  _response->header->add("Call-ID", _request->header->headers_map["Call-ID"][0]);
-  _response->header->add("CSeq", _request->header->headers_map["CSeq"][0]);
-  _response->header->add("Via", _request->header->headers_map["Via"][0]);
-
-  // Tell the client what is allowed
-  _response->header->add("Allow", std::make_shared<StringHeader>("INVITE, ACK, CANCEL, OPTIONS, BYE, REFER, NOTIFY, MESSAGE, INFO"));
-
   // Are we in a call?
   auto callId = _request->header->headers_map["Call-ID"][0]->as<StringHeader>()->to_string();
   auto call = _registrar->call_get(callId);
@@ -260,13 +243,40 @@ void Session::_process_message() {
       call->add_session(shared_from_this());
     }
 
-    // Forward messages to other sessions
-    call->with_all_sessions_except([this, call](std::shared_ptr<Session> other_session) { other_session->send(_request); }, shared_from_this());
-
     // Process Call State
     _process_call_state(call);
 
-  } else if (_request->header->request_method == "REGISTER") {
+    // Forward messages to other sessions
+    call->with_all_sessions_except([this, call](std::shared_ptr<Session> other_session) { 
+      // Forward message to this session
+      other_session->send(_request); 
+    }, shared_from_this());
+
+    // Free up request/response
+    _request.reset();
+    return;
+  } 
+
+  // Create Response
+  _response = std::make_shared<SIPMessage>();
+  _response->header = std::make_shared<SIPHeader>();
+  _response->header->type = SIPHeader::Type::Response;
+  _response->body_length = 0;
+
+  // Add From/To Headers
+  // TODO: Generate proper tag
+  _response->header->add("From", std::make_shared<StringHeader>("<sip:server@sip.athenasip.org>;tag=123456"));
+  _response->header->add("To", _request->header->headers_map["From"][0]);
+
+  // Copy Request Headers
+  _response->header->add("Call-ID", _request->header->headers_map["Call-ID"][0]);
+  _response->header->add("CSeq", _request->header->headers_map["CSeq"][0]);
+  _response->header->add("Via", _request->header->headers_map["Via"][0]);
+
+  // Tell the client what is allowed
+  _response->header->add("Allow", std::make_shared<StringHeader>("INVITE, ACK, CANCEL, OPTIONS, BYE, REFER, NOTIFY, MESSAGE, INFO"));
+
+  if (_request->header->request_method == "REGISTER") {
     _process_message_register();
   } else if (_request->header->request_method == "INVITE") {
     _process_message_invite();
@@ -295,6 +305,8 @@ void Session::_process_call_state(std::shared_ptr<Call> call) {
         _logger->debug("[Call " + call->id + "] Received ACK, Closed");
         state = State::Normal;
         _registrar->call_unregister(call->id);
+        call->rtp_pair->stop();
+        call->rtcp_pair->stop();
         call.reset();
         return;
       }
@@ -306,11 +318,34 @@ void Session::_process_call_state(std::shared_ptr<Call> call) {
         _logger->info("[Call " + call->id + "] Completed");
         state = State::Normal;
         _registrar->call_unregister(call->id);
+        call->rtp_pair->stop();
+        call->rtcp_pair->stop();
         call.reset();
         return;
       } else if (call->state == Call::State::Ringing) {
         _logger->info("[Call " + call->id + "] Connected");
         call->state = Call::State::Connected;
+      }
+
+      // Rewrite SDP if required
+      if(call->state == Call::State::Ringing || call->state == Call::State::Connected) {
+        // Parse SDP
+        auto sdp = std::make_shared<SDP>();
+        if (sdp->parse(_request->body)) {
+          // Rewrite SDP
+          auto server_address = _connection->local_endpoint().address().to_string();
+          sdp->connection.address = server_address;
+          for(auto& media : sdp->mediaDescriptions) {
+            media.description.port =  call->rtp_pair->port_b;
+            for (auto& a : media.attributes) {
+              if(a.substr(0,5) == "rtcp:") {
+                a = "rtcp:"+std::to_string(call->rtcp_pair->port_b);
+              }
+            }
+          }
+          sdp->print();
+          _request->body = sdp->to_string();
+        }
       }
     } else if (_request->header->response_code == 100) {
       _logger->info("[Call " + call->id + "] Trying");
@@ -439,6 +474,26 @@ void Session::_process_message_invite() {
   call->to = _request->header->headers_map["To"][0]->as<SIPIdentityHeader>()->value;
   call->add_session(shared_from_this());
 
+  // Create RTP/RTCP Relay Pair
+  call->rtp_pair = _registrar->rtprelay_allocate();
+  call->rtcp_pair = _registrar->rtprelay_allocate();
+  call->rtp_pair->start();
+  call->rtcp_pair->start();
+
+  // Rewrite SDP
+  auto server_address = _connection->local_endpoint().address().to_string();
+  sdp->connection.address = server_address;
+  for(auto& media : sdp->mediaDescriptions) {
+    media.description.port =  call->rtp_pair->port_a;
+    for (auto& a : media.attributes) {
+      if(a.substr(0,5) == "rtcp:") {
+        a = "rtcp:"+std::to_string(call->rtcp_pair->port_a);
+      }
+    }
+  }
+  sdp->print();
+  _request->body = sdp->to_string();
+
   // Is To: a subscriber?
   auto to_subscriber = _registrar->subscriber_get(call->to);
 
@@ -448,7 +503,6 @@ void Session::_process_message_invite() {
     _send(404, "Not Found");
     return;
   }
-
   _logger->debug("INVITE - Found To: " + call->to->to_string() + " Subscriber: " + std::to_string(to_subscriber->id));
 
   // Is Subscriber Online? TODO: This should query other AthenaSIP Instances if not.
@@ -481,25 +535,27 @@ void Session::_send(uint16_t code, std::string message) {
 }
 
 void Session::send(std::shared_ptr<SIPMessage> message) {
-  auto lep = _connection->local_endpoint();
-  auto serverendpoint = lep.address().to_string() + ":" + std::to_string(lep.port());
-  auto viaString = "SIP/2.0/TCP " + serverendpoint + ";branch=z9hG4bK.123456789";
+  // Get Server Endpoint
+    auto lep = _connection->local_endpoint();
+    auto server_endpoint = lep.address().to_string() + ":" + std::to_string(lep.port());
 
+  // Add or Remove Via
   if (message->header->type == SIPHeader::Type::Request) {
+    // TODO: Generate proper branch
+    auto viaString = "SIP/2.0/TCP " + server_endpoint + ";branch=z9hG4bK.123456789";
     // Add Via Header for this server
     auto via = std::make_shared<ViaHeader>(viaString);
     message->header->add_start("Via", via);
   } else {
-    // Strip Our Via Header
+    // Remove Our Via Header
     int x = message->header->headers.size();
-    message->header->remove_value("Via", [this, serverendpoint](std::shared_ptr<Header> header) {
-      auto via = header->as<ViaHeader>();
-      return via->host == serverendpoint;
+    message->header->remove_value("Via", [this, server_endpoint](std::shared_ptr<Header> header) {
+      return header->as<ViaHeader>()->host == server_endpoint;
     });
   }
 
   // Add Record-Route so we stay in the dialog (ACK)
-  message->header->add("Record-Route", std::make_shared<StringHeader>("<sip:" + serverendpoint + ";transport=" + _connection->transport_name() + ";lr>"));
+  message->header->add("Record-Route", std::make_shared<StringHeader>("<sip:" + server_endpoint + ";transport=" + _connection->transport_name() + ";lr>"));
 
   // Reset Length to body length
   message->header->clear("Content-Length");

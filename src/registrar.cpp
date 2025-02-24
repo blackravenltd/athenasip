@@ -7,11 +7,12 @@
 #include "registrar.h"
 
 using namespace athenasip::databases;
+using namespace athenasip::rtp;
 
 namespace athenasip {
 
-Registrar::Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<athenasip::databases::DB> db)
-    : _logger(std::make_unique<LoggerScoped>("registrar", logger)), _db(db) {}
+Registrar::Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<athenasip::databases::DB> db, std::shared_ptr<athenasip::rtp::RTPRelay> rtprelay)
+    : _logger(std::make_unique<LoggerScoped>("registrar", logger)), _db(db), _rtprelay(rtprelay) {}
 
 bool Registrar::subscriber_exists(std::shared_ptr<SIPIdentity> identity) {
   std::shared_ptr<DBResult> res = _db->query("SELECT COUNT(*) FROM `subscriber` WHERE `user` = ? AND `realm` = ?", {identity->uri->user, identity->uri->realm});
@@ -108,5 +109,13 @@ bool Registrar::call_unregister(std::string callId) {
 }
 
 std::shared_ptr<Call> Registrar::call_get(std::string callId) { return _calls[callId]; }
+
+std::shared_ptr<RTPRelayPair> Registrar::rtprelay_allocate() {
+  return _rtprelay->allocate_relay_pair();
+}
+
+void Registrar::rtprelay_release(std::shared_ptr<RTPRelayPair> relay) {
+  _rtprelay->release_relay_pair(relay);
+}
 
 }  // namespace athenasip

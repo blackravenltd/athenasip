@@ -16,6 +16,7 @@
 #include "loggers/logger.h"
 #include "registrar.h"
 #include "servers/server.h"
+#include "rtp/rtp_relay.h"
 #include "version.h"
 
 namespace athenasip {
@@ -31,6 +32,7 @@ class SIPCore {
   std::shared_ptr<Config> config;
   std::shared_ptr<athenasip::loggers::Logger> logger;
   std::shared_ptr<athenasip::databases::DB> db;
+  std::shared_ptr<rtp::RTPRelay> rtprelay;
   std::shared_ptr<Registrar> registrar;
   std::vector<std::shared_ptr<Server>> servers;
 };

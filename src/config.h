@@ -46,6 +46,12 @@ class Config {
   // SQLLite configuration (optional)
   bool sqlite_create_database;  // sqllite.create_database - True if the database should be created
 
+  // RTPProxyClient configuration
+  bool rtprelay_enable;
+  std::string rtprelay_address;
+  uint16_t rtprelay_min_port;
+  uint16_t rtprelay_max_port;
+
   // Loads configuration from a YAML file.
   bool load_from_yaml(const std::string &filename);
 
