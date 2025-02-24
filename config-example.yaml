@@ -14,5 +14,11 @@ tls:
   cert_pem_filename: "../tls/snakeoil.cer"
   key_pem_filename: "../tls/snakeoil.key"
 
+rtprelay:
+  enable: true
+  address: 0.0.0.0
+  port_min: 22000
+  port_max: 23000
+
 db:
   url: "mysql://root@localhost/athenasip"

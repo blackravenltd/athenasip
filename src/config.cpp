@@ -120,6 +120,35 @@ bool Config::load_from_yaml(const std::string &filename) {
     return false;
   }
 
+  // --- Parse the 'rtprelay' section ---
+  YAML::Node rtprelay = config["rtprelay"];
+  if (rtprelay) {
+    if (rtprelay["enable"])
+      rtprelay_enable = rtprelay["enable"].as<bool>();
+    else
+      rtprelay_enable = true;
+
+    if (rtprelay["address"]) rtprelay_address = rtprelay["address"].as<std::string>();
+    if (rtprelay["min_port"]) {
+      try {
+        rtprelay_min_port = rtprelay["min_port"].as<uint16_t>();
+      } catch (const std::exception &e) {
+        _logger->error("Invalid value for 'rtprelay.min_port': " + std::string(e.what()));
+      }
+    } else {
+      rtprelay_min_port = 22000;
+    }
+    if (rtprelay["max_port"]) {
+      try {
+        rtprelay_max_port = rtprelay["max_port"].as<uint16_t>();
+      } catch (const std::exception &e) {
+        _logger->error("Invalid value for 'rtprelay.max_port': " + std::string(e.what()));
+      }
+    } else {
+      rtprelay_max_port = 23000;
+    }
+  }
+
   return true;
 }
 

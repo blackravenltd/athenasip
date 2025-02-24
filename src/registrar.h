@@ -19,6 +19,7 @@
 #include "loggers/logger_scoped.h"
 #include "types/sip_identity.h"
 #include "types/subscriber.h"
+#include "rtp/rtp_relay.h"
 
 using namespace athenasip::types;
 
@@ -28,7 +29,7 @@ class Session;
 
 class Registrar {
  public:
-  Registrar(std::shared_ptr<athenasip::loggers::Logger> logger, std::shared_ptr<athenasip::databases::DB> db);
+  Registrar(std::shared_ptr<athenasip::loggers::Logger> logger, std::shared_ptr<athenasip::databases::DB> db, std::shared_ptr<athenasip::rtp::RTPRelay> rtprelay);
 
   // SUbscribers
   bool subscriber_exists(std::shared_ptr<SIPIdentity> identity);
@@ -48,9 +49,14 @@ class Registrar {
   bool call_unregister(std::string callId);
   std::shared_ptr<Call> call_get(std::string callId);
 
+  // RTPRelay
+  std::shared_ptr<rtp::RTPRelayPair> rtprelay_allocate();
+  void rtprelay_release(std::shared_ptr<rtp::RTPRelayPair> relay);
+
  private:
-  std::unique_ptr<Logger> _logger;
+  std::shared_ptr<Logger> _logger;
   std::shared_ptr<athenasip::databases::DB> _db;
+  std::shared_ptr<athenasip::rtp::RTPRelay> _rtprelay;
 
   std::unordered_map<std::string, std::shared_ptr<Session>> _sessions;
   std::unordered_map<uint64_t, std::shared_ptr<Session>> _sessions_by_subscriber;

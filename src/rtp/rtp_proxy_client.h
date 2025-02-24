@@ -17,22 +17,20 @@
 #include <mutex>
 #include <string>
 
-#include "global_io_context.h"
-#include "loggers/logger.h"
-#include "loggers/logger_scoped.h"
+#include "../global_io_context.h"
+#include "../loggers/logger.h"
+#include "../loggers/logger_scoped.h"
 #include "rtp_proxy_response.h"
 
 using namespace athenasip::loggers;
 
-namespace athenasip {
+namespace athenasip::clients {
 
 class RTPProxyClient : public std::enable_shared_from_this<RTPProxyClient> {
  public:
   using ResponseCallback = std::function<void(std::shared_ptr<RTPProxyResponse> response, const boost::system::error_code &ec)>;
 
   RTPProxyClient(std::shared_ptr<Logger> logger, const std::string &rtpproxy_host, unsigned short rtpproxy_port);
-
-  ~RTPProxyClient();
 
   bool open();
   void close();
