@@ -21,15 +21,17 @@ find_package(Boost 1.87 REQUIRED COMPONENTS system thread)
 # Find OpenSSL
 find_package(OpenSSL REQUIRED)
 
-# ---- Add MySQL support via mysql-concpp ----
+# ---- Add MySQL support manually ----
 
-# Workaround so MySQL Connector/C++ can find OpenSSL if it's in a nonstandard location (MacOSX)
-add_library(my_mysql_openssl INTERFACE)
-target_link_libraries(my_mysql_openssl INTERFACE OpenSSL::SSL OpenSSL::Crypto)
-add_library(mysql::openssl ALIAS my_mysql_openssl)
+# Define MySQL connector path
+set(MYSQL_CONNECTOR_CPP_DIR /usr/local/mysql/connector-c++-9.2.0)
 
-# Find MySQL Connector/C++ dynamic library
-find_package(mysql-concpp CONFIG REQUIRED)
+# Add MySQL include and library directories
+include_directories(${MYSQL_CONNECTOR_CPP_DIR}/include)
+link_directories(${MYSQL_CONNECTOR_CPP_DIR}/lib64)
+
+# Manually link MySQL Connector/C++ libraries
+find_library(MYSQL_CONCPP_LIBRARY NAMES mysqlcppconn8 PATHS ${MYSQL_CONNECTOR_CPP_DIR}/lib64)
 
 # ---------------------------------------------
 
@@ -76,10 +78,11 @@ file(GLOB_RECURSE ATHENA_SOURCES src/*.cpp)
 # Create the executable
 add_executable(athenasip ${ATHENA_SOURCES})
 
-# Include directories (Boost and SQLite are added here)
+# Include directories (Boost, SQLite, MySQL are added here)
 target_include_directories(athenasip PRIVATE 
     ${Boost_INCLUDE_DIRS}
     ${SQLite3_INCLUDE_DIRS}
+    ${MYSQL_CONNECTOR_CPP_DIR}/include
 )
 
 # Link libraries
@@ -88,15 +91,16 @@ target_link_libraries(athenasip PRIVATE
     Boost::thread 
     OpenSSL::SSL 
     OpenSSL::Crypto 
-    mysql::concpp-xdevapi
+    ${MYSQL_CONCPP_LIBRARY}  # Link MySQL Connector/C++
     yaml-cpp::yaml-cpp
     tinyxml2::tinyxml2
-    ${PQXX_LIBRARIES}   # Link PostgreSQL libpqxx
-    ${SQLite3_LIBRARIES}  # Link SQLite3 library
+    ${PQXX_LIBRARIES}        # Link PostgreSQL libpqxx
+    ${SQLite3_LIBRARIES}     # Link SQLite3 library
 )
 
 # Output build messages
 message(STATUS "Building AthenaSIP (athenasip) with C++17")
 message(STATUS "Boost Include Directory: ${Boost_INCLUDE_DIRS}")
 message(STATUS "OpenSSL Include Directory: ${OPENSSL_INCLUDE_DIR}")
+message(STATUS "MySQL Connector C++ Library: ${MYSQL_CONCPP_LIBRARY}")
 message(STATUS "libpqxx Include Directory: ${PQXX_INCLUDE_DIRS}")
