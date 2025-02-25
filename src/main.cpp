@@ -73,7 +73,7 @@ int main(int argc, char* argv[]) {
   }
 
   // Create Registrar
-  core->registrar = std::make_shared<Registrar>(core->logger, core->db, core->rtprelay);
+  core->registrar = std::make_shared<Registrar>(core->logger, core->config, core->db, core->rtprelay);
 
   if (core->config->tls_enable) {
     // Create the TLSServer instance with the logger and start it on the specified port

@@ -11,8 +11,8 @@ using namespace athenasip::rtp;
 
 namespace athenasip {
 
-Registrar::Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<athenasip::databases::DB> db, std::shared_ptr<athenasip::rtp::RTPRelay> rtprelay)
-    : _logger(std::make_unique<LoggerScoped>("registrar", logger)), _db(db), _rtprelay(rtprelay) {}
+Registrar::Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<Config> _config, std::shared_ptr<athenasip::databases::DB> db, std::shared_ptr<athenasip::rtp::RTPRelay> rtprelay)
+    : _logger(std::make_unique<LoggerScoped>("registrar", logger)), config(_config), _db(db), _rtprelay(rtprelay) {}
 
 bool Registrar::subscriber_exists(std::shared_ptr<SIPIdentity> identity) {
   std::shared_ptr<DBResult> res = _db->query("SELECT COUNT(*) FROM `subscriber` WHERE `user` = ? AND `realm` = ?", {identity->uri->user, identity->uri->realm});

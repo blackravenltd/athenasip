@@ -49,6 +49,7 @@ class Config {
   // RTPProxyClient configuration
   bool rtprelay_enable;
   std::string rtprelay_address;
+  std::string rtprelay_public_address;
   uint16_t rtprelay_min_port;
   uint16_t rtprelay_max_port;
 

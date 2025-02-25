@@ -15,6 +15,7 @@
 
 #include "call.h"
 #include "databases/db.h"
+#include "config.h"
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
 #include "rtp/rtp_relay.h"
@@ -29,7 +30,7 @@ class Session;
 
 class Registrar {
  public:
-  Registrar(std::shared_ptr<athenasip::loggers::Logger> logger, std::shared_ptr<athenasip::databases::DB> db,
+  Registrar(std::shared_ptr<athenasip::loggers::Logger> logger, std::shared_ptr<Config> config, std::shared_ptr<athenasip::databases::DB> db,
             std::shared_ptr<athenasip::rtp::RTPRelay> rtprelay);
 
   // SUbscribers
@@ -54,6 +55,8 @@ class Registrar {
   std::shared_ptr<rtp::RTPRelayPair> rtprelay_allocate();
   void rtprelay_release(std::shared_ptr<rtp::RTPRelayPair> relay);
 
+  std::shared_ptr<Config> config;
+  
  private:
   std::shared_ptr<Logger> _logger;
   std::shared_ptr<athenasip::databases::DB> _db;

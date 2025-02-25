@@ -133,6 +133,11 @@ bool Config::load_from_yaml(const std::string &filename) {
     else
       rtprelay_address = "0.0.0.0";
 
+    if (rtprelay["public_address"])
+      rtprelay_public_address = rtprelay["public_address"].as<std::string>();
+    else
+      rtprelay_public_address = "0.0.0.0";
+
     if (rtprelay["min_port"]) {
       try {
         rtprelay_min_port = rtprelay["min_port"].as<uint16_t>();
