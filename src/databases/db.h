@@ -35,7 +35,12 @@ class DBValue {
 
   template <typename T>
   T as() const {
+try {
     return std::any_cast<T>(get_any());
+} catch (const std::bad_any_cast& e) {
+    std::cout << "[DEVELOPER] Bad any cast when getting DBValue: " << e.what() << std::endl;
+    return T{};
+}
   }
 };
 

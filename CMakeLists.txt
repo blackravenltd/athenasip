@@ -83,6 +83,7 @@ target_link_libraries(athenasip PRIVATE
     yaml-cpp::yaml-cpp
     tinyxml2::tinyxml2
     ${PQXX_LIBRARIES} 
+    pq
     ${SQLite3_LIBRARIES}
 )
 
@@ -92,3 +93,4 @@ message(STATUS "OpenSSL Include Directory: ${OPENSSL_INCLUDE_DIR}")
 message(STATUS "libpqxx Include Directory: ${PQXX_INCLUDE_DIRS}")
 message(STATUS "libpqxx Library Directory: ${PQXX_LIBRARY_DIRS}")
 message(STATUS "libpqxx Libraries: ${PQXX_LIBRARIES}")
+message(STATUS "MySQL Library Directory: ${MYSQL_CONCPP_RUNTIME_LIBRARY_DIR}")
