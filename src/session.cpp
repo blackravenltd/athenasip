@@ -375,7 +375,7 @@ void Session::_send_auth_challenge() {
 
   auto authHeader = std::make_shared<Authorization>();
   authHeader->type = "Digest";
-  authHeader->fields["realm"] = "sip.athenasip.org";
+  authHeader->fields["realm"] = _request->header->headers_map["To"][0]->as<SIPIdentityHeader>()->value->uri->realm;
   authHeader->fields["nonce"] = nonce;
   authHeader->fields["algorithm"] = "MD5";
   authHeader->fields["stale"] = "true";
