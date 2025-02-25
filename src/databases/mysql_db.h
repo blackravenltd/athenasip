@@ -22,7 +22,6 @@ namespace athenasip::databases {
 class MySQLDB : public DB {
  public:
   MySQLDB(std::shared_ptr<Logger> logger, std::shared_ptr<URL> url);
-  ~MySQLDB();
 
   virtual bool connect() override;
   virtual std::shared_ptr<DBResult> query(std::string sql, std::vector<std::any> params) override;

@@ -82,6 +82,7 @@ int main(int argc, char* argv[]) {
     // Set Certificates
     if (!tlsServer->set_certificates(core->config->tls_cert_pem_filename, core->config->tls_key_pem_filename)) {
       core->logger->error("Cannot load TLS certificates");
+      core->db->close();
       return -4;
     }
     core->servers.push_back(tlsServer);
