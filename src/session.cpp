@@ -575,7 +575,7 @@ void Session::send(std::shared_ptr<SIPMessage> message) {
   }
 
   // Add Record-Route so we stay in the dialog (ACK)
-  message->header->add("Record-Route", "<sip:" + server_endpoint + ";transport=" + _connection->transport_name() + ";lr>");
+  message->header->add("Record-Route", "<sip:" + _registrar->config->rtprelay_public_address + ";transport=" + _connection->transport_name() + ";lr>");
 
   // Reset Length to body length
   message->header->clear("Content-Length");
