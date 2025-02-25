@@ -21,7 +21,7 @@ bool Registrar::subscriber_exists(std::shared_ptr<SIPIdentity> identity) {
     _logger->warn("DB returned no rows on a COUNT() statement");
     return false;
   } else {
-    return res->rows[0]->column_values[0]->as<long long>() == 1;
+    return res->rows[0]->column_values[0]->as<uint64_t>() == 1;
   }
 }
 
@@ -49,7 +49,7 @@ bool Registrar::subscriber_register(std::shared_ptr<Subscriber> subscriber, std:
 
   std::string is_nat = Util::is_ipv4(contact->realm) && Util::is_ipv4_private(contact->realm) ? "Y" : "N";
 
-  if (res->rows[0]->column_values[0]->as<long long>() == 0) {
+  if (res->rows[0]->column_values[0]->as<int64_t>() == 0) {
     // Insert a row
     _db->query("INSERT INTO `location` (`subscriber_id`, `user`, `host`, `port`, `registered_at`, `nat`) VALUES (?,?,?,?,NOW(),?)",
                {subscriber->id, contact->user, contact->realm, contact->port.value_or(0), is_nat});
