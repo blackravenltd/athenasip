@@ -303,8 +303,7 @@ void Session::_process_call_state(std::shared_ptr<Call> call) {
     if (_request->header->request_method == "INVITE") {
       auto sdp = std::make_shared<SDP>();
       if (sdp->parse(_request->body)) {
-        auto server_address = _connection->local_endpoint().address().to_string();
-        _rewrite_sdp(sdp, server_address, call->rtp_pair->port_b, call->rtp_pair->port_a);
+        _rewrite_sdp(sdp, _registrar->config->rtprelay_public_address, call->rtp_pair->port_a, call->rtcp_pair->port_a);
         _logger->debug("[Call " + call->id + "] Modifed SFP for RTPRelay (INVITE)");
         _request->body = sdp->to_string();
       }
@@ -347,8 +346,7 @@ void Session::_process_call_state(std::shared_ptr<Call> call) {
         auto sdp = std::make_shared<SDP>();
         if (sdp->parse(_request->body)) {
           // Rewrite SDP
-          auto server_address = _connection->local_endpoint().address().to_string();
-          _rewrite_sdp(sdp, server_address, call->rtp_pair->port_b, call->rtp_pair->port_a);
+          _rewrite_sdp(sdp, _registrar->config->rtprelay_public_address, call->rtp_pair->port_b, call->rtcp_pair->port_b);
           _logger->debug("[Call " + call->id + "] Modifed SFP for RTPRelay (200)");
           _request->body = sdp->to_string();
         }
@@ -492,7 +490,6 @@ void Session::_process_message_invite() {
   call->rtcp_pair->start();
 
   // Rewrite SDP
-  auto server_address = _connection->local_endpoint().address().to_string();
   _rewrite_sdp(sdp, _registrar->config->rtprelay_public_address, call->rtp_pair->port_a, call->rtcp_pair->port_a);
   _logger->debug("[Call " + call->id + "] Modifed SFP for RTPRelay (INVITE)");
   _request->body = sdp->to_string();
