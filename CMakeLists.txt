@@ -82,12 +82,13 @@ target_link_libraries(athenasip PRIVATE
     mysql::concpp
     yaml-cpp::yaml-cpp
     tinyxml2::tinyxml2
-    ${PQXX_LIBRARIES}        # Link PostgreSQL libpqxx
-    ${SQLite3_LIBRARIES}     # Link SQLite3 library
+    ${PQXX_LIBRARIES} 
+    ${SQLite3_LIBRARIES}
 )
 
 # Output build messages
-message(STATUS "Building AthenaSIP (athenasip) with C++17")
 message(STATUS "Boost Include Directory: ${Boost_INCLUDE_DIRS}")
 message(STATUS "OpenSSL Include Directory: ${OPENSSL_INCLUDE_DIR}")
 message(STATUS "libpqxx Include Directory: ${PQXX_INCLUDE_DIRS}")
+message(STATUS "libpqxx Library Directory: ${PQXX_LIBRARY_DIRS}")
+message(STATUS "libpqxx Libraries: ${PQXX_LIBRARIES}")
