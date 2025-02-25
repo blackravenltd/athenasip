@@ -18,6 +18,7 @@ tls:
 rtprelay:
   enable: true
   address: 0.0.0.0
+  public_address: 0.0.0.0
   port_min: 22000
   port_max: 23000
 

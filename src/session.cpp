@@ -493,7 +493,7 @@ void Session::_process_message_invite() {
 
   // Rewrite SDP
   auto server_address = _connection->local_endpoint().address().to_string();
-  _rewrite_sdp(sdp, server_address, call->rtp_pair->port_a, call->rtcp_pair->port_a);
+  _rewrite_sdp(sdp, _registrar->config->rtprelay_public_address, call->rtp_pair->port_a, call->rtcp_pair->port_a);
   _logger->debug("[Call " + call->id + "] Modifed SFP for RTPRelay (INVITE)");
   _request->body = sdp->to_string();
 
