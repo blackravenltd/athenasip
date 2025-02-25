@@ -19,17 +19,17 @@ list(APPEND CMAKE_PREFIX_PATH "/usr/local")
 find_package(Boost 1.87 REQUIRED COMPONENTS system thread)
 
 # Find OpenSSL
+if(APPLE)
+  set(OPENSSL_ROOT_DIR "/usr/local/opt/openssl@3")
+  set(OPENSSL_LIBRARIES "/usr/local/opt/openssl@3/lib/libssl.dylib;/usr/local/opt/openssl@3/lib/libcrypto.dylib")
+  set(OPENSSL_INCLUDE_DIR "/usr/local/opt/openssl@3/include")
+  link_directories(/usr/local/opt/openssl@3/lib)
+endif()
+
 find_package(OpenSSL REQUIRED)
 
-# Define MySQL connector path
-set(CMAKE_PREFIX_PATH "/usr/local/mysql/connector-c++-9.2.0" ${CMAKE_PREFIX_PATH})
-
-# Manually link MySQL Connector/C++ libraries
+# Find MySQL C++ Connector
 find_package(mysql-concpp REQUIRED)
-
-# ---------------------------------------------
-
-# ---- Add PostgreSQL support via libpqxx ----
 
 # Find libpqxx using pkg-config
 find_package(PkgConfig REQUIRED)
@@ -39,11 +39,6 @@ pkg_check_modules(PQXX REQUIRED libpqxx)
 include_directories(${PQXX_INCLUDE_DIRS})
 link_directories(${PQXX_LIBRARY_DIRS})
 add_definitions(${PQXX_CFLAGS_OTHER})
-
-# Suppress pqxx build warnings
-set_source_files_properties(src/postgres_db.cpp PROPERTIES COMPILE_OPTIONS "-Wno-unknown-attributes;-Wno-deprecated-declarations")
-
-# ---------------------------------------------
 
 # YAML: Use yaml-cpp instead of RapidYAML
 FetchContent_Declare(
@@ -72,12 +67,10 @@ file(GLOB_RECURSE ATHENA_SOURCES src/*.cpp)
 # Create the executable
 add_executable(athenasip ${ATHENA_SOURCES})
 
-# Include directories (Boost, SQLite, MySQL are added here)
-target_include_directories(athenasip PRIVATE
+# Include directories
+target_include_directories(athenasip PRIVATE 
     ${Boost_INCLUDE_DIRS}
     ${SQLite3_INCLUDE_DIRS}
-    ${PQXX_INCLUDE_DIRS}
-    ${MYSQL_CONNECTOR_CPP_DIR}/include
 )
 
 # Link libraries
@@ -89,8 +82,7 @@ target_link_libraries(athenasip PRIVATE
     mysql::concpp
     yaml-cpp::yaml-cpp
     tinyxml2::tinyxml2
-    ${PQXX_LIBRARIES}
-    pq
+    ${PQXX_LIBRARIES}        # Link PostgreSQL libpqxx
     ${SQLite3_LIBRARIES}     # Link SQLite3 library
 )
 
@@ -98,7 +90,4 @@ target_link_libraries(athenasip PRIVATE
 message(STATUS "Building AthenaSIP (athenasip) with C++17")
 message(STATUS "Boost Include Directory: ${Boost_INCLUDE_DIRS}")
 message(STATUS "OpenSSL Include Directory: ${OPENSSL_INCLUDE_DIR}")
-message(STATUS "MySQL Connector C++ Library: ${MYSQL_CONCPP_LIBRARY}")
 message(STATUS "libpqxx Include Directory: ${PQXX_INCLUDE_DIRS}")
-message(STATUS "libpqxx Library Directory: ${PQXX_LIBRARY_DIRS}")
-message(STATUS "libpqxx Libraries: ${PQXX_LIBRARIES}")
