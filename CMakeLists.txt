@@ -21,17 +21,11 @@ find_package(Boost 1.87 REQUIRED COMPONENTS system thread)
 # Find OpenSSL
 find_package(OpenSSL REQUIRED)
 
-# ---- Add MySQL support manually ----
-
 # Define MySQL connector path
-set(MYSQL_CONNECTOR_CPP_DIR /usr/local/mysql/connector-c++-9.2.0)
-
-# Add MySQL include and library directories
-include_directories(${MYSQL_CONNECTOR_CPP_DIR}/include)
-link_directories(${MYSQL_CONNECTOR_CPP_DIR}/lib64)
+set(CMAKE_PREFIX_PATH "/usr/local/mysql/connector-c++-9.2.0" ${CMAKE_PREFIX_PATH})
 
 # Manually link MySQL Connector/C++ libraries
-find_library(MYSQL_CONCPP_LIBRARY NAMES mysqlcppconn8 PATHS ${MYSQL_CONNECTOR_CPP_DIR}/lib64)
+find_package(mysql-concpp REQUIRED)
 
 # ---------------------------------------------
 
@@ -79,22 +73,24 @@ file(GLOB_RECURSE ATHENA_SOURCES src/*.cpp)
 add_executable(athenasip ${ATHENA_SOURCES})
 
 # Include directories (Boost, SQLite, MySQL are added here)
-target_include_directories(athenasip PRIVATE 
+target_include_directories(athenasip PRIVATE
     ${Boost_INCLUDE_DIRS}
     ${SQLite3_INCLUDE_DIRS}
+    ${PQXX_INCLUDE_DIRS}
     ${MYSQL_CONNECTOR_CPP_DIR}/include
 )
 
 # Link libraries
-target_link_libraries(athenasip PRIVATE 
-    Boost::system 
-    Boost::thread 
-    OpenSSL::SSL 
-    OpenSSL::Crypto 
-    ${MYSQL_CONCPP_LIBRARY}  # Link MySQL Connector/C++
+target_link_libraries(athenasip PRIVATE
+    Boost::system
+    Boost::thread
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    mysql::concpp
     yaml-cpp::yaml-cpp
     tinyxml2::tinyxml2
-    ${PQXX_LIBRARIES}        # Link PostgreSQL libpqxx
+    ${PQXX_LIBRARIES}
+    pq
     ${SQLite3_LIBRARIES}     # Link SQLite3 library
 )
 
@@ -104,3 +100,5 @@ message(STATUS "Boost Include Directory: ${Boost_INCLUDE_DIRS}")
 message(STATUS "OpenSSL Include Directory: ${OPENSSL_INCLUDE_DIR}")
 message(STATUS "MySQL Connector C++ Library: ${MYSQL_CONCPP_LIBRARY}")
 message(STATUS "libpqxx Include Directory: ${PQXX_INCLUDE_DIRS}")
+message(STATUS "libpqxx Library Directory: ${PQXX_LIBRARY_DIRS}")
+message(STATUS "libpqxx Libraries: ${PQXX_LIBRARIES}")
