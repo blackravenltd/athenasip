@@ -189,7 +189,7 @@ std::shared_ptr<DBResult> PostgreSQLDB::query(std::string sql, std::vector<std::
 
 void PostgreSQLDB::close() {
   if (_connection && _connection->is_open()) {
-    _connection->close();  // Use close() instead of disconnect()
+    _connection->close();
     _connection.reset();
   }
 }
