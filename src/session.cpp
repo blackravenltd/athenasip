@@ -304,8 +304,9 @@ void Session::_process_call_state(std::shared_ptr<Call> call) {
       auto sdp = std::make_shared<SDP>();
       if (sdp->parse(_request->body)) {
         _rewrite_sdp(sdp, _registrar->config->rtprelay_public_address, call->rtp_pair->port_a, call->rtcp_pair->port_a);
-        _logger->debug("[Call " + call->id + "] Modifed SFP for RTPRelay (INVITE)");
+        _logger->debug("[Call " + call->id + "] Modifed SFP for RTPRelay (INVITE, incall)");
         _request->body = sdp->to_string();
+        sdp->print();
       }
     }
     if (_request->header->request_method == "BYE") {
@@ -349,6 +350,7 @@ void Session::_process_call_state(std::shared_ptr<Call> call) {
           _rewrite_sdp(sdp, _registrar->config->rtprelay_public_address, call->rtp_pair->port_b, call->rtcp_pair->port_b);
           _logger->debug("[Call " + call->id + "] Modifed SFP for RTPRelay (200)");
           _request->body = sdp->to_string();
+          sdp->print();
         }
       }
     } else if (_request->header->response_code == 100) {
@@ -493,6 +495,7 @@ void Session::_process_message_invite() {
   _rewrite_sdp(sdp, _registrar->config->rtprelay_public_address, call->rtp_pair->port_a, call->rtcp_pair->port_a);
   _logger->debug("[Call " + call->id + "] Modifed SFP for RTPRelay (INVITE)");
   _request->body = sdp->to_string();
+  sdp->print();
 
   // Is To: a subscriber?
   auto to_subscriber = _registrar->subscriber_get(call->to);
