@@ -4,63 +4,45 @@
 
 **Project Status: ALPHA - DO NOT USE**
 
-AthenaSIP is an open-source SIP ([RFC3261](https://datatracker.ietf.org/doc/html/rfc3261)) implementation designed around 
-the following principles:
+AthenaSIP is a **modern, cloud-native SIP server** designed for security, scalability, and ease of use. It provides **out-of-the-box** support for SIP signaling, secure media relay, and event-driven processing, with a flexible architecture that adapts to both **standalone** and **distributed** deployments.
 
-* Security & Privacy – TLS-only, with no support for insecure TCP/UDP.
-* Minimalism – Focused on core SIP functionality without unnecessary features.
-* Ease of Use – Works out of the box for common use cases with minimal configuration.
-* Cloud-Native Design – Built for deployment in cloud environments.
-* Scalability – Maintains minimal internal state to support efficient scaling.
+## Key Features
+* **Secure by Default** – TLS-only SIP, with SRTP and DTLS-SRTP enforced.
+* **Standalone or Pluggable** – Ready-to-use with built-in components but fully extensible for scaling using industry-standard OSS databases, event systems and media proxies.  
+* **Cloud-Native & Scalable** – Stateless design enables seamless scaling and clustering.
+* **Minimal Configuration** – Designed for rapid deployment with automatic defaults.
+* **API-Driven** – Exposes a RESTful API for management, monitoring, and automation.
+* **WebRTC-Ready** *(Future)* – Planned support for SIP over WebSockets, STUN/TURN/ICE.
 
-## Quick Start
+## Documentation
 
-Follow the [Quick Start Instructions](docs/quick_start.md) to quickly evaluate AthenaSIP on your local network. 
+* [Installation](docs/installation.md)
+* [Quick Start](docs/quick_start.md)
+* [Configuration](docs/configuration.md)
+* [Architecture](docs/architecture.md)
 
-## Installation
+For more information, please see the [docs](docs/) directory.
 
-AthenaSIP is not yet available in pre-built packages.
+## Project Goals
 
-### Build From Source
+### Security & Privacy First
+AthenaSIP is built with **strong security defaults**—SIP communication is **TLS-only by default**, with **SRTP and DTLS-SRTP enforced** for media. Plaintext SIP (UDP/TCP) and RTP must be explicitly enabled. The server also ensures **strict cipher policies** and modern cryptographic standards.
 
-#### Install Dependencies
+### Self-Contained Yet Extensible
+AthenaSIP includes everything needed for a complete SIP solution **out of the box**—an integrated **database, eventing system, and RTP relay**—allowing immediate use without complex setup. However, all major components are **pluggable**, allowing users to swap in external databases (MySQL, PostgreSQL, SQLite), event systems, and media relays as needed.
 
-**Debain (Ubuntu)**
+### Cloud-Native & Soft-Clusterable
+Designed for **stateless** operation, AthenaSIP can scale horizontally, making it suitable for **containerized and distributed environments** like Kubernetes. It allows **soft clustering**, meaning it can dynamically distribute SIP signaling and media handling across multiple nodes.
 
-```sh
-sudo apt-get update
-sudo apt-get install -y libboost-system-dev libboost-thread-dev libssl-dev pkg-config libpqxx-dev libmysqlcppconn-dev libyaml-cpp-dev libtinyxml2-dev
-```
+### Minimal Configuration, Maximum Usability
+AthenaSIP is designed to **work out of the box** with sensible defaults. This makes it easy to evaluate, deploy, and integrate into existing infrastructures **without deep SIP expertise**.
 
-**Linux (RedHat - Fedora)**
+### API-First & Automation-Ready
+AthenaSIP exposes a **RESTful JSON API** for managing SIP routing, user authentication, monitoring, and call handling. This enables easy integration with external **admin interfaces, analytics platforms, and automation tools**.
 
-```sh
-sudo dnf install boost-devel openssl-devel pkg-config libpqxx-devel mysql-connector-c++-devel yaml-cpp-devel tinyxml2-devel
-```
-
-**Linux (RedHat - CentOS/RHEL)**
-
-```sh
-sudo yum install boost-devel openssl-devel pkgconfig libpqxx-devel mysql-connector-c++-devel yaml-cpp-devel tinyxml2-devel
-```
-
-**MacOSX**
-
-```sh
-brew install boost openssl pkg-config libpqxx mysql-connector-c++
-```
-
-#### Compile
-
-```sh
-mkdir build && cd build
-cmake ..
-make
-```
+### Future-Proof & WebRTC-Ready *(Planned)*
+Future releases will introduce **SIP over WebSockets (RFC 7118), STUN/TURN/ICE support**, and advanced WebRTC capabilities—allowing seamless interoperability between **SIP-based systems and browser-based clients**.
 
 ## License
 
 AthenaSIP is licensed under [GPLv3](https://www.gnu.org/licenses/gpl-3.0.en.html). Please see the [LICENSE](LICENSE) file.
-
-
-
