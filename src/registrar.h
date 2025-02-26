@@ -14,8 +14,8 @@
 #include <string>
 
 #include "call.h"
-#include "databases/db.h"
 #include "config.h"
+#include "databases/db.h"
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
 #include "rtp/rtp_relay.h"
@@ -56,7 +56,7 @@ class Registrar {
   void rtprelay_release(std::shared_ptr<rtp::RTPRelayPair> relay);
 
   std::shared_ptr<Config> config;
-  
+
  private:
   std::shared_ptr<Logger> _logger;
   std::shared_ptr<athenasip::databases::DB> _db;

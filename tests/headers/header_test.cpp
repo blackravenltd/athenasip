@@ -9,8 +9,8 @@
 #include <string>
 #include <unordered_map>
 #include <functional>
-#include "headers/header.h"         // Declares Header, register_factory, create, getRegistry.
-#include "headers/string_header.h"  // Declares StringHeader.
+#include "headers/header.h"
+#include "headers/string_header.h"
 
 using namespace athenasip::headers;
 

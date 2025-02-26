@@ -37,40 +37,39 @@ std::shared_ptr<DBValue> MySQLDB::_map_value(const mysqlx::Value &val) {
   switch (val.getType()) {
     case mysqlx::Value::Type::STRING:
       return std::make_shared<DBValueImpl<std::string>>(val.get<std::string>());
-      
+
     case mysqlx::Value::Type::INT64: {
-//      if constexpr (std::is_same_v<int64_t, long long>) {
-//        // On platforms where int64_t is long long, this is ideal.
-        return std::make_shared<DBValueImpl<int64_t>>(val.get<int64_t>());
-//      } else {
-//        // Otherwise, use long long and convert it.
-//        return std::make_shared<DBValueImpl<int64_t>>(static_cast<int64_t>(val.get<long long>()));
-//      }
+      //      if constexpr (std::is_same_v<int64_t, long long>) {
+      //        // On platforms where int64_t is long long, this is ideal.
+      return std::make_shared<DBValueImpl<int64_t>>(val.get<int64_t>());
+      //      } else {
+      //        // Otherwise, use long long and convert it.
+      //        return std::make_shared<DBValueImpl<int64_t>>(static_cast<int64_t>(val.get<long long>()));
+      //      }
     }
-      
+
     case mysqlx::Value::Type::UINT64: {
-//      if constexpr (std::is_same_v<uint64_t, unsigned long long>) {
-        return std::make_shared<DBValueImpl<uint64_t>>(val.get<uint64_t>());
-//      } else {
-//        return std::make_shared<DBValueImpl<uint64_t>>(static_cast<uint64_t>(val.get<unsigned long long>()));
-//      }
+      //      if constexpr (std::is_same_v<uint64_t, unsigned long long>) {
+      return std::make_shared<DBValueImpl<uint64_t>>(val.get<uint64_t>());
+      //      } else {
+      //        return std::make_shared<DBValueImpl<uint64_t>>(static_cast<uint64_t>(val.get<unsigned long long>()));
+      //      }
     }
-      
+
     case mysqlx::Value::Type::FLOAT:
       return std::make_shared<DBValueImpl<float>>(val.get<float>());
-      
+
     case mysqlx::Value::Type::DOUBLE:
       return std::make_shared<DBValueImpl<double>>(val.get<double>());
-      
+
     case mysqlx::Value::Type::BOOL:
       return std::make_shared<DBValueImpl<bool>>(val.get<bool>());
-      
+
     default:
       _logger->error("Unsupported column type: " + std::to_string(static_cast<int>(val.getType())));
       return std::make_shared<DBValueImpl<std::nullptr_t>>();
   }
 }
-
 
 std::shared_ptr<DBResult> MySQLDB::query(std::string sql, std::vector<std::any> params) {
   auto res = std::make_shared<DBResult>();

@@ -8,9 +8,9 @@
 #include <sstream>
 #include <iomanip>
 #include <vector>
-#include <cstdlib>     // for getenv
+#include <cstdlib>
 #include <filesystem>
-#include "util.h"      // Header for Util
+#include "util.h"
 
 using namespace athenasip;
 
