@@ -1,6 +1,6 @@
 # AthenaSIP v0.0.1 Proof-of-Concept Overview
 
-AthenaSIP v0.0.1 is a proof-of-concept SIP server implementation designed to validate core SIP functionalities while maintaining a stateless architecture. This release demonstrates a minimal yet robust feature set to support basic SIP operations and lays the groundwork for future scalability and clustering.
+AthenaSIP v0.0.1 is a proof-of-concept SIP server implementation designed to validate core SIP functionalities. This release demonstrates a minimal feature set to support basic SIP operations and lays the groundwork for future work.
 
 ## Key Features
 
@@ -39,10 +39,11 @@ AthenaSIP v0.0.1 integrates with relational databases to manage SIP-related data
 
 ## Conclusion
 
-AthenaSIP v0.0.1 provides a streamlined, stateless SIP server PoC that supports:
+AthenaSIP v0.0.1 provides a SIP server PoC that supports:
 - TCP and TLS transport layers
 - Flexible database integration (MySQL, PostgreSQL, SQLite)
 - Database-based subscriber authentication
+- Basic SIP Registration
 - Basic SIP call setup and teardown
 - SDP rewriting for advanced media negotiation
 - Internal RTP relaying
