@@ -7,7 +7,7 @@
 #include <gtest/gtest.h>
 #include <sstream>
 #include <stdexcept>
-#include "types/url.h"  // Header declaring athenasip::types::URL
+#include "types/url.h"
 
 using namespace athenasip::types;
 

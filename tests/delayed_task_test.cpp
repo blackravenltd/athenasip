@@ -9,8 +9,8 @@
 #include <thread>
 #include <atomic>
 #include <stdexcept>
-#include "delayed_task.h"      // This should include the DelayedTask template declaration.
-#include "global_io_context.h"   // Provides detail::getGlobalIOContext()
+#include "delayed_task.h"
+#include "global_io_context.h"
 
 #include "helpers/process_io_context_for_helper.h"
 

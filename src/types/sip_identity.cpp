@@ -6,21 +6,17 @@
 //
 #include "sip_identity.h"
 
-#include <sstream>
+#include <iostream>  // For debugging, if needed
 #include <optional>
 #include <regex>
+#include <sstream>
 #include <unordered_map>
-#include <iostream>  // For debugging, if needed
 
 namespace athenasip::types {
 
-SIPIdentity::SIPIdentity() 
-    : wrapped(false), display_name(std::nullopt), uri(nullptr), tags() {}
+SIPIdentity::SIPIdentity() : wrapped(false), display_name(std::nullopt), uri(nullptr), tags() {}
 
-SIPIdentity::SIPIdentity(const std::string& identity)
-    : wrapped(false), display_name(std::nullopt), uri(nullptr), tags() {
-  parse(identity);
-}
+SIPIdentity::SIPIdentity(const std::string& identity) : wrapped(false), display_name(std::nullopt), uri(nullptr), tags() { parse(identity); }
 
 void SIPIdentity::parse(const std::string& identity) {
   static const std::regex sip_regex(
@@ -60,8 +56,7 @@ void SIPIdentity::parse(const std::string& identity) {
   }
   if (param_start != std::string::npos) {
     std::string params_str = identity.substr(param_start);
-    if (!params_str.empty() && params_str[0] == ';')
-      params_str.erase(0, 1);
+    if (!params_str.empty() && params_str[0] == ';') params_str.erase(0, 1);
 
     std::istringstream iss(params_str);
     std::string token;
@@ -88,18 +83,13 @@ std::string SIPIdentity::to_string() const {
   oss << "<" << uri->to_string() << ">";
   for (const auto& [key, value] : tags) {
     oss << ";" << key;
-    if (!value.empty())
-      oss << "=" << value;
+    if (!value.empty()) oss << "=" << value;
   }
   return oss.str();
 }
 
-std::string operator+(const SIPIdentity& identity, const std::string& str) {
-  return identity.to_string() + str;
-}
+std::string operator+(const SIPIdentity& identity, const std::string& str) { return identity.to_string() + str; }
 
-std::string operator+(const std::string& str, const SIPIdentity& identity) {
-  return str + identity.to_string();
-}
+std::string operator+(const std::string& str, const SIPIdentity& identity) { return str + identity.to_string(); }
 
 }  // namespace athenasip::types

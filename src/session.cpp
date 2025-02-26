@@ -532,7 +532,7 @@ void Session::_rewrite_sdp(std::shared_ptr<SDP> sdp, std::string server_address,
   sdp->connection.address = server_address;
   for (auto& media : sdp->mediaDescriptions) {
     media.description.port = rtp_port;
-    if(media.hasConnection) {
+    if (media.hasConnection) {
       media.connection.nettype = "IN";
       media.connection.addrtype = "IP4";
       media.connection.address = server_address;
