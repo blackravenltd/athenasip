@@ -5,9 +5,12 @@ project(athenasip LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Use new policy behaviours (if not already default in 3.31.5)
+# Use new policy behaviours
 cmake_policy(SET CMP0177 NEW)
 cmake_policy(SET CMP0167 NEW)
+
+# Options
+option(BUILD_TESTING "Build the test targets" OFF)
 
 # FetchContent module
 include(FetchContent)
@@ -15,8 +18,9 @@ include(FetchContent)
 # Use /usr/local also
 list(APPEND CMAKE_PREFIX_PATH "/usr/local")
 
-# Find Boost libraries, including system and thread
+# Find Boost libraries
 find_package(Boost 1.87 REQUIRED COMPONENTS system thread)
+message(STATUS "Boost Include Directory: ${Boost_INCLUDE_DIRS}")
 
 # Find OpenSSL
 if(APPLE)
@@ -27,18 +31,19 @@ if(APPLE)
 endif()
 
 find_package(OpenSSL REQUIRED)
+message(STATUS "OpenSSL Include Directory: ${OPENSSL_INCLUDE_DIR}")
 
 # Find MySQL C++ Connector
 find_package(mysql-concpp REQUIRED)
+message(STATUS "MySQL Library Directory: ${MYSQL_CONCPP_INCLUDE_DIR}")
 
 # Find libpqxx using pkg-config
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(PQXX REQUIRED libpqxx)
+message(STATUS "libpqxx Include Directory: ${PQXX_INCLUDE_DIRS}")
 
 # Add libpqxx include directories to the project
-include_directories(${PQXX_INCLUDE_DIRS})
 link_directories(${PQXX_LIBRARY_DIRS})
-add_definitions(${PQXX_CFLAGS_OTHER})
 
 # YAML: Use yaml-cpp instead of RapidYAML
 FetchContent_Declare(
@@ -56,25 +61,29 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(tinyxml2)
 
-# ---- Add SQLite support ----
+# SQLite3
 find_package(SQLite3 REQUIRED)
 message(STATUS "SQLite3 Include Directory: ${SQLite3_INCLUDE_DIRS}")
 message(STATUS "SQLite3 Libraries: ${SQLite3_LIBRARIES}")
 
-# Collect all source files from the src directory
+# Testing
+
+# Collect all source files except main.cpp
 file(GLOB_RECURSE ATHENA_SOURCES src/*.cpp)
+list(REMOVE_ITEM ATHENA_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
 
 # Create the executable
-add_executable(athenasip ${ATHENA_SOURCES})
+add_library(athenasip_lib ${ATHENA_SOURCES})
 
 # Include directories
-target_include_directories(athenasip PRIVATE 
+target_include_directories(athenasip_lib PUBLIC 
+    ${PQXX_INCLUDE_DIRS}
     ${Boost_INCLUDE_DIRS}
     ${SQLite3_INCLUDE_DIRS}
 )
 
 # Link libraries
-target_link_libraries(athenasip PRIVATE
+target_link_libraries(athenasip_lib PUBLIC
     Boost::system
     Boost::thread
     OpenSSL::SSL
@@ -86,16 +95,35 @@ target_link_libraries(athenasip PRIVATE
     ${SQLite3_LIBRARIES}
 )
 
+target_compile_features(athenasip_lib PUBLIC cxx_std_17)
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-target_link_libraries(athenasip PRIVATE 
+target_link_libraries(athenasip_lib PUBLIC 
     pq
 )
 endif()
 
-# Output build messages
-message(STATUS "Boost Include Directory: ${Boost_INCLUDE_DIRS}")
-message(STATUS "OpenSSL Include Directory: ${OPENSSL_INCLUDE_DIR}")
-message(STATUS "libpqxx Include Directory: ${PQXX_INCLUDE_DIRS}")
-message(STATUS "libpqxx Library Directory: ${PQXX_LIBRARY_DIRS}")
-message(STATUS "libpqxx Libraries: ${PQXX_LIBRARIES}")
-message(STATUS "MySQL Library Directory: ${MYSQL_CONCPP_RUNTIME_LIBRARY_DIR}")
+# Make Main Executable
+add_executable(athenasip ${ATHENA_SOURCES} "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
+target_link_libraries(athenasip PRIVATE 
+  athenasip_lib
+)
+target_compile_features(athenasip PRIVATE cxx_std_17)
+
+if(BUILD_TESTING)
+  enable_testing()
+  find_package(GTest REQUIRED)
+  message(STATUS "Building GoogleTest tests")
+
+  file(GLOB_RECURSE ATHENA_TEST_SOURCES tests/*.cpp)
+  add_executable(athenasip_tests ${ATHENA_TEST_SOURCES})
+  target_include_directories(athenasip_tests PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+  target_link_libraries(athenasip_tests PRIVATE 
+      athenasip_lib
+      GTest::gtest
+      GTest::gtest_main
+  )
+  target_compile_features(athenasip_tests PRIVATE cxx_std_17)
+  include(GoogleTest)
+  gtest_discover_tests(athenasip_tests)
+endif()
