@@ -28,13 +28,13 @@ TEST(DelayedTaskTest, ExecutesTask) {
   auto task = DelayedTask<int>::schedule([&testInt]() -> int { 
     testInt = 24;
     return 42; 
-  }, 50);
+  }, 10);
 
   // Should not be touched yet
   EXPECT_EQ(testInt, 1);
 
   // Wait sufficiently for the task to execute.
-  process_io_context_for(std::chrono::milliseconds(100));
+  process_io_context_for(std::chrono::milliseconds(20));
 
   // The task should have executed.
   EXPECT_TRUE(task->has_executed());
@@ -45,15 +45,15 @@ TEST(DelayedTaskTest, ExecutesTask) {
 TEST(DelayedTaskTest, CancelPreventsExecution) {
   detail::getGlobalIOContext().restart();
 
-  // Schedule a task that would return 99 after 100ms.
-  auto task = DelayedTask<int>::schedule([]() -> int { return 99; }, 100);
+  // Schedule a task that would return 99 after 10ms.
+  auto task = DelayedTask<int>::schedule([]() -> int { return 99; }, 10);
 
   // Immediately cancel the task.
   bool cancelled = task->cancel();
   EXPECT_TRUE(cancelled);
 
   // Wait long enough that the timer would have fired if not cancelled.
-  process_io_context_for(std::chrono::milliseconds(150));
+  process_io_context_for(std::chrono::milliseconds(15));
 
   // The task should be marked as executed (by cancellation).
   EXPECT_TRUE(task->has_executed());
@@ -65,7 +65,7 @@ TEST(DelayedTaskTest, ThrowsIfNotExecutedYet) {
   detail::getGlobalIOContext().restart();
 
   // Schedule a task with a long delay.
-  auto task = DelayedTask<int>::schedule([]() -> int { return 123; }, 200);
+  auto task = DelayedTask<int>::schedule([]() -> int { return 123; }, 50);
 
   // Immediately calling result() should throw, as the task hasn't executed.
   EXPECT_THROW(task->result(), std::runtime_error);
@@ -78,7 +78,7 @@ TEST(DelayedTaskTest, MultipleCancelCalls) {
   detail::getGlobalIOContext().restart();
 
   // Schedule a task.
-  auto task = DelayedTask<int>::schedule([]() -> int { return 5; }, 200);
+  auto task = DelayedTask<int>::schedule([]() -> int { return 5; }, 10);
 
   // First cancel should succeed.
   bool cancelled1 = task->cancel();

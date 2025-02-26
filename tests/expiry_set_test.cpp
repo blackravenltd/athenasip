@@ -19,7 +19,7 @@ using namespace athenasip;
 TEST(ExpirySetTest, AddAndContains) {
   auto expirySet = std::make_shared<ExpirySet<std::string>>();
   
-  expirySet->add("item1", 100);
+  expirySet->add("item1", 10);
   
   // Immediately, the item should be present.
   EXPECT_TRUE(expirySet->contains("item1"));
@@ -33,11 +33,11 @@ TEST(ExpirySetTest, AutoRemoveAfterExpiry) {
   auto expirySet = std::make_shared<ExpirySet<std::string>>();
   
   // Add an item with a short expiry (e.g., 50ms).
-  expirySet->add("temp", 50);
+  expirySet->add("temp", 10);
   EXPECT_TRUE(expirySet->contains("temp"));
   
   // Process the I/O context for a duration longer than the expiry.
-  process_io_context_for(std::chrono::milliseconds(150));
+  process_io_context_for(std::chrono::milliseconds(15));
   
   // The item should have been removed.
   EXPECT_FALSE(expirySet->contains("temp"));
@@ -48,7 +48,7 @@ TEST(ExpirySetTest, AutoRemoveAfterExpiry) {
 TEST(ExpirySetTest, RemoveCancelsTask) {
   auto expirySet = std::make_shared<ExpirySet<std::string>>();
   
-  expirySet->add("cancelItem", 200);
+  expirySet->add("cancelItem", 10);
   EXPECT_TRUE(expirySet->contains("cancelItem"));
   
   // Remove the item explicitly.
@@ -57,7 +57,7 @@ TEST(ExpirySetTest, RemoveCancelsTask) {
   EXPECT_EQ(expirySet->operator[]("cancelItem"), nullptr);
   
   // Process I/O context to ensure any pending delayed task does not re-add it.
-  process_io_context_for(std::chrono::milliseconds(250));
+  process_io_context_for(std::chrono::milliseconds(15));
   EXPECT_FALSE(expirySet->contains("cancelItem"));
 }
 
@@ -66,15 +66,15 @@ TEST(ExpirySetTest, ReplaceExistingTask) {
   auto expirySet = std::make_shared<ExpirySet<std::string>>();
   
   // Add an item with a relatively long expiry.
-  expirySet->add("dup", 200);
+  expirySet->add("dup", 20);
   EXPECT_TRUE(expirySet->contains("dup"));
   
   // Add the same item with a shorter expiry. This should cancel the previous task.
-  expirySet->add("dup", 50);
+  expirySet->add("dup", 10);
   EXPECT_TRUE(expirySet->contains("dup"));
   
   // Process I/O context for a duration longer than the short expiry.
-  process_io_context_for(std::chrono::milliseconds(150));
+  process_io_context_for(std::chrono::milliseconds(15));
   
   // Now, the item should have been removed.
   EXPECT_FALSE(expirySet->contains("dup"));
