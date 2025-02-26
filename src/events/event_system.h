@@ -14,23 +14,27 @@ namespace athenasip::events {
 
 class Subscription {
 public:
-    std::string event_name;
-    std::function<void(std::string, std::string)> callback;
+    using EventCallbackFn = std::function<void(std::string, std::string)>;
 
-    Subscription(std::string _event_name, std::function<void(std::string, std::string)> _callback) : 
+    std::string event_name;
+    EventCallbackFn callback;
+
+    Subscription(std::string _event_name, EventCallbackFn _callback) : 
         event_name(_event_name), callback(_callback) {}
 };
 
 class EventSystem {
 public:
+    using CallbackCompleteFn = std::function<void(bool)>;
+
     virtual ~EventSystem() = default;
 
-    virtual void start(std::function<void(bool)> callback) = 0;
-    virtual void stop(std::function<void(bool)> callback) = 0;
+    virtual void start(CallbackCompleteFn callback) = 0;
+    virtual void stop(CallbackCompleteFn callback) = 0;
 
-    virtual void publish(std::string event_name, std::string message, std::function<void(bool)> callback) = 0;
-    virtual std::shared_ptr<Subscription> subscribe(std::string event_name, std::function<void(std::string event_name, std::string message)> event_callback, std::function<void(bool)> callback) = 0;
-    virtual void unsubscribe(std::shared_ptr<Subscription> subscription, std::function<void(bool)> callback) = 0;
+    virtual void publish(std::string event_name, std::string message, CallbackCompleteFn callback) = 0;
+    virtual std::shared_ptr<Subscription> subscribe(std::string event_name, Subscription::EventCallbackFn event_callback, CallbackCompleteFn) = 0;
+    virtual void unsubscribe(std::shared_ptr<Subscription> subscription, CallbackCompleteFn) = 0;
     virtual void unsubscribe_all(std::function<void(bool)> callback) = 0;
 };
 
