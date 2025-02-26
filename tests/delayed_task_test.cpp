@@ -1,0 +1,90 @@
+//
+// AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
+//
+// Copyright (C) 2025 Tom Cully <mail@tomcully.com>
+// Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
+//
+#include <gtest/gtest.h>
+#include <chrono>
+#include <thread>
+#include <atomic>
+#include <stdexcept>
+#include "delayed_task.h"      // This should include the DelayedTask template declaration.
+#include "global_io_context.h"   // Provides detail::getGlobalIOContext()
+
+#include "helpers/process_io_context_for_helper.h"
+
+using namespace athenasip;
+
+TEST(DelayedTaskTest, ExecutesTask) {
+  // Restart the global io_context to clear any previous state.
+  detail::getGlobalIOContext().restart();
+
+  std::atomic<int> testInt;
+
+  testInt = 1;
+
+  // Schedule a task that returns 42 after 50ms.
+  auto task = DelayedTask<int>::schedule([&testInt]() -> int { 
+    testInt = 24;
+    return 42; 
+  }, 50);
+
+  // Should not be touched yet
+  EXPECT_EQ(testInt, 1);
+
+  // Wait sufficiently for the task to execute.
+  process_io_context_for(std::chrono::milliseconds(100));
+
+  // The task should have executed.
+  EXPECT_TRUE(task->has_executed());
+  EXPECT_EQ(task->result(), 42);
+  EXPECT_EQ(testInt, 24);
+}
+
+TEST(DelayedTaskTest, CancelPreventsExecution) {
+  detail::getGlobalIOContext().restart();
+
+  // Schedule a task that would return 99 after 100ms.
+  auto task = DelayedTask<int>::schedule([]() -> int { return 99; }, 100);
+
+  // Immediately cancel the task.
+  bool cancelled = task->cancel();
+  EXPECT_TRUE(cancelled);
+
+  // Wait long enough that the timer would have fired if not cancelled.
+  process_io_context_for(std::chrono::milliseconds(150));
+
+  // The task should be marked as executed (by cancellation).
+  EXPECT_TRUE(task->has_executed());
+  // Accessing the result should throw because the task was cancelled.
+  EXPECT_THROW(task->result(), std::runtime_error);
+}
+
+TEST(DelayedTaskTest, ThrowsIfNotExecutedYet) {
+  detail::getGlobalIOContext().restart();
+
+  // Schedule a task with a long delay.
+  auto task = DelayedTask<int>::schedule([]() -> int { return 123; }, 200);
+
+  // Immediately calling result() should throw, as the task hasn't executed.
+  EXPECT_THROW(task->result(), std::runtime_error);
+
+  // Cancel the task to avoid later execution.
+  task->cancel();
+}
+
+TEST(DelayedTaskTest, MultipleCancelCalls) {
+  detail::getGlobalIOContext().restart();
+
+  // Schedule a task.
+  auto task = DelayedTask<int>::schedule([]() -> int { return 5; }, 200);
+
+  // First cancel should succeed.
+  bool cancelled1 = task->cancel();
+  // A second call to cancel should return false.
+  bool cancelled2 = task->cancel();
+
+  EXPECT_TRUE(cancelled1);
+  EXPECT_FALSE(cancelled2);
+}
