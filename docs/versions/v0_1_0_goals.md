@@ -1,6 +1,6 @@
 # AthenaSIP v0.1.0 Development Goals
 
-Building on the robust foundation of version 0.0.1, AthenaSIP v0.1.0 expands transport support, refines core SIP functionalities, and introduces an internal, abstracted eventing system. The primary focus is to enhance transport-agnostic processing, improve transaction reliability, extend SIP method support, and enable a flexible event-driven architecture that sets the stage for future clustering and integration.
+Building on the foundation of version 0.0.1, AthenaSIP v0.1.0 expands transport support, refines core SIP functionalities, and introduces an internal, abstracted eventing system. The primary focus is to enhance transport-agnostic processing, improve transaction reliability, extend SIP method support, and enable a flexible event-driven architecture that sets the stage for future clustering and integration.
 
 ## Key Goals
 
