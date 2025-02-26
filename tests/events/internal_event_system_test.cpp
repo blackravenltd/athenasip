@@ -12,19 +12,11 @@
 #include "events/internal_event_system.h"
 #include "loggers/logger.h"
 #include "global_io_context.h"
+
 #include "../mocks/logger_mock.h"
+#include "../helpers/wait_for_condition_helper.h"
 
 using namespace athenasip;
-
-// Helper: Wait until the given atomic flag is true or timeout expires.
-bool waitForCondition(const std::atomic<bool>& flag, std::chrono::milliseconds timeout) {
-    auto start = std::chrono::steady_clock::now();
-    while (!flag.load() && (std::chrono::steady_clock::now() - start < timeout)) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        detail::getGlobalIOContext().poll(); // Process any queued asynchronous tasks.
-    }
-    return flag.load();
-}
 
 // Test that publishing an event triggers a subscribed callback.
 TEST(EventSystemTest, PublishTriggersSubscription) {
