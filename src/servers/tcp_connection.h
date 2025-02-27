@@ -21,35 +21,35 @@ namespace athenasip::servers {
 
 class TCPConnection : public Connection {
  public:
-  TCPConnection(std::shared_ptr<boost::asio::ip::tcp::socket> connection)
-      : _connection(connection), _local_endpoint(_connection->local_endpoint()), _remote_endpoint(_connection->remote_endpoint()) {}
+  TCPConnection(std::shared_ptr<boost::asio::ip::tcp::socket> socket)
+      : _socket(socket), _local_endpoint(_socket->local_endpoint()), _remote_endpoint(_socket->remote_endpoint()) {}
 
   virtual bool start() override { return true; }
 
   virtual void async_read_some(boost::asio::mutable_buffer buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) override {
-    _connection->async_read_some(buffer, handler);
+    _socket->async_read_some(buffer, handler);
   }
 
   virtual void async_write_some(boost::asio::const_buffer buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) override {
-    _connection->async_write_some(buffer, handler);
+    _socket->async_write_some(buffer, handler);
   }
 
   virtual boost::asio::ip::tcp::endpoint local_endpoint() override { return _local_endpoint; }
   virtual boost::asio::ip::tcp::endpoint remote_endpoint() override { return _remote_endpoint; }
 
-  virtual bool is_open() override { return _connection->is_open(); }
+  virtual bool is_open() override { return _socket->is_open(); }
 
   virtual void shutdown() override {
     boost::system::error_code ec;
-    _connection->shutdown(ip::tcp::socket::shutdown_both, ec);
+    _socket->shutdown(ip::tcp::socket::shutdown_both, ec);
   }
 
-  virtual void close() override { _connection->close(); }
+  virtual void close() override { _socket->close(); }
 
   virtual std::string transport_name() const override { return "tcp"; }
 
  protected:
-  std::shared_ptr<boost::asio::ip::tcp::socket> _connection;
+  std::shared_ptr<boost::asio::ip::tcp::socket> _socket;
   boost::asio::ip::tcp::endpoint _local_endpoint;
   boost::asio::ip::tcp::endpoint _remote_endpoint;
 };

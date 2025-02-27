@@ -40,6 +40,11 @@ class Config {
   std::string tcp_address;  // e.g. "127.0.0.1"
   uint16_t tcp_port = 0;    // e.g. 5060
 
+  // UDP Configuration
+  bool udp_enable;
+  std::string udp_address;  // e.g. "127.0.0.1"
+  uint16_t udp_port = 0;    // e.g. 5060
+
   // DB configuration
   std::string db_database_url;  // e.g. "mysql://root@localhost/"
 
