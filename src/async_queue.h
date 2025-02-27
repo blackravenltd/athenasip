@@ -17,7 +17,7 @@
 namespace athenasip {
 
 template <typename T>
-class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
+class AsyncQueue {
   using CallbackFn = std::function<void(T item)>;
 
  public:
