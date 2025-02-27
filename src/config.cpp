@@ -112,6 +112,32 @@ bool Config::load_from_yaml(const std::string &filename) {
     }
   }
 
+  // --- Parse the 'tls' section ---
+  YAML::Node udp = config["udp"];
+  if (udp) {
+    if (udp["enable"])
+      udp_enable = udp["enable"].as<bool>();
+    else
+      udp_enable = true;
+
+    if (udp["address"])
+      udp_address = udp["address"].as<std::string>();
+    else
+      udp_address = "0.0.0.0";
+
+    if (udp["port"]) {
+      try {
+        udp_port = udp["port"].as<uint16_t>();
+      } catch (const std::exception &e) {
+        _logger->error("Invalid value for 'udp.port': " + std::string(e.what()));
+        return false;
+      }
+    } else {
+      _logger->error("Missing 'udp.port'");
+      return false;
+    }
+  }
+
   // --- Parse the 'db' section ---
   if (config["db"] && config["db"]["url"])
     db_database_url = config["db"]["url"].as<std::string>();

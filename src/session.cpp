@@ -21,7 +21,7 @@ Session::Session(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> regi
 }
 
 void Session::start() {
-  auto self(shared_from_this());
+  auto self(this->shared_from_this());
 
   _logger->info("Connected");
   state = State::Normal;

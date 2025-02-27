@@ -19,6 +19,7 @@
 #include "rtp/rtp_relay.h"
 #include "servers/tcp_server.h"
 #include "servers/tls_server.h"
+#include "servers/udp_server.h"
 #include "sip_core.h"
 #include "util.h"
 #include "version.h"
@@ -95,6 +96,14 @@ int main(int argc, char* argv[]) {
                                                                      core->config->tcp_port);
     core->servers.push_back(tcpServer);
     tcpServer->start();
+  }
+
+  if (core->config->udp_enable) {
+    // Create the TCPServer instance with the logger and start it on the specified port
+    auto udpServer = std::make_shared<athenasip::servers::UDPServer>(core->logger, core->registrar, core->config->sip_nonce_secret, core->config->udp_address,
+                                                                     core->config->udp_port);
+    core->servers.push_back(udpServer);
+    udpServer->start();
   }
 
   // Wait for Signals

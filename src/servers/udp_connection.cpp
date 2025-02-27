@@ -1,0 +1,56 @@
+//
+// AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
+//
+// Copyright (C) 2025 Tom Cully <mail@tomcully.com>
+// Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
+//
+#include "udp_connection.h"
+
+#include <algorithm>  // For std::min
+#include <cstring>    // For std::memcpy
+
+#include "udp_server.h"
+
+namespace athenasip::servers {
+
+UDPConnection::UDPConnection(std::weak_ptr<UDPServer> udp_server, boost::asio::ip::udp::endpoint local_endpoint, boost::asio::ip::udp::endpoint remote_endpoint)
+    : _udp_server(udp_server), _local_endpoint(local_endpoint), _remote_endpoint(remote_endpoint), _is_open(false) {}
+
+bool UDPConnection::start() {
+  _is_open = true;
+  return _is_open;
+}
+
+void UDPConnection::async_read_some(boost::asio::mutable_buffer buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) {
+  _buffer_queue.on_item_once([this, handler, buffer](std::shared_ptr<std::vector<char>> qb) {
+    auto bytes_to_copy = std::min(boost::asio::buffer_size(buffer), qb->size());
+    std::memcpy(buffer.data(), qb->data(), bytes_to_copy);
+    handler(boost::system::error_code(), bytes_to_copy);
+  });
+}
+
+void UDPConnection::async_write_some(boost::asio::const_buffer buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) {
+  if (auto server = _udp_server.lock()) {
+    server->async_send_to(buffer, _remote_endpoint, handler);
+  } else {
+    handler(boost::system::error_code(boost::asio::error::operation_aborted), 0);
+  }
+}
+
+boost::asio::ip::tcp::endpoint UDPConnection::local_endpoint() { return boost::asio::ip::tcp::endpoint(_local_endpoint.address(), _local_endpoint.port()); }
+
+boost::asio::ip::tcp::endpoint UDPConnection::remote_endpoint() { return boost::asio::ip::tcp::endpoint(_remote_endpoint.address(), _remote_endpoint.port()); }
+
+std::string UDPConnection::remote_endpoint_name() { return _remote_endpoint.address().to_string() + ":" + std::to_string(_remote_endpoint.port()); }
+
+bool UDPConnection::is_open() { return _is_open; }
+
+void UDPConnection::shutdown() { _is_open = false; }
+
+void UDPConnection::close() { _is_open = false; }
+
+void UDPConnection::deliver(std::shared_ptr<std::vector<char>> buffer) { _buffer_queue.push(buffer); }
+
+std::string UDPConnection::transport_name() const { return "udp"; }
+
+}  // namespace athenasip::servers

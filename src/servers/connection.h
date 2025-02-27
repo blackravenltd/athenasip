@@ -27,7 +27,7 @@ class Connection {
   virtual boost::asio::ip::tcp::endpoint remote_endpoint() = 0;
   virtual boost::asio::ip::tcp::endpoint local_endpoint() = 0;
 
-  std::string remote_endpoint_name() {
+  virtual std::string remote_endpoint_name() {
     auto rep = remote_endpoint();
     return rep.address().to_string() + ":" + std::to_string(rep.port());
   }

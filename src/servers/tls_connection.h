@@ -21,14 +21,14 @@ namespace athenasip::servers {
 
 class TLSConnection : public Connection {
  public:
-  TLSConnection(std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> connection)
-      : _connection(connection),
-        _local_endpoint(_connection->lowest_layer().local_endpoint()),
-        _remote_endpoint(_connection->lowest_layer().remote_endpoint()) {}
+  TLSConnection(std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> ssl_socket)
+      : _ssl_socket(ssl_socket),
+        _local_endpoint(_ssl_socket->lowest_layer().local_endpoint()),
+        _remote_endpoint(_ssl_socket->lowest_layer().remote_endpoint()) {}
 
   virtual bool start() override {
     try {
-      _connection->handshake(ssl::stream_base::server);
+      _ssl_socket->handshake(ssl::stream_base::server);
     } catch (const std::exception& e) {
       return false;
     }
@@ -36,7 +36,7 @@ class TLSConnection : public Connection {
   }
 
   virtual void async_read_some(boost::asio::mutable_buffer buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) override {
-    _connection->async_read_some(buffer, [this, handler](boost::system::error_code ec, std::size_t length) {
+    _ssl_socket->async_read_some(buffer, [this, handler](boost::system::error_code ec, std::size_t length) {
       if (ec == boost::asio::ssl::error::stream_truncated) {
         ec = boost::asio::error::operation_aborted;
       }
@@ -45,25 +45,25 @@ class TLSConnection : public Connection {
   }
 
   virtual void async_write_some(boost::asio::const_buffer buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) override {
-    _connection->async_write_some(buffer, [this, handler](boost::system::error_code ec, std::size_t length) { handler(ec, length); });
+    _ssl_socket->async_write_some(buffer, [this, handler](boost::system::error_code ec, std::size_t length) { handler(ec, length); });
   }
 
   virtual boost::asio::ip::tcp::endpoint local_endpoint() override { return _local_endpoint; }
   virtual boost::asio::ip::tcp::endpoint remote_endpoint() override { return _remote_endpoint; }
 
-  virtual bool is_open() override { return _connection->lowest_layer().is_open(); }
+  virtual bool is_open() override { return _ssl_socket->lowest_layer().is_open(); }
 
   virtual void shutdown() override {
     boost::system::error_code ec;
-    _connection->lowest_layer().shutdown(ip::tcp::socket::shutdown_both, ec);
+    _ssl_socket->lowest_layer().shutdown(ip::tcp::socket::shutdown_both, ec);
   }
 
-  virtual void close() override { _connection->lowest_layer().close(); }
+  virtual void close() override { _ssl_socket->lowest_layer().close(); }
 
   virtual std::string transport_name() const override { return "tls"; }
 
  protected:
-  std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> _connection;
+  std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> _ssl_socket;
   boost::asio::ip::tcp::endpoint _local_endpoint;
   boost::asio::ip::tcp::endpoint _remote_endpoint;
 };

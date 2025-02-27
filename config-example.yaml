@@ -3,6 +3,11 @@ sip:
   nonce_secret: "your_nonce_secret_here"
   allow_unencrypted: true
 
+udp:
+  enable: true
+  address: 0.0.0.0
+  port: 5060
+
 tcp:
   enable: true
   address: 0.0.0.0
