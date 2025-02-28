@@ -11,6 +11,7 @@
 #include <optional>
 #include <string>
 
+#include "api/admin_api.h"
 #include "config.h"
 #include "databases/db.h"
 #include "loggers/logger_scoped.h"
@@ -76,8 +77,8 @@ int main(int argc, char* argv[]) {
   // Create Registrar
   core->registrar = std::make_shared<Registrar>(core->logger, core->config, core->db, core->rtprelay);
 
+  // Create the TLSServer instance with the logger and start it on the specified port
   if (core->config->tls_enable) {
-    // Create the TLSServer instance with the logger and start it on the specified port
     auto tlsServer = std::make_shared<athenasip::servers::TLSServer>(core->logger, core->registrar, core->config->sip_nonce_secret, core->config->tls_address,
                                                                      core->config->tls_port);
     // Set Certificates
@@ -90,21 +91,25 @@ int main(int argc, char* argv[]) {
     tlsServer->start();
   }
 
+  // Create the TCPServer instance with the logger and start it on the specified port
   if (core->config->tcp_enable) {
-    // Create the TCPServer instance with the logger and start it on the specified port
     auto tcpServer = std::make_shared<athenasip::servers::TCPServer>(core->logger, core->registrar, core->config->sip_nonce_secret, core->config->tcp_address,
                                                                      core->config->tcp_port);
     core->servers.push_back(tcpServer);
     tcpServer->start();
   }
 
+  // Create the UDPServer instance with the logger and start it on the specified port
   if (core->config->udp_enable) {
-    // Create the TCPServer instance with the logger and start it on the specified port
     auto udpServer = std::make_shared<athenasip::servers::UDPServer>(core->logger, core->registrar, core->config->sip_nonce_secret, core->config->udp_address,
                                                                      core->config->udp_port);
     core->servers.push_back(udpServer);
     udpServer->start();
   }
+
+  // HTTP Admin API
+  auto admin_server = std::make_shared<athenasip::api::AdminAPI>(core->logger, core->config->admin_api_address, core->config->admin_api_port);
+  admin_server->start();
 
   // Wait for Signals
   boost::asio::io_context signal_wait_context;

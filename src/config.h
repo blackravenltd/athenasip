@@ -58,6 +58,10 @@ class Config {
   uint16_t rtprelay_min_port;
   uint16_t rtprelay_max_port;
 
+  bool admin_api_enable;
+  std::string admin_api_address;
+  uint16_t admin_api_port = 0;  // e.g. 5060
+
   // Loads configuration from a YAML file.
   bool load_from_yaml(const std::string &filename);
 

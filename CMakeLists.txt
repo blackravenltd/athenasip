@@ -18,8 +18,8 @@ include(FetchContent)
 # Use /usr/local also
 list(APPEND CMAKE_PREFIX_PATH "/usr/local")
 
-# Find Boost libraries
-find_package(Boost 1.87 REQUIRED COMPONENTS system thread)
+# Find Boost libraries - note that Boost.Beast and Boost.JSON are header-only and part of Boost.
+find_package(Boost 1.87 REQUIRED COMPONENTS system thread json)
 message(STATUS "Boost Include Directory: ${Boost_INCLUDE_DIRS}")
 
 # Find OpenSSL
@@ -72,13 +72,13 @@ message(STATUS "SQLite3 Libraries: ${SQLite3_LIBRARIES}")
 file(GLOB_RECURSE ATHENA_SOURCES src/*.cpp)
 list(REMOVE_ITEM ATHENA_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
 
-# Create the executable
+# Create the library for testing
 add_library(athenasip_lib ${ATHENA_SOURCES})
 
 # Include directories
 target_include_directories(athenasip_lib PUBLIC 
     ${PQXX_INCLUDE_DIRS}
-    ${Boost_INCLUDE_DIRS}
+    ${Boost_INCLUDE_DIRS}   # This provides access to Boost.Beast and Boost.JSON headers
     ${SQLite3_INCLUDE_DIRS}
 )
 
@@ -86,6 +86,7 @@ target_include_directories(athenasip_lib PUBLIC
 target_link_libraries(athenasip_lib PUBLIC
     Boost::system
     Boost::thread
+    Boost::json
     OpenSSL::SSL
     OpenSSL::Crypto
     mysql::concpp
@@ -98,15 +99,22 @@ target_link_libraries(athenasip_lib PUBLIC
 target_compile_features(athenasip_lib PUBLIC cxx_std_17)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-target_link_libraries(athenasip_lib PUBLIC 
-    pq
-)
+  target_link_libraries(athenasip_lib PUBLIC pq)
 endif()
 
 # Make Main Executable
 add_executable(athenasip ${ATHENA_SOURCES} "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
 target_link_libraries(athenasip PRIVATE 
-  athenasip_lib
+  Boost::system
+  Boost::thread
+  Boost::json
+  OpenSSL::SSL
+  OpenSSL::Crypto
+  mysql::concpp
+  yaml-cpp::yaml-cpp
+  tinyxml2::tinyxml2
+  ${PQXX_LIBRARIES} 
+  ${SQLite3_LIBRARIES}
 )
 target_compile_features(athenasip PRIVATE cxx_std_17)
 
