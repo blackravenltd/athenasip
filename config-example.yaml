@@ -29,3 +29,8 @@ rtprelay:
 
 db:
   url: "mysql://root@localhost/athenasip"
+
+admin_api:
+  enable: true
+  address: 0.0.0.0
+  port: 8080

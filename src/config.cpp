@@ -184,6 +184,32 @@ bool Config::load_from_yaml(const std::string &filename) {
     }
   }
 
+  // --- Parse the 'admin_api' section ---
+  YAML::Node admin_api = config["admin_api"];
+  if (admin_api) {
+    if (admin_api["enable"])
+      admin_api_enable = admin_api["enable"].as<bool>();
+    else
+      admin_api_enable = true;
+
+    if (admin_api["address"])
+      admin_api_address = admin_api["address"].as<std::string>();
+    else
+      admin_api_address = "0.0.0.0";
+
+    if (admin_api["port"]) {
+      try {
+        admin_api_port = admin_api["port"].as<uint16_t>();
+      } catch (const std::exception &e) {
+        _logger->error("Invalid value for 'admin_api.port': " + std::string(e.what()));
+        return false;
+      }
+    } else {
+      _logger->error("Missing 'admin_api.port'");
+      return false;
+    }
+  }
+
   return true;
 }
 
