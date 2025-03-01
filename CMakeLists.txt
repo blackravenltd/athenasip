@@ -10,7 +10,7 @@ cmake_policy(SET CMP0177 NEW)
 cmake_policy(SET CMP0167 NEW)
 
 # Options
-option(BUILD_TESTING "Build the test targets" OFF)
+option(ATHENA_BUILD_TESTING "Build the test targets" OFF)
 
 # FetchContent module
 include(FetchContent)
@@ -118,7 +118,7 @@ target_link_libraries(athenasip PRIVATE
 )
 target_compile_features(athenasip PRIVATE cxx_std_17)
 
-if(BUILD_TESTING)
+if(ATHENA_BUILD_TESTING)
   enable_testing()
   find_package(GTest REQUIRED)
   message(STATUS "Building GoogleTest tests")
