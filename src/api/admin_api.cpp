@@ -1,3 +1,4 @@
+//
 // AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
 //
 // Copyright (C) 2025 Tom Cully <mail@tomcully.com>
@@ -13,6 +14,7 @@
 #include <iostream>
 
 #include "../loggers/logger_scoped.h"
+#include "./http_types.h"
 
 namespace beast = boost::beast;
 namespace http = beast::http;

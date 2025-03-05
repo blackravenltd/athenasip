@@ -1,3 +1,4 @@
+//
 // AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
 //
 // Copyright (C) 2025 Tom Cully <mail@tomcully.com>
@@ -7,11 +8,13 @@
 
 #include <boost/asio.hpp>
 #include <boost/json.hpp>
+#include <functional>
 #include <memory>
 #include <string>
 #include <thread>
 
 #include "../loggers/logger.h"
+#include "./http_types.h"
 
 namespace athenasip::api {
 
@@ -20,12 +23,15 @@ class AdminAPI {
   AdminAPI(std::shared_ptr<athenasip::loggers::Logger> logger, const std::string &bind_address, unsigned short port);
   ~AdminAPI();
 
+  using RouteFn = std::function<bool(std::shared_ptr<Request> request, std::shared_ptr<Response> response)>;
+
   // Non-copyable
   AdminAPI(const AdminAPI &) = delete;
   AdminAPI &operator=(const AdminAPI &) = delete;
 
   void start();
   void stop();
+  void route(std::string route, RouteFn route_fn);
 
  private:
   void _do_accept();

@@ -11,8 +11,9 @@ AthenaSIP is a **modern, cloud-native SIP server** designed for security, scalab
 * **Standalone or Pluggable** – Ready-to-use with built-in components but fully extensible for scaling using industry-standard OSS databases, event systems and media proxies.  
 * **Cloud-Native & Scalable** – Stateless design enables seamless scaling and clustering.
 * **Minimal Configuration** – Designed for rapid deployment with automatic defaults.
-* **API-Driven** – Exposes a RESTful API for management, monitoring, and automation.
+* **API-Driven** – Exposes a RESTful API for management, monitoring, and automation, works with [AthenaSIP Admin](https://github.com/blackravenltd/athenasip-admin) - a React based administration client. 
 * **WebRTC-Ready** *(Future)* – Planned support for SIP over WebSockets, STUN/TURN/ICE.
+
 
 ## Documentation
 
