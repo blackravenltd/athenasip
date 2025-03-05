@@ -66,6 +66,11 @@ find_package(SQLite3 REQUIRED)
 message(STATUS "SQLite3 Include Directory: ${SQLite3_INCLUDE_DIRS}")
 message(STATUS "SQLite3 Libraries: ${SQLite3_LIBRARIES}")
 
+# Lua
+find_package(Lua REQUIRED)
+message(STATUS "Lua Include Directory: ${LUA_INCLUDE_DIR}")
+message(STATUS "Lua Libraries: ${LUA_LIBRARIES}")
+
 # Testing
 
 # Collect all source files except main.cpp
@@ -78,8 +83,9 @@ add_library(athenasip_lib ${ATHENA_SOURCES})
 # Include directories
 target_include_directories(athenasip_lib PUBLIC 
     ${PQXX_INCLUDE_DIRS}
-    ${Boost_INCLUDE_DIRS}   # This provides access to Boost.Beast and Boost.JSON headers
+    ${Boost_INCLUDE_DIRS}
     ${SQLite3_INCLUDE_DIRS}
+    ${LUA_INCLUDE_DIR}
 )
 
 # Link libraries
@@ -92,6 +98,7 @@ target_link_libraries(athenasip_lib PUBLIC
     mysql::concpp
     yaml-cpp::yaml-cpp
     tinyxml2::tinyxml2
+    ${LUA_LIBRARIES}
     ${PQXX_LIBRARIES} 
     ${SQLite3_LIBRARIES}
 )
@@ -104,6 +111,9 @@ endif()
 
 # Make Main Executable
 add_executable(athenasip ${ATHENA_SOURCES} "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
+target_include_directories(athenasip PUBLIC 
+    ${LUA_INCLUDE_DIR}
+)
 target_link_libraries(athenasip PRIVATE 
   Boost::system
   Boost::thread
@@ -113,6 +123,7 @@ target_link_libraries(athenasip PRIVATE
   mysql::concpp
   yaml-cpp::yaml-cpp
   tinyxml2::tinyxml2
+  ${LUA_LIBRARIES}
   ${PQXX_LIBRARIES} 
   ${SQLite3_LIBRARIES}
 )

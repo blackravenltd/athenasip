@@ -18,6 +18,7 @@
 #include "loggers/logger_stdio.h"
 #include "registrar.h"
 #include "rtp/rtp_relay.h"
+#include "script/lua_script_engine.h"
 #include "servers/tcp_server.h"
 #include "servers/tls_server.h"
 #include "servers/udp_server.h"
@@ -53,8 +54,7 @@ int main(int argc, char* argv[]) {
 
   // Create Config
   core->config = std::make_shared<Config>(core->logger);
-  // Load from YAML file
-  core->config->load_from_yaml("../config-example.yaml");
+  core->config->load_from_yaml(Util::expand_path("~/.athenasip/config.yaml"));
 
   // Create DB
   core->db = athenasip::databases::DB::create_driver(core->logger, core->config->db_database_url);
@@ -76,6 +76,10 @@ int main(int argc, char* argv[]) {
 
   // Create Registrar
   core->registrar = std::make_shared<Registrar>(core->logger, core->config, core->db, core->rtprelay);
+
+  // Script Engine
+  auto lua_scripting = std::make_shared<script::LuaScriptEngine>(core->logger);
+  lua_scripting->start();
 
   // Create the TLSServer instance with the logger and start it on the specified port
   if (core->config->tls_enable) {
