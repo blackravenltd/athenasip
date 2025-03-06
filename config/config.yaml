@@ -1,3 +1,10 @@
+#
+# AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
+#
+# Copyright (C) 2025 Tom Cully <mail@tomcully.com>
+# Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
+#
+
 sip:
   realm: "sip.athenasip.org"
   nonce_secret: "your_nonce_secret_here"
@@ -34,3 +41,9 @@ admin_api:
   enable: true
   address: 0.0.0.0
   port: 8080
+
+scripting:
+  language: lua     # 'lua' is the default
+  add_stdlib: true
+  allowed_path: /
+  routing_script: ~/.athenasip/routing.lua
