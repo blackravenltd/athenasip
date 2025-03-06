@@ -48,7 +48,6 @@ class LuaScriptEngine : public ScriptEngine {
   // Functions
   void _register_functions();
   void _register_function(std::string name, LuaCFunction fn, uint8_t args);
-  static int lua_print(lua_State* L);
   static int lua_include(lua_State* L);
 
   // Set and retreive this instance

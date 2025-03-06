@@ -71,7 +71,7 @@ void LuaScriptEngine::send_message(std::function<void(std::shared_ptr<SIPMessage
 
 // Register Lua Functions into the Lua state.
 void LuaScriptEngine::_register_functions() {
-  _register_function("print", LuaScriptEngine::lua_print, 1);
+  _register_function("print", LuaScriptEngine::lua_log_info, 1);
   _register_function("include", LuaScriptEngine::lua_include, 1);
 }
 
@@ -82,26 +82,6 @@ void LuaScriptEngine::_register_function(std::string name, LuaCFunction fn, uint
 }
 
 // Lua Functions
-
-int LuaScriptEngine::lua_print(lua_State* L) {
-  LuaScriptEngine* engine = static_cast<LuaScriptEngine*>(lua_touserdata(L, lua_upvalueindex(1)));
-
-  std::string out;
-  int nargs = lua_gettop(L);  // Number of arguments
-
-  for (int i = 1; i <= nargs; i++) {
-    if (lua_isstring(L, i)) {
-      out += lua_tostring(L, i);
-    } else {
-      engine->_logger->warn("(runtime) print() - non-string value for argument " + std::to_string(i));
-    }
-    if (i < nargs) {
-      out += " ";  // Append a space between arguments.
-    }
-  }
-  engine->_logger->info(out);
-  return 0;  // No values are returned to Lua.
-}
 
 std::string LuaScriptEngine::execute_lua_fn(const std::string& functionName, const std::string& arg) {
   if (!_current) {
