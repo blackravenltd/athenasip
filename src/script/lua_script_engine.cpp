@@ -30,8 +30,9 @@ void LuaScriptEngine::start() {
   // TODO: This should be configurable
   // luaL_openlibs(_current);
 
-  // Register our custom functions
+  // Register our custom functions and objects
   _register_functions();
+  _register_logger_object();
 
   // Load routing script from file
   if (luaL_loadfile(_current, Util::expand_path("~/.athenasip/routing.lua").c_str()) != LUA_OK) {
@@ -71,17 +72,19 @@ void LuaScriptEngine::send_message(std::function<void(std::shared_ptr<SIPMessage
 // Register Lua Functions into the Lua state.
 void LuaScriptEngine::_register_functions() {
   lua_pushlightuserdata(_current, this);
-  lua_pushcclosure(_current, LuaScriptEngine::_lua_print, 1);
+  lua_pushcclosure(_current, LuaScriptEngine::lua_print, 1);
   lua_setglobal(_current, "print");
+
+  lua_pushlightuserdata(_current, this);
+  lua_pushcclosure(_current, LuaScriptEngine::lua_include, 1);
+  lua_setglobal(_current, "include");
 }
 
 // Lua Functions
 
-int LuaScriptEngine::_lua_print(lua_State* L) {
+int LuaScriptEngine::lua_print(lua_State* L) {
   LuaScriptEngine* engine = static_cast<LuaScriptEngine*>(lua_touserdata(L, lua_upvalueindex(1)));
-  return engine->_print(L);
-}
-int LuaScriptEngine::_print(lua_State* L) {
+
   std::string out;
   int nargs = lua_gettop(L);  // Number of arguments
 
@@ -89,13 +92,13 @@ int LuaScriptEngine::_print(lua_State* L) {
     if (lua_isstring(L, i)) {
       out += lua_tostring(L, i);
     } else {
-      _logger->warn("(runtime) print() - non-string value for argument " + std::to_string(i));
+      engine->_logger->warn("(runtime) print() - non-string value for argument " + std::to_string(i));
     }
     if (i < nargs) {
       out += " ";  // Append a space between arguments.
     }
   }
-  _logger->info(out);
+  engine->_logger->info(out);
   return 0;  // No values are returned to Lua.
 }
 
@@ -127,6 +130,12 @@ std::string LuaScriptEngine::execute_lua_fn(const std::string& functionName, con
   }
   lua_pop(_current, 1);  // Remove the return value.
   return result;
+}
+
+// Helper: retrieve the script engine from the upvalue.
+LuaScriptEngine* LuaScriptEngine::get_script_engine(lua_State* L) {
+    // Upvalue index 1 should be a lightuserdata holding the logger pointer.
+    return static_cast<LuaScriptEngine*>(lua_touserdata(L, lua_upvalueindex(1)));
 }
 
 }  // namespace athenasip::script

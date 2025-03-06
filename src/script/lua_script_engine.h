@@ -35,12 +35,32 @@ class LuaScriptEngine : public ScriptEngine {
  protected:
   std::shared_ptr<Logger> _logger;
 
+  // Config
+  std::string _allowed_path = "/";
+
+  // Lua State
   lua_State* _current;
-  void _register_functions();
+
+
   std::string execute_lua_fn(const std::string& functionName, const std::string& arg);
 
-  static int _lua_print(lua_State* L);
-  int _print(lua_State* L);
+  // Functions
+  void _register_functions();
+  static int lua_print(lua_State* L);
+  static int lua_include(lua_State* L);
+
+  // Set and retreive this instance
+  static LuaScriptEngine* get_script_engine(lua_State* L);
+
+  // System functions
+  
+  // Logger
+  void _register_logger_object();
+  static int lua_log_info(lua_State* L);
+  static int lua_log_debug(lua_State* L);
+  static int lua_log_warn(lua_State* L);
+  static int lua_log_error(lua_State* L);
+  
 };
 
 }  // namespace athenasip::script
