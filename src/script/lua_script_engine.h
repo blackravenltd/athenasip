@@ -18,6 +18,8 @@ using namespace athenasip::loggers;
 namespace athenasip::script {
 
 class LuaScriptEngine : public ScriptEngine {
+  using LuaCFunction = int (*)(lua_State*);
+
  public:
   LuaScriptEngine(std::shared_ptr<Logger> logger);
   ~LuaScriptEngine();
@@ -41,11 +43,11 @@ class LuaScriptEngine : public ScriptEngine {
   // Lua State
   lua_State* _current;
 
-
   std::string execute_lua_fn(const std::string& functionName, const std::string& arg);
 
   // Functions
   void _register_functions();
+  void _register_function(std::string name, LuaCFunction fn, uint8_t args);
   static int lua_print(lua_State* L);
   static int lua_include(lua_State* L);
 
@@ -53,14 +55,13 @@ class LuaScriptEngine : public ScriptEngine {
   static LuaScriptEngine* get_script_engine(lua_State* L);
 
   // System functions
-  
+
   // Logger
   void _register_logger_object();
   static int lua_log_info(lua_State* L);
   static int lua_log_debug(lua_State* L);
   static int lua_log_warn(lua_State* L);
   static int lua_log_error(lua_State* L);
-  
 };
 
 }  // namespace athenasip::script

@@ -71,13 +71,14 @@ void LuaScriptEngine::send_message(std::function<void(std::shared_ptr<SIPMessage
 
 // Register Lua Functions into the Lua state.
 void LuaScriptEngine::_register_functions() {
-  lua_pushlightuserdata(_current, this);
-  lua_pushcclosure(_current, LuaScriptEngine::lua_print, 1);
-  lua_setglobal(_current, "print");
+  _register_function("print", LuaScriptEngine::lua_print, 1);
+  _register_function("include", LuaScriptEngine::lua_include, 1);
+}
 
+void LuaScriptEngine::_register_function(std::string name, LuaCFunction fn, uint8_t args) {
   lua_pushlightuserdata(_current, this);
-  lua_pushcclosure(_current, LuaScriptEngine::lua_include, 1);
-  lua_setglobal(_current, "include");
+  lua_pushcclosure(_current, fn, args);
+  lua_setglobal(_current, name.c_str());
 }
 
 // Lua Functions
@@ -134,8 +135,8 @@ std::string LuaScriptEngine::execute_lua_fn(const std::string& functionName, con
 
 // Helper: retrieve the script engine from the upvalue.
 LuaScriptEngine* LuaScriptEngine::get_script_engine(lua_State* L) {
-    // Upvalue index 1 should be a lightuserdata holding the logger pointer.
-    return static_cast<LuaScriptEngine*>(lua_touserdata(L, lua_upvalueindex(1)));
+  // Upvalue index 1 should be a lightuserdata holding the logger pointer.
+  return static_cast<LuaScriptEngine*>(lua_touserdata(L, lua_upvalueindex(1)));
 }
 
 }  // namespace athenasip::script
