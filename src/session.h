@@ -42,7 +42,6 @@
 #include "sdp.h"
 #include "servers/connection.h"
 #include "sip_header.h"
-#include "sip_message.h"
 #include "types/authorization.h"
 #include "types/sip_identity.h"
 #include "types/sip_uri.h"
@@ -55,9 +54,12 @@ using namespace athenasip::servers;
 
 namespace athenasip {
 
+class SIPCore;
+class SIPMessage;
+
 class Session : public std::enable_shared_from_this<Session> {
  public:
-  Session(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar>, std::string nonce_secret, std::shared_ptr<Connection> connection);
+  Session(std::shared_ptr<Logger> logger, std::shared_ptr<SIPCore> core, std::shared_ptr<Connection> connection);
 
   enum State {
     Normal,
@@ -72,49 +74,22 @@ class Session : public std::enable_shared_from_this<Session> {
 
   State state = State::Normal;
 
+  std::shared_ptr<SIPMessage> _incoming_message;
+
   void send(std::shared_ptr<SIPMessage> message);
+  void receive(std::shared_ptr<SIPMessage> message);
 
  protected:
   std::shared_ptr<Logger> _logger;
-
-  std::shared_ptr<Registrar> _registrar;
-
+  std::shared_ptr<SIPCore> _core;
   std::shared_ptr<Connection> _connection;
-  std::shared_ptr<SIPMessage> _request;
-  std::shared_ptr<SIPMessage> _response;
-
-  std::string _nonce_secret;
-  std::shared_ptr<ExpirySet<std::string>> _nonces;
-  std::string _generate_nonce() const;
-
-  std::shared_ptr<Subscriber> _subscriber;
-  std::shared_ptr<SIPUri> _contact;
-
-  void _process_message_register();
-  void _process_message_publish();
-  void _process_message_invite();
-  void _send_auth_challenge();
-
-  void _process_buffer();
-  void _process_message();
-  void _process_message_normal();
-  void _process_message_incall();
-  void _process_message_bye();
-
-  void _process_call_state(std::shared_ptr<Call> call);
-
-  void _rewrite_sdp(std::shared_ptr<SDP> sdp, std::string server_address, uint16_t rtp_port, uint16_t rtcp_port);
-
-  void _send(uint16_t code, std::string message);
-  void _send_close(uint16_t code, std::string message);
 
   std::array<char, 65535> _read_buffer;
   std::string _buffer;
 
   void _schedule_async_read();
+  void _schedule_async_write(std::string message);
   bool _append_body();
-
-  std::shared_ptr<DelayedTask<int>> _register_timeout;
 };
 
 }  // namespace athenasip

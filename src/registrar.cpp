@@ -99,6 +99,54 @@ void Registrar::session_close_all() {
   lock.unlock();
 }
 
+std::string Registrar::nonce_get() {
+  std::array<unsigned char, 16> random_bytes;
+
+  // Generate 128-bit (16-byte) secure random data
+  if (RAND_bytes(random_bytes.data(), random_bytes.size()) != 1) {
+    throw std::runtime_error("Failed to generate secure random bytes");
+  }
+
+  // Get the current UNIX timestamp
+  uint64_t timestamp = static_cast<uint64_t>(std::time(nullptr));
+
+  // Concatenate random bytes and timestamp
+  std::ostringstream raw_nonce_stream;
+  raw_nonce_stream << Util::to_hex(random_bytes.data(), random_bytes.size()) << ":" << timestamp;
+  std::string raw_nonce = raw_nonce_stream.str();
+
+  // Compute HMAC-SHA256 using OpenSSL
+  unsigned char hmac_result[EVP_MAX_MD_SIZE];
+  unsigned int hmac_len = 0;
+
+  HMAC(EVP_sha256(), config->sip_nonce_secret.c_str(), config->sip_nonce_secret.size(), reinterpret_cast<const unsigned char*>(raw_nonce.c_str()), raw_nonce.size(), hmac_result,
+       &hmac_len);
+
+  // Convert HMAC output to hex
+  std::string hmac_hex = Util::to_hex(hmac_result, hmac_len);
+
+  // Generate expiry
+  auto now = std::chrono::system_clock::now();
+  std::chrono::seconds interval(3600); // TODO: Load from config
+  std::time_t expiresAt = std::chrono::system_clock::to_time_t(now + interval);
+
+  // Insert a row
+  _db->query("INSERT INTO `nonce` (`id`, `expires_at`) VALUES (?,?)", {raw_nonce + ":" + hmac_hex, expiresAt});
+
+  return raw_nonce + ":" + hmac_hex;
+}
+
+bool Registrar::nonce_check(std::string nonce) {
+
+  std::shared_ptr<DBResult> res = _db->query("SELECT COUNT(*) FROM `nonce` WHERE `id` = ? AND `expires_at` > NOW()", {nonce});
+  if (res && res->rows.size() == 0) {
+    _logger->error("nonce_check: COUNT(*) returned no rows");
+    return false;
+  };
+
+  return res->rows[0]->column_values[0]->as<uint64_t>() == 1;
+}
+
 bool Registrar::call_register(std::string callId, std::shared_ptr<Call> call) {
   _calls[callId] = call;
   return true;

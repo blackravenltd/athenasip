@@ -11,9 +11,8 @@ using namespace boost::asio::ssl;
 
 namespace athenasip::servers {
 
-TLSServer::TLSServer(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> registrar, std::string nonce_secret, const std::string& bind_address,
-                     short port)
-    : Server(std::make_unique<LoggerScoped>("tls_server", logger), registrar, nonce_secret),
+TLSServer::TLSServer(std::shared_ptr<Logger> logger, std::shared_ptr<SIPCore> core, const std::string& bind_address, short port)
+    : Server(std::make_unique<LoggerScoped>("tls_server", logger), core),
       _port(port),
       _acceptor(_io_context, ip::tcp::endpoint(ip::make_address(bind_address), port)),
       ctx(ssl::context::sslv23) {}
@@ -85,7 +84,7 @@ void TLSServer::_handle_accept(const boost::system::error_code& error, std::shar
     }
 
     // Create TLSSession from connection
-    auto new_session = std::make_shared<Session>(_logger->base_logger(), _registrar, nonce_secret, new_connection);
+    auto new_session = std::make_shared<Session>(_logger->base_logger(), _core, new_connection);
     _logger->info("Incoming TLS Connection Accepted: " + new_connection->remote_endpoint_name());
 
     new_session->start();

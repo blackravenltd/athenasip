@@ -12,6 +12,7 @@
 #include <string>
 
 #include "sip_header.h"
+#include "session.h"
 #include "util.h"
 
 namespace athenasip {
@@ -20,19 +21,27 @@ class SIPMessage {
  public:
   SIPMessage();
 
+  // Components of Message
   std::shared_ptr<SIPHeader> header;
   std::string body;
   uint body_length = 0;
 
+  // Derived Information
+  std::string branch;
+  std::string callID;
   uint16_t source_port;
+  std::shared_ptr<Session> session;
+  std::shared_ptr<Subscriber> subscriber;
+  std::shared_ptr<SIPUri> contact;
+  bool authenticated = false;
 
   std::string to_string() const;
+  void print() const;
+
+  std::shared_ptr<SIPMessage> generate_response();
 
   friend std::string operator+(const SIPMessage& header, const std::string& str);
   friend std::string operator+(const std::string& str, const SIPMessage& header);
-
-  void print() const;
-
  private:
 };
 

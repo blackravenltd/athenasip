@@ -16,7 +16,7 @@ class UDPServer : public Server {
  public:
   const uint16_t MAX_PACKET_SIZE = 65535;
 
-  UDPServer(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> registrar, std::string nonce_secret, const std::string &bind_address, short port);
+  UDPServer(std::shared_ptr<Logger> logger, std::shared_ptr<SIPCore> core, const std::string &bind_address, short port);
 
   void start() override;
   void stop() override;
