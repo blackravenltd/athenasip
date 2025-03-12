@@ -12,6 +12,8 @@
 #include <shared_mutex>
 #include <sstream>
 #include <string>
+#include <openssl/rand.h>
+#include <openssl/hmac.h>
 
 #include "call.h"
 #include "config.h"
@@ -45,6 +47,10 @@ class Registrar {
   bool session_unregister(std::string endpoint, std::shared_ptr<Session> session);
   void session_close_all();
   std::shared_ptr<Session> subscriber_get_session(std::shared_ptr<Subscriber> subscriber);
+
+  // Nonce
+  std::string nonce_get();
+  bool nonce_check(std::string nonce);
 
   // Calls
   bool call_register(std::string callId, std::shared_ptr<Call> call);

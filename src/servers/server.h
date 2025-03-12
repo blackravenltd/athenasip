@@ -20,14 +20,19 @@
 #include "../registrar.h"
 #include "../session.h"
 
+using namespace athenasip;
 using namespace athenasip::loggers;
+
+namespace athenasip {
+  class SIPCore;
+}
 
 namespace athenasip::servers {
 
 class Server : public std::enable_shared_from_this<Server> {
  public:
-  Server(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> registrar, std::string _nonce_secret)
-      : _logger(logger), _registrar(registrar), nonce_secret(_nonce_secret) {}
+  Server(std::shared_ptr<Logger> logger, std::shared_ptr<SIPCore> core)
+      : _logger(logger), _core(core) {}
 
   virtual void start() = 0;
   virtual void stop() = 0;
@@ -35,8 +40,8 @@ class Server : public std::enable_shared_from_this<Server> {
   std::string nonce_secret = "testing123";
 
  protected:
-  std::shared_ptr<Registrar> _registrar;
   std::shared_ptr<Logger> _logger;
+  std::shared_ptr<SIPCore> _core;
 };
 
 }  // namespace athenasip::servers

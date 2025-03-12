@@ -18,9 +18,8 @@ using namespace boost::asio::ip;
 
 namespace athenasip::servers {
 
-UDPServer::UDPServer(std::shared_ptr<Logger> logger, std::shared_ptr<Registrar> registrar, std::string nonce_secret, const std::string& bind_address,
-                     short port)
-    : Server(std::make_unique<LoggerScoped>("udp_server", logger), registrar, nonce_secret),
+UDPServer::UDPServer(std::shared_ptr<Logger> logger, std::shared_ptr<SIPCore> core, const std::string& bind_address, short port)
+    : Server(std::make_unique<LoggerScoped>("udp_server", logger), core),
       _io_context(),
       _socket(_io_context, udp::endpoint(ip::make_address(bind_address), port)),
       _port(port),
@@ -93,7 +92,7 @@ void UDPServer::handle_receive_from(const boost::system::error_code& error, std:
       _connections[sender_endpoint_str] = connection;
       _logger->info("New UDP Endpoint Accepted: " + sender_endpoint_str);
 
-      auto new_session = std::make_shared<Session>(_logger->base_logger(), _registrar, nonce_secret, connection);
+      auto new_session = std::make_shared<Session>(_logger->base_logger(), _core, connection);
       new_session->start();
     }
 

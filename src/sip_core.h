@@ -18,23 +18,35 @@
 #include "rtp/rtp_relay.h"
 #include "servers/server.h"
 #include "version.h"
+#include "sip_message.h"
 
 namespace athenasip {
 
 class SIPCore {
  public:
   SIPCore();
-  SIPCore(std::shared_ptr<Version> _version, std::shared_ptr<Config> _config, std::shared_ptr<athenasip::loggers::Logger> _logger,
+  SIPCore(std::shared_ptr<Logger> _logger, std::shared_ptr<Version> _version, std::shared_ptr<Config> _config,
           std::shared_ptr<athenasip::databases::DB> _db, std::shared_ptr<Registrar> _registrar);
 
  public:
+  std::shared_ptr<Logger> logger;
   std::shared_ptr<Version> version;
   std::shared_ptr<Config> config;
-  std::shared_ptr<athenasip::loggers::Logger> logger;
-  std::shared_ptr<athenasip::databases::DB> db;
+  std::shared_ptr<databases::DB> db;
   std::shared_ptr<rtp::RTPRelay> rtprelay;
   std::shared_ptr<Registrar> registrar;
-  std::vector<std::shared_ptr<Server>> servers;
+  std::vector<std::shared_ptr<servers::Server>> servers;
+
+  void process_message(std::shared_ptr<SIPMessage> message);
+  void _process_call_state(std::shared_ptr<SIPMessage> message, std::shared_ptr<Call> call);
+  void _send_auth_challenge(std::shared_ptr<SIPMessage> message);
+  void _process_message_register(std::shared_ptr<SIPMessage> message);
+  void _process_message_publish(std::shared_ptr<SIPMessage> message);
+  void _process_message_invite(std::shared_ptr<SIPMessage> message);
+  void _rewrite_sdp(std::shared_ptr<SDP> sdp, std::string server_address, uint16_t rtp_port, uint16_t rtcp_port);
+  void _send(std::shared_ptr<SIPMessage> message, uint16_t code, std::string response_message);
+
+  std::string _generate_nonce() const;
 };
 
 }  // namespace athenasip

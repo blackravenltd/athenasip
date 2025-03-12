@@ -24,16 +24,17 @@ class Config {
   Config(std::shared_ptr<Logger> logger);
 
   // SIP configuration
-  std::string sip_realm;                     // e.g. "example.com"
-  std::string sip_nonce_secret;              // e.g. "your_nonce_secret_here"
-  uint32_t sip_registration_timeout = 5000;  // (set a default or load from YAML)
+  std::string sip_realm;                    
+  std::string sip_nonce_secret;             
+  uint32_t sip_nonce_expiry = 3600;  
+  uint32_t sip_registration_timeout = 5000;  
 
   // TLS Configuration
   bool tls_enable;
-  std::string tls_address;            // e.g. "127.0.0.1"
-  uint16_t tls_port = 0;              // e.g. 5061
-  std::string tls_cert_pem_filename;  // e.g. "./tls/snakeoil.cer"
-  std::string tls_key_pem_filename;   // e.g. "./tls/snakeoil.key"
+  std::string tls_address;           
+  uint16_t tls_port = 0;              
+  std::string tls_cert_pem_filename; 
+  std::string tls_key_pem_filename;   
 
   // TCP Configuration
   bool tcp_enable;
