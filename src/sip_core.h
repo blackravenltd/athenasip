@@ -17,16 +17,16 @@
 #include "registrar.h"
 #include "rtp/rtp_relay.h"
 #include "servers/server.h"
-#include "version.h"
 #include "sip_message.h"
+#include "version.h"
 
 namespace athenasip {
 
 class SIPCore {
  public:
   SIPCore();
-  SIPCore(std::shared_ptr<Logger> _logger, std::shared_ptr<Version> _version, std::shared_ptr<Config> _config,
-          std::shared_ptr<athenasip::databases::DB> _db, std::shared_ptr<Registrar> _registrar);
+  SIPCore(std::shared_ptr<Logger> _logger, std::shared_ptr<Version> _version, std::shared_ptr<Config> _config, std::shared_ptr<athenasip::databases::DB> _db,
+          std::shared_ptr<Registrar> _registrar);
 
  public:
   std::shared_ptr<Logger> logger;

@@ -5,10 +5,11 @@
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
 #include "session.h"
-#include "sip_core.h"
-#include "sip_message.h"
 
 #include <iostream>
+
+#include "sip_core.h"
+#include "sip_message.h"
 
 using namespace athenasip::headers;
 using namespace athenasip::types;
@@ -17,8 +18,7 @@ using namespace athenasip::servers;
 
 namespace athenasip {
 
-Session::Session(std::shared_ptr<Logger> logger, std::shared_ptr<SIPCore> core, std::shared_ptr<Connection> connection)
-    : _connection(connection), _core(core) {
+Session::Session(std::shared_ptr<Logger> logger, std::shared_ptr<SIPCore> core, std::shared_ptr<Connection> connection) : _connection(connection), _core(core) {
   _logger = std::make_unique<LoggerScoped>(_connection->transport_name() + "://" + _connection->remote_endpoint_name(), logger);
 }
 
@@ -115,7 +115,7 @@ void Session::send(std::shared_ptr<SIPMessage> message) {
 }
 
 void Session::receive(std::shared_ptr<SIPMessage> message) {
-    _logger->info("> " + message->header->first_line());
+  _logger->info("> " + message->header->first_line());
 
   // cout Incoming (DEBUG)
   // std::cout << ">>>>> ";

@@ -9,18 +9,18 @@
 namespace athenasip {
 
 SIPCore::SIPCore() {}
-SIPCore::SIPCore(std::shared_ptr<Logger> _logger, std::shared_ptr<Version> _version, std::shared_ptr<Config> _config, std::shared_ptr<athenasip::databases::DB> _db, std::shared_ptr<Registrar> registrar)
+SIPCore::SIPCore(std::shared_ptr<Logger> _logger, std::shared_ptr<Version> _version, std::shared_ptr<Config> _config,
+                 std::shared_ptr<athenasip::databases::DB> _db, std::shared_ptr<Registrar> registrar)
     : logger(std::make_shared<LoggerScoped>("core", _logger)), version(_version), config(_config), db(_db), registrar(registrar) {}
 
 void SIPCore::process_message(std::shared_ptr<SIPMessage> message) {
-
   auto response = std::make_shared<SIPMessage>();
 
   // Header Checking
   if (message->header->type == SIPHeader::Type::Request) {
     // Preflight, check basic headers for a request
-    if (!message->header->contains("From") || !message->header->contains("To") || !message->header->contains("Call-ID") ||
-        !message->header->contains("CSeq") || !message->header->contains("Via") || !message->header->contains("Max-Forwards")) {
+    if (!message->header->contains("From") || !message->header->contains("To") || !message->header->contains("Call-ID") || !message->header->contains("CSeq") ||
+        !message->header->contains("Via") || !message->header->contains("Max-Forwards")) {
       logger->info("[Request] - Incomplete Headers, Sending 400 Bad Request");
       response->header->add("Reason", "SIP ;cause=400 ;text=\"Incomplete Headers (Needs From, To, Call-ID, CSeq, Via, Max-Forwards)\"");
       _send(message, 400, "Bad Request");
@@ -29,8 +29,8 @@ void SIPCore::process_message(std::shared_ptr<SIPMessage> message) {
   } else {
     // Preflight, check basic headers for a response based on SIP RFCs (RFC 3261)
     // A SIP response must include: Via, From, To, Call-Id, CSeq, and Content-Length.
-    if (!message->header->contains("Via") || !message->header->contains("From") || !message->header->contains("To") ||
-        !message->header->contains("Call-ID") || !message->header->contains("CSeq") || !message->header->contains("Content-Length")) {
+    if (!message->header->contains("Via") || !message->header->contains("From") || !message->header->contains("To") || !message->header->contains("Call-ID") ||
+        !message->header->contains("CSeq") || !message->header->contains("Content-Length")) {
       response->header->add("Reason", "SIP ;cause=400 ;text=\"Incomplete Headers (Needs From, To, Call-ID, CSeq, Via, Content-Length)\"");
       logger->info("[Response] - Incomplete Headers, Sending 400 Bad Response");
       _send(message, 400, "Bad Request");
@@ -176,7 +176,7 @@ void SIPCore::_send_auth_challenge(std::shared_ptr<SIPMessage> message) {
 
 void SIPCore::_process_message_register(std::shared_ptr<SIPMessage> message) {
   auto response = message->generate_response();
-  
+
   // The Authorization must have been sent
   if (!message->header->contains("Authorization")) {
     logger->debug("REGISTER - No Authorization Header, Sending 401 Unauthorized");
@@ -237,7 +237,6 @@ void SIPCore::_process_message_publish(std::shared_ptr<SIPMessage> message) {
 }
 
 void SIPCore::_process_message_invite(std::shared_ptr<SIPMessage> message) {
-
   auto response = message->generate_response();
 
   if (message->body.empty()) {

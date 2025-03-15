@@ -10,7 +10,9 @@
 
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
@@ -19,8 +21,6 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
-#include <chrono>
-#include <ctime>
 
 namespace athenasip {
 

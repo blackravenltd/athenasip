@@ -24,15 +24,14 @@ using namespace athenasip;
 using namespace athenasip::loggers;
 
 namespace athenasip {
-  class SIPCore;
+class SIPCore;
 }
 
 namespace athenasip::servers {
 
 class Server : public std::enable_shared_from_this<Server> {
  public:
-  Server(std::shared_ptr<Logger> logger, std::shared_ptr<SIPCore> core)
-      : _logger(logger), _core(core) {}
+  Server(std::shared_ptr<Logger> logger, std::shared_ptr<SIPCore> core) : _logger(logger), _core(core) {}
 
   virtual void start() = 0;
   virtual void stop() = 0;

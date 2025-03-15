@@ -178,10 +178,10 @@ std::shared_ptr<DBResult> MySQLDB::query(std::string sql, std::vector<std::any> 
 
   } catch (const mysqlx::Error &ex) {
     res->error = ex.what();
-    _logger->error("SQL: " + sql + " [" + Util::trim(param_strs, ",") + "] Error: " +res->error);
+    _logger->error("SQL: " + sql + " [" + Util::trim(param_strs, ",") + "] Error: " + res->error);
   } catch (std::exception &ex) {
     res->error = ex.what();
-    _logger->error("SQL: " + sql + " [" + Util::trim(param_strs, ",") + "] Error: " +res->error);
+    _logger->error("SQL: " + sql + " [" + Util::trim(param_strs, ",") + "] Error: " + res->error);
   } catch (...) {
     res->error = "Unknown exception";
     _logger->error("Unknown exception occurred.");
@@ -195,18 +195,18 @@ void MySQLDB::close() {
   _session.reset();
 }
 
-  std::string MySQLDB::_to_mysql_datetime_string(const std::chrono::system_clock::time_point& v) {
-    return _to_mysql_datetime_string(std::chrono::system_clock::to_time_t(v));
-  }
+std::string MySQLDB::_to_mysql_datetime_string(const std::chrono::system_clock::time_point &v) {
+  return _to_mysql_datetime_string(std::chrono::system_clock::to_time_t(v));
+}
 
-  std::string MySQLDB::_to_mysql_datetime_string(const std::time_t& v) {
-    // Convert to UTC broken-down time.
-    std::tm tm = *std::gmtime(&v);
-    // Format as ISO8601 (e.g., "2025-03-15T12:34:56Z")
-    std::ostringstream oss;
-    oss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
-    return oss.str();
-  }
+std::string MySQLDB::_to_mysql_datetime_string(const std::time_t &v) {
+  // Convert to UTC broken-down time.
+  std::tm tm = *std::gmtime(&v);
+  // Format as ISO8601 (e.g., "2025-03-15T12:34:56Z")
+  std::ostringstream oss;
+  oss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
+  return oss.str();
+}
 
 // Register with DB Drivers
 static bool mysql_registered = [] {
