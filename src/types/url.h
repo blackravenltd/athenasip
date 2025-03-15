@@ -19,7 +19,7 @@ namespace athenasip::types {
 class URL {
  public:
   std::string scheme;
-  std::optional<std::string> user;
+  std::optional<std::string> username;
   std::optional<std::string> password;
   std::string host;
   std::optional<uint16_t> port;

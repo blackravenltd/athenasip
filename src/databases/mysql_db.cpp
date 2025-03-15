@@ -120,6 +120,16 @@ std::shared_ptr<DBResult> MySQLDB::query(std::string sql, std::vector<std::any> 
         auto v = std::any_cast<char>(params[i]);
         stmt.bind(v);
         param_strs += std::to_string(v) + ",";
+      } else if (params[i].type() == typeid(std::chrono::system_clock::time_point)) {
+        auto v = std::any_cast<std::chrono::system_clock::time_point>(params[i]);
+        auto value = _to_mysql_datetime_string(v);
+        stmt.bind(value);
+        param_strs += value + ",";
+      } else if (params[i].type() == typeid(std::time_t)) {
+        auto v = std::any_cast<std::time_t>(params[i]);
+        auto value = _to_mysql_datetime_string(v);
+        stmt.bind(value);
+        param_strs += value + ",";
       } else {
         throw std::runtime_error("Unsupported parameter type at index " + std::to_string(i) + " (? Name " + params[i].type().name() + ")");
       }
@@ -166,12 +176,12 @@ std::shared_ptr<DBResult> MySQLDB::query(std::string sql, std::vector<std::any> 
       res->rows.push_back(dbRow);
     }
 
-  } catch (const mysqlx::Error &err) {
-    res->error = err.what();
-    _logger->error("SQL: " + sql + " [" + Util::trim(param_strs, ",") + "] Error: " + err.what());
+  } catch (const mysqlx::Error &ex) {
+    res->error = ex.what();
+    _logger->error("SQL: " + sql + " [" + Util::trim(param_strs, ",") + "] Error: " +res->error);
   } catch (std::exception &ex) {
     res->error = ex.what();
-    _logger->error(std::string("Standard Exception: ") + ex.what());
+    _logger->error("SQL: " + sql + " [" + Util::trim(param_strs, ",") + "] Error: " +res->error);
   } catch (...) {
     res->error = "Unknown exception";
     _logger->error("Unknown exception occurred.");
@@ -184,6 +194,19 @@ void MySQLDB::close() {
   _session->close();
   _session.reset();
 }
+
+  std::string MySQLDB::_to_mysql_datetime_string(const std::chrono::system_clock::time_point& v) {
+    return _to_mysql_datetime_string(std::chrono::system_clock::to_time_t(v));
+  }
+
+  std::string MySQLDB::_to_mysql_datetime_string(const std::time_t& v) {
+    // Convert to UTC broken-down time.
+    std::tm tm = *std::gmtime(&v);
+    // Format as ISO8601 (e.g., "2025-03-15T12:34:56Z")
+    std::ostringstream oss;
+    oss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
+    return oss.str();
+  }
 
 // Register with DB Drivers
 static bool mysql_registered = [] {

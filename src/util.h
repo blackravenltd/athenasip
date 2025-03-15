@@ -19,6 +19,8 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <chrono>
+#include <ctime>
 
 namespace athenasip {
 
@@ -33,6 +35,8 @@ class Util {
   static std::filesystem::path expand_path(const std::string& input);
   static bool is_ipv4(const std::string& ipv4);
   static bool is_ipv4_private(const std::string& ipv4);
+  static std::string to_iso8601(const std::chrono::system_clock::time_point& tp);
+  static std::string to_iso8601(const std::time_t& t);
 };
 
 }  // namespace athenasip

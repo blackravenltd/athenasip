@@ -146,4 +146,17 @@ bool Util::is_ipv4(const std::string& ip) {
   return std::regex_match(ip, ipv4Pattern);
 }
 
+std::string Util::to_iso8601(const std::chrono::system_clock::time_point& tp) {
+    return Util::to_iso8601(std::chrono::system_clock::to_time_t(tp));
+}
+
+std::string Util::to_iso8601(const std::time_t& t) {
+    // Convert to UTC broken-down time.
+    std::tm tm = *std::gmtime(&t);
+    // Format as ISO8601 (e.g., "2025-03-15T12:34:56Z")
+    std::ostringstream oss;
+    oss << std::put_time(&tm, "%Y-%m-%dT%H:%M:%SZ");
+    return oss.str();
+}
+
 }  // namespace athenasip

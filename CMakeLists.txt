@@ -19,7 +19,7 @@ include(FetchContent)
 list(APPEND CMAKE_PREFIX_PATH "/usr/local")
 
 # Find Boost libraries - note that Boost.Beast and Boost.JSON are header-only and part of Boost.
-find_package(Boost 1.87 REQUIRED COMPONENTS system thread json)
+find_package(Boost 1.87 REQUIRED COMPONENTS system thread json charconv)
 message(STATUS "Boost Include Directory: ${Boost_INCLUDE_DIRS}")
 
 # Find OpenSSL
@@ -93,6 +93,7 @@ target_link_libraries(athenasip_lib PUBLIC
     Boost::system
     Boost::thread
     Boost::json
+    Boost::charconv
     OpenSSL::SSL
     OpenSSL::Crypto
     mysql::concpp
@@ -118,6 +119,7 @@ target_link_libraries(athenasip PRIVATE
   Boost::system
   Boost::thread
   Boost::json
+  Boost::charconv
   OpenSSL::SSL
   OpenSSL::Crypto
   mysql::concpp

@@ -10,6 +10,8 @@
 
 #include <iomanip>
 #include <string>
+#include <chrono>
+#include <ctime>
 
 #include "../util.h"
 #include "db.h"
@@ -32,6 +34,9 @@ class MySQLDB : public DB {
 
   std::shared_ptr<DBValue> _map_value(const mysqlx::Value &val);
   std::shared_ptr<mysqlx::Session> _session;
+
+  std::string _to_mysql_datetime_string(const std::chrono::system_clock::time_point& v);
+  std::string _to_mysql_datetime_string(const std::time_t& v);
 };
 
 }  // namespace athenasip::databases
