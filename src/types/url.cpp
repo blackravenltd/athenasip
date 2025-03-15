@@ -26,7 +26,7 @@ void URL::parse(const std::string& url) {
       scheme = matches[1];
 
       // User/Password is optional
-      user = matches[2].matched ? std::optional<std::string>{matches[2]} : std::nullopt;
+      username = matches[2].matched ? std::optional<std::string>{matches[2]} : std::nullopt;
       password = matches[3].matched ? std::optional<std::string>{matches[3]} : std::nullopt;
       host = matches[4];
 
@@ -57,8 +57,8 @@ void URL::parse(const std::string& url) {
 
 std::string URL::to_string() const {
   std::string url = scheme + "://";
-  if (user.has_value()) {
-    url += user.value();
+  if (username.has_value()) {
+    url += username.value();
     if (password.has_value()) {
       url += ":" + password.value();
     }
@@ -90,7 +90,7 @@ std::string URL::to_string() const {
 bool URL::is_valid() { return _valid; }
 
 bool operator==(const URL& lhs, const URL& rhs) {
-  return lhs.scheme == rhs.scheme && lhs.user == rhs.user && lhs.password == rhs.password && lhs.host == rhs.host && lhs.port == rhs.port &&
+  return lhs.scheme == rhs.scheme && lhs.username == rhs.username && lhs.password == rhs.password && lhs.host == rhs.host && lhs.port == rhs.port &&
          lhs.path == rhs.path && lhs.query == rhs.query && lhs.fragment == rhs.fragment;
 }
 

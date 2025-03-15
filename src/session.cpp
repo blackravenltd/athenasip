@@ -185,6 +185,7 @@ void Session::_schedule_async_read() {
             _buffer.erase(0, pos + 4);
             // Create a new SIPMessage
             _incoming_message = std::make_shared<SIPMessage>();
+            _incoming_message->session = shared_from_this();
             _incoming_message->source_port = _connection->remote_endpoint().port();
 
             // Get the header

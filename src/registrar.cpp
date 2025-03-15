@@ -56,7 +56,7 @@ bool Registrar::subscriber_register(std::shared_ptr<Subscriber> subscriber, std:
                {subscriber->id, contact->user, contact->realm, contact->port.value_or(0), is_nat});
   } else {
     // Update the row
-    _db->query("UPDATE `location` SET `registered_at` = NOW() WHERE `id` = ?", {subscriber->id});
+    _db->query("UPDATE `location` SET `registered_at` = NOW() WHERE `subscriber_id` = ?", {subscriber->id});
   }
 
   _sessions_by_subscriber[subscriber->id] = session;
@@ -144,7 +144,7 @@ bool Registrar::nonce_check(std::string nonce) {
     return false;
   };
 
-  return res->rows[0]->column_values[0]->as<uint64_t>() == 1;
+  return res->rows[0]->column_values[0]->as<long long>() == 1;
 }
 
 bool Registrar::call_register(std::string callId, std::shared_ptr<Call> call) {

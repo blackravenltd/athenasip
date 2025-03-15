@@ -222,20 +222,18 @@ void SIPCore::_process_message_register(std::shared_ptr<SIPMessage> message) {
   }
 
   // Authorized
-  logger->debug("REGISTER - Authorized, Sending 200 OK");
   response->header->add("Contact", message->header->headers_map["Contact"][0]);
-
   message->contact = message->header->headers_map["Contact"][0]->as<SIPIdentityHeader>()->value->uri;
   logger->info("REGISTER - Authorized, Registering " + message->subscriber->identity->to_string() + " To " + message->contact->to_string());
   registrar->subscriber_register(message->subscriber, message->contact, message->session);
 
-  _send(message, 200, "OK");
+  _send(response, 200, "OK");
 }
 
 void SIPCore::_process_message_publish(std::shared_ptr<SIPMessage> message) {
-  // TODO: Implement PUBLISH
+  auto response = message->generate_response();
 
-  _send(message, 200, "OK");
+  _send(response, 200, "OK");
 }
 
 void SIPCore::_process_message_invite(std::shared_ptr<SIPMessage> message) {
