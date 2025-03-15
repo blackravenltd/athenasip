@@ -14,8 +14,7 @@ using namespace boost::asio::ssl;
 namespace athenasip::servers {
 
 // Modified constructor now takes a bind address parameter
-TCPServer::TCPServer(std::shared_ptr<Logger> logger, std::shared_ptr<SIPCore> core, const std::string &bind_address,
-                     short port)
+TCPServer::TCPServer(std::shared_ptr<Logger> logger, std::shared_ptr<SIPCore> core, const std::string &bind_address, short port)
     : Server(std::make_unique<LoggerScoped>("tcp_server", logger), core),
       _port(port),
       _acceptor(_io_context, ip::tcp::endpoint(ip::make_address(bind_address), port)) {}

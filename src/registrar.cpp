@@ -119,15 +119,15 @@ std::string Registrar::nonce_get() {
   unsigned char hmac_result[EVP_MAX_MD_SIZE];
   unsigned int hmac_len = 0;
 
-  HMAC(EVP_sha256(), config->sip_nonce_secret.c_str(), config->sip_nonce_secret.size(), reinterpret_cast<const unsigned char*>(raw_nonce.c_str()), raw_nonce.size(), hmac_result,
-       &hmac_len);
+  HMAC(EVP_sha256(), config->sip_nonce_secret.c_str(), config->sip_nonce_secret.size(), reinterpret_cast<const unsigned char*>(raw_nonce.c_str()),
+       raw_nonce.size(), hmac_result, &hmac_len);
 
   // Convert HMAC output to hex
   std::string hmac_hex = Util::to_hex(hmac_result, hmac_len);
 
   // Generate expiry
   auto now = std::chrono::system_clock::now();
-  std::chrono::seconds interval(3600); // TODO: Load from config
+  std::chrono::seconds interval(3600);  // TODO: Load from config
   std::time_t expiresAt = std::chrono::system_clock::to_time_t(now + interval);
 
   // Insert a row
@@ -137,7 +137,6 @@ std::string Registrar::nonce_get() {
 }
 
 bool Registrar::nonce_check(std::string nonce) {
-
   std::shared_ptr<DBResult> res = _db->query("SELECT COUNT(*) FROM `nonce` WHERE `id` = ? AND `expires_at` > NOW()", {nonce});
   if (res && res->rows.size() == 0) {
     _logger->error("nonce_check: COUNT(*) returned no rows");

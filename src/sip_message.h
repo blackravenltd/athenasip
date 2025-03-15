@@ -11,8 +11,8 @@
 #include <sstream>
 #include <string>
 
-#include "sip_header.h"
 #include "session.h"
+#include "sip_header.h"
 #include "util.h"
 
 namespace athenasip {
@@ -42,6 +42,7 @@ class SIPMessage {
 
   friend std::string operator+(const SIPMessage& header, const std::string& str);
   friend std::string operator+(const std::string& str, const SIPMessage& header);
+
  private:
 };
 

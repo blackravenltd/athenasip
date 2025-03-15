@@ -6,14 +6,15 @@
 //
 #pragma once
 
+#include <openssl/hmac.h>
+#include <openssl/rand.h>
+
 #include <iostream>
 #include <map>
 #include <optional>
 #include <shared_mutex>
 #include <sstream>
 #include <string>
-#include <openssl/rand.h>
-#include <openssl/hmac.h>
 
 #include "call.h"
 #include "config.h"
