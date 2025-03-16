@@ -104,6 +104,10 @@ target_link_libraries(athenasip_lib PUBLIC
     ${SQLite3_LIBRARIES}
 )
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_link_libraries(athenasip PUBLIC pq)
+endif()
+
 target_compile_features(athenasip_lib PUBLIC cxx_std_17)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

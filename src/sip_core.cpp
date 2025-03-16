@@ -93,7 +93,7 @@ void SIPCore::_process_call_state(std::shared_ptr<SIPMessage> message, std::shar
     if (message->header->request_method == "INVITE") {
       auto sdp = std::make_shared<SDP>();
       if (sdp->parse(message->body)) {
-        _rewrite_sdp(sdp, config->rtprelay_public_address, call->rtp_pair->port_a, call->rtcp_pair->port_a);
+        _rewrite_sdp(sdp, config->rtprelay_public_address, call->rtp_set->port, call->rtcp_set->port);
         logger->debug("[Call " + call->id + "] Modifed SFP for RTPRelay (INVITE, incall)");
         message->body = sdp->to_string();
         // sdp->print();
@@ -108,8 +108,8 @@ void SIPCore::_process_call_state(std::shared_ptr<SIPMessage> message, std::shar
       if (call->state == Call::State::Closing) {
         logger->debug("[Call " + call->id + "] Received ACK, Closed");
         registrar->call_unregister(call->id);
-        call->rtp_pair->stop();
-        call->rtcp_pair->stop();
+        call->rtp_set->stop();
+        call->rtcp_set->stop();
         call.reset();
         return;
       }
@@ -120,8 +120,8 @@ void SIPCore::_process_call_state(std::shared_ptr<SIPMessage> message, std::shar
       if (call->state == Call::State::Closing) {
         logger->info("[Call " + call->id + "] Completed");
         registrar->call_unregister(call->id);
-        call->rtp_pair->stop();
-        call->rtcp_pair->stop();
+        call->rtp_set->stop();
+        call->rtcp_set->stop();
         call.reset();
         return;
       } else if (call->state == Call::State::Ringing) {
@@ -135,7 +135,7 @@ void SIPCore::_process_call_state(std::shared_ptr<SIPMessage> message, std::shar
         auto sdp = std::make_shared<SDP>();
         if (sdp->parse(message->body)) {
           // Rewrite SDP
-          _rewrite_sdp(sdp, registrar->config->rtprelay_public_address, call->rtp_pair->port_b, call->rtcp_pair->port_b);
+          _rewrite_sdp(sdp, registrar->config->rtprelay_public_address, call->rtp_set->port, call->rtcp_set->port);
           logger->debug("[Call " + call->id + "] Modifed SFP for RTPRelay (200)");
           message->body = sdp->to_string();
           // sdp->print();
@@ -277,13 +277,13 @@ void SIPCore::_process_message_invite(std::shared_ptr<SIPMessage> message) {
   call->add_session(message->session);
 
   // Create RTP/RTCP Relay Pair
-  call->rtp_pair = registrar->rtprelay_allocate();
-  call->rtcp_pair = registrar->rtprelay_allocate();
-  call->rtp_pair->start();
-  call->rtcp_pair->start();
+  call->rtp_set = registrar->rtprelay_allocate();
+  call->rtcp_set = registrar->rtprelay_allocate();
+  call->rtp_set->start();
+  call->rtcp_set->start();
 
   // Rewrite SDP
-  _rewrite_sdp(sdp, registrar->config->rtprelay_public_address, call->rtp_pair->port_a, call->rtcp_pair->port_a);
+  _rewrite_sdp(sdp, registrar->config->rtprelay_public_address, call->rtp_set->port, call->rtcp_set->port);
   logger->debug("[Call " + call->id + "] Modifed SFP for RTPRelay (INVITE)");
   message->body = sdp->to_string();
   // sdp->print();

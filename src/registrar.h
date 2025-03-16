@@ -59,8 +59,8 @@ class Registrar {
   std::shared_ptr<Call> call_get(std::string callId);
 
   // RTPRelay
-  std::shared_ptr<rtp::RTPRelayPair> rtprelay_allocate();
-  void rtprelay_release(std::shared_ptr<rtp::RTPRelayPair> relay);
+  std::shared_ptr<rtp::RTPRelaySet> rtprelay_allocate();
+  void rtprelay_release(std::shared_ptr<rtp::RTPRelaySet> relay);
 
   std::shared_ptr<Config> config;
 
