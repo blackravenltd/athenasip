@@ -38,7 +38,8 @@ class DBValue {
     try {
       return std::any_cast<T>(get_any());
     } catch (const std::bad_any_cast &e) {
-      std::cout << "[DEVELOPER] Bad any cast when getting DBValue: " << e.what() << ", cast from " << get_any().type().name() << " to " << typeid(T).name() << std::endl;
+      std::cout << "[DEVELOPER] Bad any cast when getting DBValue: " << e.what() << ", cast from " << get_any().type().name() << " to " << typeid(T).name()
+                << std::endl;
       return T{};
     }
   }

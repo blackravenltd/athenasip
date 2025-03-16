@@ -9,7 +9,6 @@
 using namespace athenasip::databases;
 using namespace athenasip::rtp;
 
-
 namespace athenasip {
 
 Registrar::Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<Config> _config, std::shared_ptr<athenasip::databases::DB> db,
