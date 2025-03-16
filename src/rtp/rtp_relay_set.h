@@ -27,7 +27,7 @@ class RTPRelaySet : public std::enable_shared_from_this<RTPRelaySet> {
   std::unordered_map<std::string, std::shared_ptr<boost::asio::ip::udp::endpoint>> remotes;
   uint16_t port;
 
-  RTPRelaySet(std::shared_ptr<Logger> logger, const std::string &_bind_address, uint16_t _port)
+  RTPRelaySet(std::shared_ptr<Logger> logger, const std::string& _bind_address, uint16_t _port)
       : port(_port),
         bind_address(_bind_address),
         _logger(std::make_shared<LoggerScoped>(_bind_address + ":" + std::to_string(_port), logger)),
@@ -49,53 +49,51 @@ class RTPRelaySet : public std::enable_shared_from_this<RTPRelaySet> {
     auto self = shared_from_this();
     auto sender_endpoint = std::make_shared<boost::asio::ip::udp::endpoint>();
 
-    _socket.async_receive_from(
-        boost::asio::buffer(_buffer), *sender_endpoint,
-        [this, self, sender_endpoint](boost::system::error_code ec, std::size_t bytes_recvd) {
-          // Drop packet if error
-          if (ec) {
-            if (ec != boost::asio::error::operation_aborted) {
-              _logger->error("Socket error: " + ec.what());
-            }
-            return;
-          }
+    _socket.async_receive_from(boost::asio::buffer(_buffer), *sender_endpoint,
+                               [this, self, sender_endpoint](boost::system::error_code ec, std::size_t bytes_recvd) {
+                                 // Drop packet if error
+                                 if (ec) {
+                                   if (ec != boost::asio::error::operation_aborted) {
+                                     _logger->error("Socket error: " + ec.what());
+                                   }
+                                   return;
+                                 }
 
-          // Create a string key from the endpoint
-          auto endpointString = _get_endpoint_str(sender_endpoint);
-          // Use unordered_map::find to check if key exists
-          auto it = remotes.find(endpointString);
+                                 // Create a string key from the endpoint
+                                 auto endpointString = _get_endpoint_str(sender_endpoint);
+                                 // Use unordered_map::find to check if key exists
+                                 auto it = remotes.find(endpointString);
 
-          // Register if first seen
-          if (it == remotes.end()) {
-            _logger->debug("Registered endpoint " + endpointString);
-            remotes.emplace(endpointString, sender_endpoint);
-          }
+                                 // Register if first seen
+                                 if (it == remotes.end()) {
+                                   _logger->debug("Registered endpoint " + endpointString);
+                                   remotes.emplace(endpointString, sender_endpoint);
+                                 }
 
-          // Drop packet if zero length
-          if (bytes_recvd == 0) {
-            boost::asio::post(_io_context, [this]() { read(); });
-            return;
-          }
+                                 // Drop packet if zero length
+                                 if (bytes_recvd == 0) {
+                                   boost::asio::post(_io_context, [this]() { read(); });
+                                   return;
+                                 }
 
-          // If less than two remotes are registered, there's no one else to relay to
-          if (remotes.size() < 2) {
-            boost::asio::post(_io_context, [this]() { read(); });
-            return;
-          }
+                                 // If less than two remotes are registered, there's no one else to relay to
+                                 if (remotes.size() < 2) {
+                                   boost::asio::post(_io_context, [this]() { read(); });
+                                   return;
+                                 }
 
-          // Relay packet to all other registered endpoints
-          for (const auto& remote : remotes) {
-            if (remote.first == endpointString) continue;
-            _socket.async_send_to(
-                boost::asio::buffer(_buffer, bytes_recvd), *(remote.second),
-                [this, self](boost::system::error_code /*ec*/, std::size_t /*bytes_sent*/) {
-                  // No need to handle send result here
-                });
-          }
+                                 // Relay packet to all other registered endpoints
+                                 for (const auto& remote : remotes) {
+                                   if (remote.first == endpointString) continue;
+                                   _socket.async_send_to(boost::asio::buffer(_buffer, bytes_recvd), *(remote.second),
+                                                         [this, self](boost::system::error_code /*ec*/, std::size_t /*bytes_sent*/) {
+                                                           // No need to handle send result here
+                                                         });
+                                 }
 
-          // Prepare for the next read
-          boost::asio::post(_io_context, [this]() { read(); });
-        });
+                                 // Prepare for the next read
+                                 boost::asio::post(_io_context, [this]() { read(); });
+                               });
   }
 
  protected:
