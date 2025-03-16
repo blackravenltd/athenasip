@@ -105,14 +105,10 @@ target_link_libraries(athenasip_lib PUBLIC
 )
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  target_link_libraries(athenasip PUBLIC pq)
+  target_link_libraries(athenasip_lib PUBLIC pq)
 endif()
 
 target_compile_features(athenasip_lib PUBLIC cxx_std_17)
-
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  target_link_libraries(athenasip_lib PUBLIC pq)
-endif()
 
 # Make Main Executable
 add_executable(athenasip ${ATHENA_SOURCES} "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
@@ -133,6 +129,11 @@ target_link_libraries(athenasip PRIVATE
   ${PQXX_LIBRARIES} 
   ${SQLite3_LIBRARIES}
 )
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_link_libraries(athenasip PUBLIC pq)
+endif()
+
 target_compile_features(athenasip PRIVATE cxx_std_17)
 
 if(ATHENA_BUILD_TESTING)
