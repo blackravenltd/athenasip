@@ -36,21 +36,27 @@ std::shared_ptr<DBValue> MySQLDB::_map_value(const mysqlx::Value &val) {
 
   switch (val.getType()) {
     case mysqlx::Value::Type::STRING:
+      // std::cout << "STRING" << std::endl;
       return std::make_shared<DBValueImpl<std::string>>(val.get<std::string>());
 
     case mysqlx::Value::Type::INT64:
+      // std::cout << "INT64" << std::endl;
       return std::make_shared<DBValueImpl<int64_t>>(val.get<int64_t>());
 
     case mysqlx::Value::Type::UINT64:
+      // std::cout << "UINT64" << std::endl;
       return std::make_shared<DBValueImpl<uint64_t>>(val.get<uint64_t>());
 
     case mysqlx::Value::Type::FLOAT:
+      // std::cout << "FLOAT" << std::endl;
       return std::make_shared<DBValueImpl<float>>(val.get<float>());
 
     case mysqlx::Value::Type::DOUBLE:
+      // std::cout << "DOUBLE" << std::endl;
       return std::make_shared<DBValueImpl<double>>(val.get<double>());
 
     case mysqlx::Value::Type::BOOL:
+      // std::cout << "BOOL" << std::endl;
       return std::make_shared<DBValueImpl<bool>>(val.get<bool>());
 
     default:

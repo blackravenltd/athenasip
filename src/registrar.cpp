@@ -9,6 +9,7 @@
 using namespace athenasip::databases;
 using namespace athenasip::rtp;
 
+
 namespace athenasip {
 
 Registrar::Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<Config> _config, std::shared_ptr<athenasip::databases::DB> db,
@@ -22,7 +23,7 @@ bool Registrar::subscriber_exists(std::shared_ptr<SIPIdentity> identity) {
     _logger->warn("DB returned no rows on a COUNT() statement");
     return false;
   } else {
-    return res->rows[0]->column_values[0]->as<uint64_t>() == 1;
+    return res->rows[0]->column_values[0]->as<int64_t>() == 1;
   }
 }
 
@@ -143,7 +144,7 @@ bool Registrar::nonce_check(std::string nonce) {
     return false;
   };
 
-  return res->rows[0]->column_values[0]->as<long long>() == 1;
+  return res->rows[0]->column_values[0]->as<int64_t>() == 1;
 }
 
 bool Registrar::call_register(std::string callId, std::shared_ptr<Call> call) {
@@ -158,8 +159,8 @@ bool Registrar::call_unregister(std::string callId) {
 
 std::shared_ptr<Call> Registrar::call_get(std::string callId) { return _calls[callId]; }
 
-std::shared_ptr<RTPRelayPair> Registrar::rtprelay_allocate() { return _rtprelay->allocate_relay_pair(); }
+std::shared_ptr<RTPRelaySet> Registrar::rtprelay_allocate() { return _rtprelay->allocate_relay_set(); }
 
-void Registrar::rtprelay_release(std::shared_ptr<RTPRelayPair> relay) { _rtprelay->release_relay_pair(relay); }
+void Registrar::rtprelay_release(std::shared_ptr<RTPRelaySet> relay) { _rtprelay->release_relay_set(relay); }
 
 }  // namespace athenasip

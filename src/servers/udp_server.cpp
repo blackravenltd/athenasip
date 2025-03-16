@@ -8,7 +8,7 @@
 
 #include <algorithm>
 #include <boost/asio/ip/address.hpp>
-#include <boost/bind.hpp>
+#include <boost/bind/bind.hpp>
 
 #include "../session.h"
 #include "udp_connection.h"

@@ -15,7 +15,7 @@
 #include "../global_io_context.h"
 #include "../loggers/logger.h"
 #include "../loggers/logger_scoped.h"
-#include "rtp_relay_pair.h"
+#include "rtp_relay_set.h"
 
 namespace athenasip::rtp {
 class RTPRelay : public std::enable_shared_from_this<RTPRelay> {
@@ -38,26 +38,22 @@ class RTPRelay : public std::enable_shared_from_this<RTPRelay> {
     _logger->info("Stopped");
   }
 
-  std::shared_ptr<RTPRelayPair> allocate_relay_pair() {
-    auto port_a = _allocate_port();
-    auto port_b = _allocate_port();
+  std::shared_ptr<RTPRelaySet> allocate_relay_set() {
+    auto port = _allocate_port();
 
-    if (port_a == 0 || port_b == 0) {
-      _release_port(port_a);
-      _release_port(port_b);
+    if (port == 0) {
       _logger->error("Available ports exhausted");
       return nullptr;
     }
 
-    auto relay = std::make_shared<RTPRelayPair>(_logger, _bind_address, port_a, port_b);
+    auto relay = std::make_shared<RTPRelaySet>(_logger, _bind_address, port);
     _relays.insert(relay);
     return relay;
   }
 
-  void release_relay_pair(std::shared_ptr<RTPRelayPair> relay) {
+  void release_relay_set(std::shared_ptr<RTPRelaySet> relay) {
     relay->stop();
-    _release_port(relay->port_a);
-    _release_port(relay->port_b);
+    _release_port(relay->port);
     _relays.erase(relay);
   }
 
@@ -69,7 +65,7 @@ class RTPRelay : public std::enable_shared_from_this<RTPRelay> {
   std::set<uint16_t> _available_ports;
   std::set<uint16_t> _allocated_ports;
 
-  std::set<std::shared_ptr<RTPRelayPair>> _relays;
+  std::set<std::shared_ptr<RTPRelaySet>> _relays;
 
   uint16_t _allocate_port() {
     if (_available_ports.size() == 0) return 0;

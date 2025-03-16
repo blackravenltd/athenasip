@@ -13,7 +13,7 @@
 #include <unordered_map>
 
 #include "headers/header.h"
-#include "rtp/rtp_relay_pair.h"
+#include "rtp/rtp_relay_set.h"
 #include "types/sip_identity.h"
 
 using namespace athenasip::types;
@@ -36,8 +36,8 @@ class Call {
   std::shared_ptr<SIPIdentity> from;
   std::shared_ptr<SIPIdentity> to;
 
-  std::shared_ptr<rtp::RTPRelayPair> rtp_pair;
-  std::shared_ptr<rtp::RTPRelayPair> rtcp_pair;
+  std::shared_ptr<rtp::RTPRelaySet> rtp_set;
+  std::shared_ptr<rtp::RTPRelaySet> rtcp_set;
 
   void add_session(std::shared_ptr<Session> session) { _sessions[session] = true; }
 
