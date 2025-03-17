@@ -19,6 +19,7 @@
 #include "call.h"
 #include "config.h"
 #include "databases/db.h"
+#include "expiry_set.h"
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
 #include "rtp/rtp_relay.h"
@@ -72,6 +73,8 @@ class Registrar {
   std::unordered_map<std::string, std::shared_ptr<Session>> _sessions;
   std::unordered_map<uint64_t, std::shared_ptr<Session>> _sessions_by_subscriber;
   std::shared_mutex _sessions_mutex;
+
+  std::shared_ptr<ExpirySet<std::string>> _nonce_cache;
 
   std::unordered_map<std::string, std::shared_ptr<Call>> _calls;
 };

@@ -6,8 +6,8 @@
 //
 #pragma once
 
-#include "sdp.h"
 #include "rtp/rtp_relay.h"
+#include "sdp.h"
 
 namespace athenasip {
 
@@ -17,15 +17,14 @@ class MediaStream {
  public:
   std::string id;
 
-  std::shared_ptr<Media> sdp_media;
-
   std::shared_ptr<rtp::RTPRelaySet> rtp_set;
   std::shared_ptr<rtp::RTPRelaySet> rtcp_set;
 
   void stop() {
-    if(rtp_set) rtp_set->stop();
-    if(rtcp_set) rtcp_set->stop();
+    if (rtp_set) rtp_set->stop();
+    if (rtcp_set) rtcp_set->stop();
   }
+
  private:
 };
 

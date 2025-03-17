@@ -13,7 +13,11 @@ namespace athenasip {
 
 Registrar::Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<Config> _config, std::shared_ptr<athenasip::databases::DB> db,
                      std::shared_ptr<athenasip::rtp::RTPRelay> rtprelay)
-    : _logger(std::make_unique<LoggerScoped>("registrar", logger)), config(_config), _db(db), _rtprelay(rtprelay) {}
+    : _logger(std::make_unique<LoggerScoped>("registrar", logger)),
+      config(_config),
+      _db(db),
+      _rtprelay(rtprelay),
+      _nonce_cache(std::make_shared<ExpirySet<std::string>>()) {}
 
 bool Registrar::subscriber_exists(std::shared_ptr<SIPIdentity> identity) {
   std::shared_ptr<DBResult> res = _db->query("SELECT COUNT(*) FROM `subscriber` WHERE `user` = ? AND `realm` = ?", {identity->uri->user, identity->uri->realm});
@@ -127,16 +131,23 @@ std::string Registrar::nonce_get() {
 
   // Generate expiry
   auto now = std::chrono::system_clock::now();
-  std::chrono::seconds interval(3600);  // TODO: Load from config
+  std::chrono::seconds interval(config->sip_nonce_expiry);
   std::time_t expiresAt = std::chrono::system_clock::to_time_t(now + interval);
 
-  // Insert a row
+  // Cache result locally (timeout in ms)
+  _nonce_cache->add(raw_nonce, config->sip_nonce_expiry * 1000);
+
+  // Write to DB
   _db->query("INSERT INTO `nonce` (`id`, `expires_at`) VALUES (?,?)", {raw_nonce + ":" + hmac_hex, expiresAt});
 
   return raw_nonce + ":" + hmac_hex;
 }
 
 bool Registrar::nonce_check(std::string nonce) {
+  // Check local cache
+  if (_nonce_cache->contains(nonce)) return true;
+
+  // Do DB
   std::shared_ptr<DBResult> res = _db->query("SELECT COUNT(*) FROM `nonce` WHERE `id` = ? AND `expires_at` > NOW()", {nonce});
   if (res && res->rows.size() == 0) {
     _logger->error("nonce_check: COUNT(*) returned no rows");

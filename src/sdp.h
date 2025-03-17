@@ -6,16 +6,15 @@
 //
 #pragma once
 
+#include <functional>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <vector>
-#include <functional>
 
 #include "./util.h"
 
 namespace athenasip {
-
 
 //
 // Represents a connection field, e.g. "IN IP4 192.168.18.100"
@@ -32,9 +31,7 @@ struct ConnectionInfo {
     return ci;
   }
 
-  std::string to_string() const { 
-    return nettype + " " + addrtype + " " + address; 
-  }
+  std::string to_string() const { return nettype + " " + addrtype + " " + address; }
 };
 
 //
@@ -55,9 +52,7 @@ struct Origin {
     return o;
   }
 
-  std::string to_string() const { 
-    return username + " " + sessionId + " " + sessionVersion + " " + nettype + " " + addrtype + " " + address; 
-  }
+  std::string to_string() const { return username + " " + sessionId + " " + sessionVersion + " " + nettype + " " + addrtype + " " + address; }
 };
 
 //
@@ -114,7 +109,7 @@ struct Media {
   // Extract the "mid" attribute from this media, if present.
   std::string extract_mid() {
     const std::string prefix = "mid:";
-    for (const auto &attr : attributes) {
+    for (const auto& attr : attributes) {
       if (attr.compare(0, prefix.size(), prefix) == 0) {
         return attr.substr(prefix.size());
       }
@@ -125,7 +120,7 @@ struct Media {
   // Extract the codec from the first "rtpmap:" attribute.
   std::string extract_codec() {
     const std::string prefix = "rtpmap:";
-    for (const auto &attr : attributes) {
+    for (const auto& attr : attributes) {
       if (attr.compare(0, prefix.size(), prefix) == 0) {
         // Expected format: "rtpmap:<pt> <codec>/<clockrate>"
         auto pos = attr.find(' ');
@@ -138,11 +133,11 @@ struct Media {
   }
 
   int64_t get_unique_id() {
-      int64_t seed = 0;
-      seed = Util::hash_combine(seed, std::hash<std::string>{}(extract_mid()));
-      seed = Util::hash_combine(seed, std::hash<std::string>{}(description.media));
-      seed = Util::hash_combine(seed, std::hash<std::string>{}(extract_codec()));
-      return seed;
+    int64_t seed = 0;
+    seed = Util::hash_combine(seed, std::hash<std::string>{}(extract_mid()));
+    seed = Util::hash_combine(seed, std::hash<std::string>{}(description.media));
+    seed = Util::hash_combine(seed, std::hash<std::string>{}(extract_codec()));
+    return seed;
   }
 };
 
@@ -321,4 +316,4 @@ class SDP {
   }
 };
 
-}
+}  // namespace athenasip
