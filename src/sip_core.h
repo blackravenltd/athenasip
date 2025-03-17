@@ -19,6 +19,7 @@
 #include "servers/server.h"
 #include "sip_message.h"
 #include "version.h"
+#include "media_stream.h"
 
 namespace athenasip {
 
@@ -43,6 +44,7 @@ class SIPCore {
   void _process_message_register(std::shared_ptr<SIPMessage> message);
   void _process_message_publish(std::shared_ptr<SIPMessage> message);
   void _process_message_invite(std::shared_ptr<SIPMessage> message);
+  void _map_media(std::shared_ptr<Call> call, std::shared_ptr<SDP> sdp);
   void _rewrite_sdp(std::shared_ptr<SDP> sdp, std::string server_address, uint16_t rtp_port, uint16_t rtcp_port);
   void _send(std::shared_ptr<SIPMessage> message, uint16_t code, std::string response_message);
 

@@ -93,7 +93,7 @@ void SIPCore::_process_call_state(std::shared_ptr<SIPMessage> message, std::shar
     if (message->header->request_method == "INVITE") {
       auto sdp = std::make_shared<SDP>();
       if (sdp->parse(message->body)) {
-        _rewrite_sdp(sdp, config->rtprelay_public_address, call->rtp_set->port, call->rtcp_set->port);
+        _map_media(call, sdp);
         logger->debug("[Call " + call->id + "] Modifed SFP for RTPRelay (INVITE, incall)");
         message->body = sdp->to_string();
         // sdp->print();
@@ -108,8 +108,7 @@ void SIPCore::_process_call_state(std::shared_ptr<SIPMessage> message, std::shar
       if (call->state == Call::State::Closing) {
         logger->debug("[Call " + call->id + "] Received ACK, Closed");
         registrar->call_unregister(call->id);
-        call->rtp_set->stop();
-        call->rtcp_set->stop();
+        call->stop_streams();
         call.reset();
         return;
       }
@@ -120,8 +119,7 @@ void SIPCore::_process_call_state(std::shared_ptr<SIPMessage> message, std::shar
       if (call->state == Call::State::Closing) {
         logger->info("[Call " + call->id + "] Completed");
         registrar->call_unregister(call->id);
-        call->rtp_set->stop();
-        call->rtcp_set->stop();
+        call->stop_streams();
         call.reset();
         return;
       } else if (call->state == Call::State::Ringing) {
@@ -135,7 +133,7 @@ void SIPCore::_process_call_state(std::shared_ptr<SIPMessage> message, std::shar
         auto sdp = std::make_shared<SDP>();
         if (sdp->parse(message->body)) {
           // Rewrite SDP
-          _rewrite_sdp(sdp, registrar->config->rtprelay_public_address, call->rtp_set->port, call->rtcp_set->port);
+          _map_media(call, sdp);
           logger->debug("[Call " + call->id + "] Modifed SFP for RTPRelay (200)");
           message->body = sdp->to_string();
           // sdp->print();
@@ -276,18 +274,6 @@ void SIPCore::_process_message_invite(std::shared_ptr<SIPMessage> message) {
   call->to = message->header->headers_map["To"][0]->as<SIPIdentityHeader>()->value;
   call->add_session(message->session);
 
-  // Create RTP/RTCP Relay Pair
-  call->rtp_set = registrar->rtprelay_allocate();
-  call->rtcp_set = registrar->rtprelay_allocate();
-  call->rtp_set->start();
-  call->rtcp_set->start();
-
-  // Rewrite SDP
-  _rewrite_sdp(sdp, registrar->config->rtprelay_public_address, call->rtp_set->port, call->rtcp_set->port);
-  logger->debug("[Call " + call->id + "] Modifed SFP for RTPRelay (INVITE)");
-  message->body = sdp->to_string();
-  // sdp->print();
-
   // Is To: a subscriber?
   auto toSubscriber = registrar->subscriber_get(call->to);
 
@@ -302,7 +288,7 @@ void SIPCore::_process_message_invite(std::shared_ptr<SIPMessage> message) {
   // Is Subscriber Online? TODO: This should query other AthenaSIP Instances if not.
   auto other_session = registrar->subscriber_get_session(toSubscriber);
 
-  // Not Found TODO:Forwarding?
+  // Not Found TODO: Forwarding?
   if (!other_session) {
     call->add_session(other_session);
     logger->debug("INVITE - To: " + call->to->to_string() + " Session Not Found, Sending 404 Not Found");
@@ -310,6 +296,13 @@ void SIPCore::_process_message_invite(std::shared_ptr<SIPMessage> message) {
     return;
   }
 
+  logger->debug("INVITE - Mapping Media..."); 
+
+  // Map Media
+  _map_media(call, sdp);
+  message->body = sdp->to_string();
+
+  // Register Call
   logger->info("Registering Call " + call->id);
   registrar->call_register(call->id, call);
 
@@ -317,24 +310,55 @@ void SIPCore::_process_message_invite(std::shared_ptr<SIPMessage> message) {
   other_session->send(message);
 }
 
-void SIPCore::_rewrite_sdp(std::shared_ptr<SDP> sdp, std::string server_address, uint16_t rtp_port, uint16_t rtcp_port) {
+void SIPCore::_map_media(std::shared_ptr<Call> call, std::shared_ptr<SDP> sdp) {
+
+  // Make us the proxy for everything
   sdp->connection.nettype = "IN";
   sdp->connection.addrtype = "IP4";
-  sdp->connection.address = server_address;
+  sdp->connection.address = registrar->config->rtprelay_public_address;
+
+  // Create RTP/RTCP Relay Pair
   for (auto& media : sdp->mediaDescriptions) {
-    media.description.port = rtp_port;
+    std::shared_ptr<MediaStream> ms;
+    auto id = media.get_unique_id();
+
+    auto it = call->streams.find(id);
+    if(it != call->streams.end()) {
+      ms = it->second;
+      logger->debug("INVITE - Mapping Media - Found Existing stream: "+media.description.to_string());
+      // TODO: Modify existing media stream
+    } else {
+      ms = std::make_shared<MediaStream>();
+      logger->debug("INVITE - Mapping Media - Created stream: "+media.description.to_string());
+
+      // Create a new MediaRelay for this stream and start it
+      ms->rtp_set = registrar->rtprelay_allocate();
+      ms->rtcp_set = registrar->rtprelay_allocate();
+      ms->rtp_set->start();
+      ms->rtcp_set->start();
+    }
+
+    // Fix the port
+    media.description.port = ms->rtp_set->port;
+
+    // Insert into the Streams
+    call->streams.insert({ id, ms });
+
+    // Fix the stream connection details if necessary
     if (media.hasConnection) {
       media.connection.nettype = "IN";
       media.connection.addrtype = "IP4";
-      media.connection.address = server_address;
+      media.connection.address = registrar->config->rtprelay_public_address;
     }
+    // Fix the RTCP port
     for (auto& a : media.attributes) {
       if (a.substr(0, 5) == "rtcp:") {
-        a = "rtcp:" + std::to_string(rtcp_port);
+        a = "rtcp:" + std::to_string(ms->rtcp_set->port);
       }
     }
   }
 }
+
 
 void SIPCore::_send(std::shared_ptr<SIPMessage> message, uint16_t code, std::string response_message) {
   message->header->response_code = code;

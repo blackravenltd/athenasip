@@ -63,17 +63,16 @@ void UDPServer::start_receive() {
   // Store sender endpoint
   auto sender_endpoint = std::make_shared<udp::endpoint>();
 
+  // Start the packet receive
   _socket.async_receive_from(boost::asio::buffer(*buffer), *sender_endpoint,
-                             // The lambda captures our shared objects by value.
                              [this, self, buffer, sender_endpoint](const boost::system::error_code& error, std::size_t bytes_transferred) {
-                               // Delegate the handling to a separate member function.
                                this->handle_receive_from(error, bytes_transferred, buffer, sender_endpoint);
                              });
 }
 
 void UDPServer::handle_receive_from(const boost::system::error_code& error, std::size_t bytes_transferred, std::shared_ptr<std::vector<char>> buffer,
                                     std::shared_ptr<udp::endpoint> sender_endpoint) {
-  auto me = std::static_pointer_cast<UDPServer>(this->shared_from_this());
+  auto self = std::static_pointer_cast<UDPServer>(this->shared_from_this());
 
   // Copy the sender endpoint from the heap.
   auto sender_endpoint_str = sender_endpoint->address().to_string() + ":" + std::to_string(sender_endpoint->port());
@@ -87,7 +86,7 @@ void UDPServer::handle_receive_from(const boost::system::error_code& error, std:
     if (it != _connections.end()) {
       connection = it->second;
     } else {
-      connection = std::make_shared<UDPConnection>(me, _socket.local_endpoint(), *sender_endpoint);
+      connection = std::make_shared<UDPConnection>(self, _socket.local_endpoint(), *sender_endpoint);
       _connections[sender_endpoint_str] = connection;
       _logger->info("New UDP Endpoint Accepted: " + sender_endpoint_str);
 
