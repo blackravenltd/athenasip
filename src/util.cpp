@@ -157,8 +157,6 @@ std::string Util::to_iso8601(const std::time_t& t) {
   return oss.str();
 }
 
-std::size_t Util::hash_combine(std::size_t seed, std::size_t hash_value) {
-  return seed ^ (hash_value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2));
-}
+std::size_t Util::hash_combine(std::size_t seed, std::size_t hash_value) { return seed ^ (hash_value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2)); }
 
 }  // namespace athenasip

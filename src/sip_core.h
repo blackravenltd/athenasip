@@ -14,12 +14,12 @@
 #include "config.h"
 #include "databases/db.h"
 #include "loggers/logger.h"
+#include "media_stream.h"
 #include "registrar.h"
 #include "rtp/rtp_relay.h"
 #include "servers/server.h"
 #include "sip_message.h"
 #include "version.h"
-#include "media_stream.h"
 
 namespace athenasip {
 

@@ -35,7 +35,7 @@ TEST(URLTest, ValidURLWithUserInfoAndPort) {
   URL url("ftp://user:pass@ftp.example.com:2121/files");
   EXPECT_TRUE(url.is_valid());
   EXPECT_EQ(url.scheme, "ftp");
-  EXPECT_EQ(url.user.value(), "user");
+  EXPECT_EQ(url.username.value(), "user");
   EXPECT_EQ(url.password.value(), "pass");
   EXPECT_EQ(url.host, "ftp.example.com");
   EXPECT_TRUE(url.port.has_value());

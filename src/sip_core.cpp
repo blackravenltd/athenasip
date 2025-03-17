@@ -296,7 +296,7 @@ void SIPCore::_process_message_invite(std::shared_ptr<SIPMessage> message) {
     return;
   }
 
-  logger->debug("INVITE - Mapping Media..."); 
+  logger->debug("INVITE - Mapping Media...");
 
   // Map Media
   _map_media(call, sdp);
@@ -311,7 +311,6 @@ void SIPCore::_process_message_invite(std::shared_ptr<SIPMessage> message) {
 }
 
 void SIPCore::_map_media(std::shared_ptr<Call> call, std::shared_ptr<SDP> sdp) {
-
   // Make us the proxy for everything
   sdp->connection.nettype = "IN";
   sdp->connection.addrtype = "IP4";
@@ -323,26 +322,28 @@ void SIPCore::_map_media(std::shared_ptr<Call> call, std::shared_ptr<SDP> sdp) {
     auto id = media.get_unique_id();
 
     auto it = call->streams.find(id);
-    if(it != call->streams.end()) {
+    if (it != call->streams.end()) {
       ms = it->second;
-      logger->debug("INVITE - Mapping Media - Found Existing stream: "+media.description.to_string());
       // TODO: Modify existing media stream
+      logger->debug("INVITE - Mapping Media - Found Existing stream: " + media.description.to_string());
     } else {
+      // Create a new MediaStream
       ms = std::make_shared<MediaStream>();
-      logger->debug("INVITE - Mapping Media - Created stream: "+media.description.to_string());
+      ms->id = id;
 
       // Create a new MediaRelay for this stream and start it
       ms->rtp_set = registrar->rtprelay_allocate();
       ms->rtcp_set = registrar->rtprelay_allocate();
       ms->rtp_set->start();
       ms->rtcp_set->start();
+      logger->debug("INVITE - Mapping Media - Created stream: " + media.description.to_string());
     }
 
     // Fix the port
     media.description.port = ms->rtp_set->port;
 
     // Insert into the Streams
-    call->streams.insert({ id, ms });
+    call->streams.insert({id, ms});
 
     // Fix the stream connection details if necessary
     if (media.hasConnection) {
@@ -358,7 +359,6 @@ void SIPCore::_map_media(std::shared_ptr<Call> call, std::shared_ptr<SDP> sdp) {
     }
   }
 }
-
 
 void SIPCore::_send(std::shared_ptr<SIPMessage> message, uint16_t code, std::string response_message) {
   message->header->response_code = code;
