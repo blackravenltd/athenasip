@@ -126,11 +126,6 @@ std::shared_ptr<DBResult> MySQLDB::query(std::string sql, std::vector<std::any> 
         auto v = std::any_cast<char>(params[i]);
         stmt.bind(v);
         param_strs += std::to_string(v) + ",";
-      } else if (params[i].type() == typeid(std::chrono::system_clock::time_point)) {
-        auto v = std::any_cast<std::chrono::system_clock::time_point>(params[i]);
-        auto value = _to_mysql_datetime_string(v);
-        stmt.bind(value);
-        param_strs += value + ",";
       } else if (params[i].type() == typeid(std::time_t)) {
         auto v = std::any_cast<std::time_t>(params[i]);
         auto value = _to_mysql_datetime_string(v);
@@ -199,10 +194,6 @@ std::shared_ptr<DBResult> MySQLDB::query(std::string sql, std::vector<std::any> 
 void MySQLDB::close() {
   _session->close();
   _session.reset();
-}
-
-std::string MySQLDB::_to_mysql_datetime_string(const std::chrono::system_clock::time_point &v) {
-  return _to_mysql_datetime_string(std::chrono::system_clock::to_time_t(v));
 }
 
 std::string MySQLDB::_to_mysql_datetime_string(const std::time_t &v) {

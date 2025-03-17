@@ -1,11 +1,25 @@
+//
+// AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
+//
+// Copyright (C) 2025 Tom Cully <mail@tomcully.com>
+// Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
+//
 #pragma once
 
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <vector>
+#include <functional>
 
+#include "./util.h"
+
+namespace athenasip {
+
+
+//
 // Represents a connection field, e.g. "IN IP4 192.168.18.100"
+//
 struct ConnectionInfo {
   std::string nettype;   // e.g. "IN"
   std::string addrtype;  // e.g. "IP4"
@@ -18,10 +32,14 @@ struct ConnectionInfo {
     return ci;
   }
 
-  std::string to_string() const { return nettype + " " + addrtype + " " + address; }
+  std::string to_string() const { 
+    return nettype + " " + addrtype + " " + address; 
+  }
 };
 
+//
 // Represents the origin field, e.g. "tom 1744 1438 IN IP4 192.168.18.52"
+//
 struct Origin {
   std::string username;
   std::string sessionId;
@@ -37,10 +55,14 @@ struct Origin {
     return o;
   }
 
-  std::string to_string() const { return username + " " + sessionId + " " + sessionVersion + " " + nettype + " " + addrtype + " " + address; }
+  std::string to_string() const { 
+    return username + " " + sessionId + " " + sessionVersion + " " + nettype + " " + addrtype + " " + address; 
+  }
 };
 
+//
 // Represents the "m=" media description (e.g. "audio 50000 RTP/AVP 96 97 98 0 8 ...")
+//
 struct MediaDescription {
   std::string media;                 // media type (audio, video, etc.)
   uint16_t port;                     // port number
@@ -66,7 +88,9 @@ struct MediaDescription {
   }
 };
 
+//
 // Represents a complete media section, including optional fields like media-level connection.
+//
 struct Media {
   MediaDescription description;
   std::string title;          // i=
@@ -86,8 +110,45 @@ struct Media {
     for (const auto& a : attributes) oss << "a=" << a << "\r\n";
     return oss.str();
   }
+
+  // Extract the "mid" attribute from this media, if present.
+  std::string extract_mid() {
+    const std::string prefix = "mid:";
+    for (const auto &attr : attributes) {
+      if (attr.compare(0, prefix.size(), prefix) == 0) {
+        return attr.substr(prefix.size());
+      }
+    }
+    return "";
+  }
+
+  // Extract the codec from the first "rtpmap:" attribute.
+  std::string extract_codec() {
+    const std::string prefix = "rtpmap:";
+    for (const auto &attr : attributes) {
+      if (attr.compare(0, prefix.size(), prefix) == 0) {
+        // Expected format: "rtpmap:<pt> <codec>/<clockrate>"
+        auto pos = attr.find(' ');
+        if (pos != std::string::npos && pos + 1 < attr.size()) {
+          return attr.substr(pos + 1);
+        }
+      }
+    }
+    return "";
+  }
+
+  int64_t get_unique_id() {
+      int64_t seed = 0;
+      seed = Util::hash_combine(seed, std::hash<std::string>{}(extract_mid()));
+      seed = Util::hash_combine(seed, std::hash<std::string>{}(description.media));
+      seed = Util::hash_combine(seed, std::hash<std::string>{}(extract_codec()));
+      return seed;
+  }
 };
 
+//
+// Represents an entire SDP, including session-level fields and media sections.
+//
 class SDP {
  public:
   // Session-level fields.
@@ -259,3 +320,5 @@ class SDP {
     mediaDescriptions.clear();
   }
 };
+
+}

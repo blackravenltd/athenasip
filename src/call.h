@@ -12,6 +12,7 @@
 #include <string>
 #include <unordered_map>
 
+#include "media_stream.h"
 #include "headers/header.h"
 #include "rtp/rtp_relay_set.h"
 #include "types/sip_identity.h"
@@ -36,8 +37,7 @@ class Call {
   std::shared_ptr<SIPIdentity> from;
   std::shared_ptr<SIPIdentity> to;
 
-  std::shared_ptr<rtp::RTPRelaySet> rtp_set;
-  std::shared_ptr<rtp::RTPRelaySet> rtcp_set;
+  std::unordered_map<int64_t, std::shared_ptr<MediaStream>> streams;
 
   void add_session(std::shared_ptr<Session> session) { _sessions[session] = true; }
 
@@ -50,6 +50,12 @@ class Call {
   void with_all_sessions_except(SessionsFn callback, std::shared_ptr<Session> session) {
     for (const auto& pair : _sessions) {
       if (pair.first != session) callback(pair.first);
+    }
+  }
+
+  void stop_streams() {
+    for (const auto& pair : streams) {
+      pair.second->stop();
     }
   }
 
