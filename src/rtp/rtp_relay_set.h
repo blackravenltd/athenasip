@@ -86,7 +86,7 @@ class RTPRelaySet : public std::enable_shared_from_this<RTPRelaySet> {
                                  for (const auto& remote : remotes) {
                                    if (remote.first == endpointString) continue;
                                    _socket.async_send_to(boost::asio::buffer(_buffer, bytes_recvd), *(remote.second),
-                                                         [this, self](boost::system::error_code /*ec*/, std::size_t /*bytes_sent*/) {
+                                                         [this, self](boost::system::error_code, std::size_t) {
                                                            // No need to handle send result here
                                                          });
                                  }
