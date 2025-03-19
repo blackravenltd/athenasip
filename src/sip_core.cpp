@@ -316,6 +316,9 @@ void SIPCore::_map_media(std::shared_ptr<Call> call, std::shared_ptr<SDP> sdp) {
   sdp->connection.addrtype = "IP4";
   sdp->connection.address = registrar->config->rtprelay_public_address;
 
+  std::cout << "-MapMediaOriginal-" << std::endl;
+  sdp->print();
+
   // Create RTP/RTCP Relay Pair
   for (auto& media : sdp->mediaDescriptions) {
     std::shared_ptr<MediaStream> ms;
@@ -354,10 +357,14 @@ void SIPCore::_map_media(std::shared_ptr<Call> call, std::shared_ptr<SDP> sdp) {
     // Fix the RTCP port
     for (auto& a : media.attributes) {
       if (a.substr(0, 5) == "rtcp:") {
-        a = "rtcp:" + std::to_string(ms->rtcp_set->port);
+        a = "rtcp:" + std::to_string(ms->rtcp_set->port)+" IN IP4 "+registrar->config->rtprelay_public_address;
       }
     }
   }
+
+    std::cout << "-MapMediaModified-" << std::endl;
+  sdp->print();
+    std::cout << "-MapMediaEnd-" << std::endl;
 }
 
 void SIPCore::_send(std::shared_ptr<SIPMessage> message, uint16_t code, std::string response_message) {
