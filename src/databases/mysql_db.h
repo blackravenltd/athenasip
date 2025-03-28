@@ -28,7 +28,7 @@ class MySQLDB : public DB {
   virtual bool connect() override;
   virtual std::shared_ptr<DBResult> query(std::string sql, std::vector<std::any> params) override;
   virtual void close() override;
-   virtual bool is_created() override;
+  virtual bool is_created() override;
 
  private:
   std::shared_ptr<URL> _url;

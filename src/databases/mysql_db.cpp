@@ -196,9 +196,7 @@ void MySQLDB::close() {
   _session.reset();
 }
 
-bool MySQLDB::is_created() {
-  return true;
-}
+bool MySQLDB::is_created() { return true; }
 
 std::string MySQLDB::_to_mysql_datetime_string(const std::time_t &v) {
   // Convert to UTC broken-down time.

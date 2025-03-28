@@ -357,14 +357,14 @@ void SIPCore::_map_media(std::shared_ptr<Call> call, std::shared_ptr<SDP> sdp) {
     // Fix the RTCP port
     for (auto& a : media.attributes) {
       if (a.substr(0, 5) == "rtcp:") {
-        a = "rtcp:" + std::to_string(ms->rtcp_set->port)+" IN IP4 "+registrar->config->rtprelay_public_address;
+        a = "rtcp:" + std::to_string(ms->rtcp_set->port) + " IN IP4 " + registrar->config->rtprelay_public_address;
       }
     }
   }
 
-    std::cout << "-MapMediaModified-" << std::endl;
+  std::cout << "-MapMediaModified-" << std::endl;
   sdp->print();
-    std::cout << "-MapMediaEnd-" << std::endl;
+  std::cout << "-MapMediaEnd-" << std::endl;
 }
 
 void SIPCore::_send(std::shared_ptr<SIPMessage> message, uint16_t code, std::string response_message) {

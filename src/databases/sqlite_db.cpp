@@ -119,9 +119,7 @@ void SQLiteDB::close() {
   }
 }
 
-bool SQLiteDB::is_created() {
-  return true;
-}
+bool SQLiteDB::is_created() { return true; }
 
 // Register with DB Drivers
 static bool sqlite_registered = [] {
