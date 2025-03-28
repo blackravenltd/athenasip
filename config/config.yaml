@@ -40,10 +40,19 @@ db:
   # SQLite
   #url: "sqlite://localhost/~/.athenasip/athena.sqlite"
 
-admin_api:
-  enable: true
+http:
   address: 0.0.0.0
   port: 8080
+  
+  api:
+    enable: true
+
+  files:
+    enable: true
+    path: "../admin/"
+
+  # websocket
+  #   enable: true
 
 scripting:
   language: lua     # 'lua' is the default
