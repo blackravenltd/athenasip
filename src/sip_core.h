@@ -41,6 +41,7 @@ class SIPCore {
   void process_message(std::shared_ptr<SIPMessage> message);
   void _process_call_state(std::shared_ptr<SIPMessage> message, std::shared_ptr<Call> call);
   void _send_auth_challenge(std::shared_ptr<SIPMessage> message);
+  void _process_authorization(std::shared_ptr<SIPMessage> message);
   void _process_message_register(std::shared_ptr<SIPMessage> message);
   void _process_message_publish(std::shared_ptr<SIPMessage> message);
   void _process_message_invite(std::shared_ptr<SIPMessage> message);

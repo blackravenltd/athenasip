@@ -44,6 +44,9 @@ void SIPCore::process_message(std::shared_ptr<SIPMessage> message) {
     via->parameters["rport"] = std::to_string(message->source_port);
   }
 
+  // Is message authenticated?
+  _process_authorization(message);
+
   // Are we in a call?
   auto callId = message->header->headers_map["Call-ID"][0]->as<StringHeader>()->to_string();
   auto call = registrar->call_get(callId);
@@ -155,6 +158,49 @@ void SIPCore::_process_call_state(std::shared_ptr<SIPMessage> message, std::shar
   }
 }
 
+void SIPCore::_process_authorization(std::shared_ptr<SIPMessage> message) {
+
+  message->authenticated = false;
+  message->subscriber = nullptr;
+
+  // The Authorization must have been sent
+  if (!message->header->contains("Authorization")) {
+    return;
+  }
+
+  // Process it and the identity
+  auto incomingAuthHeader = message->header->headers_map["Authorization"][0]->as<AuthorizationHeader>()->value;
+  auto fromIdentity = message->header->headers_map["From"][0]->as<SIPIdentityHeader>()->value;
+
+  // Get Subscriber
+  auto subscriber = registrar->subscriber_get(fromIdentity);
+  if (!subscriber) {
+    logger->debug("Authorize - User " + fromIdentity->to_string() + " Not Found");
+    return;
+  }
+  message->subscriber = subscriber;
+
+  // Check nonce exists
+  auto nonce = incomingAuthHeader->fields["nonce"];
+  if (!registrar->nonce_check(nonce)) {
+    logger->debug("Authorize - User " + fromIdentity->to_string() + " - Nonce not found or expired");
+    return;
+  }
+
+  // Generate H2/H3
+  auto h2 = Util::md5(message->header->request_method+":" + incomingAuthHeader->fields["uri"]);
+  auto const colon = std::string(":");
+  auto h3 = Util::md5(message->subscriber->h1 + colon + nonce + colon + h2);
+
+  // Check match
+  if (h3 != incomingAuthHeader->fields["response"]) {
+    logger->info("Authorize - User " + fromIdentity->to_string() + " - Digest hash does not match");
+    return;
+  }
+
+  message->authenticated = true;
+}
+
 void SIPCore::_send_auth_challenge(std::shared_ptr<SIPMessage> message) {
   auto nonce = registrar->nonce_get();
 
@@ -176,46 +222,9 @@ void SIPCore::_process_message_register(std::shared_ptr<SIPMessage> message) {
   auto response = message->generate_response();
 
   // The Authorization must have been sent
-  if (!message->header->contains("Authorization")) {
-    logger->debug("REGISTER - No Authorization Header, Sending 401 Unauthorized");
-    response->header->add("Reason", "No Authorization header");
-    _send_auth_challenge(response);
-    return;
-  }
-
-  // Process it and the identity
-  auto incomingAuthHeader = message->header->headers_map["Authorization"][0]->as<AuthorizationHeader>()->value;
-  auto fromIdentity = message->header->headers_map["From"][0]->as<SIPIdentityHeader>()->value;
-
-  // Check nonce exists
-  auto nonce = incomingAuthHeader->fields["nonce"];
-  if (!registrar->nonce_check(nonce)) {
-    logger->debug("REGISTER - Nonce not found or expired, Sending 401 Unauthorized");
-    response->header->add("Reason", "Nonce not found or expired");
-    _send_auth_challenge(response);
-    return;
-  }
-
-  // Get Subscriber
-  message->subscriber = registrar->subscriber_get(fromIdentity);
-
-  // Not Found
-  if (!message->subscriber) {
-    logger->debug("REGISTER - User " + fromIdentity->to_string() + " Not Found, Sending 401 Unauthorized");
+  if (!message->authenticated) {
+    logger->debug("REGISTER - Not Authorized, sending challenge");
     _send_auth_challenge(message);
-    return;
-  }
-
-  // Generate H2/H3
-  auto h2 = Util::md5("REGISTER:" + incomingAuthHeader->fields["uri"]);
-  auto const colon = std::string(":");
-  auto h3 = Util::md5(message->subscriber->h1 + colon + nonce + colon + h2);
-
-  // Check match
-  if (h3 != incomingAuthHeader->fields["response"]) {
-    logger->info("REGISTER - User " + fromIdentity->to_string() + " Digest hash does not match, Sending 401 Unauthorized and Closing");
-    _send_auth_challenge(message);
-    message->subscriber = nullptr;
     return;
   }
 
