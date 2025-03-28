@@ -37,3 +37,6 @@
 # Build dir
 build
 external
+
+# Admin System
+admin/*

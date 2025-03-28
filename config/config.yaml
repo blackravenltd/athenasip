@@ -35,7 +35,10 @@ rtprelay:
   port_max: 23000
 
 db:
-  url: "mysql://root@localhost/athenasip"
+  # MySQL
+  url: "mysql://root:wbv8g8nfzsc@localhost/athenasip"
+  # SQLite
+  #url: "sqlite://localhost/~/.athenasip/athena.sqlite"
 
 admin_api:
   enable: true
