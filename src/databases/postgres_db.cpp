@@ -194,9 +194,7 @@ void PostgreSQLDB::close() {
   }
 }
 
-bool PostgreSQLDB::is_created() {
-  return true;
-}
+bool PostgreSQLDB::is_created() { return true; }
 
 // Register with DB Drivers
 static bool postgres_registered = [] {

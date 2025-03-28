@@ -139,19 +139,19 @@ bool Config::load_from_yaml(const std::string &filename) {
   }
 
   // --- Parse the 'db' section ---
-    YAML::Node db = config["db"];
-    if (db) {
-      if(db["url"]) {
-        db_database_url = db["url"].as<std::string>();
-      } else {
-        _logger->error("Missing 'db.url'");
-        return false;
-      }
+  YAML::Node db = config["db"];
+  if (db) {
+    if (db["url"]) {
+      db_database_url = db["url"].as<std::string>();
+    } else {
+      _logger->error("Missing 'db.url'");
+      return false;
+    }
 
-      if (db["create"])
-        db_create = db["create"].as<bool>();
-      else
-        db_create = true;
+    if (db["create"])
+      db_create = db["create"].as<bool>();
+    else
+      db_create = true;
   }
 
   // --- Parse the 'rtprelay' section ---

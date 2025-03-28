@@ -29,14 +29,8 @@ namespace athenasip::api {
 // ----------------------
 
 // Constructor: sets up the listening endpoint and prepares the acceptor.
-AdminAPI::AdminAPI(std::shared_ptr<athenasip::loggers::Logger> logger,
-                   const std::string &bind_address,
-                   unsigned short port)
-    : _logger(std::make_shared<loggers::LoggerScoped>("admin_api",logger)),
-      _bind_address(bind_address),
-      _port(port),
-      _io_context(),
-      _acceptor(_io_context) {
+AdminAPI::AdminAPI(std::shared_ptr<athenasip::loggers::Logger> logger, const std::string& bind_address, unsigned short port)
+    : _logger(std::make_shared<loggers::LoggerScoped>("admin_api", logger)), _bind_address(bind_address), _port(port), _io_context(), _acceptor(_io_context) {
   boost::system::error_code ec;
   tcp::endpoint endpoint(net::ip::make_address(_bind_address, ec), _port);
   if (ec) {
@@ -107,24 +101,20 @@ void AdminAPI::_do_accept() {
 
 // send200end: prepares a 200 OK JSON response and stops further middleware processing.
 HttpMiddleware AdminAPI::send200end() {
-  return [](const http::request<http::string_body>& req,
-            std::shared_ptr<http::response<http::string_body>> res,
-            std::function<void(bool)> next) {
+  return [](const http::request<http::string_body>& req, std::shared_ptr<http::response<http::string_body>> res, std::function<void(bool)> next) {
     res->result(http::status::ok);
     res->set(http::field::server, "AthenaSIP");
     res->set(http::field::content_type, "application/json");
     boost::json::object obj;
     obj["message"] = "OK";
     res->body() = boost::json::serialize(obj);
-    next(false); // Stop processing the middleware chain.
+    next(false);  // Stop processing the middleware chain.
   };
 }
 
 // send400end: prepares a 400 Bad Request JSON response and stops further middleware processing.
 HttpMiddleware AdminAPI::send400end() {
-  return [](const http::request<http::string_body>& req,
-            std::shared_ptr<http::response<http::string_body>> res,
-            std::function<void(bool)> next) {
+  return [](const http::request<http::string_body>& req, std::shared_ptr<http::response<http::string_body>> res, std::function<void(bool)> next) {
     res->result(http::status::bad_request);
     res->set(http::field::server, "AthenaSIP");
     res->set(http::field::content_type, "application/json");
@@ -137,9 +127,7 @@ HttpMiddleware AdminAPI::send400end() {
 }
 
 HttpMiddleware AdminAPI::send404end() {
-  return [](const http::request<http::string_body>& req,
-            std::shared_ptr<http::response<http::string_body>> res,
-            std::function<void(bool)> next) {
+  return [](const http::request<http::string_body>& req, std::shared_ptr<http::response<http::string_body>> res, std::function<void(bool)> next) {
     res->result(http::status::not_found);
     res->set(http::field::server, "AthenaSIP");
     res->set(http::field::content_type, "application/json");
@@ -153,9 +141,7 @@ HttpMiddleware AdminAPI::send404end() {
 
 // send500end: prepares a 500 Internal Server Error JSON response and stops further middleware processing.
 HttpMiddleware AdminAPI::send500end() {
-  return [](const http::request<http::string_body>& req,
-            std::shared_ptr<http::response<http::string_body>> res,
-            std::function<void(bool)> next) {
+  return [](const http::request<http::string_body>& req, std::shared_ptr<http::response<http::string_body>> res, std::function<void(bool)> next) {
     res->result(http::status::internal_server_error);
     res->set(http::field::server, "AthenaSIP");
     res->set(http::field::content_type, "application/json");
@@ -172,39 +158,34 @@ HttpMiddleware AdminAPI::send500end() {
 // ----------------------
 
 // HttpSession constructor: stores the socket and a reference to the server.
-HttpSession::HttpSession(tcp::socket socket, AdminAPI &server)
-    : _socket(std::move(socket)), _server(server) {
-      auto rm = _socket.remote_endpoint();
-      _logger = std::make_shared<loggers::LoggerScoped>(rm.address().to_string()+":"+std::to_string(rm.port()), server._logger);
+HttpSession::HttpSession(tcp::socket socket, AdminAPI& server) : _socket(std::move(socket)), _server(server) {
+  auto rm = _socket.remote_endpoint();
+  _logger = std::make_shared<loggers::LoggerScoped>(rm.address().to_string() + ":" + std::to_string(rm.port()), server._logger);
 }
 
 // Start the session by initiating an asynchronous read.
-void HttpSession::start() { 
-  do_read();
-}
+void HttpSession::start() { do_read(); }
 
 // Asynchronously read an HTTP request.
 void HttpSession::do_read() {
   auto self = shared_from_this();
-  http::async_read(_socket, _buffer, _req,
-                   [this, self](boost::system::error_code ec, std::size_t bytes_transferred) {
-                     (void)bytes_transferred; // Unused
-                     if (!ec) {
-                       // Create a default HTTP response.
-                      _logger->debug(std::string(http::to_string(_req.method()))+" "+std::string(_req.target()));
-                       auto res = std::make_shared<http::response<http::string_body>>(http::status::ok, _req.version());
-                       // Begin processing the middleware chain from index 0.
-                       processMiddlewareChain(0, res);
-                     } else {
-                       _server._logger->error("Error reading request: " + ec.message());
-                     }
-                   });
+  http::async_read(_socket, _buffer, _req, [this, self](boost::system::error_code ec, std::size_t bytes_transferred) {
+    (void)bytes_transferred;  // Unused
+    if (!ec) {
+      // Create a default HTTP response.
+      _logger->debug(std::string(http::to_string(_req.method())) + " " + std::string(_req.target()));
+      auto res = std::make_shared<http::response<http::string_body>>(http::status::ok, _req.version());
+      // Begin processing the middleware chain from index 0.
+      processMiddlewareChain(0, res);
+    } else {
+      _server._logger->error("Error reading request: " + ec.message());
+    }
+  });
 }
 
 // Recursively process the middleware chain.
 // If a middleware calls next(false), the chain stops and the response is sent.
-void HttpSession::processMiddlewareChain(std::size_t index,
-                                           std::shared_ptr<http::response<http::string_body>> res) {
+void HttpSession::processMiddlewareChain(std::size_t index, std::shared_ptr<http::response<http::string_body>> res) {
   if (index < _server.middlewares.size()) {
     auto next = [this, index, res](bool continueChain) {
       if (continueChain) {
@@ -227,13 +208,12 @@ void HttpSession::processMiddlewareChain(std::size_t index,
 // Asynchronously write the response and shutdown the socket.
 void HttpSession::do_write(std::shared_ptr<http::response<http::string_body>> res) {
   auto self = shared_from_this();
-  http::async_write(_socket, *res,
-                    [this, self, res](boost::system::error_code ec, std::size_t) {
-                      _socket.shutdown(tcp::socket::shutdown_send, ec);
-                      if (ec) {
-                        _server._logger->error("Error writing response: " + ec.message());
-                      }
-                    });
+  http::async_write(_socket, *res, [this, self, res](boost::system::error_code ec, std::size_t) {
+    _socket.shutdown(tcp::socket::shutdown_send, ec);
+    if (ec) {
+      _server._logger->error("Error writing response: " + ec.message());
+    }
+  });
 }
 
-}  // namespace api
+}  // namespace athenasip::api
