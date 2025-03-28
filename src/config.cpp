@@ -192,29 +192,42 @@ bool Config::load_from_yaml(const std::string &filename) {
     }
   }
 
-  // --- Parse the 'admin_api' section ---
-  YAML::Node admin_api = config["admin_api"];
-  if (admin_api) {
-    if (admin_api["enable"])
-      admin_api_enable = admin_api["enable"].as<bool>();
+  // --- Parse the 'http' section ---
+  YAML::Node http = config["http"];
+  if (http) {
+    if (http["address"])
+      http_address = http["address"].as<std::string>();
     else
-      admin_api_enable = true;
+      http_address = "0.0.0.0";
 
-    if (admin_api["address"])
-      admin_api_address = admin_api["address"].as<std::string>();
-    else
-      admin_api_address = "0.0.0.0";
-
-    if (admin_api["port"]) {
+    if (http["port"]) {
       try {
-        admin_api_port = admin_api["port"].as<uint16_t>();
+        http_port = http["port"].as<uint16_t>();
       } catch (const std::exception &e) {
-        _logger->error("Invalid value for 'admin_api.port': " + std::string(e.what()));
+        _logger->error("Invalid value for 'http.port': " + std::string(e.what()));
         return false;
       }
     } else {
-      _logger->error("Missing 'admin_api.port'");
+      _logger->error("Missing 'http.port'");
       return false;
+    }
+
+    YAML::Node http_api = http["api"];
+    if(http_api) {
+      if (http_api["enable"])
+        http_api_enable = http_api["enable"].as<bool>();
+      else
+        http_api_enable = true;
+    }
+
+    YAML::Node http_files = http["files"];
+    if(http_files) {
+      if (http_files["enable"])
+        http_files_enable = http_files["enable"].as<bool>();
+      else
+        http_files_enable = true;
+
+      if (http_files["path"]) http_files_path = http_files["path"].as<std::string>();
     }
   }
 

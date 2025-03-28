@@ -83,8 +83,9 @@ int main(int argc, char* argv[]) {
   lua_scripting->start();
 
   // Create the TLSServer instance with the logger and start it on the specified port
+  std::shared_ptr<athenasip::servers::TLSServer> tlsServer;
   if (core->config->tls_enable) {
-    auto tlsServer = std::make_shared<athenasip::servers::TLSServer>(core->logger, core, core->config->tls_address, core->config->tls_port);
+    tlsServer = std::make_shared<athenasip::servers::TLSServer>(core->logger, core, core->config->tls_address, core->config->tls_port);
     // Set Certificates
     if (!tlsServer->set_certificates(core->config->tls_cert_pem_filename, core->config->tls_key_pem_filename)) {
       core->logger->error("Cannot load TLS certificates");
@@ -96,28 +97,35 @@ int main(int argc, char* argv[]) {
   }
 
   // Create the TCPServer instance with the logger and start it on the specified port
+  std::shared_ptr<athenasip::servers::TCPServer> tcpServer;
   if (core->config->tcp_enable) {
-    auto tcpServer = std::make_shared<athenasip::servers::TCPServer>(core->logger, core, core->config->tcp_address, core->config->tcp_port);
+    tcpServer = std::make_shared<athenasip::servers::TCPServer>(core->logger, core, core->config->tcp_address, core->config->tcp_port);
     core->servers.push_back(tcpServer);
     tcpServer->start();
   }
 
   // Create the UDPServer instance with the logger and start it on the specified port
+  std::shared_ptr<athenasip::servers::UDPServer> udpServer;
   if (core->config->udp_enable) {
-    auto udpServer = std::make_shared<athenasip::servers::UDPServer>(core->logger, core, core->config->udp_address, core->config->udp_port);
+    udpServer = std::make_shared<athenasip::servers::UDPServer>(core->logger, core, core->config->udp_address, core->config->udp_port);
     core->servers.push_back(udpServer);
     udpServer->start();
   }
 
   // HTTP Admin API
-  auto admin_server = std::make_shared<athenasip::api::AdminAPI>(core->logger, core->config->admin_api_address, core->config->admin_api_port);
+  std::shared_ptr<athenasip::api::AdminAPI> adminServer;
 
-  StaticOptions so;
-
-  admin_server->middlewares.push_back(athenasip::api::StaticMiddleware::add("/Users/tom/devroot/athenasip/admin", so));
-  admin_server->middlewares.push_back(athenasip::api::AdminAPI::send404end());
-
-  admin_server->start();
+  if(core->config->http_api_enable || core->config->http_files_enable) {
+    adminServer = std::make_shared<athenasip::api::AdminAPI>(core->logger, core->config->http_address, core->config->http_port);
+    if(core->config->http_api_enable) {
+    }
+    if(core->config->http_files_enable) {
+      StaticOptions so;
+      adminServer->middlewares.push_back(athenasip::api::StaticMiddleware::add("/Users/tom/devroot/athenasip/admin", so));
+    }
+    adminServer->middlewares.push_back(athenasip::api::AdminAPI::send404end());
+    adminServer->start();
+  }
 
   // Wait for Signals
   boost::asio::io_context signal_wait_context;
