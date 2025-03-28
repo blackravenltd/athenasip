@@ -12,6 +12,7 @@
 #include <string>
 
 #include "api/admin_api.h"
+#include "api/static_middleware.h"
 #include "config.h"
 #include "databases/db.h"
 #include "loggers/logger_scoped.h"
@@ -110,6 +111,12 @@ int main(int argc, char* argv[]) {
 
   // HTTP Admin API
   auto admin_server = std::make_shared<athenasip::api::AdminAPI>(core->logger, core->config->admin_api_address, core->config->admin_api_port);
+
+  StaticOptions so;
+
+  admin_server->middlewares.push_back(athenasip::api::StaticMiddleware::add("/Users/tom/devroot/athenasip/admin", so));
+  admin_server->middlewares.push_back(athenasip::api::AdminAPI::send404end());
+
   admin_server->start();
 
   // Wait for Signals

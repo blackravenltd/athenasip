@@ -92,6 +92,7 @@ class DB {
   virtual bool connect() = 0;
   virtual std::shared_ptr<DBResult> query(std::string sql, std::vector<std::any> params) = 0;
   virtual void close() = 0;
+  virtual bool is_created() = 0;
 
   // Register a Database Driver
   template <typename T, typename = std::enable_if_t<std::is_base_of<DB, T>::value>>

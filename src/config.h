@@ -48,6 +48,7 @@ class Config {
 
   // DB configuration
   std::string db_database_url;  // e.g. "mysql://root@localhost/"
+  bool db_create = false;
 
   // SQLLite configuration (optional)
   bool sqlite_create_database;  // sqllite.create_database - True if the database should be created
