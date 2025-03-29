@@ -18,7 +18,6 @@
 
 #include "../loggers/logger.h"
 #include "../loggers/logger_scoped.h"
-#include "./http_types.h"
 
 namespace athenasip::api {
 
@@ -52,6 +51,8 @@ class AdminAPI {
 
   // Static helper middleware functions for common responses.
   // These functions return a middleware that sends the appropriate HTTP response and stops the chain.
+  static HttpMiddleware sendStatusEnd(uint16_t code, std::string message);
+
   static HttpMiddleware send200end();
   static HttpMiddleware send400end();
   static HttpMiddleware send404end();
