@@ -99,59 +99,22 @@ void AdminAPI::_do_accept() {
 // Static Helper Middleware Functions
 // ------------------------------
 
-// send200end: prepares a 200 OK JSON response and stops further middleware processing.
-HttpMiddleware AdminAPI::send200end() {
-  return [](const http::request<http::string_body>& req, std::shared_ptr<http::response<http::string_body>> res, std::function<void(bool)> next) {
-    res->result(http::status::ok);
+// sendStatusEnd: set HTTP status and message and end
+HttpMiddleware AdminAPI::sendStatusEnd(uint16_t code, std::string message) {
+  return [code, message](const http::request<http::string_body>& req, std::shared_ptr<http::response<http::string_body>> res, std::function<void(bool)> next) {
+    res->result(code);
     res->set(http::field::server, "AthenaSIP");
     res->set(http::field::content_type, "application/json");
     boost::json::object obj;
-    obj["message"] = "OK";
-    res->body() = boost::json::serialize(obj);
-    next(false);  // Stop processing the middleware chain.
-  };
-}
-
-// send400end: prepares a 400 Bad Request JSON response and stops further middleware processing.
-HttpMiddleware AdminAPI::send400end() {
-  return [](const http::request<http::string_body>& req, std::shared_ptr<http::response<http::string_body>> res, std::function<void(bool)> next) {
-    res->result(http::status::bad_request);
-    res->set(http::field::server, "AthenaSIP");
-    res->set(http::field::content_type, "application/json");
-    boost::json::object obj;
-    obj["code"] = 400;
-    obj["message"] = "Bad Request";
+    obj["message"] = message;
     res->body() = boost::json::serialize(obj);
     next(false);
   };
 }
-
-HttpMiddleware AdminAPI::send404end() {
-  return [](const http::request<http::string_body>& req, std::shared_ptr<http::response<http::string_body>> res, std::function<void(bool)> next) {
-    res->result(http::status::not_found);
-    res->set(http::field::server, "AthenaSIP");
-    res->set(http::field::content_type, "application/json");
-    boost::json::object obj;
-    obj["code"] = 404;
-    obj["message"] = "Not Found";
-    res->body() = boost::json::serialize(obj);
-    next(false);
-  };
-}
-
-// send500end: prepares a 500 Internal Server Error JSON response and stops further middleware processing.
-HttpMiddleware AdminAPI::send500end() {
-  return [](const http::request<http::string_body>& req, std::shared_ptr<http::response<http::string_body>> res, std::function<void(bool)> next) {
-    res->result(http::status::internal_server_error);
-    res->set(http::field::server, "AthenaSIP");
-    res->set(http::field::content_type, "application/json");
-    boost::json::object obj;
-    obj["code"] = 500;
-    obj["message"] = "Internal Server Error";
-    res->body() = boost::json::serialize(obj);
-    next(false);
-  };
-}
+HttpMiddleware AdminAPI::send200end() { return AdminAPI::sendStatusEnd(200,"OK"); }
+HttpMiddleware AdminAPI::send400end() { return AdminAPI::sendStatusEnd(400,"Bad Request"); }
+HttpMiddleware AdminAPI::send404end() { return AdminAPI::sendStatusEnd(404,"Not Found"); }
+HttpMiddleware AdminAPI::send500end() { return AdminAPI::sendStatusEnd(500,"Internal Server Error"); }
 
 // ----------------------
 // HttpSession Implementation
