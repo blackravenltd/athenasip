@@ -83,7 +83,7 @@ void TLSServer::_handle_accept(const boost::system::error_code& error, std::shar
       return;
     }
 
-    // Create TLSSession from connection
+    // Create Session from connection
     auto new_session = std::make_shared<Session>(_logger->base_logger(), _core, new_connection);
     _logger->info("Incoming TLS Connection Accepted: " + new_connection->remote_endpoint_name());
 

@@ -23,6 +23,7 @@
 #include "servers/tcp_server.h"
 #include "servers/tls_server.h"
 #include "servers/udp_server.h"
+#include "servers/websocket_server.h"
 #include "sip_core.h"
 #include "util.h"
 #include "version.h"
@@ -55,7 +56,8 @@ int main(int argc, char* argv[]) {
 
   // Create Config
   core->config = std::make_shared<Config>(core->logger);
-  core->config->load_from_yaml(Util::expand_path("~/.athenasip/config.yaml"));
+  // core->config->load_from_yaml(Util::expand_path("~/.athenasip/config.yaml"));
+  core->config->load_from_yaml(Util::expand_path("/Users/tom/.athenasip/config.yaml"));
 
   // Create DB
   core->db = athenasip::databases::DB::create_driver(core->logger, core->config->db_database_url);
@@ -112,20 +114,28 @@ int main(int argc, char* argv[]) {
     udpServer->start();
   }
 
-  // HTTP Admin API
-  std::shared_ptr<athenasip::api::AdminAPI> adminServer;
-
-  if(core->config->http_api_enable || core->config->http_files_enable) {
-    adminServer = std::make_shared<athenasip::api::AdminAPI>(core->logger, core->config->http_address, core->config->http_port);
-    if(core->config->http_api_enable) {
-    }
-    if(core->config->http_files_enable) {
-      StaticOptions so;
-      adminServer->middlewares.push_back(athenasip::api::StaticMiddleware::add("/Users/tom/devroot/athenasip/admin", so));
-    }
-    adminServer->middlewares.push_back(athenasip::api::AdminAPI::send404end());
-    adminServer->start();
+  // Create the Websocket instance with the logger and start it on the specified port
+  std::shared_ptr<athenasip::servers::WebsocketServer> websocketServer;
+  if (core->config->websocket_enable) {
+    websocketServer = std::make_shared<athenasip::servers::WebsocketServer>(core->logger, core, core->config->websocket_address, core->config->websocket_port);
+    core->servers.push_back(websocketServer);
+    websocketServer->start();
   }
+
+  // HTTP Admin API
+  // std::shared_ptr<athenasip::api::AdminAPI> adminServer;
+
+  // if(core->config->http_api_enable || core->config->http_files_enable) {
+  //   adminServer = std::make_shared<athenasip::api::AdminAPI>(core->logger, core->config->http_address, core->config->http_port);
+  //   if(core->config->http_api_enable) {
+  //   }
+  //   if(core->config->http_files_enable) {
+  //     StaticOptions so;
+  //     adminServer->middlewares.push_back(athenasip::api::StaticMiddleware::add("/Users/tom/devroot/athenasip/admin", so));
+  //   }
+  //   adminServer->middlewares.push_back(athenasip::api::AdminAPI::send404end());
+  //   adminServer->start();
+  // }
 
   // Wait for Signals
   boost::asio::io_context signal_wait_context;

@@ -22,8 +22,7 @@ UDPServer::UDPServer(std::shared_ptr<Logger> logger, std::shared_ptr<SIPCore> co
     : Server(std::make_unique<LoggerScoped>("udp_server", logger), core),
       _io_context(),
       _socket(_io_context, udp::endpoint(ip::make_address(bind_address), port)),
-      _port(port),
-      _nonce_secret(nonce_secret) {}
+      _port(port) {}
 
 void UDPServer::start() {
   _logger->debug("Starting...");

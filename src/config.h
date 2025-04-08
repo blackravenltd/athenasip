@@ -46,6 +46,11 @@ class Config {
   std::string udp_address;  // e.g. "127.0.0.1"
   uint16_t udp_port = 0;    // e.g. 5060
 
+  // UDP Configuration
+  bool websocket_enable;
+  std::string websocket_address;  // e.g. "127.0.0.1"
+  uint16_t websocket_port = 0;    // e.g. 5060
+
   // DB configuration
   std::string db_database_url;  // e.g. "mysql://root@localhost/"
   bool db_create = false;

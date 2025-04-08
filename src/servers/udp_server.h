@@ -42,7 +42,6 @@ class UDPServer : public Server {
   boost::asio::ip::udp::socket _socket;
   uint16_t _port;
   std::shared_ptr<std::thread> _thread;
-  std::string _nonce_secret;
 
   // Mapping from remote endpoint key to UDPConnection.
   std::unordered_map<std::string, std::shared_ptr<UDPConnection>> _connections;
