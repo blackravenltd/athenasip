@@ -159,7 +159,6 @@ void SIPCore::_process_call_state(std::shared_ptr<SIPMessage> message, std::shar
 }
 
 void SIPCore::_process_authorization(std::shared_ptr<SIPMessage> message) {
-
   message->authenticated = false;
   message->subscriber = nullptr;
 
@@ -188,7 +187,7 @@ void SIPCore::_process_authorization(std::shared_ptr<SIPMessage> message) {
   }
 
   // Generate H2/H3
-  auto h2 = Util::md5(message->header->request_method+":" + incomingAuthHeader->fields["uri"]);
+  auto h2 = Util::md5(message->header->request_method + ":" + incomingAuthHeader->fields["uri"]);
   auto const colon = std::string(":");
   auto h3 = Util::md5(message->subscriber->h1 + colon + nonce + colon + h2);
 

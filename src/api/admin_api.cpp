@@ -111,10 +111,10 @@ HttpMiddleware AdminAPI::sendStatusEnd(uint16_t code, std::string message) {
     next(false);
   };
 }
-HttpMiddleware AdminAPI::send200end() { return AdminAPI::sendStatusEnd(200,"OK"); }
-HttpMiddleware AdminAPI::send400end() { return AdminAPI::sendStatusEnd(400,"Bad Request"); }
-HttpMiddleware AdminAPI::send404end() { return AdminAPI::sendStatusEnd(404,"Not Found"); }
-HttpMiddleware AdminAPI::send500end() { return AdminAPI::sendStatusEnd(500,"Internal Server Error"); }
+HttpMiddleware AdminAPI::send200end() { return AdminAPI::sendStatusEnd(200, "OK"); }
+HttpMiddleware AdminAPI::send400end() { return AdminAPI::sendStatusEnd(400, "Bad Request"); }
+HttpMiddleware AdminAPI::send404end() { return AdminAPI::sendStatusEnd(404, "Not Found"); }
+HttpMiddleware AdminAPI::send500end() { return AdminAPI::sendStatusEnd(500, "Internal Server Error"); }
 
 // ----------------------
 // HttpSession Implementation

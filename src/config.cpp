@@ -112,7 +112,7 @@ bool Config::load_from_yaml(const std::string &filename) {
     }
   }
 
-  // --- Parse the 'tls' section ---
+  // --- Parse the 'udp' section ---
   YAML::Node udp = config["udp"];
   if (udp) {
     if (udp["enable"])
@@ -134,6 +134,32 @@ bool Config::load_from_yaml(const std::string &filename) {
       }
     } else {
       _logger->error("Missing 'udp.port'");
+      return false;
+    }
+  }
+
+  // --- Parse the 'websocket' section ---
+  YAML::Node websocket = config["websocket"];
+  if (websocket) {
+    if (websocket["enable"])
+      websocket_enable = websocket["enable"].as<bool>();
+    else
+      websocket_enable = true;
+
+    if (websocket["address"])
+      websocket_address = websocket["address"].as<std::string>();
+    else
+      websocket_address = "0.0.0.0";
+
+    if (websocket["port"]) {
+      try {
+        websocket_port = websocket["port"].as<uint16_t>();
+      } catch (const std::exception &e) {
+        _logger->error("Invalid value for 'websocket.port': " + std::string(e.what()));
+        return false;
+      }
+    } else {
+      _logger->error("Missing 'websocket.port'");
       return false;
     }
   }
@@ -213,7 +239,7 @@ bool Config::load_from_yaml(const std::string &filename) {
     }
 
     YAML::Node http_api = http["api"];
-    if(http_api) {
+    if (http_api) {
       if (http_api["enable"])
         http_api_enable = http_api["enable"].as<bool>();
       else
@@ -221,7 +247,7 @@ bool Config::load_from_yaml(const std::string &filename) {
     }
 
     YAML::Node http_files = http["files"];
-    if(http_files) {
+    if (http_files) {
       if (http_files["enable"])
         http_files_enable = http_files["enable"].as<bool>();
       else
