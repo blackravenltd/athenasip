@@ -30,7 +30,8 @@ namespace servers {
 WebsocketConnection::WebsocketConnection(std::unique_ptr<websocket::stream<tcp::socket>> ws) : _ws(std::move(ws)) {}
 
 bool WebsocketConnection::start() {
-  // With an already-upgraded connection, there is nothing else to do.
+  _local_endpoint = _ws->next_layer().local_endpoint();
+  _remote_endpoint = _ws->next_layer().remote_endpoint();
   return true;
 }
 
@@ -40,16 +41,6 @@ void WebsocketConnection::async_read_some(boost::asio::mutable_buffer buffer, st
 
 void WebsocketConnection::async_write_some(boost::asio::const_buffer buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) {
   _ws->async_write_some(true, buffer, handler);
-}
-
-boost::asio::ip::tcp::endpoint WebsocketConnection::remote_endpoint() {
-  if (_ws) return _ws->next_layer().remote_endpoint();
-  return boost::asio::ip::tcp::endpoint();
-}
-
-boost::asio::ip::tcp::endpoint WebsocketConnection::local_endpoint() {
-  if (_ws) return _ws->next_layer().local_endpoint();
-  return boost::asio::ip::tcp::endpoint();
 }
 
 bool WebsocketConnection::is_open() {
