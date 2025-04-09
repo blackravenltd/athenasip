@@ -199,9 +199,7 @@ void MySQLDB::close() {
 bool MySQLDB::is_created() { return true; }
 
 std::string MySQLDB::_to_mysql_datetime_string(const std::time_t &v) {
-  // Convert to UTC broken-down time.
-  std::tm tm = *std::gmtime(&v);
-  // Format as ISO8601 (e.g., "2025-03-15T12:34:56Z")
+  std::tm tm = *std::localtime(&v);
   std::ostringstream oss;
   oss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
   return oss.str();

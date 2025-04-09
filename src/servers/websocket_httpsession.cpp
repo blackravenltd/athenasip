@@ -30,8 +30,8 @@ void WebsocketHTTPSession::on_read(boost::system::error_code ec, std::size_t) {
 
   _logger->debug(std::string(http::to_string(_req.method())) + " " + std::string(_req.target()));
 
-  // Validate that the request is a GET for "/ws" and that it is a WebSocket upgrade.
-  if (_req.method() == http::verb::get && _req.target() == "/ws" && websocket::is_upgrade(_req)) {
+  // Validate that the request is a GET for "/" and that it is a WebSocket upgrade.
+  if (_req.method() == http::verb::get && _req.target() == "/" && websocket::is_upgrade(_req)) {
     do_upgrade();
     return;
   }
@@ -53,13 +53,19 @@ void WebsocketHTTPSession::on_read(boost::system::error_code ec, std::size_t) {
 void WebsocketHTTPSession::do_upgrade() {
   // Create a new WebSocket stream by transferring ownership of the TCP socket.
   auto ws = std::make_unique<websocket::stream<tcp::socket>>(std::move(*_socket));
+
+  // Set a decorator to ensure that the "sip" subprotocol is included in the handshake.
+  ws->set_option(websocket::stream_base::decorator([](websocket::response_type &res) {
+    // Advertise the "sip" subprotocol.
+    res.set(http::field::sec_websocket_protocol, "sip");
+  }));
+
   // Perform the asynchronous WebSocket handshake using the HTTP request.
   auto self = shared_from_this();
   ws->async_accept(_req, [this, ws = std::move(ws), self](boost::system::error_code ec) mutable {
-    if (ec) {
-      // On handshake error, the session ends.
-      return;
-    }
+    // On error, stop and let it clean up.
+    if (ec) return;
+
     // On successful upgrade, create a WebsocketConnection using the upgraded stream.
     auto connection = std::make_shared<WebsocketConnection>(std::move(ws));
     connection->start();
