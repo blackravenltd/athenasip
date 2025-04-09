@@ -32,18 +32,23 @@ bool Config::load_from_yaml(const std::string &filename) {
   }
   YAML::Node sip = config["sip"];
 
-  if (sip["realm"])
+  if (sip["realm"]) {
     sip_realm = sip["realm"].as<std::string>();
-  else {
+  } else {
     _logger->error("Missing 'sip.realm'");
     return false;
   }
 
-  if (sip["nonce_secret"])
+  if (sip["nonce_secret"]) {
     sip_nonce_secret = sip["nonce_secret"].as<std::string>();
-  else {
+  } else {
     _logger->error("Missing 'sip.nonce_secret'");
     return false;
+  }
+
+  // Optional
+  if (sip["nonce_expiry"]) {
+    sip_nonce_expiry = sip["nonce_expiry"].as<uint64_t>();
   }
 
   // --- Parse the 'tls' section ---

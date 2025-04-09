@@ -30,14 +30,15 @@ class ExpirySet : public std::enable_shared_from_this<ExpirySet<T>> {
     // Create a lambda that will be invoked when the delayed task expires.
     // It captures a shared pointer to this ExpirySet and the item by value.
     auto self = this->shared_from_this();
-    auto task = [self, item]() -> int {
-      // Remove the item from the set once the timer expires.
-      self->remove(item);
-      return 0;  // the result is unused.
-    };
 
     // Create and schedule the delayed task.
-    auto delayedTask = DelayedTask<int>::schedule(task, expiryMs);
+    auto delayedTask = DelayedTask<int>::schedule(
+        [self, item]() {
+          // Remove the item from the set once the timer expires.
+          self->remove(item);
+          return 0;  // the result is unused.
+        },
+        expiryMs);
 
     // Insert the new delayed task.
     {
