@@ -4,18 +4,6 @@
 // Copyright (C) 2025 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
-//
-// AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
-//
-// Copyright (C) 2025 Tom Cully <mail@tomcully.com>
-// Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
-//
-//
-// AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
-//
-// Copyright (C) 2025 Tom Cully <mail@tomcully.com>
-// Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
-//
 #include "websocket_connection.h"
 
 #include <algorithm>
@@ -58,7 +46,7 @@ void WebsocketConnection::close() {
   if (_ws) _ws->close(boost::beast::websocket::close_code::normal, ec);
 }
 
-std::string WebsocketConnection::transport_name() const { return "websocket"; }
+std::string WebsocketConnection::transport_name() const { return "ws"; }
 
 }  // namespace servers
 }  // namespace athenasip
