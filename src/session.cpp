@@ -98,7 +98,10 @@ void Session::send(std::shared_ptr<SIPMessage> message) {
   }
 
   // Add Record-Route so we stay in the dialog
-  message->header->add("Record-Route", "<sip:" + _core->registrar->config->rtprelay_public_address + ";transport=" + _connection->transport_name() + ";lr>");
+  message->header->remove_value("Record-Route", [this, server_endpoint](std::shared_ptr<Header> header) { return true; });
+  message->header->remove_value("record-route", [this, server_endpoint](std::shared_ptr<Header> header) { return true; });
+  message->header->remove_value("Record-route", [this, server_endpoint](std::shared_ptr<Header> header) { return true; });
+  message->header->add("Record-Route", "<sip:192.168.0.17;transport=" + _connection->transport_name() + ";lr>");
 
   // Reset Length to body length
   message->header->clear("Content-Length");
@@ -108,14 +111,14 @@ void Session::send(std::shared_ptr<SIPMessage> message) {
   _logger->info("< " + message->header->first_line());
 
   // cout Outgoing (DEBUG)
-  // std::cout << "<<<<< ";
-  // message->print();
+  //  message->print();
 
   _schedule_async_write(message->to_string());
 }
 
 void Session::receive(std::shared_ptr<SIPMessage> message) {
   _logger->info("> " + message->header->first_line());
+  message->session = shared_from_this();
 
   // cout Incoming (DEBUG)
   // std::cout << ">>>>> ";

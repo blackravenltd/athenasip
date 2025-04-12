@@ -30,7 +30,7 @@ std::shared_ptr<SIPMessage> SIPMessage::generate_response() {
 
   // Fields
   response->session = session;
-  response->callID = callID;
+  response->call = call;
   response->contact = contact;
 
   // Add From/To Headers

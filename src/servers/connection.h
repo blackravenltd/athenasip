@@ -32,6 +32,11 @@ class Connection {
     return rep.address().to_string() + ":" + std::to_string(rep.port());
   }
 
+  virtual std::string local_endpoint_name() {
+    auto rep = local_endpoint();
+    return rep.address().to_string() + ":" + std::to_string(rep.port());
+  }
+
   virtual bool is_open() = 0;
 
   virtual void shutdown() = 0;

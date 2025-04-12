@@ -23,16 +23,11 @@ using tcp = boost::asio::ip::tcp;
 
 class WebsocketConnection : public Connection, public std::enable_shared_from_this<WebsocketConnection> {
  public:
-  // NEW: Constructor now takes an already-upgraded WebSocket stream.
   explicit WebsocketConnection(std::unique_ptr<websocket::stream<tcp::socket>> ws);
 
-  // With an already-upgraded connection, start() is a no-op.
   virtual bool start() override;
 
-  // Reads an entire message into a temporary buffer then copies up to the user-supplied buffer capacity.
   virtual void async_read_some(boost::asio::mutable_buffer buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) override;
-
-  // Writes the provided data as one complete WebSocket message.
   virtual void async_write_some(boost::asio::const_buffer buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) override;
 
   virtual boost::asio::ip::tcp::endpoint local_endpoint() override { return _local_endpoint; }
