@@ -48,26 +48,26 @@ void SIPCore::process_message(std::shared_ptr<SIPMessage> message) {
   _process_authorization(message);
 
   // Are we in a call?
-  auto callId = message->header->headers_map["Call-ID"][0]->as<StringHeader>()->to_string();
-  auto call = registrar->call_get(callId);
+  if (message->header->contains("Call-ID")) {
+    auto callId = message->header->headers_map["Call-ID"][0]->as<StringHeader>()->to_string();
+    message->call = registrar->call_get(callId);
+  }
 
-  if (call) {
+  if (message->call) {
     // Add Session to call if there is one
-    if (!call->contains_session(message->session)) {
-      logger->info("[Call " + call->id + "] Adding This Session");
-      call->add_session(message->session);
+    if (!message->call->contains_session(message->session)) {
+      logger->info("[Call " + message->call->id + "] Adding This Session");
+      message->call->add_session(message->session);
     }
 
     // Process Call State
-    _process_call_state(message, call);
+    _process_call_state(message, message->call);
 
     // Forward messages to other SIPCores
-    call->with_all_sessions_except(
-        [this, message, call](std::shared_ptr<Session> other_session) {
-          // Forward message to this SIPCore
-          other_session->send(message);
-        },
-        message->session);
+    message->call->with_all_sessions([this, message](std::shared_ptr<Session> other_session) {
+      // Forward message to this SIPCore
+      if (message->session != other_session) other_session->send(message);
+    });
 
     // Free up request/response
     message.reset();
@@ -324,8 +324,8 @@ void SIPCore::_map_media(std::shared_ptr<Call> call, std::shared_ptr<SDP> sdp) {
   sdp->connection.addrtype = "IP4";
   sdp->connection.address = registrar->config->rtprelay_public_address;
 
-  std::cout << "-MapMediaOriginal-" << std::endl;
-  sdp->print();
+  // std::cout << "-MapMediaOriginal-" << std::endl;
+  // sdp->print();
 
   // Create RTP/RTCP Relay Pair
   for (auto& media : sdp->mediaDescriptions) {
@@ -370,9 +370,9 @@ void SIPCore::_map_media(std::shared_ptr<Call> call, std::shared_ptr<SDP> sdp) {
     }
   }
 
-  std::cout << "-MapMediaModified-" << std::endl;
-  sdp->print();
-  std::cout << "-MapMediaEnd-" << std::endl;
+  // std::cout << "-MapMediaModified-" << std::endl;
+  // sdp->print();
+  // std::cout << "-MapMediaEnd-" << std::endl;
 }
 
 void SIPCore::_send(std::shared_ptr<SIPMessage> message, uint16_t code, std::string response_message) {

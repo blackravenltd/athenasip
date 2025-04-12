@@ -11,6 +11,7 @@
 #include <sstream>
 #include <string>
 
+#include "call.h"
 #include "session.h"
 #include "sip_header.h"
 #include "util.h"
@@ -28,9 +29,9 @@ class SIPMessage {
 
   // Derived Information
   std::string branch;
-  std::string callID;
   uint16_t source_port;
   std::shared_ptr<Session> session;
+  std::shared_ptr<Call> call;
   std::shared_ptr<Subscriber> subscriber;
   std::shared_ptr<SIPUri> contact;
   bool authenticated = false;

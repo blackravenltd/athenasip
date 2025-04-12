@@ -41,16 +41,10 @@ class Call {
 
   void add_session(std::shared_ptr<Session> session) { _sessions[session] = true; }
 
-  bool contains_session(std::shared_ptr<Session> session) { return _sessions[session]; }
+  bool contains_session(std::shared_ptr<Session> session) { return _sessions.find(session) != _sessions.end(); }
 
   void with_all_sessions(SessionsFn callback) {
     for (const auto& pair : _sessions) callback(pair.first);
-  }
-
-  void with_all_sessions_except(SessionsFn callback, std::shared_ptr<Session> session) {
-    for (const auto& pair : _sessions) {
-      if (pair.first != session) callback(pair.first);
-    }
   }
 
   void stop_streams() {

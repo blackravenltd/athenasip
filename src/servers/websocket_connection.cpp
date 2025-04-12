@@ -24,15 +24,25 @@ bool WebsocketConnection::start() {
 }
 
 void WebsocketConnection::async_read_some(boost::asio::mutable_buffer buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) {
-  _ws->async_read_some(buffer, handler);
+  auto self = shared_from_this();
+  _ws->async_read_some(buffer, [this, self, handler](boost::system::error_code ec, std::size_t length) {
+    // Rationalise close error code
+    if (ec == websocket::error::closed) ec = boost::asio::error::eof;
+    handler(ec, length);
+  });
 }
 
 void WebsocketConnection::async_write_some(boost::asio::const_buffer buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) {
-  _ws->async_write_some(true, buffer, handler);
+  auto self = shared_from_this();
+  _ws->async_write_some(true, buffer, [this, self, handler](boost::system::error_code ec, std::size_t length) {
+    // Rationalise close error code
+    if (ec == websocket::error::closed) ec = boost::asio::error::eof;
+    handler(ec, length);
+  });
 }
 
 bool WebsocketConnection::is_open() {
-  if (_ws) return _ws->next_layer().is_open();
+  if (_ws) return _ws->is_open();
   return false;
 }
 
