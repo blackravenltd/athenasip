@@ -38,7 +38,6 @@
 #include "headers/via_header.h"
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
-#include "registrar.h"
 #include "sdp.h"
 #include "servers/connection.h"
 #include "sip_header.h"

@@ -4,19 +4,18 @@
 // Copyright (C) 2025 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
-
-#include "internal_event_system.h"
+#include "local_event_system.h"
 
 #include <boost/asio/post.hpp>
 
 namespace athenasip::events {
 
-InternalEventSystem::InternalEventSystem(std::shared_ptr<athenasip::loggers::Logger> logger)
+LocalEventSystem::LocalEventSystem(std::shared_ptr<athenasip::loggers::Logger> logger)
     : _logger(std::make_shared<loggers::LoggerScoped>("internal_event_system", logger)), _io_context(detail::getGlobalIOContext()) {}
 
-InternalEventSystem::~InternalEventSystem() {}
+LocalEventSystem::~LocalEventSystem() {}
 
-void InternalEventSystem::start(std::function<void(bool)> callback) {
+void LocalEventSystem::start(std::function<void(bool)> callback) {
   auto self = shared_from_this();
   _logger->info("Started");
   if (callback) {
@@ -24,7 +23,7 @@ void InternalEventSystem::start(std::function<void(bool)> callback) {
   }
 }
 
-void InternalEventSystem::stop(std::function<void(bool)> callback) {
+void LocalEventSystem::stop(std::function<void(bool)> callback) {
   auto self = shared_from_this();
   // Kill all subscriptions.
   unsubscribe_all(nullptr);
@@ -34,7 +33,7 @@ void InternalEventSystem::stop(std::function<void(bool)> callback) {
   _logger->info("Stopped");
 }
 
-void InternalEventSystem::publish(std::string event_name, std::string message, std::function<void(bool)> callback) {
+void LocalEventSystem::publish(std::string event_name, std::string message, std::function<void(bool)> callback) {
   auto self = shared_from_this();
   _logger->debug("Publishing event: " + event_name + " with message: " + message);
 
@@ -65,9 +64,9 @@ void InternalEventSystem::publish(std::string event_name, std::string message, s
   }
 }
 
-std::shared_ptr<Subscription> InternalEventSystem::subscribe(std::string event_name,
-                                                             std::function<void(std::string event_name, std::string message)> event_callback,
-                                                             std::function<void(bool)> callback) {
+std::shared_ptr<Subscription> LocalEventSystem::subscribe(std::string event_name,
+                                                          std::function<void(std::string event_name, std::string message)> event_callback,
+                                                          std::function<void(bool)> callback) {
   auto self = shared_from_this();
   _logger->debug("Subscribing to event: " + event_name);
   auto sub = std::make_shared<Subscription>(event_name, event_callback);
@@ -84,7 +83,7 @@ std::shared_ptr<Subscription> InternalEventSystem::subscribe(std::string event_n
   return sub;
 }
 
-void InternalEventSystem::unsubscribe(std::shared_ptr<Subscription> subscription, std::function<void(bool)> callback) {
+void LocalEventSystem::unsubscribe(std::shared_ptr<Subscription> subscription, std::function<void(bool)> callback) {
   auto self = shared_from_this();
   {
     std::lock_guard<std::mutex> lock(_subscriptions_mutex);
@@ -101,7 +100,7 @@ void InternalEventSystem::unsubscribe(std::shared_ptr<Subscription> subscription
   }
 }
 
-void InternalEventSystem::unsubscribe_all(std::function<void(bool)> callback) {
+void LocalEventSystem::unsubscribe_all(std::function<void(bool)> callback) {
   auto self = shared_from_this();
   _logger->debug("Unsubscribing all subscriptions");
   {

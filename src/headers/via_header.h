@@ -19,12 +19,6 @@ namespace athenasip::headers {
 
 class ViaHeader : public Header {
  public:
-  // Public members representing parts of the SIP Via header.
-  // For example, given:
-  //   "SIP/2.0/TLS client.example.com;branch=z9hG4bK776asdhds"
-  // version  -> "SIP/2.0/TLS"
-  // host     -> "client.example.com"
-  // parameters -> { {"branch", "z9hG4bK776asdhds"} }
   std::string version;
   std::string host;
   std::unordered_map<std::string, std::string> parameters;
@@ -32,11 +26,8 @@ class ViaHeader : public Header {
   ViaHeader() = default;
   explicit ViaHeader(const std::string& value) { parse(value); }
 
-  // Parses a Via header string into version, host, and parameters.
-  // Returns true if parsing is successful.
   bool parse(const std::string& value);
 
-  // Returns the Via header as a string.
   std::string to_string() const;
 };
 

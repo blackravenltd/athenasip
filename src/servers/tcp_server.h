@@ -15,9 +15,9 @@ namespace athenasip::servers {
 
 class TCPServer : public Server {
  public:
-  TCPServer(std::shared_ptr<Logger> logger, std::shared_ptr<SIPCore> core, const std::string &bind_address, short port);
+  TCPServer(std::shared_ptr<Logger> logger, const std::string &bind_address, short port);
 
-  void start() override;
+  void start(std::shared_ptr<SIPCore> core) override;
   void stop() override;
 
  protected:

@@ -15,12 +15,14 @@
 namespace athenasip {
 namespace servers {
 
-WebsocketServer::WebsocketServer(std::shared_ptr<Logger> logger, std::shared_ptr<SIPCore> core, const std::string &bind_address, short port)
-    : Server(std::make_shared<LoggerScoped>("websocket_server", logger), core),
+WebsocketServer::WebsocketServer(std::shared_ptr<Logger> logger, const std::string &bind_address, short port)
+    : Server(std::make_shared<LoggerScoped>("websocket_server", logger)),
       _port(port),
       _acceptor(_io_context, boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address(bind_address), port)) {}
 
-void WebsocketServer::start() {
+void WebsocketServer::start(std::shared_ptr<SIPCore> core) {
+  _core = core;
+
   _logger->debug("Starting WebSocket Server...");
   boost::asio::post(_io_context, [this]() {
     _logger->info("Listening on " + _acceptor.local_endpoint().address().to_string() + ":" + std::to_string(_port) + " (WebSocket)");
