@@ -11,12 +11,22 @@ using namespace athenasip::rtp;
 
 namespace athenasip {
 
+void Registrar::server_register(std::shared_ptr<servers::Server> server) { _servers.push_back(server); }
+
+void Registrar::server_start_all(std::shared_ptr<SIPCore> core) {
+  for (auto &server : _servers) server->start(core);
+}
+
+void Registrar::server_stop_all() {
+  for (auto &server : _servers) server->stop();
+}
+
 Registrar::Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<Config> _config, std::shared_ptr<athenasip::databases::DB> db,
-                     std::shared_ptr<athenasip::rtp::RTPRelay> rtprelay)
+                     std::shared_ptr<events::EventSystem> events)
     : _logger(std::make_unique<LoggerScoped>("registrar", logger)),
       config(_config),
       _db(db),
-      _rtprelay(rtprelay),
+      _events(events),
       _nonce_cache(std::make_shared<ExpirySet<std::string>>()) {}
 
 bool Registrar::subscriber_exists(std::shared_ptr<SIPIdentity> identity) {
@@ -79,6 +89,8 @@ bool Registrar::subscriber_unregister(std::shared_ptr<Subscriber> subscriber, st
 
 std::shared_ptr<Session> Registrar::subscriber_get_session(std::shared_ptr<Subscriber> subscriber) { return _sessions_by_subscriber[subscriber->id]; }
 
+// Sessions
+
 bool Registrar::session_register(std::string endpoint, std::shared_ptr<Session> session) {
   std::lock_guard<std::shared_mutex> lock(_sessions_mutex);
   _sessions[endpoint] = session;
@@ -103,6 +115,8 @@ void Registrar::session_close_all() {
   lock.unlock();
 }
 
+// Nonce
+
 std::string Registrar::nonce_get() {
   std::array<unsigned char, 16> random_bytes;
 
@@ -123,7 +137,7 @@ std::string Registrar::nonce_get() {
   unsigned char hmac_result[EVP_MAX_MD_SIZE];
   unsigned int hmac_len = 0;
 
-  HMAC(EVP_sha256(), config->sip_nonce_secret.c_str(), config->sip_nonce_secret.size(), reinterpret_cast<const unsigned char*>(raw_nonce.c_str()),
+  HMAC(EVP_sha256(), config->sip_nonce_secret.c_str(), config->sip_nonce_secret.size(), reinterpret_cast<const unsigned char *>(raw_nonce.c_str()),
        raw_nonce.size(), hmac_result, &hmac_len);
 
   // Convert HMAC output to hex
@@ -157,6 +171,26 @@ bool Registrar::nonce_check(std::string nonce) {
   return res->rows[0]->column_values[0]->as<int64_t>() == 1;
 }
 
+// Transactions
+
+bool Registrar::transaction_register(std::string transactionId, std::shared_ptr<Transaction> transaction) {
+  _transactions[transactionId] = transaction;
+  return true;
+}
+
+bool Registrar::transaction_unregister(std::string transactionId) {
+  _transactions.erase(transactionId);
+  return true;
+}
+
+std::shared_ptr<Transaction> Registrar::transaction_get(std::string transactionId) {
+  auto search = _transactions.find(transactionId);
+  if (search == _transactions.end()) return nullptr;
+  return search->second;
+}
+
+// Calls
+
 bool Registrar::call_register(std::string callId, std::shared_ptr<Call> call) {
   _calls[callId] = call;
   return true;
@@ -167,10 +201,41 @@ bool Registrar::call_unregister(std::string callId) {
   return true;
 }
 
-std::shared_ptr<Call> Registrar::call_get(std::string callId) { return _calls[callId]; }
+std::shared_ptr<Call> Registrar::call_get(std::string callId) {
+  auto search = _calls.find(callId);
+  if (search == _calls.end()) return nullptr;
+  return search->second;
+}
 
-std::shared_ptr<RTPRelaySet> Registrar::rtprelay_allocate() { return _rtprelay->allocate_relay_set(); }
+// RTP Relays
 
-void Registrar::rtprelay_release(std::shared_ptr<RTPRelaySet> relay) { _rtprelay->release_relay_set(relay); }
+void Registrar::rtprelay_register(std::shared_ptr<rtp::RTPRelay> relay) { _rtprelay = relay; }
+
+void Registrar::rtprelay_start() {
+  if (_rtprelay) _rtprelay->start();
+}
+void Registrar::rtprelay_stop() {
+  if (_rtprelay) _rtprelay->stop();
+}
+
+void Registrar::admin_register(std::shared_ptr<api::AdminAPI> adminAPI) { _adminAPI = adminAPI; }
+
+void Registrar::admin_start() {
+  if (_adminAPI) _adminAPI->start();
+}
+
+void Registrar::admin_stop() {
+  if (_adminAPI) _adminAPI->stop();
+}
+
+std::shared_ptr<RTPRelaySet> Registrar::rtprelay_allocate() {
+  if (!_rtprelay) return nullptr;
+  return _rtprelay->allocate_relay_set();
+}
+
+void Registrar::rtprelay_release(std::shared_ptr<RTPRelaySet> relay) {
+  if (!_rtprelay) return;
+  _rtprelay->release_relay_set(relay);
+}
 
 }  // namespace athenasip

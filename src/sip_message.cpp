@@ -1,12 +1,17 @@
-/*
+//
 // AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
 //
 // Copyright (C) 2025 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
-*/
+//
 #include "sip_message.h"
 
+#include "headers/cseq_header.h"
+#include "headers/via_header.h"
+
 namespace athenasip {
+
+using namespace athenasip::headers;
 
 // Default constructor
 SIPMessage::SIPMessage() {}
@@ -20,6 +25,14 @@ std::string SIPMessage::to_string() const {
 }
 
 void SIPMessage::print() const { std::cout << Util::trim(to_string()) << std::endl; }
+
+std::string SIPMessage::get_transaction_id() {
+  // Transaction ID = transaction_id = topmost_Via.branch + CSeq.method
+  auto via = header->headers_map["Via"][0]->as<ViaHeader>();
+  auto cseq = header->headers_map["CSeq"][0]->as<CSeqHeader>();
+
+  return via->parameters["branch"] + cseq->method;
+}
 
 std::shared_ptr<SIPMessage> SIPMessage::generate_response() {
   // Create Response

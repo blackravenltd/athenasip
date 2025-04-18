@@ -15,6 +15,7 @@
 #include "api/static_middleware.h"
 #include "config.h"
 #include "databases/db.h"
+#include "events/local_event_system.h"
 #include "loggers/logger_scoped.h"
 #include "loggers/logger_stdio.h"
 #include "registrar.h"
@@ -40,102 +41,102 @@ void wait_for_signal(boost::asio::signal_set& signals, boost::asio::io_context& 
 }
 
 int main(int argc, char* argv[]) {
-  // SIP Core Container
-  auto core = std::make_shared<SIPCore>();
-
   // This is v0.0.1
-  core->version = std::make_shared<Version>(0, 0, 1);
+  auto version = std::make_shared<Version>(0, 0, 1);
 
   // Create Logger
-  core->logger = std::make_shared<athenasip::loggers::LoggerStdIO>(LogLevel::DEBUG);
+  auto logger = std::make_shared<loggers::LoggerStdIO>(LogLevel::DEBUG);
 
   // Log Splash
-  core->logger->raw("-----------------------------------");
-  core->logger->raw(" AthenaSIP v" + core->version->to_string());
-  core->logger->raw("-----------------------------------");
+  logger->raw("-----------------------------------");
+  logger->raw(" AthenaSIP v" + version->to_string());
+  logger->raw("-----------------------------------");
 
   // Create Config
-  core->config = std::make_shared<Config>(core->logger);
-  // core->config->load_from_yaml(Util::expand_path("~/.athenasip/config.yaml"));
-  core->config->load_from_yaml(Util::expand_path("/Users/tom/.athenasip/config.yaml"));
+  auto config = std::make_shared<Config>(logger);
+  // config->load_from_yaml(Util::expand_path("~/.athenasip/config.yaml"));
+  config->load_from_yaml(Util::expand_path("/Users/tom/.athenasip/config.yaml"));
 
   // Create DB
-  core->db = athenasip::databases::DB::create_driver(core->logger, core->config->db_database_url);
-  if (!core->db) {
-    core->logger->error("Unknown database scheme");
+  auto db = databases::DB::create_driver(logger, config->db_database_url);
+  if (!db) {
+    logger->error("Unknown database scheme");
     return -2;
   }
-  if (!core->db->connect()) {
-    core->logger->error("Database Connection Failed");
+  if (!db->connect()) {
+    logger->error("Database Connection Failed");
     return -3;
   }
 
-  // Start RTPRelay
-  if (core->config->rtprelay_enable) {
-    core->rtprelay =
-        std::make_shared<rtp::RTPRelay>(core->logger, core->config->rtprelay_address, core->config->rtprelay_min_port, core->config->rtprelay_max_port);
-    core->rtprelay->start();
-  }
+  // Events
+  std::shared_ptr<events::EventSystem> eventengine;
+  // TODO: Other event systems boot here
+  if (!eventengine) eventengine = std::make_shared<events::LocalEventSystem>(logger);
+  eventengine->start(nullptr);
 
   // Create Registrar
-  core->registrar = std::make_shared<Registrar>(core->logger, core->config, core->db, core->rtprelay);
+  auto registrar = std::make_shared<Registrar>(logger, config, db, eventengine);
+
+  // Start RTPRelay
+  if (config->rtprelay_enable) {
+    auto rtprelay = std::make_shared<rtp::RTPRelay>(logger, config->rtprelay_address, config->rtprelay_min_port, config->rtprelay_max_port);
+    registrar->rtprelay_register(rtprelay);
+    registrar->rtprelay_start();
+  }
 
   // Script Engine
-  auto lua_scripting = std::make_shared<script::LuaScriptEngine>(core->logger);
-  lua_scripting->start();
-
-  // Create the TLSServer instance with the logger and start it on the specified port
-  std::shared_ptr<athenasip::servers::TLSServer> tlsServer;
-  if (core->config->tls_enable) {
-    tlsServer = std::make_shared<athenasip::servers::TLSServer>(core->logger, core, core->config->tls_address, core->config->tls_port);
-    // Set Certificates
-    if (!tlsServer->set_certificates(core->config->tls_cert_pem_filename, core->config->tls_key_pem_filename)) {
-      core->logger->error("Cannot load TLS certificates");
-      core->db->close();
-      return -4;
-    }
-    core->servers.push_back(tlsServer);
-    tlsServer->start();
-  }
-
-  // Create the TCPServer instance with the logger and start it on the specified port
-  std::shared_ptr<athenasip::servers::TCPServer> tcpServer;
-  if (core->config->tcp_enable) {
-    tcpServer = std::make_shared<athenasip::servers::TCPServer>(core->logger, core, core->config->tcp_address, core->config->tcp_port);
-    core->servers.push_back(tcpServer);
-    tcpServer->start();
-  }
-
-  // Create the UDPServer instance with the logger and start it on the specified port
-  std::shared_ptr<athenasip::servers::UDPServer> udpServer;
-  if (core->config->udp_enable) {
-    udpServer = std::make_shared<athenasip::servers::UDPServer>(core->logger, core, core->config->udp_address, core->config->udp_port);
-    core->servers.push_back(udpServer);
-    udpServer->start();
-  }
-
-  // Create the Websocket instance with the logger and start it on the specified port
-  std::shared_ptr<athenasip::servers::WebsocketServer> websocketServer;
-  if (core->config->websocket_enable) {
-    websocketServer = std::make_shared<athenasip::servers::WebsocketServer>(core->logger, core, core->config->websocket_address, core->config->websocket_port);
-    core->servers.push_back(websocketServer);
-    websocketServer->start();
-  }
+  auto scripting = std::make_shared<script::LuaScriptEngine>(logger);
+  scripting->start();
 
   // HTTP Admin API
-  // std::shared_ptr<athenasip::api::AdminAPI> adminServer;
+  if (config->http_api_enable || config->http_files_enable) {
+    auto adminAPI = std::make_shared<api::AdminAPI>(logger, config->http_address, config->http_port);
+    if (config->http_api_enable) {
+    }
+    if (config->http_files_enable) {
+      StaticOptions so;
+      adminAPI->middlewares.push_back(api::StaticMiddleware::add("/Users/tom/devroot/athenasip/admin", so));
+    }
+    adminAPI->middlewares.push_back(api::AdminAPI::send404end());
+    registrar->admin_register(adminAPI);
+    registrar->admin_start();
+  }
 
-  // if(core->config->http_api_enable || core->config->http_files_enable) {
-  //   adminServer = std::make_shared<athenasip::api::AdminAPI>(core->logger, core->config->http_address, core->config->http_port);
-  //   if(core->config->http_api_enable) {
-  //   }
-  //   if(core->config->http_files_enable) {
-  //     StaticOptions so;
-  //     adminServer->middlewares.push_back(athenasip::api::StaticMiddleware::add("/Users/tom/devroot/athenasip/admin", so));
-  //   }
-  //   adminServer->middlewares.push_back(athenasip::api::AdminAPI::send404end());
-  //   adminServer->start();
-  // }
+  // Servers: Create the TLSServer instance with the logger and start it on the specified port
+  if (config->tls_enable) {
+    auto tlsServer = std::make_shared<servers::TLSServer>(logger, config->tls_address, config->tls_port);
+    // Set Certificates
+    if (!tlsServer->set_certificates(config->tls_cert_pem_filename, config->tls_key_pem_filename)) {
+      logger->error("Cannot load TLS certificates");
+      db->close();
+      return -4;
+    }
+    registrar->server_register(tlsServer);
+  }
+
+  // Servers: Create the TCPServer instance with the logger and start it on the specified port
+  if (config->tcp_enable) {
+    auto tcpServer = std::make_shared<servers::TCPServer>(logger, config->tcp_address, config->tcp_port);
+    registrar->server_register(tcpServer);
+  }
+
+  // Servers: Create the UDPServer instance with the logger and start it on the specified port
+  if (config->udp_enable) {
+    auto udpServer = std::make_shared<servers::UDPServer>(logger, config->udp_address, config->udp_port);
+    registrar->server_register(udpServer);
+  }
+
+  // Servers: Create the Websocket instance with the logger and start it on the specified port
+  if (config->websocket_enable) {
+    auto websocketServer = std::make_shared<servers::WebsocketServer>(logger, config->websocket_address, config->websocket_port);
+    registrar->server_register(websocketServer);
+  }
+
+  // Core
+  auto core = std::make_shared<SIPCore>(logger, version, config, registrar);
+
+  // Start all configured servers
+  registrar->server_start_all(core);
 
   // Wait for Signals
   boost::asio::io_context signal_wait_context;
@@ -143,17 +144,20 @@ int main(int argc, char* argv[]) {
   wait_for_signal(signals, signal_wait_context, [&](int signal_number) {
     switch (signal_number) {
       case SIGHUP:
-        core->logger->raw("Received Signal SIGHUP");
+        logger->raw("Received Signal SIGHUP");
         break;
       case SIGINT:
-        core->logger->raw("Received Signal SIGINT");
+        logger->raw("Received Signal SIGINT");
         signal_wait_context.stop();
-        core->registrar->session_close_all();
-        for (const auto& server : core->servers) server->stop();
-        if (core->rtprelay) core->rtprelay->stop();
+
+        registrar->session_close_all();
+        registrar->server_stop_all();
+        registrar->rtprelay_stop();
+        registrar->admin_stop();
+
         return;
       default:
-        core->logger->raw("Received Unknown Signal " + std::to_string(signal_number));
+        logger->raw("Received Unknown Signal " + std::to_string(signal_number));
     }
   });
 

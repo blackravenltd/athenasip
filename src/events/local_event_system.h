@@ -1,10 +1,10 @@
-#pragma once
 //
 // AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
 //
 // Copyright (C) 2025 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
+#pragma once
 
 #include <boost/asio/io_context.hpp>
 #include <cstdint>
@@ -23,10 +23,10 @@
 
 namespace athenasip::events {
 
-class InternalEventSystem : public EventSystem, public std::enable_shared_from_this<InternalEventSystem> {
+class LocalEventSystem : public EventSystem, public std::enable_shared_from_this<LocalEventSystem> {
  public:
-  explicit InternalEventSystem(std::shared_ptr<athenasip::loggers::Logger> logger);
-  virtual ~InternalEventSystem();
+  explicit LocalEventSystem(std::shared_ptr<athenasip::loggers::Logger> logger);
+  virtual ~LocalEventSystem();
 
   // Starts the event system.
   void start(std::function<void(bool)> callback) override;

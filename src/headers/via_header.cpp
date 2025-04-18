@@ -14,10 +14,8 @@ bool ViaHeader::parse(const std::string& value) {
   host.clear();
   parameters.clear();
 
-  std::string s = Util::trim(value);
-  // Expecting a format like:
   // "SIP/2.0/TLS client.example.com;branch=z9hG4bK776asdhds"
-  // The first token (up to the space) is the version.
+  std::string s = Util::trim(value);
   auto space_pos = s.find(' ');
   if (space_pos == std::string::npos) {
     return false;  // Invalid format

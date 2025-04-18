@@ -17,7 +17,6 @@
 
 #include "../loggers/logger.h"
 #include "../loggers/logger_scoped.h"
-#include "../registrar.h"
 #include "../session.h"
 
 using namespace athenasip;
@@ -31,9 +30,9 @@ namespace athenasip::servers {
 
 class Server : public std::enable_shared_from_this<Server> {
  public:
-  Server(std::shared_ptr<Logger> logger, std::shared_ptr<SIPCore> core) : _logger(logger), _core(core) {}
+  Server(std::shared_ptr<Logger> logger) : _logger(logger) {}
 
-  virtual void start() = 0;
+  virtual void start(std::shared_ptr<SIPCore> core) = 0;
   virtual void stop() = 0;
 
  protected:

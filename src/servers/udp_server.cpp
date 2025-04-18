@@ -18,13 +18,15 @@ using namespace boost::asio::ip;
 
 namespace athenasip::servers {
 
-UDPServer::UDPServer(std::shared_ptr<Logger> logger, std::shared_ptr<SIPCore> core, const std::string& bind_address, short port)
-    : Server(std::make_unique<LoggerScoped>("udp_server", logger), core),
+UDPServer::UDPServer(std::shared_ptr<Logger> logger, const std::string& bind_address, short port)
+    : Server(std::make_unique<LoggerScoped>("udp_server", logger)),
       _io_context(),
       _socket(_io_context, udp::endpoint(ip::make_address(bind_address), port)),
       _port(port) {}
 
-void UDPServer::start() {
+void UDPServer::start(std::shared_ptr<SIPCore> core) {
+  _core = core;
+
   _logger->debug("Starting...");
 
   // Begin receiving datagrams.
