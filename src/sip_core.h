@@ -22,10 +22,11 @@
 #include "servers/server.h"
 #include "sip_message.h"
 #include "version.h"
+#include "transaction.h"
 
 namespace athenasip {
 
-class SIPCore {
+class SIPCore : public std::enable_shared_from_this<SIPCore> {
  public:
   SIPCore();
   SIPCore(std::shared_ptr<Logger> logger, std::shared_ptr<Version> version, std::shared_ptr<Config> config, std::shared_ptr<Registrar> _registrar);

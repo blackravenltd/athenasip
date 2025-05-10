@@ -14,7 +14,7 @@ bool ViaHeader::parse(const std::string& value) {
   host.clear();
   parameters.clear();
 
-  // "SIP/2.0/TLS client.example.com;branch=z9hG4bK776asdhds"
+  // "SIP/2.0/TLS client.example.com;branch=z9hG4bK.776asdhds"
   std::string s = Util::trim(value);
   auto space_pos = s.find(' ');
   if (space_pos == std::string::npos) {

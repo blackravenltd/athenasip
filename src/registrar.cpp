@@ -5,6 +5,8 @@
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
 #include "registrar.h"
+#include "transaction.h"
+#include "session.h"
 
 using namespace athenasip::databases;
 using namespace athenasip::rtp;
@@ -172,14 +174,15 @@ bool Registrar::nonce_check(std::string nonce) {
 }
 
 // Transactions
-
-bool Registrar::transaction_register(std::string transactionId, std::shared_ptr<Transaction> transaction) {
-  _transactions[transactionId] = transaction;
+bool Registrar::transaction_register(std::shared_ptr<Transaction> transaction) {
+  _transactions[transaction->id] = transaction;
+  _events->publish("transaction.register", transaction->id);
   return true;
 }
 
 bool Registrar::transaction_unregister(std::string transactionId) {
   _transactions.erase(transactionId);
+  _events->publish("transaction.unregister", transactionId);
   return true;
 }
 
@@ -190,14 +193,15 @@ std::shared_ptr<Transaction> Registrar::transaction_get(std::string transactionI
 }
 
 // Calls
-
-bool Registrar::call_register(std::string callId, std::shared_ptr<Call> call) {
-  _calls[callId] = call;
+bool Registrar::call_register(std::shared_ptr<Call> call) {
+  _calls[call->id] = call;
+  _events->publish("call.register", call->id);
   return true;
 }
 
 bool Registrar::call_unregister(std::string callId) {
   _calls.erase(callId);
+  _events->publish("call.unregister", callId);
   return true;
 }
 

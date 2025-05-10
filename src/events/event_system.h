@@ -29,12 +29,20 @@ class EventSystem {
   virtual ~EventSystem() = default;
 
   virtual void start(CallbackCompleteFn callback) = 0;
+  virtual void start() { start(nullptr); }
   virtual void stop(CallbackCompleteFn callback) = 0;
+  virtual void stop() { stop(nullptr); }
 
   virtual void publish(std::string event_name, std::string message, CallbackCompleteFn callback) = 0;
-  virtual std::shared_ptr<Subscription> subscribe(std::string event_name, Subscription::EventCallbackFn event_callback, CallbackCompleteFn) = 0;
-  virtual void unsubscribe(std::shared_ptr<Subscription> subscription, CallbackCompleteFn) = 0;
-  virtual void unsubscribe_all(std::function<void(bool)> callback) = 0;
+  virtual void publish(std::string event_name, std::string message) { publish(event_name, message, nullptr); }
+  virtual std::shared_ptr<Subscription> subscribe(std::string event_name, Subscription::EventCallbackFn event_callback, CallbackCompleteFn callback) = 0;
+  virtual std::shared_ptr<Subscription> subscribe(std::string event_name, Subscription::EventCallbackFn event_callback) {
+    return subscribe(event_name, event_callback, nullptr);
+  }
+  virtual void unsubscribe(std::shared_ptr<Subscription> subscription, CallbackCompleteFn callback) = 0;
+  virtual void unsubscribe(std::shared_ptr<Subscription> subscription) { unsubscribe(subscription, nullptr); }
+  virtual void unsubscribe_all(CallbackCompleteFn callback) = 0;
+  virtual void unsubscribe_all() { unsubscribe_all(nullptr); }
 };
 
 }  // namespace athenasip::events

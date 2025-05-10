@@ -14,10 +14,11 @@
 #include "call.h"
 #include "session.h"
 #include "sip_header.h"
-#include "transaction.h"
 #include "util.h"
 
 namespace athenasip {
+
+class Transaction;
 
 class SIPMessage {
  public:
@@ -38,6 +39,7 @@ class SIPMessage {
   bool authenticated = false;
   std::shared_ptr<Transaction> transaction;
 
+  // Methods
   std::string to_string() const;
   void print() const;
   std::string get_transaction_id();

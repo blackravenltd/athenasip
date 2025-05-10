@@ -29,6 +29,21 @@ class Config {
   uint32_t sip_nonce_expiry = 3600;
   uint32_t sip_registration_timeout = 5000;
 
+  // SIP Timers
+  uint16_t sip_timer_t1_rtt_ms = 500;
+  uint16_t sip_timer_t2_max_retransmit_interval_ms = 4000;
+  uint16_t sip_timer_t4_network_propagation_ms = 5000;
+  uint16_t sip_timer_a_invite_initial = 1;
+  uint16_t sip_timer_b_invite_timeout = 64;
+  uint16_t sip_timer_d_invite_duration = 64;
+  uint16_t sip_timer_e_non_invite_initial = 1;
+  uint16_t sip_timer_f_non_invite_timeout = 64;
+  uint16_t sip_timer_g_server_invite_initial = 1;
+  uint16_t sip_timer_h_server_invite_timeout = 64;
+  uint16_t sip_timer_i_server_invite_duration = 1;
+
+  bool sip_timer_reliable_transport_retransmits = false;
+
   // TLS Configuration
   bool tls_enable;
   std::string tls_address;

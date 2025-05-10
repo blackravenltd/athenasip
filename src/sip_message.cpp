@@ -5,7 +5,7 @@
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
 #include "sip_message.h"
-
+#include "transaction.h"
 #include "headers/cseq_header.h"
 #include "headers/via_header.h"
 

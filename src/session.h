@@ -65,7 +65,7 @@ class Session : public std::enable_shared_from_this<Session> {
     Error,
     Closing,
     Closed,
-  } uint8_t;
+  };
 
   void write(std::string message);
   void start();

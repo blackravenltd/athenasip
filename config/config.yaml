@@ -16,24 +16,23 @@ sip:
     t4_network_propagation_ms: 5000     # Max expected network delay
 
     # INVITE client transaction
-    timer_a_initial: 1                 # A = 1 * T1
-    timer_b_timeout: 64               # B = 64 * T1
-    timer_d_duration: 64              # D = 64 * T1 (common default; not spec-fixed)
+    a_invite_initial: 1                 # A = 1 * T1
+    b_invite_timeout: 64               # B = 64 * T1
+    d_invite_duration: 64              # D = 64 * T1 (common default; not spec-fixed)
 
     # Non-INVITE client transaction
-    timer_e_initial: 1                # E = 1 * T1
-    timer_f_timeout: 64               # F = 64 * T1
-    timer_k_duration: 1               # K = 1 * T4
+    e_non_invite_initial: 1                # E = 1 * T1
+    f_non_invite_timeout: 64               # F = 64 * T1
+    k_non_invite_duration: 1               # K = 1 * T4
 
     # INVITE server transaction
-    timer_g_initial: 1                # G = 1 * T1
-    timer_h_timeout: 64               # H = 64 * T1
-    timer_i_duration: 1               # I = 1 * T4
+    g_server_invite_initial: 1                # G = 1 * T1
+    h_server_invite_timeout: 64               # H = 64 * T1
+    i_server_invite_duration: 1               # I = 1 * T4
 
     # Retransmit cap (optional safety net)
     retransmit_max_interval: 8        # T2 = 8 * T1 (derived from T2 value, capped)
     retransmit_max_attempts: 7        # Approximate exponential retry cap (T1 * 2^6 ~ 32s)
-
 
 udp:
   enable: true

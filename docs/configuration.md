@@ -54,6 +54,73 @@ If `true`, the server will reject SIP `INVITE` requests that do not describe enc
 This setting can be `true` even if the TCP server is enabled - in which case the SIP flow will
 be unencrypted, but the server will still reject attempts to initate unencrypted calls.
 
+
+#### `timers`
+
+The SIP implementation timers and multipliers as specified in [RFC 3261](https://datatracker.ietf.org/doc/html/rfc3261).
+Please note for nearly all normal use cases, you should not adjust these from their defaults.
+
+**NOTE:** There's no C or K Timers (obsolete in RFC 3261).
+
+##### `t1_rtt_ms`
+
+The SIP Timer T1 (Retransmit) - this is the initial time between retransmits,
+and is used by the other timers as a multiplier. Defaults to `500`.
+
+##### `t2_max_retransmit_interval_ms`
+
+The SIP T2 (Max retransmit interval) timeout - Defaults to `4000` (4s).
+
+##### `t4_network_propagation_ms`
+
+The SIP Timer T4 (Max network latency) - Defaults to `5000` (5s).
+
+##### `a_invite_initial`
+
+The SIP Timer A (Client INVITE retransmit interval) multipler of T1 above - Defaults to `1` (500ms).
+
+Controls retransmit interval for INVITE requests.
+
+##### `b_invite_timeout`
+
+The SIP Timer B (Client INVITE max time to receive response) multipler of T1 above - Defaults to `64` (32s).
+
+Maximum time to receive a response.
+
+##### `d_invite_duration`
+
+The SIP Timer D (Server INVITE transaction discard timer, UDP only) multipler of T1 above - Defaults to `64` (32s).
+
+Delay before discarding completed INVITE transaction
+
+##### `e_non_invite_initial`
+
+The SIP Timer E (Client Non-INVITE retransmit interval) multipler of T1 above - Defaults to `1` (500ms).
+
+Controls retransmit interval for non-INVITE requests.
+
+##### `f_non_invite_timeout`
+
+The SIP Timer F (Client Non-INVITE max time to receive response) multipler of T1 above - Defaults to `64` (32s).
+
+Maximum time to wait for a final response.
+
+##### `g_server_invite_initial`
+
+The SIP Timer G (Server Non-INVITE retransmit interval) multipler of T1 above - Defaults to `1` (500ms).
+
+Retransmit interval for final responses to unreliable transport.
+
+##### `h_server_invite_timeout`
+
+The SIP Timer H (Server Non-INVITE max time to retransmit response) multipler of T1 above - Defaults to `64` (32s).
+
+Maximum time to retransmit final response.
+
+##### `i_server_invite_duration`
+
+The SIP Timer I (Server INVITE transaction termination timer) multipler of T4 above - Defaults to `1` (5s).
+
 ### `tcp` Section
 
 This section configures TCP listener for the server. TCP is one possible transport
