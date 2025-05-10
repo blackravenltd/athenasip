@@ -71,7 +71,7 @@ void TCPServer::_handle_accept(const boost::system::error_code &error, std::shar
       return;
     }
 
-    // Create TLSSession from connection
+    // Create Channel from connection
     auto new_channel = std::make_shared<Channel>(_logger->base_logger(), _core, new_connection);
     _logger->info("Incoming TCP Connection Accepted: " + new_connection->remote_endpoint_name());
 

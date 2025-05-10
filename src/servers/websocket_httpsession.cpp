@@ -76,9 +76,9 @@ void WebsocketHTTPSession::do_upgrade() {
     auto connection = std::make_shared<WebsocketConnection>(std::move(ws));
     connection->start();
 
-    // Start the actual session with this connection
-    auto session = std::make_shared<athenasip::Channel>(_logger->base_logger(), _core, connection);
-    session->start();
+    // Start the actual channel with this connection
+    auto channel = std::make_shared<athenasip::Channel>(_logger->base_logger(), _core, connection);
+    channel->start();
   });
 }
 

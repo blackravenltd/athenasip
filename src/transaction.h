@@ -36,7 +36,7 @@ class Transaction : public std::enable_shared_from_this<Transaction>  {
   ~Transaction();
 
   std::string id;
-  std::shared_ptr<Channel> session;
+  std::shared_ptr<Channel> channel;
   std::weak_ptr<Registrar> registrar;
 
   Direction direction;

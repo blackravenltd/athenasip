@@ -150,6 +150,7 @@ int main(int argc, char* argv[]) {
         logger->raw("Received Signal SIGINT");
         signal_wait_context.stop();
 
+        registrar->transaction_end_all();
         registrar->channel_close_all();
         registrar->server_stop_all();
         registrar->rtprelay_stop();

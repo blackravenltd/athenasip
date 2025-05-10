@@ -26,7 +26,7 @@ class Channel;
 
 class Call {
  public:
-  using SessionsFn = std::function<void(std::shared_ptr<Channel> session)>;
+  using ChannelsFn = std::function<void(std::shared_ptr<Channel> channel)>;
 
   enum State { Initial, Trying, Ringing, Connected, Closing };
 
@@ -39,11 +39,11 @@ class Call {
 
   std::unordered_map<int64_t, std::shared_ptr<MediaStream>> streams;
 
-  void add_channel(std::shared_ptr<Channel> session) { _channels[session] = true; }
+  void add_channel(std::shared_ptr<Channel> channel) { _channels[channel] = true; }
 
-  bool contains_channel(std::shared_ptr<Channel> session) { return _channels.find(session) != _channels.end(); }
+  bool contains_channel(std::shared_ptr<Channel> channel) { return _channels.find(channel) != _channels.end(); }
 
-  void with_all_channels(SessionsFn callback) {
+  void with_all_channels(ChannelsFn callback) {
     for (const auto& pair : _channels) callback(pair.first);
   }
 
