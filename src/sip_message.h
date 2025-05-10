@@ -11,14 +11,16 @@
 #include <sstream>
 #include <string>
 
-#include "call.h"
-#include "session.h"
 #include "sip_header.h"
 #include "util.h"
 
 namespace athenasip {
 
+class Channel;
+class Call;
 class Transaction;
+class Subscriber;
+class SIPUri;
 
 class SIPMessage {
  public:
@@ -32,7 +34,7 @@ class SIPMessage {
   // Derived Information
   std::string branch;
   uint16_t source_port;
-  std::shared_ptr<Session> session;
+  std::shared_ptr<Channel> session;
   std::shared_ptr<Call> call;
   std::shared_ptr<Subscriber> subscriber;
   std::shared_ptr<SIPUri> contact;

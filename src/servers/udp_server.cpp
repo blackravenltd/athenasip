@@ -10,7 +10,7 @@
 #include <boost/asio/ip/address.hpp>
 #include <boost/bind/bind.hpp>
 
-#include "../session.h"
+#include "../channel.h"
 #include "udp_connection.h"
 
 using namespace boost::asio;
@@ -31,7 +31,7 @@ void UDPServer::start(std::shared_ptr<SIPCore> core) {
 
   // Begin receiving datagrams.
   boost::asio::post(_io_context, [this]() {
-    _logger->info("Listening on " + _socket.local_endpoint().address().to_string() + ":" + std::to_string(_port) + " (UDP)");
+    _logger->info("Listening on " + _socket.local_endpoint().address().to_string() + ":" + std::to_string(_port) + " (udp://)");
     start_receive();
   });
 
@@ -91,8 +91,8 @@ void UDPServer::handle_receive_from(const boost::system::error_code& error, std:
       _connections[sender_endpoint_str] = connection;
       _logger->info("New UDP Endpoint Accepted: " + sender_endpoint_str);
 
-      auto new_session = std::make_shared<Session>(_logger->base_logger(), _core, connection);
-      new_session->start();
+      auto new_channel = std::make_shared<Channel>(_logger->base_logger(), _core, connection);
+      new_channel->start();
     }
 
     // Deliver the preallocated buffer to the connection without copying.

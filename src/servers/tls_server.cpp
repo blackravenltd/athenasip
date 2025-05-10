@@ -38,7 +38,7 @@ void TLSServer::start(std::shared_ptr<SIPCore> core) {
 
   // Do the first start_accept on that thread
   boost::asio::post(_io_context, [this]() {
-    _logger->info("Listening on " + _acceptor.local_endpoint().address().to_string() + ":" + std::to_string(_port) + " (TLS)");
+    _logger->info("Listening on " + _acceptor.local_endpoint().address().to_string() + ":" + std::to_string(_port) + " (tls://)");
     start_accept();
   });
 
@@ -85,11 +85,11 @@ void TLSServer::_handle_accept(const boost::system::error_code& error, std::shar
       return;
     }
 
-    // Create Session from connection
-    auto new_session = std::make_shared<Session>(_logger->base_logger(), _core, new_connection);
+    // Create Channel from connection
+    auto new_channel = std::make_shared<Channel>(_logger->base_logger(), _core, new_connection);
     _logger->info("Incoming TLS Connection Accepted: " + new_connection->remote_endpoint_name());
 
-    new_session->start();
+    new_channel->start();
 
   } else {
     _logger->error("Incoming Connection Accept Error: " + ec.message());

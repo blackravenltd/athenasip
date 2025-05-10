@@ -6,48 +6,13 @@
 //
 #pragma once
 
-#include <openssl/evp.h>
-#include <openssl/hmac.h>
-#include <openssl/rand.h>
-
-#include <algorithm>
 #include <array>
-#include <atomic>
-#include <boost/asio.hpp>
-#include <boost/bind/bind.hpp>
-#include <cstdint>
-#include <ctime>
-#include <fstream>
-#include <functional>
-#include <iomanip>
-#include <iostream>
 #include <memory>
-#include <sstream>
 #include <string>
-#include <thread>
 
-#include "call.h"
-#include "delayed_task.h"
-#include "expiry_set.h"
-#include "headers/authorization_header.h"
-#include "headers/cseq_header.h"
-#include "headers/header.h"
-#include "headers/sip_identity_header.h"
-#include "headers/string_header.h"
-#include "headers/uint_header.h"
-#include "headers/via_header.h"
 #include "loggers/logger.h"
-#include "loggers/logger_scoped.h"
-#include "sdp.h"
 #include "servers/connection.h"
-#include "sip_header.h"
-#include "types/authorization.h"
-#include "types/sip_identity.h"
-#include "types/sip_uri.h"
-#include "types/subscriber.h"
-#include "util.h"
 
-using namespace athenasip::types;
 using namespace athenasip::loggers;
 using namespace athenasip::servers;
 
@@ -56,9 +21,9 @@ namespace athenasip {
 class SIPCore;
 class SIPMessage;
 
-class Session : public std::enable_shared_from_this<Session> {
+class Channel : public std::enable_shared_from_this<Channel> {
  public:
-  Session(std::shared_ptr<Logger> logger, std::shared_ptr<SIPCore> core, std::shared_ptr<Connection> connection);
+  Channel(std::shared_ptr<Logger> logger, std::shared_ptr<SIPCore> core, std::shared_ptr<Connection> connection);
 
   enum State {
     Normal,

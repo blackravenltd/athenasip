@@ -33,7 +33,7 @@ using namespace types;
 
 namespace athenasip {
 
-class Session;
+class Channel;
 class Transaction;
 
 class Registrar : public std::enable_shared_from_this<Registrar> {
@@ -49,15 +49,15 @@ class Registrar : public std::enable_shared_from_this<Registrar> {
   // Subscribers
   bool subscriber_exists(std::shared_ptr<SIPIdentity> identity);
   std::shared_ptr<Subscriber> subscriber_get(std::shared_ptr<SIPIdentity> identity);
-  bool subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Session> session);
-  bool subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Session> session);
+  bool subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> session);
+  bool subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> session);
   const std::shared_ptr<SIPUri> subscriber_get_location(std::shared_ptr<SIPIdentity> identity);
 
-  // Sessions
-  bool session_register(std::string endpoint, std::shared_ptr<Session> session);
-  bool session_unregister(std::string endpoint, std::shared_ptr<Session> session);
-  void session_close_all();
-  std::shared_ptr<Session> subscriber_get_session(std::shared_ptr<Subscriber> subscriber);
+  // Channels
+  bool channel_register(std::string endpoint, std::shared_ptr<Channel> session);
+  bool channel_unregister(std::string endpoint, std::shared_ptr<Channel> session);
+  void channel_close_all();
+  std::shared_ptr<Channel> subscriber_get_channel(std::shared_ptr<Subscriber> subscriber);
 
   // Nonce
   std::string nonce_get();
@@ -92,9 +92,9 @@ class Registrar : public std::enable_shared_from_this<Registrar> {
   std::shared_ptr<databases::DB> _db;
   std::shared_ptr<events::EventSystem> _events;
 
-  std::unordered_map<std::string, std::shared_ptr<Session>> _sessions;
-  std::unordered_map<uint64_t, std::shared_ptr<Session>> _sessions_by_subscriber;
-  std::shared_mutex _sessions_mutex;
+  std::unordered_map<std::string, std::shared_ptr<Channel>> _channels;
+  std::unordered_map<uint64_t, std::shared_ptr<Channel>> _channels_by_subscriber;
+  std::shared_mutex _channels_mutex;
 
   std::vector<std::shared_ptr<servers::Server>> _servers;
 
