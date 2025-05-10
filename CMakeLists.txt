@@ -35,7 +35,7 @@ message(STATUS "OpenSSL Include Directory: ${OPENSSL_INCLUDE_DIR}")
 
 # Find MySQL C++ Connector
 find_package(mysql-concpp REQUIRED)
-message(STATUS "MySQL Library Directory: ${MYSQL_CONCPP_INCLUDE_DIR}")
+message(STATUS "mysql-concpp Library Directory: ${MYSQL_CONCPP_INCLUDE_DIR}")
 
 # Find libpqxx using pkg-config
 find_package(PkgConfig REQUIRED)
@@ -46,12 +46,8 @@ message(STATUS "libpqxx Include Directory: ${PQXX_INCLUDE_DIRS}")
 link_directories(${PQXX_LIBRARY_DIRS})
 
 # YAML: Use yaml-cpp instead of RapidYAML
-FetchContent_Declare(
-  yaml-cpp
-  GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
-  GIT_TAG 0.8.0
-)
-FetchContent_MakeAvailable(yaml-cpp)
+find_package(yaml-cpp REQUIRED)
+message(STATUS "yaml-cpp Include Directory: ${YAML_CPP_INCLUDE_DIRS}")
 
 # tinyxml2
 FetchContent_Declare(
@@ -76,39 +72,6 @@ message(STATUS "Lua Libraries: ${LUA_LIBRARIES}")
 # Collect all source files except main.cpp
 file(GLOB_RECURSE ATHENA_SOURCES src/*.cpp)
 list(REMOVE_ITEM ATHENA_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
-
-# Create the library for testing
-add_library(athenasip_lib ${ATHENA_SOURCES})
-
-# Include directories
-target_include_directories(athenasip_lib PUBLIC 
-    ${PQXX_INCLUDE_DIRS}
-    ${Boost_INCLUDE_DIRS}
-    ${SQLite3_INCLUDE_DIRS}
-    ${LUA_INCLUDE_DIR}
-)
-
-# Link libraries
-target_link_libraries(athenasip_lib PUBLIC
-    Boost::system
-    Boost::thread
-    Boost::json
-    Boost::charconv
-    OpenSSL::SSL
-    OpenSSL::Crypto
-    mysql::concpp
-    yaml-cpp::yaml-cpp
-    tinyxml2::tinyxml2
-    ${LUA_LIBRARIES}
-    ${PQXX_LIBRARIES} 
-    ${SQLite3_LIBRARIES}
-)
-
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  target_link_libraries(athenasip_lib PUBLIC pq)
-endif()
-
-target_compile_features(athenasip_lib PUBLIC cxx_std_17)
 
 # Make Main Executable
 add_executable(athenasip ${ATHENA_SOURCES} "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
@@ -142,12 +105,23 @@ if(ATHENA_BUILD_TESTING)
   message(STATUS "Building GoogleTest tests")
 
   file(GLOB_RECURSE ATHENA_TEST_SOURCES tests/*.cpp)
-  add_executable(athenasip_tests ${ATHENA_TEST_SOURCES})
-  target_include_directories(athenasip_tests PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+  add_executable(athenasip_tests ${ATHENA_SOURCES} ${ATHENA_TEST_SOURCES})
+  target_include_directories(athenasip_tests PUBLIC 
+      ${LUA_INCLUDE_DIR}
+  )
   target_link_libraries(athenasip_tests PRIVATE 
-      athenasip_lib
-      GTest::gtest
-      GTest::gtest_main
+    Boost::system
+    Boost::thread
+    Boost::json
+    Boost::charconv
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    mysql::concpp
+    yaml-cpp::yaml-cpp
+    tinyxml2::tinyxml2
+    ${LUA_LIBRARIES}
+    ${PQXX_LIBRARIES} 
+    ${SQLite3_LIBRARIES}
   )
   target_compile_features(athenasip_tests PRIVATE cxx_std_17)
   include(GoogleTest)

@@ -53,6 +53,8 @@ class TLSConnection : public Connection {
 
   virtual bool is_open() override { return _ssl_socket->lowest_layer().is_open(); }
 
+  virtual bool is_reliable() override { return true; }
+
   virtual void shutdown() override {
     boost::system::error_code ec;
     _ssl_socket->lowest_layer().shutdown(ip::tcp::socket::shutdown_both, ec);

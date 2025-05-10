@@ -34,6 +34,9 @@ class WebsocketConnection : public Connection, public std::enable_shared_from_th
   virtual boost::asio::ip::tcp::endpoint remote_endpoint() override { return _remote_endpoint; }
 
   virtual bool is_open() override;
+
+  virtual bool is_reliable() override { return true; }
+  
   virtual void shutdown() override;
   virtual void close() override;
 
