@@ -29,7 +29,7 @@ void SIPCore::process_message(std::shared_ptr<SIPMessage> message) {
   message->transaction = registrar->transaction_get(transactionId);
   if (!message->transaction) {
     message->transaction = std::make_shared<Transaction>(_logger, transactionId);
-    message->transaction->session = message->session;
+    message->transaction->channel = message->channel;
     message->transaction->direction = Transaction::Direction::Incoming;
     message->transaction->type = (message->header->type == SIPHeader::Type::Request && message->header->request_method == "INVITE")
                                      ? Transaction::Type::INVITE

@@ -46,7 +46,7 @@ std::shared_ptr<SIPMessage> SIPMessage::generate_response() {
   response->body_length = 0;
 
   // Fields
-  response->session = session;
+  response->channel = channel;
   response->call = call;
   response->contact = contact;
 

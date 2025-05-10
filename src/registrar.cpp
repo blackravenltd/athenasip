@@ -56,7 +56,7 @@ std::shared_ptr<Subscriber> Registrar::subscriber_get(std::shared_ptr<SIPIdentit
   return obj;
 }
 
-bool Registrar::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> session) {
+bool Registrar::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel) {
   std::shared_ptr<DBResult> res = _db->query("SELECT COUNT(*) FROM `location` WHERE `subscriber_id` = ? AND `user` = ? AND `host` = ? AND `port` = ?",
                                              {subscriber->id, contact->user, contact->realm, contact->port.value_or(0)});
   if (res && res->rows.size() == 0) {
@@ -75,12 +75,12 @@ bool Registrar::subscriber_register(std::shared_ptr<Subscriber> subscriber, std:
     _db->query("UPDATE `location` SET `registered_at` = NOW() WHERE `subscriber_id` = ?", {subscriber->id});
   }
 
-  _channels_by_subscriber[subscriber->id] = session;
+  _channels_by_subscriber[subscriber->id] = channel;
 
   return true;
 }
 
-bool Registrar::subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> session) {
+bool Registrar::subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel) {
   _db->query("DELETE FROM `location` WHERE `subscriber_id` = ? AND `user` = ? AND `host` = ? AND `port` = ?",
              {subscriber->id, contact->user, contact->realm, contact->port.value_or(0)});
 
@@ -91,16 +91,16 @@ bool Registrar::subscriber_unregister(std::shared_ptr<Subscriber> subscriber, st
 
 std::shared_ptr<Channel> Registrar::subscriber_get_channel(std::shared_ptr<Subscriber> subscriber) { return _channels_by_subscriber[subscriber->id]; }
 
-// Sessions
+// Channels
 
-bool Registrar::channel_register(std::string endpoint, std::shared_ptr<Channel> session) {
+bool Registrar::channel_register(std::string endpoint, std::shared_ptr<Channel> channel) {
   std::lock_guard<std::shared_mutex> lock(_channels_mutex);
-  _channels[endpoint] = session;
+  _channels[endpoint] = channel;
   _logger->debug("Registered Channel " + endpoint);
   return true;
 }
 
-bool Registrar::channel_unregister(std::string endpoint, std::shared_ptr<Channel> session) {
+bool Registrar::channel_unregister(std::string endpoint, std::shared_ptr<Channel> channel) {
   std::lock_guard<std::shared_mutex> lock(_channels_mutex);
   // _channels.erase(endpoint);
   _logger->debug("Unregistered Channel " + endpoint);
@@ -108,13 +108,12 @@ bool Registrar::channel_unregister(std::string endpoint, std::shared_ptr<Channel
 }
 
 void Registrar::channel_close_all() {
-  // Close All Connections
-  // for (const auto& pair : _channels) pair.second->close();
+  // Close All Channels
+  for (const auto& pair : _channels) pair.second->close();
 
-  // Remove all connections
+  // Remove all Channels
   std::unique_lock<std::shared_mutex> lock(_channels_mutex);
   _channels.clear();
-  lock.unlock();
 }
 
 // Nonce
@@ -174,22 +173,41 @@ bool Registrar::nonce_check(std::string nonce) {
 }
 
 // Transactions
+
 bool Registrar::transaction_register(std::shared_ptr<Transaction> transaction) {
+  std::unique_lock<std::shared_mutex> lock(_transactions_mutex);
+
   _transactions[transaction->id] = transaction;
   _events->publish("transaction.register", transaction->id);
   return true;
 }
 
 bool Registrar::transaction_unregister(std::string transactionId) {
+  auto transaction = transaction_get(transactionId);
+
+  if(!transaction) return false;
+
+  std::unique_lock<std::shared_mutex> lock(_transactions_mutex);
   _transactions.erase(transactionId);
   _events->publish("transaction.unregister", transactionId);
   return true;
 }
 
 std::shared_ptr<Transaction> Registrar::transaction_get(std::string transactionId) {
+  std::unique_lock<std::shared_mutex> lock(_transactions_mutex);
+
   auto search = _transactions.find(transactionId);
   if (search == _transactions.end()) return nullptr;
   return search->second;
+}
+
+void Registrar::transaction_end_all() {
+  // Close All Channels
+  for (const auto& pair : _transactions) pair.second->end();
+
+  // Remove all Channels
+  std::unique_lock<std::shared_mutex> lock(_transactions_mutex);
+  _transactions.clear();
 }
 
 // Calls

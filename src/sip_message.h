@@ -34,7 +34,7 @@ class SIPMessage {
   // Derived Information
   std::string branch;
   uint16_t source_port;
-  std::shared_ptr<Channel> session;
+  std::shared_ptr<Channel> channel;
   std::shared_ptr<Call> call;
   std::shared_ptr<Subscriber> subscriber;
   std::shared_ptr<SIPUri> contact;

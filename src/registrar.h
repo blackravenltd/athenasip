@@ -49,13 +49,13 @@ class Registrar : public std::enable_shared_from_this<Registrar> {
   // Subscribers
   bool subscriber_exists(std::shared_ptr<SIPIdentity> identity);
   std::shared_ptr<Subscriber> subscriber_get(std::shared_ptr<SIPIdentity> identity);
-  bool subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> session);
-  bool subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> session);
+  bool subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel);
+  bool subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel);
   const std::shared_ptr<SIPUri> subscriber_get_location(std::shared_ptr<SIPIdentity> identity);
 
   // Channels
-  bool channel_register(std::string endpoint, std::shared_ptr<Channel> session);
-  bool channel_unregister(std::string endpoint, std::shared_ptr<Channel> session);
+  bool channel_register(std::string endpoint, std::shared_ptr<Channel> channel);
+  bool channel_unregister(std::string endpoint, std::shared_ptr<Channel> channel);
   void channel_close_all();
   std::shared_ptr<Channel> subscriber_get_channel(std::shared_ptr<Subscriber> subscriber);
 
@@ -67,6 +67,7 @@ class Registrar : public std::enable_shared_from_this<Registrar> {
   bool transaction_register(std::shared_ptr<Transaction> transaction);
   std::shared_ptr<Transaction> transaction_get(std::string transactionId);
   bool transaction_unregister(std::string transactionId);
+  void transaction_end_all();
 
   // Calls
   bool call_register(std::shared_ptr<Call> call);
@@ -104,6 +105,8 @@ class Registrar : public std::enable_shared_from_this<Registrar> {
   std::shared_ptr<ExpirySet<std::string>> _nonce_cache;
 
   std::unordered_map<std::string, std::shared_ptr<Transaction>> _transactions;
+  std::shared_mutex _transactions_mutex;
+  
   std::unordered_map<std::string, std::shared_ptr<Call>> _calls;
 };
 

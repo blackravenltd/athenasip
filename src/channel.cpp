@@ -152,7 +152,7 @@ void Channel::send(std::shared_ptr<SIPMessage> message) {
 
 void Channel::receive(std::shared_ptr<SIPMessage> message) {
   _logger->info("> " + message->header->first_line());
-  message->session = shared_from_this();
+  message->channel = shared_from_this();
 
   // cout Incoming (DEBUG)
   // std::cout << ">>>>> ";
@@ -222,7 +222,7 @@ void Channel::_schedule_async_read() {
             _buffer.erase(0, pos + 4);
             // Create a new SIPMessage
             _incoming_message = std::make_shared<SIPMessage>();
-            _incoming_message->session = shared_from_this();
+            _incoming_message->channel = shared_from_this();
             _incoming_message->source_port = _connection->remote_endpoint().port();
 
             // Get the header
