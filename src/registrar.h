@@ -26,7 +26,6 @@
 #include "loggers/logger_scoped.h"
 #include "rtp/rtp_relay.h"
 #include "servers/server.h"
-#include "transaction.h"
 #include "types/sip_identity.h"
 #include "types/subscriber.h"
 
@@ -35,8 +34,9 @@ using namespace types;
 namespace athenasip {
 
 class Session;
+class Transaction;
 
-class Registrar {
+class Registrar : public std::enable_shared_from_this<Registrar> {
  public:
   Registrar(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<Config> config, std::shared_ptr<databases::DB> db,
             std::shared_ptr<events::EventSystem> events);
@@ -64,12 +64,12 @@ class Registrar {
   bool nonce_check(std::string nonce);
 
   // Transactions
-  bool transaction_register(std::string transactionId, std::shared_ptr<Transaction> transaction);
+  bool transaction_register(std::shared_ptr<Transaction> transaction);
   std::shared_ptr<Transaction> transaction_get(std::string transactionId);
   bool transaction_unregister(std::string transactionId);
 
   // Calls
-  bool call_register(std::string callId, std::shared_ptr<Call> call);
+  bool call_register(std::shared_ptr<Call> call);
   bool call_unregister(std::string callId);
   std::shared_ptr<Call> call_get(std::string callId);
 

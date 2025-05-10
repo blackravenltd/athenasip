@@ -9,7 +9,7 @@
 #include <chrono>
 #include <thread>
 
-#include "events/internal_event_system.h"
+#include "events/local_event_system.h"
 #include "loggers/logger.h"
 #include "global_io_context.h"
 
@@ -21,7 +21,7 @@ using namespace athenasip;
 // Test that publishing an event triggers a subscribed callback.
 TEST(EventSystemTest, PublishTriggersSubscription) {
     auto logger = std::make_shared<MockLogger>();
-    auto event_system = std::make_shared<events::InternalEventSystem>(logger);
+    auto event_system = std::make_shared<events::LocalEventSystem>(logger);
     
     std::atomic<bool> callback_called(false);
     
@@ -44,7 +44,7 @@ TEST(EventSystemTest, PublishTriggersSubscription) {
 // Test that unsubscribing prevents the callback from being invoked.
 TEST(EventSystemTest, UnsubscribePreventsCallback) {
     auto logger = std::make_shared<MockLogger>();
-    auto event_system = std::make_shared<events::InternalEventSystem>(logger);
+    auto event_system = std::make_shared<events::LocalEventSystem>(logger);
     
     std::atomic<bool> callback_called(false);
     
@@ -67,7 +67,7 @@ TEST(EventSystemTest, UnsubscribePreventsCallback) {
 // Test that unsubscribe_all stops all callbacks.
 TEST(EventSystemTest, UnsubscribeAllPreventsCallbacks) {
     auto logger = std::make_shared<MockLogger>();
-    auto event_system = std::make_shared<events::InternalEventSystem>(logger);
+    auto event_system = std::make_shared<events::LocalEventSystem>(logger);
     
     std::atomic<bool> callback1_called(false);
     std::atomic<bool> callback2_called(false);
@@ -96,7 +96,7 @@ TEST(EventSystemTest, UnsubscribeAllPreventsCallbacks) {
 // Test that multiple subscriptions on the same event are all triggered.
 TEST(EventSystemTest, MultipleSubscriptionsTriggered) {
     auto logger = std::make_shared<MockLogger>();
-    auto event_system = std::make_shared<events::InternalEventSystem>(logger);
+    auto event_system = std::make_shared<events::LocalEventSystem>(logger);
     
     std::atomic<int> call_count(0);
     

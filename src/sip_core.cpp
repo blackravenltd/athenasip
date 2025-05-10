@@ -12,8 +12,6 @@ SIPCore::SIPCore(std::shared_ptr<Logger> logger, std::shared_ptr<Version> versio
     : _logger(logger), _version(version), _config(config), registrar(_registrar) {}
 
 void SIPCore::process_message(std::shared_ptr<SIPMessage> message) {
-  // 1. Get the transaction
-
   // Message must contain Via and CSeq to identify the transaction
   if (!message->header->contains("Via") || !message->header->contains("CSeq")) {
     _logger->info("[Request] - Incomplete Headers (No Via/CSeq) - Sending 400 Bad Request");
@@ -25,18 +23,26 @@ void SIPCore::process_message(std::shared_ptr<SIPMessage> message) {
     return;
   }
 
-  // Find or create the messag transaction
+  // Find or create the message transaction
   auto transactionId = message->get_transaction_id();
   _logger->debug("[Request] - Transaction is " + transactionId);
   message->transaction = registrar->transaction_get(transactionId);
   if (!message->transaction) {
-    message->transaction = std::make_shared<Transaction>();
-    message->transaction->id = transactionId;
+    message->transaction = std::make_shared<Transaction>(_logger, transactionId);
     message->transaction->session = message->session;
-    registrar->transaction_register(transactionId, message->transaction);
+    message->transaction->direction = Transaction::Direction::Incoming;
+    message->transaction->type = (message->header->type == SIPHeader::Type::Request && message->header->request_method == "INVITE")
+                                     ? Transaction::Type::INVITE
+                                     : Transaction::Type::NonINVITE;
+    message->transaction->registrar = registrar;
+    registrar->transaction_register(message->transaction);
+    message->transaction->start(_config->sip_timer_t1_rtt_ms);
+  } else {
+    message->transaction->reset_timers();
   }
 
-  // Event
+  // Parse the Message in the context of the transaction
+  message->transaction->parse_message(message);
 }
 
 }  // namespace athenasip

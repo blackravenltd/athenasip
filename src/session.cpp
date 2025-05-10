@@ -87,7 +87,7 @@ void Session::send(std::shared_ptr<SIPMessage> message) {
   // Add or Remove Via
   if (message->header->type == SIPHeader::Type::Request) {
     // TODO: Generate proper branch
-    auto viaString = "SIP/2.0/TCP " + server_endpoint + ";branch=z9hG4bK" + message->branch;
+    auto viaString = "SIP/2.0/TCP " + server_endpoint + ";branch=" + message->branch;
     // Add Via Header for this server
     auto via = std::make_shared<ViaHeader>(viaString);
     message->header->add_start("Via", via);
