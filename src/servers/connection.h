@@ -39,6 +39,8 @@ class Connection {
 
   virtual bool is_open() = 0;
 
+  virtual bool is_reliable() = 0;
+
   virtual void shutdown() = 0;
 
   virtual void close() = 0;

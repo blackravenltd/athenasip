@@ -35,6 +35,8 @@ class UDPConnection : public Connection {
 
   virtual bool is_open() override;
 
+  virtual bool is_reliable() override { return false; }
+
   virtual void shutdown() override;
   virtual void close() override;
 
