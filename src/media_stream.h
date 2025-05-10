@@ -11,7 +11,7 @@
 
 namespace athenasip {
 
-class Session;
+class Channel;
 
 class MediaStream {
  public:

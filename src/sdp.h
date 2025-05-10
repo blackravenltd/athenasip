@@ -146,7 +146,7 @@ struct Media {
 //
 class SDP {
  public:
-  // Session-level fields.
+  // Channel-level fields.
   std::string version;        // v=
   Origin origin;              // o=
   std::string sessionName;    // s=

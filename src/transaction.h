@@ -14,7 +14,7 @@ using namespace athenasip::loggers;
 
 namespace athenasip {
 
-class Session;
+class Channel;
 class Registrar;
 class SIPMessage;
 
@@ -36,7 +36,7 @@ class Transaction : public std::enable_shared_from_this<Transaction>  {
   ~Transaction();
 
   std::string id;
-  std::shared_ptr<Session> session;
+  std::shared_ptr<Channel> session;
   std::weak_ptr<Registrar> registrar;
 
   Direction direction;

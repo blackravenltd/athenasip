@@ -31,7 +31,7 @@ class WebsocketHTTPSession : public std::enable_shared_from_this<WebsocketHTTPSe
  public:
   // Construct with a shared pointer to the accepted TCP socket.
   explicit WebsocketHTTPSession(std::shared_ptr<Logger> logger, std::shared_ptr<SIPCore> core, std::shared_ptr<tcp::socket> socket)
-      : _logger(std::make_shared<LoggerScoped>("websocket_http_session", logger)), _core(core), _socket(socket) {}
+      : _logger(std::make_shared<LoggerScoped>("websocket_http_channel", logger)), _core(core), _socket(socket) {}
 
   // Start reading the HTTP request.
   void start();

@@ -6,7 +6,7 @@
 //
 #include "registrar.h"
 #include "transaction.h"
-#include "session.h"
+#include "channel.h"
 
 using namespace athenasip::databases;
 using namespace athenasip::rtp;
@@ -56,7 +56,7 @@ std::shared_ptr<Subscriber> Registrar::subscriber_get(std::shared_ptr<SIPIdentit
   return obj;
 }
 
-bool Registrar::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Session> session) {
+bool Registrar::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> session) {
   std::shared_ptr<DBResult> res = _db->query("SELECT COUNT(*) FROM `location` WHERE `subscriber_id` = ? AND `user` = ? AND `host` = ? AND `port` = ?",
                                              {subscriber->id, contact->user, contact->realm, contact->port.value_or(0)});
   if (res && res->rows.size() == 0) {
@@ -75,45 +75,45 @@ bool Registrar::subscriber_register(std::shared_ptr<Subscriber> subscriber, std:
     _db->query("UPDATE `location` SET `registered_at` = NOW() WHERE `subscriber_id` = ?", {subscriber->id});
   }
 
-  _sessions_by_subscriber[subscriber->id] = session;
+  _channels_by_subscriber[subscriber->id] = session;
 
   return true;
 }
 
-bool Registrar::subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Session> session) {
+bool Registrar::subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> session) {
   _db->query("DELETE FROM `location` WHERE `subscriber_id` = ? AND `user` = ? AND `host` = ? AND `port` = ?",
              {subscriber->id, contact->user, contact->realm, contact->port.value_or(0)});
 
-  _sessions_by_subscriber.erase(subscriber->id);
+  _channels_by_subscriber.erase(subscriber->id);
 
   return true;
 }
 
-std::shared_ptr<Session> Registrar::subscriber_get_session(std::shared_ptr<Subscriber> subscriber) { return _sessions_by_subscriber[subscriber->id]; }
+std::shared_ptr<Channel> Registrar::subscriber_get_channel(std::shared_ptr<Subscriber> subscriber) { return _channels_by_subscriber[subscriber->id]; }
 
 // Sessions
 
-bool Registrar::session_register(std::string endpoint, std::shared_ptr<Session> session) {
-  std::lock_guard<std::shared_mutex> lock(_sessions_mutex);
-  _sessions[endpoint] = session;
-  _logger->debug("Registered Connection " + endpoint);
+bool Registrar::channel_register(std::string endpoint, std::shared_ptr<Channel> session) {
+  std::lock_guard<std::shared_mutex> lock(_channels_mutex);
+  _channels[endpoint] = session;
+  _logger->debug("Registered Channel " + endpoint);
   return true;
 }
 
-bool Registrar::session_unregister(std::string endpoint, std::shared_ptr<Session> session) {
-  std::lock_guard<std::shared_mutex> lock(_sessions_mutex);
-  // _sessions.erase(endpoint);
-  _logger->debug("Unregistered Connection " + endpoint);
+bool Registrar::channel_unregister(std::string endpoint, std::shared_ptr<Channel> session) {
+  std::lock_guard<std::shared_mutex> lock(_channels_mutex);
+  // _channels.erase(endpoint);
+  _logger->debug("Unregistered Channel " + endpoint);
   return true;
 }
 
-void Registrar::session_close_all() {
+void Registrar::channel_close_all() {
   // Close All Connections
-  // for (const auto& pair : _sessions) pair.second->close();
+  // for (const auto& pair : _channels) pair.second->close();
 
   // Remove all connections
-  std::unique_lock<std::shared_mutex> lock(_sessions_mutex);
-  _sessions.clear();
+  std::unique_lock<std::shared_mutex> lock(_channels_mutex);
+  _channels.clear();
   lock.unlock();
 }
 

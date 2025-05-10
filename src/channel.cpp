@@ -4,9 +4,43 @@
 // Copyright (C) 2025 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
-#include "session.h"
+#include "channel.h"
 
 #include <iostream>
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <boost/asio.hpp>
+#include <boost/bind/bind.hpp>
+#include <cstdint>
+#include <ctime>
+#include <fstream>
+#include <functional>
+#include <iomanip>
+#include <iostream>
+#include <memory>
+#include <sstream>
+#include <string>
+#include <thread>
+
+#include "call.h"
+#include "delayed_task.h"
+#include "expiry_set.h"
+#include "headers/authorization_header.h"
+#include "headers/cseq_header.h"
+#include "headers/header.h"
+#include "headers/sip_identity_header.h"
+#include "headers/string_header.h"
+#include "headers/uint_header.h"
+#include "headers/via_header.h"
+#include "sdp.h"
+#include "servers/connection.h"
+#include "sip_header.h"
+#include "types/authorization.h"
+#include "types/sip_identity.h"
+#include "types/sip_uri.h"
+#include "types/subscriber.h"
+#include "util.h"
 
 #include "sip_core.h"
 #include "sip_message.h"
@@ -18,18 +52,18 @@ using namespace athenasip::servers;
 
 namespace athenasip {
 
-Session::Session(std::shared_ptr<Logger> logger, std::shared_ptr<SIPCore> core, std::shared_ptr<Connection> connection) : _connection(connection), _core(core) {
+Channel::Channel(std::shared_ptr<Logger> logger, std::shared_ptr<SIPCore> core, std::shared_ptr<Connection> connection) : _connection(connection), _core(core) {
   _logger = std::make_unique<LoggerScoped>(_connection->transport_name() + "://" + _connection->remote_endpoint_name(), logger);
 }
 
-void Session::start() {
+void Channel::start() {
   auto self(this->shared_from_this());
 
   _logger->info("Connected");
   state = State::Normal;
 
   // Register callback
-  _core->registrar->session_register(_connection->transport_name() + "://" + _connection->remote_endpoint_name(), shared_from_this());
+  _core->registrar->channel_register(_connection->transport_name() + "://" + _connection->remote_endpoint_name(), shared_from_this());
 
   // REGISTER timeout
   // TODO: Make rational
@@ -53,7 +87,7 @@ void Session::start() {
   _schedule_async_read();
 }
 
-void Session::close() {
+void Channel::close() {
   auto self(shared_from_this());
 
   if (state == State::Closing || state == State::Closed) return;
@@ -71,7 +105,7 @@ void Session::close() {
     _logger->info("Closed");
 
     // Unregister Connection
-    _core->registrar->session_unregister(_connection->transport_name() + "://" + _connection->remote_endpoint_name(), shared_from_this());
+    _core->registrar->channel_unregister(_connection->transport_name() + "://" + _connection->remote_endpoint_name(), shared_from_this());
 
     _connection.reset();
   }
@@ -79,7 +113,7 @@ void Session::close() {
   state = State::Closed;
 }
 
-void Session::send(std::shared_ptr<SIPMessage> message) {
+void Channel::send(std::shared_ptr<SIPMessage> message) {
   // Get Server Endpoint
   auto lep = _connection->local_endpoint();
   auto server_endpoint = lep.address().to_string() + ":" + std::to_string(lep.port());
@@ -116,7 +150,7 @@ void Session::send(std::shared_ptr<SIPMessage> message) {
   _schedule_async_write(message->to_string());
 }
 
-void Session::receive(std::shared_ptr<SIPMessage> message) {
+void Channel::receive(std::shared_ptr<SIPMessage> message) {
   _logger->info("> " + message->header->first_line());
   message->session = shared_from_this();
 
@@ -127,7 +161,7 @@ void Session::receive(std::shared_ptr<SIPMessage> message) {
   _core->process_message(message);
 }
 
-void Session::_schedule_async_write(std::string message) {
+void Channel::_schedule_async_write(std::string message) {
   auto self(shared_from_this());
 
   _connection->async_write_some(boost::asio::buffer(message), [this, self](boost::system::error_code ec, std::size_t) {
@@ -138,7 +172,7 @@ void Session::_schedule_async_write(std::string message) {
   });
 }
 
-void Session::_schedule_async_read() {
+void Channel::_schedule_async_read() {
   auto self(shared_from_this());
 
   // Are we already closed?
@@ -224,7 +258,7 @@ void Session::_schedule_async_read() {
   });
 }
 
-bool Session::_append_body() {
+bool Channel::_append_body() {
   // How much do we need to read?
   auto to_append = std::min(_incoming_message->body_length - _incoming_message->body.size(), _buffer.size());
   // Update current message body

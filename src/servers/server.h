@@ -17,7 +17,7 @@
 
 #include "../loggers/logger.h"
 #include "../loggers/logger_scoped.h"
-#include "../session.h"
+#include "../channel.h"
 
 using namespace athenasip;
 using namespace athenasip::loggers;

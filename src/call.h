@@ -22,11 +22,11 @@ using namespace athenasip::headers;
 
 namespace athenasip {
 
-class Session;
+class Channel;
 
 class Call {
  public:
-  using SessionsFn = std::function<void(std::shared_ptr<Session> session)>;
+  using SessionsFn = std::function<void(std::shared_ptr<Channel> session)>;
 
   enum State { Initial, Trying, Ringing, Connected, Closing };
 
@@ -39,12 +39,12 @@ class Call {
 
   std::unordered_map<int64_t, std::shared_ptr<MediaStream>> streams;
 
-  void add_session(std::shared_ptr<Session> session) { _sessions[session] = true; }
+  void add_channel(std::shared_ptr<Channel> session) { _channels[session] = true; }
 
-  bool contains_session(std::shared_ptr<Session> session) { return _sessions.find(session) != _sessions.end(); }
+  bool contains_channel(std::shared_ptr<Channel> session) { return _channels.find(session) != _channels.end(); }
 
-  void with_all_sessions(SessionsFn callback) {
-    for (const auto& pair : _sessions) callback(pair.first);
+  void with_all_channels(SessionsFn callback) {
+    for (const auto& pair : _channels) callback(pair.first);
   }
 
   void stop_streams() {
@@ -56,7 +56,7 @@ class Call {
   State state = State::Initial;
 
  private:
-  std::unordered_map<std::shared_ptr<Session>, bool> _sessions;
+  std::unordered_map<std::shared_ptr<Channel>, bool> _channels;
 };
 
 }  // namespace athenasip

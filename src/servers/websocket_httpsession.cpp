@@ -12,7 +12,7 @@
 #include <boost/beast/http.hpp>
 #include <boost/beast/websocket.hpp>
 
-#include "../session.h"
+#include "../channel.h"
 #include "websocket_connection.h"
 
 namespace athenasip {
@@ -77,7 +77,7 @@ void WebsocketHTTPSession::do_upgrade() {
     connection->start();
 
     // Start the actual session with this connection
-    auto session = std::make_shared<athenasip::Session>(_logger->base_logger(), _core, connection);
+    auto session = std::make_shared<athenasip::Channel>(_logger->base_logger(), _core, connection);
     session->start();
   });
 }
