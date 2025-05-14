@@ -21,6 +21,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <random>
 
 namespace athenasip {
 
@@ -38,6 +39,7 @@ class Util {
   static std::string to_iso8601(const std::chrono::system_clock::time_point& tp);
   static std::string to_iso8601(const std::time_t& t);
   static std::size_t hash_combine(std::size_t seed, std::size_t hash_value);
+  static std::string generate_random_string(uint16_t length);
 };
 
 }  // namespace athenasip

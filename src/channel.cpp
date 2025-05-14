@@ -135,6 +135,7 @@ void Channel::send(std::shared_ptr<SIPMessage> message) {
   message->header->remove_value("Record-Route", [this, server_endpoint](std::shared_ptr<Header> header) { return true; });
   message->header->remove_value("record-route", [this, server_endpoint](std::shared_ptr<Header> header) { return true; });
   message->header->remove_value("Record-route", [this, server_endpoint](std::shared_ptr<Header> header) { return true; });
+  
   message->header->add("Record-Route", "<sip:192.168.0.17;transport=" + _connection->transport_name() + ";lr>");
 
   // Reset Length to body length
@@ -145,7 +146,7 @@ void Channel::send(std::shared_ptr<SIPMessage> message) {
   _logger->info("< " + message->header->first_line());
 
   // cout Outgoing (DEBUG)
-  //  message->print();
+   message->print();
 
   _schedule_async_write(message->to_string());
 }
@@ -155,8 +156,8 @@ void Channel::receive(std::shared_ptr<SIPMessage> message) {
   message->channel = shared_from_this();
 
   // cout Incoming (DEBUG)
-  // std::cout << ">>>>> ";
-  // _incoming_message->print();
+  _logger->info("> " + _incoming_message->header->first_line());
+  _incoming_message->print();
 
   _core->process_message(message);
 }

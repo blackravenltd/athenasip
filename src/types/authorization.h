@@ -131,6 +131,10 @@ class Authorization {
     return true;
   }
 
+  bool contains_field(const std::string &field) {
+    return fields.find(field) != fields.end();
+  }
+
   /// Converts this header back into a std::string.
   /// The format will be:
   ///     <type> key=value, key="value", ...

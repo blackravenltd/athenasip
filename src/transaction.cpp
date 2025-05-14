@@ -12,8 +12,14 @@ using namespace athenasip::loggers;
 
 namespace athenasip {
 
-Transaction::Transaction(std::shared_ptr<Logger> logger, std::string _id) : id(_id), _logger(std::make_unique<LoggerScoped>("transaction "+_id, logger)) {
-  _logger->debug("created");
+Transaction::Transaction(std::shared_ptr<Logger> logger, std::shared_ptr<Channel> channel, std::weak_ptr<Registrar> registrar, Direction direction, std::string _id) 
+  : _logger(std::make_unique<LoggerScoped>("transaction "+_id, logger)), 
+    _channel(channel), 
+    _registrar(registrar), 
+    _direction(direction),
+    id(_id)
+{
+    _logger->debug("created");
 }
 Transaction::~Transaction() {
   _logger->debug("destroyed");
@@ -21,6 +27,7 @@ Transaction::~Transaction() {
 void Transaction::start(uint16_t t1_ms) {
   _t1_ms = t1_ms;
   _logger->debug("start");
+  if(!_registrar.expired()) _registrar.lock()->transaction_register(shared_from_this());
   _replace_timer();
 }
 
@@ -32,12 +39,16 @@ void Transaction::reset_timers() {
 void Transaction::end() {
   _logger->debug("end");
   if(_timer_b_f != nullptr) _timer_b_f->cancel();
-  if(!registrar.expired()) registrar.lock()->transaction_unregister(id);
-  registrar.reset();
+  if(!_registrar.expired()) _registrar.lock()->transaction_unregister(id);
+  _registrar.reset();
 }
 
-void Transaction::parse_message(std::shared_ptr<SIPMessage> message) {
-  _logger->debug("parse "+message->header->first_line());
+void Transaction::receive_message(std::shared_ptr<SIPMessage> message) {
+  _logger->debug("receive_message "+message->header->first_line());
+}
+
+void Transaction::send_message(std::shared_ptr<SIPMessage> message) {
+  _logger->debug("send_message "+message->header->first_line());
 }
 
 void Transaction::_replace_timer() {

@@ -32,12 +32,10 @@ class Transaction : public std::enable_shared_from_this<Transaction>  {
     ServerINVITE,
   };
 
-  Transaction(std::shared_ptr<Logger> logger, std::string _id);
+  Transaction(std::shared_ptr<Logger> logger, std::shared_ptr<Channel> channel, std::weak_ptr<Registrar> registrar, Direction direction, std::string _id);
   ~Transaction();
 
   std::string id;
-  std::shared_ptr<Channel> channel;
-  std::weak_ptr<Registrar> registrar;
 
   Direction direction;
   Type type = Type::Unknown;
@@ -45,10 +43,16 @@ class Transaction : public std::enable_shared_from_this<Transaction>  {
   void start(uint16_t t1_ms);
   void reset_timers();
   void end();
-  void parse_message(std::shared_ptr<SIPMessage> message);
+  
+  void receive_message(std::shared_ptr<SIPMessage> message);
+  void send_message(std::shared_ptr<SIPMessage> message);
 
 protected:
   std::shared_ptr<Logger> _logger;
+  std::shared_ptr<Channel> _channel;
+  std::weak_ptr<Registrar> _registrar;
+  Direction _direction;
+
   uint16_t _t1_ms;
   std::shared_ptr<DelayedTask<int>> _timer_b_f;
 

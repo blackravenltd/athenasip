@@ -27,7 +27,7 @@ void WebsocketConnection::async_read_some(boost::asio::mutable_buffer buffer, st
   auto self = shared_from_this();
   _ws->async_read_some(buffer, [this, self, handler](boost::system::error_code ec, std::size_t length) {
     // Rationalise close error code
-    if (ec == websocket::error::closed) ec = boost::asio::error::eof;
+    if (ec == websocket::error::closed || ec == boost::asio::error::not_connected) ec = boost::asio::error::eof;
     handler(ec, length);
   });
 }
@@ -36,7 +36,7 @@ void WebsocketConnection::async_write_some(boost::asio::const_buffer buffer, std
   auto self = shared_from_this();
   _ws->async_write_some(true, buffer, [this, self, handler](boost::system::error_code ec, std::size_t length) {
     // Rationalise close error code
-    if (ec == websocket::error::closed) ec = boost::asio::error::eof;
+    if (ec == websocket::error::closed || ec == boost::asio::error::not_connected)  ec = boost::asio::error::eof;
     handler(ec, length);
   });
 }
