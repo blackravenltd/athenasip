@@ -46,6 +46,9 @@ class Registrar : public std::enable_shared_from_this<Registrar> {
   void server_start_all(std::shared_ptr<SIPCore> core);
   void server_stop_all();
 
+  // Realms
+  bool realm_exists(const std::string &realm);
+
   // Subscribers
   bool subscriber_exists(std::shared_ptr<SIPIdentity> identity);
   std::shared_ptr<Subscriber> subscriber_get(std::shared_ptr<SIPIdentity> identity);

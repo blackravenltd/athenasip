@@ -31,11 +31,26 @@ Registrar::Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<Config> _co
       _events(events),
       _nonce_cache(std::make_shared<ExpirySet<std::string>>()) {}
 
-bool Registrar::subscriber_exists(std::shared_ptr<SIPIdentity> identity) {
-  std::shared_ptr<DBResult> res = _db->query("SELECT COUNT(*) FROM `subscriber` WHERE `user` = ? AND `realm` = ?", {identity->uri->user, identity->uri->realm});
+// Realms
+bool Registrar::realm_exists(const std::string &realm) {
+  std::shared_ptr<DBResult> res = _db->query("SELECT COUNT(*) FROM `realm` WHERE `realm`.`name` = ?", { realm });
 
   if (res && res->rows.size() == 0) {
-    _logger->warn("DB returned no rows on a COUNT() statement");
+    _logger->warn("realm_exists - DB returned no rows on a COUNT() statement");
+    return false;
+  } else {
+    return res->rows[0]->column_values[0]->as<int64_t>() == 1;
+  }
+};
+
+
+// Subscribers
+
+bool Registrar::subscriber_exists(std::shared_ptr<SIPIdentity> identity) {
+  std::shared_ptr<DBResult> res = _db->query("SELECT COUNT(*) FROM `subscriber`,`realm` WHERE `subscriber`.`user` = ? AND `realm`.`name` = ? AND `subscriber`.`realm_id` = `realm`.`id`", {identity->uri->user, identity->uri->realm});
+
+  if (res && res->rows.size() == 0) {
+    _logger->warn("subscriber_exists - DB returned no rows on a COUNT() statement");
     return false;
   } else {
     return res->rows[0]->column_values[0]->as<int64_t>() == 1;
@@ -44,7 +59,7 @@ bool Registrar::subscriber_exists(std::shared_ptr<SIPIdentity> identity) {
 
 std::shared_ptr<Subscriber> Registrar::subscriber_get(std::shared_ptr<SIPIdentity> identity) {
   std::shared_ptr<DBResult> res =
-      _db->query("SELECT `id`,`name`,`h1` FROM `subscriber` WHERE `user` = ? AND `realm` = ?", {identity->uri->user, identity->uri->realm});
+      _db->query("SELECT `subscriber`.`id`,`subscriber`.`name`,`subscriber`.`h1` FROM `subscriber`,`realm` WHERE `subscriber`.`user` = ? AND `realm`.`name` = ? AND `subscriber`.`realm_id` = `realm`.`id`", {identity->uri->user, identity->uri->realm});
 
   if (res && res->rows.size() == 0) return nullptr;
 
