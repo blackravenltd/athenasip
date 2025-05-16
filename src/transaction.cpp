@@ -21,9 +21,11 @@ Transaction::Transaction(std::shared_ptr<Logger> logger, std::shared_ptr<Channel
 {
     _logger->debug("created");
 }
+
 Transaction::~Transaction() {
   _logger->debug("destroyed");
 }
+
 void Transaction::start(uint16_t t1_ms) {
   _t1_ms = t1_ms;
   _logger->debug("start");
