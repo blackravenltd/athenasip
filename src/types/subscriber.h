@@ -18,6 +18,6 @@ class Subscriber {
  public:
   uint64_t id;
   std::shared_ptr<SIPIdentity> identity;
-  std::string h1;
+  std::string ha1;
 };
 }  // namespace athenasip::types

@@ -13,6 +13,14 @@ using namespace athenasip::rtp;
 
 namespace athenasip {
 
+Registrar::Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<Config> _config, std::shared_ptr<athenasip::databases::DB> db,
+                     std::shared_ptr<events::EventSystem> events)
+    : _logger(std::make_unique<LoggerScoped>("registrar", logger)),
+      config(_config),
+      _db(db),
+      _events(events),
+      _nonce_cache(std::make_shared<ExpirySet<std::string>>()) {}
+
 void Registrar::server_register(std::shared_ptr<servers::Server> server) { _servers.push_back(server); }
 
 void Registrar::server_start_all(std::shared_ptr<SIPCore> core) {
@@ -22,14 +30,6 @@ void Registrar::server_start_all(std::shared_ptr<SIPCore> core) {
 void Registrar::server_stop_all() {
   for (auto &server : _servers) server->stop();
 }
-
-Registrar::Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<Config> _config, std::shared_ptr<athenasip::databases::DB> db,
-                     std::shared_ptr<events::EventSystem> events)
-    : _logger(std::make_unique<LoggerScoped>("registrar", logger)),
-      config(_config),
-      _db(db),
-      _events(events),
-      _nonce_cache(std::make_shared<ExpirySet<std::string>>()) {}
 
 // Realms
 bool Registrar::realm_exists(const std::string &realm) {
@@ -43,6 +43,10 @@ bool Registrar::realm_exists(const std::string &realm) {
   }
 };
 
+// Events
+void Registrar::event_publish(const std::string &event, const std::string &payload) {
+  _events->publish(event, payload);
+}
 
 // Subscribers
 
@@ -59,16 +63,16 @@ bool Registrar::subscriber_exists(std::shared_ptr<SIPIdentity> identity) {
 
 std::shared_ptr<Subscriber> Registrar::subscriber_get(std::shared_ptr<SIPIdentity> identity) {
   std::shared_ptr<DBResult> res =
-      _db->query("SELECT `subscriber`.`id`,`subscriber`.`name`,`subscriber`.`h1` FROM `subscriber`,`realm` WHERE `subscriber`.`user` = ? AND `realm`.`name` = ? AND `subscriber`.`realm_id` = `realm`.`id`", {identity->uri->user, identity->uri->realm});
+      _db->query("SELECT `subscriber`.`id`,`subscriber`.`name`,`subscriber`.`ha1` FROM `subscriber`,`realm` WHERE `subscriber`.`user` = ? AND `realm`.`name` = ? AND `subscriber`.`realm_id` = `realm`.`id`", {identity->uri->user, identity->uri->realm});
 
   if (res && res->rows.size() == 0) return nullptr;
 
-  auto obj = std::make_shared<Subscriber>();
+  auto subscriber = std::make_shared<Subscriber>();
   auto row = res->rows[0];
-  obj->id = row->values["id"]->as<uint64_t>();
-  obj->identity = identity;
-  obj->h1 = row->values["h1"]->as<std::string>();
-  return obj;
+  subscriber->id = row->values["id"]->as<uint64_t>();
+  subscriber->identity = identity;
+  subscriber->ha1 = row->values["ha1"]->as<std::string>();
+  return subscriber;
 }
 
 bool Registrar::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel) {
@@ -193,7 +197,7 @@ bool Registrar::transaction_register(std::shared_ptr<Transaction> transaction) {
   std::unique_lock<std::shared_mutex> lock(_transactions_mutex);
 
   _transactions[transaction->id] = transaction;
-  _events->publish("transaction.register", transaction->id);
+  event_publish("transaction.register", transaction->id);
   return true;
 }
 
@@ -204,7 +208,7 @@ bool Registrar::transaction_unregister(std::string transactionId) {
 
   std::unique_lock<std::shared_mutex> lock(_transactions_mutex);
   _transactions.erase(transactionId);
-  _events->publish("transaction.unregister", transactionId);
+  event_publish("transaction.unregister", transactionId);
   return true;
 }
 
@@ -228,13 +232,13 @@ void Registrar::transaction_end_all() {
 // Calls
 bool Registrar::call_register(std::shared_ptr<Call> call) {
   _calls[call->id] = call;
-  _events->publish("call.register", call->id);
+  event_publish("call.register", call->id);
   return true;
 }
 
 bool Registrar::call_unregister(std::string callId) {
   _calls.erase(callId);
-  _events->publish("call.unregister", callId);
+  event_publish("call.unregister", callId);
   return true;
 }
 

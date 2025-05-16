@@ -5,6 +5,7 @@
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
 #include "sip_core.h"
+#include "util.h"
 #include "headers/authorization_header.h"
 #include "headers/sip_identity_header.h"
 
@@ -50,27 +51,47 @@ void SIPCore::process_message(std::shared_ptr<SIPMessage> message) {
   if(message->header->request_method == "REGISTER") {
     if (!message->header->contains("Authorization")) {
       // No Authorization Header
-      _logger->info("[REGISTER] - Incomplete Headers (No Authorization) - Sending 401 Proxy-Authenticate");
+      _logger->info("["+message->header->request_method+"] - No Authorization Header");
       return send_401_unauthorized(message);
-      return;
-    } else {
-      // Process Authorization
-      auto auth = message->header->headers_map["Authorization"][0]->as<AuthorizationHeader>()->value;
-      // Check Fields in Auth
-      if(auth->type!="Digest" || !auth->contains_field("realm") || !auth->contains_field("nonce") || !auth->contains_field("response")) {
-        _logger->info("[REGISTER] - Incomplete Authorization Fields - Sending 401 Proxy-Authenticate");
-        return send_401_unauthorized(message);
-      }
-      // Check nonce exists
-      if(!registrar->nonce_check(auth->fields["nonce"])) {
-        _logger->info("[REGISTER] - Nonce Not Found or Expired - Sending 401 Proxy-Authenticate");
-        return send_401_unauthorized(message);
-      }
+    }
+    
+    // Process Authorization
+
+    auto auth = message->header->headers_map["Authorization"][0]->as<AuthorizationHeader>()->value;
+    if(auth->type != "Digest" || !auth->contains_field("realm") || !auth->contains_field("nonce") || !auth->contains_field("response") || !auth->contains_field("uri")) {
+      // Auth fields incorrect
+      _logger->info("["+message->header->request_method+"] - Incomplete Authorization Fields");
+      return send_401_unauthorized(message);
     }
 
-    auto authHeader = message->header->headers_map["Authorization"][0]->as<headers::AuthorizationHeader>();
-    _logger->info("Username "+authHeader->value->fields["username"]);
+    if(!registrar->nonce_check(auth->fields["nonce"])) {
+      // No Nonce exists or is expired
+      _logger->info("["+message->header->request_method+"] - Nonce "+auth->fields["nonce"]+" Not Found or Expired");
+      return send_401_unauthorized(message);
+    }
 
+    auto aorSubscriber = registrar->subscriber_get(message->header->headers_map["To"][0]->as<SIPIdentityHeader>()->value);
+
+    if(!aorSubscriber) {
+      // Subscriber not found
+      _logger->info("["+message->header->request_method+"] - Subscriber " + aorSubscriber->identity->to_string() + " Not Found");
+      return send_401_unauthorized(message);             
+    }
+
+    // Generate MD5 Check
+    auto authMD5 = Util::md5(aorSubscriber->ha1 + ":" + auth->fields["nonce"] + ":" + Util::md5(message->header->request_method + ":" + auth->fields["uri"]));
+
+    if(Util::to_lower(authMD5) != Util::to_lower(auth->fields["response"])) {
+      // Authorization rejected
+      _logger->info("["+message->header->request_method+"] - MD5 Authorization Failed");
+      return send_401_unauthorized(message);      
+    }
+
+    // Send 200 OK
+    auto response = message->generate_response();
+    response->header->response_code = 200;
+    response->header->response_message = "OK";
+    response->channel->send(response);
   }
 
 }
@@ -78,7 +99,7 @@ void SIPCore::process_message(std::shared_ptr<SIPMessage> message) {
 void SIPCore::send_401_unauthorized(std::shared_ptr<SIPMessage> message) {
     // Send 401 Unauthorized
     auto response = message->generate_response();
-    response->header->add("Reason", "SIP;cause=407;text=\"Unauthorized\"");
+    response->header->add("Reason", "SIP;cause=401;text=\"Unauthorized\"");
     response->header->response_code = 401;
     response->header->response_message = "Unauthorized";
     // Get From Identity
