@@ -96,8 +96,9 @@ class DB {
 
   // Register a Database Driver
   template <typename T, typename = std::enable_if_t<std::is_base_of<DB, T>::value>>
-  static void register_driver(std::string scheme) {
+  static void register_driver(std::shared_ptr<Logger> logger, std::string scheme) {
     auto& drivers = get_drivers();
+    logger->debug("(dbcore) Registering scheme " + scheme);
     drivers[scheme] = [](std::shared_ptr<Logger> logger, std::shared_ptr<URL> url) -> std::shared_ptr<DB> {
       return std::static_pointer_cast<DB>(std::make_shared<T>(logger, url));
     };
@@ -106,12 +107,13 @@ class DB {
   // Get a driver instance by name
   static std::shared_ptr<DB> create_driver(std::shared_ptr<Logger> logger, std::string url) {
     auto _url = std::make_shared<URL>(url);
+    logger->debug("(dbcore) Finding scheme " + _url->scheme);
     auto& drivers = get_drivers();
     auto it = drivers.find(_url->scheme);
     if (it != drivers.end()) {
       return it->second(logger, _url);  // Call the stored factory function
     } else {
-      std::cerr << "[DB] create_driver: Unknown scheme: " << _url->scheme << std::endl;
+      logger->error("(dbcore) Unknown Scheme " + _url->scheme);
       return nullptr;
     }
   }

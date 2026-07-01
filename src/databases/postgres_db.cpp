@@ -7,23 +7,20 @@
 #include "postgres_db.h"
 
 #include <chrono>
+#include <cstdint>
 #include <iomanip>
-#include <random>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
+#include <string>
+#include <string_view>
+#include <typeinfo>
+#include <utility>
 
 namespace athenasip::databases {
+namespace {
 
-// Utility to generate a unique prepared statement name.
-std::string generate_unique_stmt_name() {
-  static std::random_device rd;
-  static std::mt19937 mt(rd());
-  static std::uniform_int_distribution<int> dist(0, 1000000);
-  return "stmt_" + std::to_string(dist(mt));
-}  // namespace
-
-// Helper function to map PostgreSQL type OIDs to type names.
-static std::string oid_to_type(pqxx::oid oid) {
+std::string oid_to_type(pqxx::oid oid) {
   switch (oid) {
     case 21:
       return "int2";
@@ -44,16 +41,127 @@ static std::string oid_to_type(pqxx::oid oid) {
   }
 }
 
-PostgreSQLDB::PostgreSQLDB(std::shared_ptr<Logger> logger, std::shared_ptr<URL> url) : DB(std::make_shared<LoggerScoped>("postgres", logger)), _url(url) {}
+template <typename T>
+bool append_if_type(const std::any& value, pqxx::params& params, std::string& log) {
+  if (value.type() != typeid(T)) {
+    return false;
+  }
+
+  const auto& typed = std::any_cast<const T&>(value);
+  params.append(typed);
+
+  std::ostringstream oss;
+  oss << typed;
+  log += oss.str();
+  log += ",";
+
+  return true;
+}
+
+bool append_string_if_type(const std::any& value, pqxx::params& params, std::string& log) {
+  if (value.type() == typeid(std::string)) {
+    const auto& typed = std::any_cast<const std::string&>(value);
+    params.append(typed);
+    log += typed;
+    log += ",";
+    return true;
+  }
+
+  if (value.type() == typeid(std::string_view)) {
+    const auto typed = std::any_cast<std::string_view>(value);
+    const std::string copied{typed};
+    params.append(copied);
+    log += copied;
+    log += ",";
+    return true;
+  }
+
+  if (value.type() == typeid(const char*)) {
+    const auto typed = std::any_cast<const char*>(value);
+    if (typed == nullptr) {
+      params.append();
+      log += "NULL,";
+    } else {
+      const std::string copied{typed};
+      params.append(copied);
+      log += copied;
+      log += ",";
+    }
+    return true;
+  }
+
+  if (value.type() == typeid(char*)) {
+    const auto typed = std::any_cast<char*>(value);
+    if (typed == nullptr) {
+      params.append();
+      log += "NULL,";
+    } else {
+      const std::string copied{typed};
+      params.append(copied);
+      log += copied;
+      log += ",";
+    }
+    return true;
+  }
+
+  return false;
+}
+
+void append_param(const std::any& value, pqxx::params& params, std::string& log, std::size_t index) {
+  if (!value.has_value() || value.type() == typeid(std::nullptr_t)) {
+    params.append();
+    log += "NULL,";
+    return;
+  }
+
+  if (append_string_if_type(value, params, log)) {
+    return;
+  }
+
+  if (append_if_type<bool>(value, params, log)) {
+    return;
+  }
+
+  if (append_if_type<int>(value, params, log) ||
+      append_if_type<unsigned int>(value, params, log) ||
+      append_if_type<long>(value, params, log) ||
+      append_if_type<unsigned long>(value, params, log) ||
+      append_if_type<long long>(value, params, log) ||
+      append_if_type<unsigned long long>(value, params, log) ||
+      append_if_type<std::int16_t>(value, params, log) ||
+      append_if_type<std::uint16_t>(value, params, log) ||
+      append_if_type<std::int32_t>(value, params, log) ||
+      append_if_type<std::uint32_t>(value, params, log) ||
+      append_if_type<std::int64_t>(value, params, log) ||
+      append_if_type<std::uint64_t>(value, params, log) ||
+      append_if_type<float>(value, params, log) ||
+      append_if_type<double>(value, params, log) ||
+      append_if_type<long double>(value, params, log)) {
+    return;
+  }
+
+  throw std::runtime_error("Unsupported PostgreSQL parameter type at index " + std::to_string(index) + ": " + value.type().name());
+}
+
+std::uint32_t clamp_rows_affected(pqxx::result::size_type rows) {
+  const auto max = static_cast<pqxx::result::size_type>(std::numeric_limits<std::uint32_t>::max());
+  return static_cast<std::uint32_t>(rows > max ? max : rows);
+}
+
+}  // namespace
+
+PostgreSQLDB::PostgreSQLDB(std::shared_ptr<Logger> logger, std::shared_ptr<URL> url)
+    : DB(std::make_shared<LoggerScoped>("postgres", logger)), _url(std::move(url)) {}
 
 PostgreSQLDB::~PostgreSQLDB() { close(); }
 
 bool PostgreSQLDB::connect() {
-  // Adjust scheme if needed (e.g., postgres:// or postgresql://)
   _url->scheme = "postgresql";
   _logger->debug("PostgreSQL URL: " + _url->to_string());
+
   try {
     _connection = std::make_shared<pqxx::connection>(_url->to_string());
+
     if (!_connection->is_open()) {
       _logger->error("Connection to PostgreSQL failed.");
       return false;
@@ -65,26 +173,29 @@ bool PostgreSQLDB::connect() {
     _logger->error("Unknown exception occurred while connecting.");
     return false;
   }
+
   return true;
 }
 
-std::shared_ptr<DBValue> PostgreSQLDB::_map_value(const pqxx::field& field, const std::string& colType) {
+std::shared_ptr<DBValue> PostgreSQLDB::_map_value(pqxx::field_ref field, const std::string& colType) {
   if (field.is_null()) {
     return std::make_shared<DBValueImpl<std::nullptr_t>>();
   }
 
   try {
-    // Basic mapping based on PostgreSQL type names.
     if (colType == "int2" || colType == "int4" || colType == "int8") {
-      return std::make_shared<DBValueImpl<int64_t>>(field.as<int64_t>());
-    } else if (colType == "float4" || colType == "float8" || colType == "numeric") {
-      return std::make_shared<DBValueImpl<double>>(field.as<double>());
-    } else if (colType == "bool") {
-      return std::make_shared<DBValueImpl<bool>>(field.as<bool>());
-    } else {
-      // For character types, text, etc.
-      return std::make_shared<DBValueImpl<std::string>>(field.c_str() ? field.c_str() : "");
+      return std::make_shared<DBValueImpl<std::int64_t>>(field.as<std::int64_t>());
     }
+
+    if (colType == "float4" || colType == "float8" || colType == "numeric") {
+      return std::make_shared<DBValueImpl<double>>(field.as<double>());
+    }
+
+    if (colType == "bool") {
+      return std::make_shared<DBValueImpl<bool>>(field.as<bool>());
+    }
+
+    return std::make_shared<DBValueImpl<std::string>>(field.as<std::string>());
   } catch (const std::exception& ex) {
     _logger->error(std::string("Type conversion error: ") + ex.what());
     return std::make_shared<DBValueImpl<std::nullptr_t>>();
@@ -93,89 +204,60 @@ std::shared_ptr<DBValue> PostgreSQLDB::_map_value(const pqxx::field& field, cons
 
 std::shared_ptr<DBResult> PostgreSQLDB::query(std::string sql, std::vector<std::any> params) {
   auto res = std::make_shared<DBResult>();
-  std::string param_strs;
+  res->rows_affected = 0;
 
-  // Get timing
-  auto start = std::chrono::high_resolution_clock::now();
+  std::string param_strs;
+  const auto start = std::chrono::high_resolution_clock::now();
 
   try {
     if (!_connection || !_connection->is_open()) {
       throw std::runtime_error("Connection is not open");
     }
 
-    // Use a write transaction (pqxx::work) since prepared statements are not supported in nontransaction.
     pqxx::work txn(*_connection);
+    pqxx::params param_values{txn};
 
-    // Prepare a unique statement name for this query.
-    std::string stmt_name = generate_unique_stmt_name();
-    _connection->prepare(stmt_name, sql);
-
-    // Build parameter strings for execution.
-    std::vector<std::string> paramValues;
-    for (size_t i = 0; i < params.size(); ++i) {
-      if (params[i].type() == typeid(std::string)) {
-        auto v = std::any_cast<std::string>(params[i]);
-        paramValues.push_back(v);
-        param_strs += v + ",";
-      } else if (params[i].type() == typeid(int)) {
-        auto v = std::any_cast<int>(params[i]);
-        paramValues.push_back(std::to_string(v));
-        param_strs += std::to_string(v) + ",";
-      } else if (params[i].type() == typeid(uint64_t)) {
-        auto v = std::any_cast<uint64_t>(params[i]);
-        paramValues.push_back(std::to_string(v));
-        param_strs += std::to_string(v) + ",";
-      } else if (params[i].type() == typeid(double)) {
-        auto v = std::any_cast<double>(params[i]);
-        paramValues.push_back(std::to_string(v));
-        param_strs += std::to_string(v) + ",";
-      } else {
-        throw std::runtime_error("Unsupported parameter type at index " + std::to_string(i));
-      }
+    for (std::size_t i = 0; i < params.size(); ++i) {
+      append_param(params[i], param_values, param_strs, i);
     }
 
-    // Execute the prepared statement.
-    // (While exec_prepared is marked deprecated, it is still available with pqxx::work.)
-    pqxx::result result = txn.exec_prepared(stmt_name, paramValues);
+    pqxx::result result = params.empty() ? txn.exec(sql) : txn.exec(sql, param_values);
 
-    // Unprepare the statement.
-    _connection->unprepare(stmt_name);
+    const auto duration =
+        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
 
-    // Get timing duration.
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
-
-    // Log SQL
     std::ostringstream oss;
     oss << std::fixed << std::setprecision(3) << duration;
-    std::string durationStr = oss.str();
-    _logger->debug("SQL: " + sql + " [" + Util::trim(param_strs, ",") + "] (" + std::to_string(result.size()) + " rows, " + durationStr + "ms)");
 
-    // Fetch column names and convert column type OIDs to type names.
-    std::vector<std::string> columnNames;
-    std::vector<std::string> columnTypes;
-    for (int i = 0; i < result.columns(); ++i) {
-      columnNames.push_back(result.column_name(i));
-      columnTypes.push_back(oid_to_type(result.column_type(i)));
+    _logger->debug("SQL: " + sql + " [" + Util::trim(param_strs, ",") + "] (" + std::to_string(result.size()) + " rows, " + oss.str() + "ms)");
+
+    std::vector<std::string> column_names;
+    std::vector<std::string> column_types;
+    column_names.reserve(static_cast<std::size_t>(result.columns()));
+    column_types.reserve(static_cast<std::size_t>(result.columns()));
+
+    for (pqxx::row_size_type i = 0; i < result.columns(); ++i) {
+      column_names.emplace_back(result.column_name(i));
+      column_types.emplace_back(oid_to_type(result.column_type(i)));
     }
 
-    // Iterate over the fetched rows.
-    for (const auto& row : result) {
-      auto dbRow = std::make_shared<DBRow>();
-      for (pqxx::row::size_type col = 0; col < row.size(); ++col) {
-        std::string colName = columnNames[col];
-        auto val = _map_value(row[col], columnTypes[col]);
-        dbRow->values.insert_or_assign(colName, val);
-        dbRow->column_values.push_back(val);
+    for (auto row : result) {
+      auto db_row = std::make_shared<DBRow>();
+
+      for (pqxx::row_size_type col = 0; col < row.size(); ++col) {
+        auto value = _map_value(row[col], column_types[static_cast<std::size_t>(col)]);
+        const auto& column_name = column_names[static_cast<std::size_t>(col)];
+
+        db_row->values.insert_or_assign(column_name, value);
+        db_row->column_values.push_back(value);
       }
-      res->rows.push_back(dbRow);
+
+      res->rows.push_back(db_row);
     }
 
-    // Store affected rows count.
-    res->rows_affected = result.affected_rows();
+    res->rows_affected = clamp_rows_affected(result.affected_rows());
 
-    // Commit the transaction.
     txn.commit();
-
   } catch (const std::exception& ex) {
     res->error = ex.what();
     _logger->error(std::string("Exception: ") + ex.what());
@@ -195,12 +277,5 @@ void PostgreSQLDB::close() {
 }
 
 bool PostgreSQLDB::is_created() { return true; }
-
-// Register with DB Drivers
-static bool postgres_registered = [] {
-  DB::register_driver<PostgreSQLDB>("postgresql");
-  DB::register_driver<PostgreSQLDB>("postgres");
-  return true;
-}();
 
 }  // namespace athenasip::databases

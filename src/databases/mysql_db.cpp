@@ -205,11 +205,4 @@ std::string MySQLDB::_to_mysql_datetime_string(const std::time_t& v) {
   return oss.str();
 }
 
-// Register with DB Drivers
-static bool mysql_registered = [] {
-  DB::register_driver<MySQLDB>("mysqlx");
-  DB::register_driver<MySQLDB>("mysql");
-  return true;
-}();
-
 }  // namespace athenasip::databases
