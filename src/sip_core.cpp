@@ -71,18 +71,19 @@ void SIPCore::process_message(std::shared_ptr<SIPMessage> message) {
       return send_401_unauthorized(message);
     }
 
-    auto aorSubscriber = registrar->subscriber_get(message->header->headers_map["To"][0]->as<SIPIdentityHeader>()->value);
+    auto& identityRef = message->header->headers_map["To"][0]->as<SIPIdentityHeader>()->value;
+    auto aorSubscriber = registrar->subscriber_get(identityRef);
 
-    if (!aorSubscriber) {
+    if (aorSubscriber == nullptr) {
       // Subscriber not found
-      _logger->info("[" + message->header->request_method + "] - Subscriber " + aorSubscriber->identity->to_string() + " Not Found");
+      _logger->info("[" + message->header->request_method + "] - Subscriber " + identityRef->to_string() + " Not Found");
       return send_401_unauthorized(message);
     }
 
     // Generate MD5 Check
-    auto authMD5 = Util::md5(aorSubscriber->ha1 + ":" + auth->fields["nonce"] + ":" + Util::md5(message->header->request_method + ":" + auth->fields["uri"]));
-
-    if (Util::to_lower(authMD5) != Util::to_lower(auth->fields["response"])) {
+    auto authMD5 = Util::to_lower(Util::md5(aorSubscriber->ha1 + ":" + auth->fields["nonce"] + ":" + Util::md5(message->header->request_method + ":" + auth->fields["uri"])));
+    
+    if (authMD5 != Util::to_lower(auth->fields["response"])) {
       // Authorization rejected
       _logger->info("[" + message->header->request_method + "] - MD5 Authorization Failed");
       return send_401_unauthorized(message);
