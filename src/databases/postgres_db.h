@@ -25,17 +25,16 @@ class PostgreSQLDB : public DB {
   PostgreSQLDB(std::shared_ptr<Logger> logger, std::shared_ptr<URL> url);
   ~PostgreSQLDB();
 
-  virtual bool connect() override;
-  virtual std::shared_ptr<DBResult> query(std::string sql, std::vector<std::any> params) override;
-  virtual void close() override;
-  virtual bool is_created() override;
+  bool connect() override;
+  std::shared_ptr<DBResult> query(std::string sql, std::vector<std::any> params) override;
+  void close() override;
+  bool is_created() override;
 
  private:
   std::shared_ptr<URL> _url;
   std::shared_ptr<pqxx::connection> _connection;
 
-  // Map a PostgreSQL field to a DBValue based on the PostgreSQL column type.
-  std::shared_ptr<DBValue> _map_value(const pqxx::field& field, const std::string& colType);
+  std::shared_ptr<DBValue> _map_value(pqxx::field_ref field, const std::string& colType);
 };
 
 }  // namespace athenasip::databases

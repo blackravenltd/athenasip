@@ -121,10 +121,4 @@ void SQLiteDB::close() {
 
 bool SQLiteDB::is_created() { return true; }
 
-// Register with DB Drivers
-static bool sqlite_registered = [] {
-  DB::register_driver<SQLiteDB>("sqlite");
-  return true;
-}();
-
 }  // namespace athenasip::databases

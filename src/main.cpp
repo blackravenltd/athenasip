@@ -31,6 +31,12 @@
 
 using namespace athenasip;
 
+// Databases
+#include "databases/mysql_db.h"
+#include "databases/postgres_db.h"
+#include "databases/sqlite_db.h"
+using namespace athenasip::databases;
+
 void wait_for_signal(boost::asio::signal_set& signals, boost::asio::io_context& io_context, std::function<void(int)> onsignal) {
   signals.async_wait([&](const boost::system::error_code& error, int signal_number) {
     if (!error) {
@@ -51,6 +57,14 @@ int main(int argc, char* argv[]) {
   logger->raw("-----------------------------------");
   logger->raw(" AthenaSIP v" + version->to_string());
   logger->raw("-----------------------------------");
+
+  // Register DB Handler
+
+  DB::register_driver<SQLiteDB>(logger, "sqlite");
+  DB::register_driver<MySQLDB>(logger, "mysqlx");
+  DB::register_driver<MySQLDB>(logger, "mysql");
+  DB::register_driver<PostgreSQLDB>(logger, "postgresql");
+  DB::register_driver<PostgreSQLDB>(logger, "postgres");
 
   // Create Config
   auto config = std::make_shared<Config>(logger);
