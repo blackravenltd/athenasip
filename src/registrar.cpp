@@ -224,10 +224,10 @@ std::shared_ptr<Transaction> Registrar::transaction_get(std::string transactionI
 }
 
 void Registrar::transaction_end_all() {
-  // Close All Channels
+  // End all transactions
   for (const auto& pair : _transactions) pair.second->end();
 
-  // Remove all Channels
+  // Remove all transactions
   std::unique_lock<std::shared_mutex> lock(_transactions_mutex);
   _transactions.clear();
 }

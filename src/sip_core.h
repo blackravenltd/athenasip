@@ -34,7 +34,6 @@ class SIPCore : public std::enable_shared_from_this<SIPCore> {
   std::shared_ptr<Registrar> registrar;
 
   void process_message(std::shared_ptr<SIPMessage> message);
-  void send_401_unauthorized(std::shared_ptr<SIPMessage> message);
 
  protected:
   std::shared_ptr<Logger> _logger;
