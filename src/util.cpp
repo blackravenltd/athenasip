@@ -166,17 +166,17 @@ std::string Util::to_iso8601(const std::time_t& t) {
 std::size_t Util::hash_combine(std::size_t seed, std::size_t hash_value) { return seed ^ (hash_value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2)); }
 
 std::string generate_random_string(uint16_t length) {
-    std::ostringstream tag;
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<> dist(0, 15);
+  std::ostringstream tag;
+  std::random_device rd;
+  std::mt19937 gen(rd());
+  std::uniform_int_distribution<> dist(0, 15);
 
-    tag << std::hex;
-    for (int i = 0; i < length; ++i) {
-        tag << dist(gen);
-    }
+  tag << std::hex;
+  for (int i = 0; i < length; ++i) {
+    tag << dist(gen);
+  }
 
-    return tag.str();
+  return tag.str();
 }
 
 }  // namespace athenasip

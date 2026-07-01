@@ -35,7 +35,7 @@ class PostgreSQLDB : public DB {
   std::shared_ptr<pqxx::connection> _connection;
 
   // Map a PostgreSQL field to a DBValue based on the PostgreSQL column type.
-  std::shared_ptr<DBValue> _map_value(const pqxx::field &field, const std::string &colType);
+  std::shared_ptr<DBValue> _map_value(const pqxx::field& field, const std::string& colType);
 };
 
 }  // namespace athenasip::databases

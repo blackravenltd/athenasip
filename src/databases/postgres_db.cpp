@@ -58,7 +58,7 @@ bool PostgreSQLDB::connect() {
       _logger->error("Connection to PostgreSQL failed.");
       return false;
     }
-  } catch (const std::exception &ex) {
+  } catch (const std::exception& ex) {
     _logger->error(std::string("Exception while connecting: ") + ex.what());
     return false;
   } catch (...) {
@@ -68,7 +68,7 @@ bool PostgreSQLDB::connect() {
   return true;
 }
 
-std::shared_ptr<DBValue> PostgreSQLDB::_map_value(const pqxx::field &field, const std::string &colType) {
+std::shared_ptr<DBValue> PostgreSQLDB::_map_value(const pqxx::field& field, const std::string& colType) {
   if (field.is_null()) {
     return std::make_shared<DBValueImpl<std::nullptr_t>>();
   }
@@ -85,7 +85,7 @@ std::shared_ptr<DBValue> PostgreSQLDB::_map_value(const pqxx::field &field, cons
       // For character types, text, etc.
       return std::make_shared<DBValueImpl<std::string>>(field.c_str() ? field.c_str() : "");
     }
-  } catch (const std::exception &ex) {
+  } catch (const std::exception& ex) {
     _logger->error(std::string("Type conversion error: ") + ex.what());
     return std::make_shared<DBValueImpl<std::nullptr_t>>();
   }
@@ -159,7 +159,7 @@ std::shared_ptr<DBResult> PostgreSQLDB::query(std::string sql, std::vector<std::
     }
 
     // Iterate over the fetched rows.
-    for (const auto &row : result) {
+    for (const auto& row : result) {
       auto dbRow = std::make_shared<DBRow>();
       for (pqxx::row::size_type col = 0; col < row.size(); ++col) {
         std::string colName = columnNames[col];
@@ -176,7 +176,7 @@ std::shared_ptr<DBResult> PostgreSQLDB::query(std::string sql, std::vector<std::
     // Commit the transaction.
     txn.commit();
 
-  } catch (const std::exception &ex) {
+  } catch (const std::exception& ex) {
     res->error = ex.what();
     _logger->error(std::string("Exception: ") + ex.what());
   } catch (...) {

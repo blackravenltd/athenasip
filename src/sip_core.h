@@ -21,8 +21,8 @@
 #include "script/script_engine.h"
 #include "servers/server.h"
 #include "sip_message.h"
-#include "version.h"
 #include "transaction.h"
+#include "version.h"
 
 namespace athenasip {
 
@@ -40,7 +40,6 @@ class SIPCore : public std::enable_shared_from_this<SIPCore> {
   std::shared_ptr<Logger> _logger;
   std::shared_ptr<Version> _version;
   std::shared_ptr<Config> _config;
-
 
   void _send(std::shared_ptr<SIPMessage> message, uint16_t code, std::string response_message);
 };

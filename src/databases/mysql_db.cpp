@@ -16,10 +16,10 @@ bool MySQLDB::connect() {
   _logger->debug("MySQL URL: " + _url->to_string());
   try {
     _session = std::make_shared<mysqlx::Session>(_url->to_string());
-  } catch (const mysqlx::Error &err) {
+  } catch (const mysqlx::Error& err) {
     _logger->error(std::string("Error while connecting: ") + err.what());
     return false;
-  } catch (std::exception &ex) {
+  } catch (std::exception& ex) {
     _logger->error(std::string("Exception while connecting: ") + ex.what());
     return false;
   } catch (...) {
@@ -29,7 +29,7 @@ bool MySQLDB::connect() {
   return true;
 }
 
-std::shared_ptr<DBValue> MySQLDB::_map_value(const mysqlx::Value &val) {
+std::shared_ptr<DBValue> MySQLDB::_map_value(const mysqlx::Value& val) {
   if (val.isNull()) {
     return std::make_shared<DBValueImpl<std::nullptr_t>>();
   }
@@ -141,7 +141,7 @@ std::shared_ptr<DBResult> MySQLDB::query(std::string sql, std::vector<std::any> 
 
     // Fetch column names before iterating over rows
     std::vector<std::string> columnNames;
-    for (const auto &col : result.getColumns()) {
+    for (const auto& col : result.getColumns()) {
       columnNames.push_back(col.getColumnName());
     }
 
@@ -161,7 +161,7 @@ std::shared_ptr<DBResult> MySQLDB::query(std::string sql, std::vector<std::any> 
     res->rows_affected = result.getAffectedItemsCount();
 
     // Iterate over the fetched rows
-    for (const mysqlx::Row &row : rows) {
+    for (const mysqlx::Row& row : rows) {
       auto dbRow = std::make_shared<DBRow>();
 
       // Iterate over columns using stored column names
@@ -177,10 +177,10 @@ std::shared_ptr<DBResult> MySQLDB::query(std::string sql, std::vector<std::any> 
       res->rows.push_back(dbRow);
     }
 
-  } catch (const mysqlx::Error &ex) {
+  } catch (const mysqlx::Error& ex) {
     res->error = ex.what();
     _logger->error("SQL: " + sql + " [" + Util::trim(param_strs, ",") + "] Error: " + res->error);
-  } catch (std::exception &ex) {
+  } catch (std::exception& ex) {
     res->error = ex.what();
     _logger->error("SQL: " + sql + " [" + Util::trim(param_strs, ",") + "] Error: " + res->error);
   } catch (...) {
@@ -198,7 +198,7 @@ void MySQLDB::close() {
 
 bool MySQLDB::is_created() { return true; }
 
-std::string MySQLDB::_to_mysql_datetime_string(const std::time_t &v) {
+std::string MySQLDB::_to_mysql_datetime_string(const std::time_t& v) {
   std::tm tm = *std::localtime(&v);
   std::ostringstream oss;
   oss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");

@@ -37,7 +37,7 @@ class DBValue {
   T as() const {
     try {
       return std::any_cast<T>(get_any());
-    } catch (const std::bad_any_cast &e) {
+    } catch (const std::bad_any_cast& e) {
       std::cout << "[DEVELOPER] Bad any cast when getting DBValue: " << e.what() << ", cast from " << get_any().type().name() << " to " << typeid(T).name()
                 << std::endl;
       return T{};
@@ -71,7 +71,7 @@ class DBRow {
   std::vector<std::shared_ptr<DBValue>> column_values;
 
   // Provide read-only access to a value by key.
-  std::shared_ptr<DBValue> operator[](const std::string &key) const {
+  std::shared_ptr<DBValue> operator[](const std::string& key) const {
     auto it = values.find(key);
     return (it != values.end()) ? it->second : nullptr;
   }
@@ -97,7 +97,7 @@ class DB {
   // Register a Database Driver
   template <typename T, typename = std::enable_if_t<std::is_base_of<DB, T>::value>>
   static void register_driver(std::string scheme) {
-    auto &drivers = get_drivers();
+    auto& drivers = get_drivers();
     drivers[scheme] = [](std::shared_ptr<Logger> logger, std::shared_ptr<URL> url) -> std::shared_ptr<DB> {
       return std::static_pointer_cast<DB>(std::make_shared<T>(logger, url));
     };
@@ -106,7 +106,7 @@ class DB {
   // Get a driver instance by name
   static std::shared_ptr<DB> create_driver(std::shared_ptr<Logger> logger, std::string url) {
     auto _url = std::make_shared<URL>(url);
-    auto &drivers = get_drivers();
+    auto& drivers = get_drivers();
     auto it = drivers.find(_url->scheme);
     if (it != drivers.end()) {
       return it->second(logger, _url);  // Call the stored factory function
@@ -119,7 +119,7 @@ class DB {
  protected:
   std::shared_ptr<Logger> _logger;
 
-  static std::unordered_map<std::string, std::function<std::shared_ptr<DB>(std::shared_ptr<Logger> logger, std::shared_ptr<URL> url)>> &get_drivers() {
+  static std::unordered_map<std::string, std::function<std::shared_ptr<DB>(std::shared_ptr<Logger> logger, std::shared_ptr<URL> url)>>& get_drivers() {
     static std::unordered_map<std::string, std::function<std::shared_ptr<DB>(std::shared_ptr<Logger> logger, std::shared_ptr<URL> url)>> drivers;
     return drivers;
   }

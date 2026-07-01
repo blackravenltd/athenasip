@@ -18,13 +18,13 @@ namespace servers {
 
 class WebsocketServer : public Server {
  public:
-  WebsocketServer(std::shared_ptr<Logger> logger, const std::string &bind_address, short port);
+  WebsocketServer(std::shared_ptr<Logger> logger, const std::string& bind_address, short port);
   void start(std::shared_ptr<SIPCore> core) override;
   void stop() override;
 
  protected:
   void start_accept();
-  void _handle_accept(const boost::system::error_code &error, std::shared_ptr<boost::asio::ip::tcp::socket> socket);
+  void _handle_accept(const boost::system::error_code& error, std::shared_ptr<boost::asio::ip::tcp::socket> socket);
 
   boost::asio::io_context _io_context;
   boost::asio::ip::tcp::acceptor _acceptor;

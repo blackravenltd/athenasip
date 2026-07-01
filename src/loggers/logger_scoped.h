@@ -16,11 +16,11 @@ class LoggerScoped : public Logger {
  public:
   LoggerScoped(std::string scope, std::shared_ptr<Logger> logger);
 
-  virtual void debug(const std::string &log) override;
-  virtual void info(const std::string &log) override;
-  virtual void warn(const std::string &log) override;
-  virtual void error(const std::string &log) override;
-  virtual void raw(const std::string &log) override;
+  virtual void debug(const std::string& log) override;
+  virtual void info(const std::string& log) override;
+  virtual void warn(const std::string& log) override;
+  virtual void error(const std::string& log) override;
+  virtual void raw(const std::string& log) override;
   virtual std::shared_ptr<Logger> base_logger() override;
   virtual void set_level(LogLevel level) override;
 

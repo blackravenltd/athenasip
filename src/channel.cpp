@@ -6,7 +6,6 @@
 //
 #include "channel.h"
 
-#include <iostream>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -35,15 +34,14 @@
 #include "headers/via_header.h"
 #include "sdp.h"
 #include "servers/connection.h"
+#include "sip_core.h"
 #include "sip_header.h"
+#include "sip_message.h"
 #include "types/authorization.h"
 #include "types/sip_identity.h"
 #include "types/sip_uri.h"
 #include "types/subscriber.h"
 #include "util.h"
-
-#include "sip_core.h"
-#include "sip_message.h"
 
 using namespace athenasip::headers;
 using namespace athenasip::types;
@@ -135,7 +133,7 @@ void Channel::send(std::shared_ptr<SIPMessage> message) {
   message->header->remove_value("Record-Route", [this, server_endpoint](std::shared_ptr<Header> header) { return true; });
   message->header->remove_value("record-route", [this, server_endpoint](std::shared_ptr<Header> header) { return true; });
   message->header->remove_value("Record-route", [this, server_endpoint](std::shared_ptr<Header> header) { return true; });
-  
+
   message->header->add("Record-Route", "<sip:192.168.0.17;transport=" + _connection->transport_name() + ";lr>");
 
   // Reset Length to body length
@@ -146,7 +144,7 @@ void Channel::send(std::shared_ptr<SIPMessage> message) {
   _logger->info("< " + message->header->first_line());
 
   // cout Outgoing (DEBUG)
-   message->print();
+  message->print();
 
   _schedule_async_write(message->to_string());
 }

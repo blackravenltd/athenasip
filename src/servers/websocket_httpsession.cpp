@@ -61,7 +61,7 @@ void WebsocketHTTPSession::do_upgrade() {
   auto ws = std::make_unique<websocket::stream<tcp::socket>>(std::move(*_socket));
 
   // Set a decorator to ensure that the "sip" subprotocol is included in the handshake.
-  ws->set_option(websocket::stream_base::decorator([](websocket::response_type &res) {
+  ws->set_option(websocket::stream_base::decorator([](websocket::response_type& res) {
     // Advertise the "sip" subprotocol.
     res.set(http::field::sec_websocket_protocol, "sip");
   }));

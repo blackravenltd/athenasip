@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.10)
 project(athenasip LANGUAGES CXX)
 
 # Set C++ Standard
@@ -19,7 +19,7 @@ include(FetchContent)
 list(APPEND CMAKE_PREFIX_PATH "/usr/local")
 
 # Find Boost libraries - note that Boost.Beast and Boost.JSON are header-only and part of Boost.
-find_package(Boost 1.87 REQUIRED COMPONENTS system thread json charconv)
+find_package(Boost 1.87 REQUIRED COMPONENTS thread json charconv)
 message(STATUS "Boost Include Directory: ${Boost_INCLUDE_DIRS}")
 
 # Find OpenSSL
@@ -79,7 +79,6 @@ target_include_directories(athenasip PUBLIC
     ${LUA_INCLUDE_DIR}
 )
 target_link_libraries(athenasip PRIVATE 
-  Boost::system
   Boost::thread
   Boost::json
   Boost::charconv
@@ -110,7 +109,6 @@ if(ATHENA_BUILD_TESTING)
       ${LUA_INCLUDE_DIR}
   )
   target_link_libraries(athenasip_tests PRIVATE 
-    Boost::system
     Boost::thread
     Boost::json
     Boost::charconv

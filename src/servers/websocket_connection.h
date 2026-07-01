@@ -36,7 +36,7 @@ class WebsocketConnection : public Connection, public std::enable_shared_from_th
   virtual bool is_open() override;
 
   virtual bool is_reliable() override { return true; }
-  
+
   virtual void shutdown() override;
   virtual void close() override;
 

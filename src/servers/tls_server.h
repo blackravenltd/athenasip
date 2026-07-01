@@ -15,7 +15,7 @@ namespace athenasip::servers {
 
 class TLSServer : public Server {
  public:
-  TLSServer(std::shared_ptr<Logger> logger, const std::string &bind_address, short port);
+  TLSServer(std::shared_ptr<Logger> logger, const std::string& bind_address, short port);
 
   void start(std::shared_ptr<SIPCore> core) override;
   void stop() override;
@@ -23,7 +23,7 @@ class TLSServer : public Server {
   bool set_certificates(std::string cert, std::string key);
 
  protected:
-  void _handle_accept(const boost::system::error_code &error, std::shared_ptr<boost::asio::ip::tcp::socket> new_connection);
+  void _handle_accept(const boost::system::error_code& error, std::shared_ptr<boost::asio::ip::tcp::socket> new_connection);
   void start_accept();
 
   boost::asio::io_context _io_context;
