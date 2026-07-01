@@ -15,11 +15,9 @@ namespace athenasip {
 
 Transaction::Transaction(std::shared_ptr<Logger> logger, std::shared_ptr<Channel> channel, std::shared_ptr<Registrar> registrar, Direction direction,
                          std::string _id)
-    : _logger(std::make_unique<LoggerScoped>("transaction " + _id, logger)), _channel(channel), _registrar(registrar), _direction(direction), id(_id) {
-  _logger->debug("created");
-}
+    : _logger(std::make_unique<LoggerScoped>("transaction " + _id, logger)), _channel(channel), _registrar(registrar), _direction(direction), id(_id) {}
 
-Transaction::~Transaction() { _logger->debug("destroyed"); }
+Transaction::~Transaction() {}
 
 void Transaction::start(uint16_t t1_ms) {
   _t1_ms = t1_ms;
@@ -34,13 +32,30 @@ void Transaction::reset_timers() {
 
 void Transaction::end() {
   _logger->debug("end");
+  _ended = true;
   if (_timer_b_f != nullptr) _timer_b_f->cancel();
+  if(_registrar) _registrar->transaction_unregister(id);
 }
 
 void Transaction::receive_message(std::shared_ptr<SIPMessage> message) { 
+  if(_ended) {
+    _logger->debug("receive_message " + message->header->first_line()+" (ended, dropping)");
+    return;
+  }
+   
   _logger->debug("receive_message " + message->header->first_line());
 
   if (message->header->request_method == "REGISTER") {
+    process_register(message);
+  } else if (message->header->request_method == "ACK") {
+    process_ack(message);
+  } else {
+    process_unknown(message);
+  }
+}
+
+void Transaction::process_register(std::shared_ptr<SIPMessage> message) {
+   // No Authorization
     if (!message->header->contains("Authorization")) {
       // No Authorization Header
       _logger->info("[" + message->header->request_method + "] - No Authorization Header");
@@ -48,7 +63,6 @@ void Transaction::receive_message(std::shared_ptr<SIPMessage> message) {
     }
 
     // Process Authorization
-
     auto auth = message->header->headers_map["Authorization"][0]->as<AuthorizationHeader>()->value;
     if (auth->type != "Digest" || !auth->contains_field("realm") || !auth->contains_field("nonce") || !auth->contains_field("response") ||
         !auth->contains_field("uri")) {
@@ -85,11 +99,46 @@ void Transaction::receive_message(std::shared_ptr<SIPMessage> message) {
     auto response = message->generate_response();
     response->header->response_code = 200;
     response->header->response_message = "OK";
+    if (message->header->contains("Contact")) {
+      auto contact_header =
+          message->header->headers_map["Contact"][0]->as<SIPIdentityHeader>();
+
+      if (contact_header && contact_header->value) {
+        auto contact = std::make_shared<SIPIdentity>(*contact_header->value);
+        // TODO: This should be configurable
+        contact->tags["expires"] = "3600";
+
+        response->header->add(
+            "Contact",
+            std::make_shared<SIPIdentityHeader>(contact)
+        );
+      }
+    }
     response->channel->send(response);
 
     // End this transaction
     end();
-  }
+}
+
+void Transaction::process_ack(std::shared_ptr<SIPMessage> message) {
+  _logger->debug("Received ACK, no response");
+
+  // End this transaction
+  end();
+}
+
+void Transaction::process_unknown(std::shared_ptr<SIPMessage> message) {
+  _logger->warn("Unknown request method "+message->header->request_method);
+
+    // Send 501 Not Implemented
+    auto response = message->generate_response();
+    response->header->add("Reason", "SIP;cause=501;text=\"Not Implemented\"");
+    response->header->response_code = 501;
+    response->header->response_message = "Not Implemented";
+    response->channel->send(response);
+
+    // End this transaction
+    end();
 }
 
 void Transaction::send_message(std::shared_ptr<SIPMessage> message) { _logger->debug("send_message " + message->header->first_line()); }

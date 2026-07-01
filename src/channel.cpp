@@ -65,22 +65,6 @@ void Channel::start() {
 
   // REGISTER timeout
   // TODO: Make rational
-  // _register_timeout = DelayedTask<int>::schedule(
-  //     [this, self] {
-  //       if (state != State::Initial && state != State::Challenged) return 1;
-
-  //       _logger->info("Exceeded REGISTER Timeout (5000ms)");
-
-  //       write("SIP/2.0 408 Request Timeout\r\nVia: SIP/2.0/" + Util::to_upper(_connection->transport_name()) +
-  //             " client.example.com;branch=z9hG4bK776asdhds\r\nFrom: <sip:user@example.com>;tag=123456\r\nTo: "
-  //             "<sip:server@example.com>\r\nCall-Id: abc123@example.com\r\nCSeq: 1 REGISTER\r\nContent-Length: 0\r\n\r\n");
-
-  //       close();
-
-  //       _register_timeout.reset();
-  //       return 0;
-  //     },
-  //     5000);
 
   _schedule_async_read();
 }
@@ -134,8 +118,6 @@ void Channel::send(std::shared_ptr<SIPMessage> message) {
   message->header->remove_value("record-route", [this, server_endpoint](std::shared_ptr<Header> header) { return true; });
   message->header->remove_value("Record-route", [this, server_endpoint](std::shared_ptr<Header> header) { return true; });
 
-  message->header->add("Record-Route", "<sip:192.168.0.17;transport=" + _connection->transport_name() + ";lr>");
-
   // Reset Length to body length
   message->header->clear("Content-Length");
   message->header->add("Content-Length", std::make_shared<UIntHeader>(message->body.size()));
@@ -151,11 +133,9 @@ void Channel::send(std::shared_ptr<SIPMessage> message) {
 
 void Channel::receive(std::shared_ptr<SIPMessage> message) {
   _logger->info("> " + message->header->first_line());
-  message->channel = shared_from_this();
+  message->print();
 
-  // cout Incoming (DEBUG)
-  _logger->info("> " + _incoming_message->header->first_line());
-  _incoming_message->print();
+  message->channel = shared_from_this();
 
   _core->process_message(message);
 }
