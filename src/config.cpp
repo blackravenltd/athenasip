@@ -16,11 +16,11 @@ namespace athenasip {
 
 Config::Config(std::shared_ptr<Logger> logger) : _logger(logger) {}
 
-bool Config::load_from_yaml(const std::string &filename) {
+bool Config::load_from_yaml(const std::string& filename) {
   YAML::Node config;
   try {
     config = YAML::LoadFile(filename);
-  } catch (const YAML::Exception &e) {
+  } catch (const YAML::Exception& e) {
     _logger->error("Failed to parse YAML file: " + std::string(e.what()));
     return false;
   }
@@ -51,7 +51,7 @@ bool Config::load_from_yaml(const std::string &filename) {
 
   // SIP Timers
   YAML::Node sip_timers = sip["timers"];
-  if(sip_timers) {
+  if (sip_timers) {
     if (sip_timers["t1_rtt_ms"]) sip_timer_t1_rtt_ms = sip_timers["t1_rtt_ms"].as<uint16_t>();
     if (sip_timers["t2_max_retransmit_interval_ms"]) sip_timer_t2_max_retransmit_interval_ms = sip_timers["t2_max_retransmit_interval_ms"].as<uint16_t>();
     if (sip_timers["t4_network_propagation_ms"]) sip_timer_t4_network_propagation_ms = sip_timers["t4_network_propagation_ms"].as<uint16_t>();
@@ -81,7 +81,7 @@ bool Config::load_from_yaml(const std::string &filename) {
     if (tls["port"]) {
       try {
         tls_port = tls["port"].as<uint16_t>();
-      } catch (const std::exception &e) {
+      } catch (const std::exception& e) {
         _logger->error("Invalid value for 'tls.port': " + std::string(e.what()));
         return false;
       }
@@ -121,7 +121,7 @@ bool Config::load_from_yaml(const std::string &filename) {
     if (tcp["port"]) {
       try {
         tcp_port = tcp["port"].as<uint16_t>();
-      } catch (const std::exception &e) {
+      } catch (const std::exception& e) {
         _logger->error("Invalid value for 'tcp.port': " + std::string(e.what()));
         return false;
       }
@@ -147,7 +147,7 @@ bool Config::load_from_yaml(const std::string &filename) {
     if (udp["port"]) {
       try {
         udp_port = udp["port"].as<uint16_t>();
-      } catch (const std::exception &e) {
+      } catch (const std::exception& e) {
         _logger->error("Invalid value for 'udp.port': " + std::string(e.what()));
         return false;
       }
@@ -173,7 +173,7 @@ bool Config::load_from_yaml(const std::string &filename) {
     if (websocket["port"]) {
       try {
         websocket_port = websocket["port"].as<uint16_t>();
-      } catch (const std::exception &e) {
+      } catch (const std::exception& e) {
         _logger->error("Invalid value for 'websocket.port': " + std::string(e.what()));
         return false;
       }
@@ -220,7 +220,7 @@ bool Config::load_from_yaml(const std::string &filename) {
     if (rtprelay["min_port"]) {
       try {
         rtprelay_min_port = rtprelay["min_port"].as<uint16_t>();
-      } catch (const std::exception &e) {
+      } catch (const std::exception& e) {
         _logger->error("Invalid value for 'rtprelay.min_port': " + std::string(e.what()));
       }
     } else {
@@ -229,7 +229,7 @@ bool Config::load_from_yaml(const std::string &filename) {
     if (rtprelay["max_port"]) {
       try {
         rtprelay_max_port = rtprelay["max_port"].as<uint16_t>();
-      } catch (const std::exception &e) {
+      } catch (const std::exception& e) {
         _logger->error("Invalid value for 'rtprelay.max_port': " + std::string(e.what()));
       }
     } else {
@@ -248,7 +248,7 @@ bool Config::load_from_yaml(const std::string &filename) {
     if (http["port"]) {
       try {
         http_port = http["port"].as<uint16_t>();
-      } catch (const std::exception &e) {
+      } catch (const std::exception& e) {
         _logger->error("Invalid value for 'http.port': " + std::string(e.what()));
         return false;
       }

@@ -47,10 +47,10 @@ class Registrar : public std::enable_shared_from_this<Registrar> {
   void server_stop_all();
 
   // Realms
-  bool realm_exists(const std::string &realm);
+  bool realm_exists(const std::string& realm);
 
   // Events
-  void event_publish(const std::string &event, const std::string &payload);
+  void event_publish(const std::string& event, const std::string& payload);
 
   // Subscribers
   bool subscriber_exists(std::shared_ptr<SIPIdentity> identity);
@@ -112,7 +112,7 @@ class Registrar : public std::enable_shared_from_this<Registrar> {
 
   std::unordered_map<std::string, std::shared_ptr<Transaction>> _transactions;
   std::shared_mutex _transactions_mutex;
-  
+
   std::unordered_map<std::string, std::shared_ptr<Call>> _calls;
 };
 

@@ -18,7 +18,7 @@ class Channel;
 class Registrar;
 class SIPMessage;
 
-class Transaction : public std::enable_shared_from_this<Transaction>  {
+class Transaction : public std::enable_shared_from_this<Transaction> {
  public:
   enum Direction {
     Incoming,
@@ -43,11 +43,11 @@ class Transaction : public std::enable_shared_from_this<Transaction>  {
   void start(uint16_t t1_ms);
   void reset_timers();
   void end();
-  
+
   void receive_message(std::shared_ptr<SIPMessage> message);
   void send_message(std::shared_ptr<SIPMessage> message);
 
-protected:
+ protected:
   std::shared_ptr<Logger> _logger;
   std::shared_ptr<Channel> _channel;
   std::weak_ptr<Registrar> _registrar;

@@ -16,26 +16,26 @@ class UDPServer : public Server {
  public:
   const uint16_t MAX_PACKET_SIZE = 65535;
 
-  UDPServer(std::shared_ptr<Logger> logger, const std::string &bind_address, short port);
+  UDPServer(std::shared_ptr<Logger> logger, const std::string& bind_address, short port);
 
   void start(std::shared_ptr<SIPCore> core) override;
   void stop() override;
 
   // Called by UDPConnection::async_write_some to send data.
   void async_send_to(boost::asio::const_buffer buffer, boost::asio::ip::udp::endpoint remote_endpoint,
-                     std::function<void(const boost::system::error_code &, std::size_t)> handler);
+                     std::function<void(const boost::system::error_code&, std::size_t)> handler);
 
   // Returns the local endpoint of the UDP socket as a TCP endpoint.
   boost::asio::ip::tcp::endpoint local_endpoint();
 
   // Remove a connection from the mapping (e.g. after shutdown).
-  void remove_connection(const std::string &key);
+  void remove_connection(const std::string& key);
 
  protected:
   // Start an asynchronous receive.
   void start_receive();
   // Handle an incoming datagram.
-  void handle_receive_from(const boost::system::error_code &error, std::size_t bytes_transferred, std::shared_ptr<std::vector<char>> buffer,
+  void handle_receive_from(const boost::system::error_code& error, std::size_t bytes_transferred, std::shared_ptr<std::vector<char>> buffer,
                            std::shared_ptr<boost::asio::ip::udp::endpoint> sender_endpoint);
 
   boost::asio::io_context _io_context;

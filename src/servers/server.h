@@ -15,9 +15,9 @@
 #include <thread>
 #include <unordered_map>
 
+#include "../channel.h"
 #include "../loggers/logger.h"
 #include "../loggers/logger_scoped.h"
-#include "../channel.h"
 
 using namespace athenasip;
 using namespace athenasip::loggers;

@@ -38,9 +38,9 @@ class StaticMiddleware {
  public:
   // This function is intended to be a static member of your server class (e.g. AdminAPI).
   // It returns a HttpMiddleware function that serves static files from disk.
-  static HttpMiddleware add(const std::string &base_path, const StaticOptions &opts = StaticOptions()) {
+  static HttpMiddleware add(const std::string& base_path, const StaticOptions& opts = StaticOptions()) {
     return
-        [base_path, opts](const http::request<http::string_body> &req, std::shared_ptr<http::response<http::string_body>> res, std::function<void(bool)> next) {
+        [base_path, opts](const http::request<http::string_body>& req, std::shared_ptr<http::response<http::string_body>> res, std::function<void(bool)> next) {
           // Convert the request target to a string.
           std::string target = std::string(req.target());
 
@@ -70,7 +70,7 @@ class StaticMiddleware {
           // If relative_path is empty or ends with '/', try default files.
           if (relative_path.empty() || (!relative_path.empty() && relative_path.back() == '/')) {
             bool found = false;
-            for (const auto &df : opts.default_file) {
+            for (const auto& df : opts.default_file) {
               std::string candidate = base_path;
               if (!relative_path.empty())
                 candidate += "/" + relative_path + df;

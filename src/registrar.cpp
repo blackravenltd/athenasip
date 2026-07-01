@@ -5,8 +5,9 @@
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
 #include "registrar.h"
-#include "transaction.h"
+
 #include "channel.h"
+#include "transaction.h"
 
 using namespace athenasip::databases;
 using namespace athenasip::rtp;
@@ -24,16 +25,16 @@ Registrar::Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<Config> _co
 void Registrar::server_register(std::shared_ptr<servers::Server> server) { _servers.push_back(server); }
 
 void Registrar::server_start_all(std::shared_ptr<SIPCore> core) {
-  for (auto &server : _servers) server->start(core);
+  for (auto& server : _servers) server->start(core);
 }
 
 void Registrar::server_stop_all() {
-  for (auto &server : _servers) server->stop();
+  for (auto& server : _servers) server->stop();
 }
 
 // Realms
-bool Registrar::realm_exists(const std::string &realm) {
-  std::shared_ptr<DBResult> res = _db->query("SELECT COUNT(*) FROM `realm` WHERE `realm`.`name` = ?", { realm });
+bool Registrar::realm_exists(const std::string& realm) {
+  std::shared_ptr<DBResult> res = _db->query("SELECT COUNT(*) FROM `realm` WHERE `realm`.`name` = ?", {realm});
 
   if (res && res->rows.size() == 0) {
     _logger->warn("realm_exists - DB returned no rows on a COUNT() statement");
@@ -44,14 +45,14 @@ bool Registrar::realm_exists(const std::string &realm) {
 };
 
 // Events
-void Registrar::event_publish(const std::string &event, const std::string &payload) {
-  _events->publish(event, payload);
-}
+void Registrar::event_publish(const std::string& event, const std::string& payload) { _events->publish(event, payload); }
 
 // Subscribers
 
 bool Registrar::subscriber_exists(std::shared_ptr<SIPIdentity> identity) {
-  std::shared_ptr<DBResult> res = _db->query("SELECT COUNT(*) FROM `subscriber`,`realm` WHERE `subscriber`.`user` = ? AND `realm`.`name` = ? AND `subscriber`.`realm_id` = `realm`.`id`", {identity->uri->user, identity->uri->realm});
+  std::shared_ptr<DBResult> res =
+      _db->query("SELECT COUNT(*) FROM `subscriber`,`realm` WHERE `subscriber`.`user` = ? AND `realm`.`name` = ? AND `subscriber`.`realm_id` = `realm`.`id`",
+                 {identity->uri->user, identity->uri->realm});
 
   if (res && res->rows.size() == 0) {
     _logger->warn("subscriber_exists - DB returned no rows on a COUNT() statement");
@@ -62,8 +63,10 @@ bool Registrar::subscriber_exists(std::shared_ptr<SIPIdentity> identity) {
 }
 
 std::shared_ptr<Subscriber> Registrar::subscriber_get(std::shared_ptr<SIPIdentity> identity) {
-  std::shared_ptr<DBResult> res =
-      _db->query("SELECT `subscriber`.`id`,`subscriber`.`name`,`subscriber`.`ha1` FROM `subscriber`,`realm` WHERE `subscriber`.`user` = ? AND `realm`.`name` = ? AND `subscriber`.`realm_id` = `realm`.`id`", {identity->uri->user, identity->uri->realm});
+  std::shared_ptr<DBResult> res = _db->query(
+      "SELECT `subscriber`.`id`,`subscriber`.`name`,`subscriber`.`ha1` FROM `subscriber`,`realm` WHERE `subscriber`.`user` = ? AND `realm`.`name` = ? AND "
+      "`subscriber`.`realm_id` = `realm`.`id`",
+      {identity->uri->user, identity->uri->realm});
 
   if (res && res->rows.size() == 0) return nullptr;
 
@@ -157,7 +160,7 @@ std::string Registrar::nonce_get() {
   unsigned char hmac_result[EVP_MAX_MD_SIZE];
   unsigned int hmac_len = 0;
 
-  HMAC(EVP_sha256(), config->sip_nonce_secret.c_str(), config->sip_nonce_secret.size(), reinterpret_cast<const unsigned char *>(raw_nonce.c_str()),
+  HMAC(EVP_sha256(), config->sip_nonce_secret.c_str(), config->sip_nonce_secret.size(), reinterpret_cast<const unsigned char*>(raw_nonce.c_str()),
        raw_nonce.size(), hmac_result, &hmac_len);
 
   // Convert HMAC output to hex
@@ -204,7 +207,7 @@ bool Registrar::transaction_register(std::shared_ptr<Transaction> transaction) {
 bool Registrar::transaction_unregister(std::string transactionId) {
   auto transaction = transaction_get(transactionId);
 
-  if(!transaction) return false;
+  if (!transaction) return false;
 
   std::unique_lock<std::shared_mutex> lock(_transactions_mutex);
   _transactions.erase(transactionId);

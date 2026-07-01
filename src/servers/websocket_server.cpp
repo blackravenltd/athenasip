@@ -15,7 +15,7 @@
 namespace athenasip {
 namespace servers {
 
-WebsocketServer::WebsocketServer(std::shared_ptr<Logger> logger, const std::string &bind_address, short port)
+WebsocketServer::WebsocketServer(std::shared_ptr<Logger> logger, const std::string& bind_address, short port)
     : Server(std::make_shared<LoggerScoped>("wsu_server", logger)),
       _port(port),
       _acceptor(_io_context, boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address(bind_address), port)) {}
@@ -50,7 +50,7 @@ void WebsocketServer::start_accept() {
   _acceptor.async_accept(*new_socket, boost::bind(&WebsocketServer::_handle_accept, this, boost::asio::placeholders::error, new_socket));
 }
 
-void WebsocketServer::_handle_accept(const boost::system::error_code &error, std::shared_ptr<boost::asio::ip::tcp::socket> socket) {
+void WebsocketServer::_handle_accept(const boost::system::error_code& error, std::shared_ptr<boost::asio::ip::tcp::socket> socket) {
   if (!error) {
     auto rm = socket->remote_endpoint();
     _logger->debug("Incoming Connection " + rm.address().to_string() + ":" + std::to_string(rm.port()));

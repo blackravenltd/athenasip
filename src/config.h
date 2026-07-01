@@ -88,7 +88,7 @@ class Config {
   std::string http_files_path;
 
   // Loads configuration from a YAML file.
-  bool load_from_yaml(const std::string &filename);
+  bool load_from_yaml(const std::string& filename);
 
  private:
   std::shared_ptr<Logger> _logger;

@@ -27,7 +27,7 @@ class RTPProxyResponse {
    * @brief Constructs and immediately parses the given RTPproxy response line.
    * @param resp_line A line from RTPproxy, e.g. "0 203.0.113.5 40000 40001".
    */
-  explicit RTPProxyResponse(const std::string &resp_line) : status_code(-1), ip(""), rtp_port(-1), rtcp_port(-1), valid(false) { _parse(resp_line); }
+  explicit RTPProxyResponse(const std::string& resp_line) : status_code(-1), ip(""), rtp_port(-1), rtcp_port(-1), valid(false) { _parse(resp_line); }
 
   const std::string to_string() const { return std::to_string(status_code) + " " + ip + " " + std::to_string(rtp_port) + " " + std::to_string(rtcp_port); }
 
@@ -35,7 +35,7 @@ class RTPProxyResponse {
   /**
    * @brief Internal parsing method that extracts tokens and populates fields.
    */
-  void _parse(const std::string &resp_line) {
+  void _parse(const std::string& resp_line) {
     // Split the line by whitespace
     std::istringstream iss(resp_line);
     std::vector<std::string> tokens;

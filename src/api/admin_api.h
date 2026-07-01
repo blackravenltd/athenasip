@@ -32,7 +32,7 @@ using tcp = net::ip::tcp;
 // - A shared pointer to the HTTP response to be modified.
 // - A "next" callback: if called with true, processing continues; if called with false,
 //   the chain stops and the current response is sent.
-typedef std::function<void(const http::request<http::string_body> &, std::shared_ptr<http::response<http::string_body>>, std::function<void(bool)>)>
+typedef std::function<void(const http::request<http::string_body>&, std::shared_ptr<http::response<http::string_body>>, std::function<void(bool)>)>
     HttpMiddleware;
 
 class AdminAPI {
@@ -42,7 +42,7 @@ class AdminAPI {
   std::vector<HttpMiddleware> middlewares;
 
   // Constructs the server using the provided logger, bind address, and port.
-  AdminAPI(std::shared_ptr<athenasip::loggers::Logger> logger, const std::string &bind_address, unsigned short port);
+  AdminAPI(std::shared_ptr<athenasip::loggers::Logger> logger, const std::string& bind_address, unsigned short port);
   ~AdminAPI();
 
   // Start and stop the server.
@@ -76,7 +76,7 @@ class AdminAPI {
 class HttpSession : public std::enable_shared_from_this<HttpSession> {
  public:
   // HttpSession now receives a reference to the server so it can access the middleware chain.
-  HttpSession(tcp::socket socket, AdminAPI &server);
+  HttpSession(tcp::socket socket, AdminAPI& server);
   void start();
 
  private:
@@ -84,7 +84,7 @@ class HttpSession : public std::enable_shared_from_this<HttpSession> {
 
   tcp::socket _socket;
   beast::flat_buffer _buffer;
-  AdminAPI &_server;
+  AdminAPI& _server;
   http::request<http::string_body> _req;
 
   // Reads the incoming HTTP request.

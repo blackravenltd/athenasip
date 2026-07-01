@@ -51,7 +51,7 @@ class AsyncQueue {
     }
   }
 
-  boost::asio::io_context &_io_context;
+  boost::asio::io_context& _io_context;
   std::queue<CallbackFn> _callbacks;
   std::mutex _callback_mutex;
   std::queue<T> _items;

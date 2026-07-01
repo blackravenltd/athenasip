@@ -10,30 +10,30 @@ namespace athenasip::loggers {
 
 LoggerStdIO::LoggerStdIO(LogLevel log_level) { _log_level = log_level; }
 
-void LoggerStdIO::debug(const std::string &log) {
+void LoggerStdIO::debug(const std::string& log) {
   if (_log_level > LogLevel::DEBUG) return;
   std::lock_guard<std::mutex> lock(mtx);
   std::cout << _getDateTime() << " [DEBUG] " << log << std::endl;
 }
 
-void LoggerStdIO::info(const std::string &log) {
+void LoggerStdIO::info(const std::string& log) {
   if (_log_level > LogLevel::INFO) return;
   std::lock_guard<std::mutex> lock(mtx);
   std::cout << _getDateTime() << " [INFO ] " << log << std::endl;
 }
 
-void LoggerStdIO::warn(const std::string &log) {
+void LoggerStdIO::warn(const std::string& log) {
   if (_log_level > LogLevel::WARN) return;
   std::lock_guard<std::mutex> lock(mtx);
   std::cout << _getDateTime() << " [WARN ] " << log << std::endl;
 }
 
-void LoggerStdIO::error(const std::string &log) {
+void LoggerStdIO::error(const std::string& log) {
   std::lock_guard<std::mutex> lock(mtx);
   std::cout << _getDateTime() << " [ERROR] " << log << std::endl;
 }
 
-void LoggerStdIO::raw(const std::string &log) {
+void LoggerStdIO::raw(const std::string& log) {
   std::lock_guard<std::mutex> lock(mtx);
   std::cout << _getDateTime() << " [-----] " << log << std::endl;
 }
