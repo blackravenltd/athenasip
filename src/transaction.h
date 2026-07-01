@@ -48,9 +48,12 @@ class Transaction : public std::enable_shared_from_this<Transaction> {
   void reset_timers();
   void end();
 
+  void process_register(std::shared_ptr<SIPMessage> message);
+  void process_ack(std::shared_ptr<SIPMessage> message);
+  void process_unknown(std::shared_ptr<SIPMessage> message);
+
   void receive_message(std::shared_ptr<SIPMessage> message);
   void send_message(std::shared_ptr<SIPMessage> message);
-
   void send_401_unauthorized(std::shared_ptr<SIPMessage> message);
 
  protected:
@@ -61,6 +64,7 @@ class Transaction : public std::enable_shared_from_this<Transaction> {
 
   uint16_t _t1_ms;
   std::shared_ptr<DelayedTask<int>> _timer_b_f;
+  bool _ended = false;
 
   void _replace_timer();
   void _timeout();
