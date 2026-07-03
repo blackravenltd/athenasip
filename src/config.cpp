@@ -32,23 +32,6 @@ bool Config::load_from_yaml(const std::string& filename) {
   }
   YAML::Node sip = config["sip"];
 
-  if (sip["realm"]) {
-    sip_realm = sip["realm"].as<std::string>();
-  } else {
-    _logger->error("Missing 'sip.realm'");
-    return false;
-  }
-
-  if (sip["nonce_secret"]) {
-    sip_nonce_secret = sip["nonce_secret"].as<std::string>();
-  } else {
-    _logger->error("Missing 'sip.nonce_secret'");
-    return false;
-  }
-
-  // Optional
-  if (sip["nonce_expiry"]) sip_nonce_expiry = sip["nonce_expiry"].as<uint64_t>();
-
   // SIP Timers
   YAML::Node sip_timers = sip["timers"];
   if (sip_timers) {
@@ -183,20 +166,49 @@ bool Config::load_from_yaml(const std::string& filename) {
     }
   }
 
-  // --- Parse the 'db' section ---
-  YAML::Node db = config["db"];
-  if (db) {
-    if (db["url"]) {
-      db_database_url = db["url"].as<std::string>();
+  // --- Parse the 'database' section ---
+  YAML::Node database = config["database"];
+  if (database) {
+    if (database["url"]) {
+      db_url = database["url"].as<std::string>();
     } else {
-      _logger->error("Missing 'db.url'");
+      _logger->error("Missing 'database.url'");
       return false;
     }
 
-    if (db["create"])
-      db_create = db["create"].as<bool>();
+    if (database["create"])
+      db_create = database["create"].as<bool>();
     else
       db_create = true;
+  }
+
+  YAML::Node mqtt = config["mqtt"];
+  if (mqtt) {
+    if (mqtt["broker_host"]) {
+      mqtt_broker_host = mqtt["url"].as<std::string>();
+    } else {
+      _logger->error("Missing 'mqtt.broker_host'");
+      return false;
+    }
+
+    if (mqtt["broker_port"])
+      mqtt_broker_port = mqtt["broker_port"].as<uint16_t>();
+    else
+      mqtt_broker_port = 1833;
+
+    if (mqtt["client_id"]) {
+      mqtt_client_id = mqtt["client_id"].as<std::string>();
+    }
+
+    if (mqtt["username"]) {
+      mqtt_username = mqtt["username"].as<std::string>();
+    }
+
+    if (mqtt["password"]) {
+      mqtt_password = mqtt["password"].as<std::string>();
+    }
+
+    if (mqtt["mqtt_keep_alive_seconds"]) mqtt_keep_alive_seconds = mqtt["keep_alive_seconds"].as<uint32_t>();
   }
 
   // --- Parse the 'rtprelay' section ---

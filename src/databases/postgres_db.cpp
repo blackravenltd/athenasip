@@ -122,20 +122,12 @@ void append_param(const std::any& value, pqxx::params& params, std::string& log,
     return;
   }
 
-  if (append_if_type<int>(value, params, log) ||
-      append_if_type<unsigned int>(value, params, log) ||
-      append_if_type<long>(value, params, log) ||
-      append_if_type<unsigned long>(value, params, log) ||
-      append_if_type<long long>(value, params, log) ||
-      append_if_type<unsigned long long>(value, params, log) ||
-      append_if_type<std::int16_t>(value, params, log) ||
-      append_if_type<std::uint16_t>(value, params, log) ||
-      append_if_type<std::int32_t>(value, params, log) ||
-      append_if_type<std::uint32_t>(value, params, log) ||
-      append_if_type<std::int64_t>(value, params, log) ||
-      append_if_type<std::uint64_t>(value, params, log) ||
-      append_if_type<float>(value, params, log) ||
-      append_if_type<double>(value, params, log) ||
+  if (append_if_type<int>(value, params, log) || append_if_type<unsigned int>(value, params, log) || append_if_type<long>(value, params, log) ||
+      append_if_type<unsigned long>(value, params, log) || append_if_type<long long>(value, params, log) ||
+      append_if_type<unsigned long long>(value, params, log) || append_if_type<std::int16_t>(value, params, log) ||
+      append_if_type<std::uint16_t>(value, params, log) || append_if_type<std::int32_t>(value, params, log) ||
+      append_if_type<std::uint32_t>(value, params, log) || append_if_type<std::int64_t>(value, params, log) ||
+      append_if_type<std::uint64_t>(value, params, log) || append_if_type<float>(value, params, log) || append_if_type<double>(value, params, log) ||
       append_if_type<long double>(value, params, log)) {
     return;
   }
@@ -223,8 +215,7 @@ std::shared_ptr<DBResult> PostgreSQLDB::query(std::string sql, std::vector<std::
 
     pqxx::result result = params.empty() ? txn.exec(sql) : txn.exec(sql, param_values);
 
-    const auto duration =
-        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
+    const auto duration = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
 
     std::ostringstream oss;
     oss << std::fixed << std::setprecision(3) << duration;

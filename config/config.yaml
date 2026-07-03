@@ -5,10 +5,14 @@
 # Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 #
 
+athenasip:
+  config_name: 'Single Node Demo'
+  data_store: 'redis'               # [database|redis]
+  event_system: 'mqtt'              # [local|mqtt|redis]
+
 sip:
-  realm: "sip.athenasip.org"
-  nonce_secret: "your_nonce_secret_here"
   allow_unencrypted: true
+
   timers:
     # Base units (milliseconds)
     t1_rtt_ms: 500                     # Default RTT estimate
@@ -63,11 +67,21 @@ rtprelay:
   port_min: 22000
   port_max: 23000
 
-db:
+database:
   # MySQL
   url: "mysql://root:wbv8g8nfzsc@localhost/athenasip"
   # SQLite
   #url: "sqlite://localhost/~/.athenasip/athena.sqlite"
+
+redis:
+
+mqtt:
+  broker_host: 'localhost'
+  broker_port: 1883
+  client_id: 'athenasip'
+  username: 'root'
+  password: ''
+  keep_alive_seconds: 3 
 
 http:
   address: 0.0.0.0

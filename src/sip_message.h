@@ -51,8 +51,7 @@ class SIPMessage {
   friend std::string operator+(const std::string& str, const SIPMessage& header);
 
  private:
-
-    std::string generate_sip_tag();
+  std::string generate_sip_tag();
 };
 
 }  // namespace athenasip
