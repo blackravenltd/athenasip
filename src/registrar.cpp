@@ -140,8 +140,19 @@ void Registrar::channel_close_all() {
 
 // Nonce
 
-std::string Registrar::nonce_get() {
+std::string Registrar::nonce_get(const std::string& realm) {
   std::array<unsigned char, 16> random_bytes;
+
+  std::shared_ptr<DBResult> res = _db->query("SELECT `nonce_secret`,`nonce_expiry` FROM `realm` WHERE `realm`.`name` = ?", {realm});
+
+  std::string nonce;
+
+  if (res && res->rows.size() == 0) {
+    _logger->warn("nonce_get - realm not found, using realm name hash: md5(" + realm + ")");
+    nonce = Util::md5(realm);
+  } else {
+    nonce = res->rows[0]->column_values[0]->as<std::string>();
+  }
 
   // Generate 128-bit (16-byte) secure random data
   if (RAND_bytes(random_bytes.data(), random_bytes.size()) != 1) {
@@ -160,8 +171,7 @@ std::string Registrar::nonce_get() {
   unsigned char hmac_result[EVP_MAX_MD_SIZE];
   unsigned int hmac_len = 0;
 
-  HMAC(EVP_sha256(), config->sip_nonce_secret.c_str(), config->sip_nonce_secret.size(), reinterpret_cast<const unsigned char*>(raw_nonce.c_str()),
-       raw_nonce.size(), hmac_result, &hmac_len);
+  HMAC(EVP_sha256(), nonce.c_str(), nonce.size(), reinterpret_cast<const unsigned char*>(raw_nonce.c_str()), raw_nonce.size(), hmac_result, &hmac_len);
 
   // Convert HMAC output to hex
   std::string hmac_hex = Util::to_hex(hmac_result, hmac_len);

@@ -72,7 +72,7 @@ int main(int argc, char* argv[]) {
   config->load_from_yaml(Util::expand_path("/Users/tom/.athenasip/config.yaml"));
 
   // Create DB
-  auto db = databases::DB::create_driver(logger, config->db_database_url);
+  auto db = databases::DB::create_driver(logger, config->db_url);
   if (!db) {
     logger->error("Unknown database scheme");
     return -2;

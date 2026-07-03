@@ -66,7 +66,7 @@ class Registrar : public std::enable_shared_from_this<Registrar> {
   std::shared_ptr<Channel> subscriber_get_channel(std::shared_ptr<Subscriber> subscriber);
 
   // Nonce
-  std::string nonce_get();
+  std::string nonce_get(const std::string& realm);
   bool nonce_check(std::string nonce);
 
   // Transactions

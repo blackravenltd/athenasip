@@ -34,15 +34,15 @@ void Transaction::end() {
   _logger->debug("end");
   _ended = true;
   if (_timer_b_f != nullptr) _timer_b_f->cancel();
-  if(_registrar) _registrar->transaction_unregister(id);
+  if (_registrar) _registrar->transaction_unregister(id);
 }
 
-void Transaction::receive_message(std::shared_ptr<SIPMessage> message) { 
-  if(_ended) {
-    _logger->debug("receive_message " + message->header->first_line()+" (ended, dropping)");
+void Transaction::receive_message(std::shared_ptr<SIPMessage> message) {
+  if (_ended) {
+    _logger->debug("receive_message " + message->header->first_line() + " (ended, dropping)");
     return;
   }
-   
+
   _logger->debug("receive_message " + message->header->first_line());
 
   if (message->header->request_method == "REGISTER") {
@@ -55,69 +55,66 @@ void Transaction::receive_message(std::shared_ptr<SIPMessage> message) {
 }
 
 void Transaction::process_register(std::shared_ptr<SIPMessage> message) {
-   // No Authorization
-    if (!message->header->contains("Authorization")) {
-      // No Authorization Header
-      _logger->info("[" + message->header->request_method + "] - No Authorization Header");
-      return send_401_unauthorized(message);
+  // No Authorization
+  if (!message->header->contains("Authorization")) {
+    // No Authorization Header
+    _logger->info("[" + message->header->request_method + "] - No Authorization Header");
+    return send_401_unauthorized(message);
+  }
+
+  // Process Authorization
+  auto auth = message->header->headers_map["Authorization"][0]->as<AuthorizationHeader>()->value;
+  if (auth->type != "Digest" || !auth->contains_field("realm") || !auth->contains_field("nonce") || !auth->contains_field("response") ||
+      !auth->contains_field("uri")) {
+    // Auth fields incorrect
+    _logger->info("[" + message->header->request_method + "] - Incomplete Authorization Fields");
+    return send_401_unauthorized(message);
+  }
+
+  if (!_registrar->nonce_check(auth->fields["nonce"])) {
+    // No Nonce exists or is expired
+    _logger->info("[" + message->header->request_method + "] - Nonce " + auth->fields["nonce"] + " Not Found or Expired");
+    return send_401_unauthorized(message);
+  }
+
+  auto& identityRef = message->header->headers_map["To"][0]->as<SIPIdentityHeader>()->value;
+  auto aorSubscriber = _registrar->subscriber_get(identityRef);
+
+  if (aorSubscriber == nullptr) {
+    // Subscriber not found
+    _logger->info("[" + message->header->request_method + "] - Subscriber " + identityRef->to_string() + " Not Found");
+    return send_401_unauthorized(message);
+  }
+
+  // Generate MD5 Check
+  auto authMD5 = Util::to_lower(
+      Util::md5(aorSubscriber->ha1 + ":" + auth->fields["nonce"] + ":" + Util::md5(message->header->request_method + ":" + auth->fields["uri"])));
+
+  if (authMD5 != Util::to_lower(auth->fields["response"])) {
+    // Authorization rejected
+    _logger->info("[" + message->header->request_method + "] - MD5 Authorization Failed");
+    return send_401_unauthorized(message);
+  }
+
+  // Send 200 OK
+  auto response = message->generate_response();
+  response->header->response_code = 200;
+  response->header->response_message = "OK";
+  if (message->header->contains("Contact")) {
+    auto contact_header = message->header->headers_map["Contact"][0]->as<SIPIdentityHeader>();
+
+    if (contact_header && contact_header->value) {
+      auto contact = std::make_shared<SIPIdentity>(*contact_header->value);
+      // TODO: This should be configurable
+      contact->tags["expires"] = "3600";
+
+      response->header->add("Contact", std::make_shared<SIPIdentityHeader>(contact));
     }
+  }
+  response->channel->send(response);
 
-    // Process Authorization
-    auto auth = message->header->headers_map["Authorization"][0]->as<AuthorizationHeader>()->value;
-    if (auth->type != "Digest" || !auth->contains_field("realm") || !auth->contains_field("nonce") || !auth->contains_field("response") ||
-        !auth->contains_field("uri")) {
-      // Auth fields incorrect
-      _logger->info("[" + message->header->request_method + "] - Incomplete Authorization Fields");
-      return send_401_unauthorized(message);
-    }
-
-    if (!_registrar->nonce_check(auth->fields["nonce"])) {
-      // No Nonce exists or is expired
-      _logger->info("[" + message->header->request_method + "] - Nonce " + auth->fields["nonce"] + " Not Found or Expired");
-      return send_401_unauthorized(message);
-    }
-
-    auto& identityRef = message->header->headers_map["To"][0]->as<SIPIdentityHeader>()->value;
-    auto aorSubscriber = _registrar->subscriber_get(identityRef);
-
-    if (aorSubscriber == nullptr) {
-      // Subscriber not found
-      _logger->info("[" + message->header->request_method + "] - Subscriber " + identityRef->to_string() + " Not Found");
-      return send_401_unauthorized(message);
-    }
-
-    // Generate MD5 Check
-    auto authMD5 = Util::to_lower(Util::md5(aorSubscriber->ha1 + ":" + auth->fields["nonce"] + ":" + Util::md5(message->header->request_method + ":" + auth->fields["uri"])));
-    
-    if (authMD5 != Util::to_lower(auth->fields["response"])) {
-      // Authorization rejected
-      _logger->info("[" + message->header->request_method + "] - MD5 Authorization Failed");
-      return send_401_unauthorized(message);
-    }
-
-    // Send 200 OK
-    auto response = message->generate_response();
-    response->header->response_code = 200;
-    response->header->response_message = "OK";
-    if (message->header->contains("Contact")) {
-      auto contact_header =
-          message->header->headers_map["Contact"][0]->as<SIPIdentityHeader>();
-
-      if (contact_header && contact_header->value) {
-        auto contact = std::make_shared<SIPIdentity>(*contact_header->value);
-        // TODO: This should be configurable
-        contact->tags["expires"] = "3600";
-
-        response->header->add(
-            "Contact",
-            std::make_shared<SIPIdentityHeader>(contact)
-        );
-      }
-    }
-    response->channel->send(response);
-
-    // End this transaction
-    end();
+  // End this transaction
+  end();
 }
 
 void Transaction::process_ack(std::shared_ptr<SIPMessage> message) {
@@ -128,17 +125,17 @@ void Transaction::process_ack(std::shared_ptr<SIPMessage> message) {
 }
 
 void Transaction::process_unknown(std::shared_ptr<SIPMessage> message) {
-  _logger->warn("Unknown request method "+message->header->request_method);
+  _logger->warn("Unknown request method " + message->header->request_method);
 
-    // Send 501 Not Implemented
-    auto response = message->generate_response();
-    response->header->add("Reason", "SIP;cause=501;text=\"Not Implemented\"");
-    response->header->response_code = 501;
-    response->header->response_message = "Not Implemented";
-    response->channel->send(response);
+  // Send 501 Not Implemented
+  auto response = message->generate_response();
+  response->header->add("Reason", "SIP;cause=501;text=\"Not Implemented\"");
+  response->header->response_code = 501;
+  response->header->response_message = "Not Implemented";
+  response->channel->send(response);
 
-    // End this transaction
-    end();
+  // End this transaction
+  end();
 }
 
 void Transaction::send_message(std::shared_ptr<SIPMessage> message) { _logger->debug("send_message " + message->header->first_line()); }
@@ -154,7 +151,8 @@ void Transaction::send_401_unauthorized(std::shared_ptr<SIPMessage> message) {
   // Don't send WWW-Authenticate if realm not recognised
   if (_registrar->realm_exists(toIdentity->uri->realm)) {
     // Generate Nonce
-    response->header->add("WWW-Authenticate", "Digest realm=\"" + toIdentity->uri->realm + "\", nonce=\"" + _registrar->nonce_get() + "\"");
+    response->header->add("WWW-Authenticate",
+                          "Digest realm=\"" + toIdentity->uri->realm + "\", nonce=\"" + _registrar->nonce_get(toIdentity->uri->realm) + "\"");
   }
   // Send Response
   response->channel->send(response);

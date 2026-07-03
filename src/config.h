@@ -24,8 +24,6 @@ class Config {
   Config(std::shared_ptr<Logger> logger);
 
   // SIP configuration
-  std::string sip_realm;
-  std::string sip_nonce_secret;
   uint32_t sip_nonce_expiry = 3600;
   uint32_t sip_registration_timeout = 5000;
 
@@ -67,8 +65,16 @@ class Config {
   uint16_t websocket_port = 0;    // e.g. 5060
 
   // DB configuration
-  std::string db_database_url;  // e.g. "mysql://root@localhost/"
+  std::string db_url;  // e.g. "mysql://root@localhost/"
   bool db_create = false;
+
+  // MQTT configuration
+  std::string mqtt_broker_host;  // e.g. "127.0.0.1"
+  std::uint16_t mqtt_broker_port = 1883;
+  std::string mqtt_client_id = "athenasip-events";
+  std::string mqtt_username;
+  std::string mqtt_password;
+  std::uint16_t mqtt_keep_alive_seconds = 3;
 
   // SQLLite configuration (optional)
   bool sqlite_create_database;  // sqllite.create_database - True if the database should be created
