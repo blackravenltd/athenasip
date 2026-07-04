@@ -6,7 +6,7 @@
 //
 #pragma once
 
-#include <mysqlx/xdevapi.h>
+#include <pqxx/pqxx>
 
 #include <chrono>
 #include <cstdint>
@@ -22,10 +22,10 @@
 
 namespace athenasip::datastores {
 
-class MySQLDatastore : public Datastore {
+class PostgreSQLDatastore : public Datastore {
  public:
-  MySQLDatastore(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<types::URL> url);
-  ~MySQLDatastore() override;
+  PostgreSQLDatastore(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<types::URL> url);
+  ~PostgreSQLDatastore() override;
 
   bool connect() override;
   void close() override;
@@ -46,7 +46,7 @@ class MySQLDatastore : public Datastore {
 
   std::shared_ptr<loggers::Logger> _logger;
   std::shared_ptr<types::URL> _url;
-  std::shared_ptr<mysqlx::Session> _session;
+  std::shared_ptr<pqxx::connection> _connection;
 };
 
 }  // namespace athenasip::datastores

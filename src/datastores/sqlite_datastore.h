@@ -6,7 +6,7 @@
 //
 #pragma once
 
-#include <mysqlx/xdevapi.h>
+#include <sqlite3.h>
 
 #include <chrono>
 #include <cstdint>
@@ -22,10 +22,10 @@
 
 namespace athenasip::datastores {
 
-class MySQLDatastore : public Datastore {
+class SQLiteDatastore : public Datastore {
  public:
-  MySQLDatastore(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<types::URL> url);
-  ~MySQLDatastore() override;
+  SQLiteDatastore(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<types::URL> url);
+  ~SQLiteDatastore() override;
 
   bool connect() override;
   void close() override;
@@ -39,14 +39,16 @@ class MySQLDatastore : public Datastore {
   bool nonce_check(std::string nonce) override;
 
  private:
+  std::string _db_path() const;
   std::string _to_utc_datetime_string(const std::time_t& value) const;
   std::string _duration_ms(std::chrono::high_resolution_clock::time_point start) const;
   void _log_sql(const std::string& sql, const std::string& params, std::size_t rows, std::chrono::high_resolution_clock::time_point start) const;
   void _log_sql_error(const std::string& sql, const std::string& params, const std::string& error) const;
+  bool _exec_simple(const std::string& sql);
 
   std::shared_ptr<loggers::Logger> _logger;
   std::shared_ptr<types::URL> _url;
-  std::shared_ptr<mysqlx::Session> _session;
+  sqlite3* _db{nullptr};
 };
 
 }  // namespace athenasip::datastores
