@@ -59,7 +59,6 @@ int main(int argc, char* argv[]) {
   logger->raw("-----------------------------------");
 
   // Register DB Handler
-
   DB::register_driver<SQLiteDB>(logger, "sqlite");
   DB::register_driver<MySQLDB>(logger, "mysqlx");
   DB::register_driver<MySQLDB>(logger, "mysql");
@@ -69,7 +68,7 @@ int main(int argc, char* argv[]) {
   // Create Config
   auto config = std::make_shared<Config>(logger);
   // config->load_from_yaml(Util::expand_path("~/.athenasip/config.yaml"));
-  config->load_from_yaml(Util::expand_path("/Users/tom/.athenasip/config.yaml"));
+  config->load_from_yaml(Util::expand_path("~/.athenasip/config.yaml"));
 
   // Create DB
   auto db = databases::DB::create_driver(logger, config->db_url);
@@ -82,6 +81,14 @@ int main(int argc, char* argv[]) {
     return -3;
   }
 
+  // TODO: FIX THIS!
+  auto mysql_db = std::dynamic_pointer_cast<MySQLDB>(db);
+  if (!mysql_db) {
+    logger->error("Configured database is not a MySQL database");
+    return -4;
+  }
+  auto datastore = std::make_shared<MySQLDatastore>(logger, mysql_db);
+
   // Events
   std::shared_ptr<events::EventSystem> eventengine;
   // TODO: Other event systems boot here
@@ -89,7 +96,7 @@ int main(int argc, char* argv[]) {
   eventengine->start(nullptr);
 
   // Create Registrar
-  auto registrar = std::make_shared<Registrar>(logger, config, db, eventengine);
+  auto registrar = std::make_shared<Registrar>(logger, config, datastore, eventengine);
 
   // Start RTPRelay
   if (config->rtprelay_enable) {
@@ -109,7 +116,7 @@ int main(int argc, char* argv[]) {
     }
     if (config->http_files_enable) {
       StaticOptions so;
-      adminAPI->middlewares.push_back(api::StaticMiddleware::add("/Users/tom/devroot/athenasip/admin", so));
+      adminAPI->middlewares.push_back(api::StaticMiddleware::add("../admin", so));
     }
     adminAPI->middlewares.push_back(api::AdminAPI::send404end());
     registrar->admin_register(adminAPI);

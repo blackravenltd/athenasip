@@ -9,16 +9,16 @@
 #include "channel.h"
 #include "transaction.h"
 
-using namespace athenasip::databases;
+using namespace athenasip::datastores;
 using namespace athenasip::rtp;
 
 namespace athenasip {
 
-Registrar::Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<Config> _config, std::shared_ptr<athenasip::databases::DB> db,
+Registrar::Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<Config> _config, std::shared_ptr<athenasip::datastores::Datastore> datastore,
                      std::shared_ptr<events::EventSystem> events)
     : _logger(std::make_unique<LoggerScoped>("registrar", logger)),
       config(_config),
-      _db(db),
+      _datastore(datastore),
       _events(events),
       _nonce_cache(std::make_shared<ExpirySet<std::string>>()) {}
 
@@ -34,98 +34,35 @@ void Registrar::server_stop_all() {
 
 // Realms
 std::shared_ptr<Realm> Registrar::realm_get_by_name(const std::string& realm_name) {
-  std::shared_ptr<DBResult> res =
-      _db->query("SELECT `id`,`name`, `nonce_secret`,`nonce_expiry`,`registration_timeout` FROM `realm` WHERE `realm`.`name` = ?", {realm_name});
-
-  if (!res) {
-    _logger->error("realm_get_by_name: No result from datastore: " + realm_name);
-    return nullptr;
-  }
-
-  if (res->rows.size() == 0) {
-    return nullptr;
-  }
-
-  if (res->rows.size() > 1) {
-    _logger->warn("Duplicate realm in datastore: " + realm_name + " (" + std::to_string(res->rows.size()) + " copies)");
-  }
-
-  auto realm = std::make_shared<Realm>(res->rows[0]->column_values[1]->as<std::string>());
-  realm->id = res->rows[0]->column_values[0]->as<uint64_t>();
-  realm->nonce_secret = res->rows[0]->column_values[2]->as<std::string>();
-  realm->nonce_expiry = res->rows[0]->column_values[3]->as<uint32_t>();
-  realm->registration_timeout = res->rows[0]->column_values[4]->as<uint32_t>();
-  return realm;
+  return _datastore->realm_get_by_name(realm_name);
 };
 
 // Events
 void Registrar::event_publish(const std::string& event, const std::string& payload) { _events->publish(event, payload); }
 
 // Subscribers
-bool Registrar::subscriber_exists(std::shared_ptr<SIPIdentity> identity) {
-  std::shared_ptr<DBResult> res =
-      _db->query("SELECT COUNT(*) FROM `subscriber`,`realm` WHERE `subscriber`.`user` = ? AND `realm`.`name` = ? AND `subscriber`.`realm_id` = `realm`.`id`",
-                 {identity->uri->user, identity->uri->realm});
-
-  if (res && res->rows.size() == 0) {
-    _logger->warn("subscriber_exists - DB returned no rows on a COUNT() statement");
-    return false;
-  } else {
-    return res->rows[0]->column_values[0]->as<int64_t>() == 1;
-  }
-}
-
 std::shared_ptr<Subscriber> Registrar::subscriber_get(std::shared_ptr<SIPIdentity> identity) {
-  std::shared_ptr<DBResult> res = _db->query(
-      "SELECT `subscriber`.`id`,`subscriber`.`name`,`subscriber`.`ha1` FROM `subscriber`,`realm` WHERE `subscriber`.`user` = ? AND `realm`.`name` = ? AND "
-      "`subscriber`.`realm_id` = `realm`.`id`",
-      {identity->uri->user, identity->uri->realm});
-
-  if (res && res->rows.size() == 0) return nullptr;
-
-  if (res->rows.size() > 1) {
-    _logger->warn("Duplicate subscriber in datastore: " + identity->to_string() + " (" + std::to_string(res->rows.size()) + " copies)");
-  }
-
-  auto subscriber = std::make_shared<Subscriber>();
-  auto row = res->rows[0];
-  subscriber->id = row->values["id"]->as<uint64_t>();
-  subscriber->identity = identity;
-  subscriber->ha1 = row->values["ha1"]->as<std::string>();
-  return subscriber;
+  return _datastore->subscriber_get(identity);
 }
 
 bool Registrar::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel) {
-  std::shared_ptr<DBResult> res = _db->query("SELECT COUNT(*) FROM `location` WHERE `subscriber_id` = ? AND `user` = ? AND `host` = ? AND `port` = ?",
-                                             {subscriber->id, contact->user, contact->realm, contact->port.value_or(0)});
-  if (res && res->rows.size() == 0) {
-    _logger->error("subscriber_register: COUNT(*) returned no rows");
-    return false;
-  };
-
-  std::string is_nat = Util::is_ipv4(contact->realm) && Util::is_ipv4_private(contact->realm) ? "Y" : "N";
-
-  if (res->rows[0]->column_values[0]->as<int64_t>() == 0) {
-    // Insert a row
-    _db->query("INSERT INTO `location` (`subscriber_id`, `user`, `host`, `port`, `registered_at`, `nat`) VALUES (?,?,?,?,NOW(),?)",
-               {subscriber->id, contact->user, contact->realm, contact->port.value_or(0), is_nat});
-  } else {
-    // Update the row
-    _db->query("UPDATE `location` SET `registered_at` = NOW() WHERE `subscriber_id` = ?", {subscriber->id});
+  if(_datastore->subscriber_register(subscriber, contact)) {
+    _channels_by_subscriber[subscriber->id] = channel;
+    return true;
   }
 
-  _channels_by_subscriber[subscriber->id] = channel;
-
-  return true;
+  _logger->error("Cannot register subscriber identity "+ subscriber->identity->to_string()+" - datastore failure");
+  return false;
 }
 
 bool Registrar::subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel) {
-  _db->query("DELETE FROM `location` WHERE `subscriber_id` = ? AND `user` = ? AND `host` = ? AND `port` = ?",
-             {subscriber->id, contact->user, contact->realm, contact->port.value_or(0)});
+  if(_datastore->subscriber_unregister(subscriber, contact)) {
+    _channels_by_subscriber.erase(subscriber->id);
+    return true;
+  }
 
-  _channels_by_subscriber.erase(subscriber->id);
-
-  return true;
+    _logger->error("Cannot unregister subscriber identity "+ subscriber->identity->to_string()+" - datastore failure");
+  return false;
 }
 
 std::shared_ptr<Channel> Registrar::subscriber_get_channel(std::shared_ptr<Subscriber> subscriber) { return _channels_by_subscriber[subscriber->id]; }
@@ -158,6 +95,7 @@ void Registrar::channel_close_all() {
 // Nonce
 
 std::string Registrar::nonce_create(std::shared_ptr<Realm> realm) {
+
   std::array<unsigned char, 16> random_bytes;
 
   if (RAND_bytes(random_bytes.data(), random_bytes.size()) != 1) {
@@ -181,29 +119,19 @@ std::string Registrar::nonce_create(std::shared_ptr<Realm> realm) {
   const std::string hmac_hex = Util::to_hex(hmac_result, hmac_len);
   const std::string nonce = raw_nonce + ":" + hmac_hex;
 
-  const auto now = std::chrono::system_clock::now();
-  const auto expires_at = std::chrono::system_clock::to_time_t(now + std::chrono::seconds(realm->nonce_expiry));
+  const auto expires_at = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now() + std::chrono::seconds(realm->nonce_expiry));
 
-  // Cache the actual nonce the client will return.
-  _nonce_cache->add(nonce, realm->nonce_expiry * 1000);
+  if(_datastore->nonce_create(nonce, expires_at)) {
+    // Cache the actual nonce for this node
+    _nonce_cache->add(nonce, realm->nonce_expiry * 1000);
+    return nonce;
+  }
 
-  _db->query("INSERT INTO `nonce` (`id`, `expires_at`) VALUES (?,?)", {nonce, expires_at});
-
-  return nonce;
+  throw std::runtime_error("Failed to generate nonce - datastore error");
 }
 
 bool Registrar::nonce_check(std::string nonce) {
-  // Check local cache
-  if (_nonce_cache->contains(nonce)) return true;
-
-  // Do DB
-  std::shared_ptr<DBResult> res = _db->query("SELECT COUNT(*) FROM `nonce` WHERE `id` = ? AND `expires_at` > NOW()", {nonce});
-  if (res && res->rows.size() == 0) {
-    _logger->error("nonce_check: COUNT(*) returned no rows");
-    return false;
-  };
-
-  return res->rows[0]->column_values[0]->as<int64_t>() == 1;
+  return _datastore->nonce_check(nonce);
 }
 
 // Transactions

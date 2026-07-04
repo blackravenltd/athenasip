@@ -19,7 +19,7 @@
 #include "api/admin_api.h"
 #include "call.h"
 #include "config.h"
-#include "databases/db.h"
+#include "datastores/datastore.h"
 #include "events/event_system.h"
 #include "expiry_set.h"
 #include "loggers/logger.h"
@@ -30,7 +30,11 @@
 #include "types/sip_identity.h"
 #include "types/subscriber.h"
 
+// TODO: Remove this
+#include "datastores/mysql_datastore.h"
+
 using namespace types;
+using namespace datastores;
 
 namespace athenasip {
 
@@ -39,8 +43,8 @@ class Transaction;
 
 class Registrar : public std::enable_shared_from_this<Registrar> {
  public:
-  Registrar(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<Config> config, std::shared_ptr<databases::DB> db,
-            std::shared_ptr<events::EventSystem> events);
+  Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<Config> _config, std::shared_ptr<athenasip::datastores::Datastore> datastore,
+                     std::shared_ptr<events::EventSystem> events);
 
   // Servers
   void server_register(std::shared_ptr<servers::Server> server);
@@ -97,7 +101,7 @@ class Registrar : public std::enable_shared_from_this<Registrar> {
 
  private:
   std::shared_ptr<loggers::Logger> _logger;
-  std::shared_ptr<databases::DB> _db;
+  std::shared_ptr<datastores::Datastore> _datastore;
   std::shared_ptr<events::EventSystem> _events;
 
   std::unordered_map<std::string, std::shared_ptr<Channel>> _channels;
