@@ -148,11 +148,11 @@ void Transaction::send_401_unauthorized(std::shared_ptr<SIPMessage> message) {
   response->header->response_message = "Unauthorized";
   // Get From Identity
   auto toIdentity = message->header->headers_map["From"][0]->as<headers::SIPIdentityHeader>()->value;
-  // Don't send WWW-Authenticate if realm not recognised
-  if (_registrar->realm_exists(toIdentity->uri->realm)) {
+  // Send WWW-Authenticate if realm recognised
+  auto realm = _registrar->realm_get_by_name(Util::to_lower(toIdentity->uri->realm));
+  if (realm) {
     // Generate Nonce
-    response->header->add("WWW-Authenticate",
-                          "Digest realm=\"" + toIdentity->uri->realm + "\", nonce=\"" + _registrar->nonce_get(toIdentity->uri->realm) + "\"");
+    response->header->add("WWW-Authenticate", "Digest realm=\"" + realm->name + "\", nonce=\"" + _registrar->nonce_get(realm) + "\"");
   }
   // Send Response
   response->channel->send(response);

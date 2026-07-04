@@ -33,14 +33,18 @@ void Registrar::server_stop_all() {
 }
 
 // Realms
-bool Registrar::realm_exists(const std::string& realm) {
-  std::shared_ptr<DBResult> res = _db->query("SELECT COUNT(*) FROM `realm` WHERE `realm`.`name` = ?", {realm});
+std::shared_ptr<Realm> Registrar::realm_get_by_name(const std::string& realm) {
+  std::shared_ptr<DBResult> res = _db->query("SELECT `id`,`name`, `nonce_secret`,`nonce_expiry`,`registration_timeout` FROM `realm` WHERE `realm`.`name` = ?", {realm});
 
   if (res && res->rows.size() == 0) {
-    _logger->warn("realm_exists - DB returned no rows on a COUNT() statement");
-    return false;
+    return nullptr;
   } else {
-    return res->rows[0]->column_values[0]->as<int64_t>() == 1;
+    auto realm = std::make_shared<Realm>(res->rows[0]->column_values[1]->as<std::string>());
+    realm->id = res->rows[0]->column_values[0]->as<uint64_t>();
+    realm->nonce_secret = res->rows[0]->column_values[2]->as<std::string>();
+    realm->nonce_expiry = res->rows[0]->column_values[3]->as<uint32_t>();
+    realm->registration_timeout = res->rows[0]->column_values[4]->as<uint32_t>();
+    return realm;
   }
 };
 
@@ -140,54 +144,49 @@ void Registrar::channel_close_all() {
 
 // Nonce
 
-std::string Registrar::nonce_get(const std::string& realm) {
+std::string Registrar::nonce_get(std::shared_ptr<Realm> realm) {
   std::array<unsigned char, 16> random_bytes;
 
-  std::shared_ptr<DBResult> res = _db->query("SELECT `nonce_secret`,`nonce_expiry` FROM `realm` WHERE `realm`.`name` = ?", {realm});
-
-  std::string nonce;
-
-  if (res && res->rows.size() == 0) {
-    _logger->warn("nonce_get - realm not found, using realm name hash: md5(" + realm + ")");
-    nonce = Util::md5(realm);
-  } else {
-    nonce = res->rows[0]->column_values[0]->as<std::string>();
-  }
-
-  // Generate 128-bit (16-byte) secure random data
   if (RAND_bytes(random_bytes.data(), random_bytes.size()) != 1) {
     throw std::runtime_error("Failed to generate secure random bytes");
   }
 
-  // Get the current UNIX timestamp
-  uint64_t timestamp = static_cast<uint64_t>(std::time(nullptr));
+  const uint64_t timestamp = static_cast<uint64_t>(std::time(nullptr));
 
-  // Concatenate random bytes and timestamp
-  std::ostringstream raw_nonce_stream;
-  raw_nonce_stream << Util::to_hex(random_bytes.data(), random_bytes.size()) << ":" << timestamp;
-  std::string raw_nonce = raw_nonce_stream.str();
+  const std::string random_hex = Util::to_hex(random_bytes.data(), random_bytes.size());
 
-  // Compute HMAC-SHA256 using OpenSSL
+  // Public - This is visible to the client.
+  const std::string raw_nonce =
+      std::to_string(realm->id) + ":" + random_hex + ":" + std::to_string(timestamp);
+
+  // Sign the public nonce material using the realm secret.
   unsigned char hmac_result[EVP_MAX_MD_SIZE];
   unsigned int hmac_len = 0;
 
-  HMAC(EVP_sha256(), nonce.c_str(), nonce.size(), reinterpret_cast<const unsigned char*>(raw_nonce.c_str()), raw_nonce.size(), hmac_result, &hmac_len);
+  HMAC(EVP_sha256(),
+       realm->nonce_secret.data(),
+       static_cast<int>(realm->nonce_secret.size()),
+       reinterpret_cast<const unsigned char*>(raw_nonce.data()),
+       raw_nonce.size(),
+       hmac_result,
+       &hmac_len);
 
-  // Convert HMAC output to hex
-  std::string hmac_hex = Util::to_hex(hmac_result, hmac_len);
+  const std::string hmac_hex = Util::to_hex(hmac_result, hmac_len);
+  const std::string nonce = raw_nonce + ":" + hmac_hex;
 
-  // Generate expiry
-  auto now = std::chrono::system_clock::now();
-  std::chrono::seconds interval(config->sip_nonce_expiry);
-  std::time_t expiresAt = std::chrono::system_clock::to_time_t(now + interval);
+  const auto now = std::chrono::system_clock::now();
+  const auto expires_at =
+      std::chrono::system_clock::to_time_t(now + std::chrono::seconds(realm->nonce_expiry));
 
-  // Cache result locally (timeout in ms)
-  _nonce_cache->add(raw_nonce, config->sip_nonce_expiry * 1000);
+  // Cache the actual nonce the client will return.
+  _nonce_cache->add(nonce, realm->nonce_expiry * 1000);
 
-  // Write to DB
-  _db->query("INSERT INTO `nonce` (`id`, `expires_at`) VALUES (?,?)", {raw_nonce + ":" + hmac_hex, expiresAt});
+  _db->query(
+      "INSERT INTO `nonce` (`id`, `expires_at`) VALUES (?,?)",
+      {nonce, expires_at}
+  );
 
-  return raw_nonce + ":" + hmac_hex;
+  return nonce;
 }
 
 bool Registrar::nonce_check(std::string nonce) {

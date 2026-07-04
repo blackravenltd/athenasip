@@ -6,6 +6,8 @@
 //
 #include "util.h"
 
+#include <limits>
+
 namespace athenasip {
 
 std::string Util::to_hex(const std::vector<uint8_t>& vec) {
