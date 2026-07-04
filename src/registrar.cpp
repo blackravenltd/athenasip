@@ -33,26 +33,35 @@ void Registrar::server_stop_all() {
 }
 
 // Realms
-std::shared_ptr<Realm> Registrar::realm_get_by_name(const std::string& realm) {
-  std::shared_ptr<DBResult> res = _db->query("SELECT `id`,`name`, `nonce_secret`,`nonce_expiry`,`registration_timeout` FROM `realm` WHERE `realm`.`name` = ?", {realm});
+std::shared_ptr<Realm> Registrar::realm_get_by_name(const std::string& realm_name) {
+  std::shared_ptr<DBResult> res =
+      _db->query("SELECT `id`,`name`, `nonce_secret`,`nonce_expiry`,`registration_timeout` FROM `realm` WHERE `realm`.`name` = ?", {realm_name});
 
-  if (res && res->rows.size() == 0) {
+  if (!res) {
+    _logger->error("realm_get_by_name: No result from datastore: " + realm_name);
     return nullptr;
-  } else {
-    auto realm = std::make_shared<Realm>(res->rows[0]->column_values[1]->as<std::string>());
-    realm->id = res->rows[0]->column_values[0]->as<uint64_t>();
-    realm->nonce_secret = res->rows[0]->column_values[2]->as<std::string>();
-    realm->nonce_expiry = res->rows[0]->column_values[3]->as<uint32_t>();
-    realm->registration_timeout = res->rows[0]->column_values[4]->as<uint32_t>();
-    return realm;
   }
+
+  if (res->rows.size() == 0) {
+    return nullptr;
+  }
+
+  if (res->rows.size() > 1) {
+    _logger->warn("Duplicate realm in datastore: " + realm_name + " (" + std::to_string(res->rows.size()) + " copies)");
+  }
+
+  auto realm = std::make_shared<Realm>(res->rows[0]->column_values[1]->as<std::string>());
+  realm->id = res->rows[0]->column_values[0]->as<uint64_t>();
+  realm->nonce_secret = res->rows[0]->column_values[2]->as<std::string>();
+  realm->nonce_expiry = res->rows[0]->column_values[3]->as<uint32_t>();
+  realm->registration_timeout = res->rows[0]->column_values[4]->as<uint32_t>();
+  return realm;
 };
 
 // Events
 void Registrar::event_publish(const std::string& event, const std::string& payload) { _events->publish(event, payload); }
 
 // Subscribers
-
 bool Registrar::subscriber_exists(std::shared_ptr<SIPIdentity> identity) {
   std::shared_ptr<DBResult> res =
       _db->query("SELECT COUNT(*) FROM `subscriber`,`realm` WHERE `subscriber`.`user` = ? AND `realm`.`name` = ? AND `subscriber`.`realm_id` = `realm`.`id`",
@@ -73,6 +82,10 @@ std::shared_ptr<Subscriber> Registrar::subscriber_get(std::shared_ptr<SIPIdentit
       {identity->uri->user, identity->uri->realm});
 
   if (res && res->rows.size() == 0) return nullptr;
+
+  if (res->rows.size() > 1) {
+    _logger->warn("Duplicate subscriber in datastore: " + identity->to_string() + " (" + std::to_string(res->rows.size()) + " copies)");
+  }
 
   auto subscriber = std::make_shared<Subscriber>();
   auto row = res->rows[0];
@@ -144,7 +157,7 @@ void Registrar::channel_close_all() {
 
 // Nonce
 
-std::string Registrar::nonce_get(std::shared_ptr<Realm> realm) {
+std::string Registrar::nonce_create(std::shared_ptr<Realm> realm) {
   std::array<unsigned char, 16> random_bytes;
 
   if (RAND_bytes(random_bytes.data(), random_bytes.size()) != 1) {
@@ -156,35 +169,25 @@ std::string Registrar::nonce_get(std::shared_ptr<Realm> realm) {
   const std::string random_hex = Util::to_hex(random_bytes.data(), random_bytes.size());
 
   // Public - This is visible to the client.
-  const std::string raw_nonce =
-      std::to_string(realm->id) + ":" + random_hex + ":" + std::to_string(timestamp);
+  const std::string raw_nonce = std::to_string(realm->id) + ":" + random_hex + ":" + std::to_string(timestamp);
 
   // Sign the public nonce material using the realm secret.
   unsigned char hmac_result[EVP_MAX_MD_SIZE];
   unsigned int hmac_len = 0;
 
-  HMAC(EVP_sha256(),
-       realm->nonce_secret.data(),
-       static_cast<int>(realm->nonce_secret.size()),
-       reinterpret_cast<const unsigned char*>(raw_nonce.data()),
-       raw_nonce.size(),
-       hmac_result,
-       &hmac_len);
+  HMAC(EVP_sha256(), realm->nonce_secret.data(), static_cast<int>(realm->nonce_secret.size()), reinterpret_cast<const unsigned char*>(raw_nonce.data()),
+       raw_nonce.size(), hmac_result, &hmac_len);
 
   const std::string hmac_hex = Util::to_hex(hmac_result, hmac_len);
   const std::string nonce = raw_nonce + ":" + hmac_hex;
 
   const auto now = std::chrono::system_clock::now();
-  const auto expires_at =
-      std::chrono::system_clock::to_time_t(now + std::chrono::seconds(realm->nonce_expiry));
+  const auto expires_at = std::chrono::system_clock::to_time_t(now + std::chrono::seconds(realm->nonce_expiry));
 
   // Cache the actual nonce the client will return.
   _nonce_cache->add(nonce, realm->nonce_expiry * 1000);
 
-  _db->query(
-      "INSERT INTO `nonce` (`id`, `expires_at`) VALUES (?,?)",
-      {nonce, expires_at}
-  );
+  _db->query("INSERT INTO `nonce` (`id`, `expires_at`) VALUES (?,?)", {nonce, expires_at});
 
   return nonce;
 }

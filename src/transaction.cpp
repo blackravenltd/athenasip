@@ -152,7 +152,7 @@ void Transaction::send_401_unauthorized(std::shared_ptr<SIPMessage> message) {
   auto realm = _registrar->realm_get_by_name(Util::to_lower(toIdentity->uri->realm));
   if (realm) {
     // Generate Nonce
-    response->header->add("WWW-Authenticate", "Digest realm=\"" + realm->name + "\", nonce=\"" + _registrar->nonce_get(realm) + "\"");
+    response->header->add("WWW-Authenticate", "Digest realm=\"" + realm->name + "\", nonce=\"" + _registrar->nonce_create(realm) + "\"");
   }
   // Send Response
   response->channel->send(response);
