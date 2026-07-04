@@ -41,7 +41,7 @@ void MQTTEventSystem::start(EventSystem::CallbackCompleteFn callback) {
   _mqtt_io_context.restart();
   configure_client();
 
-  _logger->info("Starting MQTT event system: " + _broker_host + ":" + std::to_string(_broker_port));
+  _logger->info("Starting: " + _broker_host + ":" + std::to_string(_broker_port));
 
   boost::asio::dispatch(_mqtt_strand, [this, self]() {
     _client.async_run([this, self](mqtt::error_code ec) {
@@ -50,9 +50,9 @@ void MQTTEventSystem::start(EventSystem::CallbackCompleteFn callback) {
       }
 
       if (ec) {
-        _logger->error("MQTT client stopped: " + ec.message());
+        _logger->error("Client stopped: " + ec.message());
       } else {
-        _logger->info("MQTT client stopped");
+        _logger->info("Client stopped");
       }
     });
 
@@ -63,12 +63,12 @@ void MQTTEventSystem::start(EventSystem::CallbackCompleteFn callback) {
     _mqtt_thread = std::thread([this]() { run_mqtt_io_context(); });
   } catch (const std::exception& e) {
     _running.store(false);
-    _logger->error(std::string("Failed to start MQTT event system thread: ") + e.what());
+    _logger->error(std::string("Failed to start thread: ") + e.what());
     post_complete(std::move(callback), false);
     return;
   } catch (...) {
     _running.store(false);
-    _logger->error("Failed to start MQTT event system thread: unknown exception");
+    _logger->error("Failed to start thread: unknown exception");
     post_complete(std::move(callback), false);
     return;
   }
@@ -107,12 +107,12 @@ void MQTTEventSystem::publish(std::string event_name, std::string message, Event
   auto self = shared_from_this();
 
   if (!_running.load()) {
-    _logger->error("MQTT publish rejected while stopped: " + event_name);
+    _logger->error("Publish rejected while stopped: " + event_name);
     post_complete(std::move(callback), false);
     return;
   }
 
-  _logger->debug("Publishing MQTT event: " + event_name + " with message: " + message);
+  _logger->debug("Publishing event: " + event_name + " with message: " + message);
 
   boost::asio::dispatch(_mqtt_strand, [this, self, event_name = std::move(event_name), message = std::move(message), callback = std::move(callback)]() mutable {
     if (!_running.load()) {
@@ -120,16 +120,18 @@ void MQTTEventSystem::publish(std::string event_name, std::string message, Event
       return;
     }
 
-    _client.async_publish<mqtt::qos_e::at_most_once>(std::move(event_name), std::move(message), mqtt::retain_e::no, mqtt::publish_props{},
-                                                     [this, self, callback = std::move(callback)](mqtt::error_code ec) mutable {
-                                                       if (ec) {
-                                                         _logger->error("MQTT publish failed: " + ec.message());
-                                                         post_complete(std::move(callback), false);
-                                                         return;
-                                                       }
+    auto pub_callback = ([this, self, callback = std::move(callback)](mqtt::error_code ec) mutable {
+      if (ec) {
+        _logger->error("MQTT publish failed: " + ec.message());
+        post_complete(std::move(callback), false);
+        return;
+      }
 
-                                                       post_complete(std::move(callback), true);
-                                                     });
+      post_complete(std::move(callback), true);
+    });
+
+    _client.async_publish<mqtt::qos_e::at_most_once>(std::move(event_name), std::move(message), mqtt::retain_e::no, mqtt::publish_props{},
+                                                     std::move(pub_callback));
   });
 }
 
@@ -137,7 +139,7 @@ std::shared_ptr<Subscription> MQTTEventSystem::subscribe(std::string event_name,
                                                          EventSystem::CallbackCompleteFn callback) {
   auto self = shared_from_this();
 
-  _logger->debug("Subscribing to MQTT event: " + event_name);
+  _logger->debug("Subscribing to event: " + event_name);
   auto sub = std::make_shared<Subscription>(event_name, std::move(event_callback));
 
   bool first_local_subscription = false;
@@ -187,7 +189,7 @@ void MQTTEventSystem::unsubscribe(std::shared_ptr<Subscription> subscription, Ev
 
 void MQTTEventSystem::unsubscribe_all(EventSystem::CallbackCompleteFn callback) {
   auto self = shared_from_this();
-  _logger->debug("Unsubscribing all MQTT event subscriptions");
+  _logger->debug("Unsubscribing all subscriptions");
   clear_local_subscriptions();
   post_complete(std::move(callback), true);
 }
@@ -204,9 +206,9 @@ void MQTTEventSystem::run_mqtt_io_context() {
   try {
     _mqtt_io_context.run();
   } catch (const std::exception& e) {
-    _logger->error(std::string("MQTT event system io_context failed: ") + e.what());
+    _logger->error(std::string("io_context failed: ") + e.what());
   } catch (...) {
-    _logger->error("MQTT event system io_context failed: unknown exception");
+    _logger->error("io_context failed: unknown exception");
   }
 }
 
@@ -285,7 +287,7 @@ void MQTTEventSystem::subscribe_events_on_mqtt(std::vector<std::string> event_na
   topics.reserve(to_subscribe.size());
 
   for (const auto& event_name : to_subscribe) {
-    _logger->info("MQTT subscribing to event: " + event_name);
+    _logger->info("subscribing to event: " + event_name);
     topics.push_back(mqtt::subscribe_topic{event_name, mqtt::subscribe_options{mqtt::qos_e::at_most_once, mqtt::no_local_e::no,
                                                                                mqtt::retain_as_published_e::retain, mqtt::retain_handling_e::send}});
   }
@@ -305,7 +307,7 @@ void MQTTEventSystem::subscribe_events_on_mqtt(std::vector<std::string> event_na
                               for (const auto& event_name : to_subscribe) {
                                 _broker_subscribed_events.erase(event_name);
                               }
-                              _logger->error("MQTT subscribe failed: " + ec.message());
+                              _logger->error("subscribe failed: " + ec.message());
                               post_complete(std::move(callback), false);
                               return;
                             }
@@ -314,7 +316,7 @@ void MQTTEventSystem::subscribe_events_on_mqtt(std::vector<std::string> event_na
                               for (const auto& event_name : to_subscribe) {
                                 _broker_subscribed_events.erase(event_name);
                               }
-                              _logger->error("MQTT subscribe failed: empty SUBACK reason list");
+                              _logger->error("subscribe failed: empty SUBACK reason list");
                               post_complete(std::move(callback), false);
                               return;
                             }
@@ -328,7 +330,7 @@ void MQTTEventSystem::subscribe_events_on_mqtt(std::vector<std::string> event_na
                               if (i >= reasons.size()) {
                                 all_accepted = false;
                                 _broker_subscribed_events.erase(event_name);
-                                _logger->error("MQTT subscribe rejected: event=" + event_name + ", missing SUBACK reason");
+                                _logger->error("subscribe rejected: event=" + event_name + ", missing SUBACK reason");
                                 continue;
                               }
 
@@ -338,12 +340,12 @@ void MQTTEventSystem::subscribe_events_on_mqtt(std::vector<std::string> event_na
                               if (code >= 0x80) {
                                 all_accepted = false;
                                 _broker_subscribed_events.erase(event_name);
-                                _logger->error("MQTT subscribe rejected: event=" + event_name + ", reason=" + std::to_string(static_cast<unsigned>(code)) +
-                                               " (" + reason.message() + ")");
+                                _logger->error("subscribe rejected: event=" + event_name + ", reason=" + std::to_string(static_cast<unsigned>(code)) + " (" +
+                                               reason.message() + ")");
                               } else {
                                 any_accepted = true;
-                                _logger->info("MQTT subscribe accepted: event=" + event_name + ", reason=" + std::to_string(static_cast<unsigned>(code)) +
-                                              " (" + reason.message() + ")");
+                                _logger->info("subscribe accepted: event=" + event_name + ", reason=" + std::to_string(static_cast<unsigned>(code)) + " (" +
+                                              reason.message() + ")");
                               }
                             }
 
@@ -381,9 +383,9 @@ void MQTTEventSystem::receive_next() {
       }
 
       if (ec == mqtt::client::error::session_expired) {
-        _logger->error("MQTT receive failed: session expired; re-subscribing");
+        _logger->info("receive failed: session expired; re-subscribing");
       } else {
-        _logger->error("MQTT receive failed: " + ec.message() + "; re-subscribing");
+        _logger->error("receive failed: " + ec.message() + "; re-subscribing");
       }
 
       _broker_subscribed_events.clear();
@@ -391,7 +393,7 @@ void MQTTEventSystem::receive_next() {
       return;
     }
 
-    _logger->debug("MQTT received event: " + topic + " with message: " + payload);
+    _logger->debug("received event: " + topic + " with message: " + payload);
 
     dispatch_event(std::move(topic), std::move(payload));
     ensure_receive_loop();
@@ -412,12 +414,11 @@ void MQTTEventSystem::dispatch_event(std::string event_name, std::string message
     auto self = shared_from_this();
     boost::asio::post(_callback_io_context, [this, self, event_name, message, sub]() {
       try {
-        _logger->debug("Invoking MQTT event subscription callback for event: " + event_name);
         sub->callback(event_name, message);
       } catch (const std::exception& e) {
-        _logger->error(std::string("MQTT event subscription callback failed: ") + e.what());
+        _logger->error(std::string("subscription callback failed: ") + e.what());
       } catch (...) {
-        _logger->error("MQTT event subscription callback failed: unknown exception");
+        _logger->error("subscription callback failed: unknown exception");
       }
     });
   }

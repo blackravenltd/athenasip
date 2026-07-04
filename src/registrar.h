@@ -26,9 +26,9 @@
 #include "loggers/logger_scoped.h"
 #include "rtp/rtp_relay.h"
 #include "servers/server.h"
+#include "types/realm.h"
 #include "types/sip_identity.h"
 #include "types/subscriber.h"
-#include "types/realm.h"
 
 using namespace types;
 
@@ -67,7 +67,7 @@ class Registrar : public std::enable_shared_from_this<Registrar> {
   std::shared_ptr<Channel> subscriber_get_channel(std::shared_ptr<Subscriber> subscriber);
 
   // Nonce
-  std::string nonce_get(std::shared_ptr<Realm> realm);
+  std::string nonce_create(std::shared_ptr<Realm> realm);
   bool nonce_check(std::string nonce);
 
   // Transactions

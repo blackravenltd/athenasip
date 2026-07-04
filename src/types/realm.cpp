@@ -14,16 +14,10 @@
 namespace athenasip::types {
 
 // Default constructor: initializes with default values.
-Realm::Realm() {
+Realm::Realm() {}
 
-}
+Realm::Realm(const std::string& _name) { name = _name; }
 
-Realm::Realm(const std::string& _name) {
-  name = _name;
-}
-
-std::string Realm::to_string() const {
-  return name;
-}
+std::string Realm::to_string() const { return name; }
 
 }  // namespace athenasip::types
