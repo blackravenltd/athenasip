@@ -1,7 +1,7 @@
 //
 // AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
 //
-// Copyright (C) 2025 Tom Cully <mail@tomcully.com>
+// Copyright (C) 2026 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
 #pragma once
@@ -80,16 +80,16 @@ class RedisGenericResult {
   explicit operator bool() const { return ok(); }
 };
 
-class RedisClient {
+class RedisDB {
  public:
   using BoolCallback = std::function<void(RedisError error, bool value)>;
   using StringCallback = std::function<void(RedisError error, std::optional<std::string> value)>;
   using IntegerCallback = std::function<void(RedisError error, std::int64_t value)>;
   using GenericCallback = std::function<void(RedisError error, boost::redis::generic_response response)>;
 
-  RedisClient(std::shared_ptr<Logger> logger, std::string host = "127.0.0.1", std::uint16_t port = 6379, std::string username = "default",
+  RedisDB(std::shared_ptr<Logger> logger, std::string host = "127.0.0.1", std::uint16_t port = 6379, std::string username = "default",
               std::string password = "", std::int32_t database_index = 0, bool use_ssl = false);
-  ~RedisClient();
+  ~RedisDB();
 
   bool connect();
   void close();

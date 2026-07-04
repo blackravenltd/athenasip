@@ -1,10 +1,10 @@
 //
 // AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
 //
-// Copyright (C) 2025 Tom Cully <mail@tomcully.com>
+// Copyright (C) 2026 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
-#include "redis_client.h"
+#include "redis_db.h"
 
 #include <boost/asio/consign.hpp>
 #include <boost/asio/detached.hpp>
@@ -26,7 +26,7 @@ RedisError make_redis_response_error(const std::string& diagnostic) {
 
 }  // namespace
 
-RedisClient::RedisClient(std::shared_ptr<Logger> logger, std::string host, std::uint16_t port, std::string username, std::string password,
+RedisDB::RedisDB(std::shared_ptr<Logger> logger, std::string host, std::uint16_t port, std::string username, std::string password,
                          std::int32_t database_index, bool use_ssl)
     : _logger(std::make_shared<LoggerScoped>("redis", logger)),
       _host(std::move(host)),
@@ -36,9 +36,9 @@ RedisClient::RedisClient(std::shared_ptr<Logger> logger, std::string host, std::
       _database_index(database_index),
       _use_ssl(use_ssl) {}
 
-RedisClient::~RedisClient() { close(); }
+RedisDB::~RedisDB() { close(); }
 
-bool RedisClient::connect() {
+bool RedisDB::connect() {
   if (_started.load()) {
     return ping();
   }
@@ -84,7 +84,7 @@ bool RedisClient::connect() {
   }
 }
 
-void RedisClient::close() {
+void RedisDB::close() {
   if (!_started.exchange(false)) {
     return;
   }
@@ -104,87 +104,87 @@ void RedisClient::close() {
   _io_context.restart();
 }
 
-bool RedisClient::is_started() const { return _started.load(); }
+bool RedisDB::is_started() const { return _started.load(); }
 
-bool RedisClient::ping() {
+bool RedisDB::ping() {
   return _wait_bool([this](BoolCallback callback) { async_ping(std::move(callback)); });
 }
 
-void RedisClient::async_ping(BoolCallback callback) {
+void RedisDB::async_ping(BoolCallback callback) {
   boost::redis::request req;
   req.push("PING");
   _async_ok("PING", std::move(req), std::move(callback));
 }
 
-bool RedisClient::set(std::string key, std::string value) {
+bool RedisDB::set(std::string key, std::string value) {
   return _wait_bool([this, key = std::move(key), value = std::move(value)](BoolCallback callback) mutable {
     async_set(std::move(key), std::move(value), std::move(callback));
   });
 }
 
-bool RedisClient::set_ex(std::string key, std::string value, std::chrono::seconds expiry) {
+bool RedisDB::set_ex(std::string key, std::string value, std::chrono::seconds expiry) {
   return _wait_bool([this, key = std::move(key), value = std::move(value), expiry](BoolCallback callback) mutable {
     async_set_ex(std::move(key), std::move(value), expiry, std::move(callback));
   });
 }
 
-bool RedisClient::set_px(std::string key, std::string value, std::chrono::milliseconds expiry) {
+bool RedisDB::set_px(std::string key, std::string value, std::chrono::milliseconds expiry) {
   return _wait_bool([this, key = std::move(key), value = std::move(value), expiry](BoolCallback callback) mutable {
     async_set_px(std::move(key), std::move(value), expiry, std::move(callback));
   });
 }
 
-std::optional<std::string> RedisClient::get(std::string key) {
+std::optional<std::string> RedisDB::get(std::string key) {
   return _wait_string([this, key = std::move(key)](StringCallback callback) mutable { async_get(std::move(key), std::move(callback)); });
 }
 
-std::int64_t RedisClient::del(std::string key) {
+std::int64_t RedisDB::del(std::string key) {
   return _wait_integer([this, key = std::move(key)](IntegerCallback callback) mutable { async_del(std::move(key), std::move(callback)); });
 }
 
-bool RedisClient::exists(std::string key) {
+bool RedisDB::exists(std::string key) {
   return _wait_bool([this, key = std::move(key)](BoolCallback callback) mutable { async_exists(std::move(key), std::move(callback)); });
 }
 
-bool RedisClient::expire(std::string key, std::chrono::seconds expiry) {
+bool RedisDB::expire(std::string key, std::chrono::seconds expiry) {
   return _wait_bool([this, key = std::move(key), expiry](BoolCallback callback) mutable { async_expire(std::move(key), expiry, std::move(callback)); });
 }
 
-std::int64_t RedisClient::ttl(std::string key) {
+std::int64_t RedisDB::ttl(std::string key) {
   return _wait_integer([this, key = std::move(key)](IntegerCallback callback) mutable { async_ttl(std::move(key), std::move(callback)); });
 }
 
-void RedisClient::async_set(std::string key, std::string value, BoolCallback callback) {
+void RedisDB::async_set(std::string key, std::string value, BoolCallback callback) {
   boost::redis::request req;
   req.push("SET", key, value);
   _async_ok("SET", std::move(req), std::move(callback));
 }
 
-void RedisClient::async_set_ex(std::string key, std::string value, std::chrono::seconds expiry, BoolCallback callback) {
+void RedisDB::async_set_ex(std::string key, std::string value, std::chrono::seconds expiry, BoolCallback callback) {
   boost::redis::request req;
   req.push("SET", key, value, "EX", expiry.count());
   _async_ok("SET EX", std::move(req), std::move(callback));
 }
 
-void RedisClient::async_set_px(std::string key, std::string value, std::chrono::milliseconds expiry, BoolCallback callback) {
+void RedisDB::async_set_px(std::string key, std::string value, std::chrono::milliseconds expiry, BoolCallback callback) {
   boost::redis::request req;
   req.push("SET", key, value, "PX", expiry.count());
   _async_ok("SET PX", std::move(req), std::move(callback));
 }
 
-void RedisClient::async_get(std::string key, StringCallback callback) {
+void RedisDB::async_get(std::string key, StringCallback callback) {
   boost::redis::request req;
   req.push("GET", key);
   _async_string("GET", std::move(req), std::move(callback));
 }
 
-void RedisClient::async_del(std::string key, IntegerCallback callback) {
+void RedisDB::async_del(std::string key, IntegerCallback callback) {
   boost::redis::request req;
   req.push("DEL", key);
   _async_integer("DEL", std::move(req), std::move(callback));
 }
 
-void RedisClient::async_exists(std::string key, BoolCallback callback) {
+void RedisDB::async_exists(std::string key, BoolCallback callback) {
   boost::redis::request req;
   req.push("EXISTS", key);
 
@@ -193,7 +193,7 @@ void RedisClient::async_exists(std::string key, BoolCallback callback) {
   });
 }
 
-void RedisClient::async_expire(std::string key, std::chrono::seconds expiry, BoolCallback callback) {
+void RedisDB::async_expire(std::string key, std::chrono::seconds expiry, BoolCallback callback) {
   boost::redis::request req;
   req.push("EXPIRE", key, expiry.count());
 
@@ -202,61 +202,61 @@ void RedisClient::async_expire(std::string key, std::chrono::seconds expiry, Boo
   });
 }
 
-void RedisClient::async_ttl(std::string key, IntegerCallback callback) {
+void RedisDB::async_ttl(std::string key, IntegerCallback callback) {
   boost::redis::request req;
   req.push("TTL", key);
   _async_integer("TTL", std::move(req), std::move(callback));
 }
 
-bool RedisClient::json_set(std::string key, std::string json, std::string path) {
+bool RedisDB::json_set(std::string key, std::string json, std::string path) {
   return _wait_bool([this, key = std::move(key), json = std::move(json), path = std::move(path)](BoolCallback callback) mutable {
     async_json_set(std::move(key), std::move(json), std::move(path), std::move(callback));
   });
 }
 
-std::optional<std::string> RedisClient::json_get(std::string key, std::string path) {
+std::optional<std::string> RedisDB::json_get(std::string key, std::string path) {
   return _wait_string([this, key = std::move(key), path = std::move(path)](StringCallback callback) mutable {
     async_json_get(std::move(key), std::move(path), std::move(callback));
   });
 }
 
-std::int64_t RedisClient::json_del(std::string key, std::string path) {
+std::int64_t RedisDB::json_del(std::string key, std::string path) {
   return _wait_integer([this, key = std::move(key), path = std::move(path)](IntegerCallback callback) mutable {
     async_json_del(std::move(key), std::move(path), std::move(callback));
   });
 }
 
-void RedisClient::async_json_set(std::string key, std::string json, std::string path, BoolCallback callback) {
+void RedisDB::async_json_set(std::string key, std::string json, std::string path, BoolCallback callback) {
   boost::redis::request req;
   req.push("JSON.SET", key, path, json);
   _async_ok("JSON.SET", std::move(req), std::move(callback));
 }
 
-void RedisClient::async_json_get(std::string key, std::string path, StringCallback callback) {
+void RedisDB::async_json_get(std::string key, std::string path, StringCallback callback) {
   boost::redis::request req;
   req.push("JSON.GET", key, path);
   _async_string("JSON.GET", std::move(req), std::move(callback));
 }
 
-void RedisClient::async_json_del(std::string key, std::string path, IntegerCallback callback) {
+void RedisDB::async_json_del(std::string key, std::string path, IntegerCallback callback) {
   boost::redis::request req;
   req.push("JSON.DEL", key, path);
   _async_integer("JSON.DEL", std::move(req), std::move(callback));
 }
 
-bool RedisClient::ft_create_json_index(std::string index_name, std::string key_prefix, std::vector<RedisSearchField> fields) {
+bool RedisDB::ft_create_json_index(std::string index_name, std::string key_prefix, std::vector<RedisSearchField> fields) {
   return _wait_bool([this, index_name = std::move(index_name), key_prefix = std::move(key_prefix), fields = std::move(fields)](BoolCallback callback) mutable {
     async_ft_create_json_index(std::move(index_name), std::move(key_prefix), std::move(fields), std::move(callback));
   });
 }
 
-bool RedisClient::ft_drop_index(std::string index_name, bool delete_documents) {
+bool RedisDB::ft_drop_index(std::string index_name, bool delete_documents) {
   return _wait_bool([this, index_name = std::move(index_name), delete_documents](BoolCallback callback) mutable {
     async_ft_drop_index(std::move(index_name), delete_documents, std::move(callback));
   });
 }
 
-RedisGenericResult RedisClient::ft_search(std::string index_name, std::string query, std::uint64_t offset, std::uint64_t count,
+RedisGenericResult RedisDB::ft_search(std::string index_name, std::string query, std::uint64_t offset, std::uint64_t count,
                                           std::vector<std::string> return_fields, std::uint32_t dialect) {
   return _wait_generic([this, index_name = std::move(index_name), query = std::move(query), offset, count, return_fields = std::move(return_fields),
                         dialect](GenericCallback callback) mutable {
@@ -264,13 +264,13 @@ RedisGenericResult RedisClient::ft_search(std::string index_name, std::string qu
   });
 }
 
-void RedisClient::async_ft_create_json_index(std::string index_name, std::string key_prefix, std::vector<RedisSearchField> fields, BoolCallback callback) {
+void RedisDB::async_ft_create_json_index(std::string index_name, std::string key_prefix, std::vector<RedisSearchField> fields, BoolCallback callback) {
   auto args = _make_ft_create_json_index_args(index_name, key_prefix, fields);
   auto req = _make_command("FT.CREATE", args);
   _async_ok("FT.CREATE", std::move(req), std::move(callback));
 }
 
-void RedisClient::async_ft_drop_index(std::string index_name, bool delete_documents, BoolCallback callback) {
+void RedisDB::async_ft_drop_index(std::string index_name, bool delete_documents, BoolCallback callback) {
   std::vector<std::string> args{std::move(index_name)};
   if (delete_documents) {
     args.emplace_back("DD");
@@ -280,7 +280,7 @@ void RedisClient::async_ft_drop_index(std::string index_name, bool delete_docume
   _async_ok("FT.DROPINDEX", std::move(req), std::move(callback));
 }
 
-void RedisClient::async_ft_search(std::string index_name, std::string query, std::uint64_t offset, std::uint64_t count,
+void RedisDB::async_ft_search(std::string index_name, std::string query, std::uint64_t offset, std::uint64_t count,
                                   std::vector<std::string> return_fields, std::uint32_t dialect, GenericCallback callback) {
   std::vector<std::string> args{std::move(index_name), std::move(query), "LIMIT", std::to_string(offset), std::to_string(count)};
 
@@ -299,21 +299,21 @@ void RedisClient::async_ft_search(std::string index_name, std::string query, std
   _async_generic("FT.SEARCH", std::move(req), std::move(callback));
 }
 
-RedisGenericResult RedisClient::command(std::string command_name, std::vector<std::string> args) {
+RedisGenericResult RedisDB::command(std::string command_name, std::vector<std::string> args) {
   return _wait_generic([this, command_name = std::move(command_name), args = std::move(args)](GenericCallback callback) mutable {
     async_command(std::move(command_name), std::move(args), std::move(callback));
   });
 }
 
-void RedisClient::async_command(std::string command_name, std::vector<std::string> args, GenericCallback callback) {
+void RedisDB::async_command(std::string command_name, std::vector<std::string> args, GenericCallback callback) {
   auto operation = command_name;
   auto req = _make_command(std::move(command_name), args);
   _async_generic(std::move(operation), std::move(req), std::move(callback));
 }
 
-void RedisClient::set_sync_timeout(std::chrono::milliseconds timeout) { _sync_timeout = timeout; }
+void RedisDB::set_sync_timeout(std::chrono::milliseconds timeout) { _sync_timeout = timeout; }
 
-boost::redis::config RedisClient::_make_config() const {
+boost::redis::config RedisDB::_make_config() const {
   boost::redis::config cfg;
   cfg.addr.host = _host;
   cfg.addr.port = std::to_string(_port);
@@ -324,7 +324,7 @@ boost::redis::config RedisClient::_make_config() const {
   return cfg;
 }
 
-void RedisClient::_async_ok(std::string operation, boost::redis::request request, BoolCallback callback) {
+void RedisDB::_async_ok(std::string operation, boost::redis::request request, BoolCallback callback) {
   if (!_connection) {
     callback(_not_connected_error(), false);
     return;
@@ -364,7 +364,7 @@ void RedisClient::_async_ok(std::string operation, boost::redis::request request
   });
 }
 
-void RedisClient::_async_string(std::string operation, boost::redis::request request, StringCallback callback) {
+void RedisDB::_async_string(std::string operation, boost::redis::request request, StringCallback callback) {
   if (!_connection) {
     callback(_not_connected_error(), std::nullopt);
     return;
@@ -401,7 +401,7 @@ void RedisClient::_async_string(std::string operation, boost::redis::request req
   });
 }
 
-void RedisClient::_async_integer(std::string operation, boost::redis::request request, IntegerCallback callback) {
+void RedisDB::_async_integer(std::string operation, boost::redis::request request, IntegerCallback callback) {
   if (!_connection) {
     callback(_not_connected_error(), 0);
     return;
@@ -438,7 +438,7 @@ void RedisClient::_async_integer(std::string operation, boost::redis::request re
   });
 }
 
-void RedisClient::_async_generic(std::string operation, boost::redis::request request, GenericCallback callback) {
+void RedisDB::_async_generic(std::string operation, boost::redis::request request, GenericCallback callback) {
   if (!_connection) {
     callback(_not_connected_error(), boost::redis::generic_response{});
     return;
@@ -474,7 +474,7 @@ void RedisClient::_async_generic(std::string operation, boost::redis::request re
   });
 }
 
-bool RedisClient::_wait_bool(std::function<void(BoolCallback)> starter) {
+bool RedisDB::_wait_bool(std::function<void(BoolCallback)> starter) {
   auto promise = std::make_shared<std::promise<std::pair<RedisError, bool>>>();
   auto future = promise->get_future();
 
@@ -490,7 +490,7 @@ bool RedisClient::_wait_bool(std::function<void(BoolCallback)> starter) {
   return !error && value;
 }
 
-std::optional<std::string> RedisClient::_wait_string(std::function<void(StringCallback)> starter) {
+std::optional<std::string> RedisDB::_wait_string(std::function<void(StringCallback)> starter) {
   auto promise = std::make_shared<std::promise<std::pair<RedisError, std::optional<std::string>>>>();
   auto future = promise->get_future();
 
@@ -506,7 +506,7 @@ std::optional<std::string> RedisClient::_wait_string(std::function<void(StringCa
   return error ? std::nullopt : value;
 }
 
-std::int64_t RedisClient::_wait_integer(std::function<void(IntegerCallback)> starter) {
+std::int64_t RedisDB::_wait_integer(std::function<void(IntegerCallback)> starter) {
   auto promise = std::make_shared<std::promise<std::pair<RedisError, std::int64_t>>>();
   auto future = promise->get_future();
 
@@ -522,7 +522,7 @@ std::int64_t RedisClient::_wait_integer(std::function<void(IntegerCallback)> sta
   return error ? 0 : value;
 }
 
-RedisGenericResult RedisClient::_wait_generic(std::function<void(GenericCallback)> starter) {
+RedisGenericResult RedisDB::_wait_generic(std::function<void(GenericCallback)> starter) {
   auto promise = std::make_shared<std::promise<RedisGenericResult>>();
   auto future = promise->get_future();
 
@@ -539,7 +539,7 @@ RedisGenericResult RedisClient::_wait_generic(std::function<void(GenericCallback
   return future.get();
 }
 
-boost::redis::request RedisClient::_make_command(std::string command_name, const std::vector<std::string>& args) const {
+boost::redis::request RedisDB::_make_command(std::string command_name, const std::vector<std::string>& args) const {
   boost::redis::request req;
 
   if (args.empty()) {
@@ -551,7 +551,7 @@ boost::redis::request RedisClient::_make_command(std::string command_name, const
   return req;
 }
 
-std::vector<std::string> RedisClient::_make_ft_create_json_index_args(const std::string& index_name, const std::string& key_prefix,
+std::vector<std::string> RedisDB::_make_ft_create_json_index_args(const std::string& index_name, const std::string& key_prefix,
                                                                       const std::vector<RedisSearchField>& fields) const {
   std::vector<std::string> args{index_name, "ON", "JSON", "PREFIX", "1", key_prefix, "SCHEMA"};
 
@@ -581,7 +581,7 @@ std::vector<std::string> RedisClient::_make_ft_create_json_index_args(const std:
   return args;
 }
 
-std::string RedisClient::_field_type_to_string(RedisSearchFieldType type) const {
+std::string RedisDB::_field_type_to_string(RedisSearchFieldType type) const {
   switch (type) {
     case RedisSearchFieldType::Text:
       return "TEXT";
@@ -600,18 +600,18 @@ std::string RedisClient::_field_type_to_string(RedisSearchFieldType type) const 
   return "TEXT";
 }
 
-std::string RedisClient::_duration_ms(std::chrono::high_resolution_clock::time_point start) const {
+std::string RedisDB::_duration_ms(std::chrono::high_resolution_clock::time_point start) const {
   std::ostringstream oss;
   oss << std::fixed << std::setprecision(3)
       << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
   return oss.str();
 }
 
-RedisError RedisClient::_not_connected_error() const {
+RedisError RedisDB::_not_connected_error() const {
   return RedisError(boost::system::errc::make_error_code(boost::system::errc::not_connected), "Redis connection is not started");
 }
 
-RedisError RedisClient::_timeout_error() const {
+RedisError RedisDB::_timeout_error() const {
   return RedisError(boost::system::errc::make_error_code(boost::system::errc::timed_out), "Redis synchronous command timed out");
 }
 
