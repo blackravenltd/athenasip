@@ -14,7 +14,8 @@
 #include "api/admin_api.h"
 #include "api/static_middleware.h"
 #include "config.h"
-#include "databases/db.h"
+#include "datastores/datastore.h"
+#include "datastores/datastore_drivers.h"
 #include "events/local_event_system.h"
 #include "loggers/logger_scoped.h"
 #include "loggers/logger_stdio.h"
@@ -30,12 +31,7 @@
 #include "version.h"
 
 using namespace athenasip;
-
-// Databases
-#include "databases/mysql_db.h"
-#include "databases/postgres_db.h"
-#include "databases/sqlite_db.h"
-using namespace athenasip::databases;
+using namespace athenasip::datastores;
 
 void wait_for_signal(boost::asio::signal_set& signals, boost::asio::io_context& io_context, std::function<void(int)> onsignal) {
   signals.async_wait([&](const boost::system::error_code& error, int signal_number) {
@@ -58,36 +54,24 @@ int main(int argc, char* argv[]) {
   logger->raw(" AthenaSIP v" + version->to_string());
   logger->raw("-----------------------------------");
 
-  // Register DB Handler
-  DB::register_driver<SQLiteDB>(logger, "sqlite");
-  DB::register_driver<MySQLDB>(logger, "mysqlx");
-  DB::register_driver<MySQLDB>(logger, "mysql");
-  DB::register_driver<PostgreSQLDB>(logger, "postgresql");
-  DB::register_driver<PostgreSQLDB>(logger, "postgres");
+  // Register Datastore Handlers
+  register_builtin_datastores(logger);
 
   // Create Config
   auto config = std::make_shared<Config>(logger);
   // config->load_from_yaml(Util::expand_path("~/.athenasip/config.yaml"));
   config->load_from_yaml(Util::expand_path("~/.athenasip/config.yaml"));
 
-  // Create DB
-  auto db = databases::DB::create_driver(logger, config->db_url);
-  if (!db) {
+  // Create Datastore
+  auto datastore = Datastore::create_driver(logger, config->db_url);
+  if (!datastore) {
     logger->error("Unknown database scheme");
     return -2;
   }
-  if (!db->connect()) {
-    logger->error("Database Connection Failed");
+  if (!datastore->connect()) {
+    logger->error("Datastore Connection Failed");
     return -3;
   }
-
-  // TODO: FIX THIS!
-  auto mysql_db = std::dynamic_pointer_cast<MySQLDB>(db);
-  if (!mysql_db) {
-    logger->error("Configured database is not a MySQL database");
-    return -4;
-  }
-  auto datastore = std::make_shared<MySQLDatastore>(logger, mysql_db);
 
   // Events
   std::shared_ptr<events::EventSystem> eventengine;
@@ -129,7 +113,7 @@ int main(int argc, char* argv[]) {
     // Set Certificates
     if (!tlsServer->set_certificates(config->tls_cert_pem_filename, config->tls_key_pem_filename)) {
       logger->error("Cannot load TLS certificates");
-      db->close();
+      datastore->close();
       return -4;
     }
     registrar->server_register(tlsServer);

@@ -12,7 +12,6 @@
 #include <vector>
 
 #include "config.h"
-#include "databases/db.h"
 #include "events/event_system.h"
 #include "loggers/logger.h"
 #include "media_stream.h"
