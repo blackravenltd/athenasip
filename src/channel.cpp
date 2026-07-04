@@ -114,6 +114,7 @@ void Channel::send(std::shared_ptr<SIPMessage> message) {
   }
 
   // Add Record-Route so we stay in the dialog
+  // TODO: headers should be case insensitive
   message->header->remove_value("Record-Route", [this, server_endpoint](std::shared_ptr<Header> header) { return true; });
   message->header->remove_value("record-route", [this, server_endpoint](std::shared_ptr<Header> header) { return true; });
   message->header->remove_value("Record-route", [this, server_endpoint](std::shared_ptr<Header> header) { return true; });

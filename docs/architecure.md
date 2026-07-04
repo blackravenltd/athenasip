@@ -14,7 +14,7 @@ The following modules are currently available:
 | db_sqlite    | Internal (SQLLite) backend      | Single AthenaSIP instance, no cluster | v0.0.1  | alpha        |           
 | db_mysql     | MySQL/MariaDB backend           | AthenaSIP Cluster                     | v0.0.1  | alpha        |           
 | db_postrgres | Postgres event backend          | AthenaSIP Cluster                     | v0.0.1  | alpha        |           
-| db_redis     | Redis event backend             | AthenaSIP Cluster                     | -       | planned      |           
+| db_redis     | Redis event backend             | AthenaSIP Cluster                     | v0.0.1  | alpha        |           
 | db_dynamodb  | AWS DynamoDB event backend      | AthenaSIP Cluster                     | -       | planned      |           
 
 ## Eventing 
@@ -29,6 +29,7 @@ The following modules are currently available:
 | Name         | Capabilities                    | Use Cases                             | Version | Status       |
 |:-------------|:--------------------------------|:--------------------------------------|:--------|:-------------|
 | evt_athena   | Internal (in memory) backend    | Single AthenaSIP instance, no cluster | v0.0.1  | alpha        |           
+| evt_mqtt     | MQTT event backend              | AthenaSIP Cluster                     | v0.0.1  | alpha        |           
 | evt_nats     | NATS event backend              | AthenaSIP Cluster                     | -       | planned      |           
 | evt_rabbitmq | RabbitMQ event backend          | AthenaSIP Cluster                     | -       | planned      |           
 | evt_nsq      | NSQ event backend               | AthenaSIP Cluster                     | -       | planned      |           
