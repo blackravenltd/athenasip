@@ -13,6 +13,8 @@
 #include <type_traits>
 #include <unordered_map>
 #include <vector>
+#include <cstdint>
+#include <utility>
 
 #include "../loggers/logger.h"
 #include "../loggers/logger_scoped.h"
@@ -33,16 +35,47 @@ class DBValue {
 
   virtual std::any get_any() const = 0;
 
-  template <typename T>
-  T as() const {
-    try {
-      return std::any_cast<T>(get_any());
-    } catch (const std::bad_any_cast& e) {
-      std::cout << "[DEVELOPER] Bad any cast when getting DBValue: " << e.what() << ", cast from " << get_any().type().name() << " to " << typeid(T).name()
-                << std::endl;
-      return T{};
+
+template <typename T, typename U>
+static T checked_integral_cast(U value) {
+  static_assert(std::is_integral_v<T>);
+  static_assert(std::is_integral_v<U>);
+
+  if (!std::in_range<T>(value)) {
+    std::cout << "[DEVELOPER] DBValue integer cast out of range: "
+              << value << " cannot fit in " << typeid(T).name()
+              << std::endl;
+    return T{};
+  }
+
+  return static_cast<T>(value);
+}
+
+template <typename T>
+T as() const {
+  const auto& value = get_any();
+
+  if (const auto* exact = std::any_cast<T>(&value)) {
+    return *exact;
+  }
+
+  if constexpr (std::is_integral_v<T>) {
+    if (const auto* v = std::any_cast<std::int64_t>(&value)) {
+      return checked_integral_cast<T>(*v);
+    }
+
+    if (const auto* v = std::any_cast<std::uint64_t>(&value)) {
+      return checked_integral_cast<T>(*v);
     }
   }
+
+  std::cout << "[DEVELOPER] Bad any cast when getting DBValue: "
+            << "cast from " << value.type().name()
+            << " to " << typeid(T).name()
+            << std::endl;
+
+  return T{};
+}
 };
 
 // Template implementation for a database value.

@@ -28,6 +28,7 @@
 #include "servers/server.h"
 #include "types/sip_identity.h"
 #include "types/subscriber.h"
+#include "types/realm.h"
 
 using namespace types;
 
@@ -47,7 +48,7 @@ class Registrar : public std::enable_shared_from_this<Registrar> {
   void server_stop_all();
 
   // Realms
-  bool realm_exists(const std::string& realm);
+  std::shared_ptr<Realm> realm_get_by_name(const std::string& realm);
 
   // Events
   void event_publish(const std::string& event, const std::string& payload);
@@ -66,7 +67,7 @@ class Registrar : public std::enable_shared_from_this<Registrar> {
   std::shared_ptr<Channel> subscriber_get_channel(std::shared_ptr<Subscriber> subscriber);
 
   // Nonce
-  std::string nonce_get(const std::string& realm);
+  std::string nonce_get(std::shared_ptr<Realm> realm);
   bool nonce_check(std::string nonce);
 
   // Transactions
