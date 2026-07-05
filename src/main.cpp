@@ -11,14 +11,13 @@
 #include <optional>
 #include <string>
 
-#include "api/admin_api.h"
-#include "api/static_middleware.h"
+#include "loggers/logger_scoped.h"
+#include "loggers/logger_stdio.h"
 #include "config.h"
 #include "datastores/datastore.h"
 #include "datastores/datastore_drivers.h"
-#include "events/local_event_system.h"
-#include "loggers/logger_scoped.h"
-#include "loggers/logger_stdio.h"
+#include "events/event_system.h"
+#include "events/event_system_drivers.h"
 #include "registrar.h"
 #include "rtp/rtp_relay.h"
 #include "script/lua_script_engine.h"
@@ -26,12 +25,15 @@
 #include "servers/tls_server.h"
 #include "servers/udp_server.h"
 #include "servers/websocket_server.h"
+#include "api/admin_api.h"
+#include "api/static_middleware.h"
 #include "sip_core.h"
 #include "util.h"
 #include "version.h"
 
 using namespace athenasip;
 using namespace athenasip::datastores;
+using namespace athenasip::events;
 
 void wait_for_signal(boost::asio::signal_set& signals, boost::asio::io_context& io_context, std::function<void(int)> onsignal) {
   signals.async_wait([&](const boost::system::error_code& error, int signal_number) {
@@ -54,8 +56,9 @@ int main(int argc, char* argv[]) {
   logger->raw(" AthenaSIP v" + version->to_string());
   logger->raw("-----------------------------------");
 
-  // Register Datastore Handlers
+  // Register Datastore Handlers, Event System Handlers
   register_builtin_datastores(logger);
+  register_builtin_event_systems(logger);
 
   // Create Config
   auto config = std::make_shared<Config>(logger);
@@ -65,22 +68,35 @@ int main(int argc, char* argv[]) {
   // Create Datastore
   auto datastore = Datastore::create_driver(logger, config->db_url);
   if (!datastore) {
-    logger->error("Unknown database scheme");
+    logger->error("Unknown datastore scheme: "+config->db_url);
+  }
+
+  // Create Event System
+  auto events = EventSystem::create_driver(logger, config->events_url);
+  if (!events) {
+    logger->error("Unknown event scheme: "+config->events_url);
+  }
+
+  if(!events || !datastore) {
+    if(datastore) datastore->close();
+    if(events) events->close();
     return -2;
   }
+
+  // Attempt Datastore connection
   if (!datastore->connect()) {
-    logger->error("Datastore Connection Failed");
+    logger->error("Datastore Connection Failed: "+config->db_url);
+    return -3;
+  }
+  // Attempt Events connection
+  if (!events->connect()) {
+    datastore->close();
+    logger->error("Event System Connection Failed: "+config->events_url);
     return -3;
   }
 
-  // Events
-  std::shared_ptr<events::EventSystem> eventengine;
-  // TODO: Other event systems boot here
-  if (!eventengine) eventengine = std::make_shared<events::LocalEventSystem>(logger);
-  eventengine->start(nullptr);
-
   // Create Registrar
-  auto registrar = std::make_shared<Registrar>(logger, config, datastore, eventengine);
+  auto registrar = std::make_shared<Registrar>(logger, config, datastore, events);
 
   // Start RTPRelay
   if (config->rtprelay_enable) {

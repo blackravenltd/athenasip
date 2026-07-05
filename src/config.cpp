@@ -166,49 +166,31 @@ bool Config::load_from_yaml(const std::string& filename) {
     }
   }
 
-  // --- Parse the 'database' section ---
-  YAML::Node database = config["database"];
-  if (database) {
-    if (database["url"]) {
-      db_url = database["url"].as<std::string>();
+  // --- Parse the 'datastore' section ---
+  YAML::Node datastore = config["datastore"];
+  if (datastore) {
+    if (datastore["url"]) {
+      db_url = datastore["url"].as<std::string>();
     } else {
-      _logger->error("Missing 'database.url'");
+      _logger->error("Missing 'datastore.url'");
       return false;
     }
 
-    if (database["create"])
-      db_create = database["create"].as<bool>();
+    if (datastore["create"])
+      db_create = datastore["create"].as<bool>();
     else
       db_create = true;
   }
 
-  YAML::Node mqtt = config["mqtt"];
-  if (mqtt) {
-    if (mqtt["broker_host"]) {
-      mqtt_broker_host = mqtt["url"].as<std::string>();
+  // --- Parse the 'event' section ---
+  YAML::Node events = config["events"];
+  if (events) {
+    if (events["url"]) {
+      events_url = events["url"].as<std::string>();
     } else {
-      _logger->error("Missing 'mqtt.broker_host'");
+      _logger->error("Missing 'events.url'");
       return false;
     }
-
-    if (mqtt["broker_port"])
-      mqtt_broker_port = mqtt["broker_port"].as<uint16_t>();
-    else
-      mqtt_broker_port = 1833;
-
-    if (mqtt["client_id"]) {
-      mqtt_client_id = mqtt["client_id"].as<std::string>();
-    }
-
-    if (mqtt["username"]) {
-      mqtt_username = mqtt["username"].as<std::string>();
-    }
-
-    if (mqtt["password"]) {
-      mqtt_password = mqtt["password"].as<std::string>();
-    }
-
-    if (mqtt["mqtt_keep_alive_seconds"]) mqtt_keep_alive_seconds = mqtt["keep_alive_seconds"].as<uint32_t>();
   }
 
   // --- Parse the 'rtprelay' section ---

@@ -68,13 +68,8 @@ class Config {
   std::string db_url;  // e.g. "mysql://root@localhost/"
   bool db_create = false;
 
-  // MQTT configuration
-  std::string mqtt_broker_host;  // e.g. "127.0.0.1"
-  std::uint16_t mqtt_broker_port = 1883;
-  std::string mqtt_client_id = "athenasip-events";
-  std::string mqtt_username;
-  std::string mqtt_password;
-  std::uint16_t mqtt_keep_alive_seconds = 3;
+  // Events configuration
+  std::string events_url;  // e.g. "mqtt://user:pass@127.0.0.1:1883/athenasip?client_id=sip-01&keep_alive=30"
 
   // SQLLite configuration (optional)
   bool sqlite_create_database;  // sqllite.create_database - True if the database should be created
