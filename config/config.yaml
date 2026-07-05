@@ -1,18 +1,12 @@
 #
 # AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
 #
-# Copyright (C) 2026 Tom Cully <mail@tomcully.com>
+# Copyright (C) 2025 Tom Cully <mail@tomcully.com>
 # Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 #
 
-athenasip:
-  config_name: 'Single Node Demo'
-  data_store: 'redis'               # [database|redis]
-  event_system: 'mqtt'              # [local|mqtt|redis]
-
 sip:
   allow_unencrypted: true
-
   timers:
     # Base units (milliseconds)
     t1_rtt_ms: 500                     # Default RTT estimate
@@ -49,7 +43,7 @@ tcp:
   port: 5060
 
 tls:
-  enable: true
+  enable: false
   address: 0.0.0.0
   port: 5061
   cert_pem_filename: "../tls/snakeoil.cer"
@@ -68,20 +62,10 @@ rtprelay:
   port_max: 23000
 
 database:
-  # MySQL
   url: "mysql://root:wbv8g8nfzsc@localhost/athenasip"
-  # SQLite
-  #url: "sqlite://localhost/~/.athenasip/athena.sqlite"
 
-redis:
-
-mqtt:
-  broker_host: 'localhost'
-  broker_port: 1883
-  client_id: 'athenasip'
-  username: 'root'
-  password: ''
-  keep_alive_seconds: 3 
+events:
+  url: "mqtt://user:pass@127.0.0.1:1883/athenasip?client_id=sip-01&keep_alive=30"
 
 http:
   address: 0.0.0.0

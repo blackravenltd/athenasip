@@ -7,6 +7,7 @@
 #pragma once
 
 #include <atomic>
+#include <boost/asio/executor_work_guard.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/strand.hpp>
@@ -14,6 +15,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -23,6 +25,7 @@
 #include "../global_io_context.h"
 #include "../loggers/logger.h"
 #include "../loggers/logger_scoped.h"
+#include "../types/url.h"
 #include "event_system.h"
 
 namespace athenasip::events {
@@ -35,6 +38,7 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
   explicit MQTTEventSystem(std::shared_ptr<athenasip::loggers::Logger> logger, std::string broker_host = "127.0.0.1", std::uint16_t broker_port = 1883,
                            std::string client_id = "athenasip-events", std::string username = {}, std::string password = {},
                            std::uint16_t keep_alive_seconds = 30);
+  MQTTEventSystem(std::shared_ptr<athenasip::loggers::Logger> logger, std::shared_ptr<types::URL> url);
   ~MQTTEventSystem() override;
 
   MQTTEventSystem(const MQTTEventSystem&) = delete;
@@ -42,8 +46,11 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
   MQTTEventSystem(MQTTEventSystem&&) = delete;
   MQTTEventSystem& operator=(MQTTEventSystem&&) = delete;
 
-  void start(EventSystem::CallbackCompleteFn callback) override;
-  void stop(EventSystem::CallbackCompleteFn callback) override;
+  bool connect() override;
+  void connect(EventSystem::CallbackCompleteFn callback) override;
+
+  bool close() override;
+  void close(EventSystem::CallbackCompleteFn callback) override;
 
   void publish(std::string event_name, std::string message, EventSystem::CallbackCompleteFn callback) override;
 
@@ -56,6 +63,7 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
  private:
   using MQTTClient = mqtt::mqtt_client<asio::ip::tcp::socket>;
   using MQTTStrand = asio::strand<asio::io_context::executor_type>;
+  using MQTTWorkGuard = asio::executor_work_guard<asio::io_context::executor_type>;
 
   std::shared_ptr<athenasip::loggers::Logger> _logger;
   asio::io_context& _callback_io_context;
@@ -69,9 +77,10 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
 
   asio::io_context _mqtt_io_context;
   MQTTStrand _mqtt_strand;
+  std::optional<MQTTWorkGuard> _mqtt_work_guard;
   MQTTClient _client;
 
-  std::atomic_bool _running{false};
+  std::atomic_bool _connected{false};
   std::thread _mqtt_thread;
 
   mutable std::mutex _subscriptions_mutex;
@@ -81,14 +90,16 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
   std::unordered_set<std::string> _broker_subscribed_events;
   bool _receive_active = false;
 
+  void apply_url(std::shared_ptr<types::URL> url);
   void configure_client();
   void run_mqtt_io_context();
-  void stop_without_callback() noexcept;
+  void close_without_callback() noexcept;
 
   void post_complete(EventSystem::CallbackCompleteFn callback, bool ok);
   void clear_local_subscriptions();
 
   [[nodiscard]] std::vector<std::string> current_subscription_events() const;
+  [[nodiscard]] std::unordered_set<std::shared_ptr<Subscription>> collect_matching_subscriptions(const std::string& event_name) const;
 
   void subscribe_events_on_mqtt(std::vector<std::string> event_names, EventSystem::CallbackCompleteFn callback);
   void ensure_receive_loop();
