@@ -8,26 +8,12 @@
 
 using namespace athenasip::headers;
 
-// Helper trim function.
-// If your project already provides a trim utility, you can use that instead.
-static std::string trim(const std::string& s) {
-  auto start = s.begin();
-  while (start != s.end() && std::isspace(*start)) {
-    ++start;
-  }
-  auto end = s.end();
-  do {
-    --end;
-  } while (std::distance(start, end) > 0 && std::isspace(*end));
-  return std::string(start, end + 1);
-}
-
 bool SupportedHeader::parse(const std::string& val) {
   features.clear();
   std::istringstream iss(val);
   std::string token;
   while (std::getline(iss, token, ',')) {
-    std::string trimmed = trim(token);
+    std::string trimmed = Util::trim(token);
     if (!trimmed.empty()) {
       features.insert(trimmed);
     }

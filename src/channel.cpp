@@ -51,7 +51,7 @@ using namespace athenasip::servers;
 namespace athenasip {
 
 Channel::Channel(std::shared_ptr<Logger> logger, std::shared_ptr<SIPCore> core, std::shared_ptr<Connection> connection) : _connection(connection), _core(core) {
-  _logger = std::make_unique<LoggerScoped>(_connection->transport_name() + "://" + _connection->remote_endpoint_name(), logger);
+  _logger = std::make_unique<LoggerScoped>("channel "+_connection->transport_name() + "://" + _connection->remote_endpoint_name(), logger);
 }
 
 void Channel::start() {
@@ -102,7 +102,6 @@ void Channel::send(std::shared_ptr<SIPMessage> message) {
 
   // Add or Remove Via
   if (message->header->type == SIPHeader::Type::Request) {
-    // TODO: Generate proper branch
     auto viaString = "SIP/2.0/TCP " + server_endpoint + ";branch=" + message->branch;
     // Add Via Header for this server
     auto via = std::make_shared<ViaHeader>(viaString);

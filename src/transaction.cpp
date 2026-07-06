@@ -47,6 +47,8 @@ void Transaction::receive_message(std::shared_ptr<SIPMessage> message) {
 
   if (message->header->request_method == "REGISTER") {
     process_register(message);
+  } else if (message->header->request_method == "INVITE") {
+    process_invite(message);
   } else if (message->header->request_method == "ACK") {
     process_ack(message);
   } else {
@@ -110,8 +112,6 @@ void Transaction::process_register(std::shared_ptr<SIPMessage> message) {
       // TODO: This should be configurable
       contact->tags["expires"] = "3600";
 
-
-
       response->header->add("Contact", std::make_shared<SIPIdentityHeader>(contact));
     }
   }
@@ -119,6 +119,22 @@ void Transaction::process_register(std::shared_ptr<SIPMessage> message) {
 
   // End this transaction
   end();
+}
+
+void Transaction::process_invite(std::shared_ptr<SIPMessage> message) {
+  _logger->debug("Received INVITE");
+
+  // Send the event into the backend
+  if (message->header->contains("To")) {
+    auto to_header = message->header->headers_map["To"][0]->as<SIPIdentityHeader>();
+    _registrar->event_publish(_registrar->config->sip_event_prefix+"/subscriber/"+to_header->value->uri->to_string()+"/invite",_channel->_connection->remote_endpoint_name());
+
+    // Send 100 Trying
+    auto response = message->generate_response();
+    response->header->response_code = 100;
+    response->header->response_message = "Trying";
+    response->channel->send(response);
+  }
 }
 
 void Transaction::process_ack(std::shared_ptr<SIPMessage> message) {

@@ -48,6 +48,7 @@ class Transaction : public std::enable_shared_from_this<Transaction> {
   void end();
 
   void process_register(std::shared_ptr<SIPMessage> message);
+  void process_invite(std::shared_ptr<SIPMessage> message);
   void process_ack(std::shared_ptr<SIPMessage> message);
   void process_unknown(std::shared_ptr<SIPMessage> message);
 
