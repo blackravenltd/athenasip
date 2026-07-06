@@ -48,6 +48,14 @@ std::shared_ptr<Subscriber> Registrar::subscriber_get(std::shared_ptr<SIPIdentit
 bool Registrar::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel) {
   if(_datastore->subscriber_register(subscriber, contact)) {
     _channels_by_subscriber[subscriber->id] = channel;
+
+    channel->_event_subscription = _events->subscribe("athenasip/subscriber/"+subscriber->identity->to_string()+"/#", 
+      [this, subscriber, contact, channel](std::string event, std::string payload) {
+        _logger->info("SUBSCRIBER "+subscriber->identity->to_string()+" Event: "+event+" Payload: "+payload);
+      }
+    );
+    _events->publish("athenasip/subscriber/"+subscriber->identity->to_string()+"/registered","{\"contact\":\""+contact->to_string()+"\"}");
+
     return true;
   }
 
@@ -59,6 +67,11 @@ bool Registrar::subscriber_unregister(std::shared_ptr<Subscriber> subscriber, st
   if(_datastore->subscriber_unregister(subscriber, contact)) {
     _channels_by_subscriber.erase(subscriber->id);
     return true;
+  }
+
+  if(channel->_event_subscription) {
+    _events->unsubscribe(channel->_event_subscription);
+    channel->_event_subscription = nullptr;
   }
 
     _logger->error("Cannot unregister subscriber identity "+ subscriber->identity->to_string()+" - datastore failure");

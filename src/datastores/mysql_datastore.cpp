@@ -60,6 +60,10 @@ MySQLDatastore::MySQLDatastore(std::shared_ptr<loggers::Logger> logger, std::sha
 
 MySQLDatastore::~MySQLDatastore() { close(); }
 
+std::string MySQLDatastore::get_driver_name() const {
+  return "AthenaSIP MySQL Driver v0.0.1";
+}
+
 bool MySQLDatastore::connect() {
   if (_session) {
     return true;

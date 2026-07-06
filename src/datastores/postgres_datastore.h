@@ -27,6 +27,8 @@ class PostgreSQLDatastore : public Datastore {
   PostgreSQLDatastore(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<types::URL> url);
   ~PostgreSQLDatastore() override;
 
+  std::string get_driver_name() const override;
+
   bool connect() override;
   void close() override;
   bool is_connected() const override;

@@ -66,6 +66,10 @@ PostgreSQLDatastore::PostgreSQLDatastore(std::shared_ptr<loggers::Logger> logger
 
 PostgreSQLDatastore::~PostgreSQLDatastore() { close(); }
 
+std::string PostgreSQLDatastore::get_driver_name() const {
+  return "AthenaSIP PostgreSQL Driver v0.0.1";
+}
+
 bool PostgreSQLDatastore::connect() {
   if (_connection && _connection->is_open()) {
     return true;

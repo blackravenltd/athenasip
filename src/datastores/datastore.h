@@ -27,6 +27,8 @@ class Datastore {
  public:
   virtual ~Datastore() = default;
 
+  virtual std::string get_driver_name() const = 0;
+  
   virtual bool connect() = 0;
   virtual void close() = 0;
   virtual bool is_connected() const = 0;

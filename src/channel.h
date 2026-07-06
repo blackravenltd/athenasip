@@ -12,9 +12,11 @@
 
 #include "loggers/logger.h"
 #include "servers/connection.h"
+#include "events/event_system.h"
 
 using namespace athenasip::loggers;
 using namespace athenasip::servers;
+using namespace athenasip::events;
 
 namespace athenasip {
 
@@ -39,6 +41,7 @@ class Channel : public std::enable_shared_from_this<Channel> {
   State state = State::Normal;
 
   std::shared_ptr<SIPMessage> _incoming_message;
+  std::shared_ptr<Subscription> _event_subscription;
 
   void send(std::shared_ptr<SIPMessage> message);
   void receive(std::shared_ptr<SIPMessage> message);
@@ -47,6 +50,7 @@ class Channel : public std::enable_shared_from_this<Channel> {
   std::shared_ptr<Logger> _logger;
   std::shared_ptr<SIPCore> _core;
   std::shared_ptr<Connection> _connection;
+
 
   std::array<char, 65535> _read_buffer;
   std::string _buffer;

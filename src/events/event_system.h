@@ -145,6 +145,8 @@ class EventSystem {
     }
   }
 
+  virtual std::string get_driver_name() const = 0;
+
   virtual void publish(std::string event_name, std::string message, CallbackCompleteFn callback) = 0;
   virtual void publish(std::string event_name, std::string message) { publish(std::move(event_name), std::move(message), nullptr); }
   virtual std::shared_ptr<Subscription> subscribe(std::string event_name, Subscription::EventCallbackFn event_callback, CallbackCompleteFn callback) = 0;

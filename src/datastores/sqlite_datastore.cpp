@@ -153,6 +153,10 @@ SQLiteDatastore::SQLiteDatastore(std::shared_ptr<loggers::Logger> logger, std::s
 
 SQLiteDatastore::~SQLiteDatastore() { close(); }
 
+std::string SQLiteDatastore::get_driver_name() const {
+  return "AthenaSIP SQLite Driver v0.0.1";
+}
+
 bool SQLiteDatastore::connect() {
   if (_db) {
     return true;
