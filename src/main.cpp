@@ -83,6 +83,9 @@ int main(int argc, char* argv[]) {
     return -2;
   }
 
+  logger->info("Datastore Driver: "+datastore->get_driver_name());
+  logger->info("Events Driver: "+events->get_driver_name());
+
   // Attempt Datastore connection
   if (!datastore->connect()) {
     logger->error("Datastore Connection Failed: "+config->db_url);
@@ -158,6 +161,9 @@ int main(int argc, char* argv[]) {
 
   // Start all configured servers
   registrar->server_start_all(core);
+
+  // Publish Start Event
+  events->publish("athenasip/servers/0001/status","started");
 
   // Wait for Signals
   boost::asio::io_context signal_wait_context;

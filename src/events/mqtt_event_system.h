@@ -41,6 +41,8 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
   MQTTEventSystem(std::shared_ptr<athenasip::loggers::Logger> logger, std::shared_ptr<types::URL> url);
   ~MQTTEventSystem() override;
 
+  std::string get_driver_name() const override;
+  
   MQTTEventSystem(const MQTTEventSystem&) = delete;
   MQTTEventSystem& operator=(const MQTTEventSystem&) = delete;
   MQTTEventSystem(MQTTEventSystem&&) = delete;

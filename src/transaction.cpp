@@ -96,6 +96,8 @@ void Transaction::process_register(std::shared_ptr<SIPMessage> message) {
     return send_401_unauthorized(message);
   }
 
+  _registrar->subscriber_register(aorSubscriber, message->header->headers_map["Contact"][0]->as<SIPIdentityHeader>()->value->uri, message->channel);
+
   // Send 200 OK
   auto response = message->generate_response();
   response->header->response_code = 200;
@@ -107,6 +109,8 @@ void Transaction::process_register(std::shared_ptr<SIPMessage> message) {
       auto contact = std::make_shared<SIPIdentity>(*contact_header->value);
       // TODO: This should be configurable
       contact->tags["expires"] = "3600";
+
+
 
       response->header->add("Contact", std::make_shared<SIPIdentityHeader>(contact));
     }

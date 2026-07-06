@@ -82,6 +82,10 @@ MQTTEventSystem::MQTTEventSystem(std::shared_ptr<athenasip::loggers::Logger> log
 
 MQTTEventSystem::~MQTTEventSystem() { close_without_callback(); }
 
+std::string MQTTEventSystem::get_driver_name() const {
+  return "AthenaSIP MQTT Driver v0.0.1";
+}
+
 bool MQTTEventSystem::connect() {
   auto self = shared_from_this();
 
