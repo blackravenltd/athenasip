@@ -6,6 +6,10 @@
 #
 
 sip:
+  # This must be unique in the cluster
+  node_id: sip-0001
+  event_prefix: athenasip
+
   allow_unencrypted: true
   timers:
     # Base units (milliseconds)
@@ -61,11 +65,11 @@ rtprelay:
   port_min: 22000
   port_max: 23000
 
-database:
+datastore:
   url: "mysql://root:wbv8g8nfzsc@localhost/athenasip"
 
 events:
-  url: "mqtt://user:pass@127.0.0.1:1883/athenasip?client_id=sip-01&keep_alive=30"
+  url: "mqtt://127.0.0.1:1883/?client_id=sip-01&keep_alive=30"
 
 http:
   address: 0.0.0.0

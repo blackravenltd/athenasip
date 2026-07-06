@@ -31,7 +31,6 @@ class LoggerStdIO : public Logger {
 
  private:
   LogLevel _log_level;
-  const std::string _getDateTime();
   std::mutex mtx;
 };
 

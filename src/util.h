@@ -41,6 +41,7 @@ class Util {
   static std::string to_iso8601(const std::time_t& t);
   static std::size_t hash_combine(std::size_t seed, std::size_t hash_value);
   static std::string generate_random_string(const std::string& prefix, uint16_t length);
+  static const std::string get_zulu_time();
 };
 
 }  // namespace athenasip
