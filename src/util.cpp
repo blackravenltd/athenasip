@@ -181,4 +181,14 @@ std::string Util::generate_random_string(const std::string& prefix, uint16_t len
   return tag.str();
 }
 
+std::string const Util::get_zulu_time() {
+  auto now = std::chrono::system_clock::now();
+  auto now_c = std::chrono::system_clock::to_time_t(now);
+  std::tm now_tm = *std::gmtime(&now_c);
+
+  std::ostringstream oss;
+  oss << std::put_time(&now_tm, "%Y-%m-%dT%H:%M:%SZ");
+  return oss.str();
+}
+
 }  // namespace athenasip

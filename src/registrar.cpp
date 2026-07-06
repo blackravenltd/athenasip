@@ -49,12 +49,12 @@ bool Registrar::subscriber_register(std::shared_ptr<Subscriber> subscriber, std:
   if(_datastore->subscriber_register(subscriber, contact)) {
     _channels_by_subscriber[subscriber->id] = channel;
 
-    channel->_event_subscription = _events->subscribe("athenasip/subscriber/"+subscriber->identity->to_string()+"/#", 
+    channel->_event_subscription = _events->subscribe(config->sip_event_prefix+"/subscriber/"+subscriber->identity->to_string()+"/#", 
       [this, subscriber, contact, channel](std::string event, std::string payload) {
         _logger->info("SUBSCRIBER "+subscriber->identity->to_string()+" Event: "+event+" Payload: "+payload);
       }
     );
-    _events->publish("athenasip/subscriber/"+subscriber->identity->to_string()+"/registered","{\"contact\":\""+contact->to_string()+"\"}");
+    _events->publish(config->sip_event_prefix+"/subscriber/"+subscriber->identity->to_string()+"/registered","{\"contact\":\""+contact->to_string()+"\"}");
 
     return true;
   }

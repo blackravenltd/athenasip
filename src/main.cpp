@@ -35,11 +35,11 @@ using namespace athenasip;
 using namespace athenasip::datastores;
 using namespace athenasip::events;
 
-void wait_for_signal(boost::asio::signal_set& signals, boost::asio::io_context& io_context, std::function<void(int)> onsignal) {
-  signals.async_wait([&](const boost::system::error_code& error, int signal_number) {
+void wait_for_signal(boost::asio::signal_set& signals, std::function<void(int)> onsignal) {
+  signals.async_wait([&signals, onsignal = std::move(onsignal)](const boost::system::error_code& error, int signal_number) mutable {
     if (!error) {
       onsignal(signal_number);
-      wait_for_signal(signals, io_context, onsignal);
+      wait_for_signal(signals, std::move(onsignal));
     }
   });
 }
@@ -163,19 +163,19 @@ int main(int argc, char* argv[]) {
   registrar->server_start_all(core);
 
   // Publish Start Event
-  events->publish("athenasip/servers/0001/status","started");
+  events->publish(config->sip_event_prefix +"/nodes/"+config->sip_node_id+"/status","{\"started\":\""+Util::get_zulu_time()+"\"}");
 
   // Wait for Signals
   boost::asio::io_context signal_wait_context;
   boost::asio::signal_set signals(signal_wait_context, SIGINT, SIGHUP);
-  wait_for_signal(signals, signal_wait_context, [&](int signal_number) {
+  wait_for_signal(signals, [&](int signal_number) {
     switch (signal_number) {
       case SIGHUP:
-        logger->raw("Received Signal SIGHUP");
+        logger->debug("Received Signal SIGHUP");
         break;
+
       case SIGINT:
-        logger->raw("Received Signal SIGINT");
-        signal_wait_context.stop();
+        logger->debug("Received Signal SIGINT");
 
         registrar->transaction_end_all();
         registrar->channel_close_all();
@@ -183,9 +183,20 @@ int main(int argc, char* argv[]) {
         registrar->rtprelay_stop();
         registrar->admin_stop();
 
+        events->publish(
+            config->sip_event_prefix + "/nodes/" + config->sip_node_id + "/status",
+            "{\"stopped\":\"" + Util::get_zulu_time() + "\"}"
+        );
+
+        datastore->close();
+        events->close();
+
+        signal_wait_context.stop();
         return;
+
       default:
-        logger->raw("Received Unknown Signal " + std::to_string(signal_number));
+        logger->error("Received Unknown Signal " + std::to_string(signal_number));
+        break;
     }
   });
 
