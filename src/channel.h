@@ -42,6 +42,7 @@ class Channel : public std::enable_shared_from_this<Channel> {
 
   std::shared_ptr<SIPMessage> _incoming_message;
   std::shared_ptr<Subscription> _event_subscription;
+  std::shared_ptr<Connection> _connection;
 
   void send(std::shared_ptr<SIPMessage> message);
   void receive(std::shared_ptr<SIPMessage> message);
@@ -49,7 +50,6 @@ class Channel : public std::enable_shared_from_this<Channel> {
  protected:
   std::shared_ptr<Logger> _logger;
   std::shared_ptr<SIPCore> _core;
-  std::shared_ptr<Connection> _connection;
 
 
   std::array<char, 65535> _read_buffer;

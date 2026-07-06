@@ -46,21 +46,25 @@ std::shared_ptr<Subscriber> Registrar::subscriber_get(std::shared_ptr<SIPIdentit
 }
 
 bool Registrar::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel) {
-  if(_datastore->subscriber_register(subscriber, contact)) {
-    _channels_by_subscriber[subscriber->id] = channel;
 
-    channel->_event_subscription = _events->subscribe(config->sip_event_prefix+"/subscriber/"+subscriber->identity->to_string()+"/#", 
-      [this, subscriber, contact, channel](std::string event, std::string payload) {
-        _logger->info("SUBSCRIBER "+subscriber->identity->to_string()+" Event: "+event+" Payload: "+payload);
+  auto registration = subscriber_get(subscriber->identity);
+
+  if(!registration && !_datastore->subscriber_register(subscriber, contact)) {
+    _logger->error("Cannot register subscriber identity "+ subscriber->identity->to_string()+" - datastore failure");
+    return false;
+  } 
+
+  if(!channel->_event_subscription) {
+    channel->_event_subscription = _events->subscribe(config->sip_event_prefix+"/subscriber/"+subscriber->identity->uri->to_string()+"/#", 
+      [this, subscriber](std::string event, std::string payload) {
+        _logger->info("------------------------------- SUBSCRIBER "+subscriber->identity->to_string()+" Event: "+event+" Payload: "+payload);
       }
     );
-    _events->publish(config->sip_event_prefix+"/subscriber/"+subscriber->identity->to_string()+"/registered","{\"contact\":\""+contact->to_string()+"\"}");
-
-    return true;
   }
 
-  _logger->error("Cannot register subscriber identity "+ subscriber->identity->to_string()+" - datastore failure");
-  return false;
+  _channels_by_subscriber[subscriber->id] = channel;
+  _events->publish(config->sip_event_prefix+"/subscriber/"+subscriber->identity->uri->to_string()+"/status","{\"contact\":\""+contact->to_string()+"\",\"node\":\""+config->sip_node_id+"\",\"registered\":\""+Util::get_zulu_time()+"\"}");
+  return true;
 }
 
 bool Registrar::subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel) {
@@ -85,13 +89,18 @@ std::shared_ptr<Channel> Registrar::subscriber_get_channel(std::shared_ptr<Subsc
 bool Registrar::channel_register(std::string endpoint, std::shared_ptr<Channel> channel) {
   std::lock_guard<std::shared_mutex> lock(_channels_mutex);
   _channels[endpoint] = channel;
+
+  _events->publish(config->sip_event_prefix+"/nodes/"+config->sip_node_id+"/channels/"+channel->_connection->remote_endpoint_name()+";transport="+channel->_connection->transport_name(),"{\"status\":\"registered\",\"at\":\""+Util::get_zulu_time()+"\"}");
+
   _logger->debug("Registered Channel " + endpoint);
   return true;
 }
 
 bool Registrar::channel_unregister(std::string endpoint, std::shared_ptr<Channel> channel) {
   std::lock_guard<std::shared_mutex> lock(_channels_mutex);
-  // _channels.erase(endpoint);
+  _events->publish(config->sip_event_prefix+"/nodes/"+config->sip_node_id+"/channels/"+channel->_connection->remote_endpoint_name()+";transport="+channel->_connection->transport_name(),"{\"status\":\"closed\",\"at\":\""+Util::get_zulu_time()+"\"}");
+
+  _channels.erase(endpoint);  
   _logger->debug("Unregistered Channel " + endpoint);
   return true;
 }
