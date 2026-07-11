@@ -138,7 +138,7 @@ void Transaction::process_invite(std::shared_ptr<SIPMessage> message) {
     _core->events->publish(_core->config->sip_event_prefix+"/subscriber/"+to_header->value->uri->to_string()+"/invite",_channel->_connection->remote_endpoint_name());
 
     auto call = std::make_shared<Call>();
-    // call->id = message->header->headers_map["Call-ID"][0]->as<std::string>();
+    call->id = message->header->headers_map["Call-ID"][0]->as<StringHeader>()->value;
     call->from = message->header->headers_map["From"][0]->as<SIPIdentityHeader>()->value;
     call->to = message->header->headers_map["From"][0]->as<SIPIdentityHeader>()->value;
     call->state = Call::State::Initial;

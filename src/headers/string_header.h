@@ -14,17 +14,17 @@ namespace athenasip::headers {
 class StringHeader : public Header {
  public:
   StringHeader() = default;
-  explicit StringHeader(const std::string& value) : _value(value) {}
+  explicit StringHeader(const std::string& _value) : value(_value) {}
 
-  bool parse(const std::string& value) override {
-    _value = value;
+  bool parse(const std::string& _value) override {
+    value = _value;
     return true;
   }
 
-  std::string to_string() const override { return _value; }
+  std::string to_string() const override { return value; }
 
+  std::string value;
  private:
-  std::string _value;
 };
 
 }  // namespace athenasip::headers
