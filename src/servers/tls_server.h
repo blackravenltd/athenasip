@@ -15,9 +15,9 @@ namespace athenasip::servers {
 
 class TLSServer : public Server {
  public:
-  TLSServer(std::shared_ptr<Logger> logger, const std::string& bind_address, short port);
+  TLSServer(std::shared_ptr<Logger> logger, std::shared_ptr<Core> core, const std::string& bind_address, short port);
 
-  void start(std::shared_ptr<SIPCore> core) override;
+  void start() override;
   void stop() override;
 
   bool set_certificates(std::string cert, std::string key);

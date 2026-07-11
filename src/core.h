@@ -16,46 +16,44 @@
 #include <sstream>
 #include <string>
 
-#include "api/admin_api.h"
-#include "call.h"
 #include "config.h"
+#include "servers/server.h"
 #include "datastores/datastore.h"
 #include "events/event_system.h"
+#include "rtp/rtp_relay_set.h"
+
+#include "servers/server.h"
+#include "api/admin_api.h"
+
 #include "expiry_set.h"
+#include "transaction.h"
+#include "sip_message.h"
+#include "call.h"
+
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
-#include "rtp/rtp_relay.h"
-#include "servers/server.h"
-#include "types/realm.h"
-#include "types/sip_identity.h"
-#include "types/subscriber.h"
 
-// TODO: Remove this
-#include "datastores/mysql_datastore.h"
-
-using namespace types;
-using namespace datastores;
+using namespace athenasip::types;
+using namespace athenasip::datastores;
+using namespace athenasip::events;
+using namespace athenasip::servers;
+using namespace athenasip::rtp;
+using namespace athenasip::api;
 
 namespace athenasip {
 
-class Channel;
-class Transaction;
-
-class Registrar : public std::enable_shared_from_this<Registrar> {
+class Core : public std::enable_shared_from_this<Core> {
  public:
-  Registrar(std::shared_ptr<Logger> logger, std::shared_ptr<Config> _config, std::shared_ptr<athenasip::datastores::Datastore> datastore,
+  Core(std::shared_ptr<Logger> logger, std::shared_ptr<Config> _config, std::shared_ptr<Datastore> datastore,
                      std::shared_ptr<events::EventSystem> events);
 
   // Servers
-  void server_register(std::shared_ptr<servers::Server> server);
-  void server_start_all(std::shared_ptr<SIPCore> core);
+  void server_register(std::shared_ptr<Server> server);
+  void server_start_all();
   void server_stop_all();
 
   // Realms
   std::shared_ptr<Realm> realm_get_by_name(const std::string& realm);
-
-  // Events
-  void event_publish(const std::string& event, const std::string& payload);
 
   // Subscribers
   bool subscriber_exists(std::shared_ptr<SIPIdentity> identity);
@@ -73,6 +71,9 @@ class Registrar : public std::enable_shared_from_this<Registrar> {
   // Nonce
   std::string nonce_create(std::shared_ptr<Realm> realm);
   bool nonce_check(std::string nonce);
+
+  // Messages
+  void process_message(std::shared_ptr<SIPMessage> message);
 
   // Transactions
   bool transaction_register(std::shared_ptr<Transaction> transaction);
@@ -98,17 +99,17 @@ class Registrar : public std::enable_shared_from_this<Registrar> {
   void admin_stop();
 
   std::shared_ptr<Config> config;
+  std::shared_ptr<datastores::Datastore> datastore;
+  std::shared_ptr<events::EventSystem> events;
 
  private:
   std::shared_ptr<loggers::Logger> _logger;
-  std::shared_ptr<datastores::Datastore> _datastore;
-  std::shared_ptr<events::EventSystem> _events;
 
   std::unordered_map<std::string, std::shared_ptr<Channel>> _channels;
   std::unordered_map<uint64_t, std::shared_ptr<Channel>> _channels_by_subscriber;
   std::shared_mutex _channels_mutex;
 
-  std::vector<std::shared_ptr<servers::Server>> _servers;
+  std::vector<std::shared_ptr<Server>> _servers;
 
   std::shared_ptr<rtp::RTPRelay> _rtprelay;
   std::shared_ptr<api::AdminAPI> _adminAPI;

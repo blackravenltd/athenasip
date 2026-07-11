@@ -15,7 +15,7 @@
 
 namespace athenasip::events {
 
-inline void register_builtin_event_systems(std::shared_ptr<loggers::Logger> logger) {
+void register_builtin_event_systems(std::shared_ptr<loggers::Logger> logger) {
   EventSystem::register_driver<LocalEventSystem>(logger, "athena");
   EventSystem::register_driver<LocalEventSystem>(logger, "evt+athena");
   EventSystem::register_driver<LocalEventSystem>(logger, "local");

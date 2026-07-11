@@ -6,16 +6,24 @@
 //
 #include "transaction.h"
 
-#include "registrar.h"
+#include "core.h"
 #include "sip_message.h"
+#include "types/subscriber.h"
 
+#include "headers/sip_identity_header.h"
+
+#include "call.h"
+#include "channel.h"
+
+using namespace athenasip::types;
 using namespace athenasip::loggers;
+using namespace athenasip::headers;
 
 namespace athenasip {
 
-Transaction::Transaction(std::shared_ptr<Logger> logger, std::shared_ptr<Channel> channel, std::shared_ptr<Registrar> registrar, Direction direction,
+Transaction::Transaction(std::shared_ptr<Logger> logger, std::shared_ptr<Channel> channel, std::shared_ptr<Core> core, Direction direction,
                          std::string _id)
-    : _logger(std::make_unique<LoggerScoped>("transaction " + _id, logger)), _channel(channel), _registrar(registrar), _direction(direction), id(_id) {}
+    : _logger(std::make_unique<LoggerScoped>("transaction " + _id, logger)), _channel(channel), _core(core), _direction(direction), id(_id) {}
 
 Transaction::~Transaction() {}
 
@@ -34,7 +42,7 @@ void Transaction::end() {
   _logger->debug("end");
   _ended = true;
   if (_timer_b_f != nullptr) _timer_b_f->cancel();
-  if (_registrar) _registrar->transaction_unregister(id);
+  if (_core) _core->transaction_unregister(id);
 }
 
 void Transaction::receive_message(std::shared_ptr<SIPMessage> message) {
@@ -73,14 +81,14 @@ void Transaction::process_register(std::shared_ptr<SIPMessage> message) {
     return send_401_unauthorized(message);
   }
 
-  if (!_registrar->nonce_check(auth->fields["nonce"])) {
+  if (!_core->nonce_check(auth->fields["nonce"])) {
     // No Nonce exists or is expired
     _logger->info("[" + message->header->request_method + "] - Nonce " + auth->fields["nonce"] + " Not Found or Expired");
     return send_401_unauthorized(message);
   }
 
   auto& identityRef = message->header->headers_map["To"][0]->as<SIPIdentityHeader>()->value;
-  auto aorSubscriber = _registrar->subscriber_get(identityRef);
+  auto aorSubscriber = _core->subscriber_get(identityRef);
 
   if (aorSubscriber == nullptr) {
     // Subscriber not found
@@ -98,7 +106,7 @@ void Transaction::process_register(std::shared_ptr<SIPMessage> message) {
     return send_401_unauthorized(message);
   }
 
-  _registrar->subscriber_register(aorSubscriber, message->header->headers_map["Contact"][0]->as<SIPIdentityHeader>()->value->uri, message->channel);
+  _core->subscriber_register(aorSubscriber, message->header->headers_map["Contact"][0]->as<SIPIdentityHeader>()->value->uri, message->channel);
 
   // Send 200 OK
   auto response = message->generate_response();
@@ -127,7 +135,14 @@ void Transaction::process_invite(std::shared_ptr<SIPMessage> message) {
   // Send the event into the backend
   if (message->header->contains("To")) {
     auto to_header = message->header->headers_map["To"][0]->as<SIPIdentityHeader>();
-    _registrar->event_publish(_registrar->config->sip_event_prefix+"/subscriber/"+to_header->value->uri->to_string()+"/invite",_channel->_connection->remote_endpoint_name());
+    _core->events->publish(_core->config->sip_event_prefix+"/subscriber/"+to_header->value->uri->to_string()+"/invite",_channel->_connection->remote_endpoint_name());
+
+    auto call = std::make_shared<Call>();
+    // call->id = message->header->headers_map["Call-ID"][0]->as<std::string>();
+    call->from = message->header->headers_map["From"][0]->as<SIPIdentityHeader>()->value;
+    call->to = message->header->headers_map["From"][0]->as<SIPIdentityHeader>()->value;
+    call->state = Call::State::Initial;
+    _core->call_register(call);
 
     // Send 100 Trying
     auto response = message->generate_response();
@@ -169,10 +184,10 @@ void Transaction::send_401_unauthorized(std::shared_ptr<SIPMessage> message) {
   // Get From Identity
   auto toIdentity = message->header->headers_map["From"][0]->as<headers::SIPIdentityHeader>()->value;
   // Send WWW-Authenticate if realm recognised
-  auto realm = _registrar->realm_get_by_name(Util::to_lower(toIdentity->uri->realm));
+  auto realm = _core->realm_get_by_name(Util::to_lower(toIdentity->uri->realm));
   if (realm) {
     // Generate Nonce
-    response->header->add("WWW-Authenticate", "Digest realm=\"" + realm->name + "\", nonce=\"" + _registrar->nonce_create(realm) + "\"");
+    response->header->add("WWW-Authenticate", "Digest realm=\"" + realm->name + "\", nonce=\"" + _core->nonce_create(realm) + "\"");
   }
   // Send Response
   response->channel->send(response);

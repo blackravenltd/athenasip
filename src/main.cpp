@@ -18,16 +18,14 @@
 #include "datastores/datastore_drivers.h"
 #include "events/event_system.h"
 #include "events/event_system_drivers.h"
-#include "registrar.h"
+#include "core.h"
 #include "rtp/rtp_relay.h"
-#include "script/lua_script_engine.h"
 #include "servers/tcp_server.h"
 #include "servers/tls_server.h"
 #include "servers/udp_server.h"
 #include "servers/websocket_server.h"
 #include "api/admin_api.h"
 #include "api/static_middleware.h"
-#include "sip_core.h"
 #include "util.h"
 #include "version.h"
 
@@ -98,19 +96,19 @@ int main(int argc, char* argv[]) {
     return -3;
   }
 
-  // Create Registrar
-  auto registrar = std::make_shared<Registrar>(logger, config, datastore, events);
+  // Create Core
+  auto core = std::make_shared<Core>(logger, config, datastore, events);
 
   // Start RTPRelay
   if (config->rtprelay_enable) {
     auto rtprelay = std::make_shared<rtp::RTPRelay>(logger, config->rtprelay_address, config->rtprelay_min_port, config->rtprelay_max_port);
-    registrar->rtprelay_register(rtprelay);
-    registrar->rtprelay_start();
+    core->rtprelay_register(rtprelay);
+    core->rtprelay_start();
   }
 
   // Script Engine
-  auto scripting = std::make_shared<script::LuaScriptEngine>(logger);
-  scripting->start();
+  // auto scripting = std::make_shared<script::LuaScriptEngine>(logger);
+  // scripting->start();
 
   // HTTP Admin API
   if (config->http_api_enable || config->http_files_enable) {
@@ -122,48 +120,45 @@ int main(int argc, char* argv[]) {
       adminAPI->middlewares.push_back(api::StaticMiddleware::add("../admin", so));
     }
     adminAPI->middlewares.push_back(api::AdminAPI::send404end());
-    registrar->admin_register(adminAPI);
-    registrar->admin_start();
+    core->admin_register(adminAPI);
+    core->admin_start();
   }
 
   // Servers: Create the TLSServer instance with the logger and start it on the specified port
   if (config->tls_enable) {
-    auto tlsServer = std::make_shared<servers::TLSServer>(logger, config->tls_address, config->tls_port);
+    auto tlsServer = std::make_shared<servers::TLSServer>(logger, core, config->tls_address, config->tls_port);
     // Set Certificates
     if (!tlsServer->set_certificates(config->tls_cert_pem_filename, config->tls_key_pem_filename)) {
       logger->error("Cannot load TLS certificates");
       datastore->close();
       return -4;
     }
-    registrar->server_register(tlsServer);
+    core->server_register(tlsServer);
   }
 
   // Servers: Create the TCPServer instance with the logger and start it on the specified port
   if (config->tcp_enable) {
-    auto tcpServer = std::make_shared<servers::TCPServer>(logger, config->tcp_address, config->tcp_port);
-    registrar->server_register(tcpServer);
+    auto tcpServer = std::make_shared<servers::TCPServer>(logger, core, config->tcp_address, config->tcp_port);
+    core->server_register(tcpServer);
   }
 
   // Servers: Create the UDPServer instance with the logger and start it on the specified port
   if (config->udp_enable) {
-    auto udpServer = std::make_shared<servers::UDPServer>(logger, config->udp_address, config->udp_port);
-    registrar->server_register(udpServer);
+    auto udpServer = std::make_shared<servers::UDPServer>(logger, core, config->udp_address, config->udp_port);
+    core->server_register(udpServer);
   }
 
   // Servers: Create the Websocket instance with the logger and start it on the specified port
   if (config->websocket_enable) {
-    auto websocketServer = std::make_shared<servers::WebsocketServer>(logger, config->websocket_address, config->websocket_port);
-    registrar->server_register(websocketServer);
+    auto websocketServer = std::make_shared<servers::WebsocketServer>(logger, core, config->websocket_address, config->websocket_port);
+    core->server_register(websocketServer);
   }
 
-  // Core
-  auto core = std::make_shared<SIPCore>(logger, version, config, registrar);
-
   // Start all configured servers
-  registrar->server_start_all(core);
+  core->server_start_all();
 
   // Publish Start Event
-  events->publish(config->sip_event_prefix +"/nodes/"+config->sip_node_id+"/status","{\"started\":\""+Util::get_zulu_time()+"\"}");
+  core->events->publish("/nodes/"+config->sip_node_id+"/status","{\"started\":\""+Util::get_zulu_time()+"\"}");
 
   // Wait for Signals
   boost::asio::io_context signal_wait_context;
@@ -177,11 +172,11 @@ int main(int argc, char* argv[]) {
       case SIGINT:
         logger->debug("Received Signal SIGINT");
 
-        registrar->transaction_end_all();
-        registrar->channel_close_all();
-        registrar->server_stop_all();
-        registrar->rtprelay_stop();
-        registrar->admin_stop();
+        core->transaction_end_all();
+        core->channel_close_all();
+        core->server_stop_all();
+        core->rtprelay_stop();
+        core->admin_stop();
 
         events->publish(
             config->sip_event_prefix + "/nodes/" + config->sip_node_id + "/status",

@@ -15,11 +15,9 @@
 #include "../loggers/logger.h"
 #include "../loggers/logger_scoped.h"
 
-namespace athenasip {
+#include "../core.h"
 
-class SIPCore;
-
-namespace servers {
+namespace athenasip::servers {
 
 namespace http = boost::beast::http;
 namespace websocket = boost::beast::websocket;
@@ -30,7 +28,7 @@ using namespace athenasip::loggers;
 class WebsocketHTTPSession : public std::enable_shared_from_this<WebsocketHTTPSession> {
  public:
   // Construct with a shared pointer to the accepted TCP socket.
-  explicit WebsocketHTTPSession(std::shared_ptr<Logger> logger, std::shared_ptr<SIPCore> core, std::shared_ptr<tcp::socket> socket)
+  explicit WebsocketHTTPSession(std::shared_ptr<Logger> logger, std::shared_ptr<Core> core, std::shared_ptr<tcp::socket> socket)
       : _logger(std::make_shared<LoggerScoped>("websocket_http_channel", logger)), _core(core), _socket(socket) {}
 
   // Start reading the HTTP request.
@@ -50,8 +48,7 @@ class WebsocketHTTPSession : public std::enable_shared_from_this<WebsocketHTTPSe
   std::shared_ptr<tcp::socket> _socket;
   boost::beast::flat_buffer _buffer;
   http::request<http::string_body> _req;
-  std::shared_ptr<SIPCore> _core;
+  std::shared_ptr<Core> _core;
 };
 
-}  // namespace servers
-}  // namespace athenasip
+} 

@@ -34,7 +34,6 @@
 #include "headers/via_header.h"
 #include "sdp.h"
 #include "servers/connection.h"
-#include "sip_core.h"
 #include "sip_header.h"
 #include "sip_message.h"
 #include "types/authorization.h"
@@ -50,7 +49,10 @@ using namespace athenasip::servers;
 
 namespace athenasip {
 
-Channel::Channel(std::shared_ptr<Logger> logger, std::shared_ptr<SIPCore> core, std::shared_ptr<Connection> connection) : _connection(connection), _core(core) {
+Channel::Channel(std::shared_ptr<Logger> logger, std::shared_ptr<Core> core, std::shared_ptr<Connection> connection) : 
+  _connection(connection), 
+  _core(core) 
+{
   _logger = std::make_unique<LoggerScoped>("channel "+_connection->transport_name() + "://" + _connection->remote_endpoint_name(), logger);
 }
 
@@ -61,7 +63,7 @@ void Channel::start() {
   state = State::Normal;
 
   // Register callback
-  _core->registrar->channel_register(_connection->transport_name() + "://" + _connection->remote_endpoint_name(), shared_from_this());
+  _core->channel_register(_connection->transport_name() + "://" + _connection->remote_endpoint_name(), shared_from_this());
 
   // REGISTER timeout
   // TODO: Make rational
@@ -87,7 +89,7 @@ void Channel::close() {
     _logger->info("Closed");
 
     // Unregister Connection
-    _core->registrar->channel_unregister(_connection->transport_name() + "://" + _connection->remote_endpoint_name(), shared_from_this());
+    _core->channel_unregister(_connection->transport_name() + "://" + _connection->remote_endpoint_name(), shared_from_this());
 
     _connection.reset();
   }
