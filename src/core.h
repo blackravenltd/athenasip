@@ -16,22 +16,18 @@
 #include <sstream>
 #include <string>
 
+#include "api/admin_api.h"
+#include "call.h"
 #include "config.h"
-#include "servers/server.h"
 #include "datastores/datastore.h"
 #include "events/event_system.h"
-#include "rtp/rtp_relay_set.h"
-
-#include "servers/server.h"
-#include "api/admin_api.h"
-
 #include "expiry_set.h"
-#include "transaction.h"
-#include "sip_message.h"
-#include "call.h"
-
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
+#include "rtp/rtp_relay_set.h"
+#include "servers/server.h"
+#include "sip_message.h"
+#include "transaction.h"
 
 using namespace athenasip::types;
 using namespace athenasip::datastores;
@@ -44,8 +40,7 @@ namespace athenasip {
 
 class Core : public std::enable_shared_from_this<Core> {
  public:
-  Core(std::shared_ptr<Logger> logger, std::shared_ptr<Config> _config, std::shared_ptr<Datastore> datastore,
-                     std::shared_ptr<events::EventSystem> events);
+  Core(std::shared_ptr<Logger> logger, std::shared_ptr<Config> _config, std::shared_ptr<Datastore> datastore, std::shared_ptr<events::EventSystem> events);
 
   // Servers
   void server_register(std::shared_ptr<Server> server);

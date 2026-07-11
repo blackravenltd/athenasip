@@ -66,9 +66,7 @@ PostgreSQLDatastore::PostgreSQLDatastore(std::shared_ptr<loggers::Logger> logger
 
 PostgreSQLDatastore::~PostgreSQLDatastore() { close(); }
 
-std::string PostgreSQLDatastore::get_driver_name() const {
-  return "AthenaSIP PostgreSQL Driver v0.0.1";
-}
+std::string PostgreSQLDatastore::get_driver_name() const { return "AthenaSIP PostgreSQL Driver v0.0.1"; }
 
 bool PostgreSQLDatastore::connect() {
   if (_connection && _connection->is_open()) {
@@ -374,6 +372,14 @@ bool PostgreSQLDatastore::nonce_check(std::string nonce) {
   }
 }
 
+bool PostgreSQLDatastore::call_create(std::shared_ptr<Call>) {
+  return false;
+}
+
+std::shared_ptr<Call> PostgreSQLDatastore::call_get(const std::string& id) {
+  return nullptr;
+}
+
 std::string PostgreSQLDatastore::_to_utc_datetime_string(const std::time_t& value) const {
   std::tm tm = utc_tm_from_time_t(value);
   std::ostringstream oss;
@@ -388,7 +394,8 @@ std::string PostgreSQLDatastore::_duration_ms(std::chrono::high_resolution_clock
   return oss.str();
 }
 
-void PostgreSQLDatastore::_log_sql(const std::string& sql, const std::string& params, std::size_t rows, std::chrono::high_resolution_clock::time_point start) const {
+void PostgreSQLDatastore::_log_sql(const std::string& sql, const std::string& params, std::size_t rows,
+                                   std::chrono::high_resolution_clock::time_point start) const {
   _logger->debug("SQL: " + sql + " [" + Util::trim(params, ",") + "] (" + std::to_string(rows) + " rows, " + _duration_ms(start) + "ms)");
 }
 

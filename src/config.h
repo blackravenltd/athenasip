@@ -25,7 +25,6 @@ class Config {
 
   // SIP configuration
   std::string sip_node_id;
-  std::string sip_event_prefix = "athenasip";
   uint32_t sip_registration_timeout = 5000;
 
   // SIP Timers

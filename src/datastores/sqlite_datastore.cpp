@@ -153,9 +153,7 @@ SQLiteDatastore::SQLiteDatastore(std::shared_ptr<loggers::Logger> logger, std::s
 
 SQLiteDatastore::~SQLiteDatastore() { close(); }
 
-std::string SQLiteDatastore::get_driver_name() const {
-  return "AthenaSIP SQLite Driver v0.0.1";
-}
+std::string SQLiteDatastore::get_driver_name() const { return "AthenaSIP SQLite Driver v0.0.1"; }
 
 bool SQLiteDatastore::connect() {
   if (_db) {
@@ -301,8 +299,7 @@ std::shared_ptr<types::Subscriber> SQLiteDatastore::subscriber_get(std::shared_p
 
 bool SQLiteDatastore::subscriber_register(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact) {
   static const std::string count_sql = "SELECT COUNT(*) FROM location WHERE subscriber_id = ? AND \"user\" = ? AND host = ? AND port = ?";
-  static const std::string insert_sql =
-      "INSERT INTO location (subscriber_id, \"user\", host, port, registered_at, nat) VALUES (?,?,?,?,datetime('now'),?)";
+  static const std::string insert_sql = "INSERT INTO location (subscriber_id, \"user\", host, port, registered_at, nat) VALUES (?,?,?,?,datetime('now'),?)";
   static const std::string update_sql =
       "UPDATE location SET registered_at = datetime('now') WHERE subscriber_id = ? AND \"user\" = ? AND host = ? AND port = ?";
 
@@ -452,6 +449,14 @@ bool SQLiteDatastore::nonce_check(std::string nonce) {
   }
 }
 
+bool SQLiteDatastore::call_create(std::shared_ptr<Call>) {
+  return false;
+}
+
+std::shared_ptr<Call> SQLiteDatastore::call_get(const std::string& id) {
+  return nullptr;
+}
+
 std::string SQLiteDatastore::_db_path() const {
   std::string path = _url ? _url->path : std::string{};
   if (!path.empty() && path.front() == '/') {
@@ -475,7 +480,8 @@ std::string SQLiteDatastore::_duration_ms(std::chrono::high_resolution_clock::ti
   return oss.str();
 }
 
-void SQLiteDatastore::_log_sql(const std::string& sql, const std::string& params, std::size_t rows, std::chrono::high_resolution_clock::time_point start) const {
+void SQLiteDatastore::_log_sql(const std::string& sql, const std::string& params, std::size_t rows,
+                               std::chrono::high_resolution_clock::time_point start) const {
   _logger->debug("SQL: " + sql + " [" + Util::trim(params, ",") + "] (" + std::to_string(rows) + " rows, " + _duration_ms(start) + "ms)");
 }
 

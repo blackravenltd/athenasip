@@ -11,10 +11,9 @@
 #include <sstream>
 #include <string>
 
-#include "types/subscriber.h"
-#include "types/sip_uri.h"
-
 #include "sip_header.h"
+#include "types/sip_uri.h"
+#include "types/subscriber.h"
 #include "util.h"
 
 using namespace athenasip::types;

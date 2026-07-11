@@ -14,6 +14,8 @@
 #include <utility>
 #include <vector>
 
+#include "../call.h"
+
 namespace athenasip::datastores {
 
 namespace {
@@ -60,9 +62,7 @@ MySQLDatastore::MySQLDatastore(std::shared_ptr<loggers::Logger> logger, std::sha
 
 MySQLDatastore::~MySQLDatastore() { close(); }
 
-std::string MySQLDatastore::get_driver_name() const {
-  return "AthenaSIP MySQL Driver v0.0.1";
-}
+std::string MySQLDatastore::get_driver_name() const { return "AthenaSIP MySQL Driver v0.0.1"; }
 
 bool MySQLDatastore::connect() {
   if (_session) {
@@ -331,6 +331,34 @@ bool MySQLDatastore::nonce_check(std::string nonce) {
     _log_sql_error(sql, nonce, "Unknown exception");
     return false;
   }
+}
+
+bool MySQLDatastore::call_create(std::shared_ptr<Call>) {
+  static const std::string sql = "INSERT INTO `calls` (`id`, `started_at`, `ended_at`, `status`) VALUES (new_id(), UTC_TIMESTAMP(), NULL, 0)";
+  const auto start = std::chrono::high_resolution_clock::now();
+
+  try {
+    if (!_session) {
+      _logger->error("call_create: datastore is not connected");
+      return false;
+    }
+
+    auto stmt = _session->sql(sql);
+    auto result = stmt.execute();
+    // _log_sql(sql, nullptr, static_cast<std::size_t>(result.getAffectedItemsCount()), start);
+
+    return true;
+  } catch (const std::exception& ex) {
+    _log_sql_error(sql, nullptr, ex.what());
+    return false;
+  } catch (...) {
+    _log_sql_error(sql, nullptr, "Unknown exception");
+    return false;
+  }
+}
+
+std::shared_ptr<Call> MySQLDatastore::call_get(const std::string& id) {
+  return nullptr;
 }
 
 std::string MySQLDatastore::_to_utc_datetime_string(const std::time_t& value) const {

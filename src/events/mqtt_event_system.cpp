@@ -31,6 +31,23 @@ std::uint16_t parse_port(const std::string& value, std::uint16_t default_port) {
   return static_cast<std::uint16_t>(parsed);
 }
 
+std::string prefixed_topic(const std::string& prefix, const std::string& event_name) {
+  return prefix + event_name;
+}
+
+bool remove_prefix(const std::string& prefix, std::string& topic) {
+  if (prefix.empty()) {
+    return true;
+  }
+
+  if (!topic.starts_with(prefix)) {
+    return false;
+  }
+
+  topic.erase(0, prefix.size());
+  return true;
+}
+
 std::unordered_map<std::string, std::string> parse_query(std::string value) {
   std::unordered_map<std::string, std::string> result;
 
@@ -63,10 +80,11 @@ std::unordered_map<std::string, std::string> parse_query(std::string value) {
 
 }  // namespace
 
-MQTTEventSystem::MQTTEventSystem(std::shared_ptr<athenasip::loggers::Logger> logger, std::string broker_host, std::uint16_t broker_port, std::string client_id,
+MQTTEventSystem::MQTTEventSystem(std::shared_ptr<athenasip::loggers::Logger> logger, std::string prefix, std::string broker_host, std::uint16_t broker_port, std::string client_id,
                                  std::string username, std::string password, std::uint16_t keep_alive_seconds)
     : _logger(std::make_shared<loggers::LoggerScoped>("mqtt_event_system", std::move(logger))),
       _callback_io_context(detail::getGlobalIOContext()),
+      _prefix(std::move(prefix)),
       _broker_host(std::move(broker_host)),
       _broker_port(broker_port),
       _client_id(std::move(client_id)),
@@ -82,9 +100,7 @@ MQTTEventSystem::MQTTEventSystem(std::shared_ptr<athenasip::loggers::Logger> log
 
 MQTTEventSystem::~MQTTEventSystem() { close_without_callback(); }
 
-std::string MQTTEventSystem::get_driver_name() const {
-  return "AthenaSIP MQTT Driver v0.0.1";
-}
+std::string MQTTEventSystem::get_driver_name() const { return "AthenaSIP MQTT Driver v0.0.1"; }
 
 bool MQTTEventSystem::connect() {
   auto self = shared_from_this();
@@ -141,9 +157,7 @@ bool MQTTEventSystem::connect() {
   return true;
 }
 
-void MQTTEventSystem::connect(EventSystem::CallbackCompleteFn callback) {
-  post_complete(std::move(callback), connect());
-}
+void MQTTEventSystem::connect(EventSystem::CallbackCompleteFn callback) { post_complete(std::move(callback), connect()); }
 
 bool MQTTEventSystem::close() {
   auto self = shared_from_this();
@@ -175,28 +189,27 @@ bool MQTTEventSystem::close() {
   return true;
 }
 
-void MQTTEventSystem::close(EventSystem::CallbackCompleteFn callback) {
-  post_complete(std::move(callback), close());
-}
+void MQTTEventSystem::close(EventSystem::CallbackCompleteFn callback) { post_complete(std::move(callback), close()); }
 
 void MQTTEventSystem::publish(std::string event_name, std::string message, EventSystem::CallbackCompleteFn callback) {
   auto self = shared_from_this();
+  const auto topic = prefixed_topic(_prefix, event_name);
 
-  if (!TopicFilter::is_valid_topic(event_name)) {
-    _logger->error("Publish rejected for invalid event topic: " + event_name);
+  if (!TopicFilter::is_valid_topic(topic)) {
+    _logger->error("Publish rejected for invalid event topic: " + topic);
     post_complete(std::move(callback), false);
     return;
   }
 
   if (!_connected.load()) {
-    _logger->error("Publish rejected while closed: " + event_name);
+    _logger->error("Publish rejected while closed: " + topic);
     post_complete(std::move(callback), false);
     return;
   }
 
-  _logger->debug("Publishing event: " + event_name + " with message: " + message);
+  _logger->debug("Publishing event: " + topic + " with message: " + message);
 
-  boost::asio::dispatch(_mqtt_strand, [this, self, event_name = std::move(event_name), message = std::move(message), callback = std::move(callback)]() mutable {
+  boost::asio::dispatch(_mqtt_strand, [this, self, topic, message = std::move(message), callback = std::move(callback)]() mutable {
     if (!_connected.load()) {
       post_complete(std::move(callback), false);
       return;
@@ -212,7 +225,7 @@ void MQTTEventSystem::publish(std::string event_name, std::string message, Event
       post_complete(std::move(callback), true);
     });
 
-    _client.async_publish<mqtt::qos_e::at_most_once>(std::move(event_name), std::move(message), mqtt::retain_e::no, mqtt::publish_props{},
+    _client.async_publish<mqtt::qos_e::at_most_once>(topic, std::move(message), mqtt::retain_e::no, mqtt::publish_props{},
                                                      std::move(pub_callback));
   });
 }
@@ -220,14 +233,15 @@ void MQTTEventSystem::publish(std::string event_name, std::string message, Event
 std::shared_ptr<Subscription> MQTTEventSystem::subscribe(std::string event_name, Subscription::EventCallbackFn event_callback,
                                                          EventSystem::CallbackCompleteFn callback) {
   auto self = shared_from_this();
+  const auto topic_filter = prefixed_topic(_prefix, event_name);
 
-  if (!TopicFilter::is_valid_filter(event_name)) {
-    _logger->error("Subscribe rejected for invalid event filter: " + event_name);
+  if (!TopicFilter::is_valid_filter(topic_filter)) {
+    _logger->error("Subscribe rejected for invalid event filter: " + topic_filter);
     post_complete(std::move(callback), false);
     return nullptr;
   }
 
-  _logger->debug("Subscribing to event: " + event_name);
+  _logger->debug("Subscribing to event: " + topic_filter);
   auto sub = std::make_shared<Subscription>(std::move(event_name), std::move(event_callback));
 
   bool first_local_subscription = false;
@@ -388,6 +402,11 @@ void MQTTEventSystem::apply_url(std::shared_ptr<types::URL> url) {
     _password = it->second;
   }
 
+  it = params.find("prefix");
+  if (it != params.end()) {
+    _prefix = it->second;
+  }
+
   (void)path;
 }
 
@@ -416,9 +435,7 @@ void MQTTEventSystem::close_without_callback() noexcept {
   }
 
   try {
-    boost::asio::post(_mqtt_strand, [this]() {
-      _client.async_disconnect([](mqtt::error_code) {});
-    });
+    boost::asio::post(_mqtt_strand, [this]() { _client.async_disconnect([](mqtt::error_code) {}); });
     _mqtt_work_guard.reset();
 
     if (_mqtt_thread.joinable() && _mqtt_thread.get_id() != std::this_thread::get_id()) {
@@ -461,7 +478,7 @@ std::vector<std::string> MQTTEventSystem::current_subscription_events() const {
   return events;
 }
 
-std::unordered_set<std::shared_ptr<Subscription>> MQTTEventSystem::collect_matching_subscriptions(const std::string& event_name) const {
+std::unordered_set<std::shared_ptr<Subscription>> MQTTEventSystem::collect_matching_subscriptions(std::string event_name) const {
   std::unordered_set<std::shared_ptr<Subscription>> to_publish;
 
   std::scoped_lock lock(_subscriptions_mutex);
@@ -495,9 +512,10 @@ void MQTTEventSystem::subscribe_events_on_mqtt(std::vector<std::string> event_na
   std::vector<std::string> to_subscribe;
   to_subscribe.reserve(event_names.size());
 
-  for (auto& event_name : event_names) {
-    if (_broker_subscribed_events.insert(event_name).second) {
-      to_subscribe.push_back(std::move(event_name));
+  for (const auto& event_name : event_names) {
+    auto topic_filter = prefixed_topic(_prefix, event_name);
+    if (_broker_subscribed_events.insert(topic_filter).second) {
+      to_subscribe.push_back(std::move(topic_filter));
     }
   }
 
@@ -627,6 +645,17 @@ void MQTTEventSystem::receive_next() {
 void MQTTEventSystem::dispatch_event(std::string event_name, std::string message) {
   if (!TopicFilter::is_valid_topic(event_name)) {
     _logger->error("Dropping invalid received event topic: " + event_name);
+    return;
+  }
+
+  const auto mqtt_topic = event_name;
+  if (!remove_prefix(_prefix, event_name)) {
+    _logger->error("Dropping received event outside configured prefix: " + mqtt_topic);
+    return;
+  }
+
+  if (!TopicFilter::is_valid_topic(event_name)) {
+    _logger->error("Dropping received event with invalid logical topic: " + event_name);
     return;
   }
 

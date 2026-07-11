@@ -6,14 +6,13 @@
 //
 #pragma once
 
+#include <atomic>
 #include <boost/asio/executor_work_guard.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/redis/connection.hpp>
 #include <boost/redis/request.hpp>
 #include <boost/redis/response.hpp>
 #include <boost/system/error_code.hpp>
-
-#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <ctime>
@@ -28,6 +27,7 @@
 #include "../loggers/logger_scoped.h"
 #include "../types/url.h"
 #include "../util.h"
+#include "../call.h"
 #include "datastore.h"
 
 namespace athenasip::datastores {
@@ -70,6 +70,9 @@ class RedisDatastore : public Datastore {
   bool subscriber_unregister(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact) override;
   bool nonce_create(const std::string& nonce, const std::time_t& expires_at) override;
   bool nonce_check(std::string nonce) override;
+
+  bool call_create(std::shared_ptr<Call>) override;
+  std::shared_ptr<Call> call_get(const std::string& id) override;
 
  private:
   using BoolCallback = std::function<void(RedisError error, bool value)>;

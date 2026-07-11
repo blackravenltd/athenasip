@@ -11,7 +11,6 @@
 #include <boost/json.hpp>
 #include <boost/redis/src.hpp>
 #include <boost/system/system_error.hpp>
-
 #include <cstdlib>
 #include <future>
 #include <iomanip>
@@ -92,9 +91,7 @@ RedisDatastore::RedisDatastore(std::shared_ptr<loggers::Logger> logger, std::sha
 
 RedisDatastore::~RedisDatastore() { close(); }
 
-std::string RedisDatastore::get_driver_name() const {
-  return "AthenaSIP Redis Driver v0.0.1";
-}
+std::string RedisDatastore::get_driver_name() const { return "AthenaSIP Redis Driver v0.0.1"; }
 
 bool RedisDatastore::connect() {
   if (_started.load()) {
@@ -248,6 +245,14 @@ bool RedisDatastore::nonce_create(const std::string& nonce, const std::time_t& e
 
 bool RedisDatastore::nonce_check(std::string nonce) { return _exists(_nonce_key(nonce)); }
 
+bool RedisDatastore::call_create(std::shared_ptr<Call>) {
+  return false;
+}
+
+std::shared_ptr<Call> RedisDatastore::call_get(const std::string& id) {
+  return nullptr;
+}
+
 void RedisDatastore::_apply_url(std::shared_ptr<types::URL> url) {
   _host = "127.0.0.1";
   _port = 6379;
@@ -330,7 +335,9 @@ boost::redis::config RedisDatastore::_make_config() const {
   return cfg;
 }
 
-bool RedisDatastore::_ping() { return _wait_bool([this](BoolCallback callback) { _async_ping(std::move(callback)); }); }
+bool RedisDatastore::_ping() {
+  return _wait_bool([this](BoolCallback callback) { _async_ping(std::move(callback)); });
+}
 
 bool RedisDatastore::_set(std::string key, std::string value) {
   return _wait_bool([this, key = std::move(key), value = std::move(value)](BoolCallback callback) mutable {
@@ -390,9 +397,8 @@ void RedisDatastore::_async_exists(std::string key, BoolCallback callback) {
   boost::redis::request req;
   req.push("EXISTS", key);
 
-  _async_integer("EXISTS", std::move(req), [callback = std::move(callback)](RedisError error, std::int64_t value) mutable {
-    callback(std::move(error), value > 0);
-  });
+  _async_integer("EXISTS", std::move(req),
+                 [callback = std::move(callback)](RedisError error, std::int64_t value) mutable { callback(std::move(error), value > 0); });
 }
 
 void RedisDatastore::_async_ok(std::string operation, boost::redis::request request, BoolCallback callback) {
@@ -407,32 +413,33 @@ void RedisDatastore::_async_ok(std::string operation, boost::redis::request requ
   auto req = std::make_shared<boost::redis::request>(std::move(request));
   auto resp = std::make_shared<boost::redis::response<std::string>>();
 
-  conn->async_exec(*req, *resp, [logger, operation = std::move(operation), req, resp, callback = std::move(callback), start](boost::system::error_code ec,
-                                                                                                                          std::size_t) mutable {
-    if (ec) {
-      logger->error("Error during: " + operation + ": " + ec.message());
-      callback(RedisError(ec), false);
-      return;
-    }
+  conn->async_exec(
+      *req, *resp,
+      [logger, operation = std::move(operation), req, resp, callback = std::move(callback), start](boost::system::error_code ec, std::size_t) mutable {
+        if (ec) {
+          logger->error("Error during: " + operation + ": " + ec.message());
+          callback(RedisError(ec), false);
+          return;
+        }
 
-    auto& result = std::get<0>(*resp);
-    if (!result.has_value()) {
-      auto error = make_redis_response_error(result.error().diagnostic);
-      logger->error("Error during: " + operation + ": " + error.message());
-      callback(std::move(error), false);
-      return;
-    }
+        auto& result = std::get<0>(*resp);
+        if (!result.has_value()) {
+          auto error = make_redis_response_error(result.error().diagnostic);
+          logger->error("Error during: " + operation + ": " + error.message());
+          callback(std::move(error), false);
+          return;
+        }
 
-    const auto& value = result.value();
-    const bool ok = value == "OK" || value == "PONG";
+        const auto& value = result.value();
+        const bool ok = value == "OK" || value == "PONG";
 
-    std::ostringstream oss;
-    oss << std::fixed << std::setprecision(3)
-        << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
-    logger->debug(operation + " (" + oss.str() + "ms)");
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(3)
+            << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
+        logger->debug(operation + " (" + oss.str() + "ms)");
 
-    callback(RedisError{}, ok);
-  });
+        callback(RedisError{}, ok);
+      });
 }
 
 void RedisDatastore::_async_string(std::string operation, boost::redis::request request, StringCallback callback) {
@@ -447,29 +454,30 @@ void RedisDatastore::_async_string(std::string operation, boost::redis::request 
   auto req = std::make_shared<boost::redis::request>(std::move(request));
   auto resp = std::make_shared<boost::redis::response<std::optional<std::string>>>();
 
-  conn->async_exec(*req, *resp, [logger, operation = std::move(operation), req, resp, callback = std::move(callback), start](boost::system::error_code ec,
-                                                                                                                          std::size_t) mutable {
-    if (ec) {
-      logger->error("Error during: " + operation + ": " + ec.message());
-      callback(RedisError(ec), std::nullopt);
-      return;
-    }
+  conn->async_exec(
+      *req, *resp,
+      [logger, operation = std::move(operation), req, resp, callback = std::move(callback), start](boost::system::error_code ec, std::size_t) mutable {
+        if (ec) {
+          logger->error("Error during: " + operation + ": " + ec.message());
+          callback(RedisError(ec), std::nullopt);
+          return;
+        }
 
-    auto& result = std::get<0>(*resp);
-    if (!result.has_value()) {
-      auto error = make_redis_response_error(result.error().diagnostic);
-      logger->error("Error during: " + operation + ": " + error.message());
-      callback(std::move(error), std::nullopt);
-      return;
-    }
+        auto& result = std::get<0>(*resp);
+        if (!result.has_value()) {
+          auto error = make_redis_response_error(result.error().diagnostic);
+          logger->error("Error during: " + operation + ": " + error.message());
+          callback(std::move(error), std::nullopt);
+          return;
+        }
 
-    std::ostringstream oss;
-    oss << std::fixed << std::setprecision(3)
-        << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
-    logger->debug(operation + " (" + oss.str() + "ms)");
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(3)
+            << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
+        logger->debug(operation + " (" + oss.str() + "ms)");
 
-    callback(RedisError{}, result.value());
-  });
+        callback(RedisError{}, result.value());
+      });
 }
 
 void RedisDatastore::_async_integer(std::string operation, boost::redis::request request, IntegerCallback callback) {
@@ -484,29 +492,30 @@ void RedisDatastore::_async_integer(std::string operation, boost::redis::request
   auto req = std::make_shared<boost::redis::request>(std::move(request));
   auto resp = std::make_shared<boost::redis::response<long long>>();
 
-  conn->async_exec(*req, *resp, [logger, operation = std::move(operation), req, resp, callback = std::move(callback), start](boost::system::error_code ec,
-                                                                                                                          std::size_t) mutable {
-    if (ec) {
-      logger->error("Error during: " + operation + ": " + ec.message());
-      callback(RedisError(ec), 0);
-      return;
-    }
+  conn->async_exec(
+      *req, *resp,
+      [logger, operation = std::move(operation), req, resp, callback = std::move(callback), start](boost::system::error_code ec, std::size_t) mutable {
+        if (ec) {
+          logger->error("Error during: " + operation + ": " + ec.message());
+          callback(RedisError(ec), 0);
+          return;
+        }
 
-    auto& result = std::get<0>(*resp);
-    if (!result.has_value()) {
-      auto error = make_redis_response_error(result.error().diagnostic);
-      logger->error("Error during: " + operation + ": " + error.message());
-      callback(std::move(error), 0);
-      return;
-    }
+        auto& result = std::get<0>(*resp);
+        if (!result.has_value()) {
+          auto error = make_redis_response_error(result.error().diagnostic);
+          logger->error("Error during: " + operation + ": " + error.message());
+          callback(std::move(error), 0);
+          return;
+        }
 
-    std::ostringstream oss;
-    oss << std::fixed << std::setprecision(3)
-        << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
-    logger->debug(operation + " (" + oss.str() + "ms)");
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(3)
+            << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
+        logger->debug(operation + " (" + oss.str() + "ms)");
 
-    callback(RedisError{}, static_cast<std::int64_t>(result.value()));
-  });
+        callback(RedisError{}, static_cast<std::int64_t>(result.value()));
+      });
 }
 
 bool RedisDatastore::_wait_bool(std::function<void(BoolCallback)> starter) {
@@ -559,9 +568,7 @@ std::int64_t RedisDatastore::_wait_integer(std::function<void(IntegerCallback)> 
 
 std::string RedisDatastore::_realm_key(const std::string& realm_name) { return "athena:realm:" + realm_name; }
 
-std::string RedisDatastore::_subscriber_key(const std::string& realm_name, const std::string& user) {
-  return "athena:subscriber:" + realm_name + ":" + user;
-}
+std::string RedisDatastore::_subscriber_key(const std::string& realm_name, const std::string& user) { return "athena:subscriber:" + realm_name + ":" + user; }
 
 std::string RedisDatastore::_location_key(std::uint64_t subscriber_id, const std::string& user, const std::string& host, std::uint16_t port) {
   return "athena:location:" + std::to_string(subscriber_id) + ":" + user + ":" + host + ":" + std::to_string(port);

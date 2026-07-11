@@ -12,10 +12,9 @@
 #include <boost/beast/websocket.hpp>
 #include <memory>
 
+#include "../core.h"
 #include "../loggers/logger.h"
 #include "../loggers/logger_scoped.h"
-
-#include "../core.h"
 
 namespace athenasip::servers {
 
@@ -51,4 +50,4 @@ class WebsocketHTTPSession : public std::enable_shared_from_this<WebsocketHTTPSe
   std::shared_ptr<Core> _core;
 };
 
-} 
+}  // namespace athenasip::servers

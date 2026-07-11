@@ -18,6 +18,7 @@
 #include "../loggers/logger_scoped.h"
 #include "../types/url.h"
 #include "../util.h"
+#include "../call.h"
 #include "datastore.h"
 
 namespace athenasip::datastores {
@@ -39,6 +40,9 @@ class SQLiteDatastore : public Datastore {
   bool subscriber_unregister(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact) override;
   bool nonce_create(const std::string& nonce, const std::time_t& expires_at) override;
   bool nonce_check(std::string nonce) override;
+
+  bool call_create(std::shared_ptr<Call>) override;
+  std::shared_ptr<Call> call_get(const std::string& id) override;
 
  private:
   std::string _db_path() const;

@@ -24,6 +24,7 @@ class StringHeader : public Header {
   std::string to_string() const override { return value; }
 
   std::string value;
+
  private:
 };
 
