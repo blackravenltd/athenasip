@@ -22,9 +22,9 @@ using namespace athenasip;
 using namespace athenasip::loggers;
 
 namespace athenasip {
-  // Forward declaration
-  class Core;
-}
+// Forward declaration
+class Core;
+}  // namespace athenasip
 
 namespace athenasip::servers {
 

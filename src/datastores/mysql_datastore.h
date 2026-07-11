@@ -18,6 +18,7 @@
 #include "../loggers/logger_scoped.h"
 #include "../types/url.h"
 #include "../util.h"
+#include "../call.h"
 #include "datastore.h"
 
 namespace athenasip::datastores {
@@ -34,11 +35,16 @@ class MySQLDatastore : public Datastore {
   bool is_connected() const override;
 
   std::shared_ptr<types::Realm> realm_get_by_name(const std::string& realm_name) override;
+
   std::shared_ptr<types::Subscriber> subscriber_get(std::shared_ptr<types::SIPIdentity> identity) override;
   bool subscriber_register(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact) override;
   bool subscriber_unregister(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact) override;
+
   bool nonce_create(const std::string& nonce, const std::time_t& expires_at) override;
   bool nonce_check(std::string nonce) override;
+
+  bool call_create(std::shared_ptr<Call>) override;
+  std::shared_ptr<Call> call_get(const std::string& id) override;
 
  private:
   std::string _to_utc_datetime_string(const std::time_t& value) const;

@@ -14,9 +14,7 @@
 
 namespace athenasip {
 
-Config::Config(std::shared_ptr<Logger> logger) {
-  _logger = std::make_unique<LoggerScoped>("config", logger);
-}
+Config::Config(std::shared_ptr<Logger> logger) { _logger = std::make_unique<LoggerScoped>("config", logger); }
 
 bool Config::load_from_yaml(const std::string& filename) {
   YAML::Node config;
@@ -40,8 +38,6 @@ bool Config::load_from_yaml(const std::string& filename) {
     _logger->error("Missing 'sip.node_id'");
     return false;
   }
-
-   if (sip["event_prefix"]) sip_event_prefix = sip["event_prefix"].as<std::string>();
 
   // SIP Timers
   YAML::Node sip_timers = sip["timers"];

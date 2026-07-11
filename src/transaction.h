@@ -6,14 +6,13 @@
 //
 #pragma once
 
+#include "core.h"
 #include "delayed_task.h"
 #include "headers/authorization_header.h"
 #include "headers/sip_identity_header.h"
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
-
 #include "sip_message.h"
-#include "core.h"
 
 using namespace athenasip::loggers;
 using namespace athenasip::headers;

@@ -20,6 +20,7 @@
 #include "../types/sip_uri.h"
 #include "../types/subscriber.h"
 #include "../types/url.h"
+#include "../call.h"
 
 namespace athenasip::datastores {
 
@@ -28,7 +29,7 @@ class Datastore {
   virtual ~Datastore() = default;
 
   virtual std::string get_driver_name() const = 0;
-  
+
   virtual bool connect() = 0;
   virtual void close() = 0;
   virtual bool is_connected() const = 0;
@@ -39,6 +40,9 @@ class Datastore {
   virtual bool subscriber_unregister(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact) = 0;
   virtual bool nonce_create(const std::string& nonce, const std::time_t& expires_at) = 0;
   virtual bool nonce_check(std::string nonce) = 0;
+
+  virtual bool call_create(std::shared_ptr<Call>) = 0;
+  virtual std::shared_ptr<Call> call_get(const std::string& id) = 0;
 
   template <typename T, typename = std::enable_if_t<std::is_base_of_v<Datastore, T>>>
   static void register_driver(std::shared_ptr<loggers::Logger> logger, std::string scheme) {

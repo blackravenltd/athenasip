@@ -6,14 +6,12 @@
 //
 #include "transaction.h"
 
-#include "core.h"
-#include "sip_message.h"
-#include "types/subscriber.h"
-
-#include "headers/sip_identity_header.h"
-
 #include "call.h"
 #include "channel.h"
+#include "core.h"
+#include "headers/sip_identity_header.h"
+#include "sip_message.h"
+#include "types/subscriber.h"
 
 using namespace athenasip::types;
 using namespace athenasip::loggers;
@@ -21,8 +19,7 @@ using namespace athenasip::headers;
 
 namespace athenasip {
 
-Transaction::Transaction(std::shared_ptr<Logger> logger, std::shared_ptr<Channel> channel, std::shared_ptr<Core> core, Direction direction,
-                         std::string _id)
+Transaction::Transaction(std::shared_ptr<Logger> logger, std::shared_ptr<Channel> channel, std::shared_ptr<Core> core, Direction direction, std::string _id)
     : _logger(std::make_unique<LoggerScoped>("transaction " + _id, logger)), _channel(channel), _core(core), _direction(direction), id(_id) {}
 
 Transaction::~Transaction() {}
@@ -135,7 +132,8 @@ void Transaction::process_invite(std::shared_ptr<SIPMessage> message) {
   // Send the event into the backend
   if (message->header->contains("To")) {
     auto to_header = message->header->headers_map["To"][0]->as<SIPIdentityHeader>();
-    _core->events->publish(_core->config->sip_event_prefix+"/subscriber/"+to_header->value->uri->to_string()+"/invite",_channel->_connection->remote_endpoint_name());
+    _core->events->publish("subscriber/" + to_header->value->uri->to_string() + "/invite",
+                           _channel->_connection->remote_endpoint_name());
 
     auto call = std::make_shared<Call>();
     call->id = message->header->headers_map["Call-ID"][0]->as<StringHeader>()->value;

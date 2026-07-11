@@ -13,8 +13,8 @@
 #include <string>
 #include <unordered_set>
 
-#include "header.h"
 #include "../util.h"
+#include "header.h"
 
 namespace athenasip::headers {
 

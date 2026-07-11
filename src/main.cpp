@@ -11,21 +11,21 @@
 #include <optional>
 #include <string>
 
-#include "loggers/logger_scoped.h"
-#include "loggers/logger_stdio.h"
+#include "api/admin_api.h"
+#include "api/static_middleware.h"
 #include "config.h"
+#include "core.h"
 #include "datastores/datastore.h"
 #include "datastores/datastore_drivers.h"
 #include "events/event_system.h"
 #include "events/event_system_drivers.h"
-#include "core.h"
+#include "loggers/logger_scoped.h"
+#include "loggers/logger_stdio.h"
 #include "rtp/rtp_relay.h"
 #include "servers/tcp_server.h"
 #include "servers/tls_server.h"
 #include "servers/udp_server.h"
 #include "servers/websocket_server.h"
-#include "api/admin_api.h"
-#include "api/static_middleware.h"
 #include "util.h"
 #include "version.h"
 
@@ -66,33 +66,33 @@ int main(int argc, char* argv[]) {
   // Create Datastore
   auto datastore = Datastore::create_driver(logger, config->db_url);
   if (!datastore) {
-    logger->error("Unknown datastore scheme: "+config->db_url);
+    logger->error("Unknown datastore scheme: " + config->db_url);
   }
 
   // Create Event System
   auto events = EventSystem::create_driver(logger, config->events_url);
   if (!events) {
-    logger->error("Unknown event scheme: "+config->events_url);
+    logger->error("Unknown event scheme: " + config->events_url);
   }
 
-  if(!events || !datastore) {
-    if(datastore) datastore->close();
-    if(events) events->close();
+  if (!events || !datastore) {
+    if (datastore) datastore->close();
+    if (events) events->close();
     return -2;
   }
 
-  logger->info("Datastore Driver: "+datastore->get_driver_name());
-  logger->info("Events Driver: "+events->get_driver_name());
+  logger->info("Datastore Driver: " + datastore->get_driver_name());
+  logger->info("Events Driver: " + events->get_driver_name());
 
   // Attempt Datastore connection
   if (!datastore->connect()) {
-    logger->error("Datastore Connection Failed: "+config->db_url);
+    logger->error("Datastore Connection Failed: " + config->db_url);
     return -3;
   }
   // Attempt Events connection
   if (!events->connect()) {
     datastore->close();
-    logger->error("Event System Connection Failed: "+config->events_url);
+    logger->error("Event System Connection Failed: " + config->events_url);
     return -3;
   }
 
@@ -158,7 +158,7 @@ int main(int argc, char* argv[]) {
   core->server_start_all();
 
   // Publish Start Event
-  core->events->publish("/nodes/"+config->sip_node_id+"/status","{\"started\":\""+Util::get_zulu_time()+"\"}");
+  core->events->publish("nodes/" + config->sip_node_id + "/status", "{\"started\":\"" + Util::get_zulu_time() + "\"}");
 
   // Wait for Signals
   boost::asio::io_context signal_wait_context;
@@ -178,10 +178,7 @@ int main(int argc, char* argv[]) {
         core->rtprelay_stop();
         core->admin_stop();
 
-        events->publish(
-            config->sip_event_prefix + "/nodes/" + config->sip_node_id + "/status",
-            "{\"stopped\":\"" + Util::get_zulu_time() + "\"}"
-        );
+        events->publish("nodes/" + config->sip_node_id + "/status", "{\"stopped\":\"" + Util::get_zulu_time() + "\"}");
 
         datastore->close();
         events->close();

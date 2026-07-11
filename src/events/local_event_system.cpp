@@ -21,9 +21,7 @@ LocalEventSystem::LocalEventSystem(std::shared_ptr<athenasip::loggers::Logger> l
 
 LocalEventSystem::~LocalEventSystem() {}
 
-std::string LocalEventSystem::get_driver_name() const {
-  return "AthenaSIP In Memory Events Driver v0.0.1";
-}
+std::string LocalEventSystem::get_driver_name() const { return "AthenaSIP In Memory Events Driver v0.0.1"; }
 
 bool LocalEventSystem::connect() {
   bool expected = false;
@@ -35,9 +33,7 @@ bool LocalEventSystem::connect() {
   return true;
 }
 
-void LocalEventSystem::connect(std::function<void(bool)> callback) {
-  post_complete(std::move(callback), connect());
-}
+void LocalEventSystem::connect(std::function<void(bool)> callback) { post_complete(std::move(callback), connect()); }
 
 bool LocalEventSystem::close() {
   bool expected = true;
@@ -49,9 +45,7 @@ bool LocalEventSystem::close() {
   return true;
 }
 
-void LocalEventSystem::close(std::function<void(bool)> callback) {
-  post_complete(std::move(callback), close());
-}
+void LocalEventSystem::close(std::function<void(bool)> callback) { post_complete(std::move(callback), close()); }
 
 void LocalEventSystem::publish(std::string event_name, std::string message, std::function<void(bool)> callback) {
   auto self = shared_from_this();

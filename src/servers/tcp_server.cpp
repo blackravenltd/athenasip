@@ -6,9 +6,9 @@
 //
 #include "tcp_server.h"
 
-#include "../channel.h"
-
 #include <boost/asio/ip/address.hpp>  // For ip::make_address
+
+#include "../channel.h"
 
 using namespace boost::asio;
 using namespace boost::asio::ssl;

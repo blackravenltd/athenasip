@@ -6,11 +6,11 @@
 //
 
 #include "core.h"
-#include "channel.h"
-#include "transaction.h"
-#include "rtp/rtp_relay.h"
-#include "expiry_set.h"
 
+#include "channel.h"
+#include "expiry_set.h"
+#include "rtp/rtp_relay.h"
+#include "transaction.h"
 #include "types/sip_uri.h"
 
 using namespace athenasip::servers;
@@ -22,7 +22,7 @@ using namespace athenasip::types;
 namespace athenasip {
 
 Core::Core(std::shared_ptr<Logger> logger, std::shared_ptr<Config> _config, std::shared_ptr<athenasip::datastores::Datastore> _datastore,
-                     std::shared_ptr<events::EventSystem> _events)
+           std::shared_ptr<events::EventSystem> _events)
     : _logger(std::make_unique<LoggerScoped>("core", logger)),
       config(_config),
       datastore(_datastore),
@@ -40,49 +40,44 @@ void Core::server_stop_all() {
 }
 
 // Realms
-std::shared_ptr<Realm> Core::realm_get_by_name(const std::string& realm_name) {
-  return datastore->realm_get_by_name(realm_name);
-};
+std::shared_ptr<Realm> Core::realm_get_by_name(const std::string& realm_name) { return datastore->realm_get_by_name(realm_name); };
 
 // Subscribers
-std::shared_ptr<Subscriber> Core::subscriber_get(std::shared_ptr<SIPIdentity> identity) {
-  return datastore->subscriber_get(identity);
-}
+std::shared_ptr<Subscriber> Core::subscriber_get(std::shared_ptr<SIPIdentity> identity) { return datastore->subscriber_get(identity); }
 
 bool Core::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel) {
-
   auto registration = subscriber_get(subscriber->identity);
 
-  if(!registration && !datastore->subscriber_register(subscriber, contact)) {
-    _logger->error("Cannot register subscriber identity "+ subscriber->identity->to_string()+" - datastore failure");
+  if (!registration && !datastore->subscriber_register(subscriber, contact)) {
+    _logger->error("Cannot register subscriber identity " + subscriber->identity->to_string() + " - datastore failure");
     return false;
-  } 
+  }
 
-  if(!channel->_event_subscription) {
-    channel->_event_subscription = events->subscribe(config->sip_event_prefix+"/subscriber/"+subscriber->identity->uri->to_string()+"/#", 
-      [this, subscriber](std::string event, std::string payload) {
-        _logger->info("------------------------------- SUBSCRIBER "+subscriber->identity->to_string()+" Event: "+event+" Payload: "+payload);
-      }
-    );
+  if (!channel->_event_subscription) {
+    channel->_event_subscription = events->subscribe(
+        "subscriber/" + subscriber->identity->uri->to_string() + "/#", [this, subscriber](std::string event, std::string payload) {
+          _logger->info("------------------------------- SUBSCRIBER " + subscriber->identity->to_string() + " Event: " + event + " Payload: " + payload);
+        });
   }
 
   _channels_by_subscriber[subscriber->id] = channel;
-  events->publish(config->sip_event_prefix+"/subscriber/"+subscriber->identity->uri->to_string()+"/status","{\"contact\":\""+contact->to_string()+"\",\"node\":\""+config->sip_node_id+"\",\"registered\":\""+Util::get_zulu_time()+"\"}");
+  events->publish("subscriber/" + subscriber->identity->uri->to_string() + "/status",
+                  "{\"contact\":\"" + contact->to_string() + "\",\"node\":\"" + config->sip_node_id + "\",\"registered\":\"" + Util::get_zulu_time() + "\"}");
   return true;
 }
 
 bool Core::subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel) {
-  if(datastore->subscriber_unregister(subscriber, contact)) {
+  if (datastore->subscriber_unregister(subscriber, contact)) {
     _channels_by_subscriber.erase(subscriber->id);
     return true;
   }
 
-  if(channel->_event_subscription) {
+  if (channel->_event_subscription) {
     events->unsubscribe(channel->_event_subscription);
     channel->_event_subscription = nullptr;
   }
 
-    _logger->error("Cannot unregister subscriber identity "+ subscriber->identity->to_string()+" - datastore failure");
+  _logger->error("Cannot unregister subscriber identity " + subscriber->identity->to_string() + " - datastore failure");
   return false;
 }
 
@@ -94,7 +89,9 @@ bool Core::channel_register(std::string endpoint, std::shared_ptr<Channel> chann
   std::lock_guard<std::shared_mutex> lock(_channels_mutex);
   _channels[endpoint] = channel;
 
-  events->publish(config->sip_event_prefix+"/nodes/"+config->sip_node_id+"/channels/"+channel->_connection->remote_endpoint_name()+";transport="+channel->_connection->transport_name(),"{\"status\":\"registered\",\"at\":\""+Util::get_zulu_time()+"\"}");
+  events->publish("nodes/" + config->sip_node_id + "/channels/" + channel->_connection->remote_endpoint_name() +
+                      ";transport=" + channel->_connection->transport_name(),
+                  "{\"status\":\"registered\",\"at\":\"" + Util::get_zulu_time() + "\"}");
 
   _logger->debug("Registered Channel " + endpoint);
   return true;
@@ -102,9 +99,11 @@ bool Core::channel_register(std::string endpoint, std::shared_ptr<Channel> chann
 
 bool Core::channel_unregister(std::string endpoint, std::shared_ptr<Channel> channel) {
   std::lock_guard<std::shared_mutex> lock(_channels_mutex);
-  events->publish(config->sip_event_prefix+"/nodes/"+config->sip_node_id+"/channels/"+channel->_connection->remote_endpoint_name()+";transport="+channel->_connection->transport_name(),"{\"status\":\"closed\",\"at\":\""+Util::get_zulu_time()+"\"}");
+  events->publish("nodes/" + config->sip_node_id + "/channels/" + channel->_connection->remote_endpoint_name() +
+                      ";transport=" + channel->_connection->transport_name(),
+                  "{\"status\":\"closed\",\"at\":\"" + Util::get_zulu_time() + "\"}");
 
-  _channels.erase(endpoint);  
+  _channels.erase(endpoint);
   _logger->debug("Unregistered Channel " + endpoint);
   return true;
 }
@@ -121,7 +120,6 @@ void Core::channel_close_all() {
 // Nonce
 
 std::string Core::nonce_create(std::shared_ptr<Realm> realm) {
-
   std::array<unsigned char, 16> random_bytes;
 
   if (RAND_bytes(random_bytes.data(), random_bytes.size()) != 1) {
@@ -147,7 +145,7 @@ std::string Core::nonce_create(std::shared_ptr<Realm> realm) {
 
   const auto expires_at = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now() + std::chrono::seconds(realm->nonce_expiry));
 
-  if(datastore->nonce_create(nonce, expires_at)) {
+  if (datastore->nonce_create(nonce, expires_at)) {
     // Cache the actual nonce for this node
     _nonce_cache->add(nonce, realm->nonce_expiry * 1000);
     return nonce;
@@ -156,9 +154,7 @@ std::string Core::nonce_create(std::shared_ptr<Realm> realm) {
   throw std::runtime_error("Failed to generate nonce - datastore error");
 }
 
-bool Core::nonce_check(std::string nonce) {
-  return datastore->nonce_check(nonce);
-}
+bool Core::nonce_check(std::string nonce) { return datastore->nonce_check(nonce); }
 
 // Messages
 
@@ -236,7 +232,11 @@ void Core::transaction_end_all() {
 // Calls
 bool Core::call_register(std::shared_ptr<Call> call) {
   _calls[call->id] = call;
-  events->publish("call.register", call->id);
+  
+  datastore->call_create(call);
+
+  events->publish("calls/"+call->id+"/register", call->id);
+
   return true;
 }
 
