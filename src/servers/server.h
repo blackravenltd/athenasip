@@ -15,7 +15,6 @@
 #include <thread>
 #include <unordered_map>
 
-#include "../channel.h"
 #include "../loggers/logger.h"
 #include "../loggers/logger_scoped.h"
 
@@ -23,21 +22,22 @@ using namespace athenasip;
 using namespace athenasip::loggers;
 
 namespace athenasip {
-class SIPCore;
+  // Forward declaration
+  class Core;
 }
 
 namespace athenasip::servers {
 
 class Server : public std::enable_shared_from_this<Server> {
  public:
-  Server(std::shared_ptr<Logger> logger) : _logger(logger) {}
+  Server(std::shared_ptr<Logger> logger, std::shared_ptr<Core> core) : _logger(logger), _core(core) {}
 
-  virtual void start(std::shared_ptr<SIPCore> core) = 0;
+  virtual void start() = 0;
   virtual void stop() = 0;
 
  protected:
   std::shared_ptr<Logger> _logger;
-  std::shared_ptr<SIPCore> _core;
+  std::shared_ptr<Core> _core;
 };
 
 }  // namespace athenasip::servers

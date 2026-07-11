@@ -30,8 +30,6 @@ class Call {
 
   enum State { Initial, Trying, Ringing, Connected, Closing };
 
-  Call(std::string callId) : id(callId) {}
-
   std::string id;
 
   std::shared_ptr<SIPIdentity> from;

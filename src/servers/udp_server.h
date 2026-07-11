@@ -16,9 +16,9 @@ class UDPServer : public Server {
  public:
   const uint16_t MAX_PACKET_SIZE = 65535;
 
-  UDPServer(std::shared_ptr<Logger> logger, const std::string& bind_address, short port);
+  UDPServer(std::shared_ptr<Logger> logger, std::shared_ptr<Core> core, const std::string& bind_address, short port);
 
-  void start(std::shared_ptr<SIPCore> core) override;
+  void start() override;
   void stop() override;
 
   // Called by UDPConnection::async_write_some to send data.

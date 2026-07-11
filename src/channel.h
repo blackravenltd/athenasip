@@ -14,18 +14,19 @@
 #include "servers/connection.h"
 #include "events/event_system.h"
 
+#include "sip_message.h"
+
+#include "core.h"
+
 using namespace athenasip::loggers;
 using namespace athenasip::servers;
 using namespace athenasip::events;
 
 namespace athenasip {
 
-class SIPCore;
-class SIPMessage;
-
 class Channel : public std::enable_shared_from_this<Channel> {
  public:
-  Channel(std::shared_ptr<Logger> logger, std::shared_ptr<SIPCore> core, std::shared_ptr<Connection> connection);
+  Channel(std::shared_ptr<Logger>, std::shared_ptr<Core>, std::shared_ptr<Connection>);
 
   enum State {
     Normal,
@@ -49,7 +50,7 @@ class Channel : public std::enable_shared_from_this<Channel> {
 
  protected:
   std::shared_ptr<Logger> _logger;
-  std::shared_ptr<SIPCore> _core;
+  std::shared_ptr<Core> _core;
 
 
   std::array<char, 65535> _read_buffer;

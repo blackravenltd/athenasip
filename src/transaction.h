@@ -12,14 +12,13 @@
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
 
+#include "sip_message.h"
+#include "core.h"
+
 using namespace athenasip::loggers;
 using namespace athenasip::headers;
 
 namespace athenasip {
-
-class Channel;
-class Registrar;
-class SIPMessage;
 
 class Transaction : public std::enable_shared_from_this<Transaction> {
  public:
@@ -35,7 +34,7 @@ class Transaction : public std::enable_shared_from_this<Transaction> {
     ServerINVITE,
   };
 
-  Transaction(std::shared_ptr<Logger> logger, std::shared_ptr<Channel> channel, std::shared_ptr<Registrar> registrar, Direction direction, std::string _id);
+  Transaction(std::shared_ptr<Logger> logger, std::shared_ptr<Channel> channel, std::shared_ptr<Core> core, Direction direction, std::string _id);
   ~Transaction();
 
   std::string id;
@@ -59,7 +58,7 @@ class Transaction : public std::enable_shared_from_this<Transaction> {
  protected:
   std::shared_ptr<Logger> _logger;
   std::shared_ptr<Channel> _channel;
-  std::shared_ptr<Registrar> _registrar;
+  std::shared_ptr<Core> _core;
   Direction _direction;
 
   uint16_t _t1_ms;

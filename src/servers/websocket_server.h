@@ -18,8 +18,8 @@ namespace servers {
 
 class WebsocketServer : public Server {
  public:
-  WebsocketServer(std::shared_ptr<Logger> logger, const std::string& bind_address, short port);
-  void start(std::shared_ptr<SIPCore> core) override;
+  WebsocketServer(std::shared_ptr<Logger> logger, std::shared_ptr<Core> core, const std::string& bind_address, short port);
+  void start() override;
   void stop() override;
 
  protected:

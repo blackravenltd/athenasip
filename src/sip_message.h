@@ -11,16 +11,19 @@
 #include <sstream>
 #include <string>
 
+#include "types/subscriber.h"
+#include "types/sip_uri.h"
+
 #include "sip_header.h"
 #include "util.h"
+
+using namespace athenasip::types;
 
 namespace athenasip {
 
 class Channel;
 class Call;
 class Transaction;
-class Subscriber;
-class SIPUri;
 
 class SIPMessage {
  public:

@@ -17,7 +17,7 @@
 
 namespace athenasip::datastores {
 
-inline void register_builtin_datastores(std::shared_ptr<loggers::Logger> logger) {
+void register_builtin_datastores(std::shared_ptr<loggers::Logger> logger) {
   Datastore::register_driver<MySQLDatastore>(logger, "mysql");
   Datastore::register_driver<MySQLDatastore>(logger, "mysqlx");
 

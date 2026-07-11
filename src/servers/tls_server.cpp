@@ -6,13 +6,16 @@
 //
 #include "tls_server.h"
 
+#include "../channel.h"
+
+using namespace athenasip;
 using namespace boost::asio;
 using namespace boost::asio::ssl;
 
 namespace athenasip::servers {
 
-TLSServer::TLSServer(std::shared_ptr<Logger> logger, const std::string& bind_address, short port)
-    : Server(std::make_unique<LoggerScoped>("tls_server", logger)),
+TLSServer::TLSServer(std::shared_ptr<Logger> logger, std::shared_ptr<Core> core, const std::string& bind_address, short port)
+    : Server(std::make_unique<LoggerScoped>("tls_server", logger), core),
       _port(port),
       _acceptor(_io_context, ip::tcp::endpoint(ip::make_address(bind_address), port)),
       ctx(ssl::context::sslv23) {}
@@ -31,9 +34,7 @@ bool TLSServer::set_certificates(std::string cert, std::string key) {
   return true;
 }
 
-void TLSServer::start(std::shared_ptr<SIPCore> core) {
-  _core = core;
-
+void TLSServer::start() {
   _logger->debug("Starting...");
 
   // Do the first start_accept on that thread
