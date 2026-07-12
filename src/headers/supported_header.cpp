@@ -23,8 +23,7 @@ bool SupportedHeader::parse(const std::string& val) {
 
 std::string SupportedHeader::to_string() const {
   std::string result;
-  // Note: The order of elements in an unordered_set is unspecified.
-  // If order is important, consider storing them in a different container.
+
   bool first = true;
   for (const auto& feature : features) {
     if (!first) {

@@ -36,7 +36,7 @@ class Header {
 
  protected:
   // Accessor for the static registry map.
-  static std::unordered_map<std::string, std::function<std::shared_ptr<Header>()>>& getRegistry();
+  static std::unordered_map<std::string, std::function<std::shared_ptr<Header>()>>& get_registry();
 };
 
 }  // namespace athenasip::headers

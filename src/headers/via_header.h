@@ -40,4 +40,4 @@ struct ViaHeaderRegister {
 };
 static ViaHeaderRegister s_viaHeaderRegister;
 
-}  // namespace athenasip::headers
+} // namespace athenasip::headers

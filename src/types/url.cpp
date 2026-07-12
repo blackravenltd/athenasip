@@ -87,7 +87,7 @@ std::string URL::to_string() const {
   return url;
 }
 
-bool URL::is_valid() { return _valid; }
+bool URL::is_valid() const { return _valid; }
 
 bool operator==(const URL& lhs, const URL& rhs) {
   return lhs.scheme == rhs.scheme && lhs.username == rhs.username && lhs.password == rhs.password && lhs.host == rhs.host && lhs.port == rhs.port &&
@@ -109,6 +109,7 @@ const std::map<std::string, uint16_t> URL::defaultPorts = {{"http", 80},        
                                                            {"pop3s", 995},                        // POP3 over SSL
                                                            {"redis", 6379},      {"mongodb", 27017},   {"cassandra", 9042},
                                                            {"memcached", 11211}, {"rabbitmq", 5672},   {"mqtt", 1883},
+                                                           {"mqtts", 8883},
                                                            {"coap", 5683},       {"amqp", 5671},  // AMQP over TLS
                                                            {"rsync", 873},       {"rdp", 3389},        {"elasticsearch", 9200},
                                                            {"kibana", 5601},     {"zookeeper", 2181}};
