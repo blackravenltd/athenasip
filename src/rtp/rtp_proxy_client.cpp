@@ -71,7 +71,7 @@ void RTPProxyClient::close() {
  * @param rtcp_port2   RTCP port (callee)
  * @param callback     Called when response arrives or on error.
  */
-void RTPProxyClient::commandL(const std::string& cookie, const std::string& call_id, const std::string& from_tag, const std::string& to_tag, int media_idx,
+void RTPProxyClient::command_l(const std::string& cookie, const std::string& call_id, const std::string& from_tag, const std::string& to_tag, int media_idx,
                               const std::string& ip1, int rtp_port1, int rtcp_port1, const std::string& ip2, int rtp_port2, int rtcp_port2,
                               ResponseCallback callback) {
   std::string cmd = "L " + cookie + " " + call_id + " " + from_tag + " " + to_tag + " " + std::to_string(media_idx) + " " + ip1 + " " +
@@ -81,18 +81,18 @@ void RTPProxyClient::commandL(const std::string& cookie, const std::string& call
     cmd += " " + ip2 + " " + std::to_string(rtp_port2) + " " + std::to_string(rtcp_port2);
   }
 
-  asyncSendCommand(std::move(cmd), std::move(callback));
+  send_command_async(std::move(cmd), std::move(callback));
 }
 
-void RTPProxyClient::commandV(ResponseCallback callback) {
+void RTPProxyClient::command_v(ResponseCallback callback) {
   std::string cmd = "V";
-  asyncSendCommand(std::move(cmd), std::move(callback));
+  send_command_async(std::move(cmd), std::move(callback));
 }
 
 /**
  * @brief Sends a 'U' (Update/Create) command asynchronously.
  */
-void RTPProxyClient::commandU(const std::string& cookie, const std::string& call_id, const std::string& from_tag, const std::string& to_tag, int media_idx,
+void RTPProxyClient::command_u(const std::string& cookie, const std::string& call_id, const std::string& from_tag, const std::string& to_tag, int media_idx,
                               const std::string& ip1, int rtp_port1, int rtcp_port1, const std::string& ip2, int rtp_port2, int rtcp_port2,
                               ResponseCallback callback) {
   std::string cmd = "U " + cookie + " " + call_id + " " + from_tag + " " + to_tag + " " + std::to_string(media_idx) + " " + ip1 + " " +
@@ -102,13 +102,13 @@ void RTPProxyClient::commandU(const std::string& cookie, const std::string& call
     cmd += " " + ip2 + " " + std::to_string(rtp_port2) + " " + std::to_string(rtcp_port2);
   }
 
-  asyncSendCommand(std::move(cmd), std::move(callback));
+  send_command_async(std::move(cmd), std::move(callback));
 }
 
 /**
  * @brief Sends an 'R' (Record) command asynchronously.
  */
-void RTPProxyClient::commandR(const std::string& cookie, const std::string& call_id, const std::string& from_tag, const std::string& to_tag, int media_idx,
+void RTPProxyClient::command_r(const std::string& cookie, const std::string& call_id, const std::string& from_tag, const std::string& to_tag, int media_idx,
                               const std::string& ip1, int rtp_port1, int rtcp_port1, const std::string& ip2, int rtp_port2, int rtcp_port2,
                               ResponseCallback callback) {
   std::string cmd = "R " + cookie + " " + call_id + " " + from_tag + " " + to_tag + " " + std::to_string(media_idx) + " " + ip1 + " " +
@@ -118,29 +118,29 @@ void RTPProxyClient::commandR(const std::string& cookie, const std::string& call
     cmd += " " + ip2 + " " + std::to_string(rtp_port2) + " " + std::to_string(rtcp_port2);
   }
 
-  asyncSendCommand(std::move(cmd), std::move(callback));
+  send_command_async(std::move(cmd), std::move(callback));
 }
 
 /**
  * @brief Sends a 'D' (Delete) command asynchronously.
  */
-void RTPProxyClient::commandD(const std::string& cookie, const std::string& call_id, const std::string& from_tag, const std::string& to_tag,
+void RTPProxyClient::command_d(const std::string& cookie, const std::string& call_id, const std::string& from_tag, const std::string& to_tag,
                               ResponseCallback callback) {
   std::string cmd = "D " + cookie + " " + call_id + " " + from_tag + " " + to_tag;
-  asyncSendCommand(std::move(cmd), std::move(callback));
+  send_command_async(std::move(cmd), std::move(callback));
 }
 
-void RTPProxyClient::asyncSendCommand(std::string command, ResponseCallback callback) {
+void RTPProxyClient::send_command_async(std::string command, ResponseCallback callback) {
   // Post onto the strand so that all commands are serialized
   boost::asio::post(_strand, [self = shared_from_this(), cmd = std::move(command), cb = std::move(callback)]() mutable {
-    self->doSendCommand(std::move(cmd), std::move(cb));
+    self->send_command(std::move(cmd), std::move(cb));
   });
 }
 
 /**
  * @brief Actually do the send->receive sequence on the strand.
  */
-void RTPProxyClient::doSendCommand(std::string command, ResponseCallback callback) {
+void RTPProxyClient::send_command(std::string command, ResponseCallback callback) {
   if (!_socket.is_open()) {
     // Socket is closed or not opened. Return an error.
     boost::system::error_code ec = make_error_code(boost::system::errc::bad_file_descriptor);
@@ -158,11 +158,11 @@ void RTPProxyClient::doSendCommand(std::string command, ResponseCallback callbac
   _socket.async_send_to(
       boost::asio::buffer(_send_buffer), _rtpproxy_endpoint,
       boost::asio::bind_executor(_strand, [self = shared_from_this(), callback](const boost::system::error_code& ec, std::size_t bytes_sent) mutable {
-        self->handleSend(ec, bytes_sent, std::move(callback));
+        self->handle_send(ec, bytes_sent, std::move(callback));
       }));
 }
 
-void RTPProxyClient::handleSend(const boost::system::error_code& ec, std::size_t bytes_sent, ResponseCallback callback) {
+void RTPProxyClient::handle_send(const boost::system::error_code& ec, std::size_t bytes_sent, ResponseCallback callback) {
   auto self = shared_from_this();
 
   if (ec) {
@@ -180,14 +180,14 @@ void RTPProxyClient::handleSend(const boost::system::error_code& ec, std::size_t
   // Async receive
   _socket.async_receive_from(boost::asio::buffer(_recv_buffer), _sender_endpoint,
                              boost::asio::bind_executor(_strand, [this, self, callback](const boost::system::error_code& ec2, std::size_t bytes_recvd) mutable {
-                               handleReceive(ec2, bytes_recvd, std::move(callback));
+                               handle_receive(ec2, bytes_recvd, std::move(callback));
                              }));
 }
 
 /**
  * @brief Handle completion of async_receive_from
  */
-void RTPProxyClient::handleReceive(const boost::system::error_code& ec, std::size_t bytes_recvd, ResponseCallback callback) {
+void RTPProxyClient::handle_receive(const boost::system::error_code& ec, std::size_t bytes_recvd, ResponseCallback callback) {
   if (ec) {
     // Notify callback of error
     if (callback) callback(nullptr, ec);

@@ -95,12 +95,12 @@ void AdminAPI::_do_accept() {
   });
 }
 
-// ------------------------------
+// ----------------------------------
 // Static Helper Middleware Functions
-// ------------------------------
+// ----------------------------------
 
-// sendStatusEnd: set HTTP status and message and end
-HttpMiddleware AdminAPI::sendStatusEnd(uint16_t code, std::string message) {
+// send_status_end: set HTTP status and message and end
+HttpMiddleware AdminAPI::send_status_end(uint16_t code, std::string message) {
   return [code, message](const http::request<http::string_body>& req, std::shared_ptr<http::response<http::string_body>> res, std::function<void(bool)> next) {
     res->result(code);
     res->set(http::field::server, "AthenaSIP");
@@ -111,14 +111,14 @@ HttpMiddleware AdminAPI::sendStatusEnd(uint16_t code, std::string message) {
     next(false);
   };
 }
-HttpMiddleware AdminAPI::send200end() { return AdminAPI::sendStatusEnd(200, "OK"); }
-HttpMiddleware AdminAPI::send400end() { return AdminAPI::sendStatusEnd(400, "Bad Request"); }
-HttpMiddleware AdminAPI::send404end() { return AdminAPI::sendStatusEnd(404, "Not Found"); }
-HttpMiddleware AdminAPI::send500end() { return AdminAPI::sendStatusEnd(500, "Internal Server Error"); }
+HttpMiddleware AdminAPI::send_200_end() { return AdminAPI::send_status_end(200, "OK"); }
+HttpMiddleware AdminAPI::send_400_end() { return AdminAPI::send_status_end(400, "Bad Request"); }
+HttpMiddleware AdminAPI::send_404_end() { return AdminAPI::send_status_end(404, "Not Found"); }
+HttpMiddleware AdminAPI::send_500_end() { return AdminAPI::send_status_end(500, "Internal Server Error"); }
 
-// ----------------------
+// --------------------------
 // HttpSession Implementation
-// ----------------------
+// --------------------------
 
 // HttpSession constructor: stores the socket and a reference to the server.
 HttpSession::HttpSession(tcp::socket socket, AdminAPI& server) : _socket(std::move(socket)), _server(server) {
@@ -139,7 +139,7 @@ void HttpSession::do_read() {
       _logger->debug(std::string(http::to_string(_req.method())) + " " + std::string(_req.target()));
       auto res = std::make_shared<http::response<http::string_body>>(http::status::ok, _req.version());
       // Begin processing the middleware chain from index 0.
-      processMiddlewareChain(0, res);
+      process_middleware_chain(0, res);
     } else {
       _server._logger->error("Error reading request: " + ec.message());
     }
@@ -148,11 +148,11 @@ void HttpSession::do_read() {
 
 // Recursively process the middleware chain.
 // If a middleware calls next(false), the chain stops and the response is sent.
-void HttpSession::processMiddlewareChain(std::size_t index, std::shared_ptr<http::response<http::string_body>> res) {
+void HttpSession::process_middleware_chain(std::size_t index, std::shared_ptr<http::response<http::string_body>> res) {
   if (index < _server.middlewares.size()) {
     auto next = [this, index, res](bool continueChain) {
       if (continueChain) {
-        processMiddlewareChain(index + 1, res);
+        process_middleware_chain(index + 1, res);
       } else {
         res->prepare_payload();
         // Middleware has halted further processing; send the response.

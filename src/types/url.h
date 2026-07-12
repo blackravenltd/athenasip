@@ -6,13 +6,13 @@
 //
 #pragma once
 
-#include <boost/regex.hpp>
 #include <cstdint>
 #include <iostream>
 #include <limits>
 #include <optional>
 #include <regex>
 #include <string>
+#include <map>
 
 namespace athenasip::types {
 
@@ -32,7 +32,7 @@ class URL {
 
   void parse(const std::string& url);
   std::string to_string() const;
-  bool is_valid();
+  bool is_valid() const;
 
   friend bool operator==(const URL& lhs, const URL& rhs);
 
@@ -41,9 +41,6 @@ class URL {
 
  private:
   bool _valid{false};
-
-  bool isDefaultPort() const;
-  std::string toLower(const std::string& input) const;
 
   static const std::map<std::string, uint16_t> defaultPorts;
 };

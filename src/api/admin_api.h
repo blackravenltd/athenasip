@@ -51,12 +51,12 @@ class AdminAPI {
 
   // Static helper middleware functions for common responses.
   // These functions return a middleware that sends the appropriate HTTP response and stops the chain.
-  static HttpMiddleware sendStatusEnd(uint16_t code, std::string message);
+  static HttpMiddleware send_status_end(uint16_t code, std::string message);
 
-  static HttpMiddleware send200end();
-  static HttpMiddleware send400end();
-  static HttpMiddleware send404end();
-  static HttpMiddleware send500end();
+  static HttpMiddleware send_200_end();
+  static HttpMiddleware send_400_end();
+  static HttpMiddleware send_404_end();
+  static HttpMiddleware send_500_end();
 
  private:
   std::shared_ptr<athenasip::loggers::Logger> _logger;
@@ -92,7 +92,7 @@ class HttpSession : public std::enable_shared_from_this<HttpSession> {
 
   // Recursively process the middleware chain.
   // If next(false) is called at any middleware, the chain stops and the response is sent.
-  void processMiddlewareChain(std::size_t index, std::shared_ptr<http::response<http::string_body>> res);
+  void process_middleware_chain(std::size_t index, std::shared_ptr<http::response<http::string_body>> res);
 
   // Write the final response to the client.
   void do_write(std::shared_ptr<http::response<http::string_body>> res);

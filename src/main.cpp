@@ -119,7 +119,7 @@ int main(int argc, char* argv[]) {
       StaticOptions so;
       adminAPI->middlewares.push_back(api::StaticMiddleware::add("../admin", so));
     }
-    adminAPI->middlewares.push_back(api::AdminAPI::send404end());
+    adminAPI->middlewares.push_back(api::AdminAPI::send_404_end());
     core->admin_register(adminAPI);
     core->admin_start();
   }
