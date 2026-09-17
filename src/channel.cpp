@@ -117,11 +117,9 @@ void Channel::send(std::shared_ptr<SIPMessage> message) {
     message->header->remove_value("Via", [this, server_endpoint](std::shared_ptr<Header> header) { return header->as<ViaHeader>()->host == server_endpoint; });
   }
 
-  // Add Record-Route so we stay in the dialog
-  // TODO: headers should be case insensitive
-  message->header->remove_value("Record-Route", [this, server_endpoint](std::shared_ptr<Header> header) { return true; });
-  message->header->remove_value("record-route", [this, server_endpoint](std::shared_ptr<Header> header) { return true; });
-  message->header->remove_value("Record-route", [this, server_endpoint](std::shared_ptr<Header> header) { return true; });
+  // Add Record-Route so we stay in the dialog. Field names are matched
+  // case-insensitively, so one call covers every spelling.
+  message->header->remove_value("Record-Route", [](std::shared_ptr<Header> header) { return true; });
 
   // Reset Length to body length
   message->header->clear("Content-Length");
