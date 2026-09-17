@@ -36,12 +36,12 @@ class SIPMessage {
   // Derived Information
   std::string branch;
   uint16_t source_port;
-  std::shared_ptr<Channel> channel;
-  std::shared_ptr<Call> call;
-  std::shared_ptr<Subscriber> subscriber;
+  std::weak_ptr<Channel> channel;
+  std::weak_ptr<Call> call;
+  std::weak_ptr<Subscriber> subscriber;
   std::shared_ptr<SIPUri> contact;
   bool authenticated = false;
-  std::shared_ptr<Transaction> transaction;
+  std::weak_ptr<Transaction> transaction;
 
   // Methods
   std::string to_string() const;

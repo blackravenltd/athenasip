@@ -39,7 +39,7 @@ void Transaction::end() {
   _logger->debug("end");
   _ended = true;
   if (_timer_b_f != nullptr) _timer_b_f->cancel();
-  if (_core) _core->transaction_unregister(id);
+  if (!_core.expired()) _core.lock()->transaction_unregister(id);
 }
 
 void Transaction::receive_message(std::shared_ptr<SIPMessage> message) {
@@ -62,6 +62,21 @@ void Transaction::receive_message(std::shared_ptr<SIPMessage> message) {
 }
 
 void Transaction::process_register(std::shared_ptr<SIPMessage> message) {
+  _logger->debug("Received REGISTER");
+
+  if(_core.expired()) {
+    _logger->info("Cannot process REGISTER message, core has shut down");
+    return;
+  }
+
+  if(message->channel.expired()) {
+    _logger->info("Cannot process REGISTER message, reply channel has closed");
+    return;
+  }
+
+  auto core = _core.lock();
+  auto message_channel = message->channel.lock();
+ 
   // No Authorization
   if (!message->header->contains("Authorization")) {
     // No Authorization Header
@@ -78,14 +93,14 @@ void Transaction::process_register(std::shared_ptr<SIPMessage> message) {
     return send_401_unauthorized(message);
   }
 
-  if (!_core->nonce_check(auth->fields["nonce"])) {
+  if (!core->nonce_check(auth->fields["nonce"])) {
     // No Nonce exists or is expired
     _logger->info("[" + message->header->request_method + "] - Nonce " + auth->fields["nonce"] + " Not Found or Expired");
     return send_401_unauthorized(message);
   }
 
   auto& identityRef = message->header->headers_map["To"][0]->as<SIPIdentityHeader>()->value;
-  auto aorSubscriber = _core->subscriber_get(identityRef);
+  auto aorSubscriber = core->subscriber_get(identityRef);
 
   if (aorSubscriber == nullptr) {
     // Subscriber not found
@@ -103,7 +118,7 @@ void Transaction::process_register(std::shared_ptr<SIPMessage> message) {
     return send_401_unauthorized(message);
   }
 
-  _core->subscriber_register(aorSubscriber, message->header->headers_map["Contact"][0]->as<SIPIdentityHeader>()->value->uri, message->channel);
+  core->subscriber_register(aorSubscriber, message->header->headers_map["Contact"][0]->as<SIPIdentityHeader>()->value->uri, message_channel);
 
   // Send 200 OK
   auto response = message->generate_response();
@@ -120,7 +135,12 @@ void Transaction::process_register(std::shared_ptr<SIPMessage> message) {
       response->header->add("Contact", std::make_shared<SIPIdentityHeader>(contact));
     }
   }
-  response->channel->send(response);
+
+  if(response->channel.expired()) {
+    _logger->info("Cannot process REGISTER message, reply channel has closed");
+    return;
+  }
+  response->channel.lock()->send(response);
 
   // End this transaction
   end();
@@ -129,24 +149,50 @@ void Transaction::process_register(std::shared_ptr<SIPMessage> message) {
 void Transaction::process_invite(std::shared_ptr<SIPMessage> message) {
   _logger->debug("Received INVITE");
 
+  if(_core.expired()) {
+    _logger->info("Cannot process INVITE message, core has shut down");
+    return;
+  }
+
+  if(message->channel.expired()) {
+    _logger->info("Cannot process INVITE message, reply channel has closed");
+    return;
+  }
+
+  auto core = _core.lock();
+
   // Send the event into the backend
   if (message->header->contains("To")) {
+
     auto to_header = message->header->headers_map["To"][0]->as<SIPIdentityHeader>();
-    _core->events->publish("subscriber/" + to_header->value->uri->to_string() + "/invite",
-                           _channel->_connection->remote_endpoint_name());
 
     auto call = std::make_shared<Call>();
     call->id = message->header->headers_map["Call-ID"][0]->as<StringHeader>()->value;
     call->from = message->header->headers_map["From"][0]->as<SIPIdentityHeader>()->value;
-    call->to = message->header->headers_map["From"][0]->as<SIPIdentityHeader>()->value;
+    call->to = to_header->value;
     call->state = Call::State::Initial;
-    _core->call_register(call);
+    core->call_register(call);
+
+    boost::json::object obj;
+    obj["call_id"] = call->id;
+    obj["from"] = call->from->to_string();
+    obj["to"] = call->to->to_string();
+    obj["sdp"] = message->body;
+
+    core->events->publish(
+      "subscriber/" + to_header->value->uri->to_string() + "/invite",
+      boost::json::serialize(obj)
+    );
 
     // Send 100 Trying
     auto response = message->generate_response();
     response->header->response_code = 100;
     response->header->response_message = "Trying";
-    response->channel->send(response);
+    if(response->channel.expired()) {
+      _logger->info("Cannot process INVITE message, reply channel has closed");
+      return;
+    }
+    response->channel.lock()->send(response);
   }
 }
 
@@ -165,7 +211,12 @@ void Transaction::process_unknown(std::shared_ptr<SIPMessage> message) {
   response->header->add("Reason", "SIP;cause=501;text=\"Not Implemented\"");
   response->header->response_code = 501;
   response->header->response_message = "Not Implemented";
-  response->channel->send(response);
+
+  if(response->channel.expired()) {
+    _logger->info("Cannot process INVITE message, reply channel has closed");
+    return;
+  }
+  response->channel.lock()->send(response);
 
   // End this transaction
   end();
@@ -174,6 +225,14 @@ void Transaction::process_unknown(std::shared_ptr<SIPMessage> message) {
 void Transaction::send_message(std::shared_ptr<SIPMessage> message) { _logger->debug("send_message " + message->header->first_line()); }
 
 void Transaction::send_401_unauthorized(std::shared_ptr<SIPMessage> message) {
+
+  if(_core.expired()) {
+    _logger->info("Cannot send 401 Unauthorized message, core has shut down");
+    return;
+  }
+
+  auto core = _core.lock();
+
   // Send 401 Unauthorized
   auto response = message->generate_response();
   response->header->add("Reason", "SIP;cause=401;text=\"Unauthorized\"");
@@ -182,13 +241,17 @@ void Transaction::send_401_unauthorized(std::shared_ptr<SIPMessage> message) {
   // Get From Identity
   auto toIdentity = message->header->headers_map["From"][0]->as<headers::SIPIdentityHeader>()->value;
   // Send WWW-Authenticate if realm recognised
-  auto realm = _core->realm_get_by_name(Util::to_lower(toIdentity->uri->realm));
+  auto realm = core->realm_get_by_name(Util::to_lower(toIdentity->uri->realm));
   if (realm) {
     // Generate Nonce
-    response->header->add("WWW-Authenticate", "Digest realm=\"" + realm->name + "\", nonce=\"" + _core->nonce_create(realm) + "\"");
+    response->header->add("WWW-Authenticate", "Digest realm=\"" + realm->name + "\", nonce=\"" + core->nonce_create(realm) + "\"");
   }
   // Send Response
-  response->channel->send(response);
+  if(response->channel.expired()) {
+    _logger->info("Cannot process 401 Unauthorized message, reply channel has closed");
+    return;
+  }
+  response->channel.lock()->send(response);
 
   // End this transaction
   end();
