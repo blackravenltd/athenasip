@@ -45,12 +45,19 @@ struct Fixture {
     core = std::make_shared<Core>(logger, config, datastore, event_system);
   }
 
+  // Core is strand-confined, so tests reach it the same way the rest of the system
+  // does. call_on_strand runs inline when already on the strand, so nested use is fine.
+  template <typename Fn>
+  auto on_strand(Fn&& fn) {
+    return core->call_on_strand(std::forward<Fn>(fn));
+  }
+
   std::shared_ptr<Channel> make_channel(const std::string& remote_address, std::shared_ptr<MockConnection>* out = nullptr) {
     auto connection = std::make_shared<MockConnection>("tcp", remote_address);
     if (out) *out = connection;
 
     auto channel = std::make_shared<Channel>(logger, core, connection);
-    channel->start();
+    on_strand([&channel]() { channel->start(); });
     return channel;
   }
 
@@ -81,33 +88,33 @@ TEST(CoreTest, TransactionEndAllClearsEveryTransaction) {
     ids.push_back(id);
 
     auto transaction = std::make_shared<Transaction>(f.logger, nullptr, f.core, Transaction::Direction::Incoming, id);
-    ASSERT_TRUE(f.core->transaction_register(transaction));
+    ASSERT_TRUE(f.on_strand([&]() { return f.core->transaction_register(transaction); }));
   }
 
-  ASSERT_NE(f.core->transaction_get(ids.front()), nullptr);
+  ASSERT_NE(f.on_strand([&]() { return f.core->transaction_get(ids.front()); }), nullptr);
 
-  f.core->transaction_end_all();
+  f.on_strand([&]() { f.core->transaction_end_all(); });
 
-  for (const auto& id : ids) EXPECT_EQ(f.core->transaction_get(id), nullptr);
+  for (const auto& id : ids) EXPECT_EQ(f.on_strand([&]() { return f.core->transaction_get(id); }), nullptr);
 }
 
 TEST(CoreTest, TransactionEndAllOnAnEmptyRegistryIsFine) {
   Fixture f;
-  EXPECT_NO_THROW(f.core->transaction_end_all());
+  EXPECT_NO_THROW(f.on_strand([&]() { f.core->transaction_end_all(); }));
 }
 
 TEST(CoreTest, TransactionRegisterAndUnregisterRoundTrip) {
   Fixture f;
 
   auto transaction = std::make_shared<Transaction>(f.logger, nullptr, f.core, Transaction::Direction::Incoming, "t-1");
-  ASSERT_TRUE(f.core->transaction_register(transaction));
-  EXPECT_EQ(f.core->transaction_get("t-1"), transaction);
+  ASSERT_TRUE(f.on_strand([&]() { return f.core->transaction_register(transaction); }));
+  EXPECT_EQ(f.on_strand([&]() { return f.core->transaction_get("t-1"); }), transaction);
 
-  EXPECT_TRUE(f.core->transaction_unregister("t-1"));
-  EXPECT_EQ(f.core->transaction_get("t-1"), nullptr);
+  EXPECT_TRUE(f.on_strand([&]() { return f.core->transaction_unregister("t-1"); }));
+  EXPECT_EQ(f.on_strand([&]() { return f.core->transaction_get("t-1"); }), nullptr);
 
   // Unregistering something that is not there is not a success.
-  EXPECT_FALSE(f.core->transaction_unregister("t-1"));
+  EXPECT_FALSE(f.on_strand([&]() { return f.core->transaction_unregister("t-1"); }));
 }
 
 // Regression: close() unregisters, which erases from the map being iterated.
@@ -123,7 +130,7 @@ TEST(CoreTest, ChannelCloseAllClosesEveryChannel) {
     connections.push_back(connection);
   }
 
-  f.core->channel_close_all();
+  f.on_strand([&]() { f.core->channel_close_all(); });
 
   for (const auto& connection : connections) EXPECT_EQ(connection->close_calls, 1);
   for (const auto& channel : channels) EXPECT_EQ(channel->state, Channel::State::Closed);
@@ -131,7 +138,7 @@ TEST(CoreTest, ChannelCloseAllClosesEveryChannel) {
 
 TEST(CoreTest, ChannelCloseAllOnAnEmptyRegistryIsFine) {
   Fixture f;
-  EXPECT_NO_THROW(f.core->channel_close_all());
+  EXPECT_NO_THROW(f.on_strand([&]() { f.core->channel_close_all(); }));
 }
 
 // A channel closed on its own must not be closed a second time by the sweep.
@@ -141,10 +148,10 @@ TEST(CoreTest, ChannelCloseIsIdempotent) {
   std::shared_ptr<MockConnection> connection;
   auto channel = f.make_channel("192.0.2.50", &connection);
 
-  channel->close();
+  f.on_strand([&]() { channel->close(); });
   EXPECT_EQ(connection->close_calls, 1);
 
-  f.core->channel_close_all();
+  f.on_strand([&]() { f.core->channel_close_all(); });
   EXPECT_EQ(connection->close_calls, 1);
 }
 
@@ -157,7 +164,7 @@ TEST(CoreTest, SubscriberRegisterStoresTheContact) {
   auto contact = std::make_shared<types::SIPUri>("sip:alice@192.0.2.10:5060");
   auto channel = f.make_channel("192.0.2.10");
 
-  ASSERT_TRUE(f.core->subscriber_register(subscriber, contact, channel));
+  ASSERT_TRUE(f.on_strand([&]() { return f.core->subscriber_register(subscriber, contact, channel); }));
 
   auto locations = f.datastore->locations_get(7);
   ASSERT_EQ(locations.size(), 1u);
@@ -171,8 +178,8 @@ TEST(CoreTest, SubscriberRegisterIsRepeatable) {
   auto contact = std::make_shared<types::SIPUri>("sip:alice@192.0.2.10:5060");
   auto channel = f.make_channel("192.0.2.10");
 
-  ASSERT_TRUE(f.core->subscriber_register(subscriber, contact, channel));
-  ASSERT_TRUE(f.core->subscriber_register(subscriber, contact, channel));
+  ASSERT_TRUE(f.on_strand([&]() { return f.core->subscriber_register(subscriber, contact, channel); }));
+  ASSERT_TRUE(f.on_strand([&]() { return f.core->subscriber_register(subscriber, contact, channel); }));
 
   EXPECT_EQ(f.datastore->locations_get(7).size(), 1u);
 }
@@ -186,10 +193,10 @@ TEST(CoreTest, SubscriberUnregisterDropsTheEventSubscription) {
   auto contact = std::make_shared<types::SIPUri>("sip:alice@192.0.2.10:5060");
   auto channel = f.make_channel("192.0.2.10");
 
-  ASSERT_TRUE(f.core->subscriber_register(subscriber, contact, channel));
+  ASSERT_TRUE(f.on_strand([&]() { return f.core->subscriber_register(subscriber, contact, channel); }));
   ASSERT_NE(channel->_event_subscription, nullptr);
 
-  ASSERT_TRUE(f.core->subscriber_unregister(subscriber, contact, channel));
+  ASSERT_TRUE(f.on_strand([&]() { return f.core->subscriber_unregister(subscriber, contact, channel); }));
 
   EXPECT_EQ(channel->_event_subscription, nullptr);
   EXPECT_TRUE(f.datastore->locations_get(7).empty());
@@ -203,7 +210,7 @@ TEST(CoreTest, ChannelSendSetsViaFromTheConnectionTransport) {
   for (const auto& transport : {"tcp", "udp", "tls", "ws", "wss"}) {
     auto connection = std::make_shared<MockConnection>(transport, "192.0.2.10");
     auto channel = std::make_shared<Channel>(f.logger, f.core, connection);
-    channel->start();
+    f.on_strand([&]() { channel->start(); });
 
     auto message = std::make_shared<SIPMessage>();
     message->header = std::make_shared<SIPHeader>();
@@ -211,7 +218,7 @@ TEST(CoreTest, ChannelSendSetsViaFromTheConnectionTransport) {
     message->header->request_method = "OPTIONS";
     message->header->request_uri = std::make_shared<types::SIPUri>("sip:bob@example.com");
 
-    channel->send(message);
+    f.on_strand([&]() { channel->send(message); });
 
     auto via = message->header->headers_map["Via"][0]->as<athenasip::headers::ViaHeader>();
     ASSERT_NE(via, nullptr);
@@ -225,7 +232,7 @@ TEST(CoreTest, ChannelSendGeneratesAMagicCookieBranch) {
 
   auto connection = std::make_shared<MockConnection>("udp", "192.0.2.10");
   auto channel = std::make_shared<Channel>(f.logger, f.core, connection);
-  channel->start();
+  f.on_strand([&]() { channel->start(); });
 
   auto message = std::make_shared<SIPMessage>();
   message->header = std::make_shared<SIPHeader>();
@@ -234,7 +241,7 @@ TEST(CoreTest, ChannelSendGeneratesAMagicCookieBranch) {
   message->header->request_uri = std::make_shared<types::SIPUri>("sip:bob@example.com");
 
   ASSERT_TRUE(message->branch.empty());
-  channel->send(message);
+  f.on_strand([&]() { channel->send(message); });
 
   EXPECT_EQ(message->branch.rfind("z9hG4bK", 0), 0u);
 
@@ -249,7 +256,7 @@ TEST(CoreTest, ChannelSendKeepsAnExistingBranch) {
 
   auto connection = std::make_shared<MockConnection>("udp", "192.0.2.10");
   auto channel = std::make_shared<Channel>(f.logger, f.core, connection);
-  channel->start();
+  f.on_strand([&]() { channel->start(); });
 
   auto message = std::make_shared<SIPMessage>();
   message->header = std::make_shared<SIPHeader>();
@@ -258,7 +265,7 @@ TEST(CoreTest, ChannelSendKeepsAnExistingBranch) {
   message->header->request_uri = std::make_shared<types::SIPUri>("sip:bob@example.com");
   message->branch = "z9hG4bK-chosen-by-the-transaction";
 
-  channel->send(message);
+  f.on_strand([&]() { channel->send(message); });
 
   EXPECT_EQ(message->branch, "z9hG4bK-chosen-by-the-transaction");
 }

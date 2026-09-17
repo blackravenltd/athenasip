@@ -179,8 +179,13 @@ int main(int argc, char* argv[]) {
       case SIGINT:
         logger->debug("Received Signal SIGINT");
 
-        core->transaction_end_all();
-        core->channel_close_all();
+        // These touch strand-confined state and this is the main thread, so they run
+        // through the strand and wait rather than reaching in directly.
+        core->call_on_strand([&core]() {
+          core->transaction_end_all();
+          core->channel_close_all();
+        });
+
         core->server_stop_all();
         core->rtprelay_stop();
         core->admin_stop();

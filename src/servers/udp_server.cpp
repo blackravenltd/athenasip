@@ -21,6 +21,7 @@ namespace athenasip::servers {
 UDPServer::UDPServer(std::shared_ptr<Logger> logger, std::shared_ptr<Core> core, const std::string& bind_address, short port)
     : Server(std::make_unique<LoggerScoped>("udp_server", logger), core),
       _io_context(),
+      _strand(boost::asio::make_strand(_io_context)),
       _socket(_io_context, udp::endpoint(ip::make_address(bind_address), port)),
       _port(port) {}
 
@@ -28,7 +29,7 @@ void UDPServer::start() {
   _logger->debug("Starting...");
 
   // Begin receiving datagrams.
-  boost::asio::post(_io_context, [this]() {
+  boost::asio::post(_strand, [this]() {
     _logger->info("Listening on " + _socket.local_endpoint().address().to_string() + ":" + std::to_string(_port) + " (udp://)");
     start_receive();
   });
@@ -62,10 +63,13 @@ void UDPServer::start_receive() {
   // Store sender endpoint
   auto sender_endpoint = std::make_shared<udp::endpoint>();
 
-  // Start the packet receive
+  // Start the packet receive. The completion comes back on the strand, which is the
+  // only place this socket and the connection map are touched.
   _socket.async_receive_from(boost::asio::buffer(*buffer), *sender_endpoint,
                              [this, self, buffer, sender_endpoint](const boost::system::error_code& error, std::size_t bytes_transferred) {
-                               this->handle_receive_from(error, bytes_transferred, buffer, sender_endpoint);
+                               boost::asio::dispatch(_strand, [this, self, buffer, sender_endpoint, error, bytes_transferred]() {
+                                 this->handle_receive_from(error, bytes_transferred, buffer, sender_endpoint);
+                               });
                              });
 }
 
@@ -100,12 +104,18 @@ void UDPServer::handle_receive_from(const boost::system::error_code& error, std:
   }
 
   // Start accepting the next packet.
-  boost::asio::post(_io_context, [this]() { start_receive(); });
+  boost::asio::post(_strand, [this]() { start_receive(); });
 }
 
 void UDPServer::async_send_to(boost::asio::const_buffer buffer, boost::asio::ip::udp::endpoint remote_endpoint,
                               std::function<void(const boost::system::error_code&, std::size_t)> handler) {
-  _socket.async_send_to(buffer, remote_endpoint, [this, handler](const boost::system::error_code& ec, std::size_t size) { handler(ec, size); });
+  // Called from the Core strand. The buffer stays alive because the caller's completion
+  // handler owns it, and that is not run until the send finishes.
+  auto self = this->shared_from_this();
+
+  boost::asio::dispatch(_strand, [this, self, buffer, remote_endpoint, handler = std::move(handler)]() {
+    _socket.async_send_to(buffer, remote_endpoint, [this, self, handler](const boost::system::error_code& ec, std::size_t size) { handler(ec, size); });
+  });
 }
 
 boost::asio::ip::tcp::endpoint UDPServer::local_endpoint() {
@@ -113,6 +123,9 @@ boost::asio::ip::tcp::endpoint UDPServer::local_endpoint() {
   return boost::asio::ip::tcp::endpoint(ep.address(), ep.port());
 }
 
-void UDPServer::remove_connection(const std::string& key) { _connections.erase(key); }
+void UDPServer::remove_connection(const std::string& key) {
+  auto self = this->shared_from_this();
+  boost::asio::dispatch(_strand, [this, self, key]() { _connections.erase(key); });
+}
 
 }  // namespace athenasip::servers
