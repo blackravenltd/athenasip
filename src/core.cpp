@@ -54,37 +54,67 @@ bool Core::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shar
   }
 
   if (!channel->_event_subscription) {
-    channel->_event_subscription = events->subscribe(
-      "subscriber/" + subscriber->identity->uri->to_string() + "/#", [this, subscriber, channel](std::string event, std::string payload) {
-        _logger->info("Received Event for: " + subscriber->identity->to_string() + " Event: " + event + " Payload: " + payload);
+    // Subscribe to the invite topic alone. A "subscriber/<uri>/#" filter also matches
+    // this node's own status publish below, and that payload has no call fields.
+    std::weak_ptr<Core> weak_core = weak_from_this();
+    std::weak_ptr<Channel> weak_channel = channel;
+    auto identity = subscriber->identity;
 
-        boost::system::error_code ec;
-        auto const& payload_obj = boost::json::parse(payload, ec).as_object();
+    channel->_event_subscription =
+        events->subscribe("subscriber/" + identity->uri->to_string() + "/invite", [weak_core, weak_channel, identity](std::string event, std::string payload) {
+          auto core = weak_core.lock();
+          auto event_channel = weak_channel.lock();
 
-        auto transaction = std::make_shared<Transaction>(_logger, channel, shared_from_this(), Transaction::Direction::Outgoing, Util::generate_random_string("",10));
-        transaction_register(transaction);
+          // Either the node or the channel went away between publish and delivery.
+          if (!core || !event_channel) return;
 
-        auto invite = std::make_shared<SIPMessage>();
-
-        invite->header = std::make_shared<SIPHeader>();
-        invite->header->request_method = "INVITE";
-        auto call_id = payload_obj.at("call_id").as_string();
-        invite->header->add("Call-ID",std::string(call_id));
-        auto from = payload_obj.at("from").as_string();
-        invite->header->add("From",std::string(from));
-        auto to = payload_obj.at("to").as_string();
-        invite->header->add("To",std::string(to));
-        invite->header->add("Content-Type","application/sdp");
-        invite->body = std::string(payload_obj.at("sdp").as_string());
-
-        transaction->send_message(invite);
-      });
+          core->_invite_from_event(event_channel, identity, event, payload);
+        });
   }
 
   _channels_by_subscriber[subscriber->id] = channel;
   events->publish("subscriber/" + subscriber->identity->uri->to_string() + "/status",
                   "{\"contact\":\"" + contact->to_string() + "\",\"node\":\"" + config->sip_node_id + "\",\"registered\":\"" + Util::get_zulu_time() + "\"}");
   return true;
+}
+
+// Turns a subscriber/<uri>/invite event into an outbound INVITE. The payload comes off
+// the event bus, so every field is checked before it is used.
+void Core::_invite_from_event(std::shared_ptr<Channel> channel, std::shared_ptr<SIPIdentity> identity, const std::string& event, const std::string& payload) {
+  _logger->info("Received Event for: " + identity->to_string() + " Event: " + event);
+
+  boost::system::error_code ec;
+  auto parsed = boost::json::parse(payload, ec);
+
+  if (ec || !parsed.is_object()) {
+    _logger->error("Ignoring event " + event + " - payload is not a JSON object");
+    return;
+  }
+
+  const auto& payload_obj = parsed.as_object();
+
+  for (const auto* field : {"call_id", "from", "to", "sdp"}) {
+    if (!payload_obj.contains(field) || !payload_obj.at(field).is_string()) {
+      _logger->error("Ignoring event " + event + " - missing or non-string field " + field);
+      return;
+    }
+  }
+
+  auto transaction =
+      std::make_shared<Transaction>(_logger, channel, shared_from_this(), Transaction::Direction::Outgoing, Util::generate_random_string("", 10));
+  transaction_register(transaction);
+
+  auto invite = std::make_shared<SIPMessage>();
+
+  invite->header = std::make_shared<SIPHeader>();
+  invite->header->request_method = "INVITE";
+  invite->header->add("Call-ID", std::string(payload_obj.at("call_id").as_string()));
+  invite->header->add("From", std::string(payload_obj.at("from").as_string()));
+  invite->header->add("To", std::string(payload_obj.at("to").as_string()));
+  invite->header->add("Content-Type", "application/sdp");
+  invite->body = std::string(payload_obj.at("sdp").as_string());
+
+  transaction->send_message(invite);
 }
 
 bool Core::subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel) {
@@ -110,9 +140,9 @@ bool Core::channel_register(std::string endpoint, std::shared_ptr<Channel> chann
   std::lock_guard<std::shared_mutex> lock(_channels_mutex);
   _channels[endpoint] = channel;
 
-  events->publish("nodes/" + config->sip_node_id + "/channels/" + channel->_connection->remote_endpoint_name() +
-                      ";transport=" + channel->_connection->transport_name(),
-                  "{\"status\":\"registered\",\"at\":\"" + Util::get_zulu_time() + "\"}");
+  events->publish(
+      "nodes/" + config->sip_node_id + "/channels/" + channel->_connection->remote_endpoint_name() + ";transport=" + channel->_connection->transport_name(),
+      "{\"status\":\"registered\",\"at\":\"" + Util::get_zulu_time() + "\"}");
 
   _logger->debug("Registered Channel " + endpoint);
   return true;
@@ -120,9 +150,9 @@ bool Core::channel_register(std::string endpoint, std::shared_ptr<Channel> chann
 
 bool Core::channel_unregister(std::string endpoint, std::shared_ptr<Channel> channel) {
   std::lock_guard<std::shared_mutex> lock(_channels_mutex);
-  events->publish("nodes/" + config->sip_node_id + "/channels/" + channel->_connection->remote_endpoint_name() +
-                      ";transport=" + channel->_connection->transport_name(),
-                  "{\"status\":\"closed\",\"at\":\"" + Util::get_zulu_time() + "\"}");
+  events->publish(
+      "nodes/" + config->sip_node_id + "/channels/" + channel->_connection->remote_endpoint_name() + ";transport=" + channel->_connection->transport_name(),
+      "{\"status\":\"closed\",\"at\":\"" + Util::get_zulu_time() + "\"}");
 
   _channels.erase(endpoint);
   _logger->debug("Unregistered Channel " + endpoint);
@@ -130,12 +160,18 @@ bool Core::channel_unregister(std::string endpoint, std::shared_ptr<Channel> cha
 }
 
 void Core::channel_close_all() {
-  // Close All Channels
-  for (const auto& pair : _channels) pair.second->close();
+  // close() unregisters, which erases from _channels. Take a copy and empty the map
+  // first so nothing mutates it while we are walking it.
+  std::vector<std::shared_ptr<Channel>> channels;
 
-  // Remove all Channels
-  std::unique_lock<std::shared_mutex> lock(_channels_mutex);
-  _channels.clear();
+  {
+    std::unique_lock<std::shared_mutex> lock(_channels_mutex);
+    channels.reserve(_channels.size());
+    for (const auto& [endpoint, channel] : _channels) channels.push_back(channel);
+    _channels.clear();
+  }
+
+  for (const auto& channel : channels) channel->close();
 }
 
 // Nonce
@@ -184,7 +220,7 @@ void Core::process_message(std::shared_ptr<SIPMessage> message) {
   if (!message->header->contains("Via") || !message->header->contains("CSeq")) {
     _logger->info("[Request] - Incomplete Headers (No Via/CSeq) - Sending 400 Bad Request");
 
-    if(message->channel.expired()) {
+    if (message->channel.expired()) {
       _logger->info("[Request] - Channel has closed, cannot respond");
     }
 
@@ -206,9 +242,8 @@ void Core::process_message(std::shared_ptr<SIPMessage> message) {
 
   if (!transaction) {
     transaction = std::make_shared<Transaction>(_logger, message->channel.lock(), shared_from_this(), Transaction::Direction::Incoming, transactionId);
-    transaction->type = (message->header->type == SIPHeader::Type::Request && message->header->request_method == "INVITE")
-                                     ? Transaction::Type::INVITE
-                                     : Transaction::Type::NonINVITE;
+    transaction->type = (message->header->type == SIPHeader::Type::Request && message->header->request_method == "INVITE") ? Transaction::Type::INVITE
+                                                                                                                           : Transaction::Type::NonINVITE;
     transaction_register(transaction);
     transaction->start(config->sip_timer_t1_rtt_ms);
     message->transaction = transaction;
@@ -226,7 +261,7 @@ bool Core::transaction_register(std::shared_ptr<Transaction> transaction) {
   std::unique_lock<std::shared_mutex> lock(_transactions_mutex);
 
   _transactions[transaction->id] = transaction;
-  events->publish("/nodes/"+config->sip_node_id+"/transactions/" + transaction->id, "registered");
+  events->publish("/nodes/" + config->sip_node_id + "/transactions/" + transaction->id, "registered");
   return true;
 }
 
@@ -237,7 +272,7 @@ bool Core::transaction_unregister(std::string transactionId) {
 
   std::unique_lock<std::shared_mutex> lock(_transactions_mutex);
   _transactions.erase(transactionId);
-  events->publish("/nodes/"+config->sip_node_id+"/transactions/" + transaction->id, "unregistered");
+  events->publish("/nodes/" + config->sip_node_id + "/transactions/" + transaction->id, "unregistered");
   return true;
 }
 
@@ -250,21 +285,27 @@ std::shared_ptr<Transaction> Core::transaction_get(std::string transactionId) {
 }
 
 void Core::transaction_end_all() {
-  // End all transactions
-  for (const auto& pair : _transactions) pair.second->end();
+  // end() unregisters, which erases from _transactions. Take a copy and empty the map
+  // first so nothing mutates it while we are walking it.
+  std::vector<std::shared_ptr<Transaction>> transactions;
 
-  // Remove all transactions
-  std::unique_lock<std::shared_mutex> lock(_transactions_mutex);
-  _transactions.clear();
+  {
+    std::unique_lock<std::shared_mutex> lock(_transactions_mutex);
+    transactions.reserve(_transactions.size());
+    for (const auto& [id, transaction] : _transactions) transactions.push_back(transaction);
+    _transactions.clear();
+  }
+
+  for (const auto& transaction : transactions) transaction->end();
 }
 
 // Calls
 bool Core::call_register(std::shared_ptr<Call> call) {
   _calls[call->id] = call;
-  
+
   datastore->call_create(call);
 
-  events->publish("calls/"+call->id+"/register", call->id);
+  events->publish("calls/" + call->id + "/register", call->id);
 
   return true;
 }

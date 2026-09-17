@@ -98,6 +98,8 @@ class Core : public std::enable_shared_from_this<Core> {
   std::shared_ptr<events::EventSystem> events;
 
  private:
+  void _invite_from_event(std::shared_ptr<Channel> channel, std::shared_ptr<SIPIdentity> identity, const std::string& event, const std::string& payload);
+
   std::shared_ptr<loggers::Logger> _logger;
 
   std::unordered_map<std::string, std::shared_ptr<Channel>> _channels;
