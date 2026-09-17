@@ -11,9 +11,6 @@ The following modules are currently available:
 
 | Name         | Capabilities                    | Use Cases                             | Version | Status       |
 |:-------------|:--------------------------------|:--------------------------------------|:--------|:-------------|
-| db_sqlite    | Internal (SQLLite) backend      | Single AthenaSIP instance, no cluster | v0.0.1  | alpha        |           
-| db_mysql     | MySQL/MariaDB backend           | AthenaSIP Cluster                     | v0.0.1  | alpha        |           
-| db_postrgres | Postgres event backend          | AthenaSIP Cluster                     | v0.0.1  | alpha        |           
 | db_redis     | Redis event backend             | AthenaSIP Cluster                     | v0.0.1  | alpha        |           
 | db_dynamodb  | AWS DynamoDB event backend      | AthenaSIP Cluster                     | -       | planned      |           
 

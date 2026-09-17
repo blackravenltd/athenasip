@@ -30,7 +30,7 @@ For more information, please see the [docs](docs/) directory.
 AthenaSIP is built with **strong security defaults**—SIP communication is **TLS-only by default**, with **SRTP and DTLS-SRTP enforced** for media. Plaintext SIP (UDP/TCP) and RTP must be explicitly enabled. The server also ensures **strict cipher policies** and modern cryptographic standards.
 
 ### Self-Contained Yet Extensible
-AthenaSIP includes everything needed for a complete SIP solution **out of the box**—an integrated **database, eventing system, and RTP relay**—allowing immediate use without complex setup. However, all major components are **pluggable**, allowing users to swap in external databases (MySQL, PostgreSQL, SQLite), event systems, and media relays as needed.
+AthenaSIP includes everything needed for a complete SIP solution **out of the box**—an integrated **database, eventing system, and RTP relay**—allowing immediate use without complex setup. However, all major components are **pluggable**, allowing users to swap in external datastores, event systems, and media relays as needed.
 
 ### Cloud-Native & Soft-Clusterable
 Designed for **stateless** operation, AthenaSIP can scale horizontally, making it suitable for **containerized and distributed environments** like Kubernetes. It allows **soft clustering**, meaning it can dynamically distribute SIP signaling and media handling across multiple nodes.

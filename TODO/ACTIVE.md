@@ -60,10 +60,6 @@ interfaces to build on, and carries no dead backends.
 ### Working tree and hygiene
 - [ ] Run the `asan` and `tsan` presets once before M2 and fix what they report.
 
-### Crash and shutdown bugs
-- [ ] `pg_string` never returns (`src/datastores/postgres_datastore.cpp:43-50`).
-      Moot once Postgres is deleted; listed so it is not forgotten if deletion slips.
-
 ### Concurrency model
 - [ ] Give `Core` a `boost::asio::strand`; all server threads post into it; remove the
       ad-hoc mutexes on `_channels`, `_transactions`, `_calls`, `_channels_by_subscriber`.
@@ -111,17 +107,12 @@ model has not been audited to the same standard yet.
 - [ ] Event topic drift: `"/nodes/..."` leading slash (`src/core.cpp:229,240`),
       `"call.unregister"` (`src/core.cpp:274`). Define the topic scheme once, in docs.
 - [ ] `LoggerScoped::raw` logs at error level (`src/loggers/logger_scoped.cpp:17`).
-- [ ] `LuaScriptEngine::_register_logger_object` pushes mismatched upvalues
-      (`src/script/lua_logger.cpp:54-68`). Fix or delete with the Lua park.
 
-### Delete
-- [ ] Remove `src/datastores/{mysql,postgres,sqlite}_datastore.*`, their registrations
-      in `datastore_drivers.h`, the CMake `find_package` blocks for mysql-concpp,
-      PostgreSQL, libpqxx, SQLite3, and `sql/`. Update `docs/architecure.md`.
-- [ ] Decide `tinyxml2` and `yaml-cpp` stay (yes for YAML; tinyxml2 only if presence
-      PIDF needs it in M6, otherwise drop now).
 
 ### New interfaces
+- [ ] `MemoryDatastore` (`memory://`) is now the only thing standing between the tree
+      and a zero-config single node: with the SQL drivers gone, `redis://` is the only
+      datastore, so `config.example.yaml` points there and the quick start needs Redis.
 - [ ] `MemoryDatastore` (`memory://`): realms, subscribers, locations with TTL, nonces
       with TTL, calls. Backed by `ExpiryMap`. Used by tests and zero-config single node.
 - [ ] `Datastore` gains write operations: realm create/update/delete, subscriber
