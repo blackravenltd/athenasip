@@ -73,6 +73,11 @@ datastore:
 events:
   url: "mqtt://127.0.0.1:1883/?client_id=sip-01&keep_alive=30"
 
+media:
+  # builtin:// relays plain RTP from this process and needs nothing else installed.
+  # rtpengine://host:port is the production engine, and the one that does WebRTC.
+  url: "builtin://?public_address=0.0.0.0&port_min=22000&port_max=23000"
+
 http:
   address: 0.0.0.0
   port: 8080

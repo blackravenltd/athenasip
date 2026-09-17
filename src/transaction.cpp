@@ -6,9 +6,12 @@
 //
 #include "transaction.h"
 
+#include <ctime>
+
 #include "call.h"
 #include "channel.h"
 #include "core.h"
+#include "events/topics.h"
 #include "headers/sip_identity_header.h"
 #include "sip_message.h"
 #include "types/subscriber.h"
@@ -64,19 +67,19 @@ void Transaction::receive_message(std::shared_ptr<SIPMessage> message) {
 void Transaction::process_register(std::shared_ptr<SIPMessage> message) {
   _logger->debug("Received REGISTER");
 
-  if(_core.expired()) {
+  if (_core.expired()) {
     _logger->info("Cannot process REGISTER message, core has shut down");
     return;
   }
 
-  if(message->channel.expired()) {
+  if (message->channel.expired()) {
     _logger->info("Cannot process REGISTER message, reply channel has closed");
     return;
   }
 
   auto core = _core.lock();
   auto message_channel = message->channel.lock();
- 
+
   // No Authorization
   if (!message->header->contains("Authorization")) {
     // No Authorization Header
@@ -136,7 +139,7 @@ void Transaction::process_register(std::shared_ptr<SIPMessage> message) {
     }
   }
 
-  if(response->channel.expired()) {
+  if (response->channel.expired()) {
     _logger->info("Cannot process REGISTER message, reply channel has closed");
     return;
   }
@@ -149,12 +152,12 @@ void Transaction::process_register(std::shared_ptr<SIPMessage> message) {
 void Transaction::process_invite(std::shared_ptr<SIPMessage> message) {
   _logger->debug("Received INVITE");
 
-  if(_core.expired()) {
+  if (_core.expired()) {
     _logger->info("Cannot process INVITE message, core has shut down");
     return;
   }
 
-  if(message->channel.expired()) {
+  if (message->channel.expired()) {
     _logger->info("Cannot process INVITE message, reply channel has closed");
     return;
   }
@@ -163,32 +166,34 @@ void Transaction::process_invite(std::shared_ptr<SIPMessage> message) {
 
   // Send the event into the backend
   if (message->header->contains("To")) {
-
     auto to_header = message->header->headers_map["To"][0]->as<SIPIdentityHeader>();
+
+    auto from_identity = message->header->headers_map["From"][0]->as<SIPIdentityHeader>()->value;
 
     auto call = std::make_shared<Call>();
     call->id = message->header->headers_map["Call-ID"][0]->as<StringHeader>()->value;
-    call->from = message->header->headers_map["From"][0]->as<SIPIdentityHeader>()->value;
-    call->to = to_header->value;
     call->state = Call::State::Initial;
+    call->created_at = std::time(nullptr);
+
+    // Two legs to start with. More join for a conference; nothing here assumes two.
+    call->add_participant(from_identity, message->channel.lock(), true);
+    call->add_participant(to_header->value);
+
     core->call_register(call);
 
     boost::json::object obj;
     obj["call_id"] = call->id;
-    obj["from"] = call->from->to_string();
-    obj["to"] = call->to->to_string();
+    obj["from"] = from_identity->to_string();
+    obj["to"] = to_header->value->to_string();
     obj["sdp"] = message->body;
 
-    core->events->publish(
-      "subscriber/" + to_header->value->uri->to_string() + "/invite",
-      boost::json::serialize(obj)
-    );
+    core->events->publish(events::topics::subscriber_invite(to_header->value->uri->to_string()), boost::json::serialize(obj));
 
     // Send 100 Trying
     auto response = message->generate_response();
     response->header->response_code = 100;
     response->header->response_message = "Trying";
-    if(response->channel.expired()) {
+    if (response->channel.expired()) {
       _logger->info("Cannot process INVITE message, reply channel has closed");
       return;
     }
@@ -212,7 +217,7 @@ void Transaction::process_unknown(std::shared_ptr<SIPMessage> message) {
   response->header->response_code = 501;
   response->header->response_message = "Not Implemented";
 
-  if(response->channel.expired()) {
+  if (response->channel.expired()) {
     _logger->info("Cannot process INVITE message, reply channel has closed");
     return;
   }
@@ -225,8 +230,7 @@ void Transaction::process_unknown(std::shared_ptr<SIPMessage> message) {
 void Transaction::send_message(std::shared_ptr<SIPMessage> message) { _logger->debug("send_message " + message->header->first_line()); }
 
 void Transaction::send_401_unauthorized(std::shared_ptr<SIPMessage> message) {
-
-  if(_core.expired()) {
+  if (_core.expired()) {
     _logger->info("Cannot send 401 Unauthorized message, core has shut down");
     return;
   }
@@ -247,7 +251,7 @@ void Transaction::send_401_unauthorized(std::shared_ptr<SIPMessage> message) {
     response->header->add("WWW-Authenticate", "Digest realm=\"" + realm->name + "\", nonce=\"" + core->nonce_create(realm) + "\"");
   }
   // Send Response
-  if(response->channel.expired()) {
+  if (response->channel.expired()) {
     _logger->info("Cannot process 401 Unauthorized message, reply channel has closed");
     return;
   }

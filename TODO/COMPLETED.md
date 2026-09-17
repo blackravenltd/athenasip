@@ -341,3 +341,32 @@ uncommitted working tree on 2026-09-17.
 - [x] 133 tests green, and clean under both the `asan` and `tsan` presets after the
       conversion.
 
+### Media engine and multi-party Call (2026-09-17)
+
+- [x] `Call` is multi-party. `from`/`to` are gone, replaced by `participants`, each with
+      an identity, a weakly-held channel, an owning node id, dialog tags and its own
+      media streams, plus an optional `focus` URI for RFC 4579 conferencing, and
+      created/answered/ended timestamps. A two-party call is just the case of two
+      participants and no focus; nothing assumes there are only two.
+- [x] `MediaEngine` in `src/media/media_engine.h`, registered by URL scheme the same way
+      `Datastore` and `EventSystem` are. `capabilities()` returns
+      `{bridge, conference, record, transcode}` so a caller can ask rather than assume.
+      `offer`, `answer`, `release` and `query` name the participant they act for, and
+      `join`, `leave` and `roster` default to declining so a bridge-only driver does not
+      have to implement them.
+- [x] `Flags` are derived from the SDP, not the transport: `ice`, `dtls`, `srtp`,
+      `rtcp_mux`, and the participant index.
+- [x] `BuiltinMediaEngine` (`builtin://`) wraps `RTPRelay`/`RTPRelaySet`, claims `bridge`
+      only, and declines anything needing ICE, DTLS or SRTP rather than producing a
+      broken answer. `_map_media` is ported from `c2b14f8^:src/sip_core.cpp`, now
+      keeping relay sets per call so `release()` gives the ports back.
+- [x] `Config` reads a `media:` section, and `sip.allow_unencrypted` and
+      `sip.event_prefix`, which were in the YAML and the docs but never read, so
+      setting them did nothing. The `scripting:` section is gone from the example.
+- [x] `main.cpp` creates the engine from `config->media_url`, registers it with `Core`,
+      and closes it on shutdown.
+- [x] 13 tests for the engine: capabilities, SDP rewriting to this node, the RTCP
+      attribute, per-participant streams, relay reuse on a repeated offer, declining
+      WebRTC flags, release, query and registry resolution. 146 tests green, clean
+      under asan.
+

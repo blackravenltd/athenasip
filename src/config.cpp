@@ -39,6 +39,11 @@ bool Config::load_from_yaml(const std::string& filename) {
     return false;
   }
 
+  // Previously present in the YAML and the docs but never read, so setting it had no
+  // effect at all.
+  if (sip["allow_unencrypted"]) sip_allow_unencrypted = sip["allow_unencrypted"].as<bool>();
+  if (sip["event_prefix"]) sip_event_prefix = sip["event_prefix"].as<std::string>();
+
   // SIP Timers
   YAML::Node sip_timers = sip["timers"];
   if (sip_timers) {
@@ -238,6 +243,12 @@ bool Config::load_from_yaml(const std::string& filename) {
     } else {
       rtprelay_max_port = 23000;
     }
+  }
+
+  // --- Parse the 'media' section ---
+  YAML::Node media = config["media"];
+  if (media) {
+    if (media["url"]) media_url = media["url"].as<std::string>();
   }
 
   // --- Parse the 'http' section ---

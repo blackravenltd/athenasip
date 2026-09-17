@@ -23,6 +23,8 @@
 #include "events/topics.h"
 #include "loggers/logger_scoped.h"
 #include "loggers/logger_stdio.h"
+#include "media/media_engine.h"
+#include "media/media_engine_drivers.h"
 #include "rtp/rtp_relay.h"
 #include "servers/tcp_server.h"
 #include "servers/tls_server.h"
@@ -60,6 +62,7 @@ int main(int argc, char* argv[]) {
   // Register Datastore Handlers, Event System Handlers
   register_builtin_datastores(logger);
   register_builtin_event_systems(logger);
+  media::register_builtin_media_engines(logger);
 
   // Create Config
   auto config = std::make_shared<Config>(logger);
@@ -103,8 +106,27 @@ int main(int argc, char* argv[]) {
     return -3;
   }
 
+  // Create Media Engine
+  auto media_engine = media::MediaEngine::create_driver(logger, config->media_url);
+  if (!media_engine) {
+    logger->error("Unknown media scheme: " + config->media_url);
+    datastore->close();
+    events->close();
+    return -2;
+  }
+
+  logger->info("Media Driver: " + media_engine->get_driver_name());
+
+  if (!media_engine->connect()) {
+    logger->error("Media Engine Connection Failed: " + config->media_url);
+    datastore->close();
+    events->close();
+    return -3;
+  }
+
   // Create Core
   auto core = std::make_shared<Core>(logger, config, datastore, events);
+  core->media_register(media_engine);
 
   // Start RTPRelay
   if (config->rtprelay_enable) {
@@ -192,6 +214,7 @@ int main(int argc, char* argv[]) {
 
         events->publish(events::topics::node_status(config->sip_node_id), "{\"stopped\":\"" + Util::get_zulu_time() + "\"}");
 
+        media_engine->close();
         datastore->close();
         events->close();
 
