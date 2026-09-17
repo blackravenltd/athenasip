@@ -187,11 +187,6 @@ bool Config::load_from_yaml(const std::string& filename) {
       _logger->error("Missing 'datastore.url'");
       return false;
     }
-
-    if (datastore["create"])
-      db_create = datastore["create"].as<bool>();
-    else
-      db_create = true;
   }
 
   // --- Parse the 'event' section ---

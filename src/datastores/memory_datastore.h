@@ -36,32 +36,30 @@ class MemoryDatastore : public Datastore {
   bool is_connected() const override;
 
   std::shared_ptr<types::Realm> realm_get_by_name(const std::string& realm_name) override;
+  bool realm_create(std::shared_ptr<types::Realm> realm) override;
+  bool realm_update(std::shared_ptr<types::Realm> realm) override;
+  bool realm_delete(const std::string& realm_name) override;
+  std::vector<std::shared_ptr<types::Realm>> realm_list() override;
+
   std::shared_ptr<types::Subscriber> subscriber_get(std::shared_ptr<types::SIPIdentity> identity) override;
+  bool subscriber_create(std::shared_ptr<types::Subscriber> subscriber) override;
+  bool subscriber_update(std::shared_ptr<types::Subscriber> subscriber) override;
+  bool subscriber_delete(std::shared_ptr<types::SIPIdentity> identity) override;
+  std::vector<std::shared_ptr<types::Subscriber>> subscriber_list(const std::string& realm_name) override;
+
   bool subscriber_register(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact) override;
   bool subscriber_unregister(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact) override;
+  std::vector<types::Location> location_list(std::uint64_t subscriber_id) override;
+
   bool nonce_create(const std::string& nonce, const std::time_t& expires_at) override;
   bool nonce_check(std::string nonce) override;
 
   bool call_create(std::shared_ptr<Call> call) override;
+  bool call_update(std::shared_ptr<Call> call) override;
   std::shared_ptr<Call> call_get(const std::string& id) override;
-
-  // Seeding. The Datastore interface carries no write operations yet, so provisioning
-  // goes through these until it does.
-  void realm_add(std::shared_ptr<types::Realm> realm);
-  void subscriber_add(std::shared_ptr<types::Subscriber> subscriber);
-
-  // Target determination needs every contact registered for a subscriber
-  // (RFC 3261 16.5). Expired locations are dropped on read.
-  std::vector<std::shared_ptr<types::SIPUri>> locations_get(std::uint64_t subscriber_id);
+  std::vector<std::shared_ptr<Call>> call_list() override;
 
  private:
-  struct Location {
-    std::shared_ptr<types::SIPUri> contact;
-    std::uint64_t subscriber_id = 0;
-    std::time_t expires_at = 0;
-    bool nat = false;
-  };
-
   static std::string _subscriber_key(const std::string& realm_name, const std::string& user);
   static std::string _location_key(std::uint64_t subscriber_id, const std::string& user, const std::string& host, std::uint16_t port);
 
@@ -76,7 +74,7 @@ class MemoryDatastore : public Datastore {
 
   std::unordered_map<std::string, std::shared_ptr<types::Realm>> _realms;
   std::unordered_map<std::string, std::shared_ptr<types::Subscriber>> _subscribers;
-  std::unordered_map<std::string, Location> _locations;
+  std::unordered_map<std::string, types::Location> _locations;
   std::unordered_map<std::string, std::time_t> _nonces;
   std::unordered_map<std::string, std::shared_ptr<Call>> _calls;
 };

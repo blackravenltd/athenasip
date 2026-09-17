@@ -52,23 +52,6 @@ Move items to `COMPLETED.md` as they land, with a one-line note on what shipped.
 
 ---
 
-## Milestone 1 - Foundations
-
-Goal: the tree builds and tests clean, shuts down without crashing, has the right
-interfaces to build on, and carries no dead backends.
-
-
-### New interfaces
-- [ ] `Config::db_create` is read from `datastore.create` in the YAML but nothing uses
-      it now the SQL drivers are gone. Remove with the rest of the Config cleanup.
-- [ ] `Realm::registration_timeout` has no documented unit. `MemoryDatastore` reads it
-      as seconds; nothing writes it yet, so pin the unit down when provisioning lands.
-- [ ] `Datastore` gains write operations: realm create/update/delete, subscriber
-      create/update/delete, location list, call list/update. `RedisDatastore` and
-      `MemoryDatastore` implement all of it.
-
----
-
 ## Milestone 2 - A standards-compliant call on one node
 
 Goal: INVITE / 18x / 200 / ACK / BYE / CANCEL between two subscribers on one node over

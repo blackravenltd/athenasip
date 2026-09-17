@@ -22,12 +22,13 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
+#include "../call.h"
 #include "../loggers/logger.h"
 #include "../loggers/logger_scoped.h"
 #include "../types/url.h"
 #include "../util.h"
-#include "../call.h"
 #include "datastore.h"
 
 namespace athenasip::datastores {
@@ -65,19 +66,34 @@ class RedisDatastore : public Datastore {
   bool is_connected() const override;
 
   std::shared_ptr<types::Realm> realm_get_by_name(const std::string& realm_name) override;
+  bool realm_create(std::shared_ptr<types::Realm> realm) override;
+  bool realm_update(std::shared_ptr<types::Realm> realm) override;
+  bool realm_delete(const std::string& realm_name) override;
+  std::vector<std::shared_ptr<types::Realm>> realm_list() override;
+
   std::shared_ptr<types::Subscriber> subscriber_get(std::shared_ptr<types::SIPIdentity> identity) override;
+  bool subscriber_create(std::shared_ptr<types::Subscriber> subscriber) override;
+  bool subscriber_update(std::shared_ptr<types::Subscriber> subscriber) override;
+  bool subscriber_delete(std::shared_ptr<types::SIPIdentity> identity) override;
+  std::vector<std::shared_ptr<types::Subscriber>> subscriber_list(const std::string& realm_name) override;
+
   bool subscriber_register(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact) override;
   bool subscriber_unregister(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact) override;
+  std::vector<types::Location> location_list(std::uint64_t subscriber_id) override;
+
   bool nonce_create(const std::string& nonce, const std::time_t& expires_at) override;
   bool nonce_check(std::string nonce) override;
 
   bool call_create(std::shared_ptr<Call>) override;
+  bool call_update(std::shared_ptr<Call>) override;
   std::shared_ptr<Call> call_get(const std::string& id) override;
+  std::vector<std::shared_ptr<Call>> call_list() override;
 
  private:
   using BoolCallback = std::function<void(RedisError error, bool value)>;
   using StringCallback = std::function<void(RedisError error, std::optional<std::string> value)>;
   using IntegerCallback = std::function<void(RedisError error, std::int64_t value)>;
+  using StringsCallback = std::function<void(RedisError error, std::vector<std::string> value)>;
 
   void _apply_url(std::shared_ptr<types::URL> url);
   boost::redis::config _make_config() const;
@@ -89,12 +105,19 @@ class RedisDatastore : public Datastore {
   std::int64_t _del(std::string key);
   bool _exists(std::string key);
 
+  // Sets are used as indexes, so listing never needs KEYS or SCAN. KEYS blocks the
+  // server, and location_list is on the call path for target determination.
+  bool _sadd(std::string key, std::string member);
+  bool _srem(std::string key, std::string member);
+  std::vector<std::string> _smembers(std::string key);
+
   void _async_ping(BoolCallback callback);
   void _async_set(std::string key, std::string value, BoolCallback callback);
   void _async_set_ex(std::string key, std::string value, std::chrono::seconds expiry, BoolCallback callback);
   void _async_get(std::string key, StringCallback callback);
   void _async_del(std::string key, IntegerCallback callback);
   void _async_exists(std::string key, BoolCallback callback);
+  void _async_strings(std::string operation, boost::redis::request request, StringsCallback callback);
 
   void _async_ok(std::string operation, boost::redis::request request, BoolCallback callback);
   void _async_string(std::string operation, boost::redis::request request, StringCallback callback);
@@ -103,11 +126,25 @@ class RedisDatastore : public Datastore {
   bool _wait_bool(std::function<void(BoolCallback)> starter);
   std::optional<std::string> _wait_string(std::function<void(StringCallback)> starter);
   std::int64_t _wait_integer(std::function<void(IntegerCallback)> starter);
+  std::vector<std::string> _wait_strings(std::function<void(StringsCallback)> starter);
 
   static std::string _realm_key(const std::string& realm_name);
   static std::string _subscriber_key(const std::string& realm_name, const std::string& user);
   static std::string _location_key(std::uint64_t subscriber_id, const std::string& user, const std::string& host, std::uint16_t port);
   static std::string _nonce_key(const std::string& nonce);
+  static std::string _call_key(const std::string& call_id);
+
+  static std::string _realm_index_key();
+  static std::string _subscriber_index_key(const std::string& realm_name);
+  static std::string _location_index_key(std::uint64_t subscriber_id);
+  static std::string _call_index_key();
+
+  static std::string _serialise_realm(const std::shared_ptr<types::Realm>& realm);
+  static std::string _serialise_subscriber(const std::shared_ptr<types::Subscriber>& subscriber);
+  static std::string _serialise_call(const std::shared_ptr<Call>& call);
+
+  std::shared_ptr<types::Realm> _parse_realm(const std::string& value) const;
+  std::shared_ptr<Call> _parse_call(const std::string& value) const;
 
   std::string _duration_ms(std::chrono::high_resolution_clock::time_point start) const;
   RedisError _not_connected_error() const;

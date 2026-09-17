@@ -370,3 +370,39 @@ uncommitted working tree on 2026-09-17.
       WebRTC flags, release, query and registry resolution. 146 tests green, clean
       under asan.
 
+### Datastore write operations (2026-09-18)
+
+- [x] `Datastore` gains realm create/update/delete/list, subscriber
+      create/update/delete/list, `location_list`, and call update/list. create and
+      update are separate throughout, so provisioning can tell "already exists" from
+      "changed" rather than silently overwriting, which is what the admin API needs to
+      answer 409.
+- [x] `types::Location` carries the whole binding, not just a contact URI:
+      subscriber id, node id, flow id and Path for the cluster, registered and expiry
+      times, and the NAT flag. `MemoryDatastore`'s informal `realm_add`/`subscriber_add`
+      seeding helpers are gone, replaced by the real interface.
+- [x] `RedisDatastore` implements all of it, with set-backed indexes
+      (`athena:index:realms`, `:subscribers:<realm>`, `:locations:<id>`, `:calls`) so
+      listing never needs `KEYS` or `SCAN`. `KEYS` blocks the server and `location_list`
+      is on the call path for target determination. It also implements calls, which
+      were stubs returning false and nullptr, serialising participants.
+- [x] Fixed while testing it: Redis wrote no `contact` field but `location_list` read
+      one, so every registration lookup threw and returned an empty list. The parse is
+      also per record now, so one unreadable binding cannot hide the rest.
+- [x] Fixed while testing it: `boost::redis::connection` is not thread safe, its
+      channels use a null mutex, but every `async_exec` was being initiated from
+      whichever thread called in while the datastore's own io thread ran the
+      connection. All four call sites now post onto the connection's executor.
+      ThreadSanitizer reported the race against a live server; it is clean now.
+- [x] `Realm::registration_timeout` is documented as seconds, matching the Expires
+      header it answers (RFC 3261 10.2.1). `Config::db_create` removed: dead with the
+      SQL drivers.
+- [x] `tests/datastores/redis_datastore_test.cpp` runs against a real Redis when
+      `ATHENA_TEST_REDIS_URL` is set and skips otherwise, so a machine without Redis
+      still runs the suite green. 163 tests, clean under asan and tsan with Redis.
+
+## Milestone 1 - Foundations: complete (2026-09-18)
+
+Every item is done. The tree builds and tests clean, shuts down without crashing, has
+the interfaces M2 builds on, and carries no dead backends.
+
