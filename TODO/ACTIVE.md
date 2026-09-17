@@ -57,14 +57,25 @@ Move items to `COMPLETED.md` as they land, with a one-line note on what shipped.
 Goal: the tree builds and tests clean, shuts down without crashing, has the right
 interfaces to build on, and carries no dead backends.
 
-### Working tree and hygiene
-- [ ] Run the `asan` and `tsan` presets once before M2 and fix what they report.
 
 ### Concurrency model
-- [ ] Give `Core` a `boost::asio::strand`; all server threads post into it; remove the
-      ad-hoc mutexes on `_channels`, `_transactions`, `_calls`, `_channels_by_subscriber`.
+
+Every server (TCP, TLS, UDP, WebSocket) and the admin API runs its own `io_context` on
+its own thread, plus the global context, the Redis io thread and the MQTT io thread. So
+`Core` really is reached from several threads at once, and the maps it keeps have to be
+safe for that.
+
+The immediate races are closed (see COMPLETED). The strand conversion is deferred, and
+is bigger than one line of plan suggests:
+
+- [ ] Give `Core` a `boost::asio::strand` and have server threads post into it. This
+      also needs a strand per `Connection`: once Core work runs on the Core strand,
+      `Channel::send` writes to a socket from that strand while the owning server thread
+      is reading the same socket, and an asio socket is not safe for that. Do this with
+      the M2 transaction layer, which rewrites the message path anyway, rather than
+      refactoring a path that is about to be replaced.
 - [ ] `AsyncQueue::_check_item` reads both queues without locks (`src/async_queue.h:44`).
-      Rework or replace once servers post into the Core strand.
+      Rework or replace with the strand work.
 
 ### SIP correctness (RFC 3261 7.3)
 
