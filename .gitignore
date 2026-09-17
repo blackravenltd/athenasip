@@ -34,9 +34,13 @@
 # VSCode
 .vscode
 
-# Build dir
+# Build dirs
 build
+build-*
 external
 
 # Admin System
 admin/*
+
+# macOS
+.DS_Store

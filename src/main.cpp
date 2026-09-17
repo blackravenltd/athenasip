@@ -13,6 +13,7 @@
 
 #include "api/admin_api.h"
 #include "api/static_middleware.h"
+#include "build_version.h"
 #include "config.h"
 #include "core.h"
 #include "datastores/datastore.h"
@@ -43,8 +44,7 @@ void wait_for_signal(boost::asio::signal_set& signals, std::function<void(int)> 
 }
 
 int main(int argc, char* argv[]) {
-  // This is v0.0.1
-  auto version = std::make_shared<Version>(0, 0, 1);
+  auto version = std::make_shared<Version>(ATHENA_VERSION_MAJOR, ATHENA_VERSION_MINOR, ATHENA_VERSION_PATCH);
 
   // Create Logger
   auto logger = std::make_shared<loggers::LoggerStdIO>(LogLevel::DEBUG);
