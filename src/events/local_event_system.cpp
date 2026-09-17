@@ -13,7 +13,7 @@
 namespace athenasip::events {
 
 LocalEventSystem::LocalEventSystem(std::shared_ptr<athenasip::loggers::Logger> logger)
-    : _logger(std::make_shared<loggers::LoggerScoped>("internal_event_system", std::move(logger))), _io_context(detail::getGlobalIOContext()) {}
+    : _logger(std::make_shared<loggers::LoggerScoped>("internal_event_system", std::move(logger))), _io_context(detail::get_global_io_context()) {}
 
 LocalEventSystem::LocalEventSystem(std::shared_ptr<athenasip::loggers::Logger> logger, std::shared_ptr<types::URL> url) : LocalEventSystem(std::move(logger)) {
   (void)url;

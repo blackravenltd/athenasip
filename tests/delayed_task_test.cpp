@@ -18,7 +18,7 @@ using namespace athenasip;
 
 TEST(DelayedTaskTest, ExecutesTask) {
   // Restart the global io_context to clear any previous state.
-  detail::getGlobalIOContext().restart();
+  detail::get_global_io_context().restart();
 
   std::atomic<int> testInt;
 
@@ -43,7 +43,7 @@ TEST(DelayedTaskTest, ExecutesTask) {
 }
 
 TEST(DelayedTaskTest, CancelPreventsExecution) {
-  detail::getGlobalIOContext().restart();
+  detail::get_global_io_context().restart();
 
   // Schedule a task that would return 99 after 10ms.
   auto task = DelayedTask<int>::schedule([]() -> int { return 99; }, 10);
@@ -62,7 +62,7 @@ TEST(DelayedTaskTest, CancelPreventsExecution) {
 }
 
 TEST(DelayedTaskTest, ThrowsIfNotExecutedYet) {
-  detail::getGlobalIOContext().restart();
+  detail::get_global_io_context().restart();
 
   // Schedule a task with a long delay.
   auto task = DelayedTask<int>::schedule([]() -> int { return 123; }, 50);
@@ -75,7 +75,7 @@ TEST(DelayedTaskTest, ThrowsIfNotExecutedYet) {
 }
 
 TEST(DelayedTaskTest, MultipleCancelCalls) {
-  detail::getGlobalIOContext().restart();
+  detail::get_global_io_context().restart();
 
   // Schedule a task.
   auto task = DelayedTask<int>::schedule([]() -> int { return 5; }, 10);

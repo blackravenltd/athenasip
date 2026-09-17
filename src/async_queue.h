@@ -21,7 +21,7 @@ class AsyncQueue {
   using CallbackFn = std::function<void(T item)>;
 
  public:
-  AsyncQueue() : _io_context(detail::getGlobalIOContext()) {}
+  AsyncQueue() : _io_context(detail::get_global_io_context()) {}
 
   void push(T item) {
     {

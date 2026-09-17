@@ -12,7 +12,7 @@
 #include "global_io_context.h"
 
 inline void process_io_context_for(std::chrono::milliseconds duration) {
-  auto& io_context = athenasip::detail::getGlobalIOContext();
+  auto& io_context = athenasip::detail::get_global_io_context();
   auto start = std::chrono::steady_clock::now();
   while (std::chrono::steady_clock::now() - start < duration) {
     io_context.poll();

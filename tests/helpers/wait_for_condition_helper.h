@@ -17,7 +17,7 @@ inline bool waitForCondition(const std::atomic<bool>& flag, std::chrono::millise
     auto start = std::chrono::steady_clock::now();
     while (!flag.load() && (std::chrono::steady_clock::now() - start < timeout)) {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        athenasip::detail::getGlobalIOContext().poll(); // Process any queued asynchronous tasks.
+        athenasip::detail::get_global_io_context().poll(); // Process any queued asynchronous tasks.
     }
     return flag.load();
 }

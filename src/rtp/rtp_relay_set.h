@@ -31,7 +31,7 @@ class RTPRelaySet : public std::enable_shared_from_this<RTPRelaySet> {
       : port(_port),
         bind_address(_bind_address),
         _logger(std::make_shared<LoggerScoped>(_bind_address + ":" + std::to_string(_port), logger)),
-        _io_context(detail::getGlobalIOContext()),
+        _io_context(detail::get_global_io_context()),
         _socket(_io_context, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address(_bind_address), _port)),
         _buffer(boost::asio::buffer(_recv_buffer)) {}
 

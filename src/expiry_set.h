@@ -24,7 +24,7 @@ class ExpirySet : public std::enable_shared_from_this<ExpirySet<T>> {
     {
       std::lock_guard<std::mutex> lock(_mutex);
       // Cancel any existing expiry for this item.
-      removeInternal(item);
+      remove_internal(item);
     }
 
     // Create a lambda that will be invoked when the delayed task expires.
@@ -57,7 +57,7 @@ class ExpirySet : public std::enable_shared_from_this<ExpirySet<T>> {
   // If an expiry task exists, it is cancelled.
   void remove(const T& item) {
     std::lock_guard<std::mutex> lock(_mutex);
-    removeInternal(item);
+    remove_internal(item);
   }
 
   // Const version of operator[] to access the delayed task associated with an item.
@@ -84,7 +84,7 @@ class ExpirySet : public std::enable_shared_from_this<ExpirySet<T>> {
 
  protected:
   // Internal remove function, must be called with _mutex locked.
-  void removeInternal(const T& item) {
+  void remove_internal(const T& item) {
     auto it = _timeouts.find(item);
     if (it != _timeouts.end()) {
       // Cancel the associated delayed task.
