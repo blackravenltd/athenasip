@@ -160,3 +160,36 @@ uncommitted working tree on 2026-09-17.
       tree and `main.cpp` builds `Version` from `ATHENA_VERSION_*`. The splash reads
       v0.1.0.
 
+### Crash and shutdown bugs (2026-09-17)
+
+- [x] `Core::transaction_end_all` and `Core::channel_close_all` erased from the map they
+      were iterating, because `end()` and `close()` unregister. Both copy out under the
+      lock, clear, then act. This was the segfault on close from `737ef1a` (`d58b096`).
+- [x] `Channel::send` and `_schedule_async_write` dereferenced `_connection` after
+      `close()` reset it, and the async write buffer was a local that died before the
+      write completed. Guarded, and the buffer is owned by the completion handler
+      (`d58b096`).
+- [x] The subscriber event subscription used a `subscriber/<uri>/#` filter, which also
+      matched the node's own status publish and then threw on `at("call_id")`. It now
+      takes the invite topic alone, captures `weak_ptr` rather than a `shared_ptr` to
+      the channel and a raw `this`, and validates every field (`d58b096`).
+
+### SIP correctness, header model (2026-09-17)
+
+- [x] `SIPHeader::add_start` updated a copy of the map vector, so `headers_map[f][0]`
+      was the oldest value and topmost-Via lookups read the wrong hop (`7b9b4f9`).
+- [x] `first_line()` dereferenced a null `request_uri`; `type` defaults to `Request`, so
+      any hand-built header without a URI segfaulted on serialisation. The outbound
+      INVITE built from an event did exactly that (`7b9b4f9`).
+- [x] Field names are matched case-insensitively (RFC 3261 7.3.1). The triple-cased
+      `Record-Route` removal in `Channel::send` is gone.
+- [x] Compact forms resolve to their long names (RFC 3261 7.3.3, 20).
+- [x] Comma-separated values split into separate rows for list-valued fields only,
+      respecting quoted strings and angle brackets (RFC 3261 7.3.1). Credential fields
+      are excluded, since their commas separate parameters.
+- [x] `parse()` strips the CR of each CRLF, so the blank line actually ends the headers,
+      and reports malformed start lines and header lines through `is_valid()`.
+- [x] Tests: `TopicFilter` (13 cases, previously none), `SIPHeader` behaviour, and
+      `SIPHeaderRFCTest` deriving its expectations from RFC 3261 rather than from the
+      implementation. 76 tests green.
+

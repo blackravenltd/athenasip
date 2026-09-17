@@ -61,16 +61,6 @@ interfaces to build on, and carries no dead backends.
 - [ ] Run the `asan` and `tsan` presets once before M2 and fix what they report.
 
 ### Crash and shutdown bugs
-- [ ] `Core::transaction_end_all` (`src/core.cpp:252-259`) and `Core::channel_close_all`
-      (`src/core.cpp:132-139`) erase from the map they are iterating (via `end()` /
-      `close()` -> unregister). Copy out under the lock, clear, then end each. This is
-      the probable "segfault on close" from `737ef1a`.
-- [ ] `Channel::send` / `_schedule_async_write` dereference `_connection` after
-      `close()` resets it (`src/channel.cpp:91,99,145`).
-- [ ] Subscriber event callback (`src/core.cpp:56-81`): filter `subscriber/<uri>/#`
-      matches the node's own `/status` publish and throws on `at("call_id")`; captures
-      `channel` by `shared_ptr` (leak) and raw `this`. Subscribe narrowly, capture
-      `weak_ptr`, validate JSON.
 - [ ] `pg_string` never returns (`src/datastores/postgres_datastore.cpp:43-50`).
       Moot once Postgres is deleted; listed so it is not forgotten if deletion slips.
 
@@ -80,13 +70,27 @@ interfaces to build on, and carries no dead backends.
 - [ ] `AsyncQueue::_check_item` reads both queues without locks (`src/async_queue.h:44`).
       Rework or replace once servers post into the Core strand.
 
+### SIP correctness (RFC 3261 7.3)
+
+The header model was not a faithful one. These are done; the rest of the message
+model has not been audited to the same standard yet.
+
+- [ ] Audit `SIPMessage`, `SIPUri`, `SIPIdentity` and `SDP` against the RFC grammar the
+      way `SIPHeader` now is. Do not assume the existing shapes are right: they were
+      written before the standards-first reset. Tests come from the RFC, not from the
+      current behaviour.
+- [ ] `Header::create` silently falls back to `StringHeader` when a typed parse fails,
+      so a malformed Via is indistinguishable from a text header. Decide whether that
+      should mark the message invalid.
+- [ ] Nothing calls `SIPHeader::is_valid()` yet. `Core::process_message` should answer
+      400 Bad Request on a failed parse (RFC 3261 8.2.1, 16.3) rather than only
+      checking for Via and CSeq.
+
 ### Logic bugs
 - [ ] `Core::subscriber_register` (`src/core.cpp:49-51`) tests the subscriber row, not
       the registration, so the location is never written.
 - [ ] `Core::subscriber_unregister` (`src/core.cpp:90-103`) unsubscribes events only on
       the failure path.
-- [ ] `SIPHeader::add_start` (`src/sip_header.cpp:23-32`) mutates a copy of the map
-      vector; topmost Via lookup is wrong after prepend.
 - [ ] `Channel::send` hardcodes `SIP/2.0/TCP` (`src/channel.cpp:104`); `message->branch`
       is never set. Fixed properly by the M2 transaction layer, but must not ship as is.
 - [ ] `Config` reads `rtprelay.min_port`/`max_port`; YAML and docs say
