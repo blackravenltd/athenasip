@@ -117,6 +117,7 @@ class Core : public std::enable_shared_from_this<Core> {
   std::shared_mutex _transactions_mutex;
 
   std::unordered_map<std::string, std::shared_ptr<Call>> _calls;
+  std::shared_mutex _calls_mutex;
 };
 
 }  // namespace athenasip

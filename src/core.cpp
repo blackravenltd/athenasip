@@ -74,7 +74,11 @@ bool Core::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shar
                                                      });
   }
 
-  _channels_by_subscriber[subscriber->id] = channel;
+  {
+    std::unique_lock<std::shared_mutex> lock(_channels_mutex);
+    _channels_by_subscriber[subscriber->id] = channel;
+  }
+
   events->publish(events::topics::subscriber_status(subscriber->identity->uri->to_string()),
                   "{\"contact\":\"" + contact->to_string() + "\",\"node\":\"" + config->sip_node_id + "\",\"registered\":\"" + Util::get_zulu_time() + "\"}");
   return true;
@@ -134,7 +138,10 @@ bool Core::subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::sh
     channel->_event_subscription = nullptr;
   }
 
-  _channels_by_subscriber.erase(subscriber->id);
+  {
+    std::unique_lock<std::shared_mutex> lock(_channels_mutex);
+    _channels_by_subscriber.erase(subscriber->id);
+  }
 
   if (!datastore->subscriber_unregister(subscriber, contact)) {
     _logger->error("Cannot unregister subscriber identity " + subscriber->identity->to_string() + " - datastore failure");
@@ -144,7 +151,14 @@ bool Core::subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::sh
   return true;
 }
 
-std::shared_ptr<Channel> Core::subscriber_get_channel(std::shared_ptr<Subscriber> subscriber) { return _channels_by_subscriber[subscriber->id]; }
+std::shared_ptr<Channel> Core::subscriber_get_channel(std::shared_ptr<Subscriber> subscriber) {
+  std::shared_lock<std::shared_mutex> lock(_channels_mutex);
+
+  // operator[] would insert an empty entry for an unknown subscriber.
+  auto search = _channels_by_subscriber.find(subscriber->id);
+  if (search == _channels_by_subscriber.end()) return nullptr;
+  return search->second;
+}
 
 // Channels
 
@@ -311,8 +325,13 @@ void Core::transaction_end_all() {
 
 // Calls
 bool Core::call_register(std::shared_ptr<Call> call) {
-  _calls[call->id] = call;
+  {
+    std::unique_lock<std::shared_mutex> lock(_calls_mutex);
+    _calls[call->id] = call;
+  }
 
+  // The datastore and event system are left outside the lock: both can block, and
+  // neither needs the map held.
   datastore->call_create(call);
 
   events->publish(events::topics::call_register(call->id), call->id);
@@ -321,12 +340,18 @@ bool Core::call_register(std::shared_ptr<Call> call) {
 }
 
 bool Core::call_unregister(std::string callId) {
-  _calls.erase(callId);
+  {
+    std::unique_lock<std::shared_mutex> lock(_calls_mutex);
+    _calls.erase(callId);
+  }
+
   events->publish(events::topics::call_unregister(callId), callId);
   return true;
 }
 
 std::shared_ptr<Call> Core::call_get(std::string callId) {
+  std::shared_lock<std::shared_mutex> lock(_calls_mutex);
+
   auto search = _calls.find(callId);
   if (search == _calls.end()) return nullptr;
   return search->second;

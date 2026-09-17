@@ -296,3 +296,25 @@ uncommitted working tree on 2026-09-17.
 - [x] Tests: `TopicsTest` (6) over the scheme, and Via transport, branch generation and
       branch preservation through `Channel::send`. 129 tests green.
 
+### Core data races and the sanitizers (2026-09-17)
+
+- [x] `_calls` had no mutex at all. `call_register`, `call_unregister` and `call_get`
+      mutated and read it from whichever server thread the INVITE arrived on, so two
+      concurrent calls on different transports were concurrent `unordered_map`
+      mutation.
+- [x] `_channels_by_subscriber` was declared in `core.h` as guarded by
+      `_channels_mutex`, but nothing ever took it: `subscriber_register`,
+      `subscriber_unregister` and `subscriber_get_channel` all reached the map
+      unguarded.
+- [x] `subscriber_get_channel` used `operator[]`, which inserts an empty entry for an
+      unknown subscriber: a mutation inside a getter. It uses `find` now.
+- [x] The datastore and event system calls stay outside the locks: both can block and
+      neither needs the map held.
+- [x] `tests/core_concurrency_test.cpp`: eight threads through call register, get and
+      unregister; a reader running alongside registration; concurrent channel creation;
+      and concurrent subscriber channel lookup. Verified to catch the bug by reverting
+      the locks, where the first test hangs with eight threads spinning at 688% CPU in
+      a cycled `unordered_map` bucket chain.
+- [x] Whole suite run under both sanitizers: `asan` (ASan + UBSan) and `tsan`, 133
+      tests, clean under both. This was the "run both once before M2" item.
+
