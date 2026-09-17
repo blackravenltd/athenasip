@@ -235,3 +235,22 @@ uncommitted working tree on 2026-09-17.
       the README. `docs/versions/v0_0_1_overview.md` is left alone as a record of what
       0.0.1 actually shipped.
 
+### MemoryDatastore (2026-09-17)
+
+- [x] `MemoryDatastore` (`memory://`): realms, subscribers, locations with TTL, nonces
+      with TTL and calls, all in process. Registered in `datastore_drivers.h`, and now
+      the default in `config.example.yaml`, so a single node runs with no external
+      service at all.
+- [x] Deviation from the plan, on purpose: locations and nonces carry explicit expiry
+      timestamps and are pruned on read, rather than being backed by `ExpiryMap`.
+      `ExpiryMap` cannot be enumerated, and target determination needs every contact
+      for a subscriber (RFC 3261 16.5). It also drives expiry from the global
+      io_context, which would make a datastore's correctness depend on that context
+      being polled. Lazy pruning is deterministic in tests and has no such dependency.
+- [x] `types::URL` accepts a hostless URL, so `memory://` parses. The regex required a
+      non-empty host, which also rejected `file:///path`.
+- [x] `Config::sqlite_create_database` removed: dead with the SQLite driver.
+- [x] Tests: 14 for `MemoryDatastore` covering realms, subscriber lookup, multiple
+      contacts, re-registration, selective unregister, nonce expiry, calls and
+      resolution through the driver registry. 111 tests green.
+

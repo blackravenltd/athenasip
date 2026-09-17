@@ -66,7 +66,9 @@ rtprelay:
   port_max: 23000
 
 datastore:
-  url: "redis://127.0.0.1:6379"
+  # memory:// keeps everything in this process: no external service, nothing
+  # survives a restart. Use redis:// for a cluster or to keep registrations.
+  url: "memory://"
 
 events:
   url: "mqtt://127.0.0.1:1883/?client_id=sip-01&keep_alive=30"

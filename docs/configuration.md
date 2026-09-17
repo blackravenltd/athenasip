@@ -33,7 +33,7 @@ rtprelay:
   port_max: 23000
 
 db:
-  url: "redis://127.0.0.1:6379"
+  url: "memory://"
 ```
 
 ### `sip` Section
@@ -187,8 +187,16 @@ This section configures the database.
 
 #### `url`
 
-The URL to access the database, in the format: `scheme://user[:password]@host[:port]/databasename`. AthenaSIP ships with support for the following:
+The URL of the datastore. AthenaSIP ships with two:
 
-| Database                                  | Scheme     | Example URL                           |
-|:------------------------------------------|:-----------|:--------------------------------------|
-|[MariaDB](https://mariadb.org/)            | `mariadb`  | `mariadb://root@localhost/athenasip`  |
+| Datastore                  | Scheme   | Example URL              |
+|:---------------------------|:---------|:-------------------------|
+| In memory                  | `memory` | `memory://`              |
+|[Redis](https://redis.io/)  | `redis`  | `redis://127.0.0.1:6379` |
+
+`memory://` keeps realms, subscribers, registrations, nonces and calls in the server
+process. It needs no external service and nothing survives a restart, which makes it
+the right choice for a single node you are trying out, and for the tests.
+
+`redis://` is the canonical backend: registrations survive a restart and are shared
+across a cluster. `rediss://` and `redis+ssl://` are the same driver over TLS.

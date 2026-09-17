@@ -1,7 +1,8 @@
 # AthenaSIP - Quick Start
 
 1. Install AthenaSIP
-2. Install [Redis](https://redis.io/) (or run with the built-in datastore once `memory://` lands)
+2. Nothing else: the default config uses the built-in `memory://` datastore. Use
+   [Redis](https://redis.io/) when you want registrations to survive a restart.
 3. Install [rtpproxy](https://www.rtpproxy.org/)
 4. Install a SIP Client such as [LinPhone](https://www.linphone.org/) on two or more hosts.
 5. Use your SIP clients to connect to the server using the accounts and passwords:

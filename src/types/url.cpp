@@ -14,7 +14,9 @@ URL::URL(const std::string& url) { parse(url); }
 
 void URL::parse(const std::string& url) {
   // Use std::regex to parse the URL
-  static const std::regex pattern(R"(^([a-zA-Z][a-zA-Z0-9+.-]*):\/\/(?:([^:\/?#]*)?:?([^@\/?#]*)?@)?([^:\/?#]+)(?::(\d+))?([^?#]*)(?:\?([^#]*))?(?:#(.*))?$)");
+  // The host is optional: "memory://" and "file:///path" have none. A scheme on its
+  // own is still a usable URL for a driver that takes no address.
+  static const std::regex pattern(R"(^([a-zA-Z][a-zA-Z0-9+.-]*):\/\/(?:([^:\/?#]*)?:?([^@\/?#]*)?@)?([^:\/?#]*)(?::(\d+))?([^?#]*)(?:\?([^#]*))?(?:#(.*))?$)");
   std::smatch matches;
 
   // Default is invalid
