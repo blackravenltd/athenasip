@@ -56,8 +56,8 @@ class Transaction : public std::enable_shared_from_this<Transaction> {
 
  protected:
   std::shared_ptr<Logger> _logger;
-  std::shared_ptr<Channel> _channel;
-  std::shared_ptr<Core> _core;
+  std::weak_ptr<Channel> _channel;
+  std::weak_ptr<Core> _core;
   Direction _direction;
 
   uint16_t _t1_ms;

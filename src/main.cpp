@@ -50,9 +50,11 @@ int main(int argc, char* argv[]) {
   auto logger = std::make_shared<loggers::LoggerStdIO>(LogLevel::DEBUG);
 
   // Log Splash
-  logger->raw("-----------------------------------");
-  logger->raw(" AthenaSIP v" + version->to_string());
-  logger->raw("-----------------------------------");
+  auto title = " AthenaSIP v" + version->to_string()+" ";
+  auto lines = std::string(title.size(), '-');
+  logger->raw(lines);
+  logger->raw(title);
+  logger->raw(lines);
 
   // Register Datastore Handlers, Event System Handlers
   register_builtin_datastores(logger);

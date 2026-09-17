@@ -55,9 +55,30 @@ bool Core::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shar
 
   if (!channel->_event_subscription) {
     channel->_event_subscription = events->subscribe(
-        "subscriber/" + subscriber->identity->uri->to_string() + "/#", [this, subscriber](std::string event, std::string payload) {
-          _logger->info("------------------------------- SUBSCRIBER " + subscriber->identity->to_string() + " Event: " + event + " Payload: " + payload);
-        });
+      "subscriber/" + subscriber->identity->uri->to_string() + "/#", [this, subscriber, channel](std::string event, std::string payload) {
+        _logger->info("Received Event for: " + subscriber->identity->to_string() + " Event: " + event + " Payload: " + payload);
+
+        boost::system::error_code ec;
+        auto const& payload_obj = boost::json::parse(payload, ec).as_object();
+
+        auto transaction = std::make_shared<Transaction>(_logger, channel, shared_from_this(), Transaction::Direction::Outgoing, Util::generate_random_string("",10));
+        transaction_register(transaction);
+
+        auto invite = std::make_shared<SIPMessage>();
+
+        invite->header = std::make_shared<SIPHeader>();
+        invite->header->request_method = "INVITE";
+        auto call_id = payload_obj.at("call_id").as_string();
+        invite->header->add("Call-ID",std::string(call_id));
+        auto from = payload_obj.at("from").as_string();
+        invite->header->add("From",std::string(from));
+        auto to = payload_obj.at("to").as_string();
+        invite->header->add("To",std::string(to));
+        invite->header->add("Content-Type","application/sdp");
+        invite->body = std::string(payload_obj.at("sdp").as_string());
+
+        transaction->send_message(invite);
+      });
   }
 
   _channels_by_subscriber[subscriber->id] = channel;
@@ -163,12 +184,16 @@ void Core::process_message(std::shared_ptr<SIPMessage> message) {
   if (!message->header->contains("Via") || !message->header->contains("CSeq")) {
     _logger->info("[Request] - Incomplete Headers (No Via/CSeq) - Sending 400 Bad Request");
 
+    if(message->channel.expired()) {
+      _logger->info("[Request] - Channel has closed, cannot respond");
+    }
+
     // Send 400 Bad Request
     auto response = message->generate_response();
     response->header->add("Reason", "SIP ;cause=400 ;text=\"Incomplete Headers (Needs From, To, Call-ID, CSeq, Via, Max-Forwards)\"");
     response->header->response_code = 400;
     response->header->response_message = "Bad Request";
-    response->channel->send(response);
+    response->channel.lock()->send(response);
 
     return;
   }
@@ -177,18 +202,22 @@ void Core::process_message(std::shared_ptr<SIPMessage> message) {
   auto transactionId = message->get_transaction_id();
   _logger->debug("[Request] - Transaction is " + transactionId);
   message->transaction = transaction_get(transactionId);
-  if (!message->transaction) {
-    message->transaction = std::make_shared<Transaction>(_logger, message->channel, shared_from_this(), Transaction::Direction::Incoming, transactionId);
-    message->transaction->type = (message->header->type == SIPHeader::Type::Request && message->header->request_method == "INVITE")
+  std::shared_ptr<Transaction> transaction = message->transaction.lock();
+
+  if (!transaction) {
+    transaction = std::make_shared<Transaction>(_logger, message->channel.lock(), shared_from_this(), Transaction::Direction::Incoming, transactionId);
+    transaction->type = (message->header->type == SIPHeader::Type::Request && message->header->request_method == "INVITE")
                                      ? Transaction::Type::INVITE
                                      : Transaction::Type::NonINVITE;
-    message->transaction->start(config->sip_timer_t1_rtt_ms);
+    transaction_register(transaction);
+    transaction->start(config->sip_timer_t1_rtt_ms);
+    message->transaction = transaction;
   } else {
-    message->transaction->reset_timers();
+    transaction->reset_timers();
   }
 
   // Parse the Message in the context of the transaction
-  message->transaction->receive_message(message);
+  transaction->receive_message(message);
 }
 
 // Transactions
@@ -197,7 +226,7 @@ bool Core::transaction_register(std::shared_ptr<Transaction> transaction) {
   std::unique_lock<std::shared_mutex> lock(_transactions_mutex);
 
   _transactions[transaction->id] = transaction;
-  events->publish("transaction.register", transaction->id);
+  events->publish("/nodes/"+config->sip_node_id+"/transactions/" + transaction->id, "registered");
   return true;
 }
 
@@ -208,7 +237,7 @@ bool Core::transaction_unregister(std::string transactionId) {
 
   std::unique_lock<std::shared_mutex> lock(_transactions_mutex);
   _transactions.erase(transactionId);
-  events->publish("transaction.unregister", transactionId);
+  events->publish("/nodes/"+config->sip_node_id+"/transactions/" + transaction->id, "unregistered");
   return true;
 }
 

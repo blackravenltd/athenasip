@@ -28,7 +28,19 @@ class Call {
  public:
   using ChannelsFn = std::function<void(std::shared_ptr<Channel> channel)>;
 
-  enum State { Initial, Trying, Ringing, Connected, Closing };
+  enum State { Initial, Trying, Ringing, Connected, Closing, Closed };
+
+  static std::string state_to_string(const State s) {
+    switch(s) {
+      case State::Initial: return "Initial";
+      case State::Trying: return "Trying";
+      case State::Ringing: return "Ringing";
+      case State::Connected: return "Connected";
+      case State::Closing: return "Closing";
+      case State::Closed: return "Closed";
+    }
+    return "Unknown";
+  }
 
   std::string id;
 
