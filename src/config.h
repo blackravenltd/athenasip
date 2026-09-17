@@ -43,24 +43,24 @@ class Config {
   bool sip_timer_reliable_transport_retransmits = false;
 
   // TLS Configuration
-  bool tls_enable;
+  bool tls_enable = false;
   std::string tls_address;
   uint16_t tls_port = 0;
   std::string tls_cert_pem_filename;
   std::string tls_key_pem_filename;
 
   // TCP Configuration
-  bool tcp_enable;
+  bool tcp_enable = false;
   std::string tcp_address;  // e.g. "127.0.0.1"
   uint16_t tcp_port = 0;    // e.g. 5060
 
   // UDP Configuration
-  bool udp_enable;
+  bool udp_enable = false;
   std::string udp_address;  // e.g. "127.0.0.1"
   uint16_t udp_port = 0;    // e.g. 5060
 
   // UDP Configuration
-  bool websocket_enable;
+  bool websocket_enable = false;
   std::string websocket_address;  // e.g. "127.0.0.1"
   uint16_t websocket_port = 0;    // e.g. 5060
 
@@ -72,17 +72,17 @@ class Config {
   std::string events_url;  // e.g. "mqtt://user:pass@127.0.0.1:1883/athenasip?client_id=sip-01&keep_alive=30"
 
   // RTPProxyClient configuration
-  bool rtprelay_enable;
+  bool rtprelay_enable = false;
   std::string rtprelay_address;
   std::string rtprelay_public_address;
-  uint16_t rtprelay_min_port;
-  uint16_t rtprelay_max_port;
+  uint16_t rtprelay_min_port = 22000;
+  uint16_t rtprelay_max_port = 23000;
 
   // HTTP configuration
   std::string http_address;
   uint16_t http_port = 0;  // e.g. 5060
-  bool http_api_enable;
-  bool http_files_enable;
+  bool http_api_enable = false;
+  bool http_files_enable = false;
   std::string http_files_path;
 
   // Loads configuration from a YAML file.

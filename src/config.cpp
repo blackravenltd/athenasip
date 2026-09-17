@@ -218,20 +218,22 @@ bool Config::load_from_yaml(const std::string& filename) {
     else
       rtprelay_public_address = "0.0.0.0";
 
-    if (rtprelay["min_port"]) {
+    // The documented spelling is port_min / port_max. This read min_port / max_port,
+    // so every configured range was silently ignored and the defaults used.
+    if (rtprelay["port_min"]) {
       try {
-        rtprelay_min_port = rtprelay["min_port"].as<uint16_t>();
+        rtprelay_min_port = rtprelay["port_min"].as<uint16_t>();
       } catch (const std::exception& e) {
-        _logger->error("Invalid value for 'rtprelay.min_port': " + std::string(e.what()));
+        _logger->error("Invalid value for 'rtprelay.port_min': " + std::string(e.what()));
       }
     } else {
       rtprelay_min_port = 22000;
     }
-    if (rtprelay["max_port"]) {
+    if (rtprelay["port_max"]) {
       try {
-        rtprelay_max_port = rtprelay["max_port"].as<uint16_t>();
+        rtprelay_max_port = rtprelay["port_max"].as<uint16_t>();
       } catch (const std::exception& e) {
-        _logger->error("Invalid value for 'rtprelay.max_port': " + std::string(e.what()));
+        _logger->error("Invalid value for 'rtprelay.port_max': " + std::string(e.what()));
       }
     } else {
       rtprelay_max_port = 23000;

@@ -93,18 +93,6 @@ model has not been audited to the same standard yet.
       400 Bad Request on a failed parse (RFC 3261 8.2.1, 16.3) rather than only
       checking for Via and CSeq.
 
-### Logic bugs
-- [ ] `Channel::send` hardcodes `SIP/2.0/TCP` (`src/channel.cpp:104`); `message->branch`
-      is never set. Fixed properly by the M2 transaction layer, but must not ship as is.
-- [ ] `Config` reads `rtprelay.min_port`/`max_port`; YAML and docs say
-      `port_min`/`port_max` (`src/config.cpp:221-238`).
-- [ ] `main.cpp:66` ignores `load_from_yaml`'s return; uninitialised `bool` config
-      fields on failure.
-- [ ] Event topic drift: `"/nodes/..."` leading slash (`src/core.cpp:229,240`),
-      `"call.unregister"` (`src/core.cpp:274`). Define the topic scheme once, in docs.
-- [ ] `LoggerScoped::raw` logs at error level (`src/loggers/logger_scoped.cpp:17`).
-
-
 ### New interfaces
 - [ ] `Config::db_create` is read from `datastore.create` in the YAML but nothing uses
       it now the SQL drivers are gone. Remove with the rest of the Config cleanup.

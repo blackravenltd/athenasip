@@ -11,6 +11,7 @@
 
 #include "channel.h"
 #include "core.h"
+#include "headers/via_header.h"
 #include "datastores/memory_datastore.h"
 #include "events/local_event_system.h"
 
@@ -192,4 +193,72 @@ TEST(CoreTest, SubscriberUnregisterDropsTheEventSubscription) {
 
   EXPECT_EQ(channel->_event_subscription, nullptr);
   EXPECT_TRUE(f.datastore->locations_get(7).empty());
+}
+
+// RFC 3261 18.1.1: the Via transport is the transport the request actually goes out
+// on. This was hardcoded to TCP whatever the channel was.
+TEST(CoreTest, ChannelSendSetsViaFromTheConnectionTransport) {
+  Fixture f;
+
+  for (const auto& transport : {"tcp", "udp", "tls", "ws", "wss"}) {
+    auto connection = std::make_shared<MockConnection>(transport, "192.0.2.10");
+    auto channel = std::make_shared<Channel>(f.logger, f.core, connection);
+    channel->start();
+
+    auto message = std::make_shared<SIPMessage>();
+    message->header = std::make_shared<SIPHeader>();
+    message->header->type = SIPHeader::Type::Request;
+    message->header->request_method = "OPTIONS";
+    message->header->request_uri = std::make_shared<types::SIPUri>("sip:bob@example.com");
+
+    channel->send(message);
+
+    auto via = message->header->headers_map["Via"][0]->as<athenasip::headers::ViaHeader>();
+    ASSERT_NE(via, nullptr);
+    EXPECT_EQ(via->version, "SIP/2.0/" + Util::to_upper(transport)) << transport;
+  }
+}
+
+// RFC 3261 8.1.1.7: the branch parameter must begin with the z9hG4bK magic cookie.
+TEST(CoreTest, ChannelSendGeneratesAMagicCookieBranch) {
+  Fixture f;
+
+  auto connection = std::make_shared<MockConnection>("udp", "192.0.2.10");
+  auto channel = std::make_shared<Channel>(f.logger, f.core, connection);
+  channel->start();
+
+  auto message = std::make_shared<SIPMessage>();
+  message->header = std::make_shared<SIPHeader>();
+  message->header->type = SIPHeader::Type::Request;
+  message->header->request_method = "OPTIONS";
+  message->header->request_uri = std::make_shared<types::SIPUri>("sip:bob@example.com");
+
+  ASSERT_TRUE(message->branch.empty());
+  channel->send(message);
+
+  EXPECT_EQ(message->branch.rfind("z9hG4bK", 0), 0u);
+
+  auto via = message->header->headers_map["Via"][0]->as<athenasip::headers::ViaHeader>();
+  ASSERT_NE(via, nullptr);
+  EXPECT_EQ(via->parameters["branch"], message->branch);
+}
+
+// A branch the caller already chose is the transaction's, and must be left alone.
+TEST(CoreTest, ChannelSendKeepsAnExistingBranch) {
+  Fixture f;
+
+  auto connection = std::make_shared<MockConnection>("udp", "192.0.2.10");
+  auto channel = std::make_shared<Channel>(f.logger, f.core, connection);
+  channel->start();
+
+  auto message = std::make_shared<SIPMessage>();
+  message->header = std::make_shared<SIPHeader>();
+  message->header->type = SIPHeader::Type::Request;
+  message->header->request_method = "OPTIONS";
+  message->header->request_uri = std::make_shared<types::SIPUri>("sip:bob@example.com");
+  message->branch = "z9hG4bK-chosen-by-the-transaction";
+
+  channel->send(message);
+
+  EXPECT_EQ(message->branch, "z9hG4bK-chosen-by-the-transaction");
 }
