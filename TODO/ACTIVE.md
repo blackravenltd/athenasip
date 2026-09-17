@@ -1,8 +1,8 @@
 # AthenaSIP - Active Work
 
-Rewritten 2026-09-17 after the scope reset. Branch `main` at `5ca2c9e` plus an
-uncommitted working tree (weak_ptr refactor, outbound INVITE sketch, snake_case
-rename). Line numbers refer to that tree; update them as files move.
+Rewritten 2026-09-17 after the scope reset. Work happens on `develop`, at `af83fb5`:
+the snake_case rename, the weak_ptr refactor and the outbound INVITE sketch are all
+committed. Line numbers refer to that tree; update them as files move.
 
 Move items to `COMPLETED.md` as they land, with a one-line note on what shipped.
 
@@ -64,7 +64,7 @@ interfaces to build on, and carries no dead backends.
 - [ ] `Core::transaction_end_all` (`src/core.cpp:252-259`) and `Core::channel_close_all`
       (`src/core.cpp:132-139`) erase from the map they are iterating (via `end()` /
       `close()` -> unregister). Copy out under the lock, clear, then end each. This is
-      the probable "segfault on close" from `b5f90f7`.
+      the probable "segfault on close" from `737ef1a`.
 - [ ] `Channel::send` / `_schedule_async_write` dereference `_connection` after
       `close()` resets it (`src/channel.cpp:91,99,145`).
 - [ ] Subscriber event callback (`src/core.cpp:56-81`): filter `subscriber/<uri>/#`
@@ -119,7 +119,7 @@ interfaces to build on, and carries no dead backends.
       `query(call)`, and for conference-capable drivers `join`, `leave`, `roster`.
 - [ ] `BuiltinMediaEngine` (`builtin://`): wraps `RTPRelay` / `RTPRelaySet`, capability
       `bridge` only, plain RTP only. Port `_map_media` from
-      `git show 9e06214^:src/sip_core.cpp` into it.
+      `git show c2b14f8^:src/sip_core.cpp` into it.
 - [ ] `Call` becomes multi-party: `id`, `participants` (identity, channel/node, dialog
       tags, media state), optional `focus`, `state`, timestamps. Drop `from`/`to`.
 - [ ] `Config`: `media: url: builtin://` / `rtpengine://host:port`, `sip.allow_unencrypted`
