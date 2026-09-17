@@ -254,3 +254,21 @@ uncommitted working tree on 2026-09-17.
       contacts, re-registration, selective unregister, nonce expiry, calls and
       resolution through the driver registry. 111 tests green.
 
+### Core registration and regression coverage (2026-09-17)
+
+- [x] `Core::subscriber_register` tested the subscriber row rather than the binding, so
+      `datastore->subscriber_register` was skipped whenever the subscriber existed,
+      which is always. No contact was ever stored and the registrar had nothing to
+      route to (RFC 3261 10.3 step 7).
+- [x] `Core::subscriber_unregister` dropped the per-channel event subscription only on
+      the datastore failure path, so every successful unregister leaked it. It now goes
+      first, and the channel index is cleared with it.
+- [x] `MockConnection` test double for the `Connection` interface: captures what was
+      written, counts closes and shutdowns, and parks reads. The M2 transaction tests
+      will want it too.
+- [x] Regression tests for the shutdown crashes fixed in `d58b096`: 16 transactions
+      through `transaction_end_all` and 16 channels through `channel_close_all`, both
+      of which previously erased from the map they were iterating. Also covers the
+      empty-registry case and that `Channel::close` is idempotent.
+- [x] 120 tests green.
+
