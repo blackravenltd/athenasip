@@ -181,6 +181,203 @@ std::shared_ptr<types::Realm> RedisDatastore::realm_get_by_name(const std::strin
   }
 }
 
+std::string RedisDatastore::_serialise_realm(const std::shared_ptr<types::Realm>& realm) {
+  boost::json::object obj;
+  obj["id"] = realm->id;
+  obj["name"] = realm->name;
+  obj["nonce_secret"] = realm->nonce_secret;
+  obj["nonce_expiry"] = realm->nonce_expiry;
+  obj["registration_timeout"] = realm->registration_timeout;
+  return boost::json::serialize(obj);
+}
+
+std::shared_ptr<types::Realm> RedisDatastore::_parse_realm(const std::string& value) const {
+  const auto parsed = boost::json::parse(value);
+  const auto& obj = parsed.as_object();
+
+  auto realm = std::make_shared<types::Realm>(json_string(obj, "name"));
+  realm->id = json_uint64(obj, "id");
+  realm->nonce_secret = json_string(obj, "nonce_secret");
+  realm->nonce_expiry = json_uint32(obj, "nonce_expiry");
+  realm->registration_timeout = json_uint32(obj, "registration_timeout");
+  return realm;
+}
+
+bool RedisDatastore::realm_create(std::shared_ptr<types::Realm> realm) {
+  if (!realm || realm->name.empty()) return false;
+
+  try {
+    // create is not update: an existing realm is a conflict.
+    if (_exists(_realm_key(realm->name))) return false;
+
+    if (!_set(_realm_key(realm->name), _serialise_realm(realm))) return false;
+
+    _sadd(_realm_index_key(), realm->name);
+    return true;
+  } catch (const std::exception& ex) {
+    _logger->error("realm_create: " + std::string(ex.what()));
+    return false;
+  }
+}
+
+bool RedisDatastore::realm_update(std::shared_ptr<types::Realm> realm) {
+  if (!realm || realm->name.empty()) return false;
+
+  try {
+    if (!_exists(_realm_key(realm->name))) return false;
+
+    return _set(_realm_key(realm->name), _serialise_realm(realm));
+  } catch (const std::exception& ex) {
+    _logger->error("realm_update: " + std::string(ex.what()));
+    return false;
+  }
+}
+
+bool RedisDatastore::realm_delete(const std::string& realm_name) {
+  try {
+    const bool removed = _del(_realm_key(realm_name)) > 0;
+    _srem(_realm_index_key(), realm_name);
+    return removed;
+  } catch (const std::exception& ex) {
+    _logger->error("realm_delete: " + std::string(ex.what()));
+    return false;
+  }
+}
+
+std::vector<std::shared_ptr<types::Realm>> RedisDatastore::realm_list() {
+  std::vector<std::shared_ptr<types::Realm>> realms;
+
+  try {
+    for (const auto& name : _smembers(_realm_index_key())) {
+      const auto value = _get(_realm_key(name));
+      if (value) realms.push_back(_parse_realm(*value));
+    }
+  } catch (const std::exception& ex) {
+    _logger->error("realm_list: " + std::string(ex.what()));
+  }
+
+  return realms;
+}
+
+std::string RedisDatastore::_serialise_subscriber(const std::shared_ptr<types::Subscriber>& subscriber) {
+  boost::json::object obj;
+  obj["id"] = subscriber->id;
+  obj["ha1"] = subscriber->ha1;
+  obj["uri"] = subscriber->identity->uri->to_string();
+  return boost::json::serialize(obj);
+}
+
+bool RedisDatastore::subscriber_create(std::shared_ptr<types::Subscriber> subscriber) {
+  if (!subscriber || !subscriber->identity || !subscriber->identity->uri) return false;
+
+  const auto& uri = subscriber->identity->uri;
+
+  try {
+    if (_exists(_subscriber_key(uri->realm, uri->user))) return false;
+
+    if (!_set(_subscriber_key(uri->realm, uri->user), _serialise_subscriber(subscriber))) return false;
+
+    _sadd(_subscriber_index_key(uri->realm), uri->user);
+    return true;
+  } catch (const std::exception& ex) {
+    _logger->error("subscriber_create: " + std::string(ex.what()));
+    return false;
+  }
+}
+
+bool RedisDatastore::subscriber_update(std::shared_ptr<types::Subscriber> subscriber) {
+  if (!subscriber || !subscriber->identity || !subscriber->identity->uri) return false;
+
+  const auto& uri = subscriber->identity->uri;
+
+  try {
+    if (!_exists(_subscriber_key(uri->realm, uri->user))) return false;
+
+    return _set(_subscriber_key(uri->realm, uri->user), _serialise_subscriber(subscriber));
+  } catch (const std::exception& ex) {
+    _logger->error("subscriber_update: " + std::string(ex.what()));
+    return false;
+  }
+}
+
+bool RedisDatastore::subscriber_delete(std::shared_ptr<types::SIPIdentity> identity) {
+  if (!identity || !identity->uri) return false;
+
+  const auto& uri = identity->uri;
+
+  try {
+    auto subscriber = subscriber_get(identity);
+
+    const bool removed = _del(_subscriber_key(uri->realm, uri->user)) > 0;
+    _srem(_subscriber_index_key(uri->realm), uri->user);
+
+    // A deleted subscriber keeps no bindings.
+    if (subscriber) {
+      for (const auto& key : _smembers(_location_index_key(subscriber->id))) _del(key);
+      _del(_location_index_key(subscriber->id));
+    }
+
+    return removed;
+  } catch (const std::exception& ex) {
+    _logger->error("subscriber_delete: " + std::string(ex.what()));
+    return false;
+  }
+}
+
+std::vector<std::shared_ptr<types::Subscriber>> RedisDatastore::subscriber_list(const std::string& realm_name) {
+  std::vector<std::shared_ptr<types::Subscriber>> subscribers;
+
+  try {
+    for (const auto& user : _smembers(_subscriber_index_key(realm_name))) {
+      auto identity = std::make_shared<types::SIPIdentity>("sip:" + user + "@" + realm_name);
+      auto subscriber = subscriber_get(identity);
+      if (subscriber) subscribers.push_back(subscriber);
+    }
+  } catch (const std::exception& ex) {
+    _logger->error("subscriber_list: " + std::string(ex.what()));
+  }
+
+  return subscribers;
+}
+
+std::vector<types::Location> RedisDatastore::location_list(std::uint64_t subscriber_id) {
+  std::vector<types::Location> locations;
+
+  for (const auto& key : _smembers(_location_index_key(subscriber_id))) {
+    try {
+      const auto value = _get(key);
+
+      // The binding expired and Redis dropped it; tidy the index as we go.
+      if (!value) {
+        _srem(_location_index_key(subscriber_id), key);
+        continue;
+      }
+
+      const auto parsed = boost::json::parse(*value);
+      const auto& obj = parsed.as_object();
+
+      types::Location location;
+      location.subscriber_id = json_uint64(obj, "subscriber_id");
+      location.contact = std::make_shared<types::SIPUri>(json_string(obj, "contact"));
+      location.registered_at = static_cast<std::time_t>(json_uint64(obj, "registered_at"));
+      location.expires_at = static_cast<std::time_t>(json_uint64(obj, "expires_at"));
+      location.nat = json_string(obj, "nat") == "Y";
+
+      if (obj.if_contains("node_id")) location.node_id = json_string(obj, "node_id");
+      if (obj.if_contains("flow_id")) location.flow_id = json_string(obj, "flow_id");
+      if (obj.if_contains("path")) location.path = json_string(obj, "path");
+
+      locations.push_back(std::move(location));
+    } catch (const std::exception& ex) {
+      // One unreadable binding must not hide the others: target determination needs
+      // every contact it can get (RFC 3261 16.5).
+      _logger->error("location_list: skipping " + key + ": " + std::string(ex.what()));
+    }
+  }
+
+  return locations;
+}
+
 std::shared_ptr<types::Subscriber> RedisDatastore::subscriber_get(std::shared_ptr<types::SIPIdentity> identity) {
   try {
     const auto value = _get(_subscriber_key(identity->uri->realm, identity->uri->user));
@@ -208,15 +405,26 @@ bool RedisDatastore::subscriber_register(std::shared_ptr<types::Subscriber> subs
     const auto now = static_cast<std::int64_t>(std::time(nullptr));
     const bool is_nat = Util::is_ipv4(contact->realm) && Util::is_ipv4_private(contact->realm);
 
+    // registration_timeout per realm arrives with the M4 location schema; until then
+    // every binding gets the same lifetime, and Redis expires it for us.
+    constexpr std::int64_t kDefaultRegistrationSeconds = 3600;
+
     boost::json::object location;
     location["subscriber_id"] = subscriber->id;
+    location["contact"] = contact->to_string();
     location["user"] = contact->user;
     location["host"] = contact->realm;
     location["port"] = port;
     location["registered_at"] = now;
+    location["expires_at"] = now + kDefaultRegistrationSeconds;
     location["nat"] = is_nat ? "Y" : "N";
 
-    return _set(_location_key(subscriber->id, contact->user, contact->realm, port), boost::json::serialize(location));
+    const auto key = _location_key(subscriber->id, contact->user, contact->realm, port);
+    if (!_set_ex(key, boost::json::serialize(location), std::chrono::seconds(kDefaultRegistrationSeconds))) return false;
+
+    // The index is what location_list reads, so listing never needs KEYS.
+    _sadd(_location_index_key(subscriber->id), key);
+    return true;
   } catch (const std::exception& ex) {
     _logger->error("subscriber_register: " + std::string(ex.what()));
     return false;
@@ -226,7 +434,11 @@ bool RedisDatastore::subscriber_register(std::shared_ptr<types::Subscriber> subs
 bool RedisDatastore::subscriber_unregister(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact) {
   try {
     const std::uint16_t port = contact->port.value_or(0);
-    return _del(_location_key(subscriber->id, contact->user, contact->realm, port)) > 0;
+    const auto key = _location_key(subscriber->id, contact->user, contact->realm, port);
+
+    const bool removed = _del(key) > 0;
+    _srem(_location_index_key(subscriber->id), key);
+    return removed;
   } catch (const std::exception& ex) {
     _logger->error("subscriber_unregister: " + std::string(ex.what()));
     return false;
@@ -245,12 +457,127 @@ bool RedisDatastore::nonce_create(const std::string& nonce, const std::time_t& e
 
 bool RedisDatastore::nonce_check(std::string nonce) { return _exists(_nonce_key(nonce)); }
 
-bool RedisDatastore::call_create(std::shared_ptr<Call>) {
-  return false;
+std::string RedisDatastore::_serialise_call(const std::shared_ptr<Call>& call) {
+  boost::json::object obj;
+  obj["id"] = call->id;
+  obj["state"] = Call::state_to_string(call->state);
+  obj["created_at"] = static_cast<std::uint64_t>(call->created_at);
+  obj["answered_at"] = static_cast<std::uint64_t>(call->answered_at);
+  obj["ended_at"] = static_cast<std::uint64_t>(call->ended_at);
+  obj["focus"] = call->focus ? call->focus->to_string() : "";
+
+  // Participants are persisted; their media streams are not. A relay set belongs to
+  // the node that allocated it and cannot be handed to another one.
+  boost::json::array participants;
+  for (const auto& participant : call->participants) {
+    boost::json::object entry;
+    entry["identity"] = participant.identity ? participant.identity->to_string() : "";
+    entry["node_id"] = participant.node_id;
+    entry["local_tag"] = participant.local_tag;
+    entry["remote_tag"] = participant.remote_tag;
+    entry["originator"] = participant.originator;
+    participants.push_back(std::move(entry));
+  }
+
+  obj["participants"] = std::move(participants);
+  return boost::json::serialize(obj);
+}
+
+std::shared_ptr<Call> RedisDatastore::_parse_call(const std::string& value) const {
+  const auto parsed = boost::json::parse(value);
+  const auto& obj = parsed.as_object();
+
+  auto call = std::make_shared<Call>();
+  call->id = json_string(obj, "id");
+  call->created_at = static_cast<std::time_t>(json_uint64(obj, "created_at"));
+  call->answered_at = static_cast<std::time_t>(json_uint64(obj, "answered_at"));
+  call->ended_at = static_cast<std::time_t>(json_uint64(obj, "ended_at"));
+
+  const auto state = json_string(obj, "state");
+  for (const auto candidate :
+       {Call::State::Initial, Call::State::Trying, Call::State::Ringing, Call::State::Connected, Call::State::Closing, Call::State::Closed}) {
+    if (Call::state_to_string(candidate) == state) {
+      call->state = candidate;
+      break;
+    }
+  }
+
+  const auto focus = json_string(obj, "focus");
+  if (!focus.empty()) call->focus = std::make_shared<types::SIPUri>(focus);
+
+  if (const auto* participants = obj.if_contains("participants"); participants != nullptr && participants->is_array()) {
+    for (const auto& entry : participants->as_array()) {
+      const auto& participant_obj = entry.as_object();
+
+      auto& participant = call->add_participant(std::make_shared<types::SIPIdentity>(json_string(participant_obj, "identity")), nullptr,
+                                                participant_obj.at("originator").as_bool());
+      participant.node_id = json_string(participant_obj, "node_id");
+      participant.local_tag = json_string(participant_obj, "local_tag");
+      participant.remote_tag = json_string(participant_obj, "remote_tag");
+    }
+  }
+
+  return call;
+}
+
+bool RedisDatastore::call_create(std::shared_ptr<Call> call) {
+  if (!call || call->id.empty()) return false;
+
+  try {
+    if (!_set(_call_key(call->id), _serialise_call(call))) return false;
+
+    _sadd(_call_index_key(), call->id);
+    return true;
+  } catch (const std::exception& ex) {
+    _logger->error("call_create: " + std::string(ex.what()));
+    return false;
+  }
+}
+
+bool RedisDatastore::call_update(std::shared_ptr<Call> call) {
+  if (!call || call->id.empty()) return false;
+
+  try {
+    if (!_exists(_call_key(call->id))) return false;
+
+    return _set(_call_key(call->id), _serialise_call(call));
+  } catch (const std::exception& ex) {
+    _logger->error("call_update: " + std::string(ex.what()));
+    return false;
+  }
 }
 
 std::shared_ptr<Call> RedisDatastore::call_get(const std::string& id) {
-  return nullptr;
+  try {
+    const auto value = _get(_call_key(id));
+    if (!value) return nullptr;
+
+    return _parse_call(*value);
+  } catch (const std::exception& ex) {
+    _logger->error("call_get: " + std::string(ex.what()));
+    return nullptr;
+  }
+}
+
+std::vector<std::shared_ptr<Call>> RedisDatastore::call_list() {
+  std::vector<std::shared_ptr<Call>> calls;
+
+  try {
+    for (const auto& id : _smembers(_call_index_key())) {
+      const auto value = _get(_call_key(id));
+
+      if (!value) {
+        _srem(_call_index_key(), id);
+        continue;
+      }
+
+      calls.push_back(_parse_call(*value));
+    }
+  } catch (const std::exception& ex) {
+    _logger->error("call_list: " + std::string(ex.what()));
+  }
+
+  return calls;
 }
 
 void RedisDatastore::_apply_url(std::shared_ptr<types::URL> url) {
@@ -413,33 +740,38 @@ void RedisDatastore::_async_ok(std::string operation, boost::redis::request requ
   auto req = std::make_shared<boost::redis::request>(std::move(request));
   auto resp = std::make_shared<boost::redis::response<std::string>>();
 
-  conn->async_exec(
-      *req, *resp,
-      [logger, operation = std::move(operation), req, resp, callback = std::move(callback), start](boost::system::error_code ec, std::size_t) mutable {
-        if (ec) {
-          logger->error("Error during: " + operation + ": " + ec.message());
-          callback(RedisError(ec), false);
-          return;
-        }
+  // boost::redis::connection is not thread safe: its channels use a null mutex, so
+  // every operation has to be initiated on the connection's own executor rather than
+  // on whichever thread happened to call in.
+  boost::asio::post(_io_context, [conn, req, resp, logger, operation = std::move(operation), callback = std::move(callback), start]() mutable {
+    conn->async_exec(
+        *req, *resp,
+        [logger, operation = std::move(operation), req, resp, callback = std::move(callback), start](boost::system::error_code ec, std::size_t) mutable {
+          if (ec) {
+            logger->error("Error during: " + operation + ": " + ec.message());
+            callback(RedisError(ec), false);
+            return;
+          }
 
-        auto& result = std::get<0>(*resp);
-        if (!result.has_value()) {
-          auto error = make_redis_response_error(result.error().diagnostic);
-          logger->error("Error during: " + operation + ": " + error.message());
-          callback(std::move(error), false);
-          return;
-        }
+          auto& result = std::get<0>(*resp);
+          if (!result.has_value()) {
+            auto error = make_redis_response_error(result.error().diagnostic);
+            logger->error("Error during: " + operation + ": " + error.message());
+            callback(std::move(error), false);
+            return;
+          }
 
-        const auto& value = result.value();
-        const bool ok = value == "OK" || value == "PONG";
+          const auto& value = result.value();
+          const bool ok = value == "OK" || value == "PONG";
 
-        std::ostringstream oss;
-        oss << std::fixed << std::setprecision(3)
-            << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
-        logger->debug(operation + " (" + oss.str() + "ms)");
+          std::ostringstream oss;
+          oss << std::fixed << std::setprecision(3)
+              << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
+          logger->debug(operation + " (" + oss.str() + "ms)");
 
-        callback(RedisError{}, ok);
-      });
+          callback(RedisError{}, ok);
+        });
+  });
 }
 
 void RedisDatastore::_async_string(std::string operation, boost::redis::request request, StringCallback callback) {
@@ -454,30 +786,35 @@ void RedisDatastore::_async_string(std::string operation, boost::redis::request 
   auto req = std::make_shared<boost::redis::request>(std::move(request));
   auto resp = std::make_shared<boost::redis::response<std::optional<std::string>>>();
 
-  conn->async_exec(
-      *req, *resp,
-      [logger, operation = std::move(operation), req, resp, callback = std::move(callback), start](boost::system::error_code ec, std::size_t) mutable {
-        if (ec) {
-          logger->error("Error during: " + operation + ": " + ec.message());
-          callback(RedisError(ec), std::nullopt);
-          return;
-        }
+  // boost::redis::connection is not thread safe: its channels use a null mutex, so
+  // every operation has to be initiated on the connection's own executor rather than
+  // on whichever thread happened to call in.
+  boost::asio::post(_io_context, [conn, req, resp, logger, operation = std::move(operation), callback = std::move(callback), start]() mutable {
+    conn->async_exec(
+        *req, *resp,
+        [logger, operation = std::move(operation), req, resp, callback = std::move(callback), start](boost::system::error_code ec, std::size_t) mutable {
+          if (ec) {
+            logger->error("Error during: " + operation + ": " + ec.message());
+            callback(RedisError(ec), std::nullopt);
+            return;
+          }
 
-        auto& result = std::get<0>(*resp);
-        if (!result.has_value()) {
-          auto error = make_redis_response_error(result.error().diagnostic);
-          logger->error("Error during: " + operation + ": " + error.message());
-          callback(std::move(error), std::nullopt);
-          return;
-        }
+          auto& result = std::get<0>(*resp);
+          if (!result.has_value()) {
+            auto error = make_redis_response_error(result.error().diagnostic);
+            logger->error("Error during: " + operation + ": " + error.message());
+            callback(std::move(error), std::nullopt);
+            return;
+          }
 
-        std::ostringstream oss;
-        oss << std::fixed << std::setprecision(3)
-            << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
-        logger->debug(operation + " (" + oss.str() + "ms)");
+          std::ostringstream oss;
+          oss << std::fixed << std::setprecision(3)
+              << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
+          logger->debug(operation + " (" + oss.str() + "ms)");
 
-        callback(RedisError{}, result.value());
-      });
+          callback(RedisError{}, result.value());
+        });
+  });
 }
 
 void RedisDatastore::_async_integer(std::string operation, boost::redis::request request, IntegerCallback callback) {
@@ -492,30 +829,118 @@ void RedisDatastore::_async_integer(std::string operation, boost::redis::request
   auto req = std::make_shared<boost::redis::request>(std::move(request));
   auto resp = std::make_shared<boost::redis::response<long long>>();
 
-  conn->async_exec(
-      *req, *resp,
-      [logger, operation = std::move(operation), req, resp, callback = std::move(callback), start](boost::system::error_code ec, std::size_t) mutable {
-        if (ec) {
-          logger->error("Error during: " + operation + ": " + ec.message());
-          callback(RedisError(ec), 0);
-          return;
-        }
+  // boost::redis::connection is not thread safe: its channels use a null mutex, so
+  // every operation has to be initiated on the connection's own executor rather than
+  // on whichever thread happened to call in.
+  boost::asio::post(_io_context, [conn, req, resp, logger, operation = std::move(operation), callback = std::move(callback), start]() mutable {
+    conn->async_exec(
+        *req, *resp,
+        [logger, operation = std::move(operation), req, resp, callback = std::move(callback), start](boost::system::error_code ec, std::size_t) mutable {
+          if (ec) {
+            logger->error("Error during: " + operation + ": " + ec.message());
+            callback(RedisError(ec), 0);
+            return;
+          }
 
-        auto& result = std::get<0>(*resp);
-        if (!result.has_value()) {
-          auto error = make_redis_response_error(result.error().diagnostic);
-          logger->error("Error during: " + operation + ": " + error.message());
-          callback(std::move(error), 0);
-          return;
-        }
+          auto& result = std::get<0>(*resp);
+          if (!result.has_value()) {
+            auto error = make_redis_response_error(result.error().diagnostic);
+            logger->error("Error during: " + operation + ": " + error.message());
+            callback(std::move(error), 0);
+            return;
+          }
 
-        std::ostringstream oss;
-        oss << std::fixed << std::setprecision(3)
-            << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
-        logger->debug(operation + " (" + oss.str() + "ms)");
+          std::ostringstream oss;
+          oss << std::fixed << std::setprecision(3)
+              << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
+          logger->debug(operation + " (" + oss.str() + "ms)");
 
-        callback(RedisError{}, static_cast<std::int64_t>(result.value()));
-      });
+          callback(RedisError{}, static_cast<std::int64_t>(result.value()));
+        });
+  });
+}
+
+bool RedisDatastore::_sadd(std::string key, std::string member) {
+  boost::redis::request request;
+  request.push("SADD", key, member);
+
+  return _wait_integer(
+             [this, request = std::move(request)](IntegerCallback callback) mutable { _async_integer("SADD", std::move(request), std::move(callback)); }) >= 0;
+}
+
+bool RedisDatastore::_srem(std::string key, std::string member) {
+  boost::redis::request request;
+  request.push("SREM", key, member);
+
+  return _wait_integer(
+             [this, request = std::move(request)](IntegerCallback callback) mutable { _async_integer("SREM", std::move(request), std::move(callback)); }) > 0;
+}
+
+std::vector<std::string> RedisDatastore::_smembers(std::string key) {
+  boost::redis::request request;
+  request.push("SMEMBERS", key);
+
+  return _wait_strings(
+      [this, request = std::move(request)](StringsCallback callback) mutable { _async_strings("SMEMBERS", std::move(request), std::move(callback)); });
+}
+
+void RedisDatastore::_async_strings(std::string operation, boost::redis::request request, StringsCallback callback) {
+  if (!_connection) {
+    callback(_not_connected_error(), {});
+    return;
+  }
+
+  auto start = std::chrono::high_resolution_clock::now();
+  auto logger = _logger;
+  auto conn = _connection;
+  auto req = std::make_shared<boost::redis::request>(std::move(request));
+  auto resp = std::make_shared<boost::redis::response<std::vector<std::string>>>();
+
+  // boost::redis::connection is not thread safe: its channels use a null mutex, so
+  // every operation has to be initiated on the connection's own executor rather than
+  // on whichever thread happened to call in.
+  boost::asio::post(_io_context, [conn, req, resp, logger, operation = std::move(operation), callback = std::move(callback), start]() mutable {
+    conn->async_exec(
+        *req, *resp,
+        [logger, operation = std::move(operation), req, resp, callback = std::move(callback), start](boost::system::error_code ec, std::size_t) mutable {
+          if (ec) {
+            logger->error("Error during: " + operation + ": " + ec.message());
+            callback(RedisError(ec), {});
+            return;
+          }
+
+          auto& result = std::get<0>(*resp);
+          if (!result.has_value()) {
+            auto error = make_redis_response_error(result.error().diagnostic);
+            logger->error("Error during: " + operation + ": " + error.message());
+            callback(std::move(error), {});
+            return;
+          }
+
+          std::ostringstream oss;
+          oss << std::fixed << std::setprecision(3)
+              << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
+          logger->debug(operation + " (" + oss.str() + "ms)");
+
+          callback(RedisError{}, result.value());
+        });
+  });
+}
+
+std::vector<std::string> RedisDatastore::_wait_strings(std::function<void(StringsCallback)> starter) {
+  auto promise = std::make_shared<std::promise<std::pair<RedisError, std::vector<std::string>>>>();
+  auto future = promise->get_future();
+
+  starter([promise](RedisError error, std::vector<std::string> value) mutable { promise->set_value({std::move(error), std::move(value)}); });
+
+  if (future.wait_for(_sync_timeout) != std::future_status::ready) {
+    auto error = _timeout_error();
+    _logger->error("Sync timeout: " + error.message());
+    return {};
+  }
+
+  auto [error, value] = future.get();
+  return error ? std::vector<std::string>{} : value;
 }
 
 bool RedisDatastore::_wait_bool(std::function<void(BoolCallback)> starter) {
@@ -567,6 +992,16 @@ std::int64_t RedisDatastore::_wait_integer(std::function<void(IntegerCallback)> 
 }
 
 std::string RedisDatastore::_realm_key(const std::string& realm_name) { return "athena:realm:" + realm_name; }
+
+std::string RedisDatastore::_call_key(const std::string& call_id) { return "athena:call:" + call_id; }
+
+std::string RedisDatastore::_realm_index_key() { return "athena:index:realms"; }
+
+std::string RedisDatastore::_subscriber_index_key(const std::string& realm_name) { return "athena:index:subscribers:" + realm_name; }
+
+std::string RedisDatastore::_location_index_key(std::uint64_t subscriber_id) { return "athena:index:locations:" + std::to_string(subscriber_id); }
+
+std::string RedisDatastore::_call_index_key() { return "athena:index:calls"; }
 
 std::string RedisDatastore::_subscriber_key(const std::string& realm_name, const std::string& user) { return "athena:subscriber:" + realm_name + ":" + user; }
 

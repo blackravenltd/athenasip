@@ -56,7 +56,7 @@ TEST(MemoryDatastoreTest, ConnectsAndReportsConnected) {
 
 TEST(MemoryDatastoreTest, RealmRoundTrips) {
   auto datastore = make_datastore();
-  datastore->realm_add(make_realm("example.com"));
+  datastore->realm_create(make_realm("example.com"));
 
   auto realm = datastore->realm_get_by_name("example.com");
   ASSERT_NE(realm, nullptr);
@@ -68,7 +68,7 @@ TEST(MemoryDatastoreTest, RealmRoundTrips) {
 
 TEST(MemoryDatastoreTest, SubscriberLookupByIdentity) {
   auto datastore = make_datastore();
-  datastore->subscriber_add(make_subscriber(42, "sip:alice@example.com"));
+  datastore->subscriber_create(make_subscriber(42, "sip:alice@example.com"));
 
   auto identity = std::make_shared<types::SIPIdentity>("sip:alice@example.com");
   auto found = datastore->subscriber_get(identity);
@@ -88,17 +88,17 @@ TEST(MemoryDatastoreTest, UnknownSubscriberIsNull) {
 
 TEST(MemoryDatastoreTest, RegistrationStoresAContactThatCanBeLookedUp) {
   auto datastore = make_datastore();
-  datastore->realm_add(make_realm("example.com"));
+  datastore->realm_create(make_realm("example.com"));
 
   auto subscriber = make_subscriber(7, "sip:bob@example.com");
   auto contact = std::make_shared<types::SIPUri>("sip:bob@192.168.1.50:5060");
 
   ASSERT_TRUE(datastore->subscriber_register(subscriber, contact));
 
-  auto locations = datastore->locations_get(7);
+  auto locations = datastore->location_list(7);
   ASSERT_EQ(locations.size(), 1u);
-  EXPECT_EQ(locations[0]->realm, "192.168.1.50");
-  EXPECT_EQ(locations[0]->port.value(), 5060);
+  EXPECT_EQ(locations[0].contact->realm, "192.168.1.50");
+  EXPECT_EQ(locations[0].contact->port.value(), 5060);
 }
 
 // RFC 3261 10.2.1: a subscriber may register more than one contact, and all of them
@@ -110,7 +110,7 @@ TEST(MemoryDatastoreTest, MultipleContactsForOneSubscriberAreKept) {
   ASSERT_TRUE(datastore->subscriber_register(subscriber, std::make_shared<types::SIPUri>("sip:bob@192.168.1.50:5060")));
   ASSERT_TRUE(datastore->subscriber_register(subscriber, std::make_shared<types::SIPUri>("sip:bob@192.168.1.51:5060")));
 
-  EXPECT_EQ(datastore->locations_get(7).size(), 2u);
+  EXPECT_EQ(datastore->location_list(7).size(), 2u);
 }
 
 TEST(MemoryDatastoreTest, ReregisteringTheSameContactDoesNotDuplicateIt) {
@@ -121,7 +121,7 @@ TEST(MemoryDatastoreTest, ReregisteringTheSameContactDoesNotDuplicateIt) {
   ASSERT_TRUE(datastore->subscriber_register(subscriber, contact));
   ASSERT_TRUE(datastore->subscriber_register(subscriber, contact));
 
-  EXPECT_EQ(datastore->locations_get(7).size(), 1u);
+  EXPECT_EQ(datastore->location_list(7).size(), 1u);
 }
 
 TEST(MemoryDatastoreTest, UnregisterRemovesOnlyThatContact) {
@@ -134,7 +134,7 @@ TEST(MemoryDatastoreTest, UnregisterRemovesOnlyThatContact) {
   datastore->subscriber_register(subscriber, second);
 
   ASSERT_TRUE(datastore->subscriber_unregister(subscriber, first));
-  EXPECT_EQ(datastore->locations_get(7).size(), 1u);
+  EXPECT_EQ(datastore->location_list(7).size(), 1u);
 
   // Removing something that is not there is not a success.
   EXPECT_FALSE(datastore->subscriber_unregister(subscriber, first));
@@ -144,7 +144,7 @@ TEST(MemoryDatastoreTest, ExpiredRegistrationsAreNotReturned) {
   auto datastore = make_datastore();
 
   // A realm whose registrations last no time at all.
-  datastore->realm_add(make_realm("192.168.1.50", 0));
+  datastore->realm_create(make_realm("192.168.1.50", 0));
 
   auto subscriber = make_subscriber(7, "sip:bob@example.com");
   auto contact = std::make_shared<types::SIPUri>("sip:bob@192.168.1.50:5060");
@@ -152,7 +152,7 @@ TEST(MemoryDatastoreTest, ExpiredRegistrationsAreNotReturned) {
   ASSERT_TRUE(datastore->subscriber_register(subscriber, contact));
 
   // registration_timeout of 0 falls back to the default, so this contact is live.
-  EXPECT_EQ(datastore->locations_get(7).size(), 1u);
+  EXPECT_EQ(datastore->location_list(7).size(), 1u);
 }
 
 TEST(MemoryDatastoreTest, NonceRoundTripsAndExpires) {
@@ -199,4 +199,122 @@ TEST(MemoryDatastoreTest, ResolvesThroughTheDriverRegistry) {
   ASSERT_NE(datastore, nullptr);
   EXPECT_TRUE(datastore->connect());
   EXPECT_TRUE(datastore->is_connected());
+}
+
+// Write operations. create and update are distinct on purpose: provisioning has to be
+// able to tell "already exists" from "changed" rather than silently overwriting.
+
+TEST(MemoryDatastoreTest, RealmCreateRefusesADuplicate) {
+  auto datastore = make_datastore();
+
+  EXPECT_TRUE(datastore->realm_create(make_realm("example.com")));
+  EXPECT_FALSE(datastore->realm_create(make_realm("example.com")));
+}
+
+TEST(MemoryDatastoreTest, RealmUpdateRequiresAnExistingRealm) {
+  auto datastore = make_datastore();
+
+  EXPECT_FALSE(datastore->realm_update(make_realm("example.com")));
+
+  ASSERT_TRUE(datastore->realm_create(make_realm("example.com")));
+
+  auto changed = make_realm("example.com");
+  changed->nonce_secret = "changed";
+  EXPECT_TRUE(datastore->realm_update(changed));
+  EXPECT_EQ(datastore->realm_get_by_name("example.com")->nonce_secret, "changed");
+}
+
+TEST(MemoryDatastoreTest, RealmDeleteAndList) {
+  auto datastore = make_datastore();
+
+  datastore->realm_create(make_realm("one.example"));
+  datastore->realm_create(make_realm("two.example"));
+  EXPECT_EQ(datastore->realm_list().size(), 2u);
+
+  EXPECT_TRUE(datastore->realm_delete("one.example"));
+  EXPECT_FALSE(datastore->realm_delete("one.example"));
+  EXPECT_EQ(datastore->realm_list().size(), 1u);
+  EXPECT_EQ(datastore->realm_get_by_name("one.example"), nullptr);
+}
+
+TEST(MemoryDatastoreTest, SubscriberCreateRefusesADuplicate) {
+  auto datastore = make_datastore();
+
+  EXPECT_TRUE(datastore->subscriber_create(make_subscriber(1, "sip:alice@example.com")));
+  EXPECT_FALSE(datastore->subscriber_create(make_subscriber(1, "sip:alice@example.com")));
+}
+
+TEST(MemoryDatastoreTest, SubscriberUpdateRequiresAnExistingSubscriber) {
+  auto datastore = make_datastore();
+
+  EXPECT_FALSE(datastore->subscriber_update(make_subscriber(1, "sip:alice@example.com")));
+
+  ASSERT_TRUE(datastore->subscriber_create(make_subscriber(1, "sip:alice@example.com")));
+
+  auto changed = make_subscriber(1, "sip:alice@example.com");
+  changed->ha1 = "newhash";
+  EXPECT_TRUE(datastore->subscriber_update(changed));
+
+  auto found = datastore->subscriber_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
+  ASSERT_NE(found, nullptr);
+  EXPECT_EQ(found->ha1, "newhash");
+}
+
+TEST(MemoryDatastoreTest, SubscriberListIsScopedToTheRealm) {
+  auto datastore = make_datastore();
+
+  datastore->subscriber_create(make_subscriber(1, "sip:alice@one.example"));
+  datastore->subscriber_create(make_subscriber(2, "sip:bob@one.example"));
+  datastore->subscriber_create(make_subscriber(3, "sip:carol@two.example"));
+
+  EXPECT_EQ(datastore->subscriber_list("one.example").size(), 2u);
+  EXPECT_EQ(datastore->subscriber_list("two.example").size(), 1u);
+  EXPECT_EQ(datastore->subscriber_list("nowhere.example").size(), 0u);
+}
+
+// A deleted subscriber keeps no bindings: leaving them would route calls to someone
+// who no longer exists.
+TEST(MemoryDatastoreTest, SubscriberDeleteDropsTheirRegistrations) {
+  auto datastore = make_datastore();
+
+  auto subscriber = make_subscriber(9, "sip:dave@example.com");
+  ASSERT_TRUE(datastore->subscriber_create(subscriber));
+  ASSERT_TRUE(datastore->subscriber_register(subscriber, std::make_shared<types::SIPUri>("sip:dave@192.0.2.9:5060")));
+  ASSERT_EQ(datastore->location_list(9).size(), 1u);
+
+  EXPECT_TRUE(datastore->subscriber_delete(subscriber->identity));
+  EXPECT_TRUE(datastore->location_list(9).empty());
+  EXPECT_FALSE(datastore->subscriber_delete(subscriber->identity));
+}
+
+TEST(MemoryDatastoreTest, LocationCarriesTheBindingNotJustTheContact) {
+  auto datastore = make_datastore();
+
+  auto subscriber = make_subscriber(11, "sip:erin@example.com");
+  ASSERT_TRUE(datastore->subscriber_register(subscriber, std::make_shared<types::SIPUri>("sip:erin@10.0.0.7:5060")));
+
+  auto locations = datastore->location_list(11);
+  ASSERT_EQ(locations.size(), 1u);
+  EXPECT_EQ(locations[0].subscriber_id, 11u);
+  EXPECT_GT(locations[0].expires_at, locations[0].registered_at);
+
+  // 10.0.0.0/8 is private, so the binding is marked as behind NAT.
+  EXPECT_TRUE(locations[0].nat);
+}
+
+TEST(MemoryDatastoreTest, CallUpdateRequiresAnExistingCallAndListReturnsThem) {
+  auto datastore = make_datastore();
+
+  auto call = std::make_shared<Call>();
+  call->id = "call-update-1";
+  call->state = Call::State::Initial;
+
+  EXPECT_FALSE(datastore->call_update(call));
+  ASSERT_TRUE(datastore->call_create(call));
+
+  call->state = Call::State::Connected;
+  EXPECT_TRUE(datastore->call_update(call));
+  EXPECT_EQ(datastore->call_get("call-update-1")->state, Call::State::Connected);
+
+  EXPECT_EQ(datastore->call_list().size(), 1u);
 }

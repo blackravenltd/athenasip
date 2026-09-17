@@ -64,13 +64,13 @@ struct Fixture {
   std::shared_ptr<types::Subscriber> seed_subscriber(uint64_t id, const std::string& uri) {
     auto realm = std::make_shared<types::Realm>("example.com");
     realm->id = 1;
-    datastore->realm_add(realm);
+    datastore->realm_create(realm);
 
     auto subscriber = std::make_shared<types::Subscriber>();
     subscriber->id = id;
     subscriber->identity = std::make_shared<types::SIPIdentity>(uri);
     subscriber->ha1 = "deadbeef";
-    datastore->subscriber_add(subscriber);
+    datastore->subscriber_create(subscriber);
 
     return subscriber;
   }
@@ -166,9 +166,9 @@ TEST(CoreTest, SubscriberRegisterStoresTheContact) {
 
   ASSERT_TRUE(f.on_strand([&]() { return f.core->subscriber_register(subscriber, contact, channel); }));
 
-  auto locations = f.datastore->locations_get(7);
+  auto locations = f.datastore->location_list(7);
   ASSERT_EQ(locations.size(), 1u);
-  EXPECT_EQ(locations[0]->realm, "192.0.2.10");
+  EXPECT_EQ(locations[0].contact->realm, "192.0.2.10");
 }
 
 TEST(CoreTest, SubscriberRegisterIsRepeatable) {
@@ -181,7 +181,7 @@ TEST(CoreTest, SubscriberRegisterIsRepeatable) {
   ASSERT_TRUE(f.on_strand([&]() { return f.core->subscriber_register(subscriber, contact, channel); }));
   ASSERT_TRUE(f.on_strand([&]() { return f.core->subscriber_register(subscriber, contact, channel); }));
 
-  EXPECT_EQ(f.datastore->locations_get(7).size(), 1u);
+  EXPECT_EQ(f.datastore->location_list(7).size(), 1u);
 }
 
 // The subscription is per-channel state. Once the subscriber is unregistered the node
@@ -199,7 +199,7 @@ TEST(CoreTest, SubscriberUnregisterDropsTheEventSubscription) {
   ASSERT_TRUE(f.on_strand([&]() { return f.core->subscriber_unregister(subscriber, contact, channel); }));
 
   EXPECT_EQ(channel->_event_subscription, nullptr);
-  EXPECT_TRUE(f.datastore->locations_get(7).empty());
+  EXPECT_TRUE(f.datastore->location_list(7).empty());
 }
 
 // RFC 3261 18.1.1: the Via transport is the transport the request actually goes out

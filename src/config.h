@@ -72,7 +72,6 @@ class Config {
 
   // DB configuration
   std::string db_url;  // e.g. "memory://" or "redis://127.0.0.1:6379"
-  bool db_create = false;
 
   // Events configuration
   std::string events_url;  // e.g. "mqtt://user:pass@127.0.0.1:1883/athenasip?client_id=sip-01&keep_alive=30"

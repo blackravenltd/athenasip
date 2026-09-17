@@ -53,6 +53,44 @@ std::shared_ptr<types::Realm> MemoryDatastore::realm_get_by_name(const std::stri
   return it == _realms.end() ? nullptr : it->second;
 }
 
+bool MemoryDatastore::realm_create(std::shared_ptr<types::Realm> realm) {
+  if (!realm || realm->name.empty()) return false;
+
+  std::lock_guard<std::mutex> lock(_mutex);
+
+  // create is not update: an existing realm is a conflict, not an overwrite.
+  if (_realms.find(realm->name) != _realms.end()) return false;
+
+  _realms[realm->name] = std::move(realm);
+  return true;
+}
+
+bool MemoryDatastore::realm_update(std::shared_ptr<types::Realm> realm) {
+  if (!realm || realm->name.empty()) return false;
+
+  std::lock_guard<std::mutex> lock(_mutex);
+
+  if (_realms.find(realm->name) == _realms.end()) return false;
+
+  _realms[realm->name] = std::move(realm);
+  return true;
+}
+
+bool MemoryDatastore::realm_delete(const std::string& realm_name) {
+  std::lock_guard<std::mutex> lock(_mutex);
+  return _realms.erase(realm_name) > 0;
+}
+
+std::vector<std::shared_ptr<types::Realm>> MemoryDatastore::realm_list() {
+  std::lock_guard<std::mutex> lock(_mutex);
+
+  std::vector<std::shared_ptr<types::Realm>> realms;
+  realms.reserve(_realms.size());
+  for (const auto& [name, realm] : _realms) realms.push_back(realm);
+
+  return realms;
+}
+
 std::shared_ptr<types::Subscriber> MemoryDatastore::subscriber_get(std::shared_ptr<types::SIPIdentity> identity) {
   if (!identity || !identity->uri) return nullptr;
 
@@ -78,8 +116,8 @@ bool MemoryDatastore::subscriber_register(std::shared_ptr<types::Subscriber> sub
 
   std::time_t ttl = kDefaultRegistrationSeconds;
 
-  // registration_timeout is read as seconds. It is not written by anything yet, so the
-  // unit is not yet pinned down by a caller.
+  // registration_timeout is in seconds, matching the Expires header it answers
+  // (RFC 3261 10.2.1).
   auto realm = _realms.find(contact->realm);
   if (realm != _realms.end() && realm->second->registration_timeout > 0) {
     ttl = static_cast<std::time_t>(realm->second->registration_timeout);
@@ -87,10 +125,13 @@ bool MemoryDatastore::subscriber_register(std::shared_ptr<types::Subscriber> sub
 
   const std::uint16_t port = contact->port.value_or(0);
 
-  Location location;
+  const auto now = std::time(nullptr);
+
+  types::Location location;
   location.contact = contact;
   location.subscriber_id = subscriber->id;
-  location.expires_at = std::time(nullptr) + ttl;
+  location.registered_at = now;
+  location.expires_at = now + ttl;
   location.nat = Util::is_ipv4(contact->realm) && Util::is_ipv4_private(contact->realm);
 
   _locations[_location_key(subscriber->id, contact->user, contact->realm, port)] = std::move(location);
@@ -106,16 +147,16 @@ bool MemoryDatastore::subscriber_unregister(std::shared_ptr<types::Subscriber> s
   return _locations.erase(_location_key(subscriber->id, contact->user, contact->realm, port)) > 0;
 }
 
-std::vector<std::shared_ptr<types::SIPUri>> MemoryDatastore::locations_get(std::uint64_t subscriber_id) {
+std::vector<types::Location> MemoryDatastore::location_list(std::uint64_t subscriber_id) {
   std::lock_guard<std::mutex> lock(_mutex);
   _prune_expired();
 
-  std::vector<std::shared_ptr<types::SIPUri>> contacts;
+  std::vector<types::Location> locations;
   for (const auto& [key, location] : _locations) {
-    if (location.subscriber_id == subscriber_id) contacts.push_back(location.contact);
+    if (location.subscriber_id == subscriber_id) locations.push_back(location);
   }
 
-  return contacts;
+  return locations;
 }
 
 bool MemoryDatastore::nonce_create(const std::string& nonce, const std::time_t& expires_at) {
@@ -139,9 +180,20 @@ bool MemoryDatastore::nonce_check(std::string nonce) {
 }
 
 bool MemoryDatastore::call_create(std::shared_ptr<Call> call) {
+  if (!call || call->id.empty()) return false;
+
+  std::lock_guard<std::mutex> lock(_mutex);
+  _calls[call->id] = std::move(call);
+  return true;
+}
+
+bool MemoryDatastore::call_update(std::shared_ptr<Call> call) {
   if (!call) return false;
 
   std::lock_guard<std::mutex> lock(_mutex);
+
+  if (_calls.find(call->id) == _calls.end()) return false;
+
   _calls[call->id] = std::move(call);
   return true;
 }
@@ -153,18 +205,74 @@ std::shared_ptr<Call> MemoryDatastore::call_get(const std::string& id) {
   return it == _calls.end() ? nullptr : it->second;
 }
 
-void MemoryDatastore::realm_add(std::shared_ptr<types::Realm> realm) {
-  if (!realm) return;
-
+std::vector<std::shared_ptr<Call>> MemoryDatastore::call_list() {
   std::lock_guard<std::mutex> lock(_mutex);
-  _realms[realm->name] = std::move(realm);
+
+  std::vector<std::shared_ptr<Call>> calls;
+  calls.reserve(_calls.size());
+  for (const auto& [id, call] : _calls) calls.push_back(call);
+
+  return calls;
 }
 
-void MemoryDatastore::subscriber_add(std::shared_ptr<types::Subscriber> subscriber) {
-  if (!subscriber || !subscriber->identity || !subscriber->identity->uri) return;
+bool MemoryDatastore::subscriber_create(std::shared_ptr<types::Subscriber> subscriber) {
+  if (!subscriber || !subscriber->identity || !subscriber->identity->uri) return false;
+
+  const auto key = _subscriber_key(subscriber->identity->uri->realm, subscriber->identity->uri->user);
 
   std::lock_guard<std::mutex> lock(_mutex);
-  _subscribers[_subscriber_key(subscriber->identity->uri->realm, subscriber->identity->uri->user)] = std::move(subscriber);
+
+  if (_subscribers.find(key) != _subscribers.end()) return false;
+
+  _subscribers[key] = std::move(subscriber);
+  return true;
+}
+
+bool MemoryDatastore::subscriber_update(std::shared_ptr<types::Subscriber> subscriber) {
+  if (!subscriber || !subscriber->identity || !subscriber->identity->uri) return false;
+
+  const auto key = _subscriber_key(subscriber->identity->uri->realm, subscriber->identity->uri->user);
+
+  std::lock_guard<std::mutex> lock(_mutex);
+
+  if (_subscribers.find(key) == _subscribers.end()) return false;
+
+  _subscribers[key] = std::move(subscriber);
+  return true;
+}
+
+bool MemoryDatastore::subscriber_delete(std::shared_ptr<types::SIPIdentity> identity) {
+  if (!identity || !identity->uri) return false;
+
+  const auto key = _subscriber_key(identity->uri->realm, identity->uri->user);
+
+  std::lock_guard<std::mutex> lock(_mutex);
+
+  auto subscriber = _subscribers.find(key);
+  if (subscriber == _subscribers.end()) return false;
+
+  const auto subscriber_id = subscriber->second->id;
+  _subscribers.erase(subscriber);
+
+  // A deleted subscriber keeps no bindings.
+  for (auto it = _locations.begin(); it != _locations.end();) {
+    it = (it->second.subscriber_id == subscriber_id) ? _locations.erase(it) : std::next(it);
+  }
+
+  return true;
+}
+
+std::vector<std::shared_ptr<types::Subscriber>> MemoryDatastore::subscriber_list(const std::string& realm_name) {
+  std::lock_guard<std::mutex> lock(_mutex);
+
+  std::vector<std::shared_ptr<types::Subscriber>> subscribers;
+  for (const auto& [key, subscriber] : _subscribers) {
+    if (realm_name.empty() || (subscriber->identity && subscriber->identity->uri && subscriber->identity->uri->realm == realm_name)) {
+      subscribers.push_back(subscriber);
+    }
+  }
+
+  return subscribers;
 }
 
 std::string MemoryDatastore::_subscriber_key(const std::string& realm_name, const std::string& user) { return realm_name + ":" + user; }
