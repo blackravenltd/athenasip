@@ -333,9 +333,12 @@ bool MySQLDatastore::nonce_check(std::string nonce) {
   }
 }
 
-bool MySQLDatastore::call_create(std::shared_ptr<Call>) {
-  static const std::string sql = "INSERT INTO `calls` (`id`, `started_at`, `ended_at`, `status`) VALUES (new_id(), UTC_TIMESTAMP(), NULL, 0)";
+bool MySQLDatastore::call_create(std::shared_ptr<Call> call) {
+  static const std::string sql = "INSERT INTO `calls` (`id`, `call_id`,`from`,`to`,`started_at`, `status`) VALUES (new_id(),?,?,?,UTC_TIMESTAMP(),?)";
+
   const auto start = std::chrono::high_resolution_clock::now();
+
+  const std::string params = call->id + ","+call->from->to_string()+","+call->to->to_string();
 
   try {
     if (!_session) {
@@ -344,15 +347,21 @@ bool MySQLDatastore::call_create(std::shared_ptr<Call>) {
     }
 
     auto stmt = _session->sql(sql);
+    stmt.bind(call->id);
+    stmt.bind(call->from->to_string());
+    stmt.bind(call->to->to_string());
+    stmt.bind(Call::state_to_string(call->state));
+    
     auto result = stmt.execute();
-    // _log_sql(sql, nullptr, static_cast<std::size_t>(result.getAffectedItemsCount()), start);
+
+    _log_sql(sql, params, static_cast<std::size_t>(result.getAffectedItemsCount()), start);
 
     return true;
   } catch (const std::exception& ex) {
-    _log_sql_error(sql, nullptr, ex.what());
+    _log_sql_error(sql, params, ex.what());
     return false;
   } catch (...) {
-    _log_sql_error(sql, nullptr, "Unknown exception");
+    _log_sql_error(sql, params, "Unknown exception");
     return false;
   }
 }
