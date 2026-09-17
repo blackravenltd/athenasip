@@ -66,18 +66,6 @@ interfaces to build on, and carries no dead backends.
 - [ ] `Datastore` gains write operations: realm create/update/delete, subscriber
       create/update/delete, location list, call list/update. `RedisDatastore` and
       `MemoryDatastore` implement all of it.
-- [ ] `MediaEngine` interface in `src/media/media_engine.h` with the same
-      `register_driver` / `create_driver` registry pattern:
-      `capabilities()` returning `{bridge, conference, record, transcode}`,
-      `offer(call, sdp, flags)`, `answer(call, sdp, flags)`, `release(call)`,
-      `query(call)`, and for conference-capable drivers `join`, `leave`, `roster`.
-- [ ] `BuiltinMediaEngine` (`builtin://`): wraps `RTPRelay` / `RTPRelaySet`, capability
-      `bridge` only, plain RTP only. Port `_map_media` from
-      `git show c2b14f8^:src/sip_core.cpp` into it.
-- [ ] `Call` becomes multi-party: `id`, `participants` (identity, channel/node, dialog
-      tags, media state), optional `focus`, `state`, timestamps. Drop `from`/`to`.
-- [ ] `Config`: `media: url: builtin://` / `rtpengine://host:port`, `sip.allow_unencrypted`
-      actually read, and the `scripting:` section removed until Lua returns.
 
 ---
 

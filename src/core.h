@@ -28,6 +28,7 @@
 #include "global_io_context.h"
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
+#include "media/media_engine.h"
 #include "rtp/rtp_relay_set.h"
 #include "servers/server.h"
 #include "sip_message.h"
@@ -131,9 +132,13 @@ class Core : public std::enable_shared_from_this<Core> {
   void admin_start();
   void admin_stop();
 
+  // Media engine
+  void media_register(std::shared_ptr<media::MediaEngine> engine);
+
   std::shared_ptr<Config> config;
   std::shared_ptr<datastores::Datastore> datastore;
   std::shared_ptr<events::EventSystem> events;
+  std::shared_ptr<media::MediaEngine> media;
 
  private:
   void _invite_from_event(std::shared_ptr<Channel> channel, std::shared_ptr<SIPIdentity> identity, const std::string& event, const std::string& payload);

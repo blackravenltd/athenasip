@@ -325,6 +325,10 @@ std::shared_ptr<Call> Core::call_get(std::string callId) {
   return search->second;
 }
 
+// Media
+
+void Core::media_register(std::shared_ptr<media::MediaEngine> engine) { media = std::move(engine); }
+
 // RTP Relays
 
 void Core::rtprelay_register(std::shared_ptr<rtp::RTPRelay> relay) { _rtprelay = relay; }

@@ -27,6 +27,12 @@ class Config {
   std::string sip_node_id;
   uint32_t sip_registration_timeout = 5000;
 
+  // Allow SIP over an unencrypted transport. WSS is required for browsers, and TLS is
+  // what a cluster talks, so this is the switch that permits plain UDP, TCP and WS.
+  bool sip_allow_unencrypted = true;
+
+  std::string sip_event_prefix;
+
   // SIP Timers
   uint16_t sip_timer_t1_rtt_ms = 500;
   uint16_t sip_timer_t2_max_retransmit_interval_ms = 4000;
@@ -70,6 +76,9 @@ class Config {
 
   // Events configuration
   std::string events_url;  // e.g. "mqtt://user:pass@127.0.0.1:1883/athenasip?client_id=sip-01&keep_alive=30"
+
+  // Media configuration
+  std::string media_url = "builtin://";  // or "rtpengine://host:port"
 
   // RTPProxyClient configuration
   bool rtprelay_enable = false;
