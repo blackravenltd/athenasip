@@ -40,10 +40,16 @@ void SIPIdentity::parse(const std::string& identity) {
       uri = std::make_shared<SIPUri>(match[6].str());
     }
   } else {
-    // Fallback: treat the entire input as a SIP URI.
+    // addr-spec form. With no angle brackets the first semicolon starts the header
+    // parameters, so they are not part of the URI (RFC 3261 20).
     wrapped = false;
     display_name.reset();
-    uri = std::make_shared<SIPUri>(identity);
+
+    std::string uri_text = Util::trim(identity);
+    const auto uri_param_start = uri_text.find(';');
+    if (uri_param_start != std::string::npos) uri_text = Util::trim(uri_text.substr(0, uri_param_start));
+
+    uri = std::make_shared<SIPUri>(uri_text);
   }
 
   // Now extract parameters (tags) from the original string.

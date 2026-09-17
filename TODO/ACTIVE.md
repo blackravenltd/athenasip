@@ -75,10 +75,21 @@ interfaces to build on, and carries no dead backends.
 The header model was not a faithful one. These are done; the rest of the message
 model has not been audited to the same standard yet.
 
-- [ ] Audit `SIPMessage`, `SIPUri`, `SIPIdentity` and `SDP` against the RFC grammar the
-      way `SIPHeader` now is. Do not assume the existing shapes are right: they were
-      written before the standards-first reset. Tests come from the RFC, not from the
-      current behaviour.
+- [ ] Audit `SDP` against RFC 8866 the way `SIPHeader`, `SIPUri`, `SIPIdentity` and
+      `SIPMessage` now are. Do not assume the existing shape is right.
+- [ ] `SIPUri` calls the host `realm`, which is the name of a different SIP concept
+      (the authentication realm). Rename to `host` once the datastores that read
+      `contact->realm` are deleted.
+- [ ] `SIPUri` keeps `parameters` and `headers` as raw strings. Loose routing (16.4,
+      16.12) needs `lr`, `transport`, `maddr` and `ttl` as parsed values, and
+      registration matching needs URI comparison (19.1.4).
+- [ ] `SIPUri` does not escape or unescape (19.1.2, 25.1), so a user part containing
+      an escaped character does not round-trip.
+- [ ] `get_transaction_id` does not yet implement the ACK and CANCEL special cases
+      (17.2.3): an ACK to a non-2xx must match the INVITE server transaction, and a
+      CANCEL matches the transaction it cancels. Belongs with the M2 state machines.
+- [ ] `SIPIdentity::to_string` emits tags in unordered_map order, so a round trip is
+      not byte-stable.
 - [ ] `Header::create` silently falls back to `StringHeader` when a typed parse fails,
       so a malformed Via is indistinguishable from a text header. Decide whether that
       should mark the message invalid.
