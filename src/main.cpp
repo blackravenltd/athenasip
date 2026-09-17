@@ -20,6 +20,7 @@
 #include "datastores/datastore_drivers.h"
 #include "events/event_system.h"
 #include "events/event_system_drivers.h"
+#include "events/topics.h"
 #include "loggers/logger_scoped.h"
 #include "loggers/logger_stdio.h"
 #include "rtp/rtp_relay.h"
@@ -50,7 +51,7 @@ int main(int argc, char* argv[]) {
   auto logger = std::make_shared<loggers::LoggerStdIO>(LogLevel::DEBUG);
 
   // Log Splash
-  auto title = " AthenaSIP v" + version->to_string()+" ";
+  auto title = " AthenaSIP v" + version->to_string() + " ";
   auto lines = std::string(title.size(), '-');
   logger->raw(lines);
   logger->raw(title);
@@ -62,8 +63,12 @@ int main(int argc, char* argv[]) {
 
   // Create Config
   auto config = std::make_shared<Config>(logger);
-  // config->load_from_yaml(Util::expand_path("~/.athenasip/config.yaml"));
-  config->load_from_yaml(Util::expand_path("~/.athenasip/config.yaml"));
+  const auto config_path = Util::expand_path("~/.athenasip/config.yaml");
+
+  if (!config->load_from_yaml(config_path)) {
+    logger->error("Cannot load configuration from " + config_path.string());
+    return -1;
+  }
 
   // Create Datastore
   auto datastore = Datastore::create_driver(logger, config->db_url);
@@ -160,7 +165,7 @@ int main(int argc, char* argv[]) {
   core->server_start_all();
 
   // Publish Start Event
-  core->events->publish("nodes/" + config->sip_node_id + "/status", "{\"started\":\"" + Util::get_zulu_time() + "\"}");
+  core->events->publish(events::topics::node_status(config->sip_node_id), "{\"started\":\"" + Util::get_zulu_time() + "\"}");
 
   // Wait for Signals
   boost::asio::io_context signal_wait_context;
@@ -180,7 +185,7 @@ int main(int argc, char* argv[]) {
         core->rtprelay_stop();
         core->admin_stop();
 
-        events->publish("nodes/" + config->sip_node_id + "/status", "{\"stopped\":\"" + Util::get_zulu_time() + "\"}");
+        events->publish(events::topics::node_status(config->sip_node_id), "{\"stopped\":\"" + Util::get_zulu_time() + "\"}");
 
         datastore->close();
         events->close();

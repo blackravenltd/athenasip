@@ -107,7 +107,13 @@ void Channel::send(std::shared_ptr<SIPMessage> message) {
 
   // Add or Remove Via
   if (message->header->type == SIPHeader::Type::Request) {
-    auto viaString = "SIP/2.0/TCP " + server_endpoint + ";branch=" + message->branch;
+    // The Via transport is the transport this actually goes out on (RFC 3261 18.1.1),
+    // not a constant. The branch must start with the RFC 3261 8.1.1.7 magic cookie and
+    // be unique per transaction; the M2 transaction layer takes this over.
+    if (message->branch.empty()) message->branch = Util::generate_random_string("z9hG4bK", 16);
+
+    auto viaString = "SIP/2.0/" + Util::to_upper(_connection->transport_name()) + " " + server_endpoint + ";branch=" + message->branch;
+
     // Add Via Header for this server
     auto via = std::make_shared<ViaHeader>(viaString);
     message->header->add_start("Via", via);

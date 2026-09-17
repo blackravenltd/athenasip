@@ -272,3 +272,27 @@ uncommitted working tree on 2026-09-17.
       empty-registry case and that `Channel::close` is idempotent.
 - [x] 120 tests green.
 
+### Logic bugs (2026-09-17)
+
+- [x] `Channel::send` hardcoded `SIP/2.0/TCP` on every Via whatever the channel was.
+      The transport now comes from `Connection::transport_name()` (RFC 3261 18.1.1),
+      and a missing branch is generated with the `z9hG4bK` magic cookie
+      (8.1.1.7). The M2 transaction layer takes the branch over.
+- [x] `Config` read `rtprelay.min_port`/`max_port` while the YAML and docs said
+      `port_min`/`port_max`, so every configured RTP port range was silently ignored
+      and the defaults used.
+- [x] `main.cpp` ignored `load_from_yaml`'s return and carried on with a
+      half-initialised Config. It now reports the path and exits. The `bool` and port
+      fields in `Config` have defaults, so a partial load cannot leave them
+      indeterminate.
+- [x] Event topic drift fixed and the scheme defined once in `src/events/topics.h`,
+      documented in `docs/events.md`. The transaction topics had a leading `/`, which
+      is an empty first level in MQTT and is not matched by a `nodes/#` filter, and
+      call unregister published to `call.unregister` with no call id. Channel topics
+      became `nodes/<id>/channels/<transport>/<endpoint>` rather than carrying the
+      transport as a `;transport=` parameter.
+- [x] `LoggerScoped::raw` called `error` on the underlying logger, so the startup
+      splash was logged at error level.
+- [x] Tests: `TopicsTest` (6) over the scheme, and Via transport, branch generation and
+      branch preservation through `Channel::send`. 129 tests green.
+

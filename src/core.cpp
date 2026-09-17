@@ -8,6 +8,7 @@
 #include "core.h"
 
 #include "channel.h"
+#include "events/topics.h"
 #include "expiry_set.h"
 #include "rtp/rtp_relay.h"
 #include "transaction.h"
@@ -61,20 +62,20 @@ bool Core::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shar
     std::weak_ptr<Channel> weak_channel = channel;
     auto identity = subscriber->identity;
 
-    channel->_event_subscription =
-        events->subscribe("subscriber/" + identity->uri->to_string() + "/invite", [weak_core, weak_channel, identity](std::string event, std::string payload) {
-          auto core = weak_core.lock();
-          auto event_channel = weak_channel.lock();
+    channel->_event_subscription = events->subscribe(events::topics::subscriber_invite(identity->uri->to_string()),
+                                                     [weak_core, weak_channel, identity](std::string event, std::string payload) {
+                                                       auto core = weak_core.lock();
+                                                       auto event_channel = weak_channel.lock();
 
-          // Either the node or the channel went away between publish and delivery.
-          if (!core || !event_channel) return;
+                                                       // Either the node or the channel went away between publish and delivery.
+                                                       if (!core || !event_channel) return;
 
-          core->_invite_from_event(event_channel, identity, event, payload);
-        });
+                                                       core->_invite_from_event(event_channel, identity, event, payload);
+                                                     });
   }
 
   _channels_by_subscriber[subscriber->id] = channel;
-  events->publish("subscriber/" + subscriber->identity->uri->to_string() + "/status",
+  events->publish(events::topics::subscriber_status(subscriber->identity->uri->to_string()),
                   "{\"contact\":\"" + contact->to_string() + "\",\"node\":\"" + config->sip_node_id + "\",\"registered\":\"" + Util::get_zulu_time() + "\"}");
   return true;
 }
@@ -151,9 +152,8 @@ bool Core::channel_register(std::string endpoint, std::shared_ptr<Channel> chann
   std::lock_guard<std::shared_mutex> lock(_channels_mutex);
   _channels[endpoint] = channel;
 
-  events->publish(
-      "nodes/" + config->sip_node_id + "/channels/" + channel->_connection->remote_endpoint_name() + ";transport=" + channel->_connection->transport_name(),
-      "{\"status\":\"registered\",\"at\":\"" + Util::get_zulu_time() + "\"}");
+  events->publish(events::topics::node_channel(config->sip_node_id, channel->_connection->transport_name(), channel->_connection->remote_endpoint_name()),
+                  "{\"status\":\"registered\",\"at\":\"" + Util::get_zulu_time() + "\"}");
 
   _logger->debug("Registered Channel " + endpoint);
   return true;
@@ -161,9 +161,8 @@ bool Core::channel_register(std::string endpoint, std::shared_ptr<Channel> chann
 
 bool Core::channel_unregister(std::string endpoint, std::shared_ptr<Channel> channel) {
   std::lock_guard<std::shared_mutex> lock(_channels_mutex);
-  events->publish(
-      "nodes/" + config->sip_node_id + "/channels/" + channel->_connection->remote_endpoint_name() + ";transport=" + channel->_connection->transport_name(),
-      "{\"status\":\"closed\",\"at\":\"" + Util::get_zulu_time() + "\"}");
+  events->publish(events::topics::node_channel(config->sip_node_id, channel->_connection->transport_name(), channel->_connection->remote_endpoint_name()),
+                  "{\"status\":\"closed\",\"at\":\"" + Util::get_zulu_time() + "\"}");
 
   _channels.erase(endpoint);
   _logger->debug("Unregistered Channel " + endpoint);
@@ -272,7 +271,7 @@ bool Core::transaction_register(std::shared_ptr<Transaction> transaction) {
   std::unique_lock<std::shared_mutex> lock(_transactions_mutex);
 
   _transactions[transaction->id] = transaction;
-  events->publish("/nodes/" + config->sip_node_id + "/transactions/" + transaction->id, "registered");
+  events->publish(events::topics::node_transaction(config->sip_node_id, transaction->id), "registered");
   return true;
 }
 
@@ -283,7 +282,7 @@ bool Core::transaction_unregister(std::string transactionId) {
 
   std::unique_lock<std::shared_mutex> lock(_transactions_mutex);
   _transactions.erase(transactionId);
-  events->publish("/nodes/" + config->sip_node_id + "/transactions/" + transaction->id, "unregistered");
+  events->publish(events::topics::node_transaction(config->sip_node_id, transaction->id), "unregistered");
   return true;
 }
 
@@ -316,14 +315,14 @@ bool Core::call_register(std::shared_ptr<Call> call) {
 
   datastore->call_create(call);
 
-  events->publish("calls/" + call->id + "/register", call->id);
+  events->publish(events::topics::call_register(call->id), call->id);
 
   return true;
 }
 
 bool Core::call_unregister(std::string callId) {
   _calls.erase(callId);
-  events->publish("call.unregister", callId);
+  events->publish(events::topics::call_unregister(callId), callId);
   return true;
 }
 
