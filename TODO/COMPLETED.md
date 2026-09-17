@@ -193,3 +193,26 @@ uncommitted working tree on 2026-09-17.
       `SIPHeaderRFCTest` deriving its expectations from RFC 3261 rather than from the
       implementation. 76 tests green.
 
+### SIP correctness, URI, identity and message (2026-09-17)
+
+- [x] `SIPUri` parses IPv6 host references (RFC 3261 19.1.1, RFC 5118 4). The colons
+      inside `[2001:db8::1]` were being read as a port separator, so no IPv6 SIP URI
+      parsed at all.
+- [x] `SIPUri` port parsing is range checked. It used `std::stoi`, which wrapped a
+      port above 65535 into a uint16_t and threw `std::out_of_range` on a long run of
+      digits: a malformed URI off the wire terminated the process.
+- [x] `SIPIdentity` in addr-spec form no longer puts header parameters into the URI.
+      `sip:carol@example.com;tag=qwerty` was parsed with `tag=qwerty` as a URI
+      parameter (RFC 3261 20).
+- [x] `SIPMessage::generate_response` copies every Via, in order (RFC 3261 8.2.6.2).
+      It copied only the topmost, so a response could not retrace a proxy chain.
+- [x] `generate_response` copies the To identity before adding a tag. It mutated the
+      request's own To in place, changing the request that transaction matching still
+      needs, and dereferenced the result of `as<SIPIdentityHeader>()` without checking
+      it for null.
+- [x] `get_transaction_id` includes the topmost Via sent-by as well as the branch and
+      method (RFC 3261 17.1.3, 17.2.3), with separators so the parts cannot run
+      together, and guards for a missing or untyped Via or CSeq.
+- [x] Tests: `SIPUriTest` (9), `SIPIdentityTest` (5), `SIPMessageTest` (7), all derived
+      from RFC 3261 rather than from the implementation. 97 tests green.
+
