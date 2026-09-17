@@ -56,45 +56,58 @@ Channel::Channel(std::shared_ptr<Logger> logger, std::shared_ptr<Core> core, std
 void Channel::start() {
   auto self(this->shared_from_this());
 
-  _logger->info("Connected");
-  state = State::Normal;
+  // Servers call this from their own thread. Everything a channel touches belongs to
+  // the Core strand, so hand over immediately. dispatch, not post: a caller already on
+  // the strand runs inline.
+  boost::asio::dispatch(_core->strand(), [this, self]() {
+    _logger->info("Connected");
+    state = State::Normal;
 
-  // Register callback
-  _core->channel_register(_connection->transport_name() + "://" + _connection->remote_endpoint_name(), shared_from_this());
+    // Register callback
+    _core->channel_register(_connection->transport_name() + "://" + _connection->remote_endpoint_name(), self);
 
-  // REGISTER timeout
-  // TODO: Make rational
+    // REGISTER timeout
+    // TODO: Make rational
 
-  _schedule_async_read();
+    _schedule_async_read();
+  });
 }
 
 void Channel::close() {
   auto self(shared_from_this());
 
-  if (state == State::Closing || state == State::Closed) return;
+  boost::asio::dispatch(_core->strand(), [this, self]() {
+    if (state == State::Closing || state == State::Closed) return;
 
-  state = State::Closing;
+    state = State::Closing;
 
-  // Ensure Connection Closed
-  if (_connection) {
-    // Shutdown and close connection
-    if (_connection->is_open()) {
-      _connection->shutdown();
-      _connection->close();
+    // Ensure Connection Closed
+    if (_connection) {
+      // Shutdown and close connection
+      if (_connection->is_open()) {
+        _connection->shutdown();
+        _connection->close();
+      }
+
+      _logger->info("Closed");
+
+      // Unregister Connection
+      _core->channel_unregister(_connection->transport_name() + "://" + _connection->remote_endpoint_name(), self);
+
+      _connection.reset();
     }
 
-    _logger->info("Closed");
-
-    // Unregister Connection
-    _core->channel_unregister(_connection->transport_name() + "://" + _connection->remote_endpoint_name(), shared_from_this());
-
-    _connection.reset();
-  }
-
-  state = State::Closed;
+    state = State::Closed;
+  });
 }
 
 void Channel::send(std::shared_ptr<SIPMessage> message) {
+  auto self(shared_from_this());
+
+  boost::asio::dispatch(_core->strand(), [this, self, message]() { _send_on_strand(message); });
+}
+
+void Channel::_send_on_strand(std::shared_ptr<SIPMessage> message) {
   // close() resets _connection, and a transaction can still be holding this channel.
   if (!_connection) {
     _logger->info("Dropping " + message->header->first_line() + " - channel is closed");
@@ -140,6 +153,7 @@ void Channel::send(std::shared_ptr<SIPMessage> message) {
   _schedule_async_write(message->to_string());
 }
 
+// Called from the read handler, which already runs on the Core strand.
 void Channel::receive(std::shared_ptr<SIPMessage> message) {
   _logger->info("> " + message->header->first_line());
   message->print();
@@ -158,10 +172,13 @@ void Channel::_schedule_async_write(std::string message) {
   auto buffer = std::make_shared<std::string>(std::move(message));
 
   _connection->async_write_some(boost::asio::buffer(*buffer), [this, self, buffer](boost::system::error_code ec, std::size_t) {
-    if (ec) {
-      _logger->error("Write Error " + ec.to_string());
-      close();
-    }
+    // The completion runs on the connection's own io_context thread, so hop back.
+    boost::asio::post(_core->strand(), [this, self, ec]() {
+      if (ec) {
+        _logger->error("Write Error " + ec.to_string());
+        close();
+      }
+    });
   });
 }
 
@@ -173,6 +190,16 @@ void Channel::_schedule_async_read() {
 
   // Schedule Read
   _connection->async_read_some(boost::asio::buffer(_read_buffer), [this, self](boost::system::error_code ec, std::size_t length) {
+    // The completion runs on the connection's own io_context thread. Everything the
+    // body touches is strand-confined, so hop back before any of it.
+    boost::asio::post(_core->strand(), [this, self, ec, length]() { _on_read(ec, length); });
+  });
+}
+
+void Channel::_on_read(boost::system::error_code ec, std::size_t length) {
+  auto self(shared_from_this());
+
+  {
     if (ec) {
       if (ec == boost::asio::error::operation_aborted) {
         // Normal (We closed the connection)
@@ -248,7 +275,7 @@ void Channel::_schedule_async_read() {
       // Schedule Next Read
       if (_connection) _schedule_async_read();
     }
-  });
+  }
 }
 
 bool Channel::_append_body() {

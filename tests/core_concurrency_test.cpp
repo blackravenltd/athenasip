@@ -24,8 +24,9 @@ using namespace athenasip;
 using athenasip::datastores::MemoryDatastore;
 
 // Every server (TCP, TLS, UDP, WebSocket) runs its own io_context on its own thread, so
-// Core is reached from several threads at once. These tests stand in for that: they are
-// the ones that fail under ThreadSanitizer when Core's maps are unguarded.
+// Core is reached from several threads at once. Core answers that with a strand: these
+// tests drive it the way the servers do, from many threads through call_on_strand, and
+// assert the registries stay consistent.
 namespace {
 
 struct ConcurrentFixture {
@@ -64,9 +65,9 @@ TEST(CoreConcurrencyTest, CallsSurviveConcurrentRegisterAndUnregister) {
         auto call = std::make_shared<Call>();
         call->id = "call-" + std::to_string(t) + "-" + std::to_string(i);
 
-        f.core->call_register(call);
-        f.core->call_get(call->id);
-        f.core->call_unregister(call->id);
+        f.core->call_on_strand([&]() { f.core->call_register(call); });
+        f.core->call_on_strand([&]() { return f.core->call_get(call->id); });
+        f.core->call_on_strand([&]() { f.core->call_unregister(call->id); });
       }
     });
   }
@@ -76,7 +77,7 @@ TEST(CoreConcurrencyTest, CallsSurviveConcurrentRegisterAndUnregister) {
   // Everything registered was unregistered.
   for (int t = 0; t < kThreads; ++t) {
     for (int i = 0; i < kIterations; ++i) {
-      EXPECT_EQ(f.core->call_get("call-" + std::to_string(t) + "-" + std::to_string(i)), nullptr);
+      EXPECT_EQ(f.core->call_on_strand([&]() { return f.core->call_get("call-" + std::to_string(t) + "-" + std::to_string(i)); }), nullptr);
     }
   }
 }
@@ -88,7 +89,7 @@ TEST(CoreConcurrencyTest, CallGetRunsAlongsideRegistration) {
 
   std::thread reader([&]() {
     while (!stop.load()) {
-      f.core->call_get("call-0");
+      f.core->call_on_strand([&]() { return f.core->call_get("call-0"); });
       reads.fetch_add(1);
     }
   });
@@ -96,8 +97,8 @@ TEST(CoreConcurrencyTest, CallGetRunsAlongsideRegistration) {
   for (int i = 0; i < kIterations; ++i) {
     auto call = std::make_shared<Call>();
     call->id = "call-" + std::to_string(i % 4);
-    f.core->call_register(call);
-    f.core->call_unregister(call->id);
+    f.core->call_on_strand([&]() { f.core->call_register(call); });
+    f.core->call_on_strand([&]() { f.core->call_unregister(call->id); });
   }
 
   stop.store(true);
@@ -115,19 +116,19 @@ TEST(CoreConcurrencyTest, ChannelRegistrySurvivesConcurrentChannels) {
       for (int i = 0; i < 50; ++i) {
         auto connection = std::make_shared<MockConnection>("tcp", "192.0.2." + std::to_string(t + 1), static_cast<std::uint16_t>(5060 + i));
         auto channel = std::make_shared<Channel>(f.logger, f.core, connection);
-        channel->start();
-        channel->close();
+        f.core->call_on_strand([&]() { channel->start(); });
+        f.core->call_on_strand([&]() { channel->close(); });
       }
     });
   }
 
   for (auto& thread : threads) thread.join();
 
-  EXPECT_NO_THROW(f.core->channel_close_all());
+  EXPECT_NO_THROW(f.core->call_on_strand([&]() { f.core->channel_close_all(); }));
 }
 
-// subscriber_get_channel used to reach the map with no lock, and used operator[], which
-// inserts an empty entry for an unknown subscriber: a mutation inside a getter.
+// subscriber_get_channel used operator[], which inserts an empty entry for an unknown
+// subscriber: a mutation inside a getter, and one that grew the map under lookup load.
 TEST(CoreConcurrencyTest, SubscriberChannelLookupIsSafeAndDoesNotInsert) {
   ConcurrentFixture f;
   std::vector<std::thread> threads;
@@ -140,7 +141,7 @@ TEST(CoreConcurrencyTest, SubscriberChannelLookupIsSafeAndDoesNotInsert) {
         subscriber->id = static_cast<uint64_t>((t * kIterations) + i);
         subscriber->identity = std::make_shared<types::SIPIdentity>("sip:nobody@example.com");
 
-        if (f.core->subscriber_get_channel(subscriber) != nullptr) found.fetch_add(1);
+        if (f.core->call_on_strand([&]() { return f.core->subscriber_get_channel(subscriber); }) != nullptr) found.fetch_add(1);
       }
     });
   }

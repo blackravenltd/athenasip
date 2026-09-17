@@ -318,3 +318,26 @@ uncommitted working tree on 2026-09-17.
 - [x] Whole suite run under both sanitizers: `asan` (ASan + UBSan) and `tsan`, 133
       tests, clean under both. This was the "run both once before M2" item.
 
+### Concurrency model: the Core strand (2026-09-17)
+
+- [x] `Core` runs on a `boost::asio::strand` over the global io_context. `_channels`,
+      `_channels_by_subscriber`, `_transactions` and `_calls` are strand-confined and
+      every lock is gone: `core.h` and `core.cpp` contain no mutex at all.
+- [x] `Core::post()` queues work on the strand; `Core::call_on_strand()` runs work and
+      waits, for callers that are not on the strand and need an answer (shutdown, the
+      admin API, tests). It calls straight through when already on the strand, so it
+      cannot deadlock on itself.
+- [x] `Channel` is strand-confined too, and hands over with `dispatch` rather than
+      `post`, so a caller already on the strand runs inline and `channel_close_all`
+      stays synchronous within strand work. Read and write completions arrive on the
+      connection's own io_context thread and hop back to the strand before touching
+      anything.
+- [x] `UDPServer` has its own strand. Its socket is shared by every UDP channel, unlike
+      TCP and TLS where each channel owns one, so sends now arriving from the Core
+      strand would otherwise run concurrently with the server thread's receive. The
+      socket and the connection map are both strand-confined now.
+- [x] Shutdown in `main.cpp` goes through `call_on_strand` rather than reaching into
+      Core from the signal handler's thread.
+- [x] 133 tests green, and clean under both the `asan` and `tsan` presets after the
+      conversion.
+

@@ -39,6 +39,12 @@ class UDPServer : public Server {
                            std::shared_ptr<boost::asio::ip::udp::endpoint> sender_endpoint);
 
   boost::asio::io_context _io_context;
+
+  // One socket serves every UDP channel, so unlike TCP or TLS it is shared. Sends now
+  // arrive from the Core strand while this server's own thread is receiving, and an
+  // asio socket is not safe for that, so every operation on it goes through here.
+  boost::asio::strand<boost::asio::io_context::executor_type> _strand;
+
   boost::asio::ip::udp::socket _socket;
   uint16_t _port;
   std::shared_ptr<std::thread> _thread;

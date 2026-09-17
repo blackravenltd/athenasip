@@ -7,6 +7,10 @@
 #pragma once
 
 #include <array>
+#include <boost/asio/dispatch.hpp>
+#include <boost/asio/post.hpp>
+#include <boost/system/error_code.hpp>
+#include <cstddef>
 #include <memory>
 #include <string>
 
@@ -22,6 +26,9 @@ using namespace athenasip::events;
 
 namespace athenasip {
 
+// A Channel is strand-confined: every method below hands over to the Core strand, and
+// everything it owns is touched only from there. Servers, and the connection's own
+// io_context thread, reach it only through that hand-off.
 class Channel : public std::enable_shared_from_this<Channel> {
  public:
   Channel(std::shared_ptr<Logger>, std::shared_ptr<Core>, std::shared_ptr<Connection>);
@@ -56,6 +63,10 @@ class Channel : public std::enable_shared_from_this<Channel> {
   void _schedule_async_read();
   void _schedule_async_write(std::string message);
   bool _append_body();
+
+  // Strand-confined bodies behind the public hand-offs.
+  void _send_on_strand(std::shared_ptr<SIPMessage> message);
+  void _on_read(boost::system::error_code ec, std::size_t length);
 };
 
 }  // namespace athenasip
