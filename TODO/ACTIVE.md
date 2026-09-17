@@ -94,10 +94,6 @@ model has not been audited to the same standard yet.
       checking for Via and CSeq.
 
 ### Logic bugs
-- [ ] `Core::subscriber_register` (`src/core.cpp:49-51`) tests the subscriber row, not
-      the registration, so the location is never written.
-- [ ] `Core::subscriber_unregister` (`src/core.cpp:90-103`) unsubscribes events only on
-      the failure path.
 - [ ] `Channel::send` hardcodes `SIP/2.0/TCP` (`src/channel.cpp:104`); `message->branch`
       is never set. Fixed properly by the M2 transaction layer, but must not ship as is.
 - [ ] `Config` reads `rtprelay.min_port`/`max_port`; YAML and docs say

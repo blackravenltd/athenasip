@@ -46,9 +46,10 @@ std::shared_ptr<Realm> Core::realm_get_by_name(const std::string& realm_name) { 
 std::shared_ptr<Subscriber> Core::subscriber_get(std::shared_ptr<SIPIdentity> identity) { return datastore->subscriber_get(identity); }
 
 bool Core::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel) {
-  auto registration = subscriber_get(subscriber->identity);
-
-  if (!registration && !datastore->subscriber_register(subscriber, contact)) {
+  // RFC 3261 10.3 step 7: the binding is written on every successful REGISTER. This
+  // used to be skipped whenever the subscriber record already existed, which is always,
+  // so no contact was ever stored and the registrar had nothing to route to.
+  if (!datastore->subscriber_register(subscriber, contact)) {
     _logger->error("Cannot register subscriber identity " + subscriber->identity->to_string() + " - datastore failure");
     return false;
   }
@@ -124,18 +125,22 @@ void Core::_invite_from_event(std::shared_ptr<Channel> channel, std::shared_ptr<
 }
 
 bool Core::subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel) {
-  if (datastore->subscriber_unregister(subscriber, contact)) {
-    _channels_by_subscriber.erase(subscriber->id);
-    return true;
-  }
-
-  if (channel->_event_subscription) {
+  // The subscription is per-channel state and the caller is done with this subscriber
+  // on this channel either way, so it goes before the datastore call rather than only
+  // on the failure path, where it used to sit and therefore leaked on every success.
+  if (channel && channel->_event_subscription) {
     events->unsubscribe(channel->_event_subscription);
     channel->_event_subscription = nullptr;
   }
 
-  _logger->error("Cannot unregister subscriber identity " + subscriber->identity->to_string() + " - datastore failure");
-  return false;
+  _channels_by_subscriber.erase(subscriber->id);
+
+  if (!datastore->subscriber_unregister(subscriber, contact)) {
+    _logger->error("Cannot unregister subscriber identity " + subscriber->identity->to_string() + " - datastore failure");
+    return false;
+  }
+
+  return true;
 }
 
 std::shared_ptr<Channel> Core::subscriber_get_channel(std::shared_ptr<Subscriber> subscriber) { return _channels_by_subscriber[subscriber->id]; }
