@@ -110,11 +110,10 @@ model has not been audited to the same standard yet.
 
 
 ### New interfaces
-- [ ] `MemoryDatastore` (`memory://`) is now the only thing standing between the tree
-      and a zero-config single node: with the SQL drivers gone, `redis://` is the only
-      datastore, so `config.example.yaml` points there and the quick start needs Redis.
-- [ ] `MemoryDatastore` (`memory://`): realms, subscribers, locations with TTL, nonces
-      with TTL, calls. Backed by `ExpiryMap`. Used by tests and zero-config single node.
+- [ ] `Config::db_create` is read from `datastore.create` in the YAML but nothing uses
+      it now the SQL drivers are gone. Remove with the rest of the Config cleanup.
+- [ ] `Realm::registration_timeout` has no documented unit. `MemoryDatastore` reads it
+      as seconds; nothing writes it yet, so pin the unit down when provisioning lands.
 - [ ] `Datastore` gains write operations: realm create/update/delete, subscriber
       create/update/delete, location list, call list/update. `RedisDatastore` and
       `MemoryDatastore` implement all of it.

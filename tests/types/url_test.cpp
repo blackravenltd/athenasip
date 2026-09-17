@@ -98,3 +98,13 @@ TEST(URLTest, ConcatenationOperators) {
   EXPECT_NE(concat1.find(urlStr), std::string::npos);
   EXPECT_NE(concat2.find(urlStr), std::string::npos);
 }
+
+// A scheme with no host is a usable URL for a driver that takes no address, such as
+// the memory:// datastore.
+TEST(URLTest, HostlessUrlIsValid) {
+  athenasip::types::URL url("memory://");
+
+  EXPECT_TRUE(url.is_valid());
+  EXPECT_EQ(url.scheme, "memory");
+  EXPECT_EQ(url.host, "");
+}
