@@ -216,3 +216,22 @@ uncommitted working tree on 2026-09-17.
 - [x] Tests: `SIPUriTest` (9), `SIPIdentityTest` (5), `SIPMessageTest` (7), all derived
       from RFC 3261 rather than from the implementation. 97 tests green.
 
+### Delete (2026-09-17)
+
+- [x] `src/datastores/{mysql,postgres,sqlite}_datastore.*` removed, along with their
+      registrations in `datastore_drivers.h`, `sql/`, `bin/save_db_create.sh` and the
+      CMake `find_package` blocks for mysql-concpp, PostgreSQL, libpqxx and SQLite3.
+      `redis` is the only registered datastore scheme.
+- [x] `tinyxml2` dropped: nothing in the tree included it. If presence PIDF needs XML
+      in M6 it comes back then.
+- [x] Lua taken out of the build path per the parking decision. `src/script/` stays in
+      the tree but is filtered out of the source glob and the runtime links no Lua, so
+      the mismatched-upvalue bug in `lua_logger.cpp` is moot. The `scripting:` section
+      is gone from the example config.
+- [x] Dependencies are now Boost, OpenSSL and yaml-cpp, plus GoogleTest for the test
+      build. `otool -L` on the binary shows no SQL, Lua or XML libraries.
+- [x] Docs updated: `architecure.md` driver table, `configuration.md` datastore table
+      and example, `compiling.md` brew line and build commands, `quick_start.md` and
+      the README. `docs/versions/v0_0_1_overview.md` is left alone as a record of what
+      0.0.1 actually shipped.
+

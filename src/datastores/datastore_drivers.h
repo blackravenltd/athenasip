@@ -10,23 +10,13 @@
 
 #include "../loggers/logger.h"
 #include "datastore.h"
-#include "mysql_datastore.h"
-#include "postgres_datastore.h"
 #include "redis_datastore.h"
-#include "sqlite_datastore.h"
 
 namespace athenasip::datastores {
 
+// Two implementations: one built-in for a zero-config single node, one canonical for
+// production. The SQL drivers are gone; a memory:// driver replaces them.
 void register_builtin_datastores(std::shared_ptr<loggers::Logger> logger) {
-  Datastore::register_driver<MySQLDatastore>(logger, "mysql");
-  Datastore::register_driver<MySQLDatastore>(logger, "mysqlx");
-
-  Datastore::register_driver<PostgreSQLDatastore>(logger, "postgres");
-  Datastore::register_driver<PostgreSQLDatastore>(logger, "postgresql");
-
-  Datastore::register_driver<SQLiteDatastore>(logger, "sqlite");
-  Datastore::register_driver<SQLiteDatastore>(logger, "sqlite3");
-
   Datastore::register_driver<RedisDatastore>(logger, "redis");
   Datastore::register_driver<RedisDatastore>(logger, "rediss");
   Datastore::register_driver<RedisDatastore>(logger, "redis+ssl");

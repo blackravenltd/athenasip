@@ -66,7 +66,7 @@ rtprelay:
   port_max: 23000
 
 datastore:
-  url: "mysql://USERNAME:PASSWORD@localhost/athenasip"
+  url: "redis://127.0.0.1:6379"
 
 events:
   url: "mqtt://127.0.0.1:1883/?client_id=sip-01&keep_alive=30"
@@ -85,8 +85,3 @@ http:
   # websocket
   #   enable: true
 
-scripting:
-  language: lua     # 'lua' is the default
-  add_stdlib: true
-  allowed_path: /
-  routing_script: ~/.athenasip/routing.lua

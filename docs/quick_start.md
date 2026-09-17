@@ -1,7 +1,7 @@
 # AthenaSIP - Quick Start
 
 1. Install AthenaSIP
-2. Install [MySQL](https://www.mysql.com/) or [MariaDB](https://mariadb.org/)
+2. Install [Redis](https://redis.io/) (or run with the built-in datastore once `memory://` lands)
 3. Install [rtpproxy](https://www.rtpproxy.org/)
 4. Install a SIP Client such as [LinPhone](https://www.linphone.org/) on two or more hosts.
 5. Use your SIP clients to connect to the server using the accounts and passwords:

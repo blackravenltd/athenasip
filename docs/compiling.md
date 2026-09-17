@@ -11,9 +11,14 @@ apt install cmake build-essential
 * Brew Dependencies:
 
 ```
-brew install cmake boost@1.87 openssl@3 libpq libpqxx lua mysql-connector-c++
+brew install cmake boost openssl@3 lua yaml-cpp tinyxml2 googletest
 ```
 
 * Build
 
-* https://github.com/mysql/mysql-connector-cpp (https://github.com/mysql/mysql-connector-cpp/archive/refs/tags/9.2.0.tar.gz)
+```
+cmake --preset debug
+cmake --build build -j8
+```
+
+Presets are listed in `CONTRIBUTING.md`.

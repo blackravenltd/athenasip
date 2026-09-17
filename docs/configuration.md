@@ -33,7 +33,7 @@ rtprelay:
   port_max: 23000
 
 db:
-  url: "mysql://root@localhost/athenasip"
+  url: "redis://127.0.0.1:6379"
 ```
 
 ### `sip` Section
@@ -191,6 +191,4 @@ The URL to access the database, in the format: `scheme://user[:password]@host[:p
 
 | Database                                  | Scheme     | Example URL                           |
 |:------------------------------------------|:-----------|:--------------------------------------|
-|[MySQL](https://www.mysql.com/)            | `mysql`    | `mysql://root@localhost/athenasip`    |
 |[MariaDB](https://mariadb.org/)            | `mariadb`  | `mariadb://root@localhost/athenasip`  |
-|[PostgreSQL](https://www.postgresql.org/)  | `postgres` | `postgres://root@localhost/athenasip` |
