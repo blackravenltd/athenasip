@@ -21,7 +21,7 @@ class HeaderTestAccessor : public Header {
  public:
   // Expose the registry publicly.
   static std::unordered_map<std::string, std::function<std::shared_ptr<Header>()>>& publicRegistry() {
-    return Header::getRegistry();
+    return Header::get_registry();
   }
   // Provide dummy implementations to make this class instantiable.
   virtual bool parse(const std::string& /*value*/) override { return false; }

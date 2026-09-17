@@ -24,7 +24,7 @@ class ExpiryMap : public std::enable_shared_from_this<ExpiryMap<K, V>> {
   void add(const K& key, const V& value, uint32_t expiryMs) {
     {
       std::lock_guard<std::mutex> lock(_mutex);
-      removeInternal(key);
+      remove_internal(key);
     }
 
     // Capture a shared pointer to this so that the lambda keeps the ExpiryMap alive.
@@ -55,7 +55,7 @@ class ExpiryMap : public std::enable_shared_from_this<ExpiryMap<K, V>> {
   // Cancels the associated delayed task if it exists.
   void remove(const K& key) {
     std::lock_guard<std::mutex> lock(_mutex);
-    removeInternal(key);
+    remove_internal(key);
   }
 
   // Operator[] returns a copy of the value associated with the key.
@@ -71,7 +71,7 @@ class ExpiryMap : public std::enable_shared_from_this<ExpiryMap<K, V>> {
 
  protected:
   // Internal helper to remove an entry. Must be called with _mutex already locked.
-  void removeInternal(const K& key) {
+  void remove_internal(const K& key) {
     auto it = _entries.find(key);
     if (it != _entries.end()) {
       // Cancel the expiration timer.

@@ -66,7 +66,7 @@ class DelayedTask : public std::enable_shared_from_this<DelayedTask<T>> {
 
  private:
   // Private constructor (use schedule() factory).
-  DelayedTask(Task task, int delay_ms) : _task(std::move(task)), _delay_ms(delay_ms), _timer(detail::getGlobalIOContext()), _has_executed(false) {}
+  DelayedTask(Task task, int delay_ms) : _task(std::move(task)), _delay_ms(delay_ms), _timer(detail::get_global_io_context()), _has_executed(false) {}
 
   // Actually starts the timer and schedules the callback
   void startTimer() {

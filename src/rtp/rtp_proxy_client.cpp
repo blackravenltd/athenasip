@@ -12,7 +12,7 @@ namespace athenasip::clients {
 
 RTPProxyClient::RTPProxyClient(std::shared_ptr<Logger> logger, const std::string& rtpproxy_host, unsigned short rtpproxy_port)
     : _logger(std::make_unique<LoggerScoped>("rtpproxy", logger)),
-      _io_context(detail::getGlobalIOContext())  // uses the global io_context
+      _io_context(detail::get_global_io_context())  // uses the global io_context
       ,
       _strand(boost::asio::make_strand(_io_context)),
       _socket(_strand),

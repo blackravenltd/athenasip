@@ -22,6 +22,7 @@ using namespace athenasip;
 TEST(EventSystemTest, PublishTriggersSubscription) {
     auto logger = std::make_shared<MockLogger>();
     auto event_system = std::make_shared<events::LocalEventSystem>(logger);
+    event_system->connect();
     
     std::atomic<bool> callback_called(false);
     
@@ -45,6 +46,7 @@ TEST(EventSystemTest, PublishTriggersSubscription) {
 TEST(EventSystemTest, UnsubscribePreventsCallback) {
     auto logger = std::make_shared<MockLogger>();
     auto event_system = std::make_shared<events::LocalEventSystem>(logger);
+    event_system->connect();
     
     std::atomic<bool> callback_called(false);
     
@@ -68,6 +70,7 @@ TEST(EventSystemTest, UnsubscribePreventsCallback) {
 TEST(EventSystemTest, UnsubscribeAllPreventsCallbacks) {
     auto logger = std::make_shared<MockLogger>();
     auto event_system = std::make_shared<events::LocalEventSystem>(logger);
+    event_system->connect();
     
     std::atomic<bool> callback1_called(false);
     std::atomic<bool> callback2_called(false);
@@ -97,6 +100,7 @@ TEST(EventSystemTest, UnsubscribeAllPreventsCallbacks) {
 TEST(EventSystemTest, MultipleSubscriptionsTriggered) {
     auto logger = std::make_shared<MockLogger>();
     auto event_system = std::make_shared<events::LocalEventSystem>(logger);
+    event_system->connect();
     
     std::atomic<int> call_count(0);
     
@@ -119,7 +123,7 @@ TEST(EventSystemTest, MultipleSubscriptionsTriggered) {
     while(call_count.load() < 2 &&
           (std::chrono::steady_clock::now() - start < std::chrono::milliseconds(100))) {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        detail::getGlobalIOContext().poll();
+        detail::get_global_io_context().poll();
     }
     
     EXPECT_EQ(call_count.load(), 2);

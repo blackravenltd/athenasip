@@ -11,7 +11,7 @@
 
 namespace athenasip::detail {
 
-inline boost::asio::io_context& getGlobalIOContext() {
+inline boost::asio::io_context& get_global_io_context() {
   // The io_context for the entire process
   static boost::asio::io_context io_context;
 

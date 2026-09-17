@@ -83,7 +83,7 @@ std::unordered_map<std::string, std::string> parse_query(std::string value) {
 MQTTEventSystem::MQTTEventSystem(std::shared_ptr<athenasip::loggers::Logger> logger, std::string prefix, std::string broker_host, std::uint16_t broker_port, std::string client_id,
                                  std::string username, std::string password, std::uint16_t keep_alive_seconds)
     : _logger(std::make_shared<loggers::LoggerScoped>("mqtt_event_system", std::move(logger))),
-      _callback_io_context(detail::getGlobalIOContext()),
+      _callback_io_context(detail::get_global_io_context()),
       _prefix(std::move(prefix)),
       _broker_host(std::move(broker_host)),
       _broker_port(broker_port),
