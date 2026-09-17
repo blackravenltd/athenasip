@@ -1,0 +1,66 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 23, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build-${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "debug",
+      "inherits": "base",
+      "displayName": "Debug",
+      "binaryDir": "${sourceDir}/build"
+    },
+    {
+      "name": "release",
+      "inherits": "base",
+      "displayName": "Release",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "tests",
+      "inherits": "base",
+      "displayName": "Debug with tests",
+      "binaryDir": "${sourceDir}/build-tests",
+      "cacheVariables": { "ATHENA_BUILD_TESTING": "ON" }
+    },
+    {
+      "name": "asan",
+      "inherits": "base",
+      "displayName": "AddressSanitizer and UndefinedBehaviourSanitizer",
+      "cacheVariables": {
+        "ATHENA_BUILD_TESTING": "ON",
+        "ATHENA_SANITIZE": "address",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "tsan",
+      "inherits": "base",
+      "displayName": "ThreadSanitizer",
+      "cacheVariables": {
+        "ATHENA_BUILD_TESTING": "ON",
+        "ATHENA_SANITIZE": "thread",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "debug", "configurePreset": "debug" },
+    { "name": "release", "configurePreset": "release" },
+    { "name": "tests", "configurePreset": "tests" },
+    { "name": "asan", "configurePreset": "asan" },
+    { "name": "tsan", "configurePreset": "tsan" }
+  ],
+  "testPresets": [
+    { "name": "tests", "configurePreset": "tests", "output": { "outputOnFailure": true } },
+    { "name": "asan", "configurePreset": "asan", "output": { "outputOnFailure": true } },
+    { "name": "tsan", "configurePreset": "tsan", "output": { "outputOnFailure": true } }
+  ]
+}

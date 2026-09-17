@@ -1,0 +1,13 @@
+//
+// AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
+//
+// Copyright (C) 2026 Tom Cully <mail@tomcully.com>
+// Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
+//
+// Generated from build_version.h.in by CMake. Do not edit the generated copy.
+#pragma once
+
+#define ATHENA_VERSION_MAJOR @PROJECT_VERSION_MAJOR@
+#define ATHENA_VERSION_MINOR @PROJECT_VERSION_MINOR@
+#define ATHENA_VERSION_PATCH @PROJECT_VERSION_PATCH@
+#define ATHENA_VERSION_STRING "@PROJECT_VERSION@"

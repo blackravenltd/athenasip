@@ -3,10 +3,35 @@ cmake_minimum_required(VERSION 3.23...4.2)
 project(athenasip VERSION 0.1.0 LANGUAGES CXX)
 
 option(ATHENA_BUILD_TESTING "Build test targets" OFF)
+set(ATHENA_SANITIZE "none" CACHE STRING "Sanitizer to build with: none, address, thread")
+set_property(CACHE ATHENA_SANITIZE PROPERTY STRINGS none address thread)
+
+# Single-config generators leave CMAKE_BUILD_TYPE empty, which means no optimisation
+# and no debug info. Packaging passes Release explicitly.
+get_property(ATHENA_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+
+if(NOT ATHENA_MULTI_CONFIG AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Build type" FORCE)
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS Debug Release RelWithDebInfo MinSizeRel)
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+if(ATHENA_SANITIZE STREQUAL "address")
+    set(ATHENA_SANITIZE_FLAGS -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all)
+elseif(ATHENA_SANITIZE STREQUAL "thread")
+    set(ATHENA_SANITIZE_FLAGS -fsanitize=thread -fno-omit-frame-pointer)
+elseif(NOT ATHENA_SANITIZE STREQUAL "none")
+    message(FATAL_ERROR "ATHENA_SANITIZE must be one of: none, address, thread")
+endif()
+
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/build_version.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/build_version.h"
+    @ONLY
+)
 
 include(FetchContent)
 
@@ -76,7 +101,7 @@ if(APPLE)
     endif()
 endif()
 
-find_package(Boost 1.91.0 EXACT CONFIG REQUIRED COMPONENTS thread json charconv)
+find_package(Boost 1.87.0 CONFIG REQUIRED COMPONENTS thread json charconv)
 find_package(OpenSSL REQUIRED COMPONENTS SSL Crypto)
 
 find_package(mysql-concpp CONFIG QUIET)
@@ -227,7 +252,13 @@ target_compile_features(athena_core PUBLIC cxx_std_20)
 target_include_directories(athena_core
     PUBLIC
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>"
+        "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/generated>"
 )
+
+if(ATHENA_SANITIZE_FLAGS)
+    target_compile_options(athena_core PUBLIC ${ATHENA_SANITIZE_FLAGS})
+    target_link_options(athena_core PUBLIC ${ATHENA_SANITIZE_FLAGS})
+endif()
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/include")
     target_include_directories(athena_core
