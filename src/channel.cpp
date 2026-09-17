@@ -95,6 +95,12 @@ void Channel::close() {
 }
 
 void Channel::send(std::shared_ptr<SIPMessage> message) {
+  // close() resets _connection, and a transaction can still be holding this channel.
+  if (!_connection) {
+    _logger->info("Dropping " + message->header->first_line() + " - channel is closed");
+    return;
+  }
+
   // Get Server Endpoint
   auto lep = _connection->local_endpoint();
   auto server_endpoint = lep.address().to_string() + ":" + std::to_string(lep.port());
@@ -142,7 +148,12 @@ void Channel::receive(std::shared_ptr<SIPMessage> message) {
 void Channel::_schedule_async_write(std::string message) {
   auto self(shared_from_this());
 
-  _connection->async_write_some(boost::asio::buffer(message), [this, self](boost::system::error_code ec, std::size_t) {
+  if (!_connection) return;
+
+  // The buffer has to outlive the call, so it is owned by the completion handler.
+  auto buffer = std::make_shared<std::string>(std::move(message));
+
+  _connection->async_write_some(boost::asio::buffer(*buffer), [this, self, buffer](boost::system::error_code ec, std::size_t) {
     if (ec) {
       _logger->error("Write Error " + ec.to_string());
       close();
