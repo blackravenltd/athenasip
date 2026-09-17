@@ -108,6 +108,12 @@ void Core::_invite_from_event(std::shared_ptr<Channel> channel, std::shared_ptr<
 
   invite->header = std::make_shared<SIPHeader>();
   invite->header->request_method = "INVITE";
+
+  // Without a request URI the header cannot serialise. Target the callee for now; the
+  // M2 proxy core replaces this with a location lookup.
+  auto to_identity = std::make_shared<SIPIdentity>(std::string(payload_obj.at("to").as_string()));
+  invite->header->request_uri = to_identity->uri;
+
   invite->header->add("Call-ID", std::string(payload_obj.at("call_id").as_string()));
   invite->header->add("From", std::string(payload_obj.at("from").as_string()));
   invite->header->add("To", std::string(payload_obj.at("to").as_string()));

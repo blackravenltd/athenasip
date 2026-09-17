@@ -25,10 +25,10 @@ void SIPHeader::add_start(const std::string& field_name, std::shared_ptr<headers
   HeaderField hf{field_name, value};
   headers.insert(headers.begin(), hf);
 
-  // Update the lookup map.
-  auto vec = headers_map[field_name];
+  // The map has to prepend too, or headers_map[field][0] is no longer the topmost
+  // value and Via lookups pick up the wrong hop.
+  auto& vec = headers_map[field_name];
   vec.insert(vec.begin(), value);
-  headers_map[field_name].push_back(value);
 }
 
 void SIPHeader::clear(const std::string& field_name) {
@@ -130,6 +130,7 @@ std::string SIPHeader::to_string() const {
 std::string SIPHeader::first_line() const {
   switch (type) {
     case Type::Request:
+      if (!request_uri) throw std::runtime_error("SIPHeader::first_line Request " + request_method + " has no request URI");
       return request_method + " " + request_uri->to_string() + " " + sip_version;
     case Type::Response:
       return sip_version + " " + std::to_string(response_code) + " " + response_message;
