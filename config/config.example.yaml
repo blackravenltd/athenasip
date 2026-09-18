@@ -32,6 +32,9 @@ sip:
     h_server_invite_timeout: 64               # H = 64 * T1
     i_server_invite_duration: 1               # I = 1 * T4
 
+    # Non-INVITE server transaction
+    j_server_non_invite_duration: 64          # J = 64 * T1
+
     # Retransmit cap (optional safety net)
     retransmit_max_interval: 8        # T2 = 8 * T1 (derived from T2 value, capped)
     retransmit_max_attempts: 7        # Approximate exponential retry cap (T1 * 2^6 ~ 32s)

@@ -45,6 +45,8 @@ class Config {
   uint16_t sip_timer_g_server_invite_initial = 1;
   uint16_t sip_timer_h_server_invite_timeout = 64;
   uint16_t sip_timer_i_server_invite_duration = 1;
+  uint16_t sip_timer_j_server_non_invite_duration = 64;
+  uint16_t sip_timer_k_non_invite_duration = 1;
 
   bool sip_timer_reliable_transport_retransmits = false;
 

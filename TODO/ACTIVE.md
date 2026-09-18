@@ -63,15 +63,18 @@ UDP, TCP, TLS, WS and WSS, with plain RTP through the builtin engine, provisione
 through the admin API, verified by sipp.
 
 ### Transaction layer (RFC 3261 section 17)
-- [ ] Replace `Transaction` with `InviteClientTransaction`, `NonInviteClientTransaction`,
-      `InviteServerTransaction`, `NonInviteServerTransaction`, each a state machine
-      (Calling/Trying, Proceeding, Completed, Confirmed, Terminated) with timers A-K
-      from `Config::sip_timer_*`. `Connection::is_reliable()` disables A/E/G and
-      zeroes D/K.
+
+`InviteServerTransaction` and `NonInviteServerTransaction` are done, with timers G, H,
+I and J, on `ManualTimerSource`. The client side and the wiring are what remain.
+
+- [ ] `InviteClientTransaction` (17.1.1): Calling -> Proceeding -> Completed ->
+      Terminated, timers A (doubling to T2), B and D.
+- [ ] `NonInviteClientTransaction` (17.1.2): Trying -> Proceeding -> Completed ->
+      Terminated, timers E (doubling to T2), F and K.
+- [ ] Wire the four machines into `Core::process_message` and delete the old
+      `src/transaction.{h,cpp}`. Core currently still uses it.
 - [ ] Transaction matching per 17.1.3 / 17.2.3 (branch + sent-by + method, with the
       RFC 2543 fallback deferred).
-- [ ] Retransmission absorption, ACK for non-2xx handled in the transaction, 2xx ACK
-      passed to the TU.
 - [ ] `Channel::send` sets Via transport from `Connection::transport_name()`, generates
       `z9hG4bK` branches, sets `rport`/`received` (RFC 3581).
 

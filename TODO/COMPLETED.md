@@ -448,3 +448,25 @@ arrival order, with only the fields a proxy rewrites parsed out, which makes
       seconds at the default T1, and there is a test proving that costs nothing now.
 - [x] 182 tests, clean under asan and tsan.
 
+### Server transactions, RFC 3261 section 17.2 (2026-09-18)
+
+- [x] `TransactionBase` in `src/transactions/`: the section 17 states, the timer values
+      derived from `Config` as multiples of T1 and T4, and the transport/TU boundary.
+      `is_reliable()` disables the retransmission timers and zeroes the waiting ones,
+      because a stream transport neither loses nor duplicates.
+- [x] `InviteServerTransaction` (17.2.1): Proceeding, Completed, Confirmed, Terminated
+      with timers G, H and I. Sends 100 Trying itself when the TU has not answered in
+      200ms. A 2xx terminates the transaction immediately rather than going to
+      Completed, because a 2xx and its ACK are end to end and belong to the TU. The ACK
+      for a non-2xx is absorbed and never reaches the TU, which is the opposite case.
+      G doubles to T2.
+- [x] `NonInviteServerTransaction` (17.2.2): Trying, Proceeding, Completed, Terminated
+      with timer J. A retransmission in Trying is dropped rather than passed up, so the
+      TU sees each request once.
+- [x] `Config` gains timers J and K, which were missing: J is the non-INVITE server
+      wait and K the non-INVITE client wait.
+- [x] 19 tests on `ManualTimerSource`, covering retransmission absorption, the 100
+      Trying timer, G's backoff, H giving up with no ACK, I and J, and the reliable
+      transport cases. Each runs in about 0.16s despite exercising 32 second timers.
+- [x] 201 tests, clean under asan and tsan.
+

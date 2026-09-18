@@ -58,6 +58,8 @@ bool Config::load_from_yaml(const std::string& filename) {
     if (sip_timers["g_server_invite_initial"]) sip_timer_g_server_invite_initial = sip_timers["g_server_invite_initial"].as<uint16_t>();
     if (sip_timers["h_server_invite_timeout"]) sip_timer_h_server_invite_timeout = sip_timers["h_server_invite_timeout"].as<uint16_t>();
     if (sip_timers["i_server_invite_duration"]) sip_timer_i_server_invite_duration = sip_timers["i_server_invite_duration"].as<uint16_t>();
+    if (sip_timers["j_server_non_invite_duration"]) sip_timer_j_server_non_invite_duration = sip_timers["j_server_non_invite_duration"].as<uint16_t>();
+    if (sip_timers["k_non_invite_duration"]) sip_timer_k_non_invite_duration = sip_timers["k_non_invite_duration"].as<uint16_t>();
   }
 
   // --- Parse the 'tls' section ---
