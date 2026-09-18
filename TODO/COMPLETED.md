@@ -470,3 +470,23 @@ arrival order, with only the fields a proxy rewrites parsed out, which makes
       transport cases. Each runs in about 0.16s despite exercising 32 second timers.
 - [x] 201 tests, clean under asan and tsan.
 
+### Client transactions, RFC 3261 section 17.1 (2026-09-18)
+
+- [x] `InviteClientTransaction` (17.1.1): Calling, Proceeding, Completed, Terminated
+      with timers A, B and D. It builds and sends the ACK for a non-2xx itself
+      (17.1.1.3), reusing the request's Call-ID, From, Request-URI and top Via, taking
+      the To from the response because that carries the tag the far end chose, and
+      keeping the request's CSeq number with the method changed to ACK. A 2xx is not
+      acknowledged here: that ACK is the TU's, as a separate transaction that may take
+      a different route.
+- [x] `NonInviteClientTransaction` (17.1.2): Trying, Proceeding, Completed, Terminated
+      with timers E, F and K. Timer E differs from timer A in two ways that are easy to
+      miss: it is capped at T2 rather than doubling without limit, and once in
+      Proceeding it fires at T2 flat.
+- [x] `TransactionBase` gains a timeout callback, so a TU is told when B, F or H expires
+      rather than waiting forever. The INVITE server transaction reports timer H
+      through it too.
+- [x] 18 more tests, including the full header rules for the generated ACK and the
+      difference in backoff between timers A and E.
+- [x] 219 tests, clean under asan and tsan.
+

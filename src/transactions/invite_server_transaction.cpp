@@ -139,8 +139,9 @@ void InviteServerTransaction::_start_timer_h() {
   auto self = std::static_pointer_cast<InviteServerTransaction>(shared_from_this());
 
   _timer_h = _start_timer(_timers.h, [self]() {
-    // No ACK ever came. The far end is gone.
+    // No ACK ever came. The far end is gone, and RFC 3261 17.2.1 says tell the TU.
     self->_logger->info("No ACK for the final response, giving up");
+    self->_notify_timeout();
     self->_set_state(State::Terminated);
   });
 }

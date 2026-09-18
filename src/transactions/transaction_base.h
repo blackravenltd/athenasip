@@ -97,6 +97,9 @@ class TransactionBase : public std::enable_shared_from_this<TransactionBase> {
   using TuFn = std::function<void(std::shared_ptr<SIPMessage>)>;
   // The transaction has reached Terminated and can be forgotten.
   using TerminatedFn = std::function<void(const std::string& id)>;
+  // No answer came in time. RFC 3261 requires the TU be told, so it can fail the call
+  // rather than wait forever.
+  using TimeoutFn = std::function<void()>;
 
   TransactionBase(std::shared_ptr<loggers::Logger> logger, std::string id, bool reliable, Timers timers, std::shared_ptr<TimerSource> timer_source, SendFn send,
                   TuFn to_tu)
@@ -116,6 +119,7 @@ class TransactionBase : public std::enable_shared_from_this<TransactionBase> {
   const Timers& timers() const { return _timers; }
 
   void on_terminated(TerminatedFn fn) { _on_terminated = std::move(fn); }
+  void on_timeout(TimeoutFn fn) { _on_timeout = std::move(fn); }
 
   // A message arrived from the transport for this transaction.
   virtual void receive(std::shared_ptr<SIPMessage> message) = 0;
@@ -167,6 +171,10 @@ class TransactionBase : public std::enable_shared_from_this<TransactionBase> {
     if (_to_tu) _to_tu(message);
   }
 
+  void _notify_timeout() {
+    if (_on_timeout) _on_timeout();
+  }
+
   virtual void _cancel_all_timers() = 0;
 
   std::shared_ptr<loggers::Logger> _logger;
@@ -178,6 +186,7 @@ class TransactionBase : public std::enable_shared_from_this<TransactionBase> {
   SendFn _send;
   TuFn _to_tu;
   TerminatedFn _on_terminated;
+  TimeoutFn _on_timeout;
 
   State _state = State::Trying;
 };
