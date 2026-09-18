@@ -22,7 +22,6 @@ namespace athenasip {
 
 class Channel;
 class Call;
-class Transaction;
 
 class SIPMessage {
  public:
@@ -41,7 +40,6 @@ class SIPMessage {
   std::weak_ptr<Subscriber> subscriber;
   std::shared_ptr<SIPUri> contact;
   bool authenticated = false;
-  std::weak_ptr<Transaction> transaction;
 
   // Methods
   std::string to_string() const;

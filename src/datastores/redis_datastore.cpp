@@ -399,15 +399,18 @@ std::shared_ptr<types::Subscriber> RedisDatastore::subscriber_get(std::shared_pt
   }
 }
 
-bool RedisDatastore::subscriber_register(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact) {
+bool RedisDatastore::subscriber_register(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact, std::uint32_t expires_seconds,
+                                         const std::string& path) {
   try {
     const std::uint16_t port = contact->port.value_or(0);
     const auto now = static_cast<std::int64_t>(std::time(nullptr));
     const bool is_nat = Util::is_ipv4(contact->realm) && Util::is_ipv4_private(contact->realm);
 
-    // registration_timeout per realm arrives with the M4 location schema; until then
-    // every binding gets the same lifetime, and Redis expires it for us.
     constexpr std::int64_t kDefaultRegistrationSeconds = 3600;
+
+    // The registrar negotiated this lifetime and told the client about it, so it is what
+    // Redis expires the binding on.
+    const std::int64_t ttl = expires_seconds > 0 ? static_cast<std::int64_t>(expires_seconds) : kDefaultRegistrationSeconds;
 
     boost::json::object location;
     location["subscriber_id"] = subscriber->id;
@@ -416,11 +419,12 @@ bool RedisDatastore::subscriber_register(std::shared_ptr<types::Subscriber> subs
     location["host"] = contact->realm;
     location["port"] = port;
     location["registered_at"] = now;
-    location["expires_at"] = now + kDefaultRegistrationSeconds;
+    location["expires_at"] = now + ttl;
     location["nat"] = is_nat ? "Y" : "N";
+    if (!path.empty()) location["path"] = path;
 
     const auto key = _location_key(subscriber->id, contact->user, contact->realm, port);
-    if (!_set_ex(key, boost::json::serialize(location), std::chrono::seconds(kDefaultRegistrationSeconds))) return false;
+    if (!_set_ex(key, boost::json::serialize(location), std::chrono::seconds(ttl))) return false;
 
     // The index is what location_list reads, so listing never needs KEYS.
     _sadd(_location_index_key(subscriber->id), key);

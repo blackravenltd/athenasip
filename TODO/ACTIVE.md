@@ -7,8 +7,8 @@ What M2 builds on, all landed in M1: the header, URI, identity and message model
 RFC 3261; `Core` runs on a single strand with no locks; `memory://` and `redis://` are
 the datastores and both implement the full interface; `MediaEngine` and a builtin RTP
 relay driver are in; `Call` is multi-party; all four RFC 3261 section 17 transaction
-state machines exist, tested on a fake clock, but are not yet wired in. 219 tests, clean
-under asan and tsan.
+state machines exist and are wired in behind a matcher, with `Registrar` and `Proxy` as
+the transaction users. 262 tests, clean under asan and tsan.
 
 An architecture review on 2026-09-18 compared the Principles, the tree and the RFCs.
 Its findings are merged into Milestone 2 below, which is ordered by priority: work the
@@ -94,19 +94,9 @@ Everything below the transaction users is a plugin: datastores, event systems an
 engines today, routing policy and others later. They hang off the TU layer and register
 through one contract, so adding a kind or an implementation touches nothing above it.
 
-What the review found the tree does instead, and which step below fixes it:
+What the review found the tree does instead, and which step below fixes it. Step 1
+landed on 2026-09-18 and its three findings have moved to `COMPLETED.md`; what is left:
 
-- `src/transaction.cpp` is not a transaction; it is the transaction user. It does Digest
-  auth, the binding write and the 200 OK for REGISTER, and creates the `Call` for
-  INVITE. The real section 17 machines in `src/transactions/` are done but unwired,
-  and there is no Registrar, Proxy or Dialog component for the TU logic to move into.
-  (Step 1.)
-- INVITE routing goes through the event bus: `process_invite` publishes
-  `subscriber/<uri>/invite` and `Core::_invite_from_event` builds the outbound INVITE
-  from the payload. With `mqtt://` the INVITE travels through the broker, which the
-  Decisions forbid. (Step 1.)
-- `Channel::send` adds and strips Via. Those are section 16 proxy steps, not transport
-  ones, and the proxy cannot control them while they live there. (Step 1.)
 - `Datastore` is blocking by contract and is called on the Core strand.
   `RedisDatastore` waits on a future with a 5 second timeout, so a slow Redis stalls
   every call on the node. The strand made this global rather than per server thread.
@@ -137,33 +127,21 @@ thing that would cost the most to leave.
 
 ### Step 1 - Transaction users, and the wiring (RFC 3261 sections 10, 16, 17)
 
-One step, because the pieces cannot land separately: wiring the machines evicts the TU
-logic from `src/transaction.cpp`, and it needs somewhere to go.
+Done on 2026-09-18; see `COMPLETED.md`. The matcher, the four machines wired into
+`Core::process_message`, `Registrar`, `Proxy`, the event-bus INVITE path deleted and Via
+moved out of `Channel`. What it deliberately left for later, so it is not lost:
 
-- [ ] Transaction matcher per 17.1.3 / 17.2.3. Branch and sent-by are already in
-      `SIPMessage::get_transaction_id`; the method is too, so an ACK computes a
-      different id from its INVITE. The matcher maps an ACK for a non-2xx to its
-      `InviteServerTransaction`, and a CANCEL to the transaction it cancels. RFC 2543
-      fallback deferred.
-- [ ] Wire `InviteServerTransaction`, `NonInviteServerTransaction`,
-      `InviteClientTransaction` and `NonInviteClientTransaction` into
-      `Core::process_message`, on the strand, with `AsioTimerSource`. Delete
-      `src/transaction.{h,cpp}`.
-- [ ] `Registrar` component (section 10): the Digest check, `subscriber_get`, the binding
-      write and the 200 OK, extracted from `process_register`. Responses carry `Expires`
-      and `Contact` with expiry; `Path` (RFC 3327) is recorded on the binding. It is
-      the TU for REGISTER.
-- [ ] `Proxy` component (section 16) as the TU for everything else, starting with
-      target determination: `location_list()` and forward. Serial forking only.
-- [ ] Delete the event-bus INVITE path: the publish in `process_invite`,
-      `Core::_invite_from_event`, and the per-channel `_event_subscription`. Events are
-      observability. The `subscriber/<uri>/invite` topic goes from `docs/events.md`.
-- [ ] Via moves out of `Channel`: the proxy adds its Via on forward (16.6 step 8) and
-      strips it from responses (16.7 step 3). `Channel` keeps framing, `z9hG4bK` branch
-      generation when the caller set none, and `rport`/`received` (RFC 3581).
-- [ ] `Core` is the composition root: it owns the strand, the registries and the
-      components, and routes a message to a transaction and a transaction to its TU.
-      No SIP semantics in `core.cpp`.
+- [ ] RFC 2543 fallback transaction matching, for a request whose branch carries no magic
+      cookie. Deferred by the step; needed for interop with pre-3261 endpoints only.
+- [ ] Stray responses are dropped. Forwarding one statelessly on its Via (18.1.2) is
+      proxy work and belongs with step 5.
+- [ ] CANCEL is answered locally and ends the INVITE server transaction with 487, but is
+      not forwarded down the branches already tried (16.10). Also step 5.
+- [ ] Serial forking tries each binding in turn but sends every attempt down the one flow
+      the subscriber registered on, because that is all a single node knows. Per-binding
+      flow routing is RFC 5626 in M3, and `Location.flow_id` exists for it.
+- [ ] 423 Interval Too Brief with `Min-Expires` (10.3 step 7). The registrar caps the
+      expiry rather than refusing a short one, which is legal but not the whole rule.
 
 ### Step 2 - Plugin contract v1
 

@@ -22,7 +22,6 @@ std::vector<std::string> every_topic() {
       topics::node_channel("sip-0001", "tcp", "192.0.2.10:5060"),
       topics::node_transaction("sip-0001", "z9hG4bK-abc|host|INVITE"),
       topics::subscriber_status("sip:alice@example.com"),
-      topics::subscriber_invite("sip:alice@example.com"),
       topics::call_register("call-1234"),
       topics::call_unregister("call-1234"),
   };
@@ -53,13 +52,14 @@ TEST(TopicsTest, CallTopicsSitUnderTheCallFilter) {
   EXPECT_TRUE(TopicFilter::matches("calls/+/unregister", topics::call_unregister("call-1234")));
 }
 
-// The invite subscription must not receive the node's own status publish for the same
-// subscriber, which is what a trailing '#' filter used to do.
-TEST(TopicsTest, SubscriberInviteAndStatusAreDistinct) {
+// Subscriber topics are observability. A "subscriber/#" filter must not reach anything
+// on the call setup path, and since the INVITE topic is gone there is nothing there to
+// reach.
+TEST(TopicsTest, SubscriberTopicsAreStatusOnly) {
   const auto uri = std::string("sip:alice@example.com");
 
-  EXPECT_NE(topics::subscriber_invite(uri), topics::subscriber_status(uri));
-  EXPECT_FALSE(TopicFilter::matches(topics::subscriber_invite(uri), topics::subscriber_status(uri)));
+  EXPECT_EQ(topics::subscriber_status(uri), "subscriber/" + uri + "/status");
+  EXPECT_TRUE(TopicFilter::matches("subscriber/#", topics::subscriber_status(uri)));
 }
 
 TEST(TopicsTest, TopicsAreHierarchicalNotDotSeparated) {

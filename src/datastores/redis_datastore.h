@@ -77,7 +77,8 @@ class RedisDatastore : public Datastore {
   bool subscriber_delete(std::shared_ptr<types::SIPIdentity> identity) override;
   std::vector<std::shared_ptr<types::Subscriber>> subscriber_list(const std::string& realm_name) override;
 
-  bool subscriber_register(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact) override;
+  bool subscriber_register(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact, std::uint32_t expires_seconds,
+                           const std::string& path) override;
   bool subscriber_unregister(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact) override;
   std::vector<types::Location> location_list(std::uint64_t subscriber_id) override;
 

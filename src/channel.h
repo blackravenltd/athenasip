@@ -47,7 +47,6 @@ class Channel : public std::enable_shared_from_this<Channel> {
   State state = State::Normal;
 
   std::shared_ptr<SIPMessage> _incoming_message;
-  std::shared_ptr<Subscription> _event_subscription;
   std::shared_ptr<Connection> _connection;
 
   void send(std::shared_ptr<SIPMessage> message);
@@ -66,6 +65,7 @@ class Channel : public std::enable_shared_from_this<Channel> {
 
   // Strand-confined bodies behind the public hand-offs.
   void _send_on_strand(std::shared_ptr<SIPMessage> message);
+  void _stamp_via(const std::shared_ptr<SIPMessage>& message);
   void _on_read(boost::system::error_code ec, std::size_t length);
 };
 

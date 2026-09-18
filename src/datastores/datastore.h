@@ -51,8 +51,11 @@ class Datastore {
   virtual bool subscriber_delete(std::shared_ptr<types::SIPIdentity> identity) = 0;
   virtual std::vector<std::shared_ptr<types::Subscriber>> subscriber_list(const std::string& realm_name) = 0;
 
-  // Registrations (RFC 3261 section 10 bindings).
-  virtual bool subscriber_register(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact) = 0;
+  // Registrations (RFC 3261 section 10 bindings). expires_seconds is the lifetime the
+  // registrar negotiated with the client, and path the RFC 3327 Path header recorded at
+  // registration, empty when there was none.
+  virtual bool subscriber_register(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact, std::uint32_t expires_seconds,
+                                   const std::string& path) = 0;
   virtual bool subscriber_unregister(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact) = 0;
 
   // Every live binding for a subscriber. Target determination needs all of them

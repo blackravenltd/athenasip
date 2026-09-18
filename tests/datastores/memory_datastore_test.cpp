@@ -93,7 +93,7 @@ TEST(MemoryDatastoreTest, RegistrationStoresAContactThatCanBeLookedUp) {
   auto subscriber = make_subscriber(7, "sip:bob@example.com");
   auto contact = std::make_shared<types::SIPUri>("sip:bob@192.168.1.50:5060");
 
-  ASSERT_TRUE(datastore->subscriber_register(subscriber, contact));
+  ASSERT_TRUE(datastore->subscriber_register(subscriber, contact, 3600, ""));
 
   auto locations = datastore->location_list(7);
   ASSERT_EQ(locations.size(), 1u);
@@ -107,8 +107,8 @@ TEST(MemoryDatastoreTest, MultipleContactsForOneSubscriberAreKept) {
   auto datastore = make_datastore();
   auto subscriber = make_subscriber(7, "sip:bob@example.com");
 
-  ASSERT_TRUE(datastore->subscriber_register(subscriber, std::make_shared<types::SIPUri>("sip:bob@192.168.1.50:5060")));
-  ASSERT_TRUE(datastore->subscriber_register(subscriber, std::make_shared<types::SIPUri>("sip:bob@192.168.1.51:5060")));
+  ASSERT_TRUE(datastore->subscriber_register(subscriber, std::make_shared<types::SIPUri>("sip:bob@192.168.1.50:5060"), 3600, ""));
+  ASSERT_TRUE(datastore->subscriber_register(subscriber, std::make_shared<types::SIPUri>("sip:bob@192.168.1.51:5060"), 3600, ""));
 
   EXPECT_EQ(datastore->location_list(7).size(), 2u);
 }
@@ -118,8 +118,8 @@ TEST(MemoryDatastoreTest, ReregisteringTheSameContactDoesNotDuplicateIt) {
   auto subscriber = make_subscriber(7, "sip:bob@example.com");
   auto contact = std::make_shared<types::SIPUri>("sip:bob@192.168.1.50:5060");
 
-  ASSERT_TRUE(datastore->subscriber_register(subscriber, contact));
-  ASSERT_TRUE(datastore->subscriber_register(subscriber, contact));
+  ASSERT_TRUE(datastore->subscriber_register(subscriber, contact, 3600, ""));
+  ASSERT_TRUE(datastore->subscriber_register(subscriber, contact, 3600, ""));
 
   EXPECT_EQ(datastore->location_list(7).size(), 1u);
 }
@@ -130,8 +130,8 @@ TEST(MemoryDatastoreTest, UnregisterRemovesOnlyThatContact) {
   auto first = std::make_shared<types::SIPUri>("sip:bob@192.168.1.50:5060");
   auto second = std::make_shared<types::SIPUri>("sip:bob@192.168.1.51:5060");
 
-  datastore->subscriber_register(subscriber, first);
-  datastore->subscriber_register(subscriber, second);
+  datastore->subscriber_register(subscriber, first, 3600, "");
+  datastore->subscriber_register(subscriber, second, 3600, "");
 
   ASSERT_TRUE(datastore->subscriber_unregister(subscriber, first));
   EXPECT_EQ(datastore->location_list(7).size(), 1u);
@@ -149,7 +149,7 @@ TEST(MemoryDatastoreTest, ExpiredRegistrationsAreNotReturned) {
   auto subscriber = make_subscriber(7, "sip:bob@example.com");
   auto contact = std::make_shared<types::SIPUri>("sip:bob@192.168.1.50:5060");
 
-  ASSERT_TRUE(datastore->subscriber_register(subscriber, contact));
+  ASSERT_TRUE(datastore->subscriber_register(subscriber, contact, 3600, ""));
 
   // registration_timeout of 0 falls back to the default, so this contact is live.
   EXPECT_EQ(datastore->location_list(7).size(), 1u);
@@ -279,7 +279,7 @@ TEST(MemoryDatastoreTest, SubscriberDeleteDropsTheirRegistrations) {
 
   auto subscriber = make_subscriber(9, "sip:dave@example.com");
   ASSERT_TRUE(datastore->subscriber_create(subscriber));
-  ASSERT_TRUE(datastore->subscriber_register(subscriber, std::make_shared<types::SIPUri>("sip:dave@192.0.2.9:5060")));
+  ASSERT_TRUE(datastore->subscriber_register(subscriber, std::make_shared<types::SIPUri>("sip:dave@192.0.2.9:5060"), 3600, ""));
   ASSERT_EQ(datastore->location_list(9).size(), 1u);
 
   EXPECT_TRUE(datastore->subscriber_delete(subscriber->identity));
@@ -291,7 +291,7 @@ TEST(MemoryDatastoreTest, LocationCarriesTheBindingNotJustTheContact) {
   auto datastore = make_datastore();
 
   auto subscriber = make_subscriber(11, "sip:erin@example.com");
-  ASSERT_TRUE(datastore->subscriber_register(subscriber, std::make_shared<types::SIPUri>("sip:erin@10.0.0.7:5060")));
+  ASSERT_TRUE(datastore->subscriber_register(subscriber, std::make_shared<types::SIPUri>("sip:erin@10.0.0.7:5060"), 3600, ""));
 
   auto locations = datastore->location_list(11);
   ASSERT_EQ(locations.size(), 1u);

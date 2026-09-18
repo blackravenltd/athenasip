@@ -11,7 +11,6 @@
 #include "headers/cseq_header.h"
 #include "headers/sip_identity_header.h"
 #include "headers/via_header.h"
-#include "transaction.h"
 #include "util.h"
 
 namespace athenasip {

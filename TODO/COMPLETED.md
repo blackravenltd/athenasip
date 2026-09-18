@@ -490,3 +490,50 @@ arrival order, with only the fields a proxy rewrites parsed out, which makes
       difference in backoff between timers A and E.
 - [x] 219 tests, clean under asan and tsan.
 
+
+### Transaction users and the wiring, RFC 3261 sections 10, 16, 17 (2026-09-18)
+
+M2 step 1. The four section 17 state machines were finished and unwired; `src/transaction.cpp`
+was not a transaction at all but the transaction user, doing Digest auth, the binding write
+and the 200 OK for REGISTER, and creating the `Call` for INVITE. This wires the machines in
+and gives the TU logic somewhere to live.
+
+- [x] `TransactionMatcher` (`src/transactions/transaction_matcher.*`): the 17.1.3 and 17.2.3
+      identity, branch plus sent-by plus method, with the two cases that are not the obvious
+      one. An ACK for a non-2xx carries CSeq method ACK but belongs to the INVITE server
+      transaction, so its key is computed with the method forced to INVITE. A CANCEL gets its
+      own non-INVITE server transaction and separately names the INVITE it cancels, which is
+      the same substitution again. RFC 2543 fallback matching is deferred.
+- [x] `Core::process_message` is the router and nothing else: response to its client
+      transaction, request to its server transaction, retransmissions absorbed before the TU,
+      ACK for a 2xx straight through as it travels outside any transaction. `Core` creates,
+      files and starts both kinds of transaction and is the composition root for the TUs.
+      `src/transaction.{h,cpp}` is deleted.
+- [x] `Registrar` (`src/registrar.*`), the TU for REGISTER. Digest against the stored HA1,
+      the binding write, and a 200 OK listing every current binding with the time it has left
+      plus an `Expires` (10.3 step 8). Expiry is negotiated from the Contact parameter, then
+      the `Expires` header, then the realm, and capped by the realm. Zero removes one binding
+      and a lone `*` with Expires 0 removes them all (10.2.2). An unserved domain is 404; an
+      unknown subscriber inside a served realm is challenged, so a REGISTER sweep cannot
+      enumerate accounts. RFC 3327 `Path` is recorded on the binding.
+- [x] `Proxy` (`src/proxy.*`), the TU for everything else. Target determination from
+      `location_list` (16.5), forwarding with the Request-URI set to the binding, Max-Forwards
+      decremented and this node's Via added (16.6 steps 2, 3 and 8), serial forking across the
+      bindings, and responses with the node's own Via stripped on the way back (16.7 step 3).
+      CANCEL is answered 200 on its own transaction and ends the INVITE with 487 (9.2).
+- [x] The event-bus INVITE path is gone: `Core::_invite_from_event`, the per-channel
+      `_event_subscription` and the `subscriber/<uri>/invite` topic. With `mqtt://` an INVITE
+      used to travel through the broker, which the Decisions forbid. `docs/events.md` now says
+      plainly that the bus is observability and never signalling.
+- [x] Via moved out of `Channel`. The transport keeps framing, fills in a `z9hG4bK` branch only
+      when the layer above left the top Via without one, and adds `received` and `rport`
+      (18.2.1, RFC 3581 4), which are transport facts. It no longer strips every Record-Route
+      on the way out, which would have broken the dialog it was meant to keep the node in.
+- [x] `Datastore::subscriber_register` takes the negotiated expiry and the Path, so a binding
+      expires when the registrar told the client it would rather than on a per-realm constant.
+- [x] Fixed a shutdown hang the step exposed: releasing the io_context work guard is not enough
+      when a timer is pending, so a registration expiry an hour out held `run()` open and the
+      process never exited. The global context now stops rather than waits.
+- [x] 43 new tests: the matcher against the section 17 identity rules, the registrar against
+      section 10 and RFC 3327, the proxy against section 16, and the transport against RFC 3581.
+      262 tests, clean under asan and tsan.
