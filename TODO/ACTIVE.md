@@ -6,7 +6,13 @@ the last release. Line numbers refer to the current tree; update them as files m
 What M2 builds on, all landed in M1: the header, URI, identity and message model follow
 RFC 3261; `Core` runs on a single strand with no locks; `memory://` and `redis://` are
 the datastores and both implement the full interface; `MediaEngine` and a builtin RTP
-relay driver are in; `Call` is multi-party. 163 tests, clean under asan and tsan.
+relay driver are in; `Call` is multi-party; all four RFC 3261 section 17 transaction
+state machines exist, tested on a fake clock, but are not yet wired in. 219 tests, clean
+under asan and tsan.
+
+An architecture review on 2026-09-18 compared the Principles, the tree and the RFCs.
+Its findings are merged into Milestone 2 below, which is ordered by priority: work the
+steps top to bottom. The target layering is under Architecture.
 
 Move items to `COMPLETED.md` as they land, with a one-line note on what shipped.
 
@@ -38,8 +44,16 @@ Move items to `COMPLETED.md` as they land, with a one-line note on what shipped.
   (Digest).
 - Cluster discovery: retained MQTT `nodes/<id>/status` messages carrying the node's SIP
   and inter-node TLS addresses; Redis holds registration ownership with TTL.
-- MySQL, PostgreSQL and SQLite drivers are deleted. Built-ins are `memory` + `redis`
-  for datastores, `local` + `mqtt` for events, `builtin` + `rtpengine` for media.
+- MySQL, PostgreSQL and SQLite drivers are deleted. `memory` + `redis` for datastores,
+  `local` + `mqtt` for events and `builtin` + `rtpengine` for media are what ship
+  in-tree and are tested in v1. The architecture privileges none of them: every driver,
+  in-tree or not, registers through the same plugin contract, and DynamoDB, NATS, Kafka
+  or anything else is a plugin someone can write, not a roadmap item the core carries.
+- The plugin contract is a stability promise (2026-09-18). It is versioned, it is async
+  from its first version because it cannot be made async later without breaking every
+  plugin built against it, and a plugin receives its own YAML root plus read access to
+  the system config. Plugins are compiled in for now and become shared libraries with
+  autodiscovery later, through the same contract.
 - rtpengine (ng protocol) is the flagship media engine. `RTPProxyClient` (rtpproxy
   text protocol) may remain as a driver but nothing is built on it.
 - `MediaEngine` carries capabilities: `bridge`, `conference`, `record`, `transcode`.
@@ -51,8 +65,64 @@ Move items to `COMPLETED.md` as they land, with a one-line note on what shipped.
 - Conferencing is RFC 4579 focus routing. FreeSWITCH `conference` is the first focus;
   an SFU (Janus / mediasoup / LiveKit, or rtpengine publish/subscribe) comes later
   behind the same URI scheme.
-- Lua scripting stays parked and out of the build path until there is a real use.
+- Lua scripting stays parked and out of the build path until there is a real use. When
+  it returns it is a routing-policy plugin, not a core feature.
 - Core runs on a single strand. Servers post into it.
+
+## Architecture
+
+The target layering follows RFC 3261's own: transport, transaction, transaction user.
+`Core` is the composition root and owns the strand; it does not process SIP itself.
+
+```
+udp/tcp/tls/ws/wss servers -> Connection -> Channel     transport   s18, RFC 3581
+                                              |
+                                      Transaction layer   s17: matcher + 4 machines
+                                              |
+                    +-------------+-----------+-----------+
+                Registrar       Proxy       Dialogs       UA        transaction users
+               s10, 3327,      s16, 3263   s12, 4028     (local
+               5626 flows      loose route              responses)
+                    |             |
+                Datastore    MediaEngine       Events: observability only, never the call path
+                (async)
+
+Core = composition root + the strand
+```
+
+Everything below the transaction users is a plugin: datastores, event systems and media
+engines today, routing policy and others later. They hang off the TU layer and register
+through one contract, so adding a kind or an implementation touches nothing above it.
+
+What the review found the tree does instead, and which step below fixes it:
+
+- `src/transaction.cpp` is not a transaction; it is the transaction user. It does Digest
+  auth, the binding write and the 200 OK for REGISTER, and creates the `Call` for
+  INVITE. The real section 17 machines in `src/transactions/` are done but unwired,
+  and there is no Registrar, Proxy or Dialog component for the TU logic to move into.
+  (Step 1.)
+- INVITE routing goes through the event bus: `process_invite` publishes
+  `subscriber/<uri>/invite` and `Core::_invite_from_event` builds the outbound INVITE
+  from the payload. With `mqtt://` the INVITE travels through the broker, which the
+  Decisions forbid. (Step 1.)
+- `Channel::send` adds and strips Via. Those are section 16 proxy steps, not transport
+  ones, and the proxy cannot control them while they live there. (Step 1.)
+- `Datastore` is blocking by contract and is called on the Core strand.
+  `RedisDatastore` waits on a future with a 5 second timeout, so a slow Redis stalls
+  every call on the node. The strand made this global rather than per server thread.
+  And because the interface is the plugin contract, it cannot be made async later
+  without breaking every plugin built against it. (Step 2.)
+- There are three copy-pasted registries, one per interface, and each driver is given
+  a URL to parse. That is fine for three kinds and the wrong shape for "easy to add
+  more": a unified registry and a proper config hand-off are what the shared-library
+  loader will need anyway. (Step 2.)
+- There is no Dialog (section 12). `Call` is the application object and is not one:
+  it has tags but no route set, CSeq tracking or remote target. (Step 4.)
+- `SIPUri` keeps parameters and headers as opaque strings, so the proxy cannot read
+  `lr`, `transport` or `maddr`, and there is no section 19.1.4 comparison. (Step 3.)
+- For a browser over WS the Contact URI is unroutable, so RFC 5626 flow routing and
+  WSS are prerequisites for the first WebRTC call, not cluster features. (Steps 7 and
+  M3.)
 
 ---
 
@@ -62,62 +132,150 @@ Goal: INVITE / 18x / 200 / ACK / BYE / CANCEL between two subscribers on one nod
 UDP, TCP, TLS, WS and WSS, with plain RTP through the builtin engine, provisioned
 through the admin API, verified by sipp.
 
-### Transaction layer (RFC 3261 section 17)
+Steps are in priority order. Each one is the prerequisite of the ones below it, or the
+thing that would cost the most to leave.
 
-All four machines are done and tested on `ManualTimerSource`. Only the wiring remains.
+### Step 1 - Transaction users, and the wiring (RFC 3261 sections 10, 16, 17)
 
-- [ ] Wire the four machines into `Core::process_message` and delete the old
-      `src/transaction.{h,cpp}`. Core still uses the old class, so none of this is
-      reachable yet. Needs a matcher implementing 17.2.3: an ACK for a non-2xx must
-      find the INVITE server transaction, and `SIPMessage::get_transaction_id` includes
-      the method, so an ACK computes a different id from its INVITE.
-- [ ] Transaction matching per 17.1.3 / 17.2.3, with the RFC 2543 fallback deferred.
-      Branch and sent-by are already in `get_transaction_id`; the ACK and CANCEL cases
-      are what is missing.
-- [ ] `Channel::send` sets Via transport from `Connection::transport_name()`, generates
-      `z9hG4bK` branches, sets `rport`/`received` (RFC 3581).
+One step, because the pieces cannot land separately: wiring the machines evicts the TU
+logic from `src/transaction.cpp`, and it needs somewhere to go.
 
-### Proxy core (RFC 3261 section 16)
-- [ ] Request validation, Max-Forwards, loop detection (16.3).
-- [ ] Route / Record-Route processing (16.4, 16.6.4), strict/loose routing.
-- [ ] Target determination: location lookup in the datastore, serial forking only.
-- [ ] Response processing and best-response selection (16.7), CANCEL forwarding (16.10).
-- [ ] Dialog tracking for in-dialog routing (BYE, re-INVITE, hold `a=sendonly`).
-- [ ] Session timers (RFC 4028): honour `Session-Expires`, refresh via re-INVITE/UPDATE.
-- [ ] Responses to REGISTER: `Expires`, `Contact` with expiry, `Path` (RFC 3327).
+- [ ] Transaction matcher per 17.1.3 / 17.2.3. Branch and sent-by are already in
+      `SIPMessage::get_transaction_id`; the method is too, so an ACK computes a
+      different id from its INVITE. The matcher maps an ACK for a non-2xx to its
+      `InviteServerTransaction`, and a CANCEL to the transaction it cancels. RFC 2543
+      fallback deferred.
+- [ ] Wire `InviteServerTransaction`, `NonInviteServerTransaction`,
+      `InviteClientTransaction` and `NonInviteClientTransaction` into
+      `Core::process_message`, on the strand, with `AsioTimerSource`. Delete
+      `src/transaction.{h,cpp}`.
+- [ ] `Registrar` component (section 10): the Digest check, `subscriber_get`, the binding
+      write and the 200 OK, extracted from `process_register`. Responses carry `Expires`
+      and `Contact` with expiry; `Path` (RFC 3327) is recorded on the binding. It is
+      the TU for REGISTER.
+- [ ] `Proxy` component (section 16) as the TU for everything else, starting with
+      target determination: `location_list()` and forward. Serial forking only.
+- [ ] Delete the event-bus INVITE path: the publish in `process_invite`,
+      `Core::_invite_from_event`, and the per-channel `_event_subscription`. Events are
+      observability. The `subscriber/<uri>/invite` topic goes from `docs/events.md`.
+- [ ] Via moves out of `Channel`: the proxy adds its Via on forward (16.6 step 8) and
+      strips it from responses (16.7 step 3). `Channel` keeps framing, `z9hG4bK` branch
+      generation when the caller set none, and `rport`/`received` (RFC 3581).
+- [ ] `Core` is the composition root: it owns the strand, the registries and the
+      components, and routes a message to a transaction and a transaction to its TU.
+      No SIP semantics in `core.cpp`.
 
-### Media (builtin)
-- [ ] On INVITE offer and 2xx answer, call `MediaEngine::offer/answer`; on BYE/CANCEL/
-      timeout, `release`. SDP round-trips every attribute untouched; only `c=`, `m=`
-      ports and `a=rtcp` are rewritten by the builtin driver.
+### Step 2 - Plugin contract v1
 
-### Transports
+The plugin contract is the product: it is the gap AthenaSIP occupies in the SIP
+ecosystem. It has to be right before anything else is built on it, and before step 3,
+because it is an ABI.
+
+- [ ] One `PluginRegistry` keyed by (kind, scheme), replacing the three template
+      registries in `datastore.h`, `event_system.h` and `media_engine.h`. A `Plugin`
+      base with `kind()`, `name()`, `version()` and `api_version()`. Built-ins register
+      through it exactly as an external plugin would; the only difference is link time
+      against load time.
+- [ ] Configuration: the URL stays the selector, so `datastore: { url: memory:// }`
+      remains a one-liner. A plugin also receives `configure(YAML::Node own_root,
+      const Config& system)`, where `own_root` is the section named after its scheme,
+      for anything a URL cannot express (rtpengine pools, health-check intervals).
+      Replaces `_apply_url` parsing of query strings.
+- [ ] `Datastore` is async in the contract: every operation completes through a
+      callback on the caller's executor, and no `_wait_*` runs on the Core strand.
+      `MemoryDatastore` and `RedisDatastore` follow; the Redis 5 second sync timeout
+      goes with it. `MediaEngine` gets the same treatment, since rtpengine is a network
+      round trip.
+- [ ] `docs/plugins.md`: the contract, the lifecycle (`configure`, `connect`, `close`,
+      `health`), the versioning rule, and how to write one. First-class, alongside the
+      architecture doc in step 10.
+- [ ] `EventSystem` and `MediaEngine` drivers move onto the same base and registry, so
+      there is one way to add a plugin of any kind.
+
+### Step 3 - SIPUri is a real URI (RFC 3261 section 19.1)
+
+Needed before the proxy can do Route processing.
+
+- [ ] Parameters and headers as structured values: `lr`, `transport`, `maddr`, `ttl`,
+      `user`, `method`, and the rest by name. Escaping and unescaping (19.1.2, 25.1).
+- [ ] URI comparison (19.1.4), for matching a REGISTER's Contact against the bindings.
+- [ ] `realm` becomes `host`. It is the name of a different SIP concept.
+
+### Step 4 - Dialogs (RFC 3261 section 12)
+
+- [ ] A `Dialog` type owned by the TU: Call-ID, local and remote tags, route set, local
+      and remote CSeq, remote target, secure flag. Created from the 2xx to an INVITE
+      (12.1), matched on in-dialog requests (12.2.2), ended on BYE.
+- [ ] `Call` keeps a dialog per participant leg rather than bare tags. `Call` stays the
+      application object: participants, media, focus.
+- [ ] In-dialog routing: BYE, re-INVITE, hold (`a=sendonly`), UPDATE.
+
+### Step 5 - Proxy core, the rest of section 16
+
+- [ ] Request validation, Max-Forwards, loop detection (16.3). A request that fails
+      `SIPHeader::is_valid()` gets a 400 (8.2.1).
+- [ ] Route / Record-Route processing (16.4, 16.6.4), strict and loose routing, on the
+      structured `SIPUri` from step 3.
+- [ ] Response processing and best-response selection (16.7). CANCEL forwarding (16.10).
+- [ ] Session timers (RFC 4028): honour `Session-Expires`, refresh via re-INVITE or
+      UPDATE, on the Dialog from step 4.
+
+### Step 6 - Media on the signalling path
+
+- [ ] On INVITE offer and 2xx answer, call `MediaEngine::offer/answer` for the
+      participant concerned; on BYE, CANCEL or timeout, `release`. SDP round-trips
+      every attribute untouched, which the parser now guarantees; the builtin driver
+      rewrites only `c=`, `m=` ports and `a=rtcp`.
+
+### Step 7 - Transports
+
 - [ ] WSS listener: Beast websocket over `ssl_stream`, sharing the TLS context loader.
-      `websocket.tls: true` config with cert/key.
-- [ ] TCP fallback to fragmentation-safe behaviour for UDP requests over 1300 bytes
-      (18.1.1).
-- [ ] TCP/TLS connection reuse for responses and in-dialog requests (RFC 5626
-      groundwork).
+      `websocket.tls: true` config with cert and key. A prerequisite for any browser:
+      they require a secure origin.
+- [ ] TCP fallback for UDP requests over 1300 bytes (18.1.1).
+- [ ] TCP/TLS connection reuse for responses and in-dialog requests, and a
+      per-connection flow identity written to the binding. This is the groundwork RFC
+      5626 flow routing in M3 stands on.
 
-### Admin API, part 1 (provisioning)
+### Step 8 - Admin API, part 1 (provisioning)
+
 - [ ] OpenAPI 3 document at `docs/api/openapi.yaml`, versioned under `/api/v1`.
 - [ ] Bearer-token auth middleware with `admin` and `client` scopes; tokens in config
       for now.
 - [ ] `GET/POST/PUT/DELETE /api/v1/realms`, `/api/v1/realms/{realm}/subscribers`
-      (HA1 computed server-side from password), `GET /api/v1/registrations`.
+      (HA1 computed server-side from password), `GET /api/v1/registrations`. The
+      datastore's create/update split is what lets these answer 409.
 - [ ] JSON body parsing and error envelope in `AdminAPI` (`src/api/admin_api.cpp`).
 - [ ] `StaticMiddleware` path from `config->http_files_path`, not `"../admin"`
-      (`src/main.cpp:122`).
+      (`src/main.cpp`).
+- [ ] The admin API is off the strand; it reaches Core through `call_on_strand`.
 
-### Test harness
+### Step 9 - Test harness
+
 - [ ] `test/e2e/` with sipp scenarios: REGISTER with Digest, INVITE/180/200/ACK/BYE,
       CANCEL before and after 180, 486, 408 on timer B, retransmission over UDP,
       RTP through the builtin relay (RTP sequence check, not silence).
-- [ ] GoogleTest coverage for each transaction state machine, on `ManualTimerSource`.
-      `SIPHeader`, `SIPMessage`, `SDP`, `MemoryDatastore` and `LocalEventSystem` are
-      covered.
-- [ ] `docker-compose.test.yml`: athenasip + sipp; runs in CI.
-- [ ] GitHub Actions: build (Debug + ASan), unit tests, sipp harness.
+- [ ] `Registrar`, `Proxy` and `Dialog` unit tests on `MockConnection` and
+      `ManualTimerSource`, in the same RFC-derived style as the transaction tests.
+- [ ] `docker-compose.test.yml`: athenasip + sipp.
+- [ ] GitHub Actions: build (Debug + ASan), unit tests, sipp harness. Deferred for now
+      at Tom's call; listed so it is not forgotten.
+
+### Step 10 - Smaller items surfaced by the review
+
+- [ ] Digest with SHA-256 (RFC 8760) alongside MD5, selected by the `algorithm`
+      parameter. `Util::md5` is the only hash today.
+- [ ] Decide whether `Subscriber` becomes `Account`. It collides with SUBSCRIBE
+      (RFC 6665, M6), and renaming costs more the later it happens.
+- [ ] `RTPProxyClient` is compiled into `athena_core` and nothing constructs it. Take
+      it out of the build path the way Lua was, per the Parked note.
+- [ ] `docs/architecure.md` is stale and contradicts the Decisions (it lists DynamoDB,
+      NATS, RabbitMQ, Kafka and SQS as planned). Rewrite it as `docs/architecture.md`
+      from the Architecture section above, and fix the README link. Those backends are
+      things the plugin contract makes possible, not things the core plans to build;
+      the doc should say that or it reads as a roadmap the project cannot keep. `design.md`,
+      `goals.md`, `scripting.md` and `modules/` predate the reset and need the same
+      audit before anything is assumed from them.
 
 ---
 
@@ -136,9 +294,12 @@ endpoints, media anchored in rtpengine.
 - [ ] Media policy per realm: `anchor` (default) or `passthrough` for WebRTC to WebRTC.
 - [ ] Record which rtpengine instance owns a call in the datastore so any node can
       release it; support a pool of engines with health checks.
-- [ ] RFC 5626 outbound: registrations record the node id and flow; in-dialog requests
-      to a WebSocket or NAT'd client go down the registered flow. `reg-id`/`instance`
-      parameters, `Flow-Timer`.
+- [ ] RFC 5626 outbound: registrations record the node id and flow; requests to a
+      WebSocket or NAT'd client go down the registered flow. `reg-id`/`instance`
+      parameters, `Flow-Timer`. This is a prerequisite for the first WebRTC call, not
+      a cluster refinement: a browser's Contact URI has nothing listening behind it,
+      so the flow is the only route to it. `Location.flow_id` exists for this and
+      nothing writes it yet.
 - [ ] NAT handling for UDP/TCP endpoints: `rport`, `received`, Contact rewrite policy.
 - [ ] Client provisioning endpoint: `GET /api/v1/client/config` returning WSS URL, ICE
       servers, and time-limited TURN credentials (coturn shared-secret scheme).
@@ -197,7 +358,15 @@ in ten minutes.
       configuration reference generated from the config schema, "how a call works",
       clustering guide, TLS and certificates guide, media engines guide, troubleshooting.
       Fix `README.md` link to `docs/architecure.md` (rename the file).
+- [ ] Plugins as shared libraries: `plugins.path` in config, scan for `.so`, `.dylib`
+      and `.dll`, `dlopen`, call an `extern "C"` describe/create entry point, register
+      through the step 2 contract, and refuse to load a plugin whose `api_version` does
+      not match. The rule is documented plainly: build against the SDK headers with the
+      same toolchain, because `YAML::Node` and `std::shared_ptr` cross the boundary. A
+      pure C ABI is more portable and much more work; not the starting point.
+      `athenasip plugins list` shows what loaded and why anything did not.
 - [ ] Packaging: Docker image, Debian package, Homebrew formula; `athenasip --version`.
+      In-tree plugins ship compiled in; the packages also carry the SDK headers.
 - [ ] Observability: structured log option, Prometheus `/metrics` on the admin port.
 
 ---
@@ -225,8 +394,10 @@ in ten minutes.
 Kept in the tree or history, not on any milestone:
 
 - Lua scripting (`src/script/`): not wired, `on_message`/`send_message` are TODOs,
-  `luaL_openlibs` disabled. Revisit when routing policy needs more than location lookup.
+  `luaL_openlibs` disabled. Revisit when routing policy needs more than location lookup,
+  and then as a routing-policy plugin through the step 2 contract.
 - `RTPProxyClient` (`src/rtp/rtp_proxy_client.*`): rtpproxy text protocol. May become an
-  `rtpproxy://` driver with `bridge` only; not a priority.
+  `rtpproxy://` driver with `bridge` only; not a priority. Still compiled into
+  `athena_core` until M2 step 10 takes it out of the build path.
 - Full dialog-state replication for mid-call node failover.
 - Parallel forking.
