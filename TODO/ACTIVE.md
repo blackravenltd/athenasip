@@ -64,17 +64,16 @@ through the admin API, verified by sipp.
 
 ### Transaction layer (RFC 3261 section 17)
 
-`InviteServerTransaction` and `NonInviteServerTransaction` are done, with timers G, H,
-I and J, on `ManualTimerSource`. The client side and the wiring are what remain.
+All four machines are done and tested on `ManualTimerSource`. Only the wiring remains.
 
-- [ ] `InviteClientTransaction` (17.1.1): Calling -> Proceeding -> Completed ->
-      Terminated, timers A (doubling to T2), B and D.
-- [ ] `NonInviteClientTransaction` (17.1.2): Trying -> Proceeding -> Completed ->
-      Terminated, timers E (doubling to T2), F and K.
 - [ ] Wire the four machines into `Core::process_message` and delete the old
-      `src/transaction.{h,cpp}`. Core currently still uses it.
-- [ ] Transaction matching per 17.1.3 / 17.2.3 (branch + sent-by + method, with the
-      RFC 2543 fallback deferred).
+      `src/transaction.{h,cpp}`. Core still uses the old class, so none of this is
+      reachable yet. Needs a matcher implementing 17.2.3: an ACK for a non-2xx must
+      find the INVITE server transaction, and `SIPMessage::get_transaction_id` includes
+      the method, so an ACK computes a different id from its INVITE.
+- [ ] Transaction matching per 17.1.3 / 17.2.3, with the RFC 2543 fallback deferred.
+      Branch and sent-by are already in `get_transaction_id`; the ACK and CANCEL cases
+      are what is missing.
 - [ ] `Channel::send` sets Via transport from `Connection::transport_name()`, generates
       `z9hG4bK` branches, sets `rport`/`received` (RFC 3581).
 
