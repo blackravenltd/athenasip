@@ -137,14 +137,17 @@ Result BuiltinMediaEngine::_map_media(std::shared_ptr<Call> call, const std::str
   if (!sdp->parse(sdp_text)) return Result::failure("could not parse SDP");
 
   // Make us the endpoint for everything.
-  sdp->connection.nettype = "IN";
-  sdp->connection.addrtype = "IP4";
-  sdp->connection.address = _public_address;
+  ConnectionInfo relay;
+  relay.nettype = "IN";
+  relay.addrtype = "IP4";
+  relay.address = _public_address;
+
+  sdp->set_connection(relay);
 
   auto& participant = call->participants[flags.participant];
 
-  for (auto& media : sdp->mediaDescriptions) {
-    const auto id = media.get_unique_id();
+  for (auto& media : sdp->media()) {
+    const auto id = media.unique_id();
 
     std::shared_ptr<MediaStream> stream;
     auto existing = participant.streams.find(id);
@@ -190,18 +193,12 @@ Result BuiltinMediaEngine::_map_media(std::shared_ptr<Call> call, const std::str
     // Point the media at our relay port.
     media.description.port = rtp_set->port;
 
-    if (media.hasConnection) {
-      media.connection.nettype = "IN";
-      media.connection.addrtype = "IP4";
-      media.connection.address = _public_address;
-    }
+    // Only rewrite a media-level c= that was already there. Adding one where the far
+    // end relied on the session-level line would change the shape of the offer.
+    if (media.has_connection()) media.set_connection(relay);
 
     // And the RTCP attribute at ours, where the far end named one.
-    for (auto& attribute : media.attributes) {
-      if (attribute.rfind("rtcp:", 0) == 0) {
-        attribute = "rtcp:" + std::to_string(rtcp_set->port) + " IN IP4 " + _public_address;
-      }
-    }
+    media.set_attribute("rtcp:", "rtcp:" + std::to_string(rtcp_set->port) + " IN IP4 " + _public_address);
   }
 
   return Result::success(sdp->to_string());
