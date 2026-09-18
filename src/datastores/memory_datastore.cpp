@@ -108,20 +108,17 @@ std::shared_ptr<types::Subscriber> MemoryDatastore::subscriber_get(std::shared_p
   return subscriber;
 }
 
-bool MemoryDatastore::subscriber_register(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact) {
+bool MemoryDatastore::subscriber_register(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact, std::uint32_t expires_seconds,
+                                          const std::string& path) {
   if (!subscriber || !contact) return false;
 
   std::lock_guard<std::mutex> lock(_mutex);
   _prune_expired();
 
-  std::time_t ttl = kDefaultRegistrationSeconds;
-
-  // registration_timeout is in seconds, matching the Expires header it answers
-  // (RFC 3261 10.2.1).
-  auto realm = _realms.find(contact->realm);
-  if (realm != _realms.end() && realm->second->registration_timeout > 0) {
-    ttl = static_cast<std::time_t>(realm->second->registration_timeout);
-  }
+  // The registrar negotiated this lifetime with the client and told the client about it
+  // in the 200 OK, so the binding has to expire when it said it would. A caller that
+  // asks for nothing gets the built-in default (RFC 3261 10.2.1).
+  const std::time_t ttl = expires_seconds > 0 ? static_cast<std::time_t>(expires_seconds) : kDefaultRegistrationSeconds;
 
   const std::uint16_t port = contact->port.value_or(0);
 
@@ -132,6 +129,7 @@ bool MemoryDatastore::subscriber_register(std::shared_ptr<types::Subscriber> sub
   location.subscriber_id = subscriber->id;
   location.registered_at = now;
   location.expires_at = now + ttl;
+  location.path = path;
   location.nat = Util::is_ipv4(contact->realm) && Util::is_ipv4_private(contact->realm);
 
   _locations[_location_key(subscriber->id, contact->user, contact->realm, port)] = std::move(location);

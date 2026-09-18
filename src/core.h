@@ -32,7 +32,9 @@
 #include "rtp/rtp_relay_set.h"
 #include "servers/server.h"
 #include "sip_message.h"
-#include "transaction.h"
+#include "timer_source.h"
+#include "transactions/transaction_base.h"
+#include "transactions/transaction_matcher.h"
 
 using namespace athenasip::types;
 using namespace athenasip::datastores;
@@ -43,6 +45,9 @@ using namespace athenasip::api;
 
 namespace athenasip {
 
+class Proxy;
+class Registrar;
+
 // Core runs on a single strand. Every registry it owns - channels, transactions, calls
 // and the subscriber-to-channel index - is touched only from that strand, so none of
 // them needs a lock. Servers each run their own io_context on their own thread and post
@@ -51,6 +56,11 @@ namespace athenasip {
 // Methods below are marked "on the strand" where they touch that state. Call them from
 // strand work: either from inside other strand work, or through post() and
 // call_on_strand() from another thread.
+//
+// Core is the composition root: it owns the strand, the registries and the transaction
+// users, and routes a message to its transaction and a transaction to its TU. It holds
+// no SIP semantics of its own - those live in Registrar (section 10) and Proxy
+// (section 16).
 class Core : public std::enable_shared_from_this<Core> {
  public:
   using Strand = boost::asio::strand<boost::asio::io_context::executor_type>;
@@ -92,7 +102,8 @@ class Core : public std::enable_shared_from_this<Core> {
   // Subscribers
   bool subscriber_exists(std::shared_ptr<SIPIdentity> identity);
   std::shared_ptr<Subscriber> subscriber_get(std::shared_ptr<SIPIdentity> identity);
-  bool subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel);
+  bool subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel,
+                           std::uint32_t expires_seconds, const std::string& path);
   bool subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel);
   const std::shared_ptr<SIPUri> subscriber_get_location(std::shared_ptr<SIPIdentity> identity);
 
@@ -109,11 +120,23 @@ class Core : public std::enable_shared_from_this<Core> {
   // Messages
   void process_message(std::shared_ptr<SIPMessage> message);
 
-  // Transactions
-  bool transaction_register(std::shared_ptr<Transaction> transaction);
-  std::shared_ptr<Transaction> transaction_get(std::string transactionId);
-  bool transaction_unregister(std::string transactionId);
+  // Transactions. The key is the RFC 3261 17.1.3 / 17.2.3 identity, which
+  // TransactionMatcher computes; nothing outside this file invents one.
+  void transaction_add(const std::string& key, std::shared_ptr<transactions::TransactionBase> transaction);
+  std::shared_ptr<transactions::TransactionBase> transaction_get(const std::string& key);
+  bool transaction_remove(const std::string& key);
   void transaction_end_all();
+  std::size_t transaction_count() const;
+
+  // Sends a request through a new client transaction: the machine is chosen from the
+  // method, filed under the request's own branch, and started. The caller has already
+  // put its Via on top (RFC 3261 16.6 step 8), which is what the response will match on.
+  std::shared_ptr<transactions::TransactionBase> client_transaction_start(std::shared_ptr<SIPMessage> request, std::shared_ptr<Channel> channel,
+                                                                          transactions::TransactionBase::TuFn to_tu,
+                                                                          transactions::TransactionBase::TimeoutFn on_timeout);
+
+  // Tests drive the section 17 timers from a ManualTimerSource rather than a real clock.
+  void timer_source_set(std::shared_ptr<TimerSource> source) { _timer_source = std::move(source); }
 
   // Calls
   bool call_register(std::shared_ptr<Call> call);
@@ -141,7 +164,18 @@ class Core : public std::enable_shared_from_this<Core> {
   std::shared_ptr<media::MediaEngine> media;
 
  private:
-  void _invite_from_event(std::shared_ptr<Channel> channel, std::shared_ptr<SIPIdentity> identity, const std::string& event, const std::string& payload);
+  // The transaction users are built on first use: they hold a Core and shared_from_this
+  // is not available while the constructor runs.
+  void _ensure_transaction_users();
+
+  // Creates, files and starts the server transaction for a request. Starting it is what
+  // delivers the request to its TU.
+  std::shared_ptr<transactions::TransactionBase> _server_transaction_start(const std::shared_ptr<SIPMessage>& request);
+
+  // Routes a request to the transaction user that owns its method.
+  void _deliver_to_tu(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction);
+
+  void _send_status(const std::shared_ptr<SIPMessage>& request, uint16_t code, const std::string& reason);
 
   std::shared_ptr<loggers::Logger> _logger;
 
@@ -158,7 +192,12 @@ class Core : public std::enable_shared_from_this<Core> {
 
   std::shared_ptr<ExpirySet<std::string>> _nonce_cache;
 
-  std::unordered_map<std::string, std::shared_ptr<Transaction>> _transactions;
+  transactions::TransactionMatcher _matcher;
+  std::shared_ptr<TimerSource> _timer_source = default_timer_source();
+
+  std::shared_ptr<Registrar> _registrar;
+  std::shared_ptr<Proxy> _proxy;
+
   std::unordered_map<std::string, std::shared_ptr<Call>> _calls;
 };
 

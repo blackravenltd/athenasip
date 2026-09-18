@@ -22,6 +22,11 @@ three rules:
 Every topic is built by `src/events/topics.h`, so the scheme is defined once. Nothing
 should assemble a topic from string literals at the call site.
 
+4. **The bus is observability, never signalling.** No SIP request or response travels
+   over it, and nothing on the call setup path waits for it. A `subscriber/<uri>/invite`
+   topic once carried INVITEs between nodes; it is gone, and requests reach other nodes
+   by being proxied to them.
+
 ## Topics
 
 | Topic | Published when | Payload |
@@ -30,7 +35,6 @@ should assemble a topic from string literals at the call site.
 | `nodes/<node_id>/channels/<transport>/<endpoint>` | A channel is registered or closed | `{"status":"registered","at":"<zulu>"}` or `{"status":"closed","at":"<zulu>"}` |
 | `nodes/<node_id>/transactions/<transaction_id>` | A transaction is registered or unregistered | `registered` or `unregistered` |
 | `subscriber/<uri>/status` | A subscriber registers | `{"contact":"<uri>","node":"<node_id>","registered":"<zulu>"}` |
-| `subscriber/<uri>/invite` | A call is offered to a subscriber | `{"call_id":"...","from":"...","to":"...","sdp":"..."}` |
 | `calls/<call_id>/register` | A call is created | The call id |
 | `calls/<call_id>/unregister` | A call ends | The call id |
 
@@ -47,12 +51,11 @@ must be the last level.
 | `nodes/+/status` | Node up and down events, for discovery |
 | `nodes/sip-0001/#` | Everything one node publishes |
 | `calls/+/unregister` | Every call ending, for CDR |
-| `subscriber/sip:alice@example.com/invite` | Calls offered to one subscriber |
+| `subscriber/+/status` | Every registration, for presence |
 
 Subscribe to the narrowest filter that does the job. A trailing `#` under a prefix also
-matches that prefix's other topics: `subscriber/<uri>/#` picks up the node's own
-`status` publish as well as `invite`, and a consumer expecting call fields will not
-find them.
+matches that prefix's other topics, so a consumer expecting one payload shape will be
+handed others.
 
 ## Prefix
 

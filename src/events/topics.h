@@ -29,8 +29,6 @@ inline std::string node_transaction(const std::string& node_id, const std::strin
 
 inline std::string subscriber_status(const std::string& uri) { return "subscriber/" + uri + "/status"; }
 
-inline std::string subscriber_invite(const std::string& uri) { return "subscriber/" + uri + "/invite"; }
-
 inline std::string call_register(const std::string& call_id) { return "calls/" + call_id + "/register"; }
 
 inline std::string call_unregister(const std::string& call_id) { return "calls/" + call_id + "/unregister"; }

@@ -114,31 +114,20 @@ void Channel::_send_on_strand(std::shared_ptr<SIPMessage> message) {
     return;
   }
 
-  // Get Server Endpoint
-  auto lep = _connection->local_endpoint();
-  auto server_endpoint = lep.address().to_string() + ":" + std::to_string(lep.port());
+  // Via belongs to the layers above: the proxy adds its own on forward (RFC 3261 16.6
+  // step 8) and strips it from responses (16.7 step 3). The transport's only remaining
+  // interest is that nothing leaves with a branchless Via, because a branch is what names
+  // the transaction the answer has to find (8.1.1.7).
+  if (message->header->type == SIPHeader::Type::Request && message->header->contains("Via") && !message->header->headers_map["Via"].empty()) {
+    auto via = message->header->headers_map["Via"][0]->as<ViaHeader>();
 
-  // Add or Remove Via
-  if (message->header->type == SIPHeader::Type::Request) {
-    // The Via transport is the transport this actually goes out on (RFC 3261 18.1.1),
-    // not a constant. The branch must start with the RFC 3261 8.1.1.7 magic cookie and
-    // be unique per transaction; the M2 transaction layer takes this over.
-    if (message->branch.empty()) message->branch = Util::generate_random_string("z9hG4bK", 16);
-
-    auto viaString = "SIP/2.0/" + Util::to_upper(_connection->transport_name()) + " " + server_endpoint + ";branch=" + message->branch;
-
-    // Add Via Header for this server
-    auto via = std::make_shared<ViaHeader>(viaString);
-    message->header->add_start("Via", via);
-  } else {
-    // Remove Our Via Header
-    int x = message->header->headers.size();
-    message->header->remove_value("Via", [this, server_endpoint](std::shared_ptr<Header> header) { return header->as<ViaHeader>()->host == server_endpoint; });
+    if (via != nullptr && via->parameters["branch"].empty()) {
+      if (message->branch.empty()) message->branch = Util::generate_random_string("z9hG4bK", 16);
+      via->parameters["branch"] = message->branch;
+    } else if (via != nullptr) {
+      message->branch = via->parameters["branch"];
+    }
   }
-
-  // Add Record-Route so we stay in the dialog. Field names are matched
-  // case-insensitively, so one call covers every spelling.
-  message->header->remove_value("Record-Route", [](std::shared_ptr<Header> header) { return true; });
 
   // Reset Length to body length
   message->header->clear("Content-Length");
@@ -160,7 +149,37 @@ void Channel::receive(std::shared_ptr<SIPMessage> message) {
 
   message->channel = shared_from_this();
 
+  _stamp_via(message);
+
   _core->process_message(message);
+}
+
+// RFC 3261 18.2.1 and RFC 3581 section 4. A client behind NAT sees a different address
+// and port from the one it put in its Via, so the response would go nowhere. received
+// records where the request actually came from, and rport, when the client asked for it
+// by sending the parameter empty, records the port as well. This is a transport fact, so
+// the transport is what writes it.
+void Channel::_stamp_via(const std::shared_ptr<SIPMessage>& message) {
+  if (!_connection) return;
+  if (message->header->type != SIPHeader::Type::Request) return;
+  if (!message->header->contains("Via") || message->header->headers_map["Via"].empty()) return;
+
+  auto via = message->header->headers_map["Via"][0]->as<ViaHeader>();
+  if (via == nullptr) return;
+
+  const auto remote = _connection->remote_endpoint();
+  const auto source = remote.address().to_string();
+
+  // The Via host may carry a port, so compare on the address alone.
+  const auto colon = via->host.rfind(':');
+  const auto sent_by = colon == std::string::npos ? via->host : via->host.substr(0, colon);
+
+  if (sent_by != source) via->parameters["received"] = source;
+
+  // Present and empty means "tell me the port"; present with a value is not ours to
+  // overwrite, and absent means the client does not want it.
+  auto rport = via->parameters.find("rport");
+  if (rport != via->parameters.end() && rport->second.empty()) rport->second = std::to_string(remote.port());
 }
 
 void Channel::_schedule_async_write(std::string message) {

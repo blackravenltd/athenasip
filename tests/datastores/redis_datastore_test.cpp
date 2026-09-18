@@ -147,8 +147,8 @@ TEST(RedisDatastoreTest, RegistrationsAreListedFromTheLocationIndex) {
   auto first = std::make_shared<types::SIPUri>("sip:bob@192.0.2.10:5060");
   auto second = std::make_shared<types::SIPUri>("sip:bob@10.0.0.4:5060");
 
-  ASSERT_TRUE(datastore->subscriber_register(subscriber, first));
-  ASSERT_TRUE(datastore->subscriber_register(subscriber, second));
+  ASSERT_TRUE(datastore->subscriber_register(subscriber, first, 3600, ""));
+  ASSERT_TRUE(datastore->subscriber_register(subscriber, second, 3600, ""));
 
   auto locations = datastore->location_list(5150);
   ASSERT_EQ(locations.size(), 2u);
