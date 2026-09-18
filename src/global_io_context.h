@@ -27,6 +27,12 @@ inline boost::asio::io_context& get_global_io_context() {
     ~RunThread() {
       // Release the work guard so run() eventually stops
       work_guard.reset();
+
+      // Releasing the guard is not enough: a pending timer is work in its own right, and
+      // a registration expiry an hour out would hold run() open for an hour. By the time
+      // this runs the process is leaving, so abandon them rather than wait.
+      io_context.stop();
+
       if (t.joinable()) {
         t.join();
       }
