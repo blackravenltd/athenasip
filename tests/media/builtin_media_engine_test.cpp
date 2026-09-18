@@ -104,11 +104,11 @@ TEST(BuiltinMediaEngineTest, OfferRewritesTheMediaPathToThisNode) {
   SDP rewritten;
   ASSERT_TRUE(rewritten.parse(result.sdp));
 
-  EXPECT_EQ(rewritten.connection.address, "203.0.113.5");
-  ASSERT_EQ(rewritten.mediaDescriptions.size(), 1u);
-  EXPECT_NE(rewritten.mediaDescriptions[0].description.port, 49170);
-  EXPECT_GE(rewritten.mediaDescriptions[0].description.port, 23200);
-  EXPECT_LT(rewritten.mediaDescriptions[0].description.port, 23240);
+  EXPECT_EQ(rewritten.connection().address, "203.0.113.5");
+  ASSERT_EQ(rewritten.media().size(), 1u);
+  EXPECT_NE(rewritten.media()[0].description.port, 49170);
+  EXPECT_GE(rewritten.media()[0].description.port, 23200);
+  EXPECT_LT(rewritten.media()[0].description.port, 23240);
 }
 
 TEST(BuiltinMediaEngineTest, OfferRewritesTheRtcpAttribute) {
@@ -152,7 +152,7 @@ TEST(BuiltinMediaEngineTest, RepeatedOfferReusesTheSameRelay) {
   SDP a, b;
   ASSERT_TRUE(a.parse(first.sdp));
   ASSERT_TRUE(b.parse(second.sdp));
-  EXPECT_EQ(a.mediaDescriptions[0].description.port, b.mediaDescriptions[0].description.port);
+  EXPECT_EQ(a.media()[0].description.port, b.media()[0].description.port);
 }
 
 // Plain RTP only: anything needing ICE, DTLS or SRTP is rtpengine's job, and the

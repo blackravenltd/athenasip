@@ -6,23 +6,37 @@
 //
 #pragma once
 
-#include <functional>
+#include <cstdint>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <vector>
 
-#include "./util.h"
+#include "util.h"
 
 namespace athenasip {
 
+// A session description, modelled the way a proxy needs it: every line is kept, in the
+// order it arrived, and only the few fields we rewrite are parsed out.
 //
-// Represents a connection field, e.g. "IN IP4 192.168.18.100"
-//
+// That ordering matters. A proxy that rebuilds SDP from a struct silently drops
+// everything it does not model, which for a browser offer means ICE candidates, DTLS
+// fingerprints and BUNDLE groups. RFC 8866 section 5.13 also requires a parser to
+// ignore line types it does not understand, and for a proxy "ignore" means "pass on".
+
+// One "<type>=<value>" line.
+struct Line {
+  char type = 0;
+  std::string value;
+
+  std::string to_string() const { return std::string(1, type) + "=" + value + "\r\n"; }
+};
+
+// A connection field, e.g. "IN IP4 192.0.2.1" (RFC 8866 section 5.7).
 struct ConnectionInfo {
-  std::string nettype;   // e.g. "IN"
-  std::string addrtype;  // e.g. "IP4"
-  std::string address;   // e.g. "192.168.18.100"
+  std::string nettype;
+  std::string addrtype;
+  std::string address;
 
   static ConnectionInfo parse(const std::string& s) {
     ConnectionInfo ci;
@@ -31,12 +45,13 @@ struct ConnectionInfo {
     return ci;
   }
 
+  bool empty() const { return nettype.empty() && addrtype.empty() && address.empty(); }
+
   std::string to_string() const { return nettype + " " + addrtype + " " + address; }
 };
 
-//
-// Represents the origin field, e.g. "tom 1744 1438 IN IP4 192.168.18.52"
-//
+// The origin field, e.g. "alice 2890844526 2890844526 IN IP4 192.0.2.1"
+// (RFC 8866 section 5.2).
 struct Origin {
   std::string username;
   std::string sessionId;
@@ -55,265 +70,273 @@ struct Origin {
   std::string to_string() const { return username + " " + sessionId + " " + sessionVersion + " " + nettype + " " + addrtype + " " + address; }
 };
 
-//
-// Represents the "m=" media description (e.g. "audio 50000 RTP/AVP 96 97 98 0 8 ...")
-//
+// The "m=" line: "<media> <port>[/<count>] <proto> <fmt> ..." (RFC 8866 section 5.14).
+// The optional port count is why the port cannot be read with a plain integer parse:
+// "49170/2" stops the parse at the slash and the proto then swallows "/2".
 struct MediaDescription {
-  std::string media;                 // media type (audio, video, etc.)
-  uint16_t port;                     // port number
-  std::string proto;                 // protocol (e.g. RTP/AVP)
-  std::vector<std::string> formats;  // payload types
+  std::string media;
+  std::uint16_t port = 0;
+  std::uint16_t port_count = 0;  // 0 when the m= line carried no "/count"
+  std::string proto;
+  std::vector<std::string> formats;
 
   static MediaDescription parse(const std::string& s) {
     MediaDescription md;
     std::istringstream iss(s);
-    iss >> md.media >> md.port >> md.proto;
-    std::string fmt;
-    while (iss >> fmt) {
-      md.formats.push_back(fmt);
+
+    std::string port_field;
+    iss >> md.media >> port_field >> md.proto;
+
+    const auto slash = port_field.find('/');
+    if (slash == std::string::npos) {
+      md.port = static_cast<std::uint16_t>(std::strtoul(port_field.c_str(), nullptr, 10));
+    } else {
+      md.port = static_cast<std::uint16_t>(std::strtoul(port_field.substr(0, slash).c_str(), nullptr, 10));
+      md.port_count = static_cast<std::uint16_t>(std::strtoul(port_field.substr(slash + 1).c_str(), nullptr, 10));
     }
+
+    std::string fmt;
+    while (iss >> fmt) md.formats.push_back(fmt);
+
     return md;
   }
 
   std::string to_string() const {
     std::ostringstream oss;
-    oss << media << " " << port << " " << proto;
+    oss << media << " " << port;
+    if (port_count > 0) oss << "/" << port_count;
+    oss << " " << proto;
     for (const auto& f : formats) oss << " " << f;
     return oss.str();
   }
 };
 
-//
-// Represents a complete media section, including optional fields like media-level connection.
-//
-struct Media {
+// One media section: its "m=" line plus every line that follows, in order, until the
+// next "m=" or the end.
+class MediaSection {
+ public:
   MediaDescription description;
-  std::string title;          // i=
-  ConnectionInfo connection;  // c= (optional; overrides session-level)
-  bool hasConnection = false;
-  std::vector<std::string> bandwidth;   // b=
-  std::string encryption;               // k=
-  std::vector<std::string> attributes;  // a=
+
+  const std::vector<Line>& lines() const { return _lines; }
+  std::vector<Line>& lines() { return _lines; }
+
+  void add_line(const Line& line) { _lines.push_back(line); }
+
+  bool has_connection() const { return _find('c') != nullptr; }
+
+  ConnectionInfo connection() const {
+    const auto* line = _find('c');
+    return line ? ConnectionInfo::parse(line->value) : ConnectionInfo();
+  }
+
+  // Replaces the media-level c=, or inserts one in the position RFC 8866 section 5
+  // gives it: after i=, before b=, k= and a=.
+  void set_connection(const ConnectionInfo& connection) {
+    for (auto& line : _lines) {
+      if (line.type == 'c') {
+        line.value = connection.to_string();
+        return;
+      }
+    }
+
+    auto at = _lines.begin();
+    while (at != _lines.end() && at->type == 'i') ++at;
+    _lines.insert(at, Line{'c', connection.to_string()});
+  }
+
+  std::vector<std::string> attributes() const {
+    std::vector<std::string> result;
+    for (const auto& line : _lines) {
+      if (line.type == 'a') result.push_back(line.value);
+    }
+    return result;
+  }
+
+  // Replaces the first a= whose value starts with the prefix. Returns false when there
+  // was none, so the caller can decide whether to add one.
+  bool set_attribute(const std::string& prefix, const std::string& value) {
+    for (auto& line : _lines) {
+      if (line.type == 'a' && line.value.rfind(prefix, 0) == 0) {
+        line.value = value;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void add_attribute(const std::string& value) { _lines.push_back(Line{'a', value}); }
+
+  // The BUNDLE identifier for this section (RFC 8843), empty when absent.
+  std::string mid() const { return _attribute_after("mid:"); }
+
+  // The first rtpmap codec, for identifying the stream across re-offers.
+  std::string codec() const {
+    const auto rtpmap = _attribute_after("rtpmap:");
+    if (rtpmap.empty()) return "";
+
+    const auto space = rtpmap.find(' ');
+    return space == std::string::npos ? "" : rtpmap.substr(space + 1);
+  }
+
+  // Stable across a re-offer that keeps the same stream, so media can be matched up.
+  std::int64_t unique_id() const {
+    std::size_t seed = 0;
+    seed = Util::hash_combine(seed, std::hash<std::string>{}(mid()));
+    seed = Util::hash_combine(seed, std::hash<std::string>{}(description.media));
+    seed = Util::hash_combine(seed, std::hash<std::string>{}(codec()));
+    return static_cast<std::int64_t>(seed);
+  }
 
   std::string to_string() const {
     std::ostringstream oss;
     oss << "m=" << description.to_string() << "\r\n";
-    if (!title.empty()) oss << "i=" << title << "\r\n";
-    if (hasConnection) oss << "c=" << connection.to_string() << "\r\n";
-    for (const auto& b : bandwidth) oss << "b=" << b << "\r\n";
-    if (!encryption.empty()) oss << "k=" << encryption << "\r\n";
-    for (const auto& a : attributes) oss << "a=" << a << "\r\n";
+    for (const auto& line : _lines) oss << line.to_string();
     return oss.str();
   }
 
-  // Extract the "mid" attribute from this media, if present.
-  std::string extract_mid() {
-    const std::string prefix = "mid:";
-    for (const auto& attr : attributes) {
-      if (attr.compare(0, prefix.size(), prefix) == 0) {
-        return attr.substr(prefix.size());
-      }
+ private:
+  std::vector<Line> _lines;
+
+  const Line* _find(char type) const {
+    for (const auto& line : _lines) {
+      if (line.type == type) return &line;
     }
-    return "";
+    return nullptr;
   }
 
-  // Extract the codec from the first "rtpmap:" attribute.
-  std::string extract_codec() {
-    const std::string prefix = "rtpmap:";
-    for (const auto& attr : attributes) {
-      if (attr.compare(0, prefix.size(), prefix) == 0) {
-        // Expected format: "rtpmap:<pt> <codec>/<clockrate>"
-        auto pos = attr.find(' ');
-        if (pos != std::string::npos && pos + 1 < attr.size()) {
-          return attr.substr(pos + 1);
-        }
-      }
+  std::string _attribute_after(const std::string& prefix) const {
+    for (const auto& line : _lines) {
+      if (line.type == 'a' && line.value.rfind(prefix, 0) == 0) return line.value.substr(prefix.size());
     }
     return "";
-  }
-
-  int64_t get_unique_id() {
-    int64_t seed = 0;
-    seed = Util::hash_combine(seed, std::hash<std::string>{}(extract_mid()));
-    seed = Util::hash_combine(seed, std::hash<std::string>{}(description.media));
-    seed = Util::hash_combine(seed, std::hash<std::string>{}(extract_codec()));
-    return seed;
   }
 };
 
-//
-// Represents an entire SDP, including session-level fields and media sections.
-//
 class SDP {
  public:
-  // Channel-level fields.
-  std::string version;        // v=
-  Origin origin;              // o=
-  std::string sessionName;    // s=
-  std::string sessionInfo;    // i=
-  std::string uri;            // u=
-  std::string email;          // e=
-  std::string phone;          // p=
-  ConnectionInfo connection;  // c=
-  bool hasConnection = false;
-  std::vector<std::string> bandwidth;   // b=
-  std::string timing;                   // t=
-  std::vector<std::string> repeats;     // r=
-  std::string timezones;                // z=
-  std::string encryption;               // k=
-  std::vector<std::string> attributes;  // a=
+  // Returns false when the text is not a session description. RFC 8866 section 5 makes
+  // v=, o=, s= and t= mandatory, so a description missing any of them is rejected
+  // rather than quietly half-parsed.
+  bool parse(const std::string& text) {
+    _clear();
 
-  // Media sections.
-  std::vector<Media> mediaDescriptions;
-
-  // Parses the given SDP text (assumed to be CRLF-delimited).
-  bool parse(const std::string& sdpText) {
-    clear();
-    std::istringstream sdpStream(sdpText);
+    std::istringstream stream(text);
     std::string line;
-    bool inMediaSection = false;
-    Media currentMedia;
+    bool in_media = false;
 
-    while (std::getline(sdpStream, line)) {
-      // Remove trailing carriage return if present.
+    while (std::getline(stream, line)) {
       if (!line.empty() && line.back() == '\r') line.pop_back();
-      if (line.size() < 2 || line[1] != '=') continue;  // skip malformed lines
+      if (line.empty()) continue;
 
-      char type = line[0];
-      std::string value = line.substr(2);
+      // Every line is "<type>=<value>" with a single-character type.
+      if (line.size() < 2 || line[1] != '=') return false;
 
-      if (!inMediaSection) {
-        switch (type) {
-          case 'v':
-            version = value;
-            break;
-          case 'o':
-            origin = Origin::parse(value);
-            break;
-          case 's':
-            sessionName = value;
-            break;
-          case 'i':
-            sessionInfo = value;
-            break;
-          case 'u':
-            uri = value;
-            break;
-          case 'e':
-            email = value;
-            break;
-          case 'p':
-            phone = value;
-            break;
-          case 'c':
-            connection = ConnectionInfo::parse(value);
-            hasConnection = true;
-            break;
-          case 'b':
-            bandwidth.push_back(value);
-            break;
-          case 't':
-            timing = value;
-            break;
-          case 'r':
-            repeats.push_back(value);
-            break;
-          case 'z':
-            timezones = value;
-            break;
-          case 'k':
-            encryption = value;
-            break;
-          case 'a':
-            attributes.push_back(value);
-            break;
-          case 'm': {
-            inMediaSection = true;
-            currentMedia = Media();
-            currentMedia.description = MediaDescription::parse(value);
-            break;
-          }
-          default:
-            break;
-        }
+      const char type = line[0];
+      const std::string value = line.substr(2);
+
+      if (type == 'm') {
+        in_media = true;
+        _media.emplace_back();
+        _media.back().description = MediaDescription::parse(value);
+        continue;
+      }
+
+      if (in_media) {
+        _media.back().add_line(Line{type, value});
       } else {
-        switch (type) {
-          case 'm':
-            // New media block begins; save the current one.
-            mediaDescriptions.push_back(currentMedia);
-            currentMedia = Media();
-            currentMedia.description = MediaDescription::parse(value);
-            break;
-          case 'i':
-            currentMedia.title = value;
-            break;
-          case 'c':
-            currentMedia.connection = ConnectionInfo::parse(value);
-            currentMedia.hasConnection = true;
-            break;
-          case 'b':
-            currentMedia.bandwidth.push_back(value);
-            break;
-          case 'k':
-            currentMedia.encryption = value;
-            break;
-          case 'a':
-            currentMedia.attributes.push_back(value);
-            break;
-          default:
-            break;
-        }
+        _session_lines.push_back(Line{type, value});
       }
     }
-    if (inMediaSection) {
-      mediaDescriptions.push_back(currentMedia);
-    }
-    return true;
+
+    _valid = _has_session_line('v') && _has_session_line('o') && _has_session_line('s') && _has_session_line('t');
+    return _valid;
   }
 
-  // Serializes the SDP back into a CRLF-delimited string.
+  bool is_valid() const { return _valid; }
+
+  bool has_connection() const { return _find_session('c') != nullptr; }
+
+  ConnectionInfo connection() const {
+    const auto* line = _find_session('c');
+    return line ? ConnectionInfo::parse(line->value) : ConnectionInfo();
+  }
+
+  // Replaces the session-level c=, or inserts one where RFC 8866 section 5 puts it:
+  // after s=, i=, u=, e= and p=, before b=, t= and the rest.
+  void set_connection(const ConnectionInfo& connection) {
+    for (auto& line : _session_lines) {
+      if (line.type == 'c') {
+        line.value = connection.to_string();
+        return;
+      }
+    }
+
+    static const std::string before_c = "vosiuep";
+
+    auto at = _session_lines.begin();
+    while (at != _session_lines.end() && before_c.find(at->type) != std::string::npos) ++at;
+    _session_lines.insert(at, Line{'c', connection.to_string()});
+  }
+
+  Origin origin() const {
+    const auto* line = _find_session('o');
+    return line ? Origin::parse(line->value) : Origin();
+  }
+
+  std::vector<std::string> session_attributes() const {
+    std::vector<std::string> result;
+    for (const auto& line : _session_lines) {
+      if (line.type == 'a') result.push_back(line.value);
+    }
+    return result;
+  }
+
+  const std::vector<Line>& session_lines() const { return _session_lines; }
+
+  std::vector<MediaSection>& media() { return _media; }
+  const std::vector<MediaSection>& media() const { return _media; }
+
+  // Re-emits every line in the order it arrived, so anything not modelled comes out
+  // exactly as it went in.
   std::string to_string() const {
     std::ostringstream oss;
-    oss << "v=" << version << "\r\n";
-    oss << "o=" << origin.to_string() << "\r\n";
-    oss << "s=" << sessionName << "\r\n";
-    if (!sessionInfo.empty()) oss << "i=" << sessionInfo << "\r\n";
-    if (!uri.empty()) oss << "u=" << uri << "\r\n";
-    if (!email.empty()) oss << "e=" << email << "\r\n";
-    if (!phone.empty()) oss << "p=" << phone << "\r\n";
-    if (hasConnection) oss << "c=" << connection.to_string() << "\r\n";
-    for (const auto& b : bandwidth) oss << "b=" << b << "\r\n";
-    oss << "t=" << timing << "\r\n";
-    for (const auto& r : repeats) oss << "r=" << r << "\r\n";
-    if (!timezones.empty()) oss << "z=" << timezones << "\r\n";
-    if (!encryption.empty()) oss << "k=" << encryption << "\r\n";
-    for (const auto& a : attributes) oss << "a=" << a << "\r\n";
 
-    for (const auto& media : mediaDescriptions) oss << media.to_string();
+    for (const auto& line : _session_lines) {
+      // RFC 8866 section 5.3: s= must carry at least one character. "-" is the
+      // conventional filler, and emitting a bare "s=" would be invalid.
+      if (line.type == 's' && line.value.empty()) {
+        oss << "s=-\r\n";
+        continue;
+      }
+
+      oss << line.to_string();
+    }
+
+    for (const auto& section : _media) oss << section.to_string();
     return oss.str();
   }
 
   void print() const { std::cout << to_string() << std::endl; }
 
  private:
-  void clear() {
-    version.clear();
-    origin = Origin();
-    sessionName.clear();
-    sessionInfo.clear();
-    uri.clear();
-    email.clear();
-    phone.clear();
-    connection = ConnectionInfo();
-    hasConnection = false;
-    bandwidth.clear();
-    timing.clear();
-    repeats.clear();
-    timezones.clear();
-    encryption.clear();
-    attributes.clear();
-    mediaDescriptions.clear();
+  std::vector<Line> _session_lines;
+  std::vector<MediaSection> _media;
+  bool _valid = false;
+
+  void _clear() {
+    _session_lines.clear();
+    _media.clear();
+    _valid = false;
   }
+
+  const Line* _find_session(char type) const {
+    for (const auto& line : _session_lines) {
+      if (line.type == type) return &line;
+    }
+    return nullptr;
+  }
+
+  bool _has_session_line(char type) const { return _find_session(type) != nullptr; }
 };
 
 }  // namespace athenasip

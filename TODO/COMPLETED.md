@@ -406,3 +406,45 @@ uncommitted working tree on 2026-09-17.
 Every item is done. The tree builds and tests clean, shuts down without crashing, has
 the interfaces M2 builds on, and carries no dead backends.
 
+## Milestone 2 - groundwork
+
+### SDP rewritten against RFC 8866 (2026-09-18)
+
+The old parser decomposed SDP into typed structs and rebuilt it from them, so anything
+it did not model was dropped on the way through. For a browser offer that is the ICE
+candidates, the DTLS fingerprint and the BUNDLE group. It is now a list of lines kept in
+arrival order, with only the fields a proxy rewrites parsed out, which makes
+"round-trips every attribute untouched" true by construction rather than by effort.
+
+- [x] `parse()` returned `true` unconditionally: rubbish parsed "successfully" and the
+      caller had no way to tell. It now validates the mandatory v=, o=, s= and t=
+      (RFC 8866 section 5) and reports through `is_valid()`.
+- [x] Unknown line types were silently dropped. RFC 8866 section 5.13 says a parser
+      ignores what it does not understand, and for a proxy that means passing it on.
+- [x] A second `t=` overwrote the first, losing a time description (section 5.9).
+- [x] `m=audio 49170/2 RTP/AVP 0` was mangled: reading the port as an integer stops at
+      the slash, so the proto became "/2" and the real proto was read as a format
+      (section 5.14). The port count is parsed and re-emitted.
+- [x] `to_string()` re-emits every line in arrival order, and never emits a bare `s=`,
+      which is invalid (section 5.3).
+- [x] `MediaSection` replaces the old flat media struct: `mid()` for BUNDLE (RFC 8843),
+      `codec()`, `unique_id()` for matching a stream across re-offers, and
+      `set_connection`/`set_attribute` that edit in place rather than rebuilding.
+- [x] `BuiltinMediaEngine` follows the new API and no longer adds a media-level `c=`
+      where the far end relied on the session-level one.
+- [x] 11 tests from RFC 8866, including a byte-identical round trip of a real WebRTC
+      offer with BUNDLE, ICE, DTLS and rtcp-mux.
+
+### Injectable timers (2026-09-18)
+
+- [x] `TimerSource` in `src/timer_source.h`: `AsioTimerSource` for production,
+      `ManualTimerSource` for tests. `DelayedTask` takes one, defaulting to the real
+      clock, so existing callers are unchanged.
+- [x] `ManualTimerSource::advance` steps time to each timer as it falls due rather than
+      jumping to the target, so a callback sees the time its own timer fired at. Timer A
+      doubles by re-arming from inside its callback, and jumping would make every
+      interval after the first wrong. The test that caught this is kept.
+- [x] This is what makes the section 17 state machines testable: timer B is 64*T1, 32
+      seconds at the default T1, and there is a test proving that costs nothing now.
+- [x] 182 tests, clean under asan and tsan.
+

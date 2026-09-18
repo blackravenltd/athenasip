@@ -1,8 +1,12 @@
 # AthenaSIP - Active Work
 
-Rewritten 2026-09-17 after the scope reset. Work happens on `develop`, at `af83fb5`:
-the snake_case rename, the weak_ptr refactor and the outbound INVITE sketch are all
-committed. Line numbers refer to that tree; update them as files move.
+Milestone 1 is complete and tagged `0.2.0`. Work happens on `develop`; `main` carries
+the last release. Line numbers refer to the current tree; update them as files move.
+
+What M2 builds on, all landed in M1: the header, URI, identity and message model follow
+RFC 3261; `Core` runs on a single strand with no locks; `memory://` and `redis://` are
+the datastores and both implement the full interface; `MediaEngine` and a builtin RTP
+relay driver are in; `Call` is multi-party. 163 tests, clean under asan and tsan.
 
 Move items to `COMPLETED.md` as they land, with a one-line note on what shipped.
 
@@ -84,9 +88,6 @@ through the admin API, verified by sipp.
 - [ ] On INVITE offer and 2xx answer, call `MediaEngine::offer/answer`; on BYE/CANCEL/
       timeout, `release`. SDP round-trips every attribute untouched; only `c=`, `m=`
       ports and `a=rtcp` are rewritten by the builtin driver.
-- [ ] `SDP` parser preserves unknown session-level and media-level lines verbatim and
-      handles multiple `m=` lines, BUNDLE (RFC 8843) groups and `rtcp-mux` without
-      mangling them.
 
 ### Transports
 - [ ] WSS listener: Beast websocket over `ssl_stream`, sharing the TLS context loader.
@@ -110,8 +111,9 @@ through the admin API, verified by sipp.
 - [ ] `test/e2e/` with sipp scenarios: REGISTER with Digest, INVITE/180/200/ACK/BYE,
       CANCEL before and after 180, 486, 408 on timer B, retransmission over UDP,
       RTP through the builtin relay (RTP sequence check, not silence).
-- [ ] GoogleTest coverage for `SIPHeader`, `SIPMessage`, `SDP`, each transaction state
-      machine (fake clock), `MemoryDatastore`, `LocalEventSystem`.
+- [ ] GoogleTest coverage for each transaction state machine, on `ManualTimerSource`.
+      `SIPHeader`, `SIPMessage`, `SDP`, `MemoryDatastore` and `LocalEventSystem` are
+      covered.
 - [ ] `docker-compose.test.yml`: athenasip + sipp; runs in CI.
 - [ ] GitHub Actions: build (Debug + ASan), unit tests, sipp harness.
 
