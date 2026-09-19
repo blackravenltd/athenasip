@@ -6,6 +6,7 @@
 //
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <type_traits>
@@ -75,47 +76,59 @@ struct Result {
 //
 // Drivers register by URL scheme, the same way Datastore and EventSystem do, so the
 // engine is chosen by configuration: builtin:// or rtpengine://host:port.
+//
+// Async for the same reason the datastore is: rtpengine is an ng-protocol round trip
+// over UDP, and the builtin relay only looks instant because it happens to be in this
+// process. The caller is on the Core strand and must not wait there, and the contract
+// cannot be made async later without breaking every engine written against it.
 class MediaEngine : public plugins::Plugin {
  public:
   ~MediaEngine() override = default;
 
   std::string kind() const final { return plugins::kinds::media; }
 
-  virtual bool connect() = 0;
+  // What an offer or answer reports back. Result already carries ok and error, so it
+  // is the handler's argument as it stands.
+  using MediaHandler = std::function<void(Result)>;
+
+  // Lifecycle. connect() is a round trip for a networked engine and is async like
+  // everything else; close() is teardown, synchronous and safe to call twice.
+  virtual void connect(plugins::Executor on, plugins::StatusHandler handler) = 0;
   virtual void close() = 0;
   virtual bool is_connected() const = 0;
 
+  // What this driver can do is local knowledge and needs no round trip.
   virtual Capabilities capabilities() const = 0;
 
-  // Two-way media setup. offer() takes the offer from one participant and returns the
-  // SDP to send on; answer() takes the answer coming back.
-  virtual Result offer(std::shared_ptr<Call> call, const std::string& sdp, const Flags& flags) = 0;
-  virtual Result answer(std::shared_ptr<Call> call, const std::string& sdp, const Flags& flags) = 0;
+  // Two-way media setup. offer() takes the offer from one participant and answers with
+  // the SDP to send on; answer() takes the answer coming back.
+  virtual void offer(plugins::Executor on, std::shared_ptr<Call> call, std::string sdp, Flags flags, MediaHandler handler) = 0;
+  virtual void answer(plugins::Executor on, std::shared_ptr<Call> call, std::string sdp, Flags flags, MediaHandler handler) = 0;
 
   // Give up every resource held for this call. Safe to call for a call the engine
   // never saw.
-  virtual bool release(std::shared_ptr<Call> call) = 0;
+  virtual void release(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) = 0;
 
   // What the engine currently holds for this call, for the admin API and diagnostics.
-  virtual std::string query(std::shared_ptr<Call> call) = 0;
+  virtual void query(plugins::Executor on, std::shared_ptr<Call> call, plugins::Handler<std::string> handler) = 0;
 
   // Conference operations. Only meaningful when capabilities().conference is set; the
   // defaults below decline, so a bridge-only driver does not have to implement them.
-  virtual bool join(std::shared_ptr<Call> call, std::size_t participant) {
+  virtual void join(plugins::Executor on, std::shared_ptr<Call> call, std::size_t participant, plugins::StatusHandler handler) {
     (void)call;
     (void)participant;
-    return false;
+    _complete(std::move(on), std::move(handler), plugins::Status::failure("this engine does not do conferences"));
   }
 
-  virtual bool leave(std::shared_ptr<Call> call, std::size_t participant) {
+  virtual void leave(plugins::Executor on, std::shared_ptr<Call> call, std::size_t participant, plugins::StatusHandler handler) {
     (void)call;
     (void)participant;
-    return false;
+    _complete(std::move(on), std::move(handler), plugins::Status::failure("this engine does not do conferences"));
   }
 
-  virtual std::vector<std::string> roster(std::shared_ptr<Call> call) {
+  virtual void roster(plugins::Executor on, std::shared_ptr<Call> call, plugins::Handler<std::vector<std::string>> handler) {
     (void)call;
-    return {};
+    _complete(std::move(on), std::move(handler), plugins::Result<std::vector<std::string>>::success({}));
   }
 
   template <typename T, typename = std::enable_if_t<std::is_base_of_v<MediaEngine, T>>>

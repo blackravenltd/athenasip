@@ -537,3 +537,43 @@ and gives the TU logic somewhere to live.
 - [x] 43 new tests: the matcher against the section 17 identity rules, the registrar against
       section 10 and RFC 3327, the proxy against section 16, and the transport against RFC 3581.
       262 tests, clean under asan and tsan.
+
+## Milestone 2 step 2 - Plugin contract v1 (2026-09-19)
+
+- [x] One `PluginRegistry` keyed by (kind, scheme) (`src/plugins/plugin_registry.*`), replacing
+      the three copy-pasted template registries in `datastore.h`, `event_system.h` and
+      `media_engine.h`. The pair is the key because `memory://` is a datastore and, separately,
+      an event system. `Datastore`, `EventSystem` and `MediaEngine` keep typed
+      `register_driver`/`create_driver` helpers over it, so no call site changed shape.
+- [x] `plugins::Plugin` (`src/plugins/plugin.h`): `kind()`, `name()`, `version()`,
+      `api_version()`, `configure()` and `health()`. `get_driver_name()` is gone - it returned
+      prose ("AthenaSIP Redis Driver v0.0.1"), which nothing can key on. The versioning rule is
+      enforced rather than documented: the registry refuses a plugin whose `api_version()` is
+      not this server's, which is unreachable for a compiled-in driver and the whole point once
+      plugins are shared libraries.
+- [x] Configuration hand-off: `configure(own_root, system)` with `Config::plugin_root(kind,
+      name)`, keyed on the driver's `name()` rather than its scheme so the three Redis schemes
+      share one section. `BuiltinMediaEngine` and `MQTTEventSystem` read theirs; the URL stays
+      the selector and a one-line `datastore: { url: memory:// }` still works.
+- [x] `Datastore` is async in the contract: 21 operations, each taking the caller's executor and
+      a handler that is posted rather than called inline. `RedisDatastore` loses its sync
+      primitive layer and the `_wait_*` future bridge, and with them the five second timeout
+      that ran on the Core strand - a slow Redis used to stall every call on the node.
+      `plugins::Status` and `plugins::Result<T>` separate "found nothing" from "could not ask",
+      so the registrar and proxy answer 500 to an unreachable datastore where both used to
+      answer 404.
+- [x] `Core`, `Registrar` and `Proxy` become continuation chains; the registrar reads as the
+      numbered stages of 10.3 because each step that needs the datastore returns before the
+      next one runs. `TransactionUser` is `enable_shared_from_this` and `Core` holds a
+      reference to itself across its own calls: a handler running after its owner was destroyed
+      was a use-after-free the suite found once the work outlived the fixture.
+- [x] `MediaEngine` follows: `offer`, `answer`, `release`, `query` and the conference operations
+      all take an executor and a handler.
+- [x] `docs/plugins.md`: the contract, the lifecycle, the versioning rule, the two async rules a
+      driver must not break, and how to write one.
+- [x] 26 new tests. The registry ones cover what the shape has to guarantee: the same scheme
+      under two kinds stays two drivers, an unknown scheme and a known scheme under the wrong
+      kind both refuse, and a plugin built against another contract version is not constructed.
+      `tests/helpers/sync_datastore_helper.h` and `sync_media_engine_helper.h` are blocking
+      views for tests only, with the reason written where they are defined. 273 tests, clean
+      under asan and tsan, and the Redis suite verified against a real server.

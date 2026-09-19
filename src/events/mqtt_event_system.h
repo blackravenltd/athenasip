@@ -44,6 +44,8 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
   std::string name() const override;
   std::string version() const override;
 
+  bool configure(const YAML::Node& own_root, const Config& system) override;
+
   MQTTEventSystem(const MQTTEventSystem&) = delete;
   MQTTEventSystem& operator=(const MQTTEventSystem&) = delete;
   MQTTEventSystem(MQTTEventSystem&&) = delete;

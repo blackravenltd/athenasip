@@ -97,8 +97,8 @@ schemes has one section rather than three.
 
 ## Async is the contract
 
-`Datastore` operations do not return values. Every one of them takes the caller's
-executor and a handler:
+`Datastore` and `MediaEngine` operations do not return values. Every one of them takes
+the caller's executor and a handler:
 
 ```cpp
 void realm_get_by_name(plugins::Executor on, std::string realm_name,
@@ -180,9 +180,6 @@ than swallowed - calls the driver directly instead.
 
 ## What is not here yet
 
-- **`MediaEngine` is still synchronous.** It moves to the same async shape before the
-  contract is declared stable; rtpengine is a network round trip and cannot stay on the
-  strand either.
 - **Plugins are compiled in.** Shared-library loading with `plugins.path`, an
   `extern "C"` entry point and `athenasip plugins list` is Milestone 5. The contract
   here is the one that loader will use, which is why it is worth getting right now.

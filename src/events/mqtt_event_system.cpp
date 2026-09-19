@@ -15,6 +15,8 @@
 #include <unordered_map>
 #include <utility>
 
+#include "../config.h"
+
 namespace athenasip::events {
 namespace {
 
@@ -407,6 +409,25 @@ void MQTTEventSystem::apply_url(std::shared_ptr<types::URL> url) {
   }
 
   (void)path;
+}
+
+bool MQTTEventSystem::configure(const YAML::Node& own_root, const Config& system) {
+  (void)system;
+
+  if (!own_root || !own_root.IsMap()) {
+    return true;
+  }
+
+  // The URL selects the broker; anything else about the connection belongs here. The
+  // query-string forms still parse, so an existing config keeps working, but the
+  // section wins where both are given.
+  if (own_root["client_id"]) _client_id = own_root["client_id"].as<std::string>();
+  if (own_root["keep_alive"]) _keep_alive_seconds = static_cast<std::uint16_t>(own_root["keep_alive"].as<int>());
+  if (own_root["username"]) _username = own_root["username"].as<std::string>();
+  if (own_root["password"]) _password = own_root["password"].as<std::string>();
+  if (own_root["prefix"]) _prefix = own_root["prefix"].as<std::string>();
+
+  return true;
 }
 
 void MQTTEventSystem::configure_client() {

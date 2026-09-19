@@ -160,8 +160,11 @@ int main(int argc, char* argv[]) {
     return -2;
   }
 
-  if (!media_engine->connect()) {
-    logger->error("Media Engine Connection Failed: " + config->media_url);
+  const auto media_connected =
+      connect_and_wait([&media_engine](plugins::Executor on, plugins::StatusHandler handler) { media_engine->connect(std::move(on), std::move(handler)); });
+
+  if (!media_connected.ok) {
+    logger->error("Media Engine Connection Failed: " + config->media_url + " - " + media_connected.error);
     datastore->close();
     events->close();
     return -3;

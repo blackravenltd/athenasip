@@ -74,7 +74,13 @@ datastore:
   url: "memory://"
 
 events:
-  url: "mqtt://127.0.0.1:1883/?client_id=sip-01&keep_alive=30"
+  # local:// keeps events inside this process. mqtt:// publishes them to a broker,
+  # where they are also how nodes find each other.
+  url: "mqtt://127.0.0.1:1883/"
+
+  mqtt:
+    client_id: sip-01
+    keep_alive: 30
 
 media:
   # builtin:// relays plain RTP from this process and needs nothing else installed.
