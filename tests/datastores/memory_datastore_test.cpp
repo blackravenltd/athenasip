@@ -11,6 +11,7 @@
 #include "datastores/memory_datastore.h"
 #include "types/url.h"
 
+#include "../helpers/sync_datastore_helper.h"
 #include "../mocks/logger_mock.h"
 
 using namespace athenasip;
@@ -18,10 +19,12 @@ using athenasip::datastores::MemoryDatastore;
 
 namespace {
 
-std::shared_ptr<MemoryDatastore> make_datastore() {
+// The contract is async; these tests are statements about what the store holds, so
+// they drive it through the blocking test view.
+std::shared_ptr<SyncDatastore> make_datastore() {
   auto logger = std::make_shared<MockLogger>();
   auto url = std::make_shared<types::URL>("memory://");
-  auto datastore = std::make_shared<MemoryDatastore>(logger, url);
+  auto datastore = std::make_shared<SyncDatastore>(std::make_shared<MemoryDatastore>(logger, url));
   datastore->connect();
   return datastore;
 }
@@ -196,10 +199,12 @@ TEST(MemoryDatastoreTest, ResolvesThroughTheDriverRegistry) {
   auto logger = std::make_shared<MockLogger>();
   athenasip::datastores::Datastore::register_driver<MemoryDatastore>(logger, "memory");
 
-  auto datastore = athenasip::datastores::Datastore::create_driver(logger, "memory://");
-  ASSERT_NE(datastore, nullptr);
-  EXPECT_TRUE(datastore->connect());
-  EXPECT_TRUE(datastore->is_connected());
+  auto driver = athenasip::datastores::Datastore::create_driver(logger, "memory://");
+  ASSERT_NE(driver, nullptr);
+
+  SyncDatastore datastore(driver);
+  EXPECT_TRUE(datastore.connect());
+  EXPECT_TRUE(datastore.is_connected());
 }
 
 // Write operations. create and update are distinct on purpose: provisioning has to be

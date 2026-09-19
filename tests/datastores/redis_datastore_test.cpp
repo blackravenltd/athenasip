@@ -13,6 +13,7 @@
 #include "datastores/redis_datastore.h"
 #include "types/url.h"
 
+#include "../helpers/sync_datastore_helper.h"
 #include "../mocks/logger_mock.h"
 
 using namespace athenasip;
@@ -30,12 +31,14 @@ std::string redis_url() {
   return url ? std::string(url) : std::string();
 }
 
-std::shared_ptr<RedisDatastore> make_datastore() {
+// The contract is async; these tests are statements about what Redis holds, so they
+// drive it through the blocking test view.
+std::shared_ptr<SyncDatastore> make_datastore() {
   const auto url = redis_url();
   if (url.empty()) return nullptr;
 
   auto logger = std::make_shared<MockLogger>();
-  auto datastore = std::make_shared<RedisDatastore>(logger, std::make_shared<types::URL>(url));
+  auto datastore = std::make_shared<SyncDatastore>(std::make_shared<RedisDatastore>(logger, std::make_shared<types::URL>(url)));
 
   if (!datastore->connect()) return nullptr;
   return datastore;

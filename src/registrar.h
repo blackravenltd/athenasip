@@ -9,11 +9,13 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "loggers/logger.h"
 #include "sip_message.h"
 #include "transaction_user.h"
 #include "transactions/transaction_base.h"
+#include "types/authorization.h"
 #include "types/realm.h"
 #include "types/subscriber.h"
 
@@ -34,6 +36,29 @@ class Registrar : public TransactionUser {
   void on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction) override;
 
  private:
+  // RFC 3261 10.3 is a numbered list of steps, and every step that needs the datastore
+  // now returns before the next one runs. Each stage below is one of those resumptions,
+  // named for what it has just learned rather than for what it is about to do.
+  void _on_realm(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::shared_ptr<types::SIPIdentity> aor,
+                 std::shared_ptr<types::Realm> realm);
+  void _on_nonce_checked(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
+                         std::shared_ptr<types::SIPIdentity> aor, std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Authorization> auth);
+  void _on_subscriber(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::shared_ptr<types::SIPIdentity> aor,
+                      std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Authorization> auth, std::shared_ptr<types::Subscriber> subscriber);
+  void _apply_bindings(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::shared_ptr<types::Realm> realm,
+                       std::shared_ptr<types::Subscriber> subscriber);
+
+  // One binding at a time, because each write is a round trip and the response cannot
+  // be sent until the last of them has landed.
+  struct Binding {
+    std::shared_ptr<types::SIPUri> contact;
+    std::uint32_t expires = 0;
+  };
+
+  void _write_bindings(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
+                       std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<std::vector<Binding>> bindings, std::size_t index,
+                       std::uint32_t expires_seconds);
+
   // The lifetime the client asked for, from the Contact's expires parameter, then the
   // Expires header, then the realm default. Absent everywhere means the realm default.
   std::uint32_t _requested_expiry(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<types::Realm>& realm) const;

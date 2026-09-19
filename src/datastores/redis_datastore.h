@@ -62,34 +62,36 @@ class RedisDatastore : public Datastore {
   std::string name() const override;
   std::string version() const override;
 
-  bool connect() override;
+  void connect(plugins::Executor on, plugins::StatusHandler handler) override;
   void close() override;
   bool is_connected() const override;
 
-  std::shared_ptr<types::Realm> realm_get_by_name(const std::string& realm_name) override;
-  bool realm_create(std::shared_ptr<types::Realm> realm) override;
-  bool realm_update(std::shared_ptr<types::Realm> realm) override;
-  bool realm_delete(const std::string& realm_name) override;
-  std::vector<std::shared_ptr<types::Realm>> realm_list() override;
+  void realm_get_by_name(plugins::Executor on, std::string realm_name, plugins::Handler<std::shared_ptr<types::Realm>> handler) override;
+  void realm_create(plugins::Executor on, std::shared_ptr<types::Realm> realm, plugins::StatusHandler handler) override;
+  void realm_update(plugins::Executor on, std::shared_ptr<types::Realm> realm, plugins::StatusHandler handler) override;
+  void realm_delete(plugins::Executor on, std::string realm_name, plugins::StatusHandler handler) override;
+  void realm_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::Realm>>> handler) override;
 
-  std::shared_ptr<types::Subscriber> subscriber_get(std::shared_ptr<types::SIPIdentity> identity) override;
-  bool subscriber_create(std::shared_ptr<types::Subscriber> subscriber) override;
-  bool subscriber_update(std::shared_ptr<types::Subscriber> subscriber) override;
-  bool subscriber_delete(std::shared_ptr<types::SIPIdentity> identity) override;
-  std::vector<std::shared_ptr<types::Subscriber>> subscriber_list(const std::string& realm_name) override;
+  void subscriber_get(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity,
+                      plugins::Handler<std::shared_ptr<types::Subscriber>> handler) override;
+  void subscriber_create(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, plugins::StatusHandler handler) override;
+  void subscriber_update(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, plugins::StatusHandler handler) override;
+  void subscriber_delete(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity, plugins::StatusHandler handler) override;
+  void subscriber_list(plugins::Executor on, std::string realm_name, plugins::Handler<std::vector<std::shared_ptr<types::Subscriber>>> handler) override;
 
-  bool subscriber_register(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact, std::uint32_t expires_seconds,
-                           const std::string& path) override;
-  bool subscriber_unregister(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact) override;
-  std::vector<types::Location> location_list(std::uint64_t subscriber_id) override;
+  void subscriber_register(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact,
+                           std::uint32_t expires_seconds, std::string path, plugins::StatusHandler handler) override;
+  void subscriber_unregister(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact,
+                             plugins::StatusHandler handler) override;
+  void location_list(plugins::Executor on, std::uint64_t subscriber_id, plugins::Handler<std::vector<types::Location>> handler) override;
 
-  bool nonce_create(const std::string& nonce, const std::time_t& expires_at) override;
-  bool nonce_check(std::string nonce) override;
+  void nonce_create(plugins::Executor on, std::string nonce, std::time_t expires_at, plugins::StatusHandler handler) override;
+  void nonce_check(plugins::Executor on, std::string nonce, plugins::Handler<bool> handler) override;
 
-  bool call_create(std::shared_ptr<Call>) override;
-  bool call_update(std::shared_ptr<Call>) override;
-  std::shared_ptr<Call> call_get(const std::string& id) override;
-  std::vector<std::shared_ptr<Call>> call_list() override;
+  void call_create(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) override;
+  void call_update(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) override;
+  void call_get(plugins::Executor on, std::string id, plugins::Handler<std::shared_ptr<Call>> handler) override;
+  void call_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<Call>>> handler) override;
 
  private:
   using BoolCallback = std::function<void(RedisError error, bool value)>;
@@ -100,35 +102,23 @@ class RedisDatastore : public Datastore {
   void _apply_url(std::shared_ptr<types::URL> url);
   boost::redis::config _make_config() const;
 
-  bool _ping();
-  bool _set(std::string key, std::string value);
-  bool _set_ex(std::string key, std::string value, std::chrono::seconds expiry);
-  std::optional<std::string> _get(std::string key);
-  std::int64_t _del(std::string key);
-  bool _exists(std::string key);
-
-  // Sets are used as indexes, so listing never needs KEYS or SCAN. KEYS blocks the
-  // server, and location_list is on the call path for target determination.
-  bool _sadd(std::string key, std::string member);
-  bool _srem(std::string key, std::string member);
-  std::vector<std::string> _smembers(std::string key);
-
   void _async_ping(BoolCallback callback);
   void _async_set(std::string key, std::string value, BoolCallback callback);
   void _async_set_ex(std::string key, std::string value, std::chrono::seconds expiry, BoolCallback callback);
   void _async_get(std::string key, StringCallback callback);
   void _async_del(std::string key, IntegerCallback callback);
   void _async_exists(std::string key, BoolCallback callback);
+
+  // Sets are used as indexes, so listing never needs KEYS or SCAN. KEYS blocks the
+  // server, and location_list is on the call path for target determination.
+  void _async_sadd(std::string key, std::string member, BoolCallback callback);
+  void _async_srem(std::string key, std::string member, BoolCallback callback);
+  void _async_smembers(std::string key, StringsCallback callback);
   void _async_strings(std::string operation, boost::redis::request request, StringsCallback callback);
 
   void _async_ok(std::string operation, boost::redis::request request, BoolCallback callback);
   void _async_string(std::string operation, boost::redis::request request, StringCallback callback);
   void _async_integer(std::string operation, boost::redis::request request, IntegerCallback callback);
-
-  bool _wait_bool(std::function<void(BoolCallback)> starter);
-  std::optional<std::string> _wait_string(std::function<void(StringCallback)> starter);
-  std::int64_t _wait_integer(std::function<void(IntegerCallback)> starter);
-  std::vector<std::string> _wait_strings(std::function<void(StringsCallback)> starter);
 
   static std::string _realm_key(const std::string& realm_name);
   static std::string _subscriber_key(const std::string& realm_name, const std::string& user);
@@ -150,7 +140,6 @@ class RedisDatastore : public Datastore {
 
   std::string _duration_ms(std::chrono::high_resolution_clock::time_point start) const;
   RedisError _not_connected_error() const;
-  RedisError _timeout_error() const;
 
   std::shared_ptr<loggers::Logger> _logger;
   std::shared_ptr<types::URL> _url;
@@ -167,8 +156,6 @@ class RedisDatastore : public Datastore {
   std::shared_ptr<boost::redis::connection> _connection;
   std::thread _io_thread;
   std::atomic_bool _started{false};
-
-  std::chrono::milliseconds _sync_timeout{std::chrono::seconds(5)};
 };
 
 }  // namespace athenasip::datastores

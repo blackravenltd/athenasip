@@ -62,7 +62,25 @@ void Registrar::on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<
   }
 
   auto aor = to->value;
-  auto realm = core->realm_get_by_name(Util::to_lower(aor->uri->realm));
+
+  auto self = shared_from_this();
+  core->realm_get_by_name(Util::to_lower(aor->uri->realm), [this, self, request, transaction, aor](plugins::Result<std::shared_ptr<types::Realm>> found) {
+    // A datastore that cannot answer is not a domain we do not
+    // serve. One is 500, the other 404, and before the contract
+    // could report the difference both looked like "no realm".
+    if (!found.ok) {
+      _logger->error("REGISTER could not read the realm - " + found.error);
+      return _send_status(transaction, request, 500, "Server Internal Error");
+    }
+
+    _on_realm(request, transaction, aor, found.value);
+  });
+}
+
+void Registrar::_on_realm(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
+                          std::shared_ptr<types::SIPIdentity> aor, std::shared_ptr<types::Realm> realm) {
+  auto core = _core.lock();
+  if (!core) return;
 
   // RFC 3261 10.3 step 5: an address of record this registrar does not serve is a 404.
   // A subscriber that does not exist inside a realm we do serve is challenged instead,
@@ -86,12 +104,41 @@ void Registrar::on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<
     return _send_challenge(transaction, request, realm);
   }
 
-  if (!core->nonce_check(auth->fields["nonce"])) {
-    _logger->info("REGISTER nonce " + auth->fields["nonce"] + " not found or expired - challenging");
-    return _send_challenge(transaction, request, realm);
-  }
+  auto self = shared_from_this();
+  core->nonce_check(auth->fields["nonce"], [this, self, request, transaction, aor, realm, auth](plugins::Result<bool> checked) {
+    if (!checked.ok) {
+      _logger->error("REGISTER could not check the nonce - " + checked.error);
+      return _send_status(transaction, request, 500, "Server Internal Error");
+    }
 
-  auto subscriber = core->subscriber_get(aor);
+    if (!checked.value) {
+      _logger->info("REGISTER nonce " + auth->fields["nonce"] + " not found or expired - challenging");
+      return _send_challenge(transaction, request, realm);
+    }
+
+    _on_nonce_checked(request, transaction, aor, realm, auth);
+  });
+}
+
+void Registrar::_on_nonce_checked(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
+                                  std::shared_ptr<types::SIPIdentity> aor, std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Authorization> auth) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  auto self = shared_from_this();
+  core->subscriber_get(aor, [this, self, request, transaction, aor, realm, auth](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
+    if (!found.ok) {
+      _logger->error("REGISTER could not read the subscriber - " + found.error);
+      return _send_status(transaction, request, 500, "Server Internal Error");
+    }
+
+    _on_subscriber(request, transaction, aor, realm, auth, found.value);
+  });
+}
+
+void Registrar::_on_subscriber(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
+                               std::shared_ptr<types::SIPIdentity> aor, std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Authorization> auth,
+                               std::shared_ptr<types::Subscriber> subscriber) {
   if (!subscriber) {
     _logger->info("REGISTER for unknown subscriber " + aor->to_string() + " - challenging");
     return _send_challenge(transaction, request, realm);
@@ -108,14 +155,22 @@ void Registrar::on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<
 
   request->authenticated = true;
 
+  _apply_bindings(request, transaction, realm, subscriber);
+}
+
+void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
+                                std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Subscriber> subscriber) {
+  auto core = _core.lock();
+  if (!core) return;
+
   const auto expires = _requested_expiry(request, realm);
-  const auto path = _path_of(request);
-  auto channel = request->channel.lock();
 
   // A REGISTER with no Contact is a query for the current bindings (RFC 3261 10.2.2).
   if (!request->header->contains("Contact")) {
     return _send_ok(transaction, request, subscriber, expires);
   }
+
+  auto self = shared_from_this();
 
   if (is_star_contact(request->header)) {
     if (expires != 0) {
@@ -123,12 +178,24 @@ void Registrar::on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<
       return _send_status(transaction, request, 400, "Bad Request");
     }
 
-    for (const auto& location : core->datastore->location_list(subscriber->id)) {
-      core->subscriber_unregister(subscriber, location.contact, channel);
-    }
+    // Every binding goes, which means reading them first and then removing them one at
+    // a time: each removal is its own round trip.
+    return core->location_list(subscriber->id, [this, self, request, transaction, subscriber](plugins::Result<std::vector<types::Location>> found) {
+      if (!found.ok) {
+        _logger->error("REGISTER could not list the bindings - " + found.error);
+        return _send_status(transaction, request, 500, "Server Internal Error");
+      }
 
-    return _send_ok(transaction, request, subscriber, 0);
+      auto bindings = std::make_shared<std::vector<Binding>>();
+      for (const auto& location : found.value) {
+        if (location.contact) bindings->push_back(Binding{location.contact, 0});
+      }
+
+      _write_bindings(request, transaction, subscriber, bindings, 0, 0);
+    });
   }
+
+  auto bindings = std::make_shared<std::vector<Binding>>();
 
   for (const auto& header : request->header->headers_map["Contact"]) {
     auto contact = header->as<SIPIdentityHeader>();
@@ -147,18 +214,45 @@ void Registrar::on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<
       if (realm->registration_timeout > 0) contact_expires = std::min(contact_expires, realm->registration_timeout);
     }
 
-    if (contact_expires == 0) {
-      core->subscriber_unregister(subscriber, contact->value->uri, channel);
-      continue;
-    }
-
-    if (!core->subscriber_register(subscriber, contact->value->uri, channel, contact_expires, path)) {
-      _logger->error("REGISTER could not store the binding for " + aor->to_string());
-      return _send_status(transaction, request, 500, "Server Internal Error");
-    }
+    bindings->push_back(Binding{contact->value->uri, contact_expires});
   }
 
-  _send_ok(transaction, request, subscriber, expires);
+  _write_bindings(request, transaction, subscriber, bindings, 0, expires);
+}
+
+void Registrar::_write_bindings(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
+                                std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<std::vector<Binding>> bindings, std::size_t index,
+                                std::uint32_t expires_seconds) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  if (index >= bindings->size()) {
+    return _send_ok(transaction, request, subscriber, expires_seconds);
+  }
+
+  const auto binding = (*bindings)[index];
+  auto channel = request->channel.lock();
+  auto self = shared_from_this();
+
+  auto next = [this, self, request, transaction, subscriber, bindings, index, expires_seconds]() {
+    _write_bindings(request, transaction, subscriber, bindings, index + 1, expires_seconds);
+  };
+
+  if (binding.expires == 0) {
+    // A removal that fails is logged and the rest still go: the client asked for all of
+    // them and a partial answer is better than none.
+    return core->subscriber_unregister(subscriber, binding.contact, channel, [next](plugins::Status) { next(); });
+  }
+
+  core->subscriber_register(subscriber, binding.contact, channel, binding.expires, _path_of(request),
+                            [this, self, request, transaction, subscriber, next](plugins::Status status) {
+                              if (!status.ok) {
+                                _logger->error("REGISTER could not store the binding for " + subscriber->identity->to_string() + " - " + status.error);
+                                return _send_status(transaction, request, 500, "Server Internal Error");
+                              }
+
+                              next();
+                            });
 }
 
 std::uint32_t Registrar::_requested_expiry(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<types::Realm>& realm) const {
@@ -203,30 +297,43 @@ void Registrar::_send_ok(const std::shared_ptr<transactions::TransactionBase>& t
   auto core = _core.lock();
   if (!core) return;
 
-  auto response = request->generate_response();
-  response->header->response_code = 200;
-  response->header->response_message = "OK";
+  auto self = shared_from_this();
 
   // RFC 3261 10.3 step 8: list every binding that is now current, each with the time it
   // has left, so a client that lost track can resynchronise from the response alone.
-  const auto now = std::time(nullptr);
+  // Reading them is a round trip, so the response is built in the handler.
+  core->location_list(subscriber->id, [this, self, transaction, request, expires_seconds](plugins::Result<std::vector<types::Location>> found) {
+    auto response = request->generate_response();
+    response->header->response_code = 200;
+    response->header->response_message = "OK";
 
-  for (const auto& location : core->datastore->location_list(subscriber->id)) {
-    if (!location.contact) continue;
+    const auto now = std::time(nullptr);
 
-    auto contact = std::make_shared<SIPIdentity>();
-    contact->uri = location.contact;
-    contact->wrapped = true;
+    if (!found.ok) {
+      // The bindings were written; only the read-back failed. Answering 200 with no
+      // Contact would tell the client its registration is gone, which is worse than
+      // answering 500 and having it retry.
+      _logger->error("REGISTER could not list the bindings for the response - " + found.error);
+      return _send_status(transaction, request, 500, "Server Internal Error");
+    }
 
-    const auto remaining = location.expires_at > now ? static_cast<std::uint32_t>(location.expires_at - now) : 0u;
-    contact->tags["expires"] = std::to_string(remaining);
+    for (const auto& location : found.value) {
+      if (!location.contact) continue;
 
-    response->header->add("Contact", std::make_shared<SIPIdentityHeader>(contact));
-  }
+      auto contact = std::make_shared<SIPIdentity>();
+      contact->uri = location.contact;
+      contact->wrapped = true;
 
-  response->header->add("Expires", std::make_shared<UIntHeader>(expires_seconds));
+      const auto remaining = location.expires_at > now ? static_cast<std::uint32_t>(location.expires_at - now) : 0u;
+      contact->tags["expires"] = std::to_string(remaining);
 
-  transaction->send(response);
+      response->header->add("Contact", std::make_shared<SIPIdentityHeader>(contact));
+    }
+
+    response->header->add("Expires", std::make_shared<UIntHeader>(expires_seconds));
+
+    transaction->send(response);
+  });
 }
 
 void Registrar::_send_status(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request, std::uint16_t code,
@@ -248,14 +355,28 @@ void Registrar::_send_challenge(const std::shared_ptr<transactions::TransactionB
   response->header->response_message = "Unauthorized";
   response->header->add("Reason", "SIP;cause=401;text=\"Unauthorized\"");
 
-  if (realm) {
+  if (!realm) {
+    transaction->send(response);
+    return;
+  }
+
+  auto self = shared_from_this();
+
+  // Minting a nonce writes it to the datastore, so the challenge cannot be built until
+  // that lands: a nonce the store never accepted would fail its own check next time.
+  core->nonce_create(realm, [this, self, transaction, request, response, realm](plugins::Result<std::string> nonce) {
+    if (!nonce.ok) {
+      _logger->error("Cannot mint a nonce for " + realm->name + " - " + nonce.error);
+      return _send_status(transaction, request, 500, "Server Internal Error");
+    }
+
     // No algorithm parameter: RFC 3261 25.1 makes it a token and the serialiser quotes
     // every field it holds, so sending one would be malformed. MD5 is the default when
     // it is absent (RFC 2617 3.2.1). RFC 8760 SHA-256 arrives with it.
-    response->header->add("WWW-Authenticate", "Digest realm=\"" + realm->name + "\", nonce=\"" + core->nonce_create(realm) + "\"");
-  }
+    response->header->add("WWW-Authenticate", "Digest realm=\"" + realm->name + "\", nonce=\"" + nonce.value + "\"");
 
-  transaction->send(response);
+    transaction->send(response);
+  });
 }
 
 }  // namespace athenasip
