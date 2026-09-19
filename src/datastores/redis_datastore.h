@@ -59,7 +59,8 @@ class RedisDatastore : public Datastore {
   RedisDatastore(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<types::URL> url);
   ~RedisDatastore() override;
 
-  std::string get_driver_name() const override;
+  std::string name() const override;
+  std::string version() const override;
 
   bool connect() override;
   void close() override;

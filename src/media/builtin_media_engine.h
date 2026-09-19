@@ -24,14 +24,28 @@ namespace athenasip::media {
 // more participants with no ICE, DTLS or transcoding. It is what runs when there is no
 // rtpengine, and it only claims the bridge capability.
 //
-// Configured through its URL, the way the other drivers are:
-//   builtin://?public_address=203.0.113.5&bind_address=0.0.0.0&port_min=22000&port_max=23000
+// Selected by its URL, like every other driver, and configured through its own section
+// of the config:
+//
+//   media:
+//     url: builtin://
+//     builtin:
+//       public_address: 203.0.113.5
+//       bind_address: 0.0.0.0
+//       port_min: 22000
+//       port_max: 23000
+//
+// The URL query form (builtin://?public_address=...) still works and is read first, so
+// a one-line config needs nothing else.
 class BuiltinMediaEngine : public MediaEngine {
  public:
   BuiltinMediaEngine(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<types::URL> url);
   ~BuiltinMediaEngine() override;
 
-  std::string get_driver_name() const override;
+  std::string name() const override;
+  std::string version() const override;
+
+  bool configure(const YAML::Node& own_root, const Config& system) override;
 
   bool connect() override;
   void close() override;
@@ -51,6 +65,9 @@ class BuiltinMediaEngine : public MediaEngine {
   Result _map_media(std::shared_ptr<Call> call, const std::string& sdp_text, const Flags& flags);
 
   void _apply_url(const std::shared_ptr<types::URL>& url);
+
+  // Port range sanity, applied after the URL and again after the config section.
+  void _validate_port_range();
 
   std::shared_ptr<loggers::Logger> _logger;
   std::shared_ptr<types::URL> _url;

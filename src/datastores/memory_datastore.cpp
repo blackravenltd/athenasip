@@ -24,7 +24,9 @@ MemoryDatastore::MemoryDatastore(std::shared_ptr<loggers::Logger> logger, std::s
 
 MemoryDatastore::~MemoryDatastore() { close(); }
 
-std::string MemoryDatastore::get_driver_name() const { return "AthenaSIP In Memory Datastore Driver v0.0.1"; }
+std::string MemoryDatastore::name() const { return "memory"; }
+
+std::string MemoryDatastore::version() const { return "0.0.1"; }
 
 bool MemoryDatastore::connect() {
   std::lock_guard<std::mutex> lock(_mutex);

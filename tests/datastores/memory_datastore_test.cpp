@@ -48,7 +48,8 @@ TEST(MemoryDatastoreTest, ConnectsAndReportsConnected) {
   auto datastore = make_datastore();
 
   EXPECT_TRUE(datastore->is_connected());
-  EXPECT_FALSE(datastore->get_driver_name().empty());
+  EXPECT_EQ(datastore->name(), "memory");
+  EXPECT_FALSE(datastore->version().empty());
 
   datastore->close();
   EXPECT_FALSE(datastore->is_connected());

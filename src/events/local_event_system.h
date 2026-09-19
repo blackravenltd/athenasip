@@ -29,7 +29,8 @@ class LocalEventSystem : public EventSystem, public std::enable_shared_from_this
   LocalEventSystem(std::shared_ptr<athenasip::loggers::Logger> logger, std::shared_ptr<types::URL> url);
   ~LocalEventSystem() override;
 
-  std::string get_driver_name() const override;
+  std::string name() const override;
+  std::string version() const override;
 
   bool connect() override;
   void connect(std::function<void(bool)> callback) override;

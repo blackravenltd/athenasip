@@ -149,16 +149,24 @@ The plugin contract is the product: it is the gap AthenaSIP occupies in the SIP
 ecosystem. It has to be right before anything else is built on it, and before step 3,
 because it is an ABI.
 
-- [ ] One `PluginRegistry` keyed by (kind, scheme), replacing the three template
+- [x] One `PluginRegistry` keyed by (kind, scheme), replacing the three template
       registries in `datastore.h`, `event_system.h` and `media_engine.h`. A `Plugin`
       base with `kind()`, `name()`, `version()` and `api_version()`. Built-ins register
       through it exactly as an external plugin would; the only difference is link time
-      against load time.
+      against load time. `src/plugins/plugin.h`, `src/plugins/plugin_registry.*`; the
+      three interfaces keep typed `register_driver`/`create_driver` helpers over the one
+      registry. `get_driver_name()` is gone, replaced by `name()` + `version()`.
 - [ ] Configuration: the URL stays the selector, so `datastore: { url: memory:// }`
       remains a one-liner. A plugin also receives `configure(YAML::Node own_root,
-      const Config& system)`, where `own_root` is the section named after its scheme,
-      for anything a URL cannot express (rtpengine pools, health-check intervals).
-      Replaces `_apply_url` parsing of query strings.
+      const Config& system)`, for anything a URL cannot express (rtpengine pools,
+      health-check intervals). Replaces `_apply_url` parsing of query strings.
+      In place: `Plugin::configure`, `Config::plugin_root(kind, name)` keyed on the
+      driver's `name()` rather than its scheme (three Redis schemes, one `redis:`
+      section), and `main.cpp` configures every plugin before connect.
+      `BuiltinMediaEngine` reads its section and is the worked example.
+      Left: `MQTTEventSystem` still takes `client_id` and `keep_alive` from the URL
+      query (`mqtt_event_system.cpp:380`); move them to its section. `RedisDatastore`
+      parses only the URL proper, which is selector work and stays.
 - [ ] `Datastore` is async in the contract: every operation completes through a
       callback on the caller's executor, and no `_wait_*` runs on the Core strand.
       `MemoryDatastore` and `RedisDatastore` follow; the Redis 5 second sync timeout

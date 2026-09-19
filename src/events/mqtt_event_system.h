@@ -35,13 +35,14 @@ namespace mqtt = boost::mqtt5;
 
 class MQTTEventSystem final : public EventSystem, public std::enable_shared_from_this<MQTTEventSystem> {
  public:
-  explicit MQTTEventSystem(std::shared_ptr<athenasip::loggers::Logger> logger, std::string prefix = "athenasip/", std::string broker_host = "127.0.0.1", std::uint16_t broker_port = 1883,
-                           std::string client_id = "athenasip-events", std::string username = {}, std::string password = {},
+  explicit MQTTEventSystem(std::shared_ptr<athenasip::loggers::Logger> logger, std::string prefix = "athenasip/", std::string broker_host = "127.0.0.1",
+                           std::uint16_t broker_port = 1883, std::string client_id = "athenasip-events", std::string username = {}, std::string password = {},
                            std::uint16_t keep_alive_seconds = 30);
   MQTTEventSystem(std::shared_ptr<athenasip::loggers::Logger> logger, std::shared_ptr<types::URL> url);
   ~MQTTEventSystem() override;
 
-  std::string get_driver_name() const override;
+  std::string name() const override;
+  std::string version() const override;
 
   MQTTEventSystem(const MQTTEventSystem&) = delete;
   MQTTEventSystem& operator=(const MQTTEventSystem&) = delete;

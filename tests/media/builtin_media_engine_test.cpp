@@ -8,6 +8,7 @@
 
 #include <memory>
 
+#include "config.h"
 #include "media/builtin_media_engine.h"
 #include "media/media_engine.h"
 #include "media/media_engine_drivers.h"
@@ -54,11 +55,63 @@ const char* kOffer =
 
 }  // namespace
 
+// The URL is the selector and stays a one-liner; anything richer comes from the
+// driver's own section of the config, and what it sets wins over the URL query.
+TEST(BuiltinMediaEngineTest, TheConfigSectionOverridesTheUrlQuery) {
+  auto logger = std::make_shared<MockLogger>();
+  auto url = std::make_shared<types::URL>("builtin://?bind_address=127.0.0.1&public_address=203.0.113.5&port_min=23700&port_max=23740");
+
+  auto engine = std::make_shared<BuiltinMediaEngine>(logger, url);
+
+  YAML::Node own_root;
+  own_root["public_address"] = "198.51.100.9";
+  own_root["port_min"] = "23750";
+  own_root["port_max"] = "23790";
+
+  Config system(logger);
+  ASSERT_TRUE(engine->configure(own_root, system));
+  ASSERT_TRUE(engine->connect());
+
+  auto call = make_call();
+  const auto result = engine->offer(call, kOffer, Flags{});
+
+  ASSERT_TRUE(result.ok);
+  EXPECT_NE(result.sdp.find("IN IP4 198.51.100.9"), std::string::npos);
+  EXPECT_EQ(result.sdp.find("203.0.113.5"), std::string::npos);
+
+  engine->release(call);
+  engine->close();
+}
+
+// A driver with no section of its own is configured with an empty node and must not
+// mind: datastore: { url: memory:// } has to keep working.
+TEST(BuiltinMediaEngineTest, AcceptsAnAbsentConfigSection) {
+  auto logger = std::make_shared<MockLogger>();
+  auto url = std::make_shared<types::URL>("builtin://?bind_address=127.0.0.1&public_address=203.0.113.5&port_min=23800&port_max=23840");
+
+  auto engine = std::make_shared<BuiltinMediaEngine>(logger, url);
+
+  Config system(logger);
+  EXPECT_TRUE(engine->configure(system.plugin_root("media", "builtin"), system));
+
+  ASSERT_TRUE(engine->connect());
+
+  auto call = make_call();
+  const auto result = engine->offer(call, kOffer, Flags{});
+
+  ASSERT_TRUE(result.ok);
+  EXPECT_NE(result.sdp.find("IN IP4 203.0.113.5"), std::string::npos);
+
+  engine->release(call);
+  engine->close();
+}
+
 TEST(BuiltinMediaEngineTest, ConnectsAndReportsItself) {
   auto engine = make_engine(23100, 23140);
 
   EXPECT_TRUE(engine->is_connected());
-  EXPECT_FALSE(engine->get_driver_name().empty());
+  EXPECT_EQ(engine->name(), "builtin");
+  EXPECT_FALSE(engine->version().empty());
 
   engine->close();
   EXPECT_FALSE(engine->is_connected());

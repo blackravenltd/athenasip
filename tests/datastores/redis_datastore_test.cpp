@@ -72,7 +72,8 @@ TEST(RedisDatastoreTest, ConnectsAndReportsConnected) {
   REQUIRE_REDIS(datastore);
 
   EXPECT_TRUE(datastore->is_connected());
-  EXPECT_FALSE(datastore->get_driver_name().empty());
+  EXPECT_EQ(datastore->name(), "redis");
+  EXPECT_FALSE(datastore->version().empty());
 }
 
 TEST(RedisDatastoreTest, RealmRoundTripsThroughRedis) {
