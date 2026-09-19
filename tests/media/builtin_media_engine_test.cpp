@@ -14,6 +14,7 @@
 #include "media/media_engine_drivers.h"
 #include "sdp.h"
 
+#include "../helpers/sync_media_engine_helper.h"
 #include "../mocks/logger_mock.h"
 
 using namespace athenasip;
@@ -25,12 +26,14 @@ using athenasip::media::MediaEngine;
 namespace {
 
 // A port range of its own per test, so two tests never contend for the same UDP ports.
-std::shared_ptr<BuiltinMediaEngine> make_engine(std::uint16_t port_min, std::uint16_t port_max) {
+// The contract is async; these tests are statements about what the engine did with an
+// SDP, so they drive it through the blocking test view.
+std::shared_ptr<SyncMediaEngine> make_engine(std::uint16_t port_min, std::uint16_t port_max) {
   auto logger = std::make_shared<MockLogger>();
   auto url = std::make_shared<types::URL>("builtin://?bind_address=127.0.0.1&public_address=203.0.113.5&port_min=" + std::to_string(port_min) +
                                           "&port_max=" + std::to_string(port_max));
 
-  auto engine = std::make_shared<BuiltinMediaEngine>(logger, url);
+  auto engine = std::make_shared<SyncMediaEngine>(std::make_shared<BuiltinMediaEngine>(logger, url));
   engine->connect();
   return engine;
 }
@@ -61,7 +64,7 @@ TEST(BuiltinMediaEngineTest, TheConfigSectionOverridesTheUrlQuery) {
   auto logger = std::make_shared<MockLogger>();
   auto url = std::make_shared<types::URL>("builtin://?bind_address=127.0.0.1&public_address=203.0.113.5&port_min=23700&port_max=23740");
 
-  auto engine = std::make_shared<BuiltinMediaEngine>(logger, url);
+  auto engine = std::make_shared<SyncMediaEngine>(std::make_shared<BuiltinMediaEngine>(logger, url));
 
   YAML::Node own_root;
   own_root["public_address"] = "198.51.100.9";
@@ -89,7 +92,7 @@ TEST(BuiltinMediaEngineTest, AcceptsAnAbsentConfigSection) {
   auto logger = std::make_shared<MockLogger>();
   auto url = std::make_shared<types::URL>("builtin://?bind_address=127.0.0.1&public_address=203.0.113.5&port_min=23800&port_max=23840");
 
-  auto engine = std::make_shared<BuiltinMediaEngine>(logger, url);
+  auto engine = std::make_shared<SyncMediaEngine>(std::make_shared<BuiltinMediaEngine>(logger, url));
 
   Config system(logger);
   EXPECT_TRUE(engine->configure(system.plugin_root("media", "builtin"), system));

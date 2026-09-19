@@ -94,18 +94,10 @@ Everything below the transaction users is a plugin: datastores, event systems an
 engines today, routing policy and others later. They hang off the TU layer and register
 through one contract, so adding a kind or an implementation touches nothing above it.
 
-What the review found the tree does instead, and which step below fixes it. Step 1
-landed on 2026-09-18 and its three findings have moved to `COMPLETED.md`; what is left:
+What the review found the tree does instead, and which step below fixes it. Steps 1 and
+2 landed on 2026-09-18 and 2026-09-19 and their findings have moved to `COMPLETED.md`;
+what is left:
 
-- `Datastore` is blocking by contract and is called on the Core strand.
-  `RedisDatastore` waits on a future with a 5 second timeout, so a slow Redis stalls
-  every call on the node. The strand made this global rather than per server thread.
-  And because the interface is the plugin contract, it cannot be made async later
-  without breaking every plugin built against it. (Step 2.)
-- There are three copy-pasted registries, one per interface, and each driver is given
-  a URL to parse. That is fine for three kinds and the wrong shape for "easy to add
-  more": a unified registry and a proper config hand-off are what the shared-library
-  loader will need anyway. (Step 2.)
 - There is no Dialog (section 12). `Call` is the application object and is not one:
   it has tags but no route set, CSeq tracking or remote target. (Step 4.)
 - `SIPUri` keeps parameters and headers as opaque strings, so the proxy cannot read
@@ -145,46 +137,19 @@ moved out of `Channel`. What it deliberately left for later, so it is not lost:
 
 ### Step 2 - Plugin contract v1
 
-The plugin contract is the product: it is the gap AthenaSIP occupies in the SIP
-ecosystem. It has to be right before anything else is built on it, and before step 3,
-because it is an ABI.
+Done on 2026-09-19; see `COMPLETED.md`. One registry, one `Plugin` base, the
+configuration hand-off, and `Datastore` and `MediaEngine` async in the contract.
 
-- [x] One `PluginRegistry` keyed by (kind, scheme), replacing the three template
-      registries in `datastore.h`, `event_system.h` and `media_engine.h`. A `Plugin`
-      base with `kind()`, `name()`, `version()` and `api_version()`. Built-ins register
-      through it exactly as an external plugin would; the only difference is link time
-      against load time. `src/plugins/plugin.h`, `src/plugins/plugin_registry.*`; the
-      three interfaces keep typed `register_driver`/`create_driver` helpers over the one
-      registry. `get_driver_name()` is gone, replaced by `name()` + `version()`.
-- [ ] Configuration: the URL stays the selector, so `datastore: { url: memory:// }`
-      remains a one-liner. A plugin also receives `configure(YAML::Node own_root,
-      const Config& system)`, for anything a URL cannot express (rtpengine pools,
-      health-check intervals). Replaces `_apply_url` parsing of query strings.
-      In place: `Plugin::configure`, `Config::plugin_root(kind, name)` keyed on the
-      driver's `name()` rather than its scheme (three Redis schemes, one `redis:`
-      section), and `main.cpp` configures every plugin before connect.
-      `BuiltinMediaEngine` reads its section and is the worked example.
-      Left: `MQTTEventSystem` still takes `client_id` and `keep_alive` from the URL
-      query (`mqtt_event_system.cpp:380`); move them to its section. `RedisDatastore`
-      parses only the URL proper, which is selector work and stays.
-- [x] `Datastore` is async in the contract: every operation completes through a
-      callback on the caller's executor, and no `_wait_*` runs on the Core strand.
-      `MemoryDatastore` and `RedisDatastore` follow; the Redis 5 second sync timeout
-      goes with it. 21 operations, `plugins::Status` / `plugins::Result<T>` so a caller
-      can tell "not found" from "the store is unreachable" - the registrar and proxy
-      now answer 500 rather than 404 to the second. `Core`, `Registrar` and `Proxy` are
-      continuation chains; `TransactionUser` is `enable_shared_from_this` so a TU
-      outlives the round trip it is waiting on.
-- [ ] `MediaEngine` gets the same treatment, since rtpengine is a network round trip.
-      Not done: it is still synchronous, and it has to move before the contract can be
-      called stable.
-- [x] `docs/plugins.md`: the contract, the lifecycle (`configure`, `connect`, `close`,
-      `health`), the versioning rule, and how to write one. First-class, alongside the
-      architecture doc in step 10.
-- [x] `EventSystem` and `MediaEngine` drivers move onto the same base and registry, so
-      there is one way to add a plugin of any kind. Both derive from `plugins::Plugin`
-      and resolve through `PluginRegistry`; what is left for them is the async
-      conversion above, not the registration.
+What it deliberately left, so it is not lost:
+
+- [ ] Pipelining in `RedisDatastore`: the listing operations walk their index one key at
+      a time because each step starts the next from its own completion. Correct, and
+      slower than one MGET would be. Worth doing when a node has enough bindings for it
+      to show.
+- [ ] `EventSystem` is on the registry and the `Plugin` base but its operations still
+      take a completion callback of their own shape rather than the contract's
+      `Executor` + `Handler`. It is off the call path by decision, so this is tidiness
+      rather than a stall, but the contract should be one contract.
 
 ### Step 3 - SIPUri is a real URI (RFC 3261 section 19.1)
 
