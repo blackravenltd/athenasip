@@ -42,37 +42,60 @@ void Proxy::on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<tran
   }
 
   // RFC 3261 16.5: the request URI names the address of record, and the bindings the
-  // registrar holds for it are the targets.
+  // registrar holds for it are the targets. Both reads are round trips, so target
+  // determination finishes in a handler rather than before this function returns.
   auto identity = std::make_shared<SIPIdentity>(request->header->request_uri->to_string());
-  auto subscriber = core->subscriber_get(identity);
+  auto self = shared_from_this();
 
-  if (!subscriber) {
-    _logger->info("No subscriber for " + request->header->request_uri->to_string() + " - 404");
-    return _send_status(transaction, request, 404, "Not Found");
-  }
+  core->subscriber_get(identity, [this, self, request, transaction](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
+    auto core = _core.lock();
+    if (!core) return;
 
-  auto context = std::make_shared<Context>();
-  context->request = request;
-  context->server = transaction;
-  context->targets = core->datastore->location_list(subscriber->id);
+    if (!found.ok) {
+      _logger->error("Could not read the subscriber for " + request->header->request_uri->to_string() + " - " + found.error);
+      return _send_status(transaction, request, 500, "Server Internal Error");
+    }
 
-  if (context->targets.empty()) {
-    _logger->info("No bindings for " + request->header->request_uri->to_string() + " - 480");
-    return _send_status(transaction, request, 480, "Temporarily Unavailable");
-  }
+    if (!found.value) {
+      _logger->info("No subscriber for " + request->header->request_uri->to_string() + " - 404");
+      return _send_status(transaction, request, 404, "Not Found");
+    }
 
-  // One node, one flow per subscriber: the request goes back down the connection the
-  // callee registered on. Per-binding flow routing is RFC 5626, and Location::flow_id
-  // exists for it.
-  auto channel = core->subscriber_get_channel(subscriber);
-  if (!channel) {
-    _logger->info("No live flow for " + request->header->request_uri->to_string() + " - 480");
-    return _send_status(transaction, request, 480, "Temporarily Unavailable");
-  }
+    auto subscriber = found.value;
 
-  context->outbound = channel;
+    core->location_list(subscriber->id, [this, self, request, transaction, subscriber](plugins::Result<std::vector<types::Location>> bindings) {
+      auto core = _core.lock();
+      if (!core) return;
 
-  _forward_next(context);
+      if (!bindings.ok) {
+        _logger->error("Could not read the bindings for " + request->header->request_uri->to_string() + " - " + bindings.error);
+        return _send_status(transaction, request, 500, "Server Internal Error");
+      }
+
+      auto context = std::make_shared<Context>();
+      context->request = request;
+      context->server = transaction;
+      context->targets = bindings.value;
+
+      if (context->targets.empty()) {
+        _logger->info("No bindings for " + request->header->request_uri->to_string() + " - 480");
+        return _send_status(transaction, request, 480, "Temporarily Unavailable");
+      }
+
+      // One node, one flow per subscriber: the request goes back down the connection the
+      // callee registered on. Per-binding flow routing is RFC 5626, and Location::flow_id
+      // exists for it.
+      auto channel = core->subscriber_get_channel(subscriber);
+      if (!channel) {
+        _logger->info("No live flow for " + request->header->request_uri->to_string() + " - 480");
+        return _send_status(transaction, request, 480, "Temporarily Unavailable");
+      }
+
+      context->outbound = channel;
+
+      _forward_next(context);
+    });
+  });
 }
 
 void Proxy::_forward_next(const std::shared_ptr<Context>& context) {

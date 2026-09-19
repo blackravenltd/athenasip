@@ -8,8 +8,12 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <boost/asio/any_io_executor.hpp>
+#include <boost/asio/post.hpp>
 #include <cstdint>
+#include <functional>
 #include <string>
+#include <utility>
 
 namespace athenasip {
 class Config;
@@ -32,6 +36,42 @@ inline constexpr char events[] = "events";
 inline constexpr char media[] = "media";
 
 }  // namespace kinds
+
+// The executor a caller hands a plugin so that its completion handler runs back where
+// the caller lives. Core hands in its strand; a plugin never decides for itself which
+// thread application code runs on.
+using Executor = boost::asio::any_io_executor;
+
+// What an operation that returns nothing but can fail reports back.
+struct Status {
+  bool ok = false;
+  std::string error;
+
+  static Status success() { return Status{true, {}}; }
+  static Status failure(std::string reason) { return Status{false, std::move(reason)}; }
+
+  explicit operator bool() const { return ok; }
+};
+
+// What an operation that returns something reports back. A read that finds nothing is
+// a success carrying an empty value, not a failure: "no such realm" and "Redis is
+// down" are different answers and the caller has to tell them apart.
+template <typename T>
+struct Result {
+  bool ok = false;
+  std::string error;
+  T value{};
+
+  static Result success(T value) { return Result{true, {}, std::move(value)}; }
+  static Result failure(std::string reason) { return Result{false, std::move(reason), T{}}; }
+
+  explicit operator bool() const { return ok; }
+};
+
+template <typename T>
+using Handler = std::function<void(Result<T>)>;
+
+using StatusHandler = std::function<void(Status)>;
 
 // What every plugin is, whatever it plugs into. Datastore, EventSystem and MediaEngine
 // derive from this, and so does anything added later; the registry knows nothing else
@@ -76,6 +116,22 @@ class Plugin {
 
   // For logs and the admin API: "redis 0.0.1".
   std::string describe() const { return name() + " " + version(); }
+
+ protected:
+  // How a driver answers. The handler is posted to the caller's executor and never
+  // called inline, so a caller is never re-entered from inside its own call. The
+  // in-process drivers could answer immediately and the networked ones cannot, and
+  // code written against the first has to work against the second.
+  template <typename H, typename V>
+  static void _complete(Executor on, H handler, V value) {
+    if (!handler) return;
+
+    boost::asio::post(std::move(on), [handler = std::move(handler), value = std::move(value)]() mutable { handler(std::move(value)); });
+  }
+
+  // For an operation whose only failure is "it did not happen": the name is what goes
+  // in the error, so a caller logging it says which call failed.
+  static Status _status(bool ok, std::string operation) { return ok ? Status::success() : Status::failure(std::move(operation) + " failed"); }
 };
 
 }  // namespace athenasip::plugins

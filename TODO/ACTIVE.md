@@ -167,16 +167,24 @@ because it is an ABI.
       Left: `MQTTEventSystem` still takes `client_id` and `keep_alive` from the URL
       query (`mqtt_event_system.cpp:380`); move them to its section. `RedisDatastore`
       parses only the URL proper, which is selector work and stays.
-- [ ] `Datastore` is async in the contract: every operation completes through a
+- [x] `Datastore` is async in the contract: every operation completes through a
       callback on the caller's executor, and no `_wait_*` runs on the Core strand.
       `MemoryDatastore` and `RedisDatastore` follow; the Redis 5 second sync timeout
-      goes with it. `MediaEngine` gets the same treatment, since rtpengine is a network
-      round trip.
-- [ ] `docs/plugins.md`: the contract, the lifecycle (`configure`, `connect`, `close`,
+      goes with it. 21 operations, `plugins::Status` / `plugins::Result<T>` so a caller
+      can tell "not found" from "the store is unreachable" - the registrar and proxy
+      now answer 500 rather than 404 to the second. `Core`, `Registrar` and `Proxy` are
+      continuation chains; `TransactionUser` is `enable_shared_from_this` so a TU
+      outlives the round trip it is waiting on.
+- [ ] `MediaEngine` gets the same treatment, since rtpengine is a network round trip.
+      Not done: it is still synchronous, and it has to move before the contract can be
+      called stable.
+- [x] `docs/plugins.md`: the contract, the lifecycle (`configure`, `connect`, `close`,
       `health`), the versioning rule, and how to write one. First-class, alongside the
       architecture doc in step 10.
-- [ ] `EventSystem` and `MediaEngine` drivers move onto the same base and registry, so
-      there is one way to add a plugin of any kind.
+- [x] `EventSystem` and `MediaEngine` drivers move onto the same base and registry, so
+      there is one way to add a plugin of any kind. Both derive from `plugins::Plugin`
+      and resolve through `PluginRegistry`; what is left for them is the async
+      conversion above, not the registration.
 
 ### Step 3 - SIPUri is a real URI (RFC 3261 section 19.1)
 

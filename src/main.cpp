@@ -7,6 +7,7 @@
 #include <boost/asio.hpp>
 #include <boost/asio/signal_set.hpp>
 #include <boost/asio/ssl.hpp>
+#include <future>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -21,6 +22,7 @@
 #include "events/event_system.h"
 #include "events/event_system_drivers.h"
 #include "events/topics.h"
+#include "global_io_context.h"
 #include "loggers/logger_scoped.h"
 #include "loggers/logger_stdio.h"
 #include "media/media_engine.h"
@@ -37,6 +39,18 @@
 using namespace athenasip;
 using namespace athenasip::datastores;
 using namespace athenasip::events;
+
+// Startup is the one place a wait is the right answer: this is the main thread, there
+// is no strand yet, and there is nothing to serve until the datastore answers. The
+// contract is async so that the Core strand never waits; main is not the Core strand.
+plugins::Status connect_and_wait(const std::function<void(plugins::Executor, plugins::StatusHandler)>& start) {
+  std::promise<plugins::Status> promise;
+  auto future = promise.get_future();
+
+  start(athenasip::detail::get_global_io_context().get_executor(), [&promise](plugins::Status status) { promise.set_value(std::move(status)); });
+
+  return future.get();
+}
 
 // Every plugin is configured the same way, whatever it plugs into: its own section of
 // the config, then the whole config for what it cannot be told twice.
@@ -115,8 +129,11 @@ int main(int argc, char* argv[]) {
   }
 
   // Attempt Datastore connection
-  if (!datastore->connect()) {
-    logger->error("Datastore Connection Failed: " + config->db_url);
+  const auto datastore_connected =
+      connect_and_wait([&datastore](plugins::Executor on, plugins::StatusHandler handler) { datastore->connect(std::move(on), std::move(handler)); });
+
+  if (!datastore_connected.ok) {
+    logger->error("Datastore Connection Failed: " + config->db_url + " - " + datastore_connected.error);
     return -3;
   }
   // Attempt Events connection

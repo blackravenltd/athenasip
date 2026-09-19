@@ -7,6 +7,7 @@
 #pragma once
 
 #include <cstdint>
+#include <future>
 #include <memory>
 #include <string>
 #include <utility>
@@ -20,6 +21,7 @@
 #include "timer_source.h"
 
 #include "../mocks/connection_mock.h"
+#include "sync_datastore_helper.h"
 #include "../mocks/logger_mock.h"
 
 // A Core with a memory datastore, a local event system and a manual clock, driven the
@@ -30,6 +32,10 @@ struct CoreFixture {
   std::shared_ptr<MockLogger> logger = std::make_shared<MockLogger>();
   std::shared_ptr<athenasip::Config> config;
   std::shared_ptr<athenasip::datastores::MemoryDatastore> datastore;
+
+  // Assertions about what the store holds go through this: the datastore contract is
+  // async, and a test is not on the Core strand.
+  std::shared_ptr<SyncDatastore> store;
   std::shared_ptr<athenasip::events::LocalEventSystem> event_system;
   std::shared_ptr<athenasip::ManualTimerSource> timers = std::make_shared<athenasip::ManualTimerSource>();
   std::shared_ptr<athenasip::Core> core;
@@ -39,7 +45,8 @@ struct CoreFixture {
     config->sip_node_id = "test-node";
 
     datastore = std::make_shared<athenasip::datastores::MemoryDatastore>(logger, std::make_shared<athenasip::types::URL>("memory://"));
-    datastore->connect();
+    store = std::make_shared<SyncDatastore>(datastore);
+    store->connect();
 
     event_system = std::make_shared<athenasip::events::LocalEventSystem>(logger);
     event_system->connect();
@@ -52,6 +59,46 @@ struct CoreFixture {
   template <typename Fn>
   auto on_strand(Fn&& fn) {
     return core->call_on_strand(std::forward<Fn>(fn));
+  }
+
+  // Core's datastore-facing calls answer through a handler on the strand. A test wants
+  // the answer before its next assertion, so it starts the call on the strand and waits
+  // here. Production callers are the handler; they never wait.
+  template <typename Start>
+  athenasip::plugins::Status await_on_strand(Start start) {
+    std::promise<athenasip::plugins::Status> promise;
+    auto future = promise.get_future();
+
+    core->post([&]() { start([&promise](athenasip::plugins::Status status) { promise.set_value(std::move(status)); }); });
+
+    return future.get();
+  }
+
+  bool register_binding(const std::shared_ptr<athenasip::types::Subscriber>& subscriber, const std::shared_ptr<athenasip::types::SIPUri>& contact,
+                        const std::shared_ptr<athenasip::Channel>& channel, std::uint32_t expires_seconds, const std::string& path = "") {
+    return await_on_strand([&](athenasip::plugins::StatusHandler handler) {
+             core->subscriber_register(subscriber, contact, channel, expires_seconds, path, std::move(handler));
+           })
+        .ok;
+  }
+
+  bool unregister_binding(const std::shared_ptr<athenasip::types::Subscriber>& subscriber, const std::shared_ptr<athenasip::types::SIPUri>& contact,
+                          const std::shared_ptr<athenasip::Channel>& channel) {
+    return await_on_strand([&](athenasip::plugins::StatusHandler handler) {
+             core->subscriber_unregister(subscriber, contact, channel, std::move(handler));
+           })
+        .ok;
+  }
+
+  std::string mint_nonce(const std::shared_ptr<athenasip::types::Realm>& realm) {
+    std::promise<std::string> promise;
+    auto future = promise.get_future();
+
+    core->post([&]() {
+      core->nonce_create(realm, [&promise](athenasip::plugins::Result<std::string> nonce) { promise.set_value(nonce.ok ? nonce.value : std::string()); });
+    });
+
+    return future.get();
   }
 
   std::shared_ptr<athenasip::Channel> make_channel(const std::string& remote_address, std::shared_ptr<MockConnection>* out = nullptr,
@@ -69,7 +116,7 @@ struct CoreFixture {
     realm->id = 1;
     realm->nonce_secret = "secret";
     realm->registration_timeout = 3600;
-    datastore->realm_create(realm);
+    store->realm_create(realm);
     return realm;
   }
 
@@ -78,7 +125,7 @@ struct CoreFixture {
     subscriber->id = id;
     subscriber->identity = std::make_shared<athenasip::types::SIPIdentity>(uri);
     subscriber->ha1 = ha1;
-    datastore->subscriber_create(subscriber);
+    store->subscriber_create(subscriber);
     return subscriber;
   }
 
@@ -95,6 +142,24 @@ struct CoreFixture {
     }
 
     on_strand([&]() { channel->receive(message); });
+    settle();
+  }
+
+  // Nothing may still be in flight when the fixture goes: the chain holds the channel
+  // and the connection the test is about to destroy.
+  ~CoreFixture() { settle(); }
+
+  // A transaction user's work is a chain of strand hops now: the datastore answers
+  // through a handler, and that handler starts the next read. Handing a message in only
+  // starts the chain, so a test that asserts on what was written has to wait for it to
+  // run out.
+  //
+  // Each round trip through the strand drains everything queued ahead of it, and
+  // anything a handler queued while it ran is caught by the next one. A REGISTER is
+  // about six hops deep; the bound is generous and each trip costs nothing when the
+  // queue is already empty.
+  void settle(int rounds = 32) {
+    for (int i = 0; i < rounds; ++i) core->call_on_strand([]() {});
   }
 
   // Raw SIP out, parsed back. Content-Length is what separates one message from the next,

@@ -17,6 +17,7 @@
 #include "datastores/memory_datastore.h"
 #include "events/local_event_system.h"
 
+#include "helpers/sync_datastore_helper.h"
 #include "mocks/connection_mock.h"
 #include "mocks/logger_mock.h"
 
@@ -33,6 +34,7 @@ struct ConcurrentFixture {
   std::shared_ptr<MockLogger> logger = std::make_shared<MockLogger>();
   std::shared_ptr<Config> config;
   std::shared_ptr<MemoryDatastore> datastore;
+  std::shared_ptr<SyncDatastore> store;
   std::shared_ptr<events::LocalEventSystem> event_system;
   std::shared_ptr<Core> core;
 
@@ -41,7 +43,8 @@ struct ConcurrentFixture {
     config->sip_node_id = "test-node";
 
     datastore = std::make_shared<MemoryDatastore>(logger, std::make_shared<types::URL>("memory://"));
-    datastore->connect();
+    store = std::make_shared<SyncDatastore>(datastore);
+    store->connect();
 
     event_system = std::make_shared<events::LocalEventSystem>(logger);
     event_system->connect();

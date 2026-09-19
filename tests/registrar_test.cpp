@@ -61,8 +61,8 @@ struct Fixture : CoreFixture {
   }
 
   std::string fresh_nonce() {
-    auto realm = datastore->realm_get_by_name("example.com");
-    return on_strand([&]() { return core->nonce_create(realm); });
+    auto realm = store->realm_get_by_name("example.com");
+    return mint_nonce(realm);
   }
 };
 
@@ -106,7 +106,7 @@ TEST(RegistrarTest, AWrongDigestResponseIsChallenged) {
   f.receive(f.channel, f.register_request(wrong));
 
   EXPECT_NE(f.response_with(f.connection, 401), nullptr);
-  EXPECT_TRUE(f.datastore->location_list(7).empty());
+  EXPECT_TRUE(f.store->location_list(7).empty());
 }
 
 // RFC 3261 10.3 step 5: an address of record in a domain this registrar does not serve
@@ -141,7 +141,7 @@ TEST(RegistrarTest, AnAuthenticatedRegisterStoresTheBinding) {
 
   ASSERT_NE(f.response_with(f.connection, 200), nullptr);
 
-  auto locations = f.datastore->location_list(7);
+  auto locations = f.store->location_list(7);
   ASSERT_EQ(locations.size(), 1u);
   EXPECT_EQ(locations[0].contact->user, "alice");
   EXPECT_EQ(locations[0].contact->realm, "192.0.2.10");
@@ -191,11 +191,11 @@ TEST(RegistrarTest, ExpiresZeroRemovesTheBinding) {
   Fixture f;
 
   f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce())));
-  ASSERT_EQ(f.datastore->location_list(7).size(), 1u);
+  ASSERT_EQ(f.store->location_list(7).size(), 1u);
 
   f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "0", "", "z9hG4bK-reg-2"));
 
-  EXPECT_TRUE(f.datastore->location_list(7).empty());
+  EXPECT_TRUE(f.store->location_list(7).empty());
 }
 
 // RFC 3261 10.2.2: a lone Contact of "*" with Expires 0 removes every binding at once.
@@ -204,11 +204,11 @@ TEST(RegistrarTest, StarContactWithExpiresZeroRemovesEveryBinding) {
 
   f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "", "<sip:alice@192.0.2.10:5060>", "z9hG4bK-reg-1"));
   f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "", "<sip:alice@192.0.2.11:5060>", "z9hG4bK-reg-2"));
-  ASSERT_EQ(f.datastore->location_list(7).size(), 2u);
+  ASSERT_EQ(f.store->location_list(7).size(), 2u);
 
   f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "0", "*", "z9hG4bK-reg-3"));
 
-  EXPECT_TRUE(f.datastore->location_list(7).empty());
+  EXPECT_TRUE(f.store->location_list(7).empty());
 }
 
 // RFC 3261 10.2.2: "*" with anything other than Expires 0 is malformed.
@@ -226,7 +226,7 @@ TEST(RegistrarTest, ARegisterWithNoContactIsAQuery) {
   Fixture f;
 
   f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce())));
-  ASSERT_EQ(f.datastore->location_list(7).size(), 1u);
+  ASSERT_EQ(f.store->location_list(7).size(), 1u);
 
   std::string query = "REGISTER sip:example.com SIP/2.0\r\n";
   query += "Via: SIP/2.0/UDP 192.0.2.10:5060;branch=z9hG4bK-query\r\n";
@@ -239,7 +239,7 @@ TEST(RegistrarTest, ARegisterWithNoContactIsAQuery) {
 
   f.receive(f.channel, query);
 
-  EXPECT_EQ(f.datastore->location_list(7).size(), 1u);
+  EXPECT_EQ(f.store->location_list(7).size(), 1u);
 
   auto response = f.response_with(f.connection, 200);
   ASSERT_NE(response, nullptr);
@@ -264,7 +264,7 @@ TEST(RegistrarTest, PathIsRecordedOnTheBinding) {
 
   f.receive(f.channel, raw);
 
-  auto locations = f.datastore->location_list(7);
+  auto locations = f.store->location_list(7);
   ASSERT_EQ(locations.size(), 1u);
   EXPECT_NE(locations[0].path.find("edge.example.com"), std::string::npos);
 }

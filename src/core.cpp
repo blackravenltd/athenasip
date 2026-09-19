@@ -48,39 +48,57 @@ void Core::server_stop_all() {
 }
 
 // Realms
-std::shared_ptr<Realm> Core::realm_get_by_name(const std::string& realm_name) { return datastore->realm_get_by_name(realm_name); };
+void Core::realm_get_by_name(std::string realm_name, plugins::Handler<std::shared_ptr<Realm>> handler) {
+  datastore->realm_get_by_name(_strand, std::move(realm_name), std::move(handler));
+}
 
 // Subscribers
-std::shared_ptr<Subscriber> Core::subscriber_get(std::shared_ptr<SIPIdentity> identity) { return datastore->subscriber_get(identity); }
+void Core::subscriber_get(std::shared_ptr<SIPIdentity> identity, plugins::Handler<std::shared_ptr<Subscriber>> handler) {
+  datastore->subscriber_get(_strand, std::move(identity), std::move(handler));
+}
 
-bool Core::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel,
-                               std::uint32_t expires_seconds, const std::string& path) {
+void Core::location_list(std::uint64_t subscriber_id, plugins::Handler<std::vector<types::Location>> handler) {
+  datastore->location_list(_strand, subscriber_id, std::move(handler));
+}
+
+void Core::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel,
+                               std::uint32_t expires_seconds, std::string path, plugins::StatusHandler handler) {
   // RFC 3261 10.3 step 7: the binding is written on every successful REGISTER. This
   // used to be skipped whenever the subscriber record already existed, which is always,
   // so no contact was ever stored and the registrar had nothing to route to.
-  if (!datastore->subscriber_register(subscriber, contact, expires_seconds, path)) {
-    _logger->error("Cannot register subscriber identity " + subscriber->identity->to_string() + " - datastore failure");
-    return false;
-  }
+  //
+  // The channel index and the event both wait for the write: a binding nobody stored is
+  // not one to announce.
+  datastore->subscriber_register(
+      _strand, subscriber, contact, expires_seconds, std::move(path), [this, subscriber, contact, channel, handler](plugins::Status status) mutable {
+        if (!status.ok) {
+          _logger->error("Cannot register subscriber identity " + subscriber->identity->to_string() + " - " + status.error);
+          if (handler) handler(status);
+          return;
+        }
 
-  if (channel) _channels_by_subscriber[subscriber->id] = channel;
+        if (channel) _channels_by_subscriber[subscriber->id] = channel;
 
-  events->publish(events::topics::subscriber_status(subscriber->identity->uri->to_string()),
-                  "{\"contact\":\"" + contact->to_string() + "\",\"node\":\"" + config->sip_node_id + "\",\"registered\":\"" + Util::get_zulu_time() + "\"}");
-  return true;
+        events->publish(
+            events::topics::subscriber_status(subscriber->identity->uri->to_string()),
+            "{\"contact\":\"" + contact->to_string() + "\",\"node\":\"" + config->sip_node_id + "\",\"registered\":\"" + Util::get_zulu_time() + "\"}");
+
+        if (handler) handler(status);
+      });
 }
 
-bool Core::subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel) {
+void Core::subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel,
+                                 plugins::StatusHandler handler) {
   (void)channel;
 
   _channels_by_subscriber.erase(subscriber->id);
 
-  if (!datastore->subscriber_unregister(subscriber, contact)) {
-    _logger->error("Cannot unregister subscriber identity " + subscriber->identity->to_string() + " - datastore failure");
-    return false;
-  }
+  auto self = shared_from_this();
 
-  return true;
+  datastore->subscriber_unregister(_strand, subscriber, contact, [this, self, subscriber, handler](plugins::Status status) mutable {
+    if (!status.ok) _logger->error("Cannot unregister subscriber identity " + subscriber->identity->to_string() + " - " + status.error);
+    if (handler) handler(status);
+  });
 }
 
 std::shared_ptr<Channel> Core::subscriber_get_channel(std::shared_ptr<Subscriber> subscriber) {
@@ -124,7 +142,7 @@ void Core::channel_close_all() {
 
 // Nonce
 
-std::string Core::nonce_create(std::shared_ptr<Realm> realm) {
+void Core::nonce_create(std::shared_ptr<Realm> realm, plugins::Handler<std::string> handler) {
   std::array<unsigned char, 16> random_bytes;
 
   if (RAND_bytes(random_bytes.data(), random_bytes.size()) != 1) {
@@ -150,16 +168,22 @@ std::string Core::nonce_create(std::shared_ptr<Realm> realm) {
 
   const auto expires_at = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now() + std::chrono::seconds(realm->nonce_expiry));
 
-  if (datastore->nonce_create(nonce, expires_at)) {
+  auto self = shared_from_this();
+
+  datastore->nonce_create(_strand, nonce, expires_at, [this, self, nonce, realm, handler](plugins::Status status) mutable {
+    if (!status.ok) {
+      _logger->error("Failed to generate nonce - " + status.error);
+      if (handler) handler(plugins::Result<std::string>::failure(status.error));
+      return;
+    }
+
     // Cache the actual nonce for this node
     _nonce_cache->add(nonce, realm->nonce_expiry * 1000);
-    return nonce;
-  }
-
-  throw std::runtime_error("Failed to generate nonce - datastore error");
+    if (handler) handler(plugins::Result<std::string>::success(nonce));
+  });
 }
 
-bool Core::nonce_check(std::string nonce) { return datastore->nonce_check(nonce); }
+void Core::nonce_check(std::string nonce, plugins::Handler<bool> handler) { datastore->nonce_check(_strand, std::move(nonce), std::move(handler)); }
 
 // Messages
 
@@ -389,7 +413,11 @@ void Core::transaction_end_all() { _matcher.terminate_all(); }
 bool Core::call_register(std::shared_ptr<Call> call) {
   _calls[call->id] = call;
 
-  datastore->call_create(call);
+  // The call record is for the admin API and the cluster, not for this call's
+  // signalling, so nothing waits on it.
+  datastore->call_create(_strand, call, [this, self = shared_from_this(), call](plugins::Status status) {
+    if (!status.ok) _logger->error("Cannot store call " + call->id + " - " + status.error);
+  });
 
   events->publish(events::topics::call_register(call->id), call->id);
 

@@ -40,7 +40,7 @@ struct Fixture : CoreFixture {
 
   // Puts Bob on the callee channel, the way a successful REGISTER would.
   void bind_bob(const std::string& contact = "sip:bob@192.0.2.20:5060") {
-    on_strand([&]() { core->subscriber_register(bob, std::make_shared<types::SIPUri>(contact), callee, 3600, ""); });
+    register_binding(bob, std::make_shared<types::SIPUri>(contact), callee, 3600);
   }
 
   std::string invite(const std::string& branch = "z9hG4bK-invite", const std::string& to = "sip:bob@example.com", const std::string& max_forwards = "70") {
@@ -139,7 +139,7 @@ TEST(ProxyTest, TheViaTransportIsTheOutboundOne) {
 
   std::shared_ptr<MockConnection> tls_connection;
   auto tls_channel = f.make_channel("192.0.2.30", &tls_connection, "tls");
-  f.on_strand([&]() { f.core->subscriber_register(f.bob, std::make_shared<types::SIPUri>("sip:bob@192.0.2.30:5061"), tls_channel, 3600, ""); });
+  f.register_binding(f.bob, std::make_shared<types::SIPUri>("sip:bob@192.0.2.30:5061"), tls_channel, 3600);
 
   f.receive(f.caller, f.invite());
 

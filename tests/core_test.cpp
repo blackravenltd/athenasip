@@ -6,6 +6,7 @@
 //
 #include <gtest/gtest.h>
 
+#include <future>
 #include <memory>
 #include <vector>
 
@@ -16,6 +17,7 @@
 #include "headers/via_header.h"
 #include "transactions/non_invite_server_transaction.h"
 
+#include "helpers/sync_datastore_helper.h"
 #include "mocks/connection_mock.h"
 #include "mocks/logger_mock.h"
 
@@ -28,6 +30,7 @@ struct Fixture {
   std::shared_ptr<MockLogger> logger;
   std::shared_ptr<Config> config;
   std::shared_ptr<MemoryDatastore> datastore;
+  std::shared_ptr<SyncDatastore> store;
   std::shared_ptr<events::LocalEventSystem> event_system;
   std::shared_ptr<Core> core;
   std::shared_ptr<ManualTimerSource> timers = std::make_shared<ManualTimerSource>();
@@ -39,13 +42,47 @@ struct Fixture {
     config->sip_node_id = "test-node";
 
     datastore = std::make_shared<MemoryDatastore>(logger, std::make_shared<types::URL>("memory://"));
-    datastore->connect();
+    store = std::make_shared<SyncDatastore>(datastore);
+    store->connect();
 
     event_system = std::make_shared<events::LocalEventSystem>(logger);
     event_system->connect();
 
     core = std::make_shared<Core>(logger, config, datastore, event_system);
     core->timer_source_set(timers);
+  }
+
+  // Nothing may still be in flight when the fixture goes: the chain holds the channel
+  // and the connection the test is about to destroy.
+  ~Fixture() { settle(); }
+
+  void settle(int rounds = 32) {
+    for (int i = 0; i < rounds; ++i) core->call_on_strand([]() {});
+  }
+
+  // Core answers these through a handler on the strand; the test wants the answer
+  // before its next assertion, so it starts the call there and waits here.
+  template <typename Start>
+  plugins::Status await_on_strand(Start start) {
+    std::promise<plugins::Status> promise;
+    auto future = promise.get_future();
+
+    core->post([&]() { start([&promise](plugins::Status status) { promise.set_value(std::move(status)); }); });
+
+    return future.get();
+  }
+
+  bool register_binding(const std::shared_ptr<types::Subscriber>& subscriber, const std::shared_ptr<types::SIPUri>& contact,
+                        const std::shared_ptr<Channel>& channel, std::uint32_t expires_seconds) {
+    return await_on_strand([&](plugins::StatusHandler handler) {
+             core->subscriber_register(subscriber, contact, channel, expires_seconds, "", std::move(handler));
+           })
+        .ok;
+  }
+
+  bool unregister_binding(const std::shared_ptr<types::Subscriber>& subscriber, const std::shared_ptr<types::SIPUri>& contact,
+                          const std::shared_ptr<Channel>& channel) {
+    return await_on_strand([&](plugins::StatusHandler handler) { core->subscriber_unregister(subscriber, contact, channel, std::move(handler)); }).ok;
   }
 
   // Core is strand-confined, so tests reach it the same way the rest of the system
@@ -78,13 +115,13 @@ struct Fixture {
   std::shared_ptr<types::Subscriber> seed_subscriber(uint64_t id, const std::string& uri) {
     auto realm = std::make_shared<types::Realm>("example.com");
     realm->id = 1;
-    datastore->realm_create(realm);
+    store->realm_create(realm);
 
     auto subscriber = std::make_shared<types::Subscriber>();
     subscriber->id = id;
     subscriber->identity = std::make_shared<types::SIPIdentity>(uri);
     subscriber->ha1 = "deadbeef";
-    datastore->subscriber_create(subscriber);
+    store->subscriber_create(subscriber);
 
     return subscriber;
   }
@@ -181,9 +218,9 @@ TEST(CoreTest, SubscriberRegisterStoresTheContact) {
   auto contact = std::make_shared<types::SIPUri>("sip:alice@192.0.2.10:5060");
   auto channel = f.make_channel("192.0.2.10");
 
-  ASSERT_TRUE(f.on_strand([&]() { return f.core->subscriber_register(subscriber, contact, channel, 3600, ""); }));
+  ASSERT_TRUE(f.register_binding(subscriber, contact, channel, 3600));
 
-  auto locations = f.datastore->location_list(7);
+  auto locations = f.store->location_list(7);
   ASSERT_EQ(locations.size(), 1u);
   EXPECT_EQ(locations[0].contact->realm, "192.0.2.10");
 }
@@ -195,10 +232,10 @@ TEST(CoreTest, SubscriberRegisterIsRepeatable) {
   auto contact = std::make_shared<types::SIPUri>("sip:alice@192.0.2.10:5060");
   auto channel = f.make_channel("192.0.2.10");
 
-  ASSERT_TRUE(f.on_strand([&]() { return f.core->subscriber_register(subscriber, contact, channel, 3600, ""); }));
-  ASSERT_TRUE(f.on_strand([&]() { return f.core->subscriber_register(subscriber, contact, channel, 3600, ""); }));
+  ASSERT_TRUE(f.register_binding(subscriber, contact, channel, 3600));
+  ASSERT_TRUE(f.register_binding(subscriber, contact, channel, 3600));
 
-  EXPECT_EQ(f.datastore->location_list(7).size(), 1u);
+  EXPECT_EQ(f.store->location_list(7).size(), 1u);
 }
 
 // Unregistering drops the binding, so nothing is left for target determination to find.
@@ -209,12 +246,12 @@ TEST(CoreTest, SubscriberUnregisterDropsTheBinding) {
   auto contact = std::make_shared<types::SIPUri>("sip:alice@192.0.2.10:5060");
   auto channel = f.make_channel("192.0.2.10");
 
-  ASSERT_TRUE(f.on_strand([&]() { return f.core->subscriber_register(subscriber, contact, channel, 3600, ""); }));
-  ASSERT_EQ(f.datastore->location_list(7).size(), 1u);
+  ASSERT_TRUE(f.register_binding(subscriber, contact, channel, 3600));
+  ASSERT_EQ(f.store->location_list(7).size(), 1u);
 
-  ASSERT_TRUE(f.on_strand([&]() { return f.core->subscriber_unregister(subscriber, contact, channel); }));
+  ASSERT_TRUE(f.unregister_binding(subscriber, contact, channel));
 
-  EXPECT_TRUE(f.datastore->location_list(7).empty());
+  EXPECT_TRUE(f.store->location_list(7).empty());
 }
 
 // Via is the proxy's, not the transport's: the transport must not invent one, or a
