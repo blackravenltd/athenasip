@@ -91,7 +91,9 @@ RedisDatastore::RedisDatastore(std::shared_ptr<loggers::Logger> logger, std::sha
 
 RedisDatastore::~RedisDatastore() { close(); }
 
-std::string RedisDatastore::get_driver_name() const { return "AthenaSIP Redis Driver v0.0.1"; }
+std::string RedisDatastore::name() const { return "redis"; }
+
+std::string RedisDatastore::version() const { return "0.0.1"; }
 
 bool RedisDatastore::connect() {
   if (_started.load()) {

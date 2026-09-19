@@ -31,9 +31,7 @@ std::uint16_t parse_port(const std::string& value, std::uint16_t default_port) {
   return static_cast<std::uint16_t>(parsed);
 }
 
-std::string prefixed_topic(const std::string& prefix, const std::string& event_name) {
-  return prefix + event_name;
-}
+std::string prefixed_topic(const std::string& prefix, const std::string& event_name) { return prefix + event_name; }
 
 bool remove_prefix(const std::string& prefix, std::string& topic) {
   if (prefix.empty()) {
@@ -80,8 +78,8 @@ std::unordered_map<std::string, std::string> parse_query(std::string value) {
 
 }  // namespace
 
-MQTTEventSystem::MQTTEventSystem(std::shared_ptr<athenasip::loggers::Logger> logger, std::string prefix, std::string broker_host, std::uint16_t broker_port, std::string client_id,
-                                 std::string username, std::string password, std::uint16_t keep_alive_seconds)
+MQTTEventSystem::MQTTEventSystem(std::shared_ptr<athenasip::loggers::Logger> logger, std::string prefix, std::string broker_host, std::uint16_t broker_port,
+                                 std::string client_id, std::string username, std::string password, std::uint16_t keep_alive_seconds)
     : _logger(std::make_shared<loggers::LoggerScoped>("mqtt_event_system", std::move(logger))),
       _callback_io_context(detail::get_global_io_context()),
       _prefix(std::move(prefix)),
@@ -100,7 +98,9 @@ MQTTEventSystem::MQTTEventSystem(std::shared_ptr<athenasip::loggers::Logger> log
 
 MQTTEventSystem::~MQTTEventSystem() { close_without_callback(); }
 
-std::string MQTTEventSystem::get_driver_name() const { return "AthenaSIP MQTT Driver v0.0.1"; }
+std::string MQTTEventSystem::name() const { return "mqtt"; }
+
+std::string MQTTEventSystem::version() const { return "0.0.1"; }
 
 bool MQTTEventSystem::connect() {
   auto self = shared_from_this();
@@ -225,8 +225,7 @@ void MQTTEventSystem::publish(std::string event_name, std::string message, Event
       post_complete(std::move(callback), true);
     });
 
-    _client.async_publish<mqtt::qos_e::at_most_once>(topic, std::move(message), mqtt::retain_e::no, mqtt::publish_props{},
-                                                     std::move(pub_callback));
+    _client.async_publish<mqtt::qos_e::at_most_once>(topic, std::move(message), mqtt::retain_e::no, mqtt::publish_props{}, std::move(pub_callback));
   });
 }
 

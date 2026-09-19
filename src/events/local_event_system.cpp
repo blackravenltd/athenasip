@@ -21,7 +21,9 @@ LocalEventSystem::LocalEventSystem(std::shared_ptr<athenasip::loggers::Logger> l
 
 LocalEventSystem::~LocalEventSystem() {}
 
-std::string LocalEventSystem::get_driver_name() const { return "AthenaSIP In Memory Events Driver v0.0.1"; }
+std::string LocalEventSystem::name() const { return "local"; }
+
+std::string LocalEventSystem::version() const { return "0.0.1"; }
 
 bool LocalEventSystem::connect() {
   bool expected = false;

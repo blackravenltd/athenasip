@@ -25,6 +25,7 @@
 #include "loggers/logger_stdio.h"
 #include "media/media_engine.h"
 #include "media/media_engine_drivers.h"
+#include "plugins/plugin.h"
 #include "rtp/rtp_relay.h"
 #include "servers/tcp_server.h"
 #include "servers/tls_server.h"
@@ -36,6 +37,17 @@
 using namespace athenasip;
 using namespace athenasip::datastores;
 using namespace athenasip::events;
+
+// Every plugin is configured the same way, whatever it plugs into: its own section of
+// the config, then the whole config for what it cannot be told twice.
+bool configure_plugin(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<plugins::Plugin> plugin, std::shared_ptr<Config> config) {
+  if (plugin->configure(config->plugin_root(plugin->kind(), plugin->name()), *config)) {
+    return true;
+  }
+
+  logger->error("Configuration rejected by " + plugin->kind() + " driver " + plugin->describe());
+  return false;
+}
 
 void wait_for_signal(boost::asio::signal_set& signals, std::function<void(int)> onsignal) {
   signals.async_wait([&signals, onsignal = std::move(onsignal)](const boost::system::error_code& error, int signal_number) mutable {
@@ -91,8 +103,16 @@ int main(int argc, char* argv[]) {
     return -2;
   }
 
-  logger->info("Datastore Driver: " + datastore->get_driver_name());
-  logger->info("Events Driver: " + events->get_driver_name());
+  logger->info("Datastore Driver: " + datastore->describe());
+  logger->info("Events Driver: " + events->describe());
+
+  // Configure before connect: a driver reads its own section here, and refusing it is
+  // how a driver says the configuration it was given cannot work.
+  if (!configure_plugin(logger, datastore, config) || !configure_plugin(logger, events, config)) {
+    datastore->close();
+    events->close();
+    return -2;
+  }
 
   // Attempt Datastore connection
   if (!datastore->connect()) {
@@ -115,7 +135,13 @@ int main(int argc, char* argv[]) {
     return -2;
   }
 
-  logger->info("Media Driver: " + media_engine->get_driver_name());
+  logger->info("Media Driver: " + media_engine->describe());
+
+  if (!configure_plugin(logger, media_engine, config)) {
+    datastore->close();
+    events->close();
+    return -2;
+  }
 
   if (!media_engine->connect()) {
     logger->error("Media Engine Connection Failed: " + config->media_url);

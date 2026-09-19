@@ -12,11 +12,12 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "../loggers/logger.h"
+#include "../plugins/plugin.h"
+#include "../plugins/plugin_registry.h"
 #include "../types/url.h"
 
 namespace athenasip::events {
@@ -123,11 +124,13 @@ class Subscription {
   Subscription(std::string _event_name, EventCallbackFn _callback) : event_name(std::move(_event_name)), callback(std::move(_callback)) {}
 };
 
-class EventSystem {
+class EventSystem : public plugins::Plugin {
  public:
   using CallbackCompleteFn = std::function<void(bool)>;
 
-  virtual ~EventSystem() = default;
+  ~EventSystem() override = default;
+
+  std::string kind() const final { return plugins::kinds::events; }
 
   virtual bool connect() = 0;
   virtual void connect(CallbackCompleteFn callback) {
@@ -145,8 +148,6 @@ class EventSystem {
     }
   }
 
-  virtual std::string get_driver_name() const = 0;
-
   virtual void publish(std::string event_name, std::string message, CallbackCompleteFn callback) = 0;
   virtual void publish(std::string event_name, std::string message) { publish(std::move(event_name), std::move(message), nullptr); }
   virtual std::shared_ptr<Subscription> subscribe(std::string event_name, Subscription::EventCallbackFn event_callback, CallbackCompleteFn callback) = 0;
@@ -160,35 +161,11 @@ class EventSystem {
 
   template <typename T, typename = std::enable_if_t<std::is_base_of_v<EventSystem, T>>>
   static void register_driver(std::shared_ptr<loggers::Logger> logger, std::string scheme) {
-    auto& drivers = get_drivers();
-    logger->debug("(event_system) Registering scheme " + scheme);
-
-    drivers[std::move(scheme)] = [](std::shared_ptr<loggers::Logger> logger, std::shared_ptr<types::URL> url) -> std::shared_ptr<EventSystem> {
-      return std::static_pointer_cast<EventSystem>(std::make_shared<T>(std::move(logger), std::move(url)));
-    };
+    plugins::PluginRegistry::instance().add<T>(std::move(logger), plugins::kinds::events, std::move(scheme));
   }
 
   static std::shared_ptr<EventSystem> create_driver(std::shared_ptr<loggers::Logger> logger, const std::string& url_string) {
-    auto url = std::make_shared<types::URL>(url_string);
-
-    logger->debug("(event_system) Finding scheme " + url->scheme);
-
-    auto& drivers = get_drivers();
-    auto it = drivers.find(url->scheme);
-    if (it == drivers.end()) {
-      logger->error("(event_system) Unknown scheme " + url->scheme);
-      return nullptr;
-    }
-
-    return it->second(std::move(logger), std::move(url));
-  }
-
- protected:
-  using Factory = std::function<std::shared_ptr<EventSystem>(std::shared_ptr<loggers::Logger>, std::shared_ptr<types::URL>)>;
-
-  static std::unordered_map<std::string, Factory>& get_drivers() {
-    static std::unordered_map<std::string, Factory> drivers;
-    return drivers;
+    return plugins::PluginRegistry::instance().create_as<EventSystem>(std::move(logger), plugins::kinds::events, url_string);
   }
 };
 

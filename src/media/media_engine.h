@@ -6,16 +6,16 @@
 //
 #pragma once
 
-#include <functional>
 #include <memory>
 #include <string>
 #include <type_traits>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "../call.h"
 #include "../loggers/logger.h"
+#include "../plugins/plugin.h"
+#include "../plugins/plugin_registry.h"
 #include "../types/url.h"
 
 namespace athenasip::media {
@@ -75,11 +75,11 @@ struct Result {
 //
 // Drivers register by URL scheme, the same way Datastore and EventSystem do, so the
 // engine is chosen by configuration: builtin:// or rtpengine://host:port.
-class MediaEngine {
+class MediaEngine : public plugins::Plugin {
  public:
-  virtual ~MediaEngine() = default;
+  ~MediaEngine() override = default;
 
-  virtual std::string get_driver_name() const = 0;
+  std::string kind() const final { return plugins::kinds::media; }
 
   virtual bool connect() = 0;
   virtual void close() = 0;
@@ -120,35 +120,11 @@ class MediaEngine {
 
   template <typename T, typename = std::enable_if_t<std::is_base_of_v<MediaEngine, T>>>
   static void register_driver(std::shared_ptr<loggers::Logger> logger, std::string scheme) {
-    auto& drivers = get_drivers();
-    logger->debug("(media_engine) Registering scheme " + scheme);
-
-    drivers[std::move(scheme)] = [](std::shared_ptr<loggers::Logger> logger, std::shared_ptr<types::URL> url) -> std::shared_ptr<MediaEngine> {
-      return std::static_pointer_cast<MediaEngine>(std::make_shared<T>(std::move(logger), std::move(url)));
-    };
+    plugins::PluginRegistry::instance().add<T>(std::move(logger), plugins::kinds::media, std::move(scheme));
   }
 
   static std::shared_ptr<MediaEngine> create_driver(std::shared_ptr<loggers::Logger> logger, const std::string& url_string) {
-    auto url = std::make_shared<types::URL>(url_string);
-
-    logger->debug("(media_engine) Finding scheme " + url->scheme);
-
-    auto& drivers = get_drivers();
-    auto it = drivers.find(url->scheme);
-    if (it == drivers.end()) {
-      logger->error("(media_engine) Unknown scheme " + url->scheme);
-      return nullptr;
-    }
-
-    return it->second(std::move(logger), std::move(url));
-  }
-
- protected:
-  using Factory = std::function<std::shared_ptr<MediaEngine>(std::shared_ptr<loggers::Logger>, std::shared_ptr<types::URL>)>;
-
-  static std::unordered_map<std::string, Factory>& get_drivers() {
-    static std::unordered_map<std::string, Factory> drivers;
-    return drivers;
+    return plugins::PluginRegistry::instance().create_as<MediaEngine>(std::move(logger), plugins::kinds::media, url_string);
   }
 };
 

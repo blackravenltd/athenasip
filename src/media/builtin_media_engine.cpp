@@ -9,6 +9,7 @@
 #include <sstream>
 #include <utility>
 
+#include "../config.h"
 #include "../sdp.h"
 
 namespace athenasip::media {
@@ -51,7 +52,9 @@ BuiltinMediaEngine::BuiltinMediaEngine(std::shared_ptr<loggers::Logger> logger, 
 
 BuiltinMediaEngine::~BuiltinMediaEngine() { close(); }
 
-std::string BuiltinMediaEngine::get_driver_name() const { return "AthenaSIP Builtin Media Engine v0.0.1"; }
+std::string BuiltinMediaEngine::name() const { return "builtin"; }
+
+std::string BuiltinMediaEngine::version() const { return "0.0.1"; }
 
 void BuiltinMediaEngine::_apply_url(const std::shared_ptr<types::URL>& url) {
   if (!url) return;
@@ -70,6 +73,26 @@ void BuiltinMediaEngine::_apply_url(const std::shared_ptr<types::URL>& url) {
   it = params.find("port_max");
   if (it != params.end()) _port_max = parse_port(it->second, _port_max);
 
+  _validate_port_range();
+}
+
+bool BuiltinMediaEngine::configure(const YAML::Node& own_root, const Config& system) {
+  (void)system;
+
+  if (!own_root || !own_root.IsMap()) {
+    return true;
+  }
+
+  if (own_root["bind_address"]) _bind_address = own_root["bind_address"].as<std::string>();
+  if (own_root["public_address"]) _public_address = own_root["public_address"].as<std::string>();
+  if (own_root["port_min"]) _port_min = parse_port(own_root["port_min"].as<std::string>(), _port_min);
+  if (own_root["port_max"]) _port_max = parse_port(own_root["port_max"].as<std::string>(), _port_max);
+
+  _validate_port_range();
+  return true;
+}
+
+void BuiltinMediaEngine::_validate_port_range() {
   if (_port_max <= _port_min) {
     _logger->warn("port_max is not above port_min, using the defaults");
     _port_min = 22000;
