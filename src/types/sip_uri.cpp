@@ -6,119 +6,387 @@
 //
 #include "sip_uri.h"
 
-#include <regex>
+#include <algorithm>
 #include <sstream>
 
 namespace athenasip::types {
 
-// Default constructor: initializes with default values.
-SIPUri::SIPUri() {
-  scheme = "sip";
-  user = "";
-  password = std::nullopt;
-  realm = "";
-  port = std::nullopt;
-  parameters = "";
-  headers = "";
-  valid = false;
-}
-
-// Constructor with parsing: calls the parse function.
-SIPUri::SIPUri(const std::string& uri) { parse(uri); }
-
-// Converts the SIPUri back into a string.
-std::string SIPUri::to_string() const {
-  std::ostringstream oss;
-  oss << scheme << ":";
-  if (!user.empty()) {
-    oss << user;
-    if (password.has_value()) {
-      oss << ":" << *password;
-    }
-    oss << "@";
-  }
-  oss << realm;
-  if (port.has_value()) {
-    oss << ":" << *port;
-  }
-  if (!parameters.empty()) {
-    oss << ";" << parameters;
-  }
-  if (!headers.empty()) {
-    oss << "?" << headers;
-  }
-  return oss.str();
-}
-
 namespace {
+
+char lower(char c) { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c; }
+
+bool equals_ignoring_case(std::string_view a, std::string_view b) {
+  if (a.size() != b.size()) return false;
+
+  for (std::size_t i = 0; i < a.size(); ++i) {
+    if (lower(a[i]) != lower(b[i])) return false;
+  }
+
+  return true;
+}
+
+std::string to_lower(std::string_view value) {
+  std::string out(value);
+  for (auto& c : out) c = lower(c);
+  return out;
+}
+
+bool is_alphanum(char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
+
+// RFC 3261 25.1: mark = "-" / "_" / "." / "!" / "~" / "*" / "'" / "(" / ")"
+// unreserved = alphanum / mark
+bool is_unreserved(char c) { return is_alphanum(c) || std::string_view("-_.!~*'()").find(c) != std::string_view::npos; }
+
+// The character sets that may appear unescaped in each component (RFC 3261 25.1). A
+// character outside its component's set is percent-escaped, which is why these are
+// separate: a ';' is ordinary inside a header value and a delimiter inside the
+// parameter list.
+bool is_user_char(char c) { return is_unreserved(c) || std::string_view("&=+$,;?/").find(c) != std::string_view::npos; }
+bool is_password_char(char c) { return is_unreserved(c) || std::string_view("&=+$,").find(c) != std::string_view::npos; }
+bool is_param_char(char c) { return is_unreserved(c) || std::string_view("[]/:&+$").find(c) != std::string_view::npos; }
+bool is_header_char(char c) { return is_unreserved(c) || std::string_view("[]/?:+$").find(c) != std::string_view::npos; }
+
+int hex_value(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
+// RFC 3261 19.1.2: escaped = "%" HEX HEX. A '%' that is not followed by two hex digits
+// is not an escape sequence and is left as it stands rather than swallowed.
+std::string unescape(std::string_view value) {
+  std::string out;
+  out.reserve(value.size());
+
+  for (std::size_t i = 0; i < value.size(); ++i) {
+    if (value[i] == '%' && i + 2 < value.size()) {
+      const int high = hex_value(value[i + 1]);
+      const int low = hex_value(value[i + 2]);
+
+      if (high >= 0 && low >= 0) {
+        out.push_back(static_cast<char>((high << 4) | low));
+        i += 2;
+        continue;
+      }
+    }
+
+    out.push_back(value[i]);
+  }
+
+  return out;
+}
+
+template <typename Predicate>
+std::string escape(std::string_view value, Predicate allowed) {
+  static const char* kHex = "0123456789ABCDEF";
+
+  std::string out;
+  out.reserve(value.size());
+
+  for (const char c : value) {
+    if (allowed(c)) {
+      out.push_back(c);
+      continue;
+    }
+
+    out.push_back('%');
+    out.push_back(kHex[(static_cast<unsigned char>(c) >> 4) & 0x0F]);
+    out.push_back(kHex[static_cast<unsigned char>(c) & 0x0F]);
+  }
+
+  return out;
+}
 
 // RFC 3261 19.1.1 port is 1*DIGIT, and a port is 16 bits. An overlong run of digits is
 // not a valid port, and must not throw out of a message parser.
-bool parse_port(const std::string& text, uint16_t& out) {
+bool parse_port(std::string_view text, std::uint16_t& out) {
   if (text.empty() || text.size() > 5) return false;
 
   unsigned long value = 0;
-  for (char c : text) {
+  for (const char c : text) {
     if (c < '0' || c > '9') return false;
     value = (value * 10) + static_cast<unsigned long>(c - '0');
   }
 
   if (value == 0 || value > 65535) return false;
 
-  out = static_cast<uint16_t>(value);
+  out = static_cast<std::uint16_t>(value);
   return true;
+}
+
+// Splits "a=1;b;c=2" on the separator, keeping a valueless name as a name with an empty
+// value: lr is present-or-absent and carries nothing (19.1.1).
+SIPUri::Fields split_fields(std::string_view text, char separator) {
+  SIPUri::Fields fields;
+
+  std::size_t start = 0;
+  while (start <= text.size()) {
+    auto end = text.find(separator, start);
+    if (end == std::string_view::npos) end = text.size();
+
+    const auto piece = text.substr(start, end - start);
+    if (!piece.empty()) {
+      const auto equals = piece.find('=');
+
+      if (equals == std::string_view::npos) {
+        fields.emplace_back(unescape(piece), std::string{});
+      } else {
+        fields.emplace_back(unescape(piece.substr(0, equals)), unescape(piece.substr(equals + 1)));
+      }
+    }
+
+    if (end == text.size()) break;
+    start = end + 1;
+  }
+
+  return fields;
+}
+
+const std::pair<std::string, std::string>* find_field(const SIPUri::Fields& fields, std::string_view name) {
+  for (const auto& field : fields) {
+    if (equals_ignoring_case(field.first, name)) return &field;
+  }
+
+  return nullptr;
 }
 
 }  // namespace
 
-// Private parsing function using a regular expression.
-void SIPUri::parse(const std::string& uri) {
-  // The host is either an IPv6 reference in square brackets (RFC 3261 19.1.1, RFC 5118
-  // section 4) or a run of characters up to the port, parameters or headers. The
-  // brackets matter: the colons inside an IPv6 address are not a port separator.
-  static const std::regex uri_regex(R"((sip|sips):(?:([^:@]+)(?::([^@]+))?@)?(\[[0-9A-Fa-f:.]+\]|[^:;?]+)(?::(\d+))?(;[^?]*)?(\?.*)?)");
+SIPUri::SIPUri() : scheme("sip"), user(), password(std::nullopt), host(), port(std::nullopt), valid(false) {}
 
-  std::smatch match;
-  if (std::regex_match(uri, match, uri_regex)) {
-    uint16_t parsed_port = 0;
+SIPUri::SIPUri(const std::string& uri) : valid(false) { parse(uri); }
 
-    if (match[5].matched && !parse_port(match[5].str(), parsed_port)) {
-      // A host that carries an unusable port is not a usable URI.
-      scheme = "sip";
-      user.clear();
-      password.reset();
-      realm = uri;
-      port.reset();
-      parameters.clear();
-      headers.clear();
-      valid = false;
-      return;
-    }
+bool SIPUri::has_parameter(std::string_view name) const { return find_field(_parameters, name) != nullptr; }
 
-    scheme = match[1].str();
-    user = match[2].matched ? match[2].str() : "";
-    password = match[3].matched ? std::make_optional(match[3].str()) : std::nullopt;
-    realm = match[4].str();
-    port = match[5].matched ? std::optional<uint16_t>(parsed_port) : std::nullopt;
-    // Remove the leading ';' from parameters (if present)
-    parameters = match[6].matched ? match[6].str().substr(1) : "";
-    // Remove the leading '?' from headers (if present)
-    headers = match[7].matched ? match[7].str().substr(1) : "";
-    valid = true;
-  } else {
-    // Fallback: treat the entire input as the realm.
-    scheme = "sip";
-    user.clear();
-    password.reset();
-    realm = uri;
-    port.reset();
-    parameters.clear();
-    headers.clear();
-    valid = false;
-  }
+std::string SIPUri::parameter(std::string_view name) const {
+  const auto* field = find_field(_parameters, name);
+  return field ? field->second : std::string{};
 }
 
-// Friend operators for concatenation.
+void SIPUri::set_parameter(std::string name, std::string value) {
+  for (auto& field : _parameters) {
+    if (equals_ignoring_case(field.first, name)) {
+      field.second = std::move(value);
+      return;
+    }
+  }
+
+  _parameters.emplace_back(std::move(name), std::move(value));
+}
+
+void SIPUri::remove_parameter(std::string_view name) {
+  _parameters.erase(std::remove_if(_parameters.begin(), _parameters.end(), [&name](const auto& field) { return equals_ignoring_case(field.first, name); }),
+                    _parameters.end());
+}
+
+bool SIPUri::has_header(std::string_view name) const { return find_field(_headers, name) != nullptr; }
+
+std::string SIPUri::header(std::string_view name) const {
+  const auto* field = find_field(_headers, name);
+  return field ? field->second : std::string{};
+}
+
+void SIPUri::set_header(std::string name, std::string value) {
+  for (auto& field : _headers) {
+    if (equals_ignoring_case(field.first, name)) {
+      field.second = std::move(value);
+      return;
+    }
+  }
+
+  _headers.emplace_back(std::move(name), std::move(value));
+}
+
+void SIPUri::_reset_invalid(const std::string& uri) {
+  scheme = "sip";
+  user.clear();
+  password.reset();
+  host = uri;
+  port.reset();
+  _parameters.clear();
+  _headers.clear();
+  valid = false;
+}
+
+// Hand-written rather than a regular expression. The grammar is a sequence of splits on
+// characters that cannot appear unescaped in the parts they delimit, which is a few
+// lines of find(); a backtracking regex over attacker-supplied text is both harder to
+// read and a recursion depth nobody has bounded.
+void SIPUri::parse(const std::string& uri) {
+  _parameters.clear();
+  _headers.clear();
+
+  const auto scheme_end = uri.find(':');
+  if (scheme_end == std::string::npos) {
+    return _reset_invalid(uri);
+  }
+
+  const auto parsed_scheme = to_lower(std::string_view(uri).substr(0, scheme_end));
+  if (parsed_scheme != "sip" && parsed_scheme != "sips") {
+    return _reset_invalid(uri);
+  }
+
+  std::string_view rest = std::string_view(uri).substr(scheme_end + 1);
+
+  // Headers first, then parameters: '?' ends the parameter list, and a ';' after the
+  // '?' belongs to a header value rather than starting a new parameter.
+  std::string_view header_text;
+  if (const auto question = rest.find('?'); question != std::string_view::npos) {
+    header_text = rest.substr(question + 1);
+    rest = rest.substr(0, question);
+  }
+
+  std::string_view parameter_text;
+  if (const auto semicolon = rest.find(';'); semicolon != std::string_view::npos) {
+    parameter_text = rest.substr(semicolon + 1);
+    rest = rest.substr(0, semicolon);
+  }
+
+  // The userinfo ends at the last '@': '@' may appear escaped in a user part, but an
+  // unescaped one is the delimiter and the host cannot contain one at all.
+  std::string_view host_port = rest;
+  if (const auto at = rest.rfind('@'); at != std::string_view::npos) {
+    const auto userinfo = rest.substr(0, at);
+    host_port = rest.substr(at + 1);
+
+    if (const auto colon = userinfo.find(':'); colon != std::string_view::npos) {
+      user = unescape(userinfo.substr(0, colon));
+      password = unescape(userinfo.substr(colon + 1));
+    } else {
+      user = unescape(userinfo);
+      password.reset();
+    }
+  } else {
+    user.clear();
+    password.reset();
+  }
+
+  if (host_port.empty()) {
+    return _reset_invalid(uri);
+  }
+
+  // An IPv6 reference is bracketed (19.1.1, RFC 5118 section 4). The colons inside it
+  // are part of the address, so the port separator is only the one after the ']'.
+  std::string_view host_text = host_port;
+  std::string_view port_text;
+
+  if (host_port.front() == '[') {
+    const auto close = host_port.find(']');
+    if (close == std::string_view::npos) {
+      return _reset_invalid(uri);
+    }
+
+    host_text = host_port.substr(0, close + 1);
+
+    const auto after = host_port.substr(close + 1);
+    if (!after.empty()) {
+      if (after.front() != ':') {
+        return _reset_invalid(uri);
+      }
+      port_text = after.substr(1);
+    }
+  } else if (const auto colon = host_port.rfind(':'); colon != std::string_view::npos) {
+    host_text = host_port.substr(0, colon);
+    port_text = host_port.substr(colon + 1);
+  }
+
+  if (host_text.empty()) {
+    return _reset_invalid(uri);
+  }
+
+  if (!port_text.empty()) {
+    std::uint16_t parsed_port = 0;
+    if (!parse_port(port_text, parsed_port)) {
+      // A host that carries an unusable port is not a usable URI.
+      return _reset_invalid(uri);
+    }
+    port = parsed_port;
+  } else {
+    port.reset();
+  }
+
+  scheme = parsed_scheme;
+  host = std::string(host_text);
+  _parameters = split_fields(parameter_text, ';');
+  _headers = split_fields(header_text, '&');
+  valid = true;
+}
+
+std::string SIPUri::to_string() const {
+  std::ostringstream oss;
+  oss << scheme << ":";
+
+  if (!user.empty()) {
+    oss << escape(user, is_user_char);
+    if (password.has_value()) {
+      oss << ":" << escape(*password, is_password_char);
+    }
+    oss << "@";
+  }
+
+  oss << host;
+
+  if (port.has_value()) {
+    oss << ":" << *port;
+  }
+
+  for (const auto& [name, value] : _parameters) {
+    oss << ";" << escape(name, is_param_char);
+    if (!value.empty()) oss << "=" << escape(value, is_param_char);
+  }
+
+  bool first_header = true;
+  for (const auto& [name, value] : _headers) {
+    oss << (first_header ? '?' : '&') << escape(name, is_header_char) << "=" << escape(value, is_header_char);
+    first_header = false;
+  }
+
+  return oss.str();
+}
+
+// RFC 3261 19.1.4.
+bool SIPUri::equivalent_to(const SIPUri& other) const {
+  // "A SIP and SIPS URI are never equivalent."
+  if (!equals_ignoring_case(scheme, other.scheme)) return false;
+
+  // The user part is case-sensitive; the host is not. A missing port is not the default
+  // port, so the optionals are compared as they stand.
+  if (user != other.user) return false;
+  if (password.value_or("") != other.password.value_or("")) return false;
+  if (!equals_ignoring_case(host, other.host)) return false;
+  if (port != other.port) return false;
+
+  // "Any uri-parameter appearing in both URIs must match." A parameter in only one is
+  // ignored, except for these four: they change where the request goes, so their
+  // absence is not the same as agreement.
+  static const char* kNeverIgnored[] = {"user", "ttl", "method", "maddr"};
+
+  for (const char* name : kNeverIgnored) {
+    const bool mine = has_parameter(name);
+    const bool theirs = other.has_parameter(name);
+
+    if (mine != theirs) return false;
+    if (mine && !equals_ignoring_case(parameter(name), other.parameter(name))) return false;
+  }
+
+  for (const auto& [name, value] : _parameters) {
+    if (!other.has_parameter(name)) continue;
+    if (!equals_ignoring_case(value, other.parameter(name))) return false;
+  }
+
+  // "URI header components are never ignored. Any present header component MUST be
+  // present in both URIs and match."
+  if (_headers.size() != other._headers.size()) return false;
+
+  for (const auto& [name, value] : _headers) {
+    if (!other.has_header(name)) return false;
+    if (value != other.header(name)) return false;
+  }
+
+  return true;
+}
+
 std::string operator+(const SIPUri& uri, const std::string& str) { return uri.to_string() + str; }
 
 std::string operator+(const std::string& str, const SIPUri& uri) { return str + uri.to_string(); }

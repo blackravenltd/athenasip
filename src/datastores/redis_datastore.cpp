@@ -311,7 +311,7 @@ void RedisDatastore::subscriber_get(plugins::Executor on, std::shared_ptr<types:
 
   if (!identity || !identity->uri) return _complete(on, handler, Answer::failure("subscriber_get: no identity"));
 
-  _async_get(_subscriber_key(identity->uri->realm, identity->uri->user),
+  _async_get(_subscriber_key(identity->uri->host, identity->uri->user),
              [this, on, handler, identity](RedisError error, std::optional<std::string> value) mutable {
                if (error) return _complete(on, handler, Answer::failure(error.message()));
                if (!value) return _complete(on, handler, Answer::success(nullptr));
@@ -337,8 +337,8 @@ void RedisDatastore::subscriber_create(plugins::Executor on, std::shared_ptr<typ
     return _complete(on, handler, plugins::Status::failure("subscriber_create: no subscriber"));
 
   const auto& uri = subscriber->identity->uri;
-  const auto key = _subscriber_key(uri->realm, uri->user);
-  const auto index = _subscriber_index_key(uri->realm);
+  const auto key = _subscriber_key(uri->host, uri->user);
+  const auto index = _subscriber_index_key(uri->host);
   const auto user = uri->user;
   const auto body = _serialise_subscriber(subscriber);
 
@@ -361,7 +361,7 @@ void RedisDatastore::subscriber_update(plugins::Executor on, std::shared_ptr<typ
     return _complete(on, handler, plugins::Status::failure("subscriber_update: no subscriber"));
 
   const auto& uri = subscriber->identity->uri;
-  const auto key = _subscriber_key(uri->realm, uri->user);
+  const auto key = _subscriber_key(uri->host, uri->user);
   const auto user = uri->user;
   const auto body = _serialise_subscriber(subscriber);
 
@@ -378,7 +378,7 @@ void RedisDatastore::subscriber_update(plugins::Executor on, std::shared_ptr<typ
 void RedisDatastore::subscriber_delete(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity, plugins::StatusHandler handler) {
   if (!identity || !identity->uri) return _complete(on, handler, plugins::Status::failure("subscriber_delete: no identity"));
 
-  const auto realm_name = identity->uri->realm;
+  const auto realm_name = identity->uri->host;
   const auto user = identity->uri->user;
 
   // The bindings go with the subscriber, so the record has to be read before it is
@@ -444,7 +444,7 @@ void RedisDatastore::subscriber_register(plugins::Executor on, std::shared_ptr<t
 
   const std::uint16_t port = contact->port.value_or(0);
   const auto now = static_cast<std::int64_t>(std::time(nullptr));
-  const bool is_nat = Util::is_ipv4(contact->realm) && Util::is_ipv4_private(contact->realm);
+  const bool is_nat = Util::is_ipv4(contact->host) && Util::is_ipv4_private(contact->host);
 
   constexpr std::int64_t kDefaultRegistrationSeconds = 3600;
 
@@ -456,14 +456,14 @@ void RedisDatastore::subscriber_register(plugins::Executor on, std::shared_ptr<t
   location["subscriber_id"] = subscriber->id;
   location["contact"] = contact->to_string();
   location["user"] = contact->user;
-  location["host"] = contact->realm;
+  location["host"] = contact->host;
   location["port"] = port;
   location["registered_at"] = now;
   location["expires_at"] = now + ttl;
   location["nat"] = is_nat ? "Y" : "N";
   if (!path.empty()) location["path"] = path;
 
-  const auto key = _location_key(subscriber->id, contact->user, contact->realm, port);
+  const auto key = _location_key(subscriber->id, contact->user, contact->host, port);
   const auto index = _location_index_key(subscriber->id);
 
   _async_set_ex(key, boost::json::serialize(location), std::chrono::seconds(ttl), [this, on, handler, key, index](RedisError error, bool ok) mutable {
@@ -481,7 +481,7 @@ void RedisDatastore::subscriber_unregister(plugins::Executor on, std::shared_ptr
   if (!subscriber || !contact) return _complete(on, handler, plugins::Status::failure("subscriber_unregister: no subscriber or contact"));
 
   const std::uint16_t port = contact->port.value_or(0);
-  const auto key = _location_key(subscriber->id, contact->user, contact->realm, port);
+  const auto key = _location_key(subscriber->id, contact->user, contact->host, port);
   const auto index = _location_index_key(subscriber->id);
 
   _async_del(key, [this, on, handler, key, index](RedisError error, std::int64_t removed) mutable {

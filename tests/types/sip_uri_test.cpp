@@ -19,7 +19,7 @@ TEST(SIPUriTest, ParsesFullUri) {
   EXPECT_EQ(uri.user, "alice");
   ASSERT_TRUE(uri.password.has_value());
   EXPECT_EQ(uri.password.value(), "secret");
-  EXPECT_EQ(uri.realm, "example.com");
+  EXPECT_EQ(uri.host, "example.com");
   ASSERT_TRUE(uri.port.has_value());
   EXPECT_EQ(uri.port.value(), 5070);
 }
@@ -30,7 +30,7 @@ TEST(SIPUriTest, ParsesMinimalUri) {
   EXPECT_TRUE(uri.valid);
   EXPECT_EQ(uri.scheme, "sip");
   EXPECT_EQ(uri.user, "");
-  EXPECT_EQ(uri.realm, "example.com");
+  EXPECT_EQ(uri.host, "example.com");
   EXPECT_FALSE(uri.port.has_value());
 }
 
@@ -48,7 +48,7 @@ TEST(SIPUriTest, ParsesIPv6HostReference) {
 
   EXPECT_TRUE(uri.valid);
   EXPECT_EQ(uri.user, "alice");
-  EXPECT_EQ(uri.realm, "[2001:db8::1]");
+  EXPECT_EQ(uri.host, "[2001:db8::1]");
   EXPECT_FALSE(uri.port.has_value());
 }
 
@@ -56,7 +56,7 @@ TEST(SIPUriTest, ParsesIPv6HostReferenceWithPort) {
   SIPUri uri("sip:alice@[2001:db8::1]:5061");
 
   EXPECT_TRUE(uri.valid);
-  EXPECT_EQ(uri.realm, "[2001:db8::1]");
+  EXPECT_EQ(uri.host, "[2001:db8::1]");
   ASSERT_TRUE(uri.port.has_value());
   EXPECT_EQ(uri.port.value(), 5061);
 }

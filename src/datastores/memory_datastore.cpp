@@ -102,7 +102,7 @@ std::shared_ptr<types::Subscriber> MemoryDatastore::_subscriber_get(std::shared_
 
   std::lock_guard<std::mutex> lock(_mutex);
 
-  auto it = _subscribers.find(_subscriber_key(identity->uri->realm, identity->uri->user));
+  auto it = _subscribers.find(_subscriber_key(identity->uri->host, identity->uri->user));
   if (it == _subscribers.end()) return nullptr;
 
   // Hand back the identity the caller asked with, as the Redis driver does, so the
@@ -136,9 +136,9 @@ bool MemoryDatastore::_subscriber_register(std::shared_ptr<types::Subscriber> su
   location.registered_at = now;
   location.expires_at = now + ttl;
   location.path = path;
-  location.nat = Util::is_ipv4(contact->realm) && Util::is_ipv4_private(contact->realm);
+  location.nat = Util::is_ipv4(contact->host) && Util::is_ipv4_private(contact->host);
 
-  _locations[_location_key(subscriber->id, contact->user, contact->realm, port)] = std::move(location);
+  _locations[_location_key(subscriber->id, contact->user, contact->host, port)] = std::move(location);
   return true;
 }
 
@@ -148,7 +148,7 @@ bool MemoryDatastore::_subscriber_unregister(std::shared_ptr<types::Subscriber> 
   std::lock_guard<std::mutex> lock(_mutex);
 
   const std::uint16_t port = contact->port.value_or(0);
-  return _locations.erase(_location_key(subscriber->id, contact->user, contact->realm, port)) > 0;
+  return _locations.erase(_location_key(subscriber->id, contact->user, contact->host, port)) > 0;
 }
 
 std::vector<types::Location> MemoryDatastore::_location_list(std::uint64_t subscriber_id) {
@@ -222,7 +222,7 @@ std::vector<std::shared_ptr<Call>> MemoryDatastore::_call_list() {
 bool MemoryDatastore::_subscriber_create(std::shared_ptr<types::Subscriber> subscriber) {
   if (!subscriber || !subscriber->identity || !subscriber->identity->uri) return false;
 
-  const auto key = _subscriber_key(subscriber->identity->uri->realm, subscriber->identity->uri->user);
+  const auto key = _subscriber_key(subscriber->identity->uri->host, subscriber->identity->uri->user);
 
   std::lock_guard<std::mutex> lock(_mutex);
 
@@ -235,7 +235,7 @@ bool MemoryDatastore::_subscriber_create(std::shared_ptr<types::Subscriber> subs
 bool MemoryDatastore::_subscriber_update(std::shared_ptr<types::Subscriber> subscriber) {
   if (!subscriber || !subscriber->identity || !subscriber->identity->uri) return false;
 
-  const auto key = _subscriber_key(subscriber->identity->uri->realm, subscriber->identity->uri->user);
+  const auto key = _subscriber_key(subscriber->identity->uri->host, subscriber->identity->uri->user);
 
   std::lock_guard<std::mutex> lock(_mutex);
 
@@ -248,7 +248,7 @@ bool MemoryDatastore::_subscriber_update(std::shared_ptr<types::Subscriber> subs
 bool MemoryDatastore::_subscriber_delete(std::shared_ptr<types::SIPIdentity> identity) {
   if (!identity || !identity->uri) return false;
 
-  const auto key = _subscriber_key(identity->uri->realm, identity->uri->user);
+  const auto key = _subscriber_key(identity->uri->host, identity->uri->user);
 
   std::lock_guard<std::mutex> lock(_mutex);
 
@@ -271,7 +271,7 @@ std::vector<std::shared_ptr<types::Subscriber>> MemoryDatastore::_subscriber_lis
 
   std::vector<std::shared_ptr<types::Subscriber>> subscribers;
   for (const auto& [key, subscriber] : _subscribers) {
-    if (realm_name.empty() || (subscriber->identity && subscriber->identity->uri && subscriber->identity->uri->realm == realm_name)) {
+    if (realm_name.empty() || (subscriber->identity && subscriber->identity->uri && subscriber->identity->uri->host == realm_name)) {
       subscribers.push_back(subscriber);
     }
   }

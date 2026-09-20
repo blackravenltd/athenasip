@@ -37,7 +37,7 @@ bool is_star_contact(const std::shared_ptr<SIPHeader>& header) {
   auto contact = contacts[0]->as<SIPIdentityHeader>();
   if (contact == nullptr || contact->value == nullptr || contact->value->uri == nullptr) return false;
 
-  return contact->value->uri->user.empty() && contact->value->uri->realm == "*";
+  return contact->value->uri->user.empty() && contact->value->uri->host == "*";
 }
 
 }  // namespace
@@ -64,7 +64,7 @@ void Registrar::on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<
   auto aor = to->value;
 
   auto self = shared_from_this();
-  core->realm_get_by_name(Util::to_lower(aor->uri->realm), [this, self, request, transaction, aor](plugins::Result<std::shared_ptr<types::Realm>> found) {
+  core->realm_get_by_name(Util::to_lower(aor->uri->host), [this, self, request, transaction, aor](plugins::Result<std::shared_ptr<types::Realm>> found) {
     // A datastore that cannot answer is not a domain we do not
     // serve. One is 500, the other 404, and before the contract
     // could report the difference both looked like "no realm".
@@ -86,7 +86,7 @@ void Registrar::_on_realm(std::shared_ptr<SIPMessage> request, std::shared_ptr<t
   // A subscriber that does not exist inside a realm we do serve is challenged instead,
   // so a REGISTER sweep cannot enumerate accounts.
   if (!realm) {
-    _logger->info("REGISTER for unserved domain " + aor->uri->realm + " - 404");
+    _logger->info("REGISTER for unserved domain " + aor->uri->host + " - 404");
     return _send_status(transaction, request, 404, "Not Found");
   }
 

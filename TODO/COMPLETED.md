@@ -577,3 +577,23 @@ and gives the TU logic somewhere to live.
       `tests/helpers/sync_datastore_helper.h` and `sync_media_engine_helper.h` are blocking
       views for tests only, with the reason written where they are defined. 273 tests, clean
       under asan and tsan, and the Redis suite verified against a real server.
+
+## Milestone 2 step 3 - SIPUri is a real URI (2026-09-20)
+
+- [x] Parameters and headers are structured (`src/types/sip_uri.*`): `parameter(name)`,
+      `has_parameter`, `header(name)`, in the order they arrived so a URI we did not write
+      round-trips as it came. Names match case-insensitively (19.1.1) and are kept as written.
+      `lr` is present-with-empty-value, distinguishable from absent, which is what 16.12 needs.
+- [x] Escaping per 19.1.2 and 25.1, with the per-component allowed sets (user, password,
+      param, header) written out from the ABNF. Values are held unescaped; `to_string()` puts
+      it back. A '%' not followed by two hex digits is left alone rather than swallowed.
+- [x] `equivalent_to()` implements 19.1.4: sip and sips never match, user is case-sensitive,
+      host is not, an absent port is not the default port, a parameter in both must match,
+      `user`/`ttl`/`method`/`maddr` in only one never match, and headers must be present in
+      both and equal. Not `operator==`, because it is not string equality and a reader should
+      notice.
+- [x] `realm` is `host`. A realm is the Digest protection domain (22.1); the field was the
+      host of the URI and had been named for a different concept.
+- [x] The regex is gone. The parser is a sequence of `find()`s on characters that cannot
+      appear unescaped in the parts they delimit, over attacker-supplied text, with no
+      recursion to bound. 16 tests from the RFC, written first and watched fail. 289 tests.

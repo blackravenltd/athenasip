@@ -153,12 +153,9 @@ What it deliberately left, so it is not lost:
 
 ### Step 3 - SIPUri is a real URI (RFC 3261 section 19.1)
 
-Needed before the proxy can do Route processing.
-
-- [ ] Parameters and headers as structured values: `lr`, `transport`, `maddr`, `ttl`,
-      `user`, `method`, and the rest by name. Escaping and unescaping (19.1.2, 25.1).
-- [ ] URI comparison (19.1.4), for matching a REGISTER's Contact against the bindings.
-- [ ] `realm` becomes `host`. It is the name of a different SIP concept.
+Done on 2026-09-20; see `COMPLETED.md`. Structured parameters and headers, escaping,
+19.1.4 equivalence, and `realm` renamed to `host`. Hand-written, no regex: the grammar
+is a sequence of splits on delimiters that cannot appear unescaped in what they delimit.
 
 ### Step 4 - Dialogs (RFC 3261 section 12)
 
