@@ -50,6 +50,27 @@ std::string SIPMessage::get_transaction_id() {
   return via->parameters["branch"] + "|" + via->host + "|" + cseq->method;
 }
 
+// Serialising and re-parsing is the copy. Doing it field by field would mean a virtual
+// clone on every header type and a new one every time a type is added; this cannot fall
+// behind because it goes through the same writer and reader the wire does.
+std::shared_ptr<SIPMessage> SIPMessage::clone() const {
+  auto copy = std::make_shared<SIPMessage>();
+
+  copy->header = std::make_shared<SIPHeader>(header->to_string());
+  copy->body = body;
+  copy->body_length = body_length;
+
+  copy->branch = branch;
+  copy->source_port = source_port;
+  copy->channel = channel;
+  copy->call = call;
+  copy->subscriber = subscriber;
+  copy->contact = contact;
+  copy->authenticated = authenticated;
+
+  return copy;
+}
+
 std::shared_ptr<SIPMessage> SIPMessage::generate_response() {
   // Create Response
   auto response = std::make_shared<SIPMessage>();

@@ -10,9 +10,10 @@ relay driver are in; `Call` is multi-party; all four RFC 3261 section 17 transac
 state machines exist and are wired in behind a matcher, with `Registrar` and `Proxy` as
 the transaction users.
 
-M2 steps 1 to 3 have landed since: the transaction users, the plugin contract (one
-registry, async datastore and media engine) and a structured `SIPUri`. 289 tests, clean
-under asan and tsan, the Redis suite verified against a real server.
+M2 steps 1 to 4 have landed since: the transaction users, the plugin contract (one
+registry, async datastore and media engine), a structured `SIPUri` and the rest of
+section 16. 320 tests, clean under asan and tsan, the Redis suite verified against a
+real server.
 
 An architecture review on 2026-09-18 compared the Principles, the tree and the RFCs.
 Its findings are merged into Milestone 2 below, which is ordered by priority: work the
@@ -103,9 +104,7 @@ What the review found the tree does instead, and which step below fixes it. Step
 what is left:
 
 - There is no Dialog (section 12). `Call` is the application object and is not one:
-  it has tags but no route set, CSeq tracking or remote target. (Step 4.)
-- `SIPUri` keeps parameters and headers as opaque strings, so the proxy cannot read
-  `lr`, `transport` or `maddr`, and there is no section 19.1.4 comparison. (Step 3.)
+  it has tags but no route set, CSeq tracking or remote target. (Step 5.)
 - For a browser over WS the Contact URI is unroutable, so RFC 5626 flow routing and
   WSS are prerequisites for the first WebRTC call, not cluster features. (Steps 7 and
   M3.)
@@ -171,29 +170,30 @@ What it deliberately left, so it is not lost:
 
 ### Step 4 - Proxy core, the rest of section 16
 
-Reordered ahead of dialogs on 2026-09-20. The M2 goal is INVITE through BYE between two
-subscribers on one node. Record-Route is what makes the ACK and the BYE come back
-through this node rather than go endpoint to endpoint, and Route processing is what
-forwards them once they do. Neither needs dialog state: a proxy is transaction-stateful,
-not dialog-stateful (16.1). Dialog tracking is what the node then needs to notice the
-call ended, and follows.
+Done on 2026-09-20; see `COMPLETED.md`. Loop detection, Route and Record-Route
+processing, in-dialog transit, stateless response forwarding and CANCEL forwarding.
 
-- [ ] Loop detection (16.3.4): a request whose branch this node already produced. Request
-      validation and Max-Forwards (16.3.1-16.3.3) landed in step 1 (`src/proxy.cpp:192`),
-      and the 400 for an unparseable request (8.2.1) is in `Core::process_message`.
-- [ ] Route / Record-Route processing (16.4, 16.6.4): strip a Route naming this node,
-      strict-route rewriting when the top Route has no `lr`, Record-Route on every INVITE
-      this node forwards. On the structured `SIPUri` from step 3; `parameter("lr")` and
-      `equivalent_to()` exist for exactly this.
-- [ ] In-dialog requests transit the node on their Route set: BYE, re-INVITE, UPDATE, and
-      hold (`a=sendonly` is just a re-INVITE to the proxy). This was listed under dialogs
-      and is not dialog work; it is Route processing with the same code as above.
-- [ ] Response processing and best-response selection (16.7). Stray responses are
-      dropped today; a response for no transaction is forwarded statelessly on its Via
-      (18.1.2, deferred from step 1).
-- [ ] CANCEL forwarding (16.10): CANCEL is answered locally and ends the INVITE server
-      transaction with 487, but is not sent down the branches already tried (deferred from
-      step 1).
+What it deliberately left, so it is not lost:
+
+- [ ] RFC 3263: a next hop is resolved from the URI's own transport, host and port, with
+      the scheme's defaults for what it does not say. NAPTR and SRV are a step of their
+      own and are what a cluster and a trunk both need.
+- [ ] Outbound flows. A next hop this node has no live connection to is answered 480,
+      because nothing in the tree opens a connection rather than accepting one. Every
+      target in M2 is a registered client with a flow, so this is not a stall; it becomes
+      one the moment a request has to leave for a trunk or a peer node. Step 7.
+- [ ] Double Record-Route (RFC 5658), for a call whose two ends are on different
+      transports. One value naming the outbound flow is right for a call that is UDP to
+      UDP or WSS to WSS, which is what M2 tests; a browser calling a desk phone needs two
+      values and needs both stripped on the way back. Prerequisite for mixed-transport
+      calls in M3, not for M2.
+- [ ] Parallel forking. The fork is serial: one branch at a time, best response wins.
+      16.7's response context is written to hold more than one branch, and the CANCEL
+      path already walks it, so the change is in `_forward_next` rather than in the
+      shape. Parked deliberately - it is listed under Parked.
+- [ ] Timer C (16.6 step 11). An INVITE branch that goes on receiving provisional
+      responses for ever is not currently given up on. Timer B bounds the branch that
+      never answers at all; this is the one that answers 180 and never stops.
 
 ### Step 5 - Dialogs (RFC 3261 section 12)
 

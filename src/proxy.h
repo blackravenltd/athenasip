@@ -10,13 +10,13 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "loggers/logger.h"
 #include "sip_message.h"
 #include "transaction_user.h"
 #include "transactions/transaction_base.h"
-#include "types/location.h"
 
 namespace athenasip {
 
@@ -26,52 +26,128 @@ class Core;
 // RFC 3261 section 16: the proxy, and the transaction user for everything that is not a
 // REGISTER.
 //
-// This step covers target determination (16.5) and forwarding (16.6) with serial
-// forking, plus response processing far enough to pass a response back up the server
-// transaction (16.7). Route and Record-Route handling, loop detection and best-response
-// selection across parallel branches come with the rest of section 16.
+// The order of work is the RFC's own: loop detection (16.3.4), route preprocessing
+// (16.4), target determination (16.5), forwarding (16.6) with serial forking, response
+// processing (16.7) and CANCEL (16.10).
+//
+// A proxy is transaction-stateful and not dialog-stateful (16.1). Nothing here knows
+// what a dialog is: an in-dialog request reaches its far end because the Route set the
+// endpoints kept from the Record-Route brings it back through this node, and because
+// its Request-URI is a target this node is not responsible for and so is forwarded as
+// it stands. Dialog tracking is a separate concern and belongs to the layer above.
 class Proxy : public TransactionUser {
  public:
   Proxy(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<Core> core);
 
   void on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction) override;
 
-  // RFC 3261 9.2: a CANCEL is answered 200 OK on its own transaction, and the INVITE
-  // server transaction it names is answered 487. Forwarding the CANCEL down the branches
-  // already tried (16.10) waits for the rest of section 16.
+  // RFC 3261 9.2 and 16.10: a CANCEL is answered 200 OK on its own transaction, the
+  // INVITE server transaction it names is answered 487, and the branch already tried is
+  // cancelled in turn.
   void on_cancel(std::shared_ptr<SIPMessage> cancel, std::shared_ptr<transactions::TransactionBase> cancel_transaction,
                  std::shared_ptr<transactions::TransactionBase> invite_transaction);
 
+  // RFC 3261 16.7 step 1 and 18.1.2: a response matching no client transaction has no
+  // context to be the best response of. It goes back down the Via chain with this
+  // node's own Via removed, and nothing is remembered about it.
+  void on_stray_response(std::shared_ptr<SIPMessage> response);
+
  private:
-  // One request being proxied: the server transaction it arrived on, the targets left to
-  // try, and the best response seen so far. It is kept alive by the callbacks the client
-  // transactions hold, and dies with the last of them.
+  // Where a hop actually goes, once its URI has given up its transport, host and port
+  // (RFC 3261 16.6 step 7).
+  struct NextHop {
+    std::string transport;
+    std::string host;
+    std::uint16_t port = 5060;
+  };
+
+  // One entry of the target set (16.5). The URI that becomes the Request-URI and the
+  // hop the request is handed to are not the same thing whenever a Route set is in
+  // play: the Request-URI stays as it arrived and the top Route is where it goes.
+  struct Target {
+    std::shared_ptr<SIPUri> uri;
+    std::shared_ptr<SIPUri> next_hop;
+    std::weak_ptr<Channel> flow;
+  };
+
+  // The response context (16.7): the request as received, the server transaction it
+  // arrived on, the targets left to try, and the best response so far. It is kept alive
+  // by the callbacks the client transactions hold, and dies with the last of them.
   struct Context {
     std::shared_ptr<SIPMessage> request;
     std::shared_ptr<transactions::TransactionBase> server;
-    std::weak_ptr<Channel> outbound;
 
-    std::vector<types::Location> targets;
+    // The 16.3.4 half of the branch this node writes, computed once from the request as
+    // it arrived so that every branch of the fork carries the same one.
+    std::string loop_token;
+
+    std::vector<Target> targets;
     std::size_t next = 0;
 
     std::shared_ptr<SIPMessage> best;
+
+    // The branch in flight, for CANCEL (16.10). RFC 3261 9.1 builds the CANCEL from the
+    // request that was sent, not from the one that arrived.
+    std::shared_ptr<SIPMessage> forwarded;
+    std::weak_ptr<Channel> forwarded_flow;
+
+    // A CANCEL may not go out before a provisional response has come back (9.1), so one
+    // that arrives early is held until the branch answers.
+    bool provisional = false;
+    bool cancelled = false;
+
+    // A final response has gone upstream. The search is over, and a late answer from a
+    // branch must not be sent a second time.
+    bool answered = false;
   };
 
-  // Rewrites the request for one hop: Request-URI, Max-Forwards, and this node's Via
-  // with a fresh branch (RFC 3261 16.6 steps 2, 3 and 8). False when Max-Forwards has
-  // run out.
-  bool _prepare_forward(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<Channel>& channel, const std::shared_ptr<SIPUri>& target) const;
+  // RFC 3261 16.3.4. The branch this node writes carries a hash of the fields that
+  // decide where a request goes, so a request that comes back can be told apart from
+  // one that never left: same hash is a loop, a different one is a spiral.
+  std::string _loop_token(const std::shared_ptr<SIPMessage>& request) const;
+  bool _is_loop(const std::shared_ptr<SIPMessage>& request, const std::string& token) const;
+
+  // RFC 3261 16.4. Undoes a strict router's rewrite and takes off a Route naming this
+  // node, so that what is left is the route set the request still has to travel.
+  void _preprocess_routes(const std::shared_ptr<SIPMessage>& request) const;
+
+  // RFC 3261 16.5, once route preprocessing is done. Answers the caller itself when
+  // there is nothing to route to, and otherwise hands a filled context to _forward_next.
+  void _determine_targets(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
+                          const std::string& loop_token);
+
+  // Rewrites one copy of the request for one hop: Request-URI, Max-Forwards,
+  // Record-Route, the route set and this node's Via (16.6 steps 2, 3, 4, 6 and 8).
+  // False when Max-Forwards has run out.
+  bool _prepare_forward(const std::shared_ptr<SIPMessage>& copy, const std::shared_ptr<Channel>& channel, const Target& target,
+                        const std::string& loop_token) const;
 
   // Sends to the next untried target, and answers the caller when there are none left.
   void _forward_next(const std::shared_ptr<Context>& context);
 
   void _on_response(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response);
 
+  // RFC 3261 16.7 step 6: what goes back when every branch has been tried.
+  void _send_best(const std::shared_ptr<Context>& context);
+
+  // RFC 3261 16.10: the CANCEL for a branch already forwarded.
+  void _cancel_branch(const std::shared_ptr<Context>& context);
+
   void _send_status(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request, std::uint16_t code,
                     const std::string& reason);
 
+  bool _names_this_node(const SIPUri& uri) const;
+  std::shared_ptr<Channel> _flow_to(const SIPUri& uri) const;
+
+  static NextHop _next_hop_of(const SIPUri& uri);
+
   std::shared_ptr<loggers::Logger> _logger;
   std::weak_ptr<Core> _core;
+
+  // Response contexts by the id of the server transaction they answer, so a CANCEL can
+  // find the branches its INVITE is still waiting on. Weak: the context belongs to the
+  // callbacks in flight and must not outlive them.
+  std::unordered_map<std::string, std::weak_ptr<Context>> _contexts;
 };
 
 }  // namespace athenasip
