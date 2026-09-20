@@ -8,7 +8,11 @@ RFC 3261; `Core` runs on a single strand with no locks; `memory://` and `redis:/
 the datastores and both implement the full interface; `MediaEngine` and a builtin RTP
 relay driver are in; `Call` is multi-party; all four RFC 3261 section 17 transaction
 state machines exist and are wired in behind a matcher, with `Registrar` and `Proxy` as
-the transaction users. 262 tests, clean under asan and tsan.
+the transaction users.
+
+M2 steps 1 to 3 have landed since: the transaction users, the plugin contract (one
+registry, async datastore and media engine) and a structured `SIPUri`. 289 tests, clean
+under asan and tsan, the Redis suite verified against a real server.
 
 An architecture review on 2026-09-18 compared the Principles, the tree and the RFCs.
 Its findings are merged into Milestone 2 below, which is ordered by priority: work the
@@ -28,8 +32,8 @@ Move items to `COMPLETED.md` as they land, with a one-line note on what shipped.
    certificates, and an admin UI that works out of the box. Every feature ships with
    the tooling and documentation that makes it easy, or it is not done.
 4. **IoC / plugin architecture.** `Datastore`, `EventSystem` and `MediaEngine` are
-   registries keyed by URL scheme. Two implementations per interface: one built-in for
-   zero-config single node, one canonical for production.
+   plugin kinds behind one registry keyed by (kind, URL scheme). Two implementations
+   per kind: one built-in for zero-config single node, one canonical for production.
 5. **Canonical backends:** Redis (datastore), MQTT (events), rtpengine (media).
 6. **Web video calling and conferencing are first class.** AthenaPhone is the client
    for now; a web client follows. Everything in the signalling and media model must
@@ -125,10 +129,6 @@ moved out of `Channel`. What it deliberately left for later, so it is not lost:
 
 - [ ] RFC 2543 fallback transaction matching, for a request whose branch carries no magic
       cookie. Deferred by the step; needed for interop with pre-3261 endpoints only.
-- [ ] Stray responses are dropped. Forwarding one statelessly on its Via (18.1.2) is
-      proxy work and belongs with step 5.
-- [ ] CANCEL is answered locally and ends the INVITE server transaction with 487, but is
-      not forwarded down the branches already tried (16.10). Also step 5.
 - [ ] Serial forking tries each binding in turn but sends every attempt down the one flow
       the subscriber registered on, because that is all a single node knows. Per-binding
       flow routing is RFC 5626 in M3, and `Location.flow_id` exists for it.
@@ -157,24 +157,58 @@ Done on 2026-09-20; see `COMPLETED.md`. Structured parameters and headers, escap
 19.1.4 equivalence, and `realm` renamed to `host`. Hand-written, no regex: the grammar
 is a sequence of splits on delimiters that cannot appear unescaped in what they delimit.
 
-### Step 4 - Dialogs (RFC 3261 section 12)
+What it deliberately left, so it is not lost:
 
-- [ ] A `Dialog` type owned by the TU: Call-ID, local and remote tags, route set, local
-      and remote CSeq, remote target, secure flag. Created from the 2xx to an INVITE
-      (12.1), matched on in-dialog requests (12.2.2), ended on BYE.
-- [ ] `Call` keeps a dialog per participant leg rather than bare tags. `Call` stays the
+- [ ] `SIPIdentity::parse` (`src/types/sip_identity.cpp`) is still a backtracking
+      `std::regex`, and it runs over every To, From and Contact that arrives. libc++
+      matches by recursing per state, so its depth is bounded by the input and nothing
+      else; on the io thread's default stack that is a remote crash waiting for a long
+      enough header. It also has nowhere to put a Contact of `*`, which the registrar
+      works around by shape. Rewrite it the way `SIPUri` was, and give `*` a home. This is
+      the one item below step 4 worth pulling forward.
+- [ ] `types::URL` (`src/types/url.cpp`) is the other regex. Off the message path, only
+      parses config, but the same rewrite and cheap.
+
+### Step 4 - Proxy core, the rest of section 16
+
+Reordered ahead of dialogs on 2026-09-20. The M2 goal is INVITE through BYE between two
+subscribers on one node. Record-Route is what makes the ACK and the BYE come back
+through this node rather than go endpoint to endpoint, and Route processing is what
+forwards them once they do. Neither needs dialog state: a proxy is transaction-stateful,
+not dialog-stateful (16.1). Dialog tracking is what the node then needs to notice the
+call ended, and follows.
+
+- [ ] Loop detection (16.3.4): a request whose branch this node already produced. Request
+      validation and Max-Forwards (16.3.1-16.3.3) landed in step 1 (`src/proxy.cpp:192`),
+      and the 400 for an unparseable request (8.2.1) is in `Core::process_message`.
+- [ ] Route / Record-Route processing (16.4, 16.6.4): strip a Route naming this node,
+      strict-route rewriting when the top Route has no `lr`, Record-Route on every INVITE
+      this node forwards. On the structured `SIPUri` from step 3; `parameter("lr")` and
+      `equivalent_to()` exist for exactly this.
+- [ ] In-dialog requests transit the node on their Route set: BYE, re-INVITE, UPDATE, and
+      hold (`a=sendonly` is just a re-INVITE to the proxy). This was listed under dialogs
+      and is not dialog work; it is Route processing with the same code as above.
+- [ ] Response processing and best-response selection (16.7). Stray responses are
+      dropped today; a response for no transaction is forwarded statelessly on its Via
+      (18.1.2, deferred from step 1).
+- [ ] CANCEL forwarding (16.10): CANCEL is answered locally and ends the INVITE server
+      transaction with 487, but is not sent down the branches already tried (deferred from
+      step 1).
+
+### Step 5 - Dialogs (RFC 3261 section 12)
+
+The node is call-stateful by product decision: it anchors media, keeps call records
+and shows live calls, so it has to know when a call ends. That is dialog tracking, not
+dialog ownership; the UAs own the dialogs.
+
+- [ ] A `Dialog` type: Call-ID, local and remote tags, route set, local and remote CSeq,
+      remote target, secure flag. Created from the 2xx to an INVITE (12.1), matched on
+      in-dialog requests (12.2.2), ended on BYE. `Call` keeps one per participant leg
+      rather than bare tags (`src/call.h:66` has only the tags today). `Call` stays the
       application object: participants, media, focus.
-- [ ] In-dialog routing: BYE, re-INVITE, hold (`a=sendonly`), UPDATE.
-
-### Step 5 - Proxy core, the rest of section 16
-
-- [ ] Request validation, Max-Forwards, loop detection (16.3). A request that fails
-      `SIPHeader::is_valid()` gets a 400 (8.2.1).
-- [ ] Route / Record-Route processing (16.4, 16.6.4), strict and loose routing, on the
-      structured `SIPUri` from step 3.
-- [ ] Response processing and best-response selection (16.7). CANCEL forwarding (16.10).
 - [ ] Session timers (RFC 4028): honour `Session-Expires`, refresh via re-INVITE or
-      UPDATE, on the Dialog from step 4.
+      UPDATE, tear down on expiry. Needs the dialog, which is why this lives here and
+      not in step 4.
 
 ### Step 6 - Media on the signalling path
 
@@ -204,15 +238,20 @@ is a sequence of splits on delimiters that cannot appear unescaped in what they 
 - [ ] JSON body parsing and error envelope in `AdminAPI` (`src/api/admin_api.cpp`).
 - [ ] `StaticMiddleware` path from `config->http_files_path`, not `"../admin"`
       (`src/main.cpp`).
-- [ ] The admin API is off the strand; it reaches Core through `call_on_strand`.
+- [ ] The admin API is off the strand. Provisioning goes to the datastore directly with
+      the API's own executor, which the async contract exists for; only reads of Core's
+      registries (live calls, channels) go through `call_on_strand`. Written before step
+      2 as "reaches Core through `call_on_strand`" for everything, which would put every
+      admin request on the call path.
 
 ### Step 9 - Test harness
 
 - [ ] `test/e2e/` with sipp scenarios: REGISTER with Digest, INVITE/180/200/ACK/BYE,
       CANCEL before and after 180, 486, 408 on timer B, retransmission over UDP,
       RTP through the builtin relay (RTP sequence check, not silence).
-- [ ] `Registrar`, `Proxy` and `Dialog` unit tests on `MockConnection` and
-      `ManualTimerSource`, in the same RFC-derived style as the transaction tests.
+- [ ] `Dialog` unit tests on `MockConnection` and `ManualTimerSource`, in the same
+      RFC-derived style as the transaction tests. `Registrar` and `Proxy` have theirs
+      (`tests/registrar_test.cpp`, `tests/proxy_test.cpp`, since step 1).
 - [ ] `docker-compose.test.yml`: athenasip + sipp.
 - [ ] GitHub Actions: build (Debug + ASan), unit tests, sipp harness. Deferred for now
       at Tom's call; listed so it is not forgotten.
@@ -226,8 +265,10 @@ is a sequence of splits on delimiters that cannot appear unescaped in what they 
 - [ ] `RTPProxyClient` is compiled into `athena_core` and nothing constructs it. Take
       it out of the build path the way Lua was, per the Parked note.
 - [ ] `docs/architecure.md` is stale and contradicts the Decisions (it lists DynamoDB,
-      NATS, RabbitMQ, Kafka and SQS as planned). Rewrite it as `docs/architecture.md`
-      from the Architecture section above, and fix the README link. Those backends are
+      NATS, RabbitMQ, Kafka and SQS as planned). `README.md:23` already links
+      `docs/architecture.md`, which does not exist, so the link on the front page is
+      broken today. Rewrite it as `docs/architecture.md` from the Architecture section
+      above; `docs/plugins.md` (step 2) is the companion it should point at. Those backends are
       things the plugin contract makes possible, not things the core plans to build;
       the doc should say that or it reads as a roadmap the project cannot keep. `design.md`,
       `goals.md`, `scripting.md` and `modules/` predate the reset and need the same
