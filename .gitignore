@@ -34,6 +34,9 @@
 # VSCode
 .vscode
 
+# clangd index
+.cache
+
 # Build dirs
 build
 build-*
