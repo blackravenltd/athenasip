@@ -7,12 +7,19 @@
 
 #include "core.h"
 
+#include <atomic>
+#include <boost/asio/connect.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <chrono>
+
 #include "channel.h"
 #include "events/topics.h"
 #include "expiry_set.h"
 #include "proxy.h"
 #include "registrar.h"
 #include "rtp/rtp_relay.h"
+#include "servers/tcp_connection.h"
 #include "transactions/invite_client_transaction.h"
 #include "transactions/invite_server_transaction.h"
 #include "transactions/non_invite_client_transaction.h"
@@ -124,12 +131,21 @@ bool Core::channel_register(std::string endpoint, std::shared_ptr<Channel> chann
   return true;
 }
 
+void Core::channel_alias(std::string endpoint, const std::shared_ptr<Channel>& channel) {
+  _channels[endpoint] = channel;
+  _logger->debug("Aliased Channel " + endpoint);
+}
+
 bool Core::channel_unregister(std::string endpoint, std::shared_ptr<Channel> channel) {
   events->publish(events::topics::node_channel(config->sip_node_id, channel->_connection->transport_name(), channel->_connection->remote_endpoint_name()),
                   "{\"status\":\"closed\",\"at\":\"" + Util::get_zulu_time() + "\"}");
 
-  _channels.erase(endpoint);
-  _logger->debug("Unregistered Channel " + endpoint);
+  // Every name, not only the one the caller knew. A dialled channel is filed under the
+  // address it resolved to and under the name it was asked for, and leaving the second
+  // behind would be a route to a closed socket.
+  const auto removed = std::erase_if(_channels, [&channel](const auto& entry) { return entry.second == channel; });
+
+  _logger->debug("Unregistered Channel " + endpoint + (removed > 1 ? " and " + std::to_string(removed - 1) + " alias(es)" : ""));
   return true;
 }
 
@@ -137,6 +153,90 @@ std::shared_ptr<Channel> Core::channel_find(const std::string& transport, const 
   auto search = _channels.find(Util::to_lower(transport) + "://" + host + ":" + std::to_string(port));
   if (search == _channels.end()) return nullptr;
   return search->second;
+}
+
+// RFC 3261 16.6 step 7 and 18.1. Everything here runs on the global io_context, which is
+// where an outbound socket belongs - it has no server of its own - and the answer is
+// posted back to the strand, which is where the registry lives.
+void Core::channel_connect(std::string transport, std::string host, std::uint16_t port, plugins::Handler<std::shared_ptr<Channel>> handler) {
+  using ChannelResult = plugins::Result<std::shared_ptr<Channel>>;
+
+  transport = Util::to_lower(transport);
+
+  const auto key = transport + "://" + host + ":" + std::to_string(port);
+
+  if (auto existing = channel_find(transport, host, port)) return handler(ChannelResult::success(existing));
+
+  // UDP has no connection to open. A datagram to a host this node has never heard from
+  // has to leave by the listener's own socket so that the source port is the one the far
+  // end will answer to, and that socket belongs to the UDP server rather than to this
+  // registry. TLS outbound waits for the trust configuration the cluster CA brings.
+  if (transport != "tcp") {
+    return handler(ChannelResult::failure("cannot open an outbound " + transport + " flow"));
+  }
+
+  auto& io_context = detail::get_global_io_context();
+
+  auto resolver = std::make_shared<boost::asio::ip::tcp::resolver>(io_context);
+  auto socket = std::make_shared<boost::asio::ip::tcp::socket>(io_context);
+  auto deadline = std::make_shared<boost::asio::steady_timer>(io_context);
+
+  // One answer only. The timer and the connect race each other, and whichever loses must
+  // not call the handler a second time - a transaction told twice that its hop is
+  // unreachable would try the next target twice.
+  auto answered = std::make_shared<std::atomic<bool>>(false);
+
+  std::weak_ptr<Core> weak_self = weak_from_this();
+
+  auto answer = [weak_self, answered, socket, deadline, handler](ChannelResult result) {
+    if (answered->exchange(true)) return;
+
+    deadline->cancel();
+
+    auto self = weak_self.lock();
+    if (!self) return;
+
+    if (!result.ok) {
+      boost::system::error_code ec;
+      socket->close(ec);
+    }
+
+    boost::asio::post(self->_strand, [handler, result = std::move(result)]() mutable { handler(std::move(result)); });
+  };
+
+  deadline->expires_after(std::chrono::milliseconds(config->sip_connect_timeout_ms));
+  deadline->async_wait([answer, key](const boost::system::error_code& ec) {
+    if (ec == boost::asio::error::operation_aborted) return;
+    answer(ChannelResult::failure("timed out opening a flow to " + key));
+  });
+
+  // Not RFC 3263: no NAPTR and no SRV, only the A and AAAA records for the host the URI
+  // named. The service records are a step of their own, and what a cluster and a trunk
+  // both need.
+  resolver->async_resolve(host, std::to_string(port), [weak_self, resolver, socket, answer, key](const boost::system::error_code& ec, auto results) {
+    if (ec) return answer(ChannelResult::failure("cannot resolve " + key + " - " + ec.message()));
+
+    boost::asio::async_connect(*socket, results, [weak_self, socket, answer, key](const boost::system::error_code& ec, auto) {
+      if (ec) return answer(ChannelResult::failure("cannot reach " + key + " - " + ec.message()));
+
+      auto self = weak_self.lock();
+      if (!self) return;
+
+      std::shared_ptr<servers::Connection> connection = std::make_shared<servers::TCPConnection>(socket);
+      if (!connection->start()) return answer(ChannelResult::failure("cannot start the flow to " + key));
+
+      auto channel = std::make_shared<Channel>(self->_logger->base_logger(), self, connection);
+
+      // start() dispatches onto the strand and files the channel under the address it
+      // reached, which is not the name it was asked for when that name was a hostname.
+      channel->start();
+
+      boost::asio::post(self->_strand, [self, channel, key]() { self->channel_alias(key, channel); });
+
+      self->_logger->info("Opened flow to " + key + " as " + connection->remote_endpoint_name());
+      answer(ChannelResult::success(channel));
+    });
+  });
 }
 
 void Core::local_address_add(std::string host_port) { _local_addresses.insert(std::move(host_port)); }
