@@ -312,6 +312,82 @@ endpoints, media anchored in rtpengine.
 Goal: two nodes, one Redis, one Mosquitto, one rtpengine; a subscriber on node A calls
 a subscriber on node B; either node can die and re-registration recovers service.
 
+Decided 2026-09-20, on whether the nodes can sit behind a load balancer. They can, and
+the shape it forces is this:
+
+- A binding shares; a flow does not. The Redis row is readable by any node, but the
+  socket a TCP, TLS, WS or WSS client registered on lives on one node. A node that
+  reads a binding it does not own forwards to the node that does. `Location.node_id`
+  and `Location.flow_id` are what that turns on.
+- Connection-oriented transports balance cleanly: the balancer pins a connection to one
+  node for its lifetime, which is the affinity SIP wants, and a node dying drops the
+  socket so the client reconnects and re-REGISTERs. UDP does not: an L4 balancer cannot
+  see Call-ID, so a retransmission can land on a node holding no transaction state.
+  Either front UDP with a SIP-aware dispatcher or do not balance it.
+- TLS is passed through, never terminated at the balancer: the cluster-CA peer
+  certificate is what distinguishes a peer node from an endpoint.
+- Record-Route names the node, not the balancer's address. In-dialog requests then come
+  straight back to the node that anchored the media, which is coherent with "in-flight
+  dialogs on a dead node do not survive" (Principle 1) and needs no dialog replication.
+  The alternative - Record-Route the VIP and look up dialog ownership on every hop - is
+  full dialog-state sharing, which is parked. This means every node needs a
+  client-reachable address of its own, as well as the shared one.
+- RFC 3263 SRV is the failover mechanism for SIP endpoints and needs no balancer at all;
+  browsers cannot use it, so they get a balancer or a provisioned list from
+  `GET /api/v1/client/config`. RFC 5626 outbound with two flows to two nodes is the
+  strongest form of this and removes the reconnect window entirely.
+
+- [ ] Public contact addresses, which are not the node's local ones. `Via` and
+      `Record-Route` are built from `connection->local_endpoint()` today
+      (`src/proxy.cpp`, `src/channel.cpp`). Behind a balancer, in a container, or on the
+      single NAT'd public IP with port forwarding that is the normal SOHO deployment,
+      that address is a private one nothing outside can reach. A node on `192.168.1.10`
+      forwarded from `203.0.113.5` must write `203.0.113.5` into both, per transport and
+      with its own port, because the forwarded port is not always the local one.
+      Two consequences, and the second is the one that bites:
+      - `Core::is_local_address` has to hold the public addresses as well as the
+        observed local ones. It is additive already (`local_address_add`), so the
+        startup path adds the configured ones. Without that, the Record-Route this node
+        wrote comes back as a Route naming `203.0.113.5`, the node does not recognise
+        itself in it, and it forwards the request to itself - a loop, caught by 16.3.4
+        as a 482 instead of routing the BYE.
+      - A client on the same LAN reaching the public address depends on the router
+        hairpinning, and plenty do not. So the address a node advertises depends on who
+        is asking: a `localnet` list of private prefixes, the local address to anything
+        inside them and the public address to everything else, for Via, Record-Route and
+        Contact. `Util::is_ipv4_private` (`src/util.cpp`) and `Location.nat` are the
+        groundwork already in the tree.
+      The same split applies in the media plane and is step 6's problem, not this one:
+      the builtin relay puts its local address in `c=`, which is wrong for the same
+      reason and for the same audience, and the RTP port range has to be forwarded as a
+      contiguous block.
+- [ ] A node determines its own public address and reachability, rather than being told.
+      Configuration stays and always wins, because an explicit answer beats a guessed
+      one, but a node with nothing configured should work out the answer itself. Three
+      sources, cheapest first:
+      - From peers, for nothing. A peer that receives an inter-node request already
+        stamps `received` and `rport` on the top Via (RFC 3581), which is what
+        `Channel::_stamp_via` does in the receive direction. Reading them back off the
+        response is a per-transport observation of what a peer actually sees, which one
+        STUN answer cannot give.
+      - From STUN (RFC 5389) when there is no peer yet, which is every single-node first
+        start. coturn is already in the M5 compose, so the client is the only new part.
+        STUN reports the mapping the router made for an outbound packet, which on a SOHO
+        router doing symmetric NAT is not the port that was forwarded inbound. It gives
+        the public address with confidence and the port only as a guess, so it is a
+        starting point to be verified, never an answer to act on.
+      - From the operator, as today.
+      Then verify rather than believe: the node publishes what it thinks it is in the
+      retained `nodes/<id>/status` roster, and a peer sends an OPTIONS (11.1) back to
+      that address from outside. An address that does not answer is not advertised, and
+      the node says so loudly instead of record-routing something unreachable.
+      `athenasip check` reports what was found, per transport, and how.
+      The honest failure case has to be expressible: a node behind symmetric NAT or a
+      connection-pinning balancer has no address peers can reach on their own, only
+      flows clients opened. Discovery must be able to answer "not directly reachable",
+      and a node in that state must not advertise itself as a routable cluster peer -
+      that is the case where Record-Route-the-node stops working and RFC 5626 flows are
+      the only way in.
 - [ ] Redis location schema: `athena:location:<realm>:<user>` -> set of
       `{contact, node_id, flow_id, expires, path}` with TTL = registration expiry.
       `MemoryDatastore` mirrors it.
