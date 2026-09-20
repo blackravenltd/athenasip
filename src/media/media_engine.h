@@ -10,12 +10,13 @@
 #include <memory>
 #include <string>
 #include <type_traits>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "../call.h"
 #include "../loggers/logger.h"
+#include "../plugins/plugin.h"
+#include "../plugins/plugin_registry.h"
 #include "../types/url.h"
 
 namespace athenasip::media {
@@ -75,80 +76,68 @@ struct Result {
 //
 // Drivers register by URL scheme, the same way Datastore and EventSystem do, so the
 // engine is chosen by configuration: builtin:// or rtpengine://host:port.
-class MediaEngine {
+//
+// Async for the same reason the datastore is: rtpengine is an ng-protocol round trip
+// over UDP, and the builtin relay only looks instant because it happens to be in this
+// process. The caller is on the Core strand and must not wait there, and the contract
+// cannot be made async later without breaking every engine written against it.
+class MediaEngine : public plugins::Plugin {
  public:
-  virtual ~MediaEngine() = default;
+  ~MediaEngine() override = default;
 
-  virtual std::string get_driver_name() const = 0;
+  std::string kind() const final { return plugins::kinds::media; }
 
-  virtual bool connect() = 0;
+  // What an offer or answer reports back. Result already carries ok and error, so it
+  // is the handler's argument as it stands.
+  using MediaHandler = std::function<void(Result)>;
+
+  // Lifecycle. connect() is a round trip for a networked engine and is async like
+  // everything else; close() is teardown, synchronous and safe to call twice.
+  virtual void connect(plugins::Executor on, plugins::StatusHandler handler) = 0;
   virtual void close() = 0;
   virtual bool is_connected() const = 0;
 
+  // What this driver can do is local knowledge and needs no round trip.
   virtual Capabilities capabilities() const = 0;
 
-  // Two-way media setup. offer() takes the offer from one participant and returns the
-  // SDP to send on; answer() takes the answer coming back.
-  virtual Result offer(std::shared_ptr<Call> call, const std::string& sdp, const Flags& flags) = 0;
-  virtual Result answer(std::shared_ptr<Call> call, const std::string& sdp, const Flags& flags) = 0;
+  // Two-way media setup. offer() takes the offer from one participant and answers with
+  // the SDP to send on; answer() takes the answer coming back.
+  virtual void offer(plugins::Executor on, std::shared_ptr<Call> call, std::string sdp, Flags flags, MediaHandler handler) = 0;
+  virtual void answer(plugins::Executor on, std::shared_ptr<Call> call, std::string sdp, Flags flags, MediaHandler handler) = 0;
 
   // Give up every resource held for this call. Safe to call for a call the engine
   // never saw.
-  virtual bool release(std::shared_ptr<Call> call) = 0;
+  virtual void release(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) = 0;
 
   // What the engine currently holds for this call, for the admin API and diagnostics.
-  virtual std::string query(std::shared_ptr<Call> call) = 0;
+  virtual void query(plugins::Executor on, std::shared_ptr<Call> call, plugins::Handler<std::string> handler) = 0;
 
   // Conference operations. Only meaningful when capabilities().conference is set; the
   // defaults below decline, so a bridge-only driver does not have to implement them.
-  virtual bool join(std::shared_ptr<Call> call, std::size_t participant) {
+  virtual void join(plugins::Executor on, std::shared_ptr<Call> call, std::size_t participant, plugins::StatusHandler handler) {
     (void)call;
     (void)participant;
-    return false;
+    _complete(std::move(on), std::move(handler), plugins::Status::failure("this engine does not do conferences"));
   }
 
-  virtual bool leave(std::shared_ptr<Call> call, std::size_t participant) {
+  virtual void leave(plugins::Executor on, std::shared_ptr<Call> call, std::size_t participant, plugins::StatusHandler handler) {
     (void)call;
     (void)participant;
-    return false;
+    _complete(std::move(on), std::move(handler), plugins::Status::failure("this engine does not do conferences"));
   }
 
-  virtual std::vector<std::string> roster(std::shared_ptr<Call> call) {
+  virtual void roster(plugins::Executor on, std::shared_ptr<Call> call, plugins::Handler<std::vector<std::string>> handler) {
     (void)call;
-    return {};
+    _complete(std::move(on), std::move(handler), plugins::Result<std::vector<std::string>>::success({}));
   }
 
   template <typename T, typename = std::enable_if_t<std::is_base_of_v<MediaEngine, T>>>
   static void register_driver(std::shared_ptr<loggers::Logger> logger, std::string scheme) {
-    auto& drivers = get_drivers();
-    logger->debug("(media_engine) Registering scheme " + scheme);
-
-    drivers[std::move(scheme)] = [](std::shared_ptr<loggers::Logger> logger, std::shared_ptr<types::URL> url) -> std::shared_ptr<MediaEngine> {
-      return std::static_pointer_cast<MediaEngine>(std::make_shared<T>(std::move(logger), std::move(url)));
-    };
+    plugins::PluginRegistry::instance().add<T>(std::move(logger), plugins::kinds::media, std::move(scheme));
   }
 
   static std::shared_ptr<MediaEngine> create_driver(std::shared_ptr<loggers::Logger> logger, const std::string& url_string) {
-    auto url = std::make_shared<types::URL>(url_string);
-
-    logger->debug("(media_engine) Finding scheme " + url->scheme);
-
-    auto& drivers = get_drivers();
-    auto it = drivers.find(url->scheme);
-    if (it == drivers.end()) {
-      logger->error("(media_engine) Unknown scheme " + url->scheme);
-      return nullptr;
-    }
-
-    return it->second(std::move(logger), std::move(url));
-  }
-
- protected:
-  using Factory = std::function<std::shared_ptr<MediaEngine>(std::shared_ptr<loggers::Logger>, std::shared_ptr<types::URL>)>;
-
-  static std::unordered_map<std::string, Factory>& get_drivers() {
-    static std::unordered_map<std::string, Factory> drivers;
-    return drivers;
+    return plugins::PluginRegistry::instance().create_as<MediaEngine>(std::move(logger), plugins::kinds::media, url_string);
   }
 };
 

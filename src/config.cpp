@@ -25,6 +25,8 @@ bool Config::load_from_yaml(const std::string& filename) {
     return false;
   }
 
+  _root = config;
+
   // --- Parse the 'sip' section ---
   if (!config["sip"]) {
     _logger->error("YAML file missing 'sip' section");
@@ -288,6 +290,19 @@ bool Config::load_from_yaml(const std::string& filename) {
   }
 
   return true;
+}
+
+YAML::Node Config::plugin_root(const std::string& kind, const std::string& name) const {
+  if (!_root || !_root[kind]) {
+    return YAML::Node(YAML::NodeType::Undefined);
+  }
+
+  const YAML::Node section = _root[kind][name];
+  if (!section) {
+    return YAML::Node(YAML::NodeType::Undefined);
+  }
+
+  return section;
 }
 
 }  // namespace athenasip

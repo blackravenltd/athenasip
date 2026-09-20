@@ -230,7 +230,7 @@ uncommitted working tree on 2026-09-17.
       is gone from the example config.
 - [x] Dependencies are now Boost, OpenSSL and yaml-cpp, plus GoogleTest for the test
       build. `otool -L` on the binary shows no SQL, Lua or XML libraries.
-- [x] Docs updated: `architecure.md` driver table, `configuration.md` datastore table
+- [x] Docs updated: `architecture.md` driver table, `configuration.md` datastore table
       and example, `compiling.md` brew line and build commands, `quick_start.md` and
       the README. `docs/versions/v0_0_1_overview.md` is left alone as a record of what
       0.0.1 actually shipped.
@@ -537,3 +537,135 @@ and gives the TU logic somewhere to live.
 - [x] 43 new tests: the matcher against the section 17 identity rules, the registrar against
       section 10 and RFC 3327, the proxy against section 16, and the transport against RFC 3581.
       262 tests, clean under asan and tsan.
+
+## Milestone 2 step 2 - Plugin contract v1 (2026-09-19)
+
+- [x] One `PluginRegistry` keyed by (kind, scheme) (`src/plugins/plugin_registry.*`), replacing
+      the three copy-pasted template registries in `datastore.h`, `event_system.h` and
+      `media_engine.h`. The pair is the key because `memory://` is a datastore and, separately,
+      an event system. `Datastore`, `EventSystem` and `MediaEngine` keep typed
+      `register_driver`/`create_driver` helpers over it, so no call site changed shape.
+- [x] `plugins::Plugin` (`src/plugins/plugin.h`): `kind()`, `name()`, `version()`,
+      `api_version()`, `configure()` and `health()`. `get_driver_name()` is gone - it returned
+      prose ("AthenaSIP Redis Driver v0.0.1"), which nothing can key on. The versioning rule is
+      enforced rather than documented: the registry refuses a plugin whose `api_version()` is
+      not this server's, which is unreachable for a compiled-in driver and the whole point once
+      plugins are shared libraries.
+- [x] Configuration hand-off: `configure(own_root, system)` with `Config::plugin_root(kind,
+      name)`, keyed on the driver's `name()` rather than its scheme so the three Redis schemes
+      share one section. `BuiltinMediaEngine` and `MQTTEventSystem` read theirs; the URL stays
+      the selector and a one-line `datastore: { url: memory:// }` still works.
+- [x] `Datastore` is async in the contract: 21 operations, each taking the caller's executor and
+      a handler that is posted rather than called inline. `RedisDatastore` loses its sync
+      primitive layer and the `_wait_*` future bridge, and with them the five second timeout
+      that ran on the Core strand - a slow Redis used to stall every call on the node.
+      `plugins::Status` and `plugins::Result<T>` separate "found nothing" from "could not ask",
+      so the registrar and proxy answer 500 to an unreachable datastore where both used to
+      answer 404.
+- [x] `Core`, `Registrar` and `Proxy` become continuation chains; the registrar reads as the
+      numbered stages of 10.3 because each step that needs the datastore returns before the
+      next one runs. `TransactionUser` is `enable_shared_from_this` and `Core` holds a
+      reference to itself across its own calls: a handler running after its owner was destroyed
+      was a use-after-free the suite found once the work outlived the fixture.
+- [x] `MediaEngine` follows: `offer`, `answer`, `release`, `query` and the conference operations
+      all take an executor and a handler.
+- [x] `docs/plugins.md`: the contract, the lifecycle, the versioning rule, the two async rules a
+      driver must not break, and how to write one.
+- [x] 26 new tests. The registry ones cover what the shape has to guarantee: the same scheme
+      under two kinds stays two drivers, an unknown scheme and a known scheme under the wrong
+      kind both refuse, and a plugin built against another contract version is not constructed.
+      `tests/helpers/sync_datastore_helper.h` and `sync_media_engine_helper.h` are blocking
+      views for tests only, with the reason written where they are defined. 273 tests, clean
+      under asan and tsan, and the Redis suite verified against a real server.
+
+## Milestone 2 step 3 - SIPUri is a real URI (2026-09-20)
+
+- [x] Parameters and headers are structured (`src/types/sip_uri.*`): `parameter(name)`,
+      `has_parameter`, `header(name)`, in the order they arrived so a URI we did not write
+      round-trips as it came. Names match case-insensitively (19.1.1) and are kept as written.
+      `lr` is present-with-empty-value, distinguishable from absent, which is what 16.12 needs.
+- [x] Escaping per 19.1.2 and 25.1, with the per-component allowed sets (user, password,
+      param, header) written out from the ABNF. Values are held unescaped; `to_string()` puts
+      it back. A '%' not followed by two hex digits is left alone rather than swallowed.
+- [x] `equivalent_to()` implements 19.1.4: sip and sips never match, user is case-sensitive,
+      host is not, an absent port is not the default port, a parameter in both must match,
+      `user`/`ttl`/`method`/`maddr` in only one never match, and headers must be present in
+      both and equal. Not `operator==`, because it is not string equality and a reader should
+      notice.
+- [x] `realm` is `host`. A realm is the Digest protection domain (22.1); the field was the
+      host of the URI and had been named for a different concept.
+- [x] The regex is gone. The parser is a sequence of `find()`s on characters that cannot
+      appear unescaped in the parts they delimit, over attacker-supplied text, with no
+      recursion to bound. 16 tests from the RFC, written first and watched fail. 289 tests.
+
+## Milestone 2 - SIPIdentity is hand-written (2026-09-20)
+
+- [x] `SIPIdentity::parse` (`src/types/sip_identity.cpp`) is a hand-written parser. The
+      backtracking `std::regex` it replaces ran over every To, From and Contact arriving from
+      the network, with a recursion depth bounded by the length of the header and nothing
+      else. The message path now has no regex on it at all.
+- [x] It parses what the grammar actually allows and the regex could not: a quoted display
+      name containing `<`, `>`, `;` or `,` (20.10 allows it, which is the whole point of
+      quoting), and `quoted-pair` escapes inside one (25.1).
+- [x] `star`: RFC 3261 20.10 has STAR as its own alternative to a contact-param, and 10.2.2
+      gives it meaning. A Contact of `*` was previously parsed as a URI and recognised by the
+      wreckage it left - no user, host `"*"`, marked invalid. `Registrar::is_star_contact`
+      now asks the identity.
+- [x] Header parameter names are lower-cased on the way in (7.3.1 makes them
+      case-insensitive). A UA sending `;Tag=` or `;Expires=` was previously missed, which for
+      Expires meant a binding written with the wrong lifetime.
+- [x] `to_string()` emits parameters in sorted order rather than hash order, so the same
+      identity produces the same bytes every time.
+- [x] 14 tests from section 20.10 and 25.1, written first and watched fail. 303 tests.
+
+## Milestone 2 step 4 - Proxy core, the rest of section 16 (2026-09-20)
+
+- [x] Loop detection (16.3.4). The branch this node writes is now separable, as 16.6 step 8
+      asks: the magic cookie, a hash of the fields that decide where the request goes, and a
+      value unique to the branch. A request arriving with a Via this node wrote is a loop when
+      the hash recomputes the same and a spiral when it does not, so 482 is returned for the
+      first and nothing changes for the second. The topmost Via is left out of the hash on
+      purpose, against the RFC's own worked example: it is the hop that handed the request
+      over, which is exactly what differs between the first pass and the pass that comes back,
+      so including it would make every loop look like a spiral. The reason is written where
+      the hash is computed.
+- [x] Route preprocessing (16.4): a strict router's rewrite is undone - Request-URI naming
+      this node with the `lr` this node wrote, and the real target recovered from the last
+      Route value - and a first Route naming this node is removed.
+- [x] Record-Route (16.6 step 4) on every INVITE forwarded, naming the flow the hop goes out
+      on, with `lr` and with `transport` when it is not UDP, and `sips` for a TLS hop or a
+      sips Request-URI. This is what brings the ACK and the BYE back through a node that
+      anchors media and keeps call records.
+- [x] Route postprocessing (16.6 step 6): a top Route without `lr` belongs to a strict router,
+      so the Request-URI goes to the end of the route set and the Route into the Request-URI.
+- [x] In-dialog requests transit on their route set, with no dialog state consulted, because
+      a proxy is transaction-stateful and not dialog-stateful (16.1). Target determination now
+      follows 16.5 properly: a route set decides the hop and leaves the Request-URI alone, and
+      a Request-URI in a domain this node serves no realm for is itself the only target. That
+      second rule is the whole of it - a BYE's Request-URI is the remote target, which is an
+      address rather than an address of record, so it is forwarded as it stands.
+- [x] `SIPMessage::clone` and 16.6 step 1: each branch of a fork starts from a copy of the
+      request as received. Forwarding the one object twice stacked this node's Via and
+      decremented Max-Forwards once per attempt, so the second callee saw a different request
+      from the first, and a 483 was generated from a request the proxy had already rewritten.
+- [x] Stateless response forwarding (16.7 step 1, 18.1.2): a response matching no client
+      transaction goes back down its Via chain with this node's Via removed, and is dropped
+      rather than relayed when the top Via is not one this node wrote. They were dropped.
+- [x] CANCEL forwarding (16.10): the response context is filed under the server transaction it
+      answers, so a CANCEL reaches the branch already tried. RFC 3261 9.1 is honoured - one
+      Via, the route set it was sent with, CSeq method rewritten, no body - and a CANCEL
+      arriving before the branch has answered provisionally waits for the provisional rather
+      than naming a transaction the far end does not have yet. A cancelled fork stops trying
+      further targets, which is what stops the next phone ringing after the caller hung up.
+- [x] 16.7 step 6: a 503 from the last branch goes upstream as a 500, because a 503 is a fact
+      about the next hop and not about this node.
+- [x] `Route` and `Record-Route` are `SIPIdentityHeader` rather than strings - the same
+      name-addr grammar as To, From and Contact (20.30, 20.34) - so `parameter("lr")` from
+      step 3 is readable where 16.12 needs it.
+- [x] `Core::is_local_address` and `Core::channel_find`: what names this node, and the live
+      flow to a next hop. Channels add their local endpoint as they register, so the set is
+      what the node is reachable at rather than what it was configured with. The configured
+      and discovered public addresses that a NAT'd or balanced node needs are M4.
+- [x] 17 tests from sections 16.3.4, 16.4, 16.5, 16.6, 16.7, 16.10, 18.1.2 and 9.1, written
+      from the RFC and watched fail. `tests/helpers/proxy_fixture_helper.h` is the shared
+      fixture. 320 tests, clean under asan and tsan.

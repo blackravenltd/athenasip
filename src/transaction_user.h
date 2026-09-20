@@ -22,7 +22,11 @@ namespace athenasip {
 //
 // Registrar (section 10) is the TU for REGISTER. Proxy (section 16) is the TU for
 // everything else. Dialogs (section 12) and a local UA join them in later steps.
-class TransactionUser {
+//
+// A TU's work is async now that the datastore is: it answers a request from a handler
+// that runs some time after on_request returned. Holding a strong reference to itself
+// across that gap is what keeps it alive, so every TU is shared and can hand out one.
+class TransactionUser : public std::enable_shared_from_this<TransactionUser> {
  public:
   virtual ~TransactionUser() = default;
 

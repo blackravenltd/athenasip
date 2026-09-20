@@ -12,7 +12,7 @@
 #include "headers/uint_header.h"
 #include "headers/via_header.h"
 
-#include "helpers/core_fixture_helper.h"
+#include "helpers/proxy_fixture_helper.h"
 
 using namespace athenasip;
 using athenasip::headers::UIntHeader;
@@ -20,57 +20,7 @@ using athenasip::headers::ViaHeader;
 
 namespace {
 
-struct Fixture : CoreFixture {
-  std::shared_ptr<MockConnection> caller_connection;
-  std::shared_ptr<Channel> caller;
-
-  std::shared_ptr<MockConnection> callee_connection;
-  std::shared_ptr<Channel> callee;
-
-  std::shared_ptr<types::Subscriber> bob;
-
-  Fixture() {
-    seed_realm("example.com");
-    seed_subscriber(1, "sip:alice@example.com", "alice-ha1");
-    bob = seed_subscriber(2, "sip:bob@example.com", "bob-ha1");
-
-    caller = make_channel("192.0.2.10", &caller_connection);
-    callee = make_channel("192.0.2.20", &callee_connection);
-  }
-
-  // Puts Bob on the callee channel, the way a successful REGISTER would.
-  void bind_bob(const std::string& contact = "sip:bob@192.0.2.20:5060") {
-    on_strand([&]() { core->subscriber_register(bob, std::make_shared<types::SIPUri>(contact), callee, 3600, ""); });
-  }
-
-  std::string invite(const std::string& branch = "z9hG4bK-invite", const std::string& to = "sip:bob@example.com", const std::string& max_forwards = "70") {
-    std::string raw = "INVITE " + to + " SIP/2.0\r\n";
-    raw += "Via: SIP/2.0/UDP 192.0.2.10:5060;branch=" + branch + "\r\n";
-    raw += "From: <sip:alice@example.com>;tag=alice\r\n";
-    raw += "To: <" + to + ">\r\n";
-    raw += "Call-ID: call-proxy\r\n";
-    raw += "CSeq: 1 INVITE\r\n";
-    raw += "Contact: <sip:alice@192.0.2.10:5060>\r\n";
-    if (!max_forwards.empty()) raw += "Max-Forwards: " + max_forwards + "\r\n";
-    raw += "\r\n";
-    return raw;
-  }
-
-  // The response the callee sends back, carrying the Via chain the proxy built.
-  std::string response_from_callee(int code, const std::string& reason, const std::string& to_tag = "bob") {
-    auto forwarded = request_with(callee_connection, "INVITE");
-    if (!forwarded) return "";
-
-    std::string raw = "SIP/2.0 " + std::to_string(code) + " " + reason + "\r\n";
-    for (const auto& via : forwarded->header->headers_map["Via"]) raw += "Via: " + via->to_string() + "\r\n";
-    raw += "From: <sip:alice@example.com>;tag=alice\r\n";
-    raw += "To: <sip:bob@example.com>;tag=" + to_tag + "\r\n";
-    raw += "Call-ID: call-proxy\r\n";
-    raw += "CSeq: 1 INVITE\r\n";
-    raw += "\r\n";
-    return raw;
-  }
-};
+using Fixture = ProxyFixture;
 
 }  // namespace
 
@@ -102,7 +52,7 @@ TEST(ProxyTest, TheForwardedRequestUriIsTheBinding) {
   auto forwarded = f.request_with(f.callee_connection, "INVITE");
   ASSERT_NE(forwarded, nullptr);
   ASSERT_NE(forwarded->header->request_uri, nullptr);
-  EXPECT_EQ(forwarded->header->request_uri->realm, "192.0.2.20");
+  EXPECT_EQ(forwarded->header->request_uri->host, "192.0.2.20");
 }
 
 // RFC 3261 16.6 step 8: the proxy adds its own Via on top, with a branch of its own, and
@@ -139,7 +89,7 @@ TEST(ProxyTest, TheViaTransportIsTheOutboundOne) {
 
   std::shared_ptr<MockConnection> tls_connection;
   auto tls_channel = f.make_channel("192.0.2.30", &tls_connection, "tls");
-  f.on_strand([&]() { f.core->subscriber_register(f.bob, std::make_shared<types::SIPUri>("sip:bob@192.0.2.30:5061"), tls_channel, 3600, ""); });
+  f.register_binding(f.bob, std::make_shared<types::SIPUri>("sip:bob@192.0.2.30:5061"), tls_channel, 3600);
 
   f.receive(f.caller, f.invite());
 
