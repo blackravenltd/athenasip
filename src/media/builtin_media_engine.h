@@ -88,9 +88,18 @@ class BuiltinMediaEngine : public MediaEngine {
   std::shared_ptr<rtp::RTPRelay> _relay;
   bool _connected = false;
 
-  // Relay sets held per call, so release() can give the ports back.
+  // What one media stream is relayed through. Both legs are given the same pair: the
+  // relay learns where a leg is from the first packet it sends and forwards to every
+  // other leg that has, so one port is the bridge and two ports would be two sinks.
+  struct StreamRelays {
+    std::shared_ptr<rtp::RTPRelaySet> rtp;
+    std::shared_ptr<rtp::RTPRelaySet> rtcp;
+  };
+
+  // Held per call and then per stream, which is the granularity a re-offer matches on
+  // and the granularity release() gives back.
   mutable std::mutex _mutex;
-  std::unordered_map<std::string, std::vector<std::shared_ptr<rtp::RTPRelaySet>>> _allocated;
+  std::unordered_map<std::string, std::unordered_map<std::int64_t, StreamRelays>> _allocated;
 };
 
 }  // namespace athenasip::media
