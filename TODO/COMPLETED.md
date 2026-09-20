@@ -597,3 +597,23 @@ and gives the TU logic somewhere to live.
 - [x] The regex is gone. The parser is a sequence of `find()`s on characters that cannot
       appear unescaped in the parts they delimit, over attacker-supplied text, with no
       recursion to bound. 16 tests from the RFC, written first and watched fail. 289 tests.
+
+## Milestone 2 - SIPIdentity is hand-written (2026-09-20)
+
+- [x] `SIPIdentity::parse` (`src/types/sip_identity.cpp`) is a hand-written parser. The
+      backtracking `std::regex` it replaces ran over every To, From and Contact arriving from
+      the network, with a recursion depth bounded by the length of the header and nothing
+      else. The message path now has no regex on it at all.
+- [x] It parses what the grammar actually allows and the regex could not: a quoted display
+      name containing `<`, `>`, `;` or `,` (20.10 allows it, which is the whole point of
+      quoting), and `quoted-pair` escapes inside one (25.1).
+- [x] `star`: RFC 3261 20.10 has STAR as its own alternative to a contact-param, and 10.2.2
+      gives it meaning. A Contact of `*` was previously parsed as a URI and recognised by the
+      wreckage it left - no user, host `"*"`, marked invalid. `Registrar::is_star_contact`
+      now asks the identity.
+- [x] Header parameter names are lower-cased on the way in (7.3.1 makes them
+      case-insensitive). A UA sending `;Tag=` or `;Expires=` was previously missed, which for
+      Expires meant a binding written with the wrong lifetime.
+- [x] `to_string()` emits parameters in sorted order rather than hash order, so the same
+      identity produces the same bytes every time.
+- [x] 14 tests from section 20.10 and 25.1, written first and watched fail. 303 tests.
