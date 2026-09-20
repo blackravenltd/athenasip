@@ -264,10 +264,10 @@ dialog ownership; the UAs own the dialogs.
       (RFC 6665, M6), and renaming costs more the later it happens.
 - [ ] `RTPProxyClient` is compiled into `athena_core` and nothing constructs it. Take
       it out of the build path the way Lua was, per the Parked note.
-- [ ] `docs/architecure.md` is stale and contradicts the Decisions (it lists DynamoDB,
-      NATS, RabbitMQ, Kafka and SQS as planned). `README.md:23` already links
-      `docs/architecture.md`, which does not exist, so the link on the front page is
-      broken today. Rewrite it as `docs/architecture.md` from the Architecture section
+- [ ] `docs/architecture.md` is stale and contradicts the Decisions (it lists DynamoDB,
+      NATS, RabbitMQ, Kafka and SQS as planned). The file was renamed from
+      `architecure.md` on 2026-09-20, which fixed the broken `README.md:23` link; the
+      contents are still the pre-reset ones. Rewrite it from the Architecture section
       above; `docs/plugins.md` (step 2) is the companion it should point at. Those backends are
       things the plugin contract makes possible, not things the core plans to build;
       the doc should say that or it reads as a roadmap the project cannot keep. `design.md`,
@@ -354,7 +354,8 @@ in ten minutes.
 - [ ] Docs rewritten for the reader without a telecoms background: install, quick start,
       configuration reference generated from the config schema, "how a call works",
       clustering guide, TLS and certificates guide, media engines guide, troubleshooting.
-      Fix `README.md` link to `docs/architecure.md` (rename the file).
+      The `README.md` link and the filename were fixed on 2026-09-20; the contents are
+      the M2 step 10 rewrite.
 - [ ] Plugins as shared libraries: `plugins.path` in config, scan for `.so`, `.dylib`
       and `.dll`, `dlopen`, call an `extern "C"` describe/create entry point, register
       through the step 2 contract, and refuse to load a plugin whose `api_version` does
