@@ -47,6 +47,11 @@ class SIPMessage {
   std::string get_transaction_id();
   std::shared_ptr<SIPMessage> generate_response();
 
+  // RFC 3261 16.6 step 1: a proxy forwards a copy of the request it received, and keeps
+  // the received one to answer with. Header values are polymorphic and shared, so a
+  // shallow copy would put the Via added for one branch on the next one too.
+  std::shared_ptr<SIPMessage> clone() const;
+
   friend std::string operator+(const SIPMessage& header, const std::string& str);
   friend std::string operator+(const std::string& str, const SIPMessage& header);
 

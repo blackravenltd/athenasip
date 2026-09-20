@@ -113,6 +113,10 @@ std::shared_ptr<Channel> Core::subscriber_get_channel(std::shared_ptr<Subscriber
 bool Core::channel_register(std::string endpoint, std::shared_ptr<Channel> channel) {
   _channels[endpoint] = channel;
 
+  // Where the far end reached us is where a Record-Route this node writes will point,
+  // so it is what a Route coming back has to be recognised against (RFC 3261 16.4).
+  if (channel->_connection) local_address_add(channel->_connection->local_endpoint_name());
+
   events->publish(events::topics::node_channel(config->sip_node_id, channel->_connection->transport_name(), channel->_connection->remote_endpoint_name()),
                   "{\"status\":\"registered\",\"at\":\"" + Util::get_zulu_time() + "\"}");
 
@@ -128,6 +132,16 @@ bool Core::channel_unregister(std::string endpoint, std::shared_ptr<Channel> cha
   _logger->debug("Unregistered Channel " + endpoint);
   return true;
 }
+
+std::shared_ptr<Channel> Core::channel_find(const std::string& transport, const std::string& host, std::uint16_t port) {
+  auto search = _channels.find(Util::to_lower(transport) + "://" + host + ":" + std::to_string(port));
+  if (search == _channels.end()) return nullptr;
+  return search->second;
+}
+
+void Core::local_address_add(std::string host_port) { _local_addresses.insert(std::move(host_port)); }
+
+bool Core::is_local_address(const std::string& host, std::uint16_t port) const { return _local_addresses.count(host + ":" + std::to_string(port)) > 0; }
 
 void Core::channel_close_all() {
   // close() unregisters, which erases from _channels. Take a copy and empty the map
@@ -201,12 +215,12 @@ void Core::process_message(std::shared_ptr<SIPMessage> message) {
 
   if (message->header->type == SIPHeader::Type::Response) {
     // RFC 3261 17.1.3: a response belongs to the client transaction whose branch it
-    // carries. A response with no transaction is a stray; forwarding it statelessly on
-    // its Via (18.1.2) is proxy work and comes with the rest of section 16.
+    // carries. One that belongs to none has no context here, so it goes back down its
+    // Via chain statelessly (16.7 step 1, 18.1.2), which is the proxy's job.
     auto transaction = _matcher.match_response(message);
 
     if (!transaction) {
-      _logger->debug("Response " + std::to_string(message->header->response_code) + " matches no transaction - dropping");
+      _proxy->on_stray_response(message);
       return;
     }
 

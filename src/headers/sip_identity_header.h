@@ -33,6 +33,13 @@ struct SIPIdentityHeaderRegister {
     Header::register_factory("To", reg);
     Header::register_factory("From", reg);
     Header::register_factory("Contact", reg);
+
+    // RFC 3261 20.30 and 20.34: Route and Record-Route are name-addr with parameters,
+    // the same grammar. The proxy has to read the lr parameter of the top Route (16.12)
+    // and compare its URI with this node's own, neither of which is possible while the
+    // value is a string.
+    Header::register_factory("Route", reg);
+    Header::register_factory("Record-Route", reg);
   }
 };
 static SIPIdentityHeaderRegister s_sipIdentityHeaderRegister;

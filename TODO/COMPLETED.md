@@ -617,3 +617,55 @@ and gives the TU logic somewhere to live.
 - [x] `to_string()` emits parameters in sorted order rather than hash order, so the same
       identity produces the same bytes every time.
 - [x] 14 tests from section 20.10 and 25.1, written first and watched fail. 303 tests.
+
+## Milestone 2 step 4 - Proxy core, the rest of section 16 (2026-09-20)
+
+- [x] Loop detection (16.3.4). The branch this node writes is now separable, as 16.6 step 8
+      asks: the magic cookie, a hash of the fields that decide where the request goes, and a
+      value unique to the branch. A request arriving with a Via this node wrote is a loop when
+      the hash recomputes the same and a spiral when it does not, so 482 is returned for the
+      first and nothing changes for the second. The topmost Via is left out of the hash on
+      purpose, against the RFC's own worked example: it is the hop that handed the request
+      over, which is exactly what differs between the first pass and the pass that comes back,
+      so including it would make every loop look like a spiral. The reason is written where
+      the hash is computed.
+- [x] Route preprocessing (16.4): a strict router's rewrite is undone - Request-URI naming
+      this node with the `lr` this node wrote, and the real target recovered from the last
+      Route value - and a first Route naming this node is removed.
+- [x] Record-Route (16.6 step 4) on every INVITE forwarded, naming the flow the hop goes out
+      on, with `lr` and with `transport` when it is not UDP, and `sips` for a TLS hop or a
+      sips Request-URI. This is what brings the ACK and the BYE back through a node that
+      anchors media and keeps call records.
+- [x] Route postprocessing (16.6 step 6): a top Route without `lr` belongs to a strict router,
+      so the Request-URI goes to the end of the route set and the Route into the Request-URI.
+- [x] In-dialog requests transit on their route set, with no dialog state consulted, because
+      a proxy is transaction-stateful and not dialog-stateful (16.1). Target determination now
+      follows 16.5 properly: a route set decides the hop and leaves the Request-URI alone, and
+      a Request-URI in a domain this node serves no realm for is itself the only target. That
+      second rule is the whole of it - a BYE's Request-URI is the remote target, which is an
+      address rather than an address of record, so it is forwarded as it stands.
+- [x] `SIPMessage::clone` and 16.6 step 1: each branch of a fork starts from a copy of the
+      request as received. Forwarding the one object twice stacked this node's Via and
+      decremented Max-Forwards once per attempt, so the second callee saw a different request
+      from the first, and a 483 was generated from a request the proxy had already rewritten.
+- [x] Stateless response forwarding (16.7 step 1, 18.1.2): a response matching no client
+      transaction goes back down its Via chain with this node's Via removed, and is dropped
+      rather than relayed when the top Via is not one this node wrote. They were dropped.
+- [x] CANCEL forwarding (16.10): the response context is filed under the server transaction it
+      answers, so a CANCEL reaches the branch already tried. RFC 3261 9.1 is honoured - one
+      Via, the route set it was sent with, CSeq method rewritten, no body - and a CANCEL
+      arriving before the branch has answered provisionally waits for the provisional rather
+      than naming a transaction the far end does not have yet. A cancelled fork stops trying
+      further targets, which is what stops the next phone ringing after the caller hung up.
+- [x] 16.7 step 6: a 503 from the last branch goes upstream as a 500, because a 503 is a fact
+      about the next hop and not about this node.
+- [x] `Route` and `Record-Route` are `SIPIdentityHeader` rather than strings - the same
+      name-addr grammar as To, From and Contact (20.30, 20.34) - so `parameter("lr")` from
+      step 3 is readable where 16.12 needs it.
+- [x] `Core::is_local_address` and `Core::channel_find`: what names this node, and the live
+      flow to a next hop. Channels add their local endpoint as they register, so the set is
+      what the node is reachable at rather than what it was configured with. The configured
+      and discovered public addresses that a NAT'd or balanced node needs are M4.
+- [x] 17 tests from sections 16.3.4, 16.4, 16.5, 16.6, 16.7, 16.10, 18.1.2 and 9.1, written
+      from the RFC and watched fail. `tests/helpers/proxy_fixture_helper.h` is the shared
+      fixture. 320 tests, clean under asan and tsan.
