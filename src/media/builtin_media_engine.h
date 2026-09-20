@@ -24,33 +24,58 @@ namespace athenasip::media {
 // more participants with no ICE, DTLS or transcoding. It is what runs when there is no
 // rtpengine, and it only claims the bridge capability.
 //
-// Configured through its URL, the way the other drivers are:
-//   builtin://?public_address=203.0.113.5&bind_address=0.0.0.0&port_min=22000&port_max=23000
+// Selected by its URL, like every other driver, and configured through its own section
+// of the config:
+//
+//   media:
+//     url: builtin://
+//     builtin:
+//       public_address: 203.0.113.5
+//       bind_address: 0.0.0.0
+//       port_min: 22000
+//       port_max: 23000
+//
+// The URL query form (builtin://?public_address=...) still works and is read first, so
+// a one-line config needs nothing else.
 class BuiltinMediaEngine : public MediaEngine {
  public:
   BuiltinMediaEngine(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<types::URL> url);
   ~BuiltinMediaEngine() override;
 
-  std::string get_driver_name() const override;
+  std::string name() const override;
+  std::string version() const override;
 
-  bool connect() override;
+  bool configure(const YAML::Node& own_root, const Config& system) override;
+
+  void connect(plugins::Executor on, plugins::StatusHandler handler) override;
   void close() override;
   bool is_connected() const override;
 
   // Bridge only. No conference, no recording, no transcoding.
   Capabilities capabilities() const override;
 
-  Result offer(std::shared_ptr<Call> call, const std::string& sdp, const Flags& flags) override;
-  Result answer(std::shared_ptr<Call> call, const std::string& sdp, const Flags& flags) override;
-  bool release(std::shared_ptr<Call> call) override;
-  std::string query(std::shared_ptr<Call> call) override;
+  void offer(plugins::Executor on, std::shared_ptr<Call> call, std::string sdp, Flags flags, MediaHandler handler) override;
+  void answer(plugins::Executor on, std::shared_ptr<Call> call, std::string sdp, Flags flags, MediaHandler handler) override;
+  void release(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) override;
+  void query(plugins::Executor on, std::shared_ptr<Call> call, plugins::Handler<std::string> handler) override;
 
  private:
+  // The work itself, synchronous: this engine relays in-process and genuinely has the
+  // answer at once. The public methods are the contract, and deliver these on the
+  // caller's executor.
+  Result _offer(std::shared_ptr<Call> call, const std::string& sdp, const Flags& flags);
+  Result _answer(std::shared_ptr<Call> call, const std::string& sdp, const Flags& flags);
+  bool _release(std::shared_ptr<Call> call);
+  std::string _query(std::shared_ptr<Call> call);
+
   // Rewrites the SDP so this node is the media endpoint for every stream, allocating a
   // relay pair per media description. Ported from the pre-reset SIPCore::_map_media.
   Result _map_media(std::shared_ptr<Call> call, const std::string& sdp_text, const Flags& flags);
 
   void _apply_url(const std::shared_ptr<types::URL>& url);
+
+  // Port range sanity, applied after the URL and again after the config section.
+  void _validate_port_range();
 
   std::shared_ptr<loggers::Logger> _logger;
   std::shared_ptr<types::URL> _url;

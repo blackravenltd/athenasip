@@ -8,7 +8,12 @@ RFC 3261; `Core` runs on a single strand with no locks; `memory://` and `redis:/
 the datastores and both implement the full interface; `MediaEngine` and a builtin RTP
 relay driver are in; `Call` is multi-party; all four RFC 3261 section 17 transaction
 state machines exist and are wired in behind a matcher, with `Registrar` and `Proxy` as
-the transaction users. 262 tests, clean under asan and tsan.
+the transaction users.
+
+M2 steps 1 to 4 have landed since: the transaction users, the plugin contract (one
+registry, async datastore and media engine), a structured `SIPUri` and the rest of
+section 16. 320 tests, clean under asan and tsan, the Redis suite verified against a
+real server.
 
 An architecture review on 2026-09-18 compared the Principles, the tree and the RFCs.
 Its findings are merged into Milestone 2 below, which is ordered by priority: work the
@@ -28,8 +33,8 @@ Move items to `COMPLETED.md` as they land, with a one-line note on what shipped.
    certificates, and an admin UI that works out of the box. Every feature ships with
    the tooling and documentation that makes it easy, or it is not done.
 4. **IoC / plugin architecture.** `Datastore`, `EventSystem` and `MediaEngine` are
-   registries keyed by URL scheme. Two implementations per interface: one built-in for
-   zero-config single node, one canonical for production.
+   plugin kinds behind one registry keyed by (kind, URL scheme). Two implementations
+   per kind: one built-in for zero-config single node, one canonical for production.
 5. **Canonical backends:** Redis (datastore), MQTT (events), rtpengine (media).
 6. **Web video calling and conferencing are first class.** AthenaPhone is the client
    for now; a web client follows. Everything in the signalling and media model must
@@ -94,22 +99,12 @@ Everything below the transaction users is a plugin: datastores, event systems an
 engines today, routing policy and others later. They hang off the TU layer and register
 through one contract, so adding a kind or an implementation touches nothing above it.
 
-What the review found the tree does instead, and which step below fixes it. Step 1
-landed on 2026-09-18 and its three findings have moved to `COMPLETED.md`; what is left:
+What the review found the tree does instead, and which step below fixes it. Steps 1 and
+2 landed on 2026-09-18 and 2026-09-19 and their findings have moved to `COMPLETED.md`;
+what is left:
 
-- `Datastore` is blocking by contract and is called on the Core strand.
-  `RedisDatastore` waits on a future with a 5 second timeout, so a slow Redis stalls
-  every call on the node. The strand made this global rather than per server thread.
-  And because the interface is the plugin contract, it cannot be made async later
-  without breaking every plugin built against it. (Step 2.)
-- There are three copy-pasted registries, one per interface, and each driver is given
-  a URL to parse. That is fine for three kinds and the wrong shape for "easy to add
-  more": a unified registry and a proper config hand-off are what the shared-library
-  loader will need anyway. (Step 2.)
 - There is no Dialog (section 12). `Call` is the application object and is not one:
-  it has tags but no route set, CSeq tracking or remote target. (Step 4.)
-- `SIPUri` keeps parameters and headers as opaque strings, so the proxy cannot read
-  `lr`, `transport` or `maddr`, and there is no section 19.1.4 comparison. (Step 3.)
+  it has tags but no route set, CSeq tracking or remote target. (Step 5.)
 - For a browser over WS the Contact URI is unroutable, so RFC 5626 flow routing and
   WSS are prerequisites for the first WebRTC call, not cluster features. (Steps 7 and
   M3.)
@@ -133,10 +128,6 @@ moved out of `Channel`. What it deliberately left for later, so it is not lost:
 
 - [ ] RFC 2543 fallback transaction matching, for a request whose branch carries no magic
       cookie. Deferred by the step; needed for interop with pre-3261 endpoints only.
-- [ ] Stray responses are dropped. Forwarding one statelessly on its Via (18.1.2) is
-      proxy work and belongs with step 5.
-- [ ] CANCEL is answered locally and ends the INVITE server transaction with 487, but is
-      not forwarded down the branches already tried (16.10). Also step 5.
 - [ ] Serial forking tries each binding in turn but sends every attempt down the one flow
       the subscriber registered on, because that is all a single node knows. Per-binding
       flow routing is RFC 5626 in M3, and `Location.flow_id` exists for it.
@@ -145,58 +136,79 @@ moved out of `Channel`. What it deliberately left for later, so it is not lost:
 
 ### Step 2 - Plugin contract v1
 
-The plugin contract is the product: it is the gap AthenaSIP occupies in the SIP
-ecosystem. It has to be right before anything else is built on it, and before step 3,
-because it is an ABI.
+Done on 2026-09-19; see `COMPLETED.md`. One registry, one `Plugin` base, the
+configuration hand-off, and `Datastore` and `MediaEngine` async in the contract.
 
-- [ ] One `PluginRegistry` keyed by (kind, scheme), replacing the three template
-      registries in `datastore.h`, `event_system.h` and `media_engine.h`. A `Plugin`
-      base with `kind()`, `name()`, `version()` and `api_version()`. Built-ins register
-      through it exactly as an external plugin would; the only difference is link time
-      against load time.
-- [ ] Configuration: the URL stays the selector, so `datastore: { url: memory:// }`
-      remains a one-liner. A plugin also receives `configure(YAML::Node own_root,
-      const Config& system)`, where `own_root` is the section named after its scheme,
-      for anything a URL cannot express (rtpengine pools, health-check intervals).
-      Replaces `_apply_url` parsing of query strings.
-- [ ] `Datastore` is async in the contract: every operation completes through a
-      callback on the caller's executor, and no `_wait_*` runs on the Core strand.
-      `MemoryDatastore` and `RedisDatastore` follow; the Redis 5 second sync timeout
-      goes with it. `MediaEngine` gets the same treatment, since rtpengine is a network
-      round trip.
-- [ ] `docs/plugins.md`: the contract, the lifecycle (`configure`, `connect`, `close`,
-      `health`), the versioning rule, and how to write one. First-class, alongside the
-      architecture doc in step 10.
-- [ ] `EventSystem` and `MediaEngine` drivers move onto the same base and registry, so
-      there is one way to add a plugin of any kind.
+What it deliberately left, so it is not lost:
+
+- [ ] Pipelining in `RedisDatastore`: the listing operations walk their index one key at
+      a time because each step starts the next from its own completion. Correct, and
+      slower than one MGET would be. Worth doing when a node has enough bindings for it
+      to show.
+- [ ] `EventSystem` is on the registry and the `Plugin` base but its operations still
+      take a completion callback of their own shape rather than the contract's
+      `Executor` + `Handler`. It is off the call path by decision, so this is tidiness
+      rather than a stall, but the contract should be one contract.
 
 ### Step 3 - SIPUri is a real URI (RFC 3261 section 19.1)
 
-Needed before the proxy can do Route processing.
+Done on 2026-09-20; see `COMPLETED.md`. Structured parameters and headers, escaping,
+19.1.4 equivalence, and `realm` renamed to `host`. Hand-written, no regex: the grammar
+is a sequence of splits on delimiters that cannot appear unescaped in what they delimit.
 
-- [ ] Parameters and headers as structured values: `lr`, `transport`, `maddr`, `ttl`,
-      `user`, `method`, and the rest by name. Escaping and unescaping (19.1.2, 25.1).
-- [ ] URI comparison (19.1.4), for matching a REGISTER's Contact against the bindings.
-- [ ] `realm` becomes `host`. It is the name of a different SIP concept.
+What it deliberately left, so it is not lost:
 
-### Step 4 - Dialogs (RFC 3261 section 12)
+- [x] `SIPIdentity::parse` is hand-written, done on 2026-09-20. The backtracking regex
+      it replaces ran over every To, From and Contact that arrived and could not express
+      a quoted display name containing `<` or `;` at all. `star` gives a Contact of `*`
+      its own home (20.10) and the registrar no longer recognises it by shape.
+- [ ] `types::URL` (`src/types/url.cpp`) is the last regex worth replacing. Off the
+      message path - it only parses config URLs at startup - so it is tidiness, and
+      cheap. `Util::is_ipv4` (`src/util.cpp:153`) also uses one and does see network
+      data, but the pattern is anchored with no nested quantifiers, so it is linear and
+      not the same hazard.
 
-- [ ] A `Dialog` type owned by the TU: Call-ID, local and remote tags, route set, local
-      and remote CSeq, remote target, secure flag. Created from the 2xx to an INVITE
-      (12.1), matched on in-dialog requests (12.2.2), ended on BYE.
-- [ ] `Call` keeps a dialog per participant leg rather than bare tags. `Call` stays the
+### Step 4 - Proxy core, the rest of section 16
+
+Done on 2026-09-20; see `COMPLETED.md`. Loop detection, Route and Record-Route
+processing, in-dialog transit, stateless response forwarding and CANCEL forwarding.
+
+What it deliberately left, so it is not lost:
+
+- [ ] RFC 3263: a next hop is resolved from the URI's own transport, host and port, with
+      the scheme's defaults for what it does not say. NAPTR and SRV are a step of their
+      own and are what a cluster and a trunk both need.
+- [ ] Outbound flows. A next hop this node has no live connection to is answered 480,
+      because nothing in the tree opens a connection rather than accepting one. Every
+      target in M2 is a registered client with a flow, so this is not a stall; it becomes
+      one the moment a request has to leave for a trunk or a peer node. Step 7.
+- [ ] Double Record-Route (RFC 5658), for a call whose two ends are on different
+      transports. One value naming the outbound flow is right for a call that is UDP to
+      UDP or WSS to WSS, which is what M2 tests; a browser calling a desk phone needs two
+      values and needs both stripped on the way back. Prerequisite for mixed-transport
+      calls in M3, not for M2.
+- [ ] Parallel forking. The fork is serial: one branch at a time, best response wins.
+      16.7's response context is written to hold more than one branch, and the CANCEL
+      path already walks it, so the change is in `_forward_next` rather than in the
+      shape. Parked deliberately - it is listed under Parked.
+- [ ] Timer C (16.6 step 11). An INVITE branch that goes on receiving provisional
+      responses for ever is not currently given up on. Timer B bounds the branch that
+      never answers at all; this is the one that answers 180 and never stops.
+
+### Step 5 - Dialogs (RFC 3261 section 12)
+
+The node is call-stateful by product decision: it anchors media, keeps call records
+and shows live calls, so it has to know when a call ends. That is dialog tracking, not
+dialog ownership; the UAs own the dialogs.
+
+- [ ] A `Dialog` type: Call-ID, local and remote tags, route set, local and remote CSeq,
+      remote target, secure flag. Created from the 2xx to an INVITE (12.1), matched on
+      in-dialog requests (12.2.2), ended on BYE. `Call` keeps one per participant leg
+      rather than bare tags (`src/call.h:66` has only the tags today). `Call` stays the
       application object: participants, media, focus.
-- [ ] In-dialog routing: BYE, re-INVITE, hold (`a=sendonly`), UPDATE.
-
-### Step 5 - Proxy core, the rest of section 16
-
-- [ ] Request validation, Max-Forwards, loop detection (16.3). A request that fails
-      `SIPHeader::is_valid()` gets a 400 (8.2.1).
-- [ ] Route / Record-Route processing (16.4, 16.6.4), strict and loose routing, on the
-      structured `SIPUri` from step 3.
-- [ ] Response processing and best-response selection (16.7). CANCEL forwarding (16.10).
 - [ ] Session timers (RFC 4028): honour `Session-Expires`, refresh via re-INVITE or
-      UPDATE, on the Dialog from step 4.
+      UPDATE, tear down on expiry. Needs the dialog, which is why this lives here and
+      not in step 4.
 
 ### Step 6 - Media on the signalling path
 
@@ -226,15 +238,20 @@ Needed before the proxy can do Route processing.
 - [ ] JSON body parsing and error envelope in `AdminAPI` (`src/api/admin_api.cpp`).
 - [ ] `StaticMiddleware` path from `config->http_files_path`, not `"../admin"`
       (`src/main.cpp`).
-- [ ] The admin API is off the strand; it reaches Core through `call_on_strand`.
+- [ ] The admin API is off the strand. Provisioning goes to the datastore directly with
+      the API's own executor, which the async contract exists for; only reads of Core's
+      registries (live calls, channels) go through `call_on_strand`. Written before step
+      2 as "reaches Core through `call_on_strand`" for everything, which would put every
+      admin request on the call path.
 
 ### Step 9 - Test harness
 
 - [ ] `test/e2e/` with sipp scenarios: REGISTER with Digest, INVITE/180/200/ACK/BYE,
       CANCEL before and after 180, 486, 408 on timer B, retransmission over UDP,
       RTP through the builtin relay (RTP sequence check, not silence).
-- [ ] `Registrar`, `Proxy` and `Dialog` unit tests on `MockConnection` and
-      `ManualTimerSource`, in the same RFC-derived style as the transaction tests.
+- [ ] `Dialog` unit tests on `MockConnection` and `ManualTimerSource`, in the same
+      RFC-derived style as the transaction tests. `Registrar` and `Proxy` have theirs
+      (`tests/registrar_test.cpp`, `tests/proxy_test.cpp`, since step 1).
 - [ ] `docker-compose.test.yml`: athenasip + sipp.
 - [ ] GitHub Actions: build (Debug + ASan), unit tests, sipp harness. Deferred for now
       at Tom's call; listed so it is not forgotten.
@@ -247,9 +264,11 @@ Needed before the proxy can do Route processing.
       (RFC 6665, M6), and renaming costs more the later it happens.
 - [ ] `RTPProxyClient` is compiled into `athena_core` and nothing constructs it. Take
       it out of the build path the way Lua was, per the Parked note.
-- [ ] `docs/architecure.md` is stale and contradicts the Decisions (it lists DynamoDB,
-      NATS, RabbitMQ, Kafka and SQS as planned). Rewrite it as `docs/architecture.md`
-      from the Architecture section above, and fix the README link. Those backends are
+- [ ] `docs/architecture.md` is stale and contradicts the Decisions (it lists DynamoDB,
+      NATS, RabbitMQ, Kafka and SQS as planned). The file was renamed from
+      `architecure.md` on 2026-09-20, which fixed the broken `README.md:23` link; the
+      contents are still the pre-reset ones. Rewrite it from the Architecture section
+      above; `docs/plugins.md` (step 2) is the companion it should point at. Those backends are
       things the plugin contract makes possible, not things the core plans to build;
       the doc should say that or it reads as a roadmap the project cannot keep. `design.md`,
       `goals.md`, `scripting.md` and `modules/` predate the reset and need the same
@@ -293,6 +312,82 @@ endpoints, media anchored in rtpengine.
 Goal: two nodes, one Redis, one Mosquitto, one rtpengine; a subscriber on node A calls
 a subscriber on node B; either node can die and re-registration recovers service.
 
+Decided 2026-09-20, on whether the nodes can sit behind a load balancer. They can, and
+the shape it forces is this:
+
+- A binding shares; a flow does not. The Redis row is readable by any node, but the
+  socket a TCP, TLS, WS or WSS client registered on lives on one node. A node that
+  reads a binding it does not own forwards to the node that does. `Location.node_id`
+  and `Location.flow_id` are what that turns on.
+- Connection-oriented transports balance cleanly: the balancer pins a connection to one
+  node for its lifetime, which is the affinity SIP wants, and a node dying drops the
+  socket so the client reconnects and re-REGISTERs. UDP does not: an L4 balancer cannot
+  see Call-ID, so a retransmission can land on a node holding no transaction state.
+  Either front UDP with a SIP-aware dispatcher or do not balance it.
+- TLS is passed through, never terminated at the balancer: the cluster-CA peer
+  certificate is what distinguishes a peer node from an endpoint.
+- Record-Route names the node, not the balancer's address. In-dialog requests then come
+  straight back to the node that anchored the media, which is coherent with "in-flight
+  dialogs on a dead node do not survive" (Principle 1) and needs no dialog replication.
+  The alternative - Record-Route the VIP and look up dialog ownership on every hop - is
+  full dialog-state sharing, which is parked. This means every node needs a
+  client-reachable address of its own, as well as the shared one.
+- RFC 3263 SRV is the failover mechanism for SIP endpoints and needs no balancer at all;
+  browsers cannot use it, so they get a balancer or a provisioned list from
+  `GET /api/v1/client/config`. RFC 5626 outbound with two flows to two nodes is the
+  strongest form of this and removes the reconnect window entirely.
+
+- [ ] Public contact addresses, which are not the node's local ones. `Via` and
+      `Record-Route` are built from `connection->local_endpoint()` today
+      (`src/proxy.cpp`, `src/channel.cpp`). Behind a balancer, in a container, or on the
+      single NAT'd public IP with port forwarding that is the normal SOHO deployment,
+      that address is a private one nothing outside can reach. A node on `192.168.1.10`
+      forwarded from `203.0.113.5` must write `203.0.113.5` into both, per transport and
+      with its own port, because the forwarded port is not always the local one.
+      Two consequences, and the second is the one that bites:
+      - `Core::is_local_address` has to hold the public addresses as well as the
+        observed local ones. It is additive already (`local_address_add`), so the
+        startup path adds the configured ones. Without that, the Record-Route this node
+        wrote comes back as a Route naming `203.0.113.5`, the node does not recognise
+        itself in it, and it forwards the request to itself - a loop, caught by 16.3.4
+        as a 482 instead of routing the BYE.
+      - A client on the same LAN reaching the public address depends on the router
+        hairpinning, and plenty do not. So the address a node advertises depends on who
+        is asking: a `localnet` list of private prefixes, the local address to anything
+        inside them and the public address to everything else, for Via, Record-Route and
+        Contact. `Util::is_ipv4_private` (`src/util.cpp`) and `Location.nat` are the
+        groundwork already in the tree.
+      The same split applies in the media plane and is step 6's problem, not this one:
+      the builtin relay puts its local address in `c=`, which is wrong for the same
+      reason and for the same audience, and the RTP port range has to be forwarded as a
+      contiguous block.
+- [ ] A node determines its own public address and reachability, rather than being told.
+      Configuration stays and always wins, because an explicit answer beats a guessed
+      one, but a node with nothing configured should work out the answer itself. Three
+      sources, cheapest first:
+      - From peers, for nothing. A peer that receives an inter-node request already
+        stamps `received` and `rport` on the top Via (RFC 3581), which is what
+        `Channel::_stamp_via` does in the receive direction. Reading them back off the
+        response is a per-transport observation of what a peer actually sees, which one
+        STUN answer cannot give.
+      - From STUN (RFC 5389) when there is no peer yet, which is every single-node first
+        start. coturn is already in the M5 compose, so the client is the only new part.
+        STUN reports the mapping the router made for an outbound packet, which on a SOHO
+        router doing symmetric NAT is not the port that was forwarded inbound. It gives
+        the public address with confidence and the port only as a guess, so it is a
+        starting point to be verified, never an answer to act on.
+      - From the operator, as today.
+      Then verify rather than believe: the node publishes what it thinks it is in the
+      retained `nodes/<id>/status` roster, and a peer sends an OPTIONS (11.1) back to
+      that address from outside. An address that does not answer is not advertised, and
+      the node says so loudly instead of record-routing something unreachable.
+      `athenasip check` reports what was found, per transport, and how.
+      The honest failure case has to be expressible: a node behind symmetric NAT or a
+      connection-pinning balancer has no address peers can reach on their own, only
+      flows clients opened. Discovery must be able to answer "not directly reachable",
+      and a node in that state must not advertise itself as a routable cluster peer -
+      that is the case where Record-Route-the-node stops working and RFC 5626 flows are
+      the only way in.
 - [ ] Redis location schema: `athena:location:<realm>:<user>` -> set of
       `{contact, node_id, flow_id, expires, path}` with TTL = registration expiry.
       `MemoryDatastore` mirrors it.
@@ -335,7 +430,8 @@ in ten minutes.
 - [ ] Docs rewritten for the reader without a telecoms background: install, quick start,
       configuration reference generated from the config schema, "how a call works",
       clustering guide, TLS and certificates guide, media engines guide, troubleshooting.
-      Fix `README.md` link to `docs/architecure.md` (rename the file).
+      The `README.md` link and the filename were fixed on 2026-09-20; the contents are
+      the M2 step 10 rewrite.
 - [ ] Plugins as shared libraries: `plugins.path` in config, scan for `.so`, `.dylib`
       and `.dll`, `dlopen`, call an `extern "C"` describe/create entry point, register
       through the step 2 contract, and refuse to load a plugin whose `api_version` does

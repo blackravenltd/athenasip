@@ -74,12 +74,26 @@ datastore:
   url: "memory://"
 
 events:
-  url: "mqtt://127.0.0.1:1883/?client_id=sip-01&keep_alive=30"
+  # local:// keeps events inside this process. mqtt:// publishes them to a broker,
+  # where they are also how nodes find each other.
+  url: "mqtt://127.0.0.1:1883/"
+
+  mqtt:
+    client_id: sip-01
+    keep_alive: 30
 
 media:
   # builtin:// relays plain RTP from this process and needs nothing else installed.
   # rtpengine://host:port is the production engine, and the one that does WebRTC.
-  url: "builtin://?public_address=0.0.0.0&port_min=22000&port_max=23000"
+  url: "builtin://"
+
+  # A driver reads the section named after it, for what the URL cannot express. The
+  # section is optional: the URL on its own is a working configuration.
+  builtin:
+    bind_address: 0.0.0.0
+    public_address: 0.0.0.0
+    port_min: 22000
+    port_max: 23000
 
 http:
   address: 0.0.0.0

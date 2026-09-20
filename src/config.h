@@ -6,6 +6,8 @@
 //
 #pragma once
 
+#include <yaml-cpp/yaml.h>
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -98,8 +100,26 @@ class Config {
   // Loads configuration from a YAML file.
   bool load_from_yaml(const std::string& filename);
 
+  // A plugin's own configuration: the section named after the driver, inside the
+  // section for its kind. The URL stays the selector, so this is only for what a URL
+  // cannot express (engine pools, health-check intervals) and is usually absent.
+  //
+  //   datastore:
+  //     url: redis://127.0.0.1:6379
+  //     redis:
+  //       health_check_interval: 5
+  //
+  // Keyed on the driver's name() rather than the scheme it was reached by, so the
+  // three Redis schemes share one section instead of needing three.
+  YAML::Node plugin_root(const std::string& kind, const std::string& name) const;
+
  private:
   std::shared_ptr<Logger> _logger;
+
+  // The document as loaded, kept so plugins can be handed their own section. Nothing
+  // else should read it: everything the server itself needs is parsed into the fields
+  // above at load time.
+  YAML::Node _root;
 };
 
 }  // namespace athenasip

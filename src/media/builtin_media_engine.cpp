@@ -9,6 +9,7 @@
 #include <sstream>
 #include <utility>
 
+#include "../config.h"
 #include "../sdp.h"
 
 namespace athenasip::media {
@@ -51,7 +52,9 @@ BuiltinMediaEngine::BuiltinMediaEngine(std::shared_ptr<loggers::Logger> logger, 
 
 BuiltinMediaEngine::~BuiltinMediaEngine() { close(); }
 
-std::string BuiltinMediaEngine::get_driver_name() const { return "AthenaSIP Builtin Media Engine v0.0.1"; }
+std::string BuiltinMediaEngine::name() const { return "builtin"; }
+
+std::string BuiltinMediaEngine::version() const { return "0.0.1"; }
 
 void BuiltinMediaEngine::_apply_url(const std::shared_ptr<types::URL>& url) {
   if (!url) return;
@@ -70,6 +73,26 @@ void BuiltinMediaEngine::_apply_url(const std::shared_ptr<types::URL>& url) {
   it = params.find("port_max");
   if (it != params.end()) _port_max = parse_port(it->second, _port_max);
 
+  _validate_port_range();
+}
+
+bool BuiltinMediaEngine::configure(const YAML::Node& own_root, const Config& system) {
+  (void)system;
+
+  if (!own_root || !own_root.IsMap()) {
+    return true;
+  }
+
+  if (own_root["bind_address"]) _bind_address = own_root["bind_address"].as<std::string>();
+  if (own_root["public_address"]) _public_address = own_root["public_address"].as<std::string>();
+  if (own_root["port_min"]) _port_min = parse_port(own_root["port_min"].as<std::string>(), _port_min);
+  if (own_root["port_max"]) _port_max = parse_port(own_root["port_max"].as<std::string>(), _port_max);
+
+  _validate_port_range();
+  return true;
+}
+
+void BuiltinMediaEngine::_validate_port_range() {
   if (_port_max <= _port_min) {
     _logger->warn("port_max is not above port_min, using the defaults");
     _port_min = 22000;
@@ -77,15 +100,15 @@ void BuiltinMediaEngine::_apply_url(const std::shared_ptr<types::URL>& url) {
   }
 }
 
-bool BuiltinMediaEngine::connect() {
-  if (_connected) return true;
+void BuiltinMediaEngine::connect(plugins::Executor on, plugins::StatusHandler handler) {
+  if (_connected) return _complete(std::move(on), std::move(handler), plugins::Status::success());
 
   _relay = std::make_shared<rtp::RTPRelay>(_logger, _bind_address, _port_min, _port_max);
   _relay->start();
   _connected = true;
 
   _logger->info("Connected, relaying on " + _bind_address + " as " + _public_address);
-  return true;
+  _complete(std::move(on), std::move(handler), plugins::Status::success());
 }
 
 void BuiltinMediaEngine::close() {
@@ -111,7 +134,26 @@ Capabilities BuiltinMediaEngine::capabilities() const {
   return capabilities;
 }
 
-Result BuiltinMediaEngine::offer(std::shared_ptr<Call> call, const std::string& sdp, const Flags& flags) {
+// The relay is in this process and answers at once; the contract is about where the
+// handler runs. Posting it is what lets an rtpengine driver, which really does go to
+// the network, be dropped in without the caller changing.
+void BuiltinMediaEngine::offer(plugins::Executor on, std::shared_ptr<Call> call, std::string sdp, Flags flags, MediaHandler handler) {
+  _complete(std::move(on), std::move(handler), _offer(std::move(call), sdp, flags));
+}
+
+void BuiltinMediaEngine::answer(plugins::Executor on, std::shared_ptr<Call> call, std::string sdp, Flags flags, MediaHandler handler) {
+  _complete(std::move(on), std::move(handler), _answer(std::move(call), sdp, flags));
+}
+
+void BuiltinMediaEngine::release(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) {
+  _complete(std::move(on), std::move(handler), _status(_release(std::move(call)), "release"));
+}
+
+void BuiltinMediaEngine::query(plugins::Executor on, std::shared_ptr<Call> call, plugins::Handler<std::string> handler) {
+  _complete(std::move(on), std::move(handler), plugins::Result<std::string>::success(_query(std::move(call))));
+}
+
+Result BuiltinMediaEngine::_offer(std::shared_ptr<Call> call, const std::string& sdp, const Flags& flags) {
   // Plain RTP only. An offer needing ICE, DTLS or SRTP belongs to rtpengine.
   if (flags.ice || flags.dtls || flags.srtp) {
     return Result::failure("builtin media engine handles plain RTP only: use rtpengine:// for ICE, DTLS or SRTP");
@@ -120,7 +162,7 @@ Result BuiltinMediaEngine::offer(std::shared_ptr<Call> call, const std::string& 
   return _map_media(std::move(call), sdp, flags);
 }
 
-Result BuiltinMediaEngine::answer(std::shared_ptr<Call> call, const std::string& sdp, const Flags& flags) {
+Result BuiltinMediaEngine::_answer(std::shared_ptr<Call> call, const std::string& sdp, const Flags& flags) {
   if (flags.ice || flags.dtls || flags.srtp) {
     return Result::failure("builtin media engine handles plain RTP only: use rtpengine:// for ICE, DTLS or SRTP");
   }
@@ -204,7 +246,7 @@ Result BuiltinMediaEngine::_map_media(std::shared_ptr<Call> call, const std::str
   return Result::success(sdp->to_string());
 }
 
-bool BuiltinMediaEngine::release(std::shared_ptr<Call> call) {
+bool BuiltinMediaEngine::_release(std::shared_ptr<Call> call) {
   if (!call) return false;
 
   std::vector<std::shared_ptr<rtp::RTPRelaySet>> held;
@@ -230,7 +272,7 @@ bool BuiltinMediaEngine::release(std::shared_ptr<Call> call) {
   return true;
 }
 
-std::string BuiltinMediaEngine::query(std::shared_ptr<Call> call) {
+std::string BuiltinMediaEngine::_query(std::shared_ptr<Call> call) {
   if (!call) return "{}";
 
   std::lock_guard<std::mutex> lock(_mutex);

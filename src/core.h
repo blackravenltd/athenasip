@@ -15,6 +15,7 @@
 #include <iostream>
 #include <map>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -29,6 +30,7 @@
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
 #include "media/media_engine.h"
+#include "plugins/plugin.h"
 #include "rtp/rtp_relay_set.h"
 #include "servers/server.h"
 #include "sip_message.h"
@@ -96,16 +98,19 @@ class Core : public std::enable_shared_from_this<Core> {
   void server_start_all();
   void server_stop_all();
 
-  // Realms
-  std::shared_ptr<Realm> realm_get_by_name(const std::string& realm);
+  // Realms, subscribers and nonces all live in the datastore, which is async by
+  // contract, so these are too: the handler runs back on the strand once the datastore
+  // answers. Nothing here blocks, because blocking here would stop every call on the
+  // node rather than only the one that asked.
+  void realm_get_by_name(std::string realm, plugins::Handler<std::shared_ptr<Realm>> handler);
 
   // Subscribers
-  bool subscriber_exists(std::shared_ptr<SIPIdentity> identity);
-  std::shared_ptr<Subscriber> subscriber_get(std::shared_ptr<SIPIdentity> identity);
-  bool subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel,
-                           std::uint32_t expires_seconds, const std::string& path);
-  bool subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel);
-  const std::shared_ptr<SIPUri> subscriber_get_location(std::shared_ptr<SIPIdentity> identity);
+  void subscriber_get(std::shared_ptr<SIPIdentity> identity, plugins::Handler<std::shared_ptr<Subscriber>> handler);
+  void subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel,
+                           std::uint32_t expires_seconds, std::string path, plugins::StatusHandler handler);
+  void subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel,
+                             plugins::StatusHandler handler);
+  void location_list(std::uint64_t subscriber_id, plugins::Handler<std::vector<types::Location>> handler);
 
   // Channels
   bool channel_register(std::string endpoint, std::shared_ptr<Channel> channel);
@@ -113,9 +118,23 @@ class Core : public std::enable_shared_from_this<Core> {
   void channel_close_all();
   std::shared_ptr<Channel> subscriber_get_channel(std::shared_ptr<Subscriber> subscriber);
 
+  // The live flow to a next hop, or null when this node has none (RFC 3261 16.6 step 7).
+  // Channels are filed under "transport://host:port", which is what a next hop resolves
+  // to once its URI has given up its transport, host and port. Opening a new flow to a
+  // hop nothing is connected to needs outbound connections, which is step 7 of the plan.
+  std::shared_ptr<Channel> channel_find(const std::string& transport, const std::string& host, std::uint16_t port);
+
+  // The addresses this node answers on, as "host:port". A Route or a Request-URI naming
+  // one of these names this node (RFC 3261 16.4), which is how a Record-Route this node
+  // wrote is recognised when it comes back. Channels add their local endpoint as they
+  // register, so the set is what the node is actually reachable at rather than what it
+  // was configured with.
+  void local_address_add(std::string host_port);
+  bool is_local_address(const std::string& host, std::uint16_t port) const;
+
   // Nonce
-  std::string nonce_create(std::shared_ptr<Realm> realm);
-  bool nonce_check(std::string nonce);
+  void nonce_create(std::shared_ptr<Realm> realm, plugins::Handler<std::string> handler);
+  void nonce_check(std::string nonce, plugins::Handler<bool> handler);
 
   // Messages
   void process_message(std::shared_ptr<SIPMessage> message);
@@ -184,6 +203,7 @@ class Core : public std::enable_shared_from_this<Core> {
   // All of the following are strand-confined. No locks.
   std::unordered_map<std::string, std::shared_ptr<Channel>> _channels;
   std::unordered_map<uint64_t, std::shared_ptr<Channel>> _channels_by_subscriber;
+  std::set<std::string> _local_addresses;
 
   std::vector<std::shared_ptr<Server>> _servers;
 
