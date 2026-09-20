@@ -6,6 +6,7 @@
 //
 #include "builtin_media_engine.h"
 
+#include <cstdint>
 #include <sstream>
 #include <utility>
 
@@ -191,56 +192,60 @@ Result BuiltinMediaEngine::_map_media(std::shared_ptr<Call> call, const std::str
   for (auto& media : sdp->media()) {
     const auto id = media.unique_id();
 
-    std::shared_ptr<MediaStream> stream;
-    auto existing = participant.streams.find(id);
+    StreamRelays relays;
 
-    if (existing != participant.streams.end()) {
-      stream = existing->second;
-      _logger->debug("Mapping media, existing stream: " + media.description.to_string());
-    } else {
-      stream = std::make_shared<MediaStream>();
-      stream->id = std::to_string(id);
+    {
+      std::lock_guard<std::mutex> lock(_mutex);
+      auto& streams = _allocated[call->id];
+      auto existing = streams.find(id);
 
-      auto rtp_set = _relay->allocate_relay_set();
-      auto rtcp_set = _relay->allocate_relay_set();
+      // The stream is the call's, not the leg's. The second leg to arrive for a stream
+      // is the far end of a bridge already standing, and giving it a port of its own
+      // would leave each end talking to a relay nothing else is on.
+      if (existing != streams.end()) {
+        relays = existing->second;
+        _logger->debug("Mapping media, existing stream: " + media.description.to_string());
+      } else {
+        relays.rtp = _relay->allocate_relay_set();
+        relays.rtcp = _relay->allocate_relay_set();
 
-      if (!rtp_set || !rtcp_set) {
-        if (rtp_set) _relay->release_relay_set(rtp_set);
-        if (rtcp_set) _relay->release_relay_set(rtcp_set);
-        return Result::failure("no relay ports available");
+        if (!relays.rtp || !relays.rtcp) {
+          if (relays.rtp) _relay->release_relay_set(relays.rtp);
+          if (relays.rtcp) _relay->release_relay_set(relays.rtcp);
+          return Result::failure("no relay ports available");
+        }
+
+        relays.rtp->start();
+        relays.rtcp->start();
+
+        streams.emplace(id, relays);
+        _logger->debug("Mapping media, created stream: " + media.description.to_string());
       }
-
-      rtp_set->start();
-      rtcp_set->start();
-
-      stream->rtp_set = rtp_set;
-      stream->rtcp_set = rtcp_set;
-
-      participant.streams.insert({id, stream});
-
-      {
-        std::lock_guard<std::mutex> lock(_mutex);
-        auto& held = _allocated[call->id];
-        held.push_back(rtp_set);
-        held.push_back(rtcp_set);
-      }
-
-      _logger->debug("Mapping media, created stream: " + media.description.to_string());
     }
 
-    auto rtp_set = stream->rtp_set.lock();
-    auto rtcp_set = stream->rtcp_set.lock();
-    if (!rtp_set || !rtcp_set) return Result::failure("relay set went away");
+    // What the leg itself holds, for everything that reads a call rather than relays it.
+    auto& stream = participant.streams[id];
+    if (!stream) {
+      stream = std::make_shared<MediaStream>();
+      stream->id = std::to_string(id);
+    }
+
+    stream->rtp_set = relays.rtp;
+    stream->rtcp_set = relays.rtcp;
 
     // Point the media at our relay port.
-    media.description.port = rtp_set->port;
+    media.description.port = relays.rtp->port;
 
     // Only rewrite a media-level c= that was already there. Adding one where the far
     // end relied on the session-level line would change the shape of the offer.
     if (media.has_connection()) media.set_connection(relay);
 
-    // And the RTCP attribute at ours, where the far end named one.
-    media.set_attribute("rtcp:", "rtcp:" + std::to_string(rtcp_set->port) + " IN IP4 " + _public_address);
+    // RFC 3605, and written whether or not the far end named a port of its own. The
+    // relay's RTCP port comes out of the same pool as its RTP port and is not reliably
+    // the one above it, so an endpoint left to assume the convention would send its
+    // receiver reports into somebody else's call.
+    const auto rtcp = "rtcp:" + std::to_string(relays.rtcp->port) + " IN IP4 " + _public_address;
+    if (!media.set_attribute("rtcp:", rtcp)) media.add_attribute(rtcp);
   }
 
   return Result::success(sdp->to_string());
@@ -249,7 +254,7 @@ Result BuiltinMediaEngine::_map_media(std::shared_ptr<Call> call, const std::str
 bool BuiltinMediaEngine::_release(std::shared_ptr<Call> call) {
   if (!call) return false;
 
-  std::vector<std::shared_ptr<rtp::RTPRelaySet>> held;
+  std::unordered_map<std::int64_t, StreamRelays> held;
 
   {
     std::lock_guard<std::mutex> lock(_mutex);
@@ -260,15 +265,18 @@ bool BuiltinMediaEngine::_release(std::shared_ptr<Call> call) {
 
     held = std::move(it->second);
     _allocated.erase(it);
-  }
 
-  if (_relay) {
-    for (const auto& relay_set : held) _relay->release_relay_set(relay_set);
+    if (_relay) {
+      for (const auto& [id, relays] : held) {
+        _relay->release_relay_set(relays.rtp);
+        _relay->release_relay_set(relays.rtcp);
+      }
+    }
   }
 
   for (auto& participant : call->participants) participant.streams.clear();
 
-  _logger->debug("Released " + std::to_string(held.size()) + " relay sets for call " + call->id);
+  _logger->debug("Released " + std::to_string(held.size() * 2) + " relay sets for call " + call->id);
   return true;
 }
 
@@ -277,7 +285,7 @@ std::string BuiltinMediaEngine::_query(std::shared_ptr<Call> call) {
 
   std::lock_guard<std::mutex> lock(_mutex);
   auto it = _allocated.find(call->id);
-  const auto count = (it == _allocated.end()) ? 0u : it->second.size();
+  const auto count = (it == _allocated.end()) ? 0u : it->second.size() * 2;
 
   return "{\"call_id\":\"" + call->id + "\",\"engine\":\"builtin\",\"relay_sets\":" + std::to_string(count) + "}";
 }
