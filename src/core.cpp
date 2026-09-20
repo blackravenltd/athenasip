@@ -257,16 +257,35 @@ void Core::process_message(std::shared_ptr<SIPMessage> message) {
 }
 
 void Core::_ensure_transaction_users() {
-  if (_registrar && _proxy) return;
+  if (_registrar && _proxy && _dialogs) return;
 
   auto base = _logger->base_logger();
 
   if (!_registrar) _registrar = std::make_shared<Registrar>(base, shared_from_this());
   if (!_proxy) _proxy = std::make_shared<Proxy>(base, shared_from_this());
+
+  if (!_dialogs) {
+    _dialogs = std::make_shared<Dialogs>(base, _timer_source);
+
+    std::weak_ptr<Core> weak_self = weak_from_this();
+    _dialogs->on_change([weak_self](const std::shared_ptr<types::Dialog>& dialog) {
+      if (auto self = weak_self.lock()) self->_on_dialog_change(dialog);
+    });
+  }
+}
+
+std::shared_ptr<Dialogs> Core::dialogs() {
+  _ensure_transaction_users();
+  return _dialogs;
 }
 
 void Core::_deliver_to_tu(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction) {
   _ensure_transaction_users();
+
+  // Here rather than in process_message, because this is where a request has been
+  // de-duplicated: a retransmission is absorbed by its transaction and never arrives
+  // (17.2.1), so what the tracker sees is each request once.
+  _dialogs->observe_request(request);
 
   const auto& method = request->header->request_method;
 
@@ -436,6 +455,72 @@ bool Core::call_register(std::shared_ptr<Call> call) {
   events->publish(events::topics::call_register(call->id), call->id);
 
   return true;
+}
+
+// A dialog is the signalling relationship between the two ends; a Call is the
+// application object that hangs off it - participants, media, focus - and what the admin
+// API lists and the event bus announces. One follows the other, which is the whole
+// reason this node tracks dialogs it does not own.
+void Core::_on_dialog_change(const std::shared_ptr<types::Dialog>& dialog) {
+  if (!dialog || dialog->call_id.empty()) return;
+
+  auto call = call_get(dialog->call_id);
+
+  if (!call) {
+    // A dialog that is over before this node had a call for it is an attempt that failed
+    // before anyone answered. There is no call to record.
+    if (dialog->state == types::Dialog::State::Terminated) return;
+
+    call = std::make_shared<Call>();
+    call->id = dialog->call_id;
+    call->created_at = dialog->created_at != 0 ? dialog->created_at : std::time(nullptr);
+
+    call->add_participant(dialog->caller, nullptr, true);
+    call->add_participant(dialog->callee, nullptr, false);
+
+    // Not inside add_participant: it returns a reference into the vector, and the second
+    // call reallocates it.
+    for (auto& participant : call->participants) {
+      participant.dialog = dialog;
+      participant.node_id = config->sip_node_id;
+    }
+
+    call_register(call);
+  }
+
+  const auto previous = call->state;
+
+  switch (dialog->state) {
+    case types::Dialog::State::Early:
+      // A callee tag means the callee has spoken, which is the difference between a call
+      // that is on its way and one that is ringing.
+      call->state = dialog->callee_tag.empty() ? Call::State::Trying : Call::State::Ringing;
+      break;
+
+    case types::Dialog::State::Confirmed:
+      call->state = Call::State::Connected;
+      if (call->answered_at == 0) call->answered_at = dialog->confirmed_at;
+      break;
+
+    case types::Dialog::State::Terminated:
+      call->state = Call::State::Closed;
+      call->ended_at = dialog->terminated_at;
+      break;
+  }
+
+  if (call->state == previous) return;
+
+  events->publish(events::topics::call_state(call->id), Call::state_to_string(call->state));
+
+  // The record is for the admin API and the cluster, not for this call's signalling, so
+  // nothing waits on it.
+  datastore->call_update(_strand, call, [this, self = shared_from_this(), call](plugins::Status status) {
+    if (!status.ok) _logger->error("Cannot update call " + call->id + " - " + status.error);
+  });
+
+  // Releasing the media the call reserved is the signalling path's job and belongs with
+  // the rest of it (step 6); what happens here is only that the call stops being live.
+  if (call->state == Call::State::Closed) call_unregister(call->id);
 }
 
 bool Core::call_unregister(std::string callId) {
