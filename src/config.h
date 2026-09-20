@@ -35,6 +35,12 @@ class Config {
 
   std::string sip_event_prefix;
 
+  // RFC 4028 section 5: the shortest session interval this node will let a call
+  // negotiate, and the floor the RFC itself sets is 90 seconds. A proxy that keeps state
+  // for a call has a stake in how often it is told the call is still there, and rejecting
+  // an interval below this is the only say it gets (section 8).
+  uint32_t sip_session_min_se = 90;
+
   // SIP Timers
   uint16_t sip_timer_t1_rtt_ms = 500;
   uint16_t sip_timer_t2_max_retransmit_interval_ms = 4000;

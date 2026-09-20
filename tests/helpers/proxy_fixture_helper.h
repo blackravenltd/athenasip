@@ -52,19 +52,40 @@ struct ProxyFixture : CoreFixture {
     return raw;
   }
 
-  // The response the callee sends back, carrying the Via chain the proxy built.
-  std::string response_from_callee(int code, const std::string& reason, const std::string& to_tag = "bob") {
+  // The response the callee sends back, carrying the Via chain and the Record-Route the
+  // proxy built. RFC 3261 12.1.1: a UAS copies Record-Route into its response in the
+  // order it arrived, and offers its own Contact, which is how the caller learns the
+  // route set and the remote target.
+  std::string response_from_callee(int code, const std::string& reason, const std::string& to_tag = "bob",
+                                   const std::string& contact = "sip:bob@192.0.2.20:5060", const std::string& extra = "") {
     auto forwarded = request_with(callee_connection, "INVITE");
     if (!forwarded) return "";
 
     std::string raw = "SIP/2.0 " + std::to_string(code) + " " + reason + "\r\n";
     for (const auto& via : forwarded->header->headers_map["Via"]) raw += "Via: " + via->to_string() + "\r\n";
+    for (const auto& route : forwarded->header->headers_map["Record-Route"]) raw += "Record-Route: " + route->to_string() + "\r\n";
     raw += "From: <sip:alice@example.com>;tag=alice\r\n";
     raw += "To: <sip:bob@example.com>;tag=" + to_tag + "\r\n";
     raw += "Call-ID: call-proxy\r\n";
     raw += "CSeq: 1 INVITE\r\n";
+    if (!contact.empty()) raw += "Contact: <" + contact + ">\r\n";
+    raw += extra;
     raw += "\r\n";
     return raw;
+  }
+
+  // The dialogs this node is still on the path of, read from the strand that owns them.
+  std::vector<std::shared_ptr<athenasip::types::Dialog>> dialogs() {
+    return on_strand([this]() { return core->dialogs()->all(); });
+  }
+
+  std::shared_ptr<athenasip::types::Dialog> only_dialog() {
+    auto found = dialogs();
+    return found.size() == 1 ? found.front() : nullptr;
+  }
+
+  std::shared_ptr<athenasip::Call> call(const std::string& id = "call-proxy") {
+    return on_strand([this, id]() { return core->call_get(id); });
   }
 
   // Every request of this method written to a connection, in the order they went out.
