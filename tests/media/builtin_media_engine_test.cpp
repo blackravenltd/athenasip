@@ -409,3 +409,67 @@ TEST(BuiltinMediaEngineTest, BridgesMediaBetweenTheTwoLegs) {
 
   engine->release(call);
 }
+
+// What an offer needs is in the offer. Reading it from the transport would be wrong in
+// both directions: a browser reaches a node over WSS and a desk phone can too, and the
+// same browser offer relayed in over UDP by another proxy still wants ICE and DTLS.
+TEST(MediaFlagsTest, ReadsWhatAWebRtcOfferAsksFor) {
+  const char* webrtc =
+      "v=0\r\n"
+      "o=- 4611731400430051336 2 IN IP4 127.0.0.1\r\n"
+      "s=-\r\n"
+      "t=0 0\r\n"
+      "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n"
+      "c=IN IP4 0.0.0.0\r\n"
+      "a=rtpmap:111 opus/48000/2\r\n"
+      "a=ice-ufrag:4ZcD\r\n"
+      "a=fingerprint:sha-256 AA:BB:CC\r\n"
+      "a=rtcp-mux\r\n";
+
+  const auto flags = Flags::from_sdp(webrtc);
+
+  EXPECT_TRUE(flags.ice);
+  EXPECT_TRUE(flags.dtls);
+  EXPECT_TRUE(flags.srtp);
+  EXPECT_TRUE(flags.rtcp_mux);
+}
+
+TEST(MediaFlagsTest, PlainRtpAsksForNothing) {
+  const auto flags = Flags::from_sdp(kOffer);
+
+  EXPECT_FALSE(flags.ice);
+  EXPECT_FALSE(flags.dtls);
+  EXPECT_FALSE(flags.srtp);
+  EXPECT_FALSE(flags.rtcp_mux);
+}
+
+// RFC 4568: SDES puts the keys in the description and the profile is a plain secure one.
+// There is no DTLS and no ICE in it, and saying otherwise would send the offer to the
+// wrong engine.
+TEST(MediaFlagsTest, TheSecureProfileAloneIsEnoughToSaySrtp) {
+  const char* sdes =
+      "v=0\r\n"
+      "o=alice 1 1 IN IP4 198.51.100.1\r\n"
+      "s=-\r\n"
+      "c=IN IP4 198.51.100.1\r\n"
+      "t=0 0\r\n"
+      "m=audio 49170 RTP/SAVP 0\r\n"
+      "a=rtpmap:0 PCMU/8000\r\n";
+
+  const auto flags = Flags::from_sdp(sdes);
+
+  EXPECT_TRUE(flags.srtp);
+  EXPECT_FALSE(flags.ice);
+  EXPECT_FALSE(flags.dtls);
+}
+
+// Nothing readable claims nothing. The engine that is handed the description is what
+// refuses it, and guessing here would have it refuse for the wrong reason.
+TEST(MediaFlagsTest, AnUnreadableDescriptionClaimsNothing) {
+  const auto flags = Flags::from_sdp("this is not a session description");
+
+  EXPECT_FALSE(flags.ice);
+  EXPECT_FALSE(flags.dtls);
+  EXPECT_FALSE(flags.srtp);
+  EXPECT_FALSE(flags.rtcp_mux);
+}

@@ -518,9 +518,21 @@ void Core::_on_dialog_change(const std::shared_ptr<types::Dialog>& dialog) {
     if (!status.ok) _logger->error("Cannot update call " + call->id + " - " + status.error);
   });
 
-  // Releasing the media the call reserved is the signalling path's job and belongs with
-  // the rest of it (step 6); what happens here is only that the call stops being live.
-  if (call->state == Call::State::Closed) call_unregister(call->id);
+  if (call->state != Call::State::Closed) return;
+
+  // The other end of the anchoring the proxy does on the signalling path. A dialog
+  // ending is the only thing that says a call is over, which is the whole reason this
+  // node tracks dialogs it does not own; the ports go back here or they never do.
+  //
+  // The call is held by the handler, so unregistering it below does not take it away
+  // from an engine that has not answered yet.
+  if (media) {
+    media->release(_strand, call, [this, self = shared_from_this(), call](plugins::Status status) {
+      if (!status.ok) _logger->error("Cannot release the media for call " + call->id + " - " + status.error);
+    });
+  }
+
+  call_unregister(call->id);
 }
 
 bool Core::call_unregister(std::string callId) {
