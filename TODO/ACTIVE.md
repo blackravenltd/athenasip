@@ -262,16 +262,45 @@ What it deliberately left, so it is not lost:
       and it is what steps below stand on.
 - [x] TCP fallback for UDP requests over 1300 bytes (18.1.1), done on 2026-09-20, with
       the top Via rewritten and a fall back to UDP when TCP is refused.
-- [ ] Per-connection flow identity written to the binding. `Location::flow_id` exists and
-      nothing writes it; the value wants to be the channel registry's own key
-      (`transport://host:port`), so a node holding a binding can find the connection again
-      without re-resolving a Contact that, for a browser or a NAT'd client, resolves to
-      nothing reachable. This is the groundwork RFC 5626 flow routing in M3 stands on.
+- [ ] **In progress (2026-09-20): plugin contract v2.** Decided with Tom: the flow
+      identity and the `EventSystem` realignment land in one `API_VERSION` bump rather
+      than two, so a plugin author migrates once. `API_VERSION` is already 2 in
+      `src/plugins/plugin.h`, with the reason recorded above the constant.
 
-      It changes `Datastore::subscriber_register`, which is a plugin contract change and
-      so an `API_VERSION` bump. Step 2 left one other contract change outstanding
-      (`EventSystem` still takes a callback of its own shape), and both should land in the
-      same bump rather than two.
+      Half of it is written. What is done:
+
+      - `Datastore::subscriber_register` now takes `types::Location binding` in place of
+        the `contact` + `path` pair, so the flow and the node holding it can be recorded.
+        The store still fills `registered_at`, `expires_at`, `subscriber_id` and `nat`
+        from `expires_seconds`; everything else on the binding is the caller's.
+      - `MemoryDatastore` and `RedisDatastore` are updated; Redis writes `flow_id` and
+        `node_id` only when set, and already read them back.
+
+      What is left:
+
+      - `Channel::flow_id()`: `transport://host:port`, the same key `channel_find` takes,
+        built in one place rather than the three that build it by hand today
+        (`Channel::start`, `Channel::close`, `Core::channel_find`). A key built two ways
+        is a lookup that silently misses.
+      - `Core::subscriber_register` keeps its own signature and builds the `Location`:
+        contact, path, `node_id` from the config, `flow_id` from the channel. The
+        registrar's call site does not change.
+      - `EventSystem`: `connect(Executor, StatusHandler)`, a synchronous `close()` and an
+        `is_connected()` to match `Datastore` and `MediaEngine`, and `publish` /
+        `subscribe` / `unsubscribe` / `unsubscribe_all` on the contract's `Executor` and
+        handlers. Keep the fire-and-forget `publish(name, message)`: the bus is
+        observability and is never on the call path, so a caller that does not care
+        whether the broker took it should be able to say so. `main.cpp` moves to the
+        `connect_and_wait` helper it already uses for the datastore and the media engine.
+      - Call sites: `src/core.cpp` (8 publishes), `src/main.cpp` (connect/close),
+        `tests/helpers/core_fixture_helper.h`, `tests/helpers/sync_datastore_helper.h`,
+        `tests/core_test.cpp`, `tests/core_concurrency_test.cpp`,
+        `tests/datastores/*_test.cpp`, `tests/events/internal_event_system_test.cpp`.
+      - A test that a binding records the flow it was learned over, and that the flow id
+        is the key `channel_find` answers to.
+
+      If the tree is mid-change and will not build, `git checkout -- src/datastores
+      src/plugins` puts it back to the last good commit and this note is the whole plan.
 - [ ] Outbound TLS. `channel_connect` refuses `tls://` rather than guessing at what a
       node trusts; the cluster CA decision in M4 is what settles it. Until then a TLS peer
       has to connect inwards.
