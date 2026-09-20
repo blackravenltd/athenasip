@@ -230,7 +230,7 @@ uncommitted working tree on 2026-09-17.
       is gone from the example config.
 - [x] Dependencies are now Boost, OpenSSL and yaml-cpp, plus GoogleTest for the test
       build. `otool -L` on the binary shows no SQL, Lua or XML libraries.
-- [x] Docs updated: `architecure.md` driver table, `configuration.md` datastore table
+- [x] Docs updated: `architecture.md` driver table, `configuration.md` datastore table
       and example, `compiling.md` brew line and build commands, `quick_start.md` and
       the README. `docs/versions/v0_0_1_overview.md` is left alone as a record of what
       0.0.1 actually shipped.
