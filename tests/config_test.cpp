@@ -135,3 +135,16 @@ TEST(ConfigTest, ASecureWebsocketListenerWithoutCertificatesIsRefused) {
   with_neither.load(ok);
   EXPECT_FALSE(ok);
 }
+
+// The node ships defaulting to what needs no external service, which is the whole of the
+// "easy to install" principle in one line: a config that says nothing has to start.
+TEST(ConfigTest, DefaultsNeedNoExternalService) {
+  ConfigFile file("sip:\n  node_id: test-node\n");
+
+  bool ok = false;
+  auto config = file.load(ok);
+
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(config->db_url, "memory://");
+  EXPECT_EQ(config->media_url, "builtin://");
+}

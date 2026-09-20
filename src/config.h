@@ -89,10 +89,16 @@ class Config {
   std::string websocket_key_pem_filename;
 
   // DB configuration
-  std::string db_url;  // e.g. "memory://" or "redis://127.0.0.1:6379"
+  // Defaulted, not blank. A node whose configuration says nothing about where to keep
+  // state has to start anyway, on what needs no external service - that is the whole of
+  // the ten-line config the project promises. redis:// is what a cluster says instead.
+  std::string db_url = "memory://";  // or "redis://127.0.0.1:6379"
 
   // Events configuration
-  std::string events_url;  // e.g. "mqtt://user:pass@127.0.0.1:1883/athenasip?client_id=sip-01&keep_alive=30"
+  // Same reason. The event bus carries observability, presence and discovery and is
+  // never on the call setup path, so a single node with nothing to tell has a working
+  // default and a cluster names its broker.
+  std::string events_url = "local://";  // or "mqtt://user:pass@127.0.0.1:1883/athenasip?client_id=sip-01&keep_alive=30"
 
   // Media configuration
   std::string media_url = "builtin://";  // or "rtpengine://host:port"
