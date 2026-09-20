@@ -400,6 +400,10 @@ void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::sha
     response->header->remove_value("Via", [&top](std::shared_ptr<headers::Header> header) { return header == top; });
   }
 
+  // Section 12 is tracked, not routed on: the dialog record is what tells this node a
+  // call is up and when it ends, and it is built from what goes past.
+  if (auto core = _core.lock()) core->dialogs()->observe_response(context->request, response);
+
   const int code = response->header->response_code;
 
   if (!is_final(code)) {
@@ -450,6 +454,11 @@ void Proxy::_send_best(const std::shared_ptr<Context>& context) {
     context->answered = true;
     return _send_status(context->server, context->request, 500, "Server Internal Error");
   }
+
+  // Observing again is harmless: a dialog already terminated is gone from the table, and
+  // one that was never created has nothing to end. What it catches is the response this
+  // node made up rather than received, such as the 408 timer B produced.
+  if (auto core = _core.lock()) core->dialogs()->observe_response(context->request, context->best);
 
   context->answered = true;
   context->server->send(context->best);
@@ -712,6 +721,10 @@ void Proxy::_send_status(const std::shared_ptr<transactions::TransactionBase>& t
   auto response = request->generate_response();
   response->header->response_code = code;
   response->header->response_message = reason;
+
+  // A failure this node answered itself ends the attempt as surely as one from a branch,
+  // and nothing else would tell the tracker it is over.
+  if (auto core = _core.lock()) core->dialogs()->observe_response(request, response);
 
   transaction->send(response);
 }

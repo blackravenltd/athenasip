@@ -44,6 +44,7 @@ const std::unordered_map<std::string, std::string>& canonical_names() {
       {"expires", "Expires"},
       {"from", "From"},
       {"max-forwards", "Max-Forwards"},
+      {"min-se", "Min-SE"},
       {"path", "Path"},
       {"proxy-authenticate", "Proxy-Authenticate"},
       {"proxy-authorization", "Proxy-Authorization"},

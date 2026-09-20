@@ -45,6 +45,7 @@ bool Config::load_from_yaml(const std::string& filename) {
   // effect at all.
   if (sip["allow_unencrypted"]) sip_allow_unencrypted = sip["allow_unencrypted"].as<bool>();
   if (sip["event_prefix"]) sip_event_prefix = sip["event_prefix"].as<std::string>();
+  if (sip["session_min_se"]) sip_session_min_se = sip["session_min_se"].as<uint32_t>();
 
   // SIP Timers
   YAML::Node sip_timers = sip["timers"];

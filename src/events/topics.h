@@ -33,4 +33,9 @@ inline std::string call_register(const std::string& call_id) { return "calls/" +
 
 inline std::string call_unregister(const std::string& call_id) { return "calls/" + call_id + "/unregister"; }
 
+// Every state a call passes through, from the dialog it hangs off (RFC 3261 section 12).
+// This is what an admin UI watches to show a call ringing and then connected without
+// polling for it.
+inline std::string call_state(const std::string& call_id) { return "calls/" + call_id + "/state"; }
+
 }  // namespace athenasip::events::topics

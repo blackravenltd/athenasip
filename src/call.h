@@ -17,6 +17,7 @@
 
 #include "headers/header.h"
 #include "media_stream.h"
+#include "types/dialog.h"
 #include "types/sip_identity.h"
 #include "types/sip_uri.h"
 
@@ -62,9 +63,15 @@ class Call {
     std::weak_ptr<Channel> channel;
     std::string node_id;
 
-    // Dialog identifiers (RFC 3261 section 12).
-    std::string local_tag;
-    std::string remote_tag;
+    // The dialog this leg takes part in (RFC 3261 section 12). Held rather than the two
+    // bare tags it used to be, because the tags alone cannot say where the leg's
+    // requests go, what route they take or whether the call is still up, and those are
+    // the questions a node that anchors media has to answer.
+    //
+    // A proxied two-party call has one dialog end to end, so both participants point at
+    // the same one. A conference has one per participant, each with the focus (RFC
+    // 4579), which is why this hangs off the leg and not off the call.
+    std::shared_ptr<Dialog> dialog;
 
     // Media for this leg, keyed by the SDP media identifier.
     std::unordered_map<int64_t, std::shared_ptr<MediaStream>> streams;
@@ -117,6 +124,14 @@ class Call {
       if (!participant.originator) result.push_back(&participant);
     }
     return result;
+  }
+
+  // The leg for a dialog, or null. A two-party call has one of each.
+  Participant* participant_for(const std::shared_ptr<Dialog>& dialog) {
+    for (auto& participant : participants) {
+      if (participant.dialog == dialog) return &participant;
+    }
+    return nullptr;
   }
 
   bool contains_channel(const std::shared_ptr<Channel>& channel) const {
