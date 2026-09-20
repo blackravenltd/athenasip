@@ -37,6 +37,11 @@ constexpr std::uint64_t kDefaultMaxForwards = 70;
 constexpr const char* kMagicCookie = "z9hG4bK";
 constexpr std::size_t kLoopTokenLength = 16;
 
+// RFC 3261 18.1.1: "if it is larger than 1300 bytes and the path MTU is unknown". This
+// node does no path MTU discovery, so the MTU is always unknown and the number is the
+// whole of the rule.
+constexpr std::size_t kMaxUdpRequest = 1300;
+
 bool is_2xx(int code) { return code >= 200 && code < 300; }
 bool is_final(int code) { return code >= 200; }
 
@@ -89,6 +94,28 @@ std::shared_ptr<SIPUri> route_uri(const std::shared_ptr<headers::Header>& header
 bool has_sdp(const std::shared_ptr<SIPMessage>& message) {
   if (message->body.empty() || !message->header->contains("Content-Type")) return false;
   return Util::to_lower(message->header->headers_map["Content-Type"][0]->to_string()).rfind("application/sdp", 0) == 0;
+}
+
+// The size of the message as it will actually leave. Content-Length is fixed up by the
+// transport on the way out, so it is made right here too: measuring before that would be
+// measuring a message that is not the one sent. Doing it twice costs nothing and gets the
+// same answer.
+std::size_t wire_size(const std::shared_ptr<SIPMessage>& message) {
+  message->header->clear("Content-Length");
+  message->header->add("Content-Length", std::make_shared<UIntHeader>(message->body.size()));
+  return message->to_string().size();
+}
+
+// RFC 3261 20.42: sent-protocol is "SIP/2.0/<transport>". Changing where a request goes
+// out means changing what the top Via says it went out over (18.1.1).
+void set_top_via_transport(const std::shared_ptr<SIPMessage>& message, const std::string& transport) {
+  if (!message->header->contains("Via")) return;
+
+  auto via = message->header->headers_map["Via"][0]->as<ViaHeader>();
+  if (via == nullptr) return;
+
+  const auto slash = via->version.rfind('/');
+  via->version = (slash == std::string::npos ? std::string("SIP/2.0") : via->version.substr(0, slash)) + "/" + transport;
 }
 
 // The loop half of a branch this node wrote, or empty for a branch it did not.
@@ -388,6 +415,43 @@ void Proxy::_send_forward(const std::shared_ptr<Context>& context, const std::sh
 
   // A CANCEL may have arrived while the media engine had the description. The branch is
   // no longer wanted, and 487 has already gone back on the server transaction.
+  if (context->answered || context->cancelled) return;
+
+  const bool over_udp = channel->_connection && Util::to_lower(channel->_connection->transport_name()) == "udp";
+
+  // RFC 3261 18.1.1: a request this large may not go out over UDP when the path MTU is
+  // unknown. It goes over a congestion controlled transport instead, which for this node
+  // means TCP, and the top Via has to say where it really went.
+  if (over_udp && wire_size(copy) > kMaxUdpRequest) {
+    // The same hop, a different transport. A UDP flow's remote is where the far end's
+    // datagrams came from, which for a symmetric endpoint is the port it listens on.
+    const auto hop = channel->_connection->remote_endpoint();
+
+    auto self = shared_from_this();
+
+    core->channel_connect("tcp", hop.address().to_string(), hop.port(), [this, self, context, copy, channel](plugins::Result<std::shared_ptr<Channel>> opened) {
+      if (opened.ok && opened.value && opened.value->_connection) {
+        set_top_via_transport(copy, "TCP");
+        return _write_forward(context, copy, opened.value);
+      }
+
+      // 18.1.1 again: a TCP attempt the far end refuses is retried over UDP. A
+      // datagram that may be fragmented beats a request that never leaves.
+      _logger->info("Cannot open TCP for a request of " + std::to_string(wire_size(copy)) + " bytes - " + opened.error + " - sending it over UDP");
+
+      _write_forward(context, copy, channel);
+    });
+
+    return;
+  }
+
+  _write_forward(context, copy, channel);
+}
+
+void Proxy::_write_forward(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& copy, const std::shared_ptr<Channel>& channel) {
+  auto core = _core.lock();
+  if (!core) return;
+
   if (context->answered || context->cancelled) return;
 
   // The ACK for a 2xx travels outside any transaction (RFC 3261 17.1.1.3), so it is

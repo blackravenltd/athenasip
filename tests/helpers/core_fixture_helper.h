@@ -102,8 +102,8 @@ struct CoreFixture {
   }
 
   std::shared_ptr<athenasip::Channel> make_channel(const std::string& remote_address, std::shared_ptr<MockConnection>* out = nullptr,
-                                                  const std::string& transport = "udp") {
-    auto connection = std::make_shared<MockConnection>(transport, remote_address);
+                                                  const std::string& transport = "udp", std::uint16_t remote_port = 5060) {
+    auto connection = std::make_shared<MockConnection>(transport, remote_address, remote_port);
     if (out) *out = connection;
 
     auto channel = std::make_shared<athenasip::Channel>(logger, core, connection);
