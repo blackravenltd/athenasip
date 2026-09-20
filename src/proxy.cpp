@@ -332,25 +332,39 @@ void Proxy::_forward_next(const std::shared_ptr<Context>& context) {
   // remaining targets are no longer wanted (16.10).
   if (context->answered || context->cancelled || context->next >= context->targets.size()) return _send_best(context);
 
-  const auto& target = context->targets[context->next++];
+  // By value: the continuation below runs after a round trip, and the target set is the
+  // context's rather than this frame's.
+  const Target target = context->targets[context->next++];
 
-  auto channel = target.flow.lock();
+  if (auto channel = target.flow.lock(); channel && channel->_connection) return _forward_to(context, target, channel);
 
-  if (!channel || !channel->_connection) {
-    // The next hop is not one this node has a live flow to - either it never had one, or
-    // the connection has since closed - and opening one needs outbound connections, which
-    // the transports step adds. Try the rest of the target set rather than ending the
-    // search on it.
-    _logger->info("No flow to " + target.next_hop->to_string() + " - trying the next target");
+  // RFC 3261 16.6 step 7: a hop this node has no flow to gets one opened. A registered
+  // client is answered on the connection it registered over, so this is the trunk, the
+  // peer node, and the client whose connection has since closed.
+  const auto hop = _next_hop_of(*target.next_hop);
+  const auto name = target.next_hop->to_string();
 
-    auto unavailable = context->request->generate_response();
-    unavailable->header->response_code = 480;
-    unavailable->header->response_message = "Temporarily Unavailable";
+  auto self = shared_from_this();
 
-    if (!context->best) context->best = unavailable;
-    return _forward_next(context);
-  }
+  core->channel_connect(hop.transport, hop.host, hop.port, [this, self, context, target, name](plugins::Result<std::shared_ptr<Channel>> opened) {
+    if (!opened.ok || !opened.value || !opened.value->_connection) {
+      // Unreachable is about this target and not about the request, so the rest of the
+      // target set still gets its turn (16.7).
+      _logger->info("No flow to " + name + " - " + opened.error + " - trying the next target");
 
+      auto unavailable = context->request->generate_response();
+      unavailable->header->response_code = 480;
+      unavailable->header->response_message = "Temporarily Unavailable";
+
+      if (!context->best) context->best = unavailable;
+      return _forward_next(context);
+    }
+
+    _forward_to(context, target, opened.value);
+  });
+}
+
+void Proxy::_forward_to(const std::shared_ptr<Context>& context, const Target& target, const std::shared_ptr<Channel>& channel) {
   // RFC 3261 16.6 step 1: every branch starts from a copy of the request as received,
   // so the Via and the Max-Forwards of one branch are not what the next one inherits.
   auto copy = context->request->clone();

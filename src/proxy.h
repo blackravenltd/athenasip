@@ -124,7 +124,13 @@ class Proxy : public TransactionUser {
                         const std::string& loop_token) const;
 
   // Sends to the next untried target, and answers the caller when there are none left.
+  // Opens a flow to the target first where this node has none, which is a round trip, so
+  // the sending half is _forward_to.
   void _forward_next(const std::shared_ptr<Context>& context);
+
+  // One target, one flow: the copy of the request, the rewrites 16.6 asks for, and the
+  // send.
+  void _forward_to(const std::shared_ptr<Context>& context, const Target& target, const std::shared_ptr<Channel>& channel);
 
   // The tail of _forward_next, once the session description has been through the media
   // engine. Separate because that is a round trip and the send waits for it.

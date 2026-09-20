@@ -65,6 +65,8 @@ bool Config::load_from_yaml(const std::string& filename) {
     if (sip_timers["k_non_invite_duration"]) sip_timer_k_non_invite_duration = sip_timers["k_non_invite_duration"].as<uint16_t>();
   }
 
+  if (sip["connect_timeout_ms"]) sip_connect_timeout_ms = sip["connect_timeout_ms"].as<uint32_t>();
+
   // --- Parse the 'tls' section ---
   YAML::Node tls = config["tls"];
   if (tls) {

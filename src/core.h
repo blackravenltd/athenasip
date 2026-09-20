@@ -121,9 +121,27 @@ class Core : public std::enable_shared_from_this<Core> {
 
   // The live flow to a next hop, or null when this node has none (RFC 3261 16.6 step 7).
   // Channels are filed under "transport://host:port", which is what a next hop resolves
-  // to once its URI has given up its transport, host and port. Opening a new flow to a
-  // hop nothing is connected to needs outbound connections, which is step 7 of the plan.
+  // to once its URI has given up its transport, host and port.
   std::shared_ptr<Channel> channel_find(const std::string& transport, const std::string& host, std::uint16_t port);
+
+  // The flow to a next hop, opening one when this node has none.
+  //
+  // A registered client is reached on the connection this node accepted, which
+  // channel_find already answers. A trunk, a peer node, or a request too large to leave
+  // over UDP (18.1.1) has nothing listening back this way and has to be dialled. Until
+  // this existed such a hop was answered 480, because nothing in the tree opened a
+  // connection rather than accepting one.
+  //
+  // Async because it is a DNS lookup and a TCP handshake, and bounded by
+  // Config::sip_connect_timeout_ms because the operating system's own bound is far
+  // longer than the transaction has. The handler runs on the strand.
+  void channel_connect(std::string transport, std::string host, std::uint16_t port, plugins::Handler<std::shared_ptr<Channel>> handler);
+
+  // A second name for a channel already registered: the name it was dialled by, when
+  // that is not the address it resolved to. Without it every request to a hop named by
+  // hostname would resolve and dial again, and the node would hold one connection per
+  // request.
+  void channel_alias(std::string endpoint, const std::shared_ptr<Channel>& channel);
 
   // The addresses this node answers on, as "host:port". A Route or a Request-URI naming
   // one of these names this node (RFC 3261 16.4), which is how a Record-Route this node

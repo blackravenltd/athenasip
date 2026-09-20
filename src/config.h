@@ -58,6 +58,13 @@ class Config {
 
   bool sip_timer_reliable_transport_retransmits = false;
 
+  // How long this node will spend opening a flow to a next hop it has none to (RFC 3261
+  // 16.6 step 7). Not an RFC timer - the RFC does not give one - but it has to be
+  // bounded: the operating system's own connect timeout is well over a minute, and Timer
+  // B gives the whole transaction thirty-two seconds. A fork with several bindings has
+  // to have room to try more than the first.
+  uint32_t sip_connect_timeout_ms = 4000;
+
   // TLS Configuration
   bool tls_enable = false;
   std::string tls_address;
