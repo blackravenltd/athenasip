@@ -8,8 +8,9 @@
 
 #include <boost/asio/ip/address.hpp>
 #include <boost/bind/bind.hpp>
-#include <sstream>
+#include <utility>
 
+#include "tls_context.h"
 #include "websocket_httpsession.h"
 
 namespace athenasip {
@@ -17,13 +18,20 @@ namespace servers {
 
 WebsocketServer::WebsocketServer(std::shared_ptr<Logger> logger, std::shared_ptr<Core> core, const std::string& bind_address, short port)
     : Server(std::make_shared<LoggerScoped>("wsu_server", logger), core),
-      _port(port),
-      _acceptor(_io_context, boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address(bind_address), port)) {}
+      _acceptor(_io_context, boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address(bind_address), port)),
+      _ssl_context(boost::asio::ssl::context::tls_server) {}
+
+bool WebsocketServer::set_certificates(std::string cert, std::string key) {
+  if (!load_tls_certificates(_logger, _ssl_context, cert, key)) return false;
+
+  _tls = true;
+  return true;
+}
 
 void WebsocketServer::start() {
   _logger->debug("Starting...");
   boost::asio::post(_io_context, [this]() {
-    _logger->info("Listening on " + _acceptor.local_endpoint().address().to_string() + ":" + std::to_string(_port) + " (ws://)");
+    _logger->info("Listening on " + _acceptor.local_endpoint().address().to_string() + ":" + std::to_string(port()) + " (" + _scheme() + "://)");
     start_accept();
   });
   _thread = std::make_shared<std::thread>([this]() { _io_context.run(); });
@@ -50,16 +58,37 @@ void WebsocketServer::start_accept() {
 
 void WebsocketServer::_handle_accept(const boost::system::error_code& error, std::shared_ptr<boost::asio::ip::tcp::socket> socket) {
   if (!error) {
-    auto rm = socket->remote_endpoint();
-    _logger->debug("Incoming Connection " + rm.address().to_string() + ":" + std::to_string(rm.port()));
+    auto remote = socket->remote_endpoint();
+    _logger->debug("Incoming Connection " + remote.address().to_string() + ":" + std::to_string(remote.port()));
 
-    // Create a new HTTPSession to perform the HTTP upgrade.
-    auto session = std::make_shared<WebsocketHTTPSession>(_logger->base_logger(), _core, socket);
-    session->start();
+    if (_tls) {
+      _start_tls_session(std::move(socket));
+    } else {
+      // Straight to the HTTP upgrade. Until it completes there is nothing to hang a
+      // Channel off.
+      std::make_shared<WebsocketHTTPSession>(_logger->base_logger(), _core, std::move(socket), "ws")->start();
+    }
   } else {
     _logger->error("Incoming Connection Accept Error: " + error.message());
   }
+
   boost::asio::post(_io_context, [this]() { start_accept(); });
+}
+
+void WebsocketServer::_start_tls_session(std::shared_ptr<boost::asio::ip::tcp::socket> socket) {
+  auto stream = std::make_shared<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>>(std::move(*socket), _ssl_context);
+
+  // Asynchronous, unlike the TLS SIP listener's blocking handshake: this one runs on the
+  // listener's own thread, and a client that opens a connection and then says nothing
+  // would otherwise stop every other client being accepted.
+  stream->async_handshake(boost::asio::ssl::stream_base::server, [this, stream](const boost::system::error_code& ec) {
+    if (ec) {
+      _logger->info("TLS handshake failed: " + ec.message());
+      return;
+    }
+
+    std::make_shared<WebsocketTLSHTTPSession>(_logger->base_logger(), _core, stream, "wss")->start();
+  });
 }
 
 }  // namespace servers
