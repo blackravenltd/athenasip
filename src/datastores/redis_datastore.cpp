@@ -696,8 +696,12 @@ std::string RedisDatastore::_serialise_call(const std::shared_ptr<Call>& call) {
     boost::json::object entry;
     entry["identity"] = participant.identity ? participant.identity->to_string() : "";
     entry["node_id"] = participant.node_id;
-    entry["local_tag"] = participant.local_tag;
-    entry["remote_tag"] = participant.remote_tag;
+    // The dialog's identity, not the whole dialog. A route set and a pair of sequence
+    // numbers belong to the node on the path and are no use to another one; replicating
+    // them is full dialog failover, which is parked.
+    entry["call_id"] = participant.dialog ? participant.dialog->call_id : "";
+    entry["caller_tag"] = participant.dialog ? participant.dialog->caller_tag : "";
+    entry["callee_tag"] = participant.dialog ? participant.dialog->callee_tag : "";
     entry["originator"] = participant.originator;
     participants.push_back(std::move(entry));
   }
@@ -735,8 +739,15 @@ std::shared_ptr<Call> RedisDatastore::_parse_call(const std::string& value) cons
       auto& participant = call->add_participant(std::make_shared<types::SIPIdentity>(json_string(participant_obj, "identity")), nullptr,
                                                 participant_obj.at("originator").as_bool());
       participant.node_id = json_string(participant_obj, "node_id");
-      participant.local_tag = json_string(participant_obj, "local_tag");
-      participant.remote_tag = json_string(participant_obj, "remote_tag");
+
+      const auto call_id = json_string(participant_obj, "call_id");
+
+      if (!call_id.empty()) {
+        participant.dialog = std::make_shared<types::Dialog>();
+        participant.dialog->call_id = call_id;
+        participant.dialog->caller_tag = json_string(participant_obj, "caller_tag");
+        participant.dialog->callee_tag = json_string(participant_obj, "callee_tag");
+      }
     }
   }
 

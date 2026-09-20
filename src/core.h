@@ -24,6 +24,7 @@
 #include "call.h"
 #include "config.h"
 #include "datastores/datastore.h"
+#include "dialogs.h"
 #include "events/event_system.h"
 #include "expiry_set.h"
 #include "global_io_context.h"
@@ -157,6 +158,11 @@ class Core : public std::enable_shared_from_this<Core> {
   // Tests drive the section 17 timers from a ManualTimerSource rather than a real clock.
   void timer_source_set(std::shared_ptr<TimerSource> source) { _timer_source = std::move(source); }
 
+  // Dialogs (RFC 3261 section 12). Tracked, not owned: the node is on the path of every
+  // request in a dialog because it record-routed, and it watches them go by so that it
+  // knows when a call has ended. Nothing routes on this.
+  std::shared_ptr<Dialogs> dialogs();
+
   // Calls
   bool call_register(std::shared_ptr<Call> call);
   bool call_unregister(std::string callId);
@@ -217,6 +223,10 @@ class Core : public std::enable_shared_from_this<Core> {
 
   std::shared_ptr<Registrar> _registrar;
   std::shared_ptr<Proxy> _proxy;
+  std::shared_ptr<Dialogs> _dialogs;
+
+  // Keeps the Call record in step with the dialog it is a leg of.
+  void _on_dialog_change(const std::shared_ptr<types::Dialog>& dialog);
 
   std::unordered_map<std::string, std::shared_ptr<Call>> _calls;
 };

@@ -10,10 +10,14 @@ relay driver are in; `Call` is multi-party; all four RFC 3261 section 17 transac
 state machines exist and are wired in behind a matcher, with `Registrar` and `Proxy` as
 the transaction users.
 
-M2 steps 1 to 4 have landed since: the transaction users, the plugin contract (one
-registry, async datastore and media engine), a structured `SIPUri` and the rest of
-section 16. 320 tests, clean under asan and tsan, the Redis suite verified against a
-real server.
+M2 steps 1 to 5 have landed since: the transaction users, the plugin contract (one
+registry, async datastore and media engine), a structured `SIPUri`, the rest of
+section 16 and dialog tracking. 339 tests, clean under asan and tsan, the Redis suite
+verified against a real server.
+
+Step 6 is next: media on the signalling path. `Dialogs` is where it hooks in - a dialog
+confirmed is where `MediaEngine::offer`/`answer` belongs, and a dialog terminated is
+where `release` does. Both are already single call sites in `Core::_on_dialog_change`.
 
 An architecture review on 2026-09-18 compared the Principles, the tree and the RFCs.
 Its findings are merged into Milestone 2 below, which is ordered by priority: work the
@@ -99,12 +103,9 @@ Everything below the transaction users is a plugin: datastores, event systems an
 engines today, routing policy and others later. They hang off the TU layer and register
 through one contract, so adding a kind or an implementation touches nothing above it.
 
-What the review found the tree does instead, and which step below fixes it. Steps 1 and
-2 landed on 2026-09-18 and 2026-09-19 and their findings have moved to `COMPLETED.md`;
-what is left:
+What the review found the tree does instead, and which step below fixes it. Steps 1 to
+5 have landed and their findings have moved to `COMPLETED.md`; what is left:
 
-- There is no Dialog (section 12). `Call` is the application object and is not one:
-  it has tags but no route set, CSeq tracking or remote target. (Step 5.)
 - For a browser over WS the Contact URI is unroutable, so RFC 5626 flow routing and
   WSS are prerequisites for the first WebRTC call, not cluster features. (Steps 7 and
   M3.)
@@ -197,18 +198,30 @@ What it deliberately left, so it is not lost:
 
 ### Step 5 - Dialogs (RFC 3261 section 12)
 
-The node is call-stateful by product decision: it anchors media, keeps call records
-and shows live calls, so it has to know when a call ends. That is dialog tracking, not
-dialog ownership; the UAs own the dialogs.
+Done on 2026-09-20; see `COMPLETED.md`. `types::Dialog`, the `Dialogs` observer,
+`Call` hanging off it, and RFC 4028 session expiry.
 
-- [ ] A `Dialog` type: Call-ID, local and remote tags, route set, local and remote CSeq,
-      remote target, secure flag. Created from the 2xx to an INVITE (12.1), matched on
-      in-dialog requests (12.2.2), ended on BYE. `Call` keeps one per participant leg
-      rather than bare tags (`src/call.h:66` has only the tags today). `Call` stays the
-      application object: participants, media, focus.
-- [ ] Session timers (RFC 4028): honour `Session-Expires`, refresh via re-INVITE or
-      UPDATE, tear down on expiry. Needs the dialog, which is why this lives here and
-      not in step 4.
+What it deliberately left, so it is not lost:
+
+- [ ] RFC 4028 section 8, the proxy's own say in the negotiation. `Config::sip_session_min_se`
+      exists and nothing reads it: an INVITE whose `Session-Expires` is below this node's
+      minimum should be answered 422 Session Interval Too Small with a `Min-SE` header,
+      and `Supported: timer` / `Require: timer` should be honoured. Until then the node
+      accepts whatever the two ends agree and only watches.
+- [ ] Requiring a session timer at all. A call between two endpoints that never offered
+      one has no interval, so it never lapses and this node holds its state until a BYE
+      arrives. That is correct - ending a call nobody said would end is worse - but it
+      means a stuck call is only cleaned up by a restart. Inserting `Session-Expires` on
+      the way through is the fix and it is a policy decision, so it waits for the config
+      to have somewhere to say it.
+- [ ] Tearing a lapsed call down towards the endpoints. On expiry this node discards its
+      state, which is what RFC 4028 section 8 asks of a proxy; sending a BYE to both ends
+      would be acting as a user agent in a dialog it only sits on the path of. When the
+      local UA arrives (the fourth transaction user in the Architecture diagram), it is
+      worth revisiting, because a node that anchored media would rather tell both ends.
+- [ ] Forking creates one dialog per answering branch (12.1) and the model holds them,
+      but serial forking means only one branch is ever outstanding, so the second one is
+      untested. Parallel forking is what would exercise it, and that is Parked.
 
 ### Step 6 - Media on the signalling path
 

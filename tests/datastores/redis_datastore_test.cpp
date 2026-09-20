@@ -189,7 +189,9 @@ TEST(RedisDatastoreTest, CallRoundTripsWithItsParticipants) {
   call->created_at = std::time(nullptr);
   call->add_participant(std::make_shared<types::SIPIdentity>("sip:alice@example.com"), nullptr, true);
   call->add_participant(std::make_shared<types::SIPIdentity>("sip:bob@example.com"));
-  call->participants[0].local_tag = "alice-tag";
+  call->participants[0].dialog = std::make_shared<athenasip::types::Dialog>();
+  call->participants[0].dialog->call_id = "call-1";
+  call->participants[0].dialog->caller_tag = "alice-tag";
   call->participants[1].node_id = "sip-0002";
 
   ASSERT_TRUE(datastore->call_create(call));
@@ -201,7 +203,8 @@ TEST(RedisDatastoreTest, CallRoundTripsWithItsParticipants) {
   ASSERT_EQ(found->participants.size(), 2u);
   EXPECT_TRUE(found->participants[0].originator);
   EXPECT_FALSE(found->participants[1].originator);
-  EXPECT_EQ(found->participants[0].local_tag, "alice-tag");
+  ASSERT_NE(found->participants[0].dialog, nullptr);
+  EXPECT_EQ(found->participants[0].dialog->caller_tag, "alice-tag");
   EXPECT_EQ(found->participants[1].node_id, "sip-0002");
 
   call->state = Call::State::Connected;

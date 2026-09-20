@@ -669,3 +669,49 @@ and gives the TU logic somewhere to live.
 - [x] 17 tests from sections 16.3.4, 16.4, 16.5, 16.6, 16.7, 16.10, 18.1.2 and 9.1, written
       from the RFC and watched fail. `tests/helpers/proxy_fixture_helper.h` is the shared
       fixture. 320 tests, clean under asan and tsan.
+
+## Milestone 2 step 5 - Dialogs (2026-09-20)
+
+- [x] `types::Dialog` (`src/types/dialog.h`): RFC 3261 12.1.1's list - Call-ID and both
+      tags, each end's identity and remote target, the route set, a sequence number per end,
+      the secure flag and the state. The two ends are named caller and callee rather than the
+      RFC's local and remote, because local and remote are written from inside one UA and a
+      proxy that used them would have to pick an end to pretend to be. `Dialog::matches`
+      accepts the tags in either order for the same reason (12.2.2 is stated from one side).
+- [x] `Dialogs` (`src/dialogs.*`): an observer, not a transaction user. Nothing routes on it
+      and every request would still reach its far end with the class deleted - a proxy is
+      transaction-stateful, not dialog-stateful (16.1). It exists for the question a proxy
+      alone cannot answer: whether a call is still up, which is what releases media, closes a
+      call record and feeds a live-calls page.
+- [x] An INVITE with no To tag is a call attempt; a provisional carrying a To tag makes it an
+      early dialog (12.1); a 2xx confirms it; a BYE ends it (15.1); a CANCEL ends the attempt
+      but not a call already answered (9.1). A non-2xx final ends it too, so a call that never
+      connected leaves nothing behind. A terminated dialog is out of the table by the time the
+      change callback returns, so what is in it is what is live and nothing else.
+- [x] The CANCEL case is the one worth naming: a CANCEL carries the INVITE's To, which has no
+      tag, so it has to find its call by the caller's tag alone - and it has to do so after a
+      180 has already given the callee one.
+- [x] `Call::Participant` holds its `Dialog` rather than two bare tags. A proxied two-party
+      call has one dialog end to end, so both legs point at the same one; a conference has one
+      per leg with the focus (RFC 4579), which is why it hangs off the participant. The Redis
+      call record persists the dialog's identity and not its route set or sequence numbers:
+      those belong to the node on the path and are no use to another one, and replicating them
+      is full dialog failover, which is parked.
+- [x] `Core::_on_dialog_change` keeps the `Call` in step - Trying, Ringing, Connected, Closed -
+      publishes `calls/<id>/state`, writes the record through and drops the call from the live
+      table when it closes. This is where step 6 hangs media off: offer and answer on confirm,
+      release on terminate, both already single call sites.
+- [x] RFC 4028 session timers: `SessionExpiresHeader` for `Session-Expires` and `Min-SE`
+      (section 4's grammar, including the `refresher` parameter and the `x` compact form), the
+      interval taken from the 2xx because that is what the two ends settled on rather than what
+      the INVITE asked for, refreshed by a re-INVITE or UPDATE passing through, and the dialog
+      discarded when it lapses. One timer for the node, armed at the earliest deadline of any
+      dialog that negotiated an interval, so a node whose endpoints do not use session timers
+      pays nothing. Deadlines are on the steady clock: an interval is a duration, and a wall
+      clock stepping backwards must not extend a call by an hour.
+- [x] On expiry the node discards its state rather than sending a BYE to both ends. That is
+      what RFC 4028 section 8 asks of a proxy; sending one would be acting as a user agent in a
+      dialog this node is only on the path of. A call whose ends never agreed an interval never
+      lapses at all, because ending a call nobody said would end is the worse failure.
+- [x] 19 tests from sections 12.1, 12.1.1, 12.2.1.1, 12.2.2, 15.1, 9.1 and RFC 4028, written
+      from the RFCs and watched fail. 339 tests, clean under asan and tsan.
