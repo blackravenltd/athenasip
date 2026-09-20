@@ -760,3 +760,49 @@ and gives the TU logic somewhere to live.
       from two sockets and asserts each comes out at the other, because a relay that allocates
       ports and forwards nothing passes every assertion about SDP. 351 tests, clean under asan
       and tsan.
+
+## Milestone 2 step 7 - Transports, part 1 (2026-09-20)
+
+- [x] WSS listener (`src/servers/websocket_server.*`). A browser will not open an insecure
+      WebSocket from a page served over https, so wss is not a hardening option for a web
+      client but the only way in, and without it there is no first WebRTC call to make.
+      One listener class rather than two: the only difference is a TLS handshake before the
+      HTTP upgrade, and a node running two near-identical listeners would drift between them.
+- [x] `WebsocketConnectionFor` and `WebsocketHTTPSessionFor` are templated on what carries
+      the bytes, because below the websocket framing ws and wss are identical. The transport
+      name is carried rather than deduced: it is the one thing that differs and the layers
+      above route on it. Both are header-only now; their implementation files are gone.
+- [x] The WSS handshake is asynchronous, unlike the TLS SIP listener's blocking one. It runs
+      on the listener's own thread, and a client that connects and then says nothing would
+      otherwise stop every other client being accepted.
+- [x] `servers/tls_context.h`: one certificate loader for both secure listeners, which also
+      turns off SSLv2, SSLv3, TLS 1.0 and TLS 1.1. A node whose two secure listeners were set
+      up differently is a node whose security depends on which port you reached it on.
+      `websocket.tls` with no certificate or no key is a startup error rather than a silent
+      fall back to ws://.
+- [x] `Core::channel_connect`: this node can open a connection rather than only accept one.
+      Nothing in the tree could before, so a next hop with no live flow was answered 480 - a
+      registered client always has one, which is why it never showed, but a trunk or a peer
+      node could not be reached at all. The channel is filed under the address it reached and
+      under the name it was dialled by, so a second request to a hop named by hostname reuses
+      the connection; closing it takes both names away.
+- [x] The attempt is bounded by `sip.connect_timeout_ms`, four seconds by default. Not an RFC
+      timer, but the operating system's own bound is well over a minute and Timer B gives the
+      whole transaction thirty-two seconds, which a fork with several bindings has to share.
+      The timer and the connect race and whichever loses is ignored: a transaction told twice
+      that its hop is unreachable would try the next target twice.
+- [x] No NAPTR and no SRV: RFC 3263 is a step of its own, and this resolves the host the URI
+      named the way 16.6 step 7 falls back to without service records. UDP and TLS outbound
+      are refused rather than faked, for reasons recorded under step 7 in `ACTIVE.md`.
+- [x] RFC 3261 18.1.1: a request over 1300 bytes with the path MTU unknown leaves over TCP
+      rather than UDP, with the top Via rewritten to say so, and falls back to UDP when TCP
+      is refused. The decision is made where the final bytes exist, after the media engine
+      has had the body - which matters more now than it did, because anchoring makes the
+      description this node forwards larger than the one it received.
+- [x] `Config` defaults `datastore` to `memory://` and `events` to `local://`. A config with
+      neither section left both blank and the node failed at startup, which is not the
+      ten-line config and sane defaults the project promises. Found by a config test written
+      for the WebSocket TLS settings.
+- [x] 20 tests. The WSS ones complete a real TLS handshake against the listener, carry a
+      REGISTER over the frames and read the 401 back; the 18.1.1 ones read what this node
+      actually wrote off a real TCP socket. 371 tests, clean under asan and tsan.

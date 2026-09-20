@@ -12,13 +12,13 @@ the transaction users.
 
 M2 steps 1 to 6 have landed since: the transaction users, the plugin contract (one
 registry, async datastore and media engine), a structured `SIPUri`, the rest of
-section 16, dialog tracking and media on the signalling path. 351 tests, clean under
+section 16, dialog tracking and media on the signalling path. 371 tests, clean under
 asan and tsan, the Redis suite verified against a real server.
 
-Step 7 is next: transports. WSS is the one that unblocks everything else - a browser
-needs a secure origin - and TCP fallback for a request over 1300 bytes and connection
-reuse for responses and in-dialog requests are what RFC 5626 flow routing in M3 stands
-on.
+Step 7 is mostly done: the WSS listener, outbound flows and RFC 3261 18.1.1 have
+landed. What is left of it is the per-connection flow identity on a binding, which is a
+plugin contract change and wants to share an `API_VERSION` bump with the one step 2 left
+outstanding.
 
 An architecture review on 2026-09-18 compared the Principles, the tree and the RFCs.
 Its findings are merged into Milestone 2 below, which is ordered by priority: work the
@@ -180,10 +180,8 @@ What it deliberately left, so it is not lost:
 - [ ] RFC 3263: a next hop is resolved from the URI's own transport, host and port, with
       the scheme's defaults for what it does not say. NAPTR and SRV are a step of their
       own and are what a cluster and a trunk both need.
-- [ ] Outbound flows. A next hop this node has no live connection to is answered 480,
-      because nothing in the tree opens a connection rather than accepting one. Every
-      target in M2 is a registered client with a flow, so this is not a stall; it becomes
-      one the moment a request has to leave for a trunk or a peer node. Step 7.
+- [x] Outbound flows, done on 2026-09-20 as part of step 7. `Core::channel_connect`
+      opens one to a hop this node has none to, rather than answering 480.
 - [ ] Double Record-Route (RFC 5658), for a call whose two ends are on different
       transports. One value naming the outbound flow is right for a call that is UDP to
       UDP or WSS to WSS, which is what M2 tests; a browser calling a desk phone needs two
@@ -255,13 +253,36 @@ What it deliberately left, so it is not lost:
 
 ### Step 7 - Transports
 
-- [ ] WSS listener: Beast websocket over `ssl_stream`, sharing the TLS context loader.
-      `websocket.tls: true` config with cert and key. A prerequisite for any browser:
-      they require a secure origin.
-- [ ] TCP fallback for UDP requests over 1300 bytes (18.1.1).
-- [ ] TCP/TLS connection reuse for responses and in-dialog requests, and a
-      per-connection flow identity written to the binding. This is the groundwork RFC
-      5626 flow routing in M3 stands on.
+- [x] WSS listener, done on 2026-09-20. Beast websocket over `ssl_stream`, one listener
+      class for both, `websocket.tls` with its own certificate and key, and one TLS
+      context loader shared with the TLS SIP listener.
+- [x] Outbound flows, done on 2026-09-20. `Core::channel_connect` resolves and dials a
+      hop this node has none to, bounded by `sip.connect_timeout_ms`, filed under both
+      the address it reached and the name it was dialled by. This was step 4's leftover
+      and it is what steps below stand on.
+- [x] TCP fallback for UDP requests over 1300 bytes (18.1.1), done on 2026-09-20, with
+      the top Via rewritten and a fall back to UDP when TCP is refused.
+- [ ] Per-connection flow identity written to the binding. `Location::flow_id` exists and
+      nothing writes it; the value wants to be the channel registry's own key
+      (`transport://host:port`), so a node holding a binding can find the connection again
+      without re-resolving a Contact that, for a browser or a NAT'd client, resolves to
+      nothing reachable. This is the groundwork RFC 5626 flow routing in M3 stands on.
+
+      It changes `Datastore::subscriber_register`, which is a plugin contract change and
+      so an `API_VERSION` bump. Step 2 left one other contract change outstanding
+      (`EventSystem` still takes a callback of its own shape), and both should land in the
+      same bump rather than two.
+- [ ] Outbound TLS. `channel_connect` refuses `tls://` rather than guessing at what a
+      node trusts; the cluster CA decision in M4 is what settles it. Until then a TLS peer
+      has to connect inwards.
+- [ ] Outbound UDP to a host this node has never heard from. The datagram has to leave by
+      the listener's own socket so the source port is the one the far end answers to, and
+      that socket belongs to `UDPServer` rather than to the channel registry. Needed for a
+      UDP trunk, not for anything in M2.
+- [ ] Connection reuse for responses and in-dialog requests works as it stands - a
+      response goes back on the server transaction's own channel, and an in-dialog request
+      is routed by its Route set through `channel_find` - but nothing tests that a second
+      in-dialog request reuses the first one's connection rather than opening another.
 
 ### Step 8 - Admin API, part 1 (provisioning)
 
