@@ -133,8 +133,12 @@ class Proxy : public TransactionUser {
   void _forward_to(const std::shared_ptr<Context>& context, const Target& target, const std::shared_ptr<Channel>& channel);
 
   // The tail of _forward_next, once the session description has been through the media
-  // engine. Separate because that is a round trip and the send waits for it.
+  // engine. Separate because that is a round trip and the send waits for it. This is also
+  // where RFC 3261 18.1.1 moves an oversized request off UDP, which is another one.
   void _send_forward(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& copy, const std::shared_ptr<Channel>& channel);
+
+  // The send itself, once the transport is settled.
+  void _write_forward(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& copy, const std::shared_ptr<Channel>& channel);
 
   void _on_response(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response);
 
