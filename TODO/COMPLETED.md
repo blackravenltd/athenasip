@@ -715,3 +715,48 @@ and gives the TU logic somewhere to live.
       lapses at all, because ending a call nobody said would end is the worse failure.
 - [x] 19 tests from sections 12.1, 12.1.1, 12.2.1.1, 12.2.2, 15.1, 9.1 and RFC 4028, written
       from the RFCs and watched fail. 339 tests, clean under asan and tsan.
+
+## Milestone 2 step 6 - Media on the signalling path (2026-09-20)
+
+- [x] `Proxy::_anchor_media` (`src/proxy.cpp`): a session description on its way through goes
+      to the media engine first, and what comes back names this node. An INVITE carries the
+      offer of the end that sent it and the response to it carries the answer of the end that
+      answered (RFC 3264 section 5), so the leg the description belongs to is read from the
+      dialog rather than assumed from the direction. An INVITE with no description at all
+      inverts the exchange - the response becomes the offer and the ACK the answer - which is
+      why the ACK is never treated as an offer.
+- [x] This is a deliberate departure from 16.6, which says a proxy does not add to, modify or
+      remove a body. The node does it because it is the media relay. Where it cannot - no
+      engine configured, no call record, or an engine that declines - the message travels on
+      exactly as it arrived, which is the proxy behaviour the RFC describes, and the call is
+      not failed over it.
+- [x] Forwarding waits for the engine. `_send_forward` and `_forward_response` are the far
+      side of a round trip that is in-process for the builtin relay and an ng-protocol
+      exchange for rtpengine; the contract was made async for this and it is now used that
+      way. A CANCEL that arrives while the engine holds a description stops the branch rather
+      than sending it late.
+- [x] `Flags::from_sdp` (`src/media/media_engine.cpp`): ICE, DTLS, SRTP and rtcp-mux read from
+      the description itself, never from the transport. A browser asks for ICE and DTLS
+      whether its offer arrived over WSS or over UDP, and a desk phone on WSS is still plain
+      RTP. `RTP/SAVP` in the profile is enough to say SRTP on its own (RFC 3711, RFC 5764).
+      This is what lets the builtin engine decline a WebRTC offer instead of rewriting it into
+      something that cannot work.
+- [x] `Core::_on_dialog_change` releases the media when a call closes. A dialog ending is the
+      only thing that says a call is over, which is the whole reason this node tracks dialogs
+      it does not own. The call is held by the release handler, so dropping it from the live
+      table does not take it away from an engine that has not answered.
+- [x] The builtin relay actually bridges. Its relay sets are held per call and per stream
+      rather than per leg: `RTPRelaySet` learns where a leg is from the first packet it sends
+      and forwards to every other leg that has, so one port is a bridge and a port per leg is
+      two sinks with nothing between them. Both legs of a stream are handed the same port.
+- [x] `a=rtcp` is written whether or not the far end offered one (RFC 3605). The relay's RTCP
+      port comes out of the same pool as its RTP port and is not reliably the one above it, so
+      an endpoint left to assume the convention would send its receiver reports into another
+      call.
+- [x] `Call::participant_index` turns "which end sent this" into the index the media contract
+      addresses a participant by.
+- [x] 12 tests from RFC 3264, RFC 3605, RFC 8866 and the bridging concept, written from the
+      standards and watched fail. The bridging one sends real UDP packets through the relay
+      from two sockets and asserts each comes out at the other, because a relay that allocates
+      ports and forwards nothing passes every assertion about SDP. 351 tests, clean under asan
+      and tsan.

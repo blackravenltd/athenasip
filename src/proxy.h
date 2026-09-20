@@ -8,6 +8,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -125,7 +126,30 @@ class Proxy : public TransactionUser {
   // Sends to the next untried target, and answers the caller when there are none left.
   void _forward_next(const std::shared_ptr<Context>& context);
 
+  // The tail of _forward_next, once the session description has been through the media
+  // engine. Separate because that is a round trip and the send waits for it.
+  void _send_forward(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& copy, const std::shared_ptr<Channel>& channel);
+
   void _on_response(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response);
+
+  // RFC 3261 16.7: a response on its way back to the caller, once its own session
+  // description has been through the media engine.
+  void _forward_response(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response);
+
+  // RFC 3264 through the media engine. A session description on its way through belongs
+  // to the leg it came from - a request carries the description of the end that sent it,
+  // and a response carries the description of the end that answered - and what the
+  // engine gives back names this node instead, so the media arrives here to be bridged
+  // rather than going end to end.
+  //
+  // This is a departure from 16.6, which says a proxy does not add to, modify or remove
+  // a body. The node does it because it is the media relay; where it cannot - no engine,
+  // no call, or an engine that will not take the description - the message travels on
+  // exactly as it arrived, which is the proxy behaviour the RFC describes.
+  //
+  // `then` runs when the message is ready to go: inline when there was nothing to do,
+  // and on the strand from the engine's handler when there was.
+  void _anchor_media(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<SIPMessage>& message, std::function<void()> then);
 
   // RFC 3261 16.7 step 6: what goes back when every branch has been tried.
   void _send_best(const std::shared_ptr<Context>& context);

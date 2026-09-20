@@ -10,14 +10,15 @@ relay driver are in; `Call` is multi-party; all four RFC 3261 section 17 transac
 state machines exist and are wired in behind a matcher, with `Registrar` and `Proxy` as
 the transaction users.
 
-M2 steps 1 to 5 have landed since: the transaction users, the plugin contract (one
+M2 steps 1 to 6 have landed since: the transaction users, the plugin contract (one
 registry, async datastore and media engine), a structured `SIPUri`, the rest of
-section 16 and dialog tracking. 339 tests, clean under asan and tsan, the Redis suite
-verified against a real server.
+section 16, dialog tracking and media on the signalling path. 351 tests, clean under
+asan and tsan, the Redis suite verified against a real server.
 
-Step 6 is next: media on the signalling path. `Dialogs` is where it hooks in - a dialog
-confirmed is where `MediaEngine::offer`/`answer` belongs, and a dialog terminated is
-where `release` does. Both are already single call sites in `Core::_on_dialog_change`.
+Step 7 is next: transports. WSS is the one that unblocks everything else - a browser
+needs a secure origin - and TCP fallback for a request over 1300 bytes and connection
+reuse for responses and in-dialog requests are what RFC 5626 flow routing in M3 stands
+on.
 
 An architecture review on 2026-09-18 compared the Principles, the tree and the RFCs.
 Its findings are merged into Milestone 2 below, which is ordered by priority: work the
@@ -225,10 +226,32 @@ What it deliberately left, so it is not lost:
 
 ### Step 6 - Media on the signalling path
 
-- [ ] On INVITE offer and 2xx answer, call `MediaEngine::offer/answer` for the
-      participant concerned; on BYE, CANCEL or timeout, `release`. SDP round-trips
-      every attribute untouched, which the parser now guarantees; the builtin driver
-      rewrites only `c=`, `m=` ports and `a=rtcp`.
+Done on 2026-09-20; see `COMPLETED.md`. Offer and answer on the way through the proxy,
+release when the dialog ends, flags read from the description, and a builtin relay that
+actually bridges.
+
+What it deliberately left, so it is not lost:
+
+- [ ] Media policy. Anchoring happens whenever an engine is configured, and an engine
+      that declines means the description travels on untouched and the media goes end to
+      end. That is the right failure for a proxy, but it is a policy decision with
+      nowhere to say it: `anchor` or `passthrough` per realm is an M3 item and this is
+      the same knob.
+- [ ] The `o=` line keeps the endpoint's own address (RFC 8866 section 5.2). It is an
+      identifier for the session rather than somewhere to send to, so nothing breaks,
+      but a node anchoring media to hide topology is leaking the far end's address in
+      it. rtpengine rewrites it; the builtin driver's scope is `c=`, `m=` ports and
+      `a=rtcp`.
+- [ ] RFC 3264 section 8's version rule: an offer that changes the description must
+      increment the `o=` version, and a re-offer this node rewrote does not. It matters
+      once a re-INVITE changes the stream rather than repeating it, which is hold and
+      resume in M3.
+- [ ] The delayed offer - an INVITE with no description, its offer in the 2xx and the
+      answer in the ACK - is handled in the shape but untested. No endpoint in M2 sends
+      one; a sipp scenario in step 9 is what would prove it.
+- [ ] A conference through the builtin relay. Three legs on one latching port would
+      forward each to the other two, which works and is not mixing, so the driver still
+      advertises `bridge` only. A real focus is RFC 4579 in M6.
 
 ### Step 7 - Transports
 
