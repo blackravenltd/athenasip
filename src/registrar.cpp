@@ -25,19 +25,17 @@ using athenasip::headers::UIntHeader;
 
 namespace {
 
-// RFC 3261 10.2.2: a single Contact of "*" with Expires 0 removes every binding.
-//
-// "*" is not a URI, and the identity parser has nowhere to put it: it lands in the host
-// part with no user and the URI marked invalid. Recognising that shape is the best that
-// can be done until the SIPUri rewrite gives Contact somewhere honest to keep it.
+// RFC 3261 10.2.2: a single Contact of "*" with Expires 0 removes every binding. The
+// grammar has STAR as its own alternative (20.10), so the identity says whether it saw
+// one rather than this having to recognise the shape a "*" left behind.
 bool is_star_contact(const std::shared_ptr<SIPHeader>& header) {
   const auto& contacts = header->headers_map["Contact"];
   if (contacts.size() != 1) return false;
 
   auto contact = contacts[0]->as<SIPIdentityHeader>();
-  if (contact == nullptr || contact->value == nullptr || contact->value->uri == nullptr) return false;
+  if (contact == nullptr || contact->value == nullptr) return false;
 
-  return contact->value->uri->user.empty() && contact->value->uri->host == "*";
+  return contact->value->star;
 }
 
 }  // namespace

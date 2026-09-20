@@ -159,15 +159,15 @@ is a sequence of splits on delimiters that cannot appear unescaped in what they 
 
 What it deliberately left, so it is not lost:
 
-- [ ] `SIPIdentity::parse` (`src/types/sip_identity.cpp`) is still a backtracking
-      `std::regex`, and it runs over every To, From and Contact that arrives. libc++
-      matches by recursing per state, so its depth is bounded by the input and nothing
-      else; on the io thread's default stack that is a remote crash waiting for a long
-      enough header. It also has nowhere to put a Contact of `*`, which the registrar
-      works around by shape. Rewrite it the way `SIPUri` was, and give `*` a home. This is
-      the one item below step 4 worth pulling forward.
-- [ ] `types::URL` (`src/types/url.cpp`) is the other regex. Off the message path, only
-      parses config, but the same rewrite and cheap.
+- [x] `SIPIdentity::parse` is hand-written, done on 2026-09-20. The backtracking regex
+      it replaces ran over every To, From and Contact that arrived and could not express
+      a quoted display name containing `<` or `;` at all. `star` gives a Contact of `*`
+      its own home (20.10) and the registrar no longer recognises it by shape.
+- [ ] `types::URL` (`src/types/url.cpp`) is the last regex worth replacing. Off the
+      message path - it only parses config URLs at startup - so it is tidiness, and
+      cheap. `Util::is_ipv4` (`src/util.cpp:153`) also uses one and does see network
+      data, but the pattern is anchored with no nested quantifiers, so it is linear and
+      not the same hazard.
 
 ### Step 4 - Proxy core, the rest of section 16
 
