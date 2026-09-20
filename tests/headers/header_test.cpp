@@ -28,6 +28,22 @@ class HeaderTestAccessor : public Header {
   virtual std::string to_string() const override { return ""; }
 };
 
+// The factory registry is process-wide: every header type registers itself into it, and
+// SIPHeader::parse asks it which class to build. A test that clears it and walks away
+// leaves every later test in the same process parsing To, Via and Authorization as a
+// plain StringHeader, so `as<SIPIdentityHeader>()` returns null and a registrar answers
+// 400 where it should answer 401. ctest hides that by forking per test; running the
+// binary directly does not. So these tests put it back.
+class HeaderFactoryTest : public ::testing::Test {
+ protected:
+  void SetUp() override { _saved = HeaderTestAccessor::publicRegistry(); }
+
+  void TearDown() override { HeaderTestAccessor::publicRegistry() = _saved; }
+
+ private:
+  std::unordered_map<std::string, std::function<std::shared_ptr<Header>()>> _saved;
+};
+
 // -----------------------------------------------------------------------------
 // DummyHeader: Implements parse() and to_string() so we can test custom factories.
 class DummyHeader : public Header {
@@ -53,7 +69,7 @@ class FailHeader : public Header {
   }
 };
 
-TEST(HeaderFactoryTest, FallbackReturnsStringHeader) {
+TEST_F(HeaderFactoryTest, FallbackReturnsStringHeader) {
   // Clear the registry via our test accessor.
   HeaderTestAccessor::publicRegistry().clear();
 
@@ -65,7 +81,7 @@ TEST(HeaderFactoryTest, FallbackReturnsStringHeader) {
   EXPECT_EQ(sh->to_string(), "fallback-test");
 }
 
-TEST(HeaderFactoryTest, CustomFactoryRegistration) {
+TEST_F(HeaderFactoryTest, CustomFactoryRegistration) {
   HeaderTestAccessor::publicRegistry().clear();
 
   // Register a custom factory for field "X-Custom" that returns a DummyHeader.
@@ -80,7 +96,7 @@ TEST(HeaderFactoryTest, CustomFactoryRegistration) {
   EXPECT_EQ(dh->dummy, "dummy:custom-value");
 }
 
-TEST(HeaderFactoryTest, CustomFactoryParseFailureFallsBack) {
+TEST_F(HeaderFactoryTest, CustomFactoryParseFailureFallsBack) {
   HeaderTestAccessor::publicRegistry().clear();
 
   // Register a factory for "X-Fail" that produces an instance whose parse() always fails.
@@ -95,7 +111,7 @@ TEST(HeaderFactoryTest, CustomFactoryParseFailureFallsBack) {
   EXPECT_EQ(sh->to_string(), "some-value");
 }
 
-TEST(HeaderFactoryTest, RegistryRetention) {
+TEST_F(HeaderFactoryTest, RegistryRetention) {
   HeaderTestAccessor::publicRegistry().clear();
 
   // Initially, the registry should be empty.
