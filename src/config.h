@@ -80,6 +80,14 @@ class Config {
   std::string websocket_address;  // e.g. "127.0.0.1"
   uint16_t websocket_port = 0;    // e.g. 5060
 
+  // RFC 7118 over TLS. A browser will not open an insecure WebSocket from a page served
+  // over https, so this is what a web client actually connects to; ws:// is for local
+  // development. The certificate is the listener's own rather than the tls section's,
+  // because the name a browser reaches the node by is rarely the name a SIP peer does.
+  bool websocket_tls = false;
+  std::string websocket_cert_pem_filename;
+  std::string websocket_key_pem_filename;
+
   // DB configuration
   std::string db_url;  // e.g. "memory://" or "redis://127.0.0.1:6379"
 

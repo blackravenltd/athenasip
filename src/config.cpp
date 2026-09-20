@@ -181,6 +181,18 @@ bool Config::load_from_yaml(const std::string& filename) {
       _logger->error("Missing 'websocket.port'");
       return false;
     }
+
+    if (websocket["tls"]) websocket_tls = websocket["tls"].as<bool>();
+
+    if (websocket["cert_pem_filename"]) websocket_cert_pem_filename = websocket["cert_pem_filename"].as<std::string>();
+    if (websocket["key_pem_filename"]) websocket_key_pem_filename = websocket["key_pem_filename"].as<std::string>();
+
+    // A listener asked to be secure with nothing to be secure with cannot start, and
+    // falling back to ws:// would be a node quietly serving a browser in the clear.
+    if (websocket_tls && (websocket_cert_pem_filename.empty() || websocket_key_pem_filename.empty())) {
+      _logger->error("'websocket.tls' is set but 'websocket.cert_pem_filename' or 'websocket.key_pem_filename' is missing");
+      return false;
+    }
   }
 
   // --- Parse the 'datastore' section ---
