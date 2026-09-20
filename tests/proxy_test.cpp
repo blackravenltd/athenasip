@@ -102,7 +102,7 @@ TEST(ProxyTest, TheForwardedRequestUriIsTheBinding) {
   auto forwarded = f.request_with(f.callee_connection, "INVITE");
   ASSERT_NE(forwarded, nullptr);
   ASSERT_NE(forwarded->header->request_uri, nullptr);
-  EXPECT_EQ(forwarded->header->request_uri->realm, "192.0.2.20");
+  EXPECT_EQ(forwarded->header->request_uri->host, "192.0.2.20");
 }
 
 // RFC 3261 16.6 step 8: the proxy adds its own Via on top, with a branch of its own, and

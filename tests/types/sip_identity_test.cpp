@@ -19,7 +19,7 @@ TEST(SIPIdentityTest, ParsesNameAddrWithQuotedDisplayName) {
   EXPECT_EQ(identity.display_name.value(), "Alice Smith");
   ASSERT_NE(identity.uri, nullptr);
   EXPECT_EQ(identity.uri->user, "alice");
-  EXPECT_EQ(identity.uri->realm, "example.com");
+  EXPECT_EQ(identity.uri->host, "example.com");
   EXPECT_EQ(identity.tags["tag"], "abc123");
 }
 
@@ -39,8 +39,8 @@ TEST(SIPIdentityTest, AddrSpecParametersAreHeaderParametersNotUriParameters) {
 
   ASSERT_NE(identity.uri, nullptr);
   EXPECT_EQ(identity.uri->user, "carol");
-  EXPECT_EQ(identity.uri->realm, "example.com");
-  EXPECT_EQ(identity.uri->parameters, "");
+  EXPECT_EQ(identity.uri->host, "example.com");
+  EXPECT_TRUE(identity.uri->parameters().empty());
   EXPECT_EQ(identity.tags["tag"], "qwerty");
 }
 
@@ -49,7 +49,7 @@ TEST(SIPIdentityTest, NameAddrKeepsUriParametersInsideTheBrackets) {
   SIPIdentity identity("<sip:dave@example.com;transport=tcp>;tag=zzz");
 
   ASSERT_NE(identity.uri, nullptr);
-  EXPECT_EQ(identity.uri->parameters, "transport=tcp");
+  EXPECT_EQ(identity.uri->parameter("transport"), "tcp");
   EXPECT_EQ(identity.tags["tag"], "zzz");
   EXPECT_EQ(identity.tags.count("transport"), 0u);
 }

@@ -144,7 +144,7 @@ TEST(RegistrarTest, AnAuthenticatedRegisterStoresTheBinding) {
   auto locations = f.store->location_list(7);
   ASSERT_EQ(locations.size(), 1u);
   EXPECT_EQ(locations[0].contact->user, "alice");
-  EXPECT_EQ(locations[0].contact->realm, "192.0.2.10");
+  EXPECT_EQ(locations[0].contact->host, "192.0.2.10");
 }
 
 // RFC 3261 10.3 step 8: the 200 OK lists every current binding with the time it has

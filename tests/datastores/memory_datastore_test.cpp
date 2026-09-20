@@ -101,7 +101,7 @@ TEST(MemoryDatastoreTest, RegistrationStoresAContactThatCanBeLookedUp) {
 
   auto locations = datastore->location_list(7);
   ASSERT_EQ(locations.size(), 1u);
-  EXPECT_EQ(locations[0].contact->realm, "192.168.1.50");
+  EXPECT_EQ(locations[0].contact->host, "192.168.1.50");
   EXPECT_EQ(locations[0].contact->port.value(), 5060);
 }
 
