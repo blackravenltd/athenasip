@@ -25,43 +25,46 @@ std::string LocalEventSystem::name() const { return "local"; }
 
 std::string LocalEventSystem::version() const { return "0.0.1"; }
 
-bool LocalEventSystem::connect() {
+void LocalEventSystem::connect(plugins::Executor on, plugins::StatusHandler handler) {
   bool expected = false;
-  if (!_connected.compare_exchange_strong(expected, true)) {
-    return true;
+  if (_connected.compare_exchange_strong(expected, true)) {
+    _logger->info("Connected");
   }
 
-  _logger->info("Connected");
-  return true;
+  _complete(std::move(on), std::move(handler), plugins::Status::success());
 }
 
-void LocalEventSystem::connect(std::function<void(bool)> callback) { post_complete(std::move(callback), connect()); }
-
-bool LocalEventSystem::close() {
+void LocalEventSystem::close() {
   bool expected = true;
   if (!_connected.compare_exchange_strong(expected, false)) {
-    return true;
+    return;
   }
 
   _logger->info("Closed");
-  return true;
 }
 
-void LocalEventSystem::close(std::function<void(bool)> callback) { post_complete(std::move(callback), close()); }
+bool LocalEventSystem::is_connected() const { return _connected.load(); }
 
-void LocalEventSystem::publish(std::string event_name, std::string message, std::function<void(bool)> callback) {
+void LocalEventSystem::publish(std::string event_name, std::string message) {
+  const auto status = deliver(event_name, message);
+  if (!status.ok) {
+    _logger->error(status.error);
+  }
+}
+
+void LocalEventSystem::publish(plugins::Executor on, std::string event_name, std::string message, plugins::StatusHandler handler) {
+  _complete(std::move(on), std::move(handler), deliver(event_name, message));
+}
+
+plugins::Status LocalEventSystem::deliver(const std::string& event_name, const std::string& message) {
   auto self = shared_from_this();
 
   if (!TopicFilter::is_valid_topic(event_name)) {
-    _logger->error("Publish rejected for invalid event topic: " + event_name);
-    post_complete(std::move(callback), false);
-    return;
+    return plugins::Status::failure("Publish rejected for invalid event topic: " + event_name);
   }
 
   if (!_connected.load()) {
-    _logger->error("Publish rejected while closed: " + event_name);
-    post_complete(std::move(callback), false);
-    return;
+    return plugins::Status::failure("Publish rejected while closed: " + event_name);
   }
 
   _logger->debug("Publishing event: " + event_name + " with message: " + message);
@@ -81,37 +84,36 @@ void LocalEventSystem::publish(std::string event_name, std::string message, std:
     });
   }
 
-  post_complete(std::move(callback), true);
+  return plugins::Status::success();
 }
 
-std::shared_ptr<Subscription> LocalEventSystem::subscribe(std::string event_name,
-                                                          std::function<void(std::string event_name, std::string message)> event_callback,
-                                                          std::function<void(bool)> callback) {
-  auto self = shared_from_this();
+void LocalEventSystem::subscribe(plugins::Executor on, std::string event_name, Subscription::EventCallbackFn event_callback,
+                                 plugins::Handler<std::shared_ptr<Subscription>> handler) {
+  using SubscriptionResult = plugins::Result<std::shared_ptr<Subscription>>;
 
   if (!TopicFilter::is_valid_filter(event_name)) {
     _logger->error("Subscribe rejected for invalid event filter: " + event_name);
-    post_complete(std::move(callback), false);
-    return nullptr;
+    _complete(std::move(on), std::move(handler), SubscriptionResult::failure("Subscribe rejected for invalid event filter: " + event_name));
+    return;
   }
 
   _logger->debug("Subscribing to event: " + event_name);
-  auto sub = std::make_shared<Subscription>(std::move(event_name), std::move(event_callback));
 
-  {
-    std::lock_guard<std::mutex> lock(_subscriptions_mutex);
-    _subscriptions[sub->event_name].insert(sub);
-  }
+  _complete(std::move(on), std::move(handler), SubscriptionResult::success(add_subscription(event_name, std::move(event_callback))));
+}
 
-  post_complete(std::move(callback), true);
+std::shared_ptr<Subscription> LocalEventSystem::add_subscription(const std::string& event_name, Subscription::EventCallbackFn event_callback) {
+  auto sub = std::make_shared<Subscription>(event_name, std::move(event_callback));
+
+  std::lock_guard<std::mutex> lock(_subscriptions_mutex);
+  _subscriptions[sub->event_name].insert(sub);
+
   return sub;
 }
 
-void LocalEventSystem::unsubscribe(std::shared_ptr<Subscription> subscription, std::function<void(bool)> callback) {
-  auto self = shared_from_this();
-
+void LocalEventSystem::unsubscribe(plugins::Executor on, std::shared_ptr<Subscription> subscription, plugins::StatusHandler handler) {
   if (!subscription) {
-    post_complete(std::move(callback), false);
+    _complete(std::move(on), std::move(handler), plugins::Status::failure("unsubscribe: no subscription"));
     return;
   }
 
@@ -126,11 +128,10 @@ void LocalEventSystem::unsubscribe(std::shared_ptr<Subscription> subscription, s
     }
   }
 
-  post_complete(std::move(callback), true);
+  _complete(std::move(on), std::move(handler), plugins::Status::success());
 }
 
-void LocalEventSystem::unsubscribe_all(std::function<void(bool)> callback) {
-  auto self = shared_from_this();
+void LocalEventSystem::unsubscribe_all(plugins::Executor on, plugins::StatusHandler handler) {
   _logger->debug("Unsubscribing all subscriptions");
 
   {
@@ -138,16 +139,7 @@ void LocalEventSystem::unsubscribe_all(std::function<void(bool)> callback) {
     _subscriptions.clear();
   }
 
-  post_complete(std::move(callback), true);
-}
-
-void LocalEventSystem::post_complete(std::function<void(bool)> callback, bool ok) {
-  if (!callback) {
-    return;
-  }
-
-  auto self = shared_from_this();
-  boost::asio::post(_io_context, [self, callback = std::move(callback), ok]() mutable { callback(ok); });
+  _complete(std::move(on), std::move(handler), plugins::Status::success());
 }
 
 std::unordered_set<std::shared_ptr<Subscription>> LocalEventSystem::collect_matching_subscriptions(const std::string& event_name) const {

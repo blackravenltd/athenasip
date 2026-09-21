@@ -10,14 +10,15 @@ relay driver are in; `Call` is multi-party; all four RFC 3261 section 17 transac
 state machines exist and are wired in behind a matcher, with `Registrar` and `Proxy` as
 the transaction users.
 
-M2 steps 1 to 5 have landed since: the transaction users, the plugin contract (one
+M2 steps 1 to 6 have landed since: the transaction users, the plugin contract (one
 registry, async datastore and media engine), a structured `SIPUri`, the rest of
-section 16 and dialog tracking. 339 tests, clean under asan and tsan, the Redis suite
-verified against a real server.
+section 16, dialog tracking and media on the signalling path. 371 tests, clean under
+asan and tsan, the Redis suite verified against a real server.
 
-Step 6 is next: media on the signalling path. `Dialogs` is where it hooks in - a dialog
-confirmed is where `MediaEngine::offer`/`answer` belongs, and a dialog terminated is
-where `release` does. Both are already single call sites in `Core::_on_dialog_change`.
+Step 7 is mostly done: the WSS listener, outbound flows and RFC 3261 18.1.1 have
+landed. What is left of it is the per-connection flow identity on a binding, which is a
+plugin contract change and wants to share an `API_VERSION` bump with the one step 2 left
+outstanding.
 
 An architecture review on 2026-09-18 compared the Principles, the tree and the RFCs.
 Its findings are merged into Milestone 2 below, which is ordered by priority: work the
@@ -179,10 +180,8 @@ What it deliberately left, so it is not lost:
 - [ ] RFC 3263: a next hop is resolved from the URI's own transport, host and port, with
       the scheme's defaults for what it does not say. NAPTR and SRV are a step of their
       own and are what a cluster and a trunk both need.
-- [ ] Outbound flows. A next hop this node has no live connection to is answered 480,
-      because nothing in the tree opens a connection rather than accepting one. Every
-      target in M2 is a registered client with a flow, so this is not a stall; it becomes
-      one the moment a request has to leave for a trunk or a peer node. Step 7.
+- [x] Outbound flows, done on 2026-09-20 as part of step 7. `Core::channel_connect`
+      opens one to a hop this node has none to, rather than answering 480.
 - [ ] Double Record-Route (RFC 5658), for a call whose two ends are on different
       transports. One value naming the outbound flow is right for a call that is UDP to
       UDP or WSS to WSS, which is what M2 tests; a browser calling a desk phone needs two
@@ -225,20 +224,94 @@ What it deliberately left, so it is not lost:
 
 ### Step 6 - Media on the signalling path
 
-- [ ] On INVITE offer and 2xx answer, call `MediaEngine::offer/answer` for the
-      participant concerned; on BYE, CANCEL or timeout, `release`. SDP round-trips
-      every attribute untouched, which the parser now guarantees; the builtin driver
-      rewrites only `c=`, `m=` ports and `a=rtcp`.
+Done on 2026-09-20; see `COMPLETED.md`. Offer and answer on the way through the proxy,
+release when the dialog ends, flags read from the description, and a builtin relay that
+actually bridges.
+
+What it deliberately left, so it is not lost:
+
+- [ ] Media policy. Anchoring happens whenever an engine is configured, and an engine
+      that declines means the description travels on untouched and the media goes end to
+      end. That is the right failure for a proxy, but it is a policy decision with
+      nowhere to say it: `anchor` or `passthrough` per realm is an M3 item and this is
+      the same knob.
+- [ ] The `o=` line keeps the endpoint's own address (RFC 8866 section 5.2). It is an
+      identifier for the session rather than somewhere to send to, so nothing breaks,
+      but a node anchoring media to hide topology is leaking the far end's address in
+      it. rtpengine rewrites it; the builtin driver's scope is `c=`, `m=` ports and
+      `a=rtcp`.
+- [ ] RFC 3264 section 8's version rule: an offer that changes the description must
+      increment the `o=` version, and a re-offer this node rewrote does not. It matters
+      once a re-INVITE changes the stream rather than repeating it, which is hold and
+      resume in M3.
+- [ ] The delayed offer - an INVITE with no description, its offer in the 2xx and the
+      answer in the ACK - is handled in the shape but untested. No endpoint in M2 sends
+      one; a sipp scenario in step 9 is what would prove it.
+- [ ] A conference through the builtin relay. Three legs on one latching port would
+      forward each to the other two, which works and is not mixing, so the driver still
+      advertises `bridge` only. A real focus is RFC 4579 in M6.
 
 ### Step 7 - Transports
 
-- [ ] WSS listener: Beast websocket over `ssl_stream`, sharing the TLS context loader.
-      `websocket.tls: true` config with cert and key. A prerequisite for any browser:
-      they require a secure origin.
-- [ ] TCP fallback for UDP requests over 1300 bytes (18.1.1).
-- [ ] TCP/TLS connection reuse for responses and in-dialog requests, and a
-      per-connection flow identity written to the binding. This is the groundwork RFC
-      5626 flow routing in M3 stands on.
+- [x] WSS listener, done on 2026-09-20. Beast websocket over `ssl_stream`, one listener
+      class for both, `websocket.tls` with its own certificate and key, and one TLS
+      context loader shared with the TLS SIP listener.
+- [x] Outbound flows, done on 2026-09-20. `Core::channel_connect` resolves and dials a
+      hop this node has none to, bounded by `sip.connect_timeout_ms`, filed under both
+      the address it reached and the name it was dialled by. This was step 4's leftover
+      and it is what steps below stand on.
+- [x] TCP fallback for UDP requests over 1300 bytes (18.1.1), done on 2026-09-20, with
+      the top Via rewritten and a fall back to UDP when TCP is refused.
+- [x] Plugin contract v2, done on 2026-09-21. The flow identity and the `EventSystem`
+      realignment landed in one `API_VERSION` bump rather than two, so a plugin author
+      migrates once. The reason is recorded above the constant in `src/plugins/plugin.h`.
+
+      - `Datastore::subscriber_register` takes the binding as a `types::Location` in
+        place of the `contact` + `path` pair, so the flow and the node holding it can be
+        recorded. The store still fills `subscriber_id`, `registered_at`, `expires_at`
+        and `nat`; everything else on the binding is the caller's. Redis writes
+        `flow_id` and `node_id` only when they are set.
+      - `Channel::flow_id()` is `transport://host:port`, taken once at construction and
+        built by `Core::channel_key`, which is now the only place that key is spelled:
+        `Channel::start`, `Channel::close`, `Core::channel_find` and
+        `Core::channel_connect` all go through it. A key built two ways is a lookup that
+        silently misses.
+      - `Core::subscriber_register` keeps its own signature and builds the `Location`:
+        contact and path from the registrar, `node_id` from the config, `flow_id` from
+        the channel the REGISTER arrived over. The registrar's call site is unchanged.
+      - `EventSystem` now has the shape `Datastore` and `MediaEngine` have:
+        `connect(Executor, StatusHandler)`, a synchronous `close()`, `is_connected()`,
+        and `publish` / `subscribe` / `unsubscribe` / `unsubscribe_all` on the contract's
+        executor and handlers. `subscribe` hands the `Subscription` back through its
+        handler, because a broker has to be asked before the subscription exists, and
+        the MQTT driver drops one the broker refused rather than leaving the caller a
+        handle to nothing. The fire-and-forget `publish(name, message)` stays: the bus
+        is observability and is never on the call setup path. `main.cpp` connects it
+        through the `connect_and_wait` helper it already used for the other two.
+      - `tests/helpers/sync_event_system_helper.h` is the blocking view of a bus, as
+        `SyncDatastore` is of a store. The tests cover the binding recording the flow it
+        was learned over, that flow id being exactly what `channel_find` answers to, a
+        binding learned over no channel recording no flow, and the flow and node making
+        the round trip through Redis.
+- [ ] A data race in `WebsocketConnectionFor::is_open()`
+      (`src/servers/websocket_connection.h:70`), found by tsan on 2026-09-21 while
+      checking the contract v2 work and measured as pre-existing: the baseline tree
+      fails `WebsocketServerTest.CarriesSipWithoutTls` 12 times in 30 runs under tsan,
+      the same rate as the tree with the change. The websocket server's own thread and
+      the global io_context thread both touch the stream, and `is_open()` reads it
+      without the strand every other accessor on that connection has. The other
+      transports hand over to the Core strand; this one does not, and that is the fix.
+- [ ] Outbound TLS. `channel_connect` refuses `tls://` rather than guessing at what a
+      node trusts; the cluster CA decision in M4 is what settles it. Until then a TLS peer
+      has to connect inwards.
+- [ ] Outbound UDP to a host this node has never heard from. The datagram has to leave by
+      the listener's own socket so the source port is the one the far end answers to, and
+      that socket belongs to `UDPServer` rather than to the channel registry. Needed for a
+      UDP trunk, not for anything in M2.
+- [ ] Connection reuse for responses and in-dialog requests works as it stands - a
+      response goes back on the server transaction's own channel, and an in-dialog request
+      is routed by its Route set through `channel_find` - but nothing tests that a second
+      in-dialog request reuses the first one's connection rather than opening another.
 
 ### Step 8 - Admin API, part 1 (provisioning)
 

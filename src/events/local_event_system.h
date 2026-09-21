@@ -18,6 +18,7 @@
 #include "../global_io_context.h"
 #include "../loggers/logger.h"
 #include "../loggers/logger_scoped.h"
+#include "../plugins/plugin.h"
 #include "../types/url.h"
 #include "event_system.h"
 
@@ -32,22 +33,25 @@ class LocalEventSystem : public EventSystem, public std::enable_shared_from_this
   std::string name() const override;
   std::string version() const override;
 
-  bool connect() override;
-  void connect(std::function<void(bool)> callback) override;
+  void connect(plugins::Executor on, plugins::StatusHandler handler) override;
+  void close() override;
+  bool is_connected() const override;
 
-  bool close() override;
-  void close(std::function<void(bool)> callback) override;
+  void publish(std::string event_name, std::string message) override;
+  void publish(plugins::Executor on, std::string event_name, std::string message, plugins::StatusHandler handler) override;
 
-  void publish(std::string event_name, std::string message, std::function<void(bool)> callback) override;
+  void subscribe(plugins::Executor on, std::string event_name, Subscription::EventCallbackFn event_callback,
+                 plugins::Handler<std::shared_ptr<Subscription>> handler) override;
 
-  std::shared_ptr<Subscription> subscribe(std::string event_name, std::function<void(std::string event_name, std::string message)> event_callback,
-                                          std::function<void(bool)> callback) override;
-
-  void unsubscribe(std::shared_ptr<Subscription> subscription, std::function<void(bool)> callback) override;
-  void unsubscribe_all(std::function<void(bool)> callback) override;
+  void unsubscribe(plugins::Executor on, std::shared_ptr<Subscription> subscription, plugins::StatusHandler handler) override;
+  void unsubscribe_all(plugins::Executor on, plugins::StatusHandler handler) override;
 
  private:
-  void post_complete(std::function<void(bool)> callback, bool ok);
+  // The delivery half of a publish, shared by both forms: what it could not do is the
+  // reason a caller that asked for one gets back.
+  plugins::Status deliver(const std::string& event_name, const std::string& message);
+
+  std::shared_ptr<Subscription> add_subscription(const std::string& event_name, Subscription::EventCallbackFn event_callback);
   std::unordered_set<std::shared_ptr<Subscription>> collect_matching_subscriptions(const std::string& event_name) const;
 
   std::shared_ptr<athenasip::loggers::Logger> _logger;

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.23...4.2)
 
-project(athenasip VERSION 0.3.0 LANGUAGES CXX)
+project(athenasip VERSION 0.4.0 LANGUAGES CXX)
 
 option(ATHENA_BUILD_TESTING "Build test targets" OFF)
 set(ATHENA_SANITIZE "none" CACHE STRING "Sanitizer to build with: none, address, thread")
@@ -182,6 +182,10 @@ if(ATHENA_BUILD_TESTING)
     endif()
 
     target_compile_features(athenasip_tests PRIVATE cxx_std_20)
+
+    # The TLS listener tests need real certificates, and the working directory a test
+    # runs in is the build tree rather than the source one.
+    target_compile_definitions(athenasip_tests PRIVATE ATHENA_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 
     if(MSVC AND TARGET OpenSSL::applink)
         target_link_libraries(athenasip_tests PRIVATE OpenSSL::applink)

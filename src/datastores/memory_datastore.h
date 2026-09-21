@@ -49,8 +49,8 @@ class MemoryDatastore : public Datastore {
   void subscriber_delete(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity, plugins::StatusHandler handler) override;
   void subscriber_list(plugins::Executor on, std::string realm_name, plugins::Handler<std::vector<std::shared_ptr<types::Subscriber>>> handler) override;
 
-  void subscriber_register(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact,
-                           std::uint32_t expires_seconds, std::string path, plugins::StatusHandler handler) override;
+  void subscriber_register(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, types::Location binding, std::uint32_t expires_seconds,
+                           plugins::StatusHandler handler) override;
   void subscriber_unregister(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact,
                              plugins::StatusHandler handler) override;
   void location_list(plugins::Executor on, std::uint64_t subscriber_id, plugins::Handler<std::vector<types::Location>> handler) override;
@@ -79,8 +79,7 @@ class MemoryDatastore : public Datastore {
   bool _subscriber_delete(std::shared_ptr<types::SIPIdentity> identity);
   std::vector<std::shared_ptr<types::Subscriber>> _subscriber_list(const std::string& realm_name);
 
-  bool _subscriber_register(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact, std::uint32_t expires_seconds,
-                            const std::string& path);
+  bool _subscriber_register(const std::shared_ptr<types::Subscriber>& subscriber, types::Location binding, std::uint32_t expires_seconds);
   bool _subscriber_unregister(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact);
   std::vector<types::Location> _location_list(std::uint64_t subscriber_id);
 

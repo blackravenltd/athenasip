@@ -6,6 +6,7 @@
 //
 #pragma once
 
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <string>
@@ -47,6 +48,13 @@ struct Flags {
   // The participant this offer or answer belongs to, as an index into
   // Call::participants. A multi-party call has more than two.
   std::size_t participant = 0;
+
+  // Read from the description itself. The transport says nothing: a browser asks for
+  // ICE and DTLS whether its offer arrived over WSS or over UDP, and a desk phone on
+  // WSS is still plain RTP. It is also the only way a node can tell what an offer needs
+  // before it has to answer it, which is what lets an engine decline rather than
+  // produce something that cannot work.
+  static Flags from_sdp(const std::string& sdp);
 };
 
 // The result of an offer or answer: the SDP to pass on, and whether the engine took

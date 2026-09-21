@@ -58,6 +58,13 @@ class Config {
 
   bool sip_timer_reliable_transport_retransmits = false;
 
+  // How long this node will spend opening a flow to a next hop it has none to (RFC 3261
+  // 16.6 step 7). Not an RFC timer - the RFC does not give one - but it has to be
+  // bounded: the operating system's own connect timeout is well over a minute, and Timer
+  // B gives the whole transaction thirty-two seconds. A fork with several bindings has
+  // to have room to try more than the first.
+  uint32_t sip_connect_timeout_ms = 4000;
+
   // TLS Configuration
   bool tls_enable = false;
   std::string tls_address;
@@ -80,11 +87,25 @@ class Config {
   std::string websocket_address;  // e.g. "127.0.0.1"
   uint16_t websocket_port = 0;    // e.g. 5060
 
+  // RFC 7118 over TLS. A browser will not open an insecure WebSocket from a page served
+  // over https, so this is what a web client actually connects to; ws:// is for local
+  // development. The certificate is the listener's own rather than the tls section's,
+  // because the name a browser reaches the node by is rarely the name a SIP peer does.
+  bool websocket_tls = false;
+  std::string websocket_cert_pem_filename;
+  std::string websocket_key_pem_filename;
+
   // DB configuration
-  std::string db_url;  // e.g. "memory://" or "redis://127.0.0.1:6379"
+  // Defaulted, not blank. A node whose configuration says nothing about where to keep
+  // state has to start anyway, on what needs no external service - that is the whole of
+  // the ten-line config the project promises. redis:// is what a cluster says instead.
+  std::string db_url = "memory://";  // or "redis://127.0.0.1:6379"
 
   // Events configuration
-  std::string events_url;  // e.g. "mqtt://user:pass@127.0.0.1:1883/athenasip?client_id=sip-01&keep_alive=30"
+  // Same reason. The event bus carries observability, presence and discovery and is
+  // never on the call setup path, so a single node with nothing to tell has a working
+  // default and a cluster names its broker.
+  std::string events_url = "local://";  // or "mqtt://user:pass@127.0.0.1:1883/athenasip?client_id=sip-01&keep_alive=30"
 
   // Media configuration
   std::string media_url = "builtin://";  // or "rtpengine://host:port"

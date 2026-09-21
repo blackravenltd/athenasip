@@ -8,6 +8,7 @@
 
 #include <utility>
 
+#include "call.h"
 #include "channel.h"
 #include "core.h"
 #include "headers/cseq_header.h"
@@ -15,6 +16,7 @@
 #include "headers/uint_header.h"
 #include "headers/via_header.h"
 #include "loggers/logger_scoped.h"
+#include "media/media_engine.h"
 #include "types/location.h"
 #include "util.h"
 
@@ -34,6 +36,11 @@ constexpr std::uint64_t kDefaultMaxForwards = 70;
 // read the token back out of a Via this node wrote.
 constexpr const char* kMagicCookie = "z9hG4bK";
 constexpr std::size_t kLoopTokenLength = 16;
+
+// RFC 3261 18.1.1: "if it is larger than 1300 bytes and the path MTU is unknown". This
+// node does no path MTU discovery, so the MTU is always unknown and the number is the
+// whole of the rule.
+constexpr std::size_t kMaxUdpRequest = 1300;
 
 bool is_2xx(int code) { return code >= 200 && code < 300; }
 bool is_final(int code) { return code >= 200; }
@@ -80,6 +87,35 @@ std::shared_ptr<SIPUri> route_uri(const std::shared_ptr<headers::Header>& header
   auto identity = header->as<SIPIdentityHeader>();
   if (identity == nullptr || identity->value == nullptr) return nullptr;
   return identity->value->uri;
+}
+
+// RFC 3261 20.15: a body is a session description when the Content-Type says so. A body
+// with no Content-Type at all is malformed and is not guessed at.
+bool has_sdp(const std::shared_ptr<SIPMessage>& message) {
+  if (message->body.empty() || !message->header->contains("Content-Type")) return false;
+  return Util::to_lower(message->header->headers_map["Content-Type"][0]->to_string()).rfind("application/sdp", 0) == 0;
+}
+
+// The size of the message as it will actually leave. Content-Length is fixed up by the
+// transport on the way out, so it is made right here too: measuring before that would be
+// measuring a message that is not the one sent. Doing it twice costs nothing and gets the
+// same answer.
+std::size_t wire_size(const std::shared_ptr<SIPMessage>& message) {
+  message->header->clear("Content-Length");
+  message->header->add("Content-Length", std::make_shared<UIntHeader>(message->body.size()));
+  return message->to_string().size();
+}
+
+// RFC 3261 20.42: sent-protocol is "SIP/2.0/<transport>". Changing where a request goes
+// out means changing what the top Via says it went out over (18.1.1).
+void set_top_via_transport(const std::shared_ptr<SIPMessage>& message, const std::string& transport) {
+  if (!message->header->contains("Via")) return;
+
+  auto via = message->header->headers_map["Via"][0]->as<ViaHeader>();
+  if (via == nullptr) return;
+
+  const auto slash = via->version.rfind('/');
+  via->version = (slash == std::string::npos ? std::string("SIP/2.0") : via->version.substr(0, slash)) + "/" + transport;
 }
 
 // The loop half of a branch this node wrote, or empty for a branch it did not.
@@ -323,25 +359,39 @@ void Proxy::_forward_next(const std::shared_ptr<Context>& context) {
   // remaining targets are no longer wanted (16.10).
   if (context->answered || context->cancelled || context->next >= context->targets.size()) return _send_best(context);
 
-  const auto& target = context->targets[context->next++];
+  // By value: the continuation below runs after a round trip, and the target set is the
+  // context's rather than this frame's.
+  const Target target = context->targets[context->next++];
 
-  auto channel = target.flow.lock();
+  if (auto channel = target.flow.lock(); channel && channel->_connection) return _forward_to(context, target, channel);
 
-  if (!channel || !channel->_connection) {
-    // The next hop is not one this node has a live flow to - either it never had one, or
-    // the connection has since closed - and opening one needs outbound connections, which
-    // the transports step adds. Try the rest of the target set rather than ending the
-    // search on it.
-    _logger->info("No flow to " + target.next_hop->to_string() + " - trying the next target");
+  // RFC 3261 16.6 step 7: a hop this node has no flow to gets one opened. A registered
+  // client is answered on the connection it registered over, so this is the trunk, the
+  // peer node, and the client whose connection has since closed.
+  const auto hop = _next_hop_of(*target.next_hop);
+  const auto name = target.next_hop->to_string();
 
-    auto unavailable = context->request->generate_response();
-    unavailable->header->response_code = 480;
-    unavailable->header->response_message = "Temporarily Unavailable";
+  auto self = shared_from_this();
 
-    if (!context->best) context->best = unavailable;
-    return _forward_next(context);
-  }
+  core->channel_connect(hop.transport, hop.host, hop.port, [this, self, context, target, name](plugins::Result<std::shared_ptr<Channel>> opened) {
+    if (!opened.ok || !opened.value || !opened.value->_connection) {
+      // Unreachable is about this target and not about the request, so the rest of the
+      // target set still gets its turn (16.7).
+      _logger->info("No flow to " + name + " - " + opened.error + " - trying the next target");
 
+      auto unavailable = context->request->generate_response();
+      unavailable->header->response_code = 480;
+      unavailable->header->response_message = "Temporarily Unavailable";
+
+      if (!context->best) context->best = unavailable;
+      return _forward_next(context);
+    }
+
+    _forward_to(context, target, opened.value);
+  });
+}
+
+void Proxy::_forward_to(const std::shared_ptr<Context>& context, const Target& target, const std::shared_ptr<Channel>& channel) {
   // RFC 3261 16.6 step 1: every branch starts from a copy of the request as received,
   // so the Via and the Max-Forwards of one branch are not what the next one inherits.
   auto copy = context->request->clone();
@@ -352,6 +402,57 @@ void Proxy::_forward_next(const std::shared_ptr<Context>& context) {
     _logger->info("Max-Forwards exhausted - 483");
     return _send_status(context->server, context->request, 483, "Too Many Hops");
   }
+
+  // Step 6: the media engine has its say on the body before the copy goes anywhere, and
+  // it is a round trip, so the send is the other side of it.
+  auto self = shared_from_this();
+  _anchor_media(context->request, copy, [this, self, context, copy, channel]() { _send_forward(context, copy, channel); });
+}
+
+void Proxy::_send_forward(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& copy, const std::shared_ptr<Channel>& channel) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  // A CANCEL may have arrived while the media engine had the description. The branch is
+  // no longer wanted, and 487 has already gone back on the server transaction.
+  if (context->answered || context->cancelled) return;
+
+  const bool over_udp = channel->_connection && Util::to_lower(channel->_connection->transport_name()) == "udp";
+
+  // RFC 3261 18.1.1: a request this large may not go out over UDP when the path MTU is
+  // unknown. It goes over a congestion controlled transport instead, which for this node
+  // means TCP, and the top Via has to say where it really went.
+  if (over_udp && wire_size(copy) > kMaxUdpRequest) {
+    // The same hop, a different transport. A UDP flow's remote is where the far end's
+    // datagrams came from, which for a symmetric endpoint is the port it listens on.
+    const auto hop = channel->_connection->remote_endpoint();
+
+    auto self = shared_from_this();
+
+    core->channel_connect("tcp", hop.address().to_string(), hop.port(), [this, self, context, copy, channel](plugins::Result<std::shared_ptr<Channel>> opened) {
+      if (opened.ok && opened.value && opened.value->_connection) {
+        set_top_via_transport(copy, "TCP");
+        return _write_forward(context, copy, opened.value);
+      }
+
+      // 18.1.1 again: a TCP attempt the far end refuses is retried over UDP. A
+      // datagram that may be fragmented beats a request that never leaves.
+      _logger->info("Cannot open TCP for a request of " + std::to_string(wire_size(copy)) + " bytes - " + opened.error + " - sending it over UDP");
+
+      _write_forward(context, copy, channel);
+    });
+
+    return;
+  }
+
+  _write_forward(context, copy, channel);
+}
+
+void Proxy::_write_forward(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& copy, const std::shared_ptr<Channel>& channel) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  if (context->answered || context->cancelled) return;
 
   // The ACK for a 2xx travels outside any transaction (RFC 3261 17.1.1.3), so it is
   // written straight to the transport.
@@ -413,7 +514,7 @@ void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::sha
     // nothing at the far end that knows the transaction. This is where that wait ends.
     if (context->cancelled) return _cancel_branch(context);
 
-    if (!context->answered) context->server->send(response);
+    if (!context->answered) _forward_response(context, response);
     return;
   }
 
@@ -429,7 +530,7 @@ void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::sha
     context->best = response;
     context->answered = true;
     _contexts.erase(context->server->id());
-    context->server->send(response);
+    _forward_response(context, response);
     return;
   }
 
@@ -461,7 +562,64 @@ void Proxy::_send_best(const std::shared_ptr<Context>& context) {
   if (auto core = _core.lock()) core->dialogs()->observe_response(context->request, context->best);
 
   context->answered = true;
-  context->server->send(context->best);
+  _forward_response(context, context->best);
+}
+
+void Proxy::_forward_response(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response) {
+  auto self = shared_from_this();
+  auto server = context->server;
+
+  _anchor_media(context->request, response, [self, server, response]() { server->send(response); });
+}
+
+void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<SIPMessage>& message, std::function<void()> then) {
+  auto core = _core.lock();
+  if (!core || !core->media || !has_sdp(message)) return then();
+
+  auto call = core->call_get(value_of(request, "Call-ID"));
+  auto dialog = core->dialogs()->find(request);
+
+  // No call record and no dialog means nothing to anchor against - which end sent this
+  // description is the one question the engine has to be told the answer to.
+  if (!call || !dialog) return then();
+
+  const bool is_response = message->header->type == SIPHeader::Type::Response;
+  const bool request_from_caller = dialog->is_from_caller(tag_of(request, "From"));
+
+  // A response carries the answering end's description, which is the end the request did
+  // not come from.
+  const auto participant = call->participant_index(is_response ? !request_from_caller : request_from_caller);
+  if (!participant) return then();
+
+  // RFC 3264 section 5: the INVITE carries the offer and the response to it carries the
+  // answer. An INVITE with no description at all inverts that - the response becomes the
+  // offer and the ACK the answer - which is why the ACK is not an offer here.
+  const bool is_offer = is_response ? !has_sdp(request) : message->header->request_method != "ACK";
+
+  auto flags = media::Flags::from_sdp(message->body);
+  flags.participant = *participant;
+
+  auto self = shared_from_this();
+
+  auto handler = [this, self, message, then = std::move(then)](media::Result result) {
+    if (result.ok) {
+      message->body = std::move(result.sdp);
+      message->body_length = static_cast<unsigned int>(message->body.size());
+    } else {
+      // The engine will not take it - a WebRTC offer at the plain-RTP relay, or no ports
+      // left. Passing the description through untouched is what a proxy would have done
+      // with it in any case, and it beats failing a call this node can still signal.
+      _logger->warn("Media engine declined the session description, passing it through - " + result.error);
+    }
+
+    then();
+  };
+
+  if (is_offer) {
+    core->media->offer(core->strand(), call, message->body, flags, std::move(handler));
+  } else {
+    core->media->answer(core->strand(), call, message->body, flags, std::move(handler));
+  }
 }
 
 bool Proxy::_prepare_forward(const std::shared_ptr<SIPMessage>& copy, const std::shared_ptr<Channel>& channel, const Target& target,

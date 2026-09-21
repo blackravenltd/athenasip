@@ -114,9 +114,8 @@ std::shared_ptr<types::Subscriber> MemoryDatastore::_subscriber_get(std::shared_
   return subscriber;
 }
 
-bool MemoryDatastore::_subscriber_register(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact, std::uint32_t expires_seconds,
-                                           const std::string& path) {
-  if (!subscriber || !contact) return false;
+bool MemoryDatastore::_subscriber_register(const std::shared_ptr<types::Subscriber>& subscriber, types::Location binding, std::uint32_t expires_seconds) {
+  if (!subscriber || !binding.contact) return false;
 
   std::lock_guard<std::mutex> lock(_mutex);
   _prune_expired();
@@ -126,19 +125,19 @@ bool MemoryDatastore::_subscriber_register(std::shared_ptr<types::Subscriber> su
   // asks for nothing gets the built-in default (RFC 3261 10.2.1).
   const std::time_t ttl = expires_seconds > 0 ? static_cast<std::time_t>(expires_seconds) : kDefaultRegistrationSeconds;
 
+  const auto contact = binding.contact;
   const std::uint16_t port = contact->port.value_or(0);
 
   const auto now = std::time(nullptr);
 
-  types::Location location;
-  location.contact = contact;
-  location.subscriber_id = subscriber->id;
-  location.registered_at = now;
-  location.expires_at = now + ttl;
-  location.path = path;
-  location.nat = Util::is_ipv4(contact->host) && Util::is_ipv4_private(contact->host);
+  // The lifetime and the identity are the store's to settle; everything else on the
+  // binding is what the caller knew and is kept as it was given.
+  binding.subscriber_id = subscriber->id;
+  binding.registered_at = now;
+  binding.expires_at = now + ttl;
+  binding.nat = Util::is_ipv4(contact->host) && Util::is_ipv4_private(contact->host);
 
-  _locations[_location_key(subscriber->id, contact->user, contact->host, port)] = std::move(location);
+  _locations[_location_key(subscriber->id, contact->user, contact->host, port)] = std::move(binding);
   return true;
 }
 
@@ -324,10 +323,9 @@ void MemoryDatastore::subscriber_list(plugins::Executor on, std::string realm_na
   _complete(std::move(on), std::move(handler), plugins::Result<std::vector<std::shared_ptr<types::Subscriber>>>::success(_subscriber_list(realm_name)));
 }
 
-void MemoryDatastore::subscriber_register(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact,
-                                          std::uint32_t expires_seconds, std::string path, plugins::StatusHandler handler) {
-  _complete(std::move(on), std::move(handler),
-            _status(_subscriber_register(std::move(subscriber), std::move(contact), expires_seconds, path), "subscriber_register"));
+void MemoryDatastore::subscriber_register(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, types::Location binding,
+                                          std::uint32_t expires_seconds, plugins::StatusHandler handler) {
+  _complete(std::move(on), std::move(handler), _status(_subscriber_register(subscriber, std::move(binding), expires_seconds), "subscriber_register"));
 }
 
 void MemoryDatastore::subscriber_unregister(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact,

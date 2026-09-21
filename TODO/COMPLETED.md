@@ -715,3 +715,94 @@ and gives the TU logic somewhere to live.
       lapses at all, because ending a call nobody said would end is the worse failure.
 - [x] 19 tests from sections 12.1, 12.1.1, 12.2.1.1, 12.2.2, 15.1, 9.1 and RFC 4028, written
       from the RFCs and watched fail. 339 tests, clean under asan and tsan.
+
+## Milestone 2 step 6 - Media on the signalling path (2026-09-20)
+
+- [x] `Proxy::_anchor_media` (`src/proxy.cpp`): a session description on its way through goes
+      to the media engine first, and what comes back names this node. An INVITE carries the
+      offer of the end that sent it and the response to it carries the answer of the end that
+      answered (RFC 3264 section 5), so the leg the description belongs to is read from the
+      dialog rather than assumed from the direction. An INVITE with no description at all
+      inverts the exchange - the response becomes the offer and the ACK the answer - which is
+      why the ACK is never treated as an offer.
+- [x] This is a deliberate departure from 16.6, which says a proxy does not add to, modify or
+      remove a body. The node does it because it is the media relay. Where it cannot - no
+      engine configured, no call record, or an engine that declines - the message travels on
+      exactly as it arrived, which is the proxy behaviour the RFC describes, and the call is
+      not failed over it.
+- [x] Forwarding waits for the engine. `_send_forward` and `_forward_response` are the far
+      side of a round trip that is in-process for the builtin relay and an ng-protocol
+      exchange for rtpengine; the contract was made async for this and it is now used that
+      way. A CANCEL that arrives while the engine holds a description stops the branch rather
+      than sending it late.
+- [x] `Flags::from_sdp` (`src/media/media_engine.cpp`): ICE, DTLS, SRTP and rtcp-mux read from
+      the description itself, never from the transport. A browser asks for ICE and DTLS
+      whether its offer arrived over WSS or over UDP, and a desk phone on WSS is still plain
+      RTP. `RTP/SAVP` in the profile is enough to say SRTP on its own (RFC 3711, RFC 5764).
+      This is what lets the builtin engine decline a WebRTC offer instead of rewriting it into
+      something that cannot work.
+- [x] `Core::_on_dialog_change` releases the media when a call closes. A dialog ending is the
+      only thing that says a call is over, which is the whole reason this node tracks dialogs
+      it does not own. The call is held by the release handler, so dropping it from the live
+      table does not take it away from an engine that has not answered.
+- [x] The builtin relay actually bridges. Its relay sets are held per call and per stream
+      rather than per leg: `RTPRelaySet` learns where a leg is from the first packet it sends
+      and forwards to every other leg that has, so one port is a bridge and a port per leg is
+      two sinks with nothing between them. Both legs of a stream are handed the same port.
+- [x] `a=rtcp` is written whether or not the far end offered one (RFC 3605). The relay's RTCP
+      port comes out of the same pool as its RTP port and is not reliably the one above it, so
+      an endpoint left to assume the convention would send its receiver reports into another
+      call.
+- [x] `Call::participant_index` turns "which end sent this" into the index the media contract
+      addresses a participant by.
+- [x] 12 tests from RFC 3264, RFC 3605, RFC 8866 and the bridging concept, written from the
+      standards and watched fail. The bridging one sends real UDP packets through the relay
+      from two sockets and asserts each comes out at the other, because a relay that allocates
+      ports and forwards nothing passes every assertion about SDP. 351 tests, clean under asan
+      and tsan.
+
+## Milestone 2 step 7 - Transports, part 1 (2026-09-20)
+
+- [x] WSS listener (`src/servers/websocket_server.*`). A browser will not open an insecure
+      WebSocket from a page served over https, so wss is not a hardening option for a web
+      client but the only way in, and without it there is no first WebRTC call to make.
+      One listener class rather than two: the only difference is a TLS handshake before the
+      HTTP upgrade, and a node running two near-identical listeners would drift between them.
+- [x] `WebsocketConnectionFor` and `WebsocketHTTPSessionFor` are templated on what carries
+      the bytes, because below the websocket framing ws and wss are identical. The transport
+      name is carried rather than deduced: it is the one thing that differs and the layers
+      above route on it. Both are header-only now; their implementation files are gone.
+- [x] The WSS handshake is asynchronous, unlike the TLS SIP listener's blocking one. It runs
+      on the listener's own thread, and a client that connects and then says nothing would
+      otherwise stop every other client being accepted.
+- [x] `servers/tls_context.h`: one certificate loader for both secure listeners, which also
+      turns off SSLv2, SSLv3, TLS 1.0 and TLS 1.1. A node whose two secure listeners were set
+      up differently is a node whose security depends on which port you reached it on.
+      `websocket.tls` with no certificate or no key is a startup error rather than a silent
+      fall back to ws://.
+- [x] `Core::channel_connect`: this node can open a connection rather than only accept one.
+      Nothing in the tree could before, so a next hop with no live flow was answered 480 - a
+      registered client always has one, which is why it never showed, but a trunk or a peer
+      node could not be reached at all. The channel is filed under the address it reached and
+      under the name it was dialled by, so a second request to a hop named by hostname reuses
+      the connection; closing it takes both names away.
+- [x] The attempt is bounded by `sip.connect_timeout_ms`, four seconds by default. Not an RFC
+      timer, but the operating system's own bound is well over a minute and Timer B gives the
+      whole transaction thirty-two seconds, which a fork with several bindings has to share.
+      The timer and the connect race and whichever loses is ignored: a transaction told twice
+      that its hop is unreachable would try the next target twice.
+- [x] No NAPTR and no SRV: RFC 3263 is a step of its own, and this resolves the host the URI
+      named the way 16.6 step 7 falls back to without service records. UDP and TLS outbound
+      are refused rather than faked, for reasons recorded under step 7 in `ACTIVE.md`.
+- [x] RFC 3261 18.1.1: a request over 1300 bytes with the path MTU unknown leaves over TCP
+      rather than UDP, with the top Via rewritten to say so, and falls back to UDP when TCP
+      is refused. The decision is made where the final bytes exist, after the media engine
+      has had the body - which matters more now than it did, because anchoring makes the
+      description this node forwards larger than the one it received.
+- [x] `Config` defaults `datastore` to `memory://` and `events` to `local://`. A config with
+      neither section left both blank and the node failed at startup, which is not the
+      ten-line config and sane defaults the project promises. Found by a config test written
+      for the WebSocket TLS settings.
+- [x] 20 tests. The WSS ones complete a real TLS handshake against the listener, carry a
+      REGISTER over the frames and read the 401 back; the 18.1.1 ones read what this node
+      actually wrote off a real TCP socket. 371 tests, clean under asan and tsan.

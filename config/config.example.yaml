@@ -60,6 +60,12 @@ websocket:
   enable: true
   address: 0.0.0.0
   port: 9500
+  # RFC 7118 over TLS. A browser will not open an insecure WebSocket from a page served
+  # over https, so a web client needs this; ws:// is for local development. Setting tls
+  # without both files is a startup error rather than a silent fall back to ws://.
+  tls: false
+  # cert_pem_filename: "../tls/snakeoil.cer"
+  # key_pem_filename: "../tls/snakeoil.key"
 
 rtprelay:
   enable: true

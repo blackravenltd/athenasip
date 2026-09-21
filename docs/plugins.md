@@ -97,8 +97,8 @@ schemes has one section rather than three.
 
 ## Async is the contract
 
-`Datastore` and `MediaEngine` operations do not return values. Every one of them takes
-the caller's executor and a handler:
+`Datastore`, `EventSystem` and `MediaEngine` operations do not return values. Every one
+of them takes the caller's executor and a handler:
 
 ```cpp
 void realm_get_by_name(plugins::Executor on, std::string realm_name,
@@ -108,9 +108,17 @@ void realm_create(plugins::Executor on, std::shared_ptr<types::Realm> realm,
 ```
 
 This is not decoration. `Core` runs on a single strand, so a blocking read there stops
-every call on the node rather than only the one that asked. It is version 1 of the
-contract because it could not be added later: making a returning interface async breaks
-every plugin written against it.
+every call on the node rather than only the one that asked. It was in the contract from
+the first version because it could not be added later: making a returning interface
+async breaks every plugin written against it.
+
+There is one deliberate exception. `EventSystem::publish(event_name, message)` answers
+nothing at all. The bus carries observability, presence and discovery and is never on
+the call setup path, so a node announcing a channel or a transaction does not wait to
+hear whether the broker took it - and must not, or the broker would be on the path of
+the call that caused the event. A caller that does care uses
+`publish(on, event_name, message, handler)` and hears the answer like any other
+operation.
 
 Two rules follow, and a driver that breaks either is broken:
 
@@ -174,9 +182,10 @@ covers the registry itself.
 A test is not on the Core strand, so it may wait where production code may not.
 `tests/helpers/sync_datastore_helper.h` is a blocking view of a datastore for exactly
 that: it turns each async call back into a return value so an assertion can be a
-statement about what the store holds. Anything testing the async behaviour itself -
-that the handler runs on the executor it was given, that a failure is reported rather
-than swallowed - calls the driver directly instead.
+statement about what the store holds. `sync_event_system_helper.h` and
+`sync_media_engine_helper.h` do the same for the other two kinds. Anything testing the
+async behaviour itself - that the handler runs on the executor it was given, that a
+failure is reported rather than swallowed - calls the driver directly instead.
 
 ## What is not here yet
 

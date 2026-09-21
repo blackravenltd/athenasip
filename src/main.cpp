@@ -137,9 +137,12 @@ int main(int argc, char* argv[]) {
     return -3;
   }
   // Attempt Events connection
-  if (!events->connect()) {
+  const auto events_connected =
+      connect_and_wait([&events](plugins::Executor on, plugins::StatusHandler handler) { events->connect(std::move(on), std::move(handler)); });
+
+  if (!events_connected.ok) {
     datastore->close();
-    logger->error("Event System Connection Failed: " + config->events_url);
+    logger->error("Event System Connection Failed: " + config->events_url + " - " + events_connected.error);
     return -3;
   }
 
@@ -226,6 +229,15 @@ int main(int argc, char* argv[]) {
   // Servers: Create the Websocket instance with the logger and start it on the specified port
   if (config->websocket_enable) {
     auto websocketServer = std::make_shared<servers::WebsocketServer>(logger, core, config->websocket_address, config->websocket_port);
+
+    // A listener asked to be secure and unable to be is fatal. Serving a browser over
+    // ws:// because the certificate would not load is the failure nobody notices.
+    if (config->websocket_tls && !websocketServer->set_certificates(config->websocket_cert_pem_filename, config->websocket_key_pem_filename)) {
+      logger->error("Cannot load WebSocket TLS certificates");
+      datastore->close();
+      return -4;
+    }
+
     core->server_register(websocketServer);
   }
 
