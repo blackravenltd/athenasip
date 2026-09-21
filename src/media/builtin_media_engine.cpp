@@ -187,6 +187,20 @@ Result BuiltinMediaEngine::_map_media(std::shared_ptr<Call> call, const std::str
 
   sdp->set_connection(relay);
 
+  // RFC 8866 section 5.2: the o= line gives "an address of the machine from which the
+  // session was created", and a node that anchors media so the two ends never see each
+  // other's addresses hands one of them away in it regardless. The RFC allows exactly
+  // this substitution - "for privacy reasons, it is sometimes desirable to obfuscate the
+  // username and IP address of the session originator" - on the condition that the field
+  // stays globally unique. The username and session id the endpoint chose are what carry
+  // that uniqueness and are left alone; only the address is replaced. The version is the
+  // endpoint's too, and 3264's rule for incrementing it is its own item in the plan.
+  auto origin = sdp->origin();
+  origin.nettype = relay.nettype;
+  origin.addrtype = relay.addrtype;
+  origin.address = relay.address;
+  sdp->set_origin(origin);
+
   auto& participant = call->participants[flags.participant];
 
   for (auto& media : sdp->media()) {

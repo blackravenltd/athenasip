@@ -275,11 +275,15 @@ What it deliberately left, so it is not lost:
       end. That is the right failure for a proxy, but it is a policy decision with
       nowhere to say it: `anchor` or `passthrough` per realm is an M3 item and this is
       the same knob.
-- [ ] The `o=` line keeps the endpoint's own address (RFC 8866 section 5.2). It is an
-      identifier for the session rather than somewhere to send to, so nothing breaks,
-      but a node anchoring media to hide topology is leaking the far end's address in
-      it. rtpengine rewrites it; the builtin driver's scope is `c=`, `m=` ports and
-      `a=rtcp`.
+- [x] The `o=` line carries this node's address, done on 2026-09-21. Every `c=`, `m=`
+      port and `a=rtcp` was rewritten and the `o=` was not, so a node anchoring media so
+      that neither end learns the other's address handed one of them away in it anyway.
+      RFC 8866 section 5.2 allows the substitution in as many words - "for privacy
+      reasons, it is sometimes desirable to obfuscate the username and IP address of the
+      session originator" - on the condition that the field stays globally unique, so the
+      username and session id the endpoint chose are kept and only the address, nettype
+      and addrtype are replaced. Those two are what carry the uniqueness. The version is
+      the endpoint's as well; incrementing it is the next item.
 - [ ] RFC 3264 section 8's version rule: an offer that changes the description must
       increment the `o=` version, and a re-offer this node rewrote does not. It matters
       once a re-INVITE changes the stream rather than repeating it, which is hold and
