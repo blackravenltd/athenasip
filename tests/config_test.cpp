@@ -236,3 +236,27 @@ TEST(ConfigTest, ASessionMinimumAboveTheRfcFloorIsTaken) {
   ASSERT_TRUE(ok);
   EXPECT_EQ(config->sip_session_min_se, 600u);
 }
+
+// The configuration this project ships as its example has to be one the node accepts.
+// It is the first thing anybody copies, and every setting in it is written as its own
+// default, so a key that has been renamed or removed shows up here rather than in
+// somebody's log.
+TEST(ConfigTest, TheShippedExampleConfigurationLoads) {
+  const std::string path = std::string(ATHENA_TEST_SOURCE_DIR) + "/config/config.example.yaml";
+  ASSERT_TRUE(std::filesystem::exists(path)) << path;
+
+  auto logger = std::make_shared<MockLogger>();
+  auto config = std::make_shared<Config>(logger);
+
+  ASSERT_TRUE(config->load_from_yaml(path));
+
+  // Spot-check the values the file claims are the defaults, because a comment that has
+  // drifted from the code is worse than no comment.
+  EXPECT_EQ(config->sip_media_timeout, 300u);
+  EXPECT_EQ(config->sip_session_expires, 1800u);
+  EXPECT_EQ(config->sip_session_min_se, 90u);
+  EXPECT_EQ(config->sip_max_call_duration, 0u);
+  EXPECT_FALSE(config->sip_require_session_timer);
+  EXPECT_EQ(config->sip_timer_c_invite_proxy_ms, 240000u);
+  EXPECT_EQ(config->sip_connect_timeout_ms, 4000u);
+}
