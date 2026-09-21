@@ -195,7 +195,9 @@ events:
 
 media:
   # builtin:// relays plain RTP from this process and needs nothing else installed.
-  # rtpengine://host:port is the production engine, and the one that does WebRTC.
+  # rtpengine://host:port is the production engine, and the one that does WebRTC: ICE,
+  # DTLS and SRTP are what a browser requires and what the builtin relay declines rather
+  # than answers badly. The port is rtpengine's ng control port.
   url: "builtin://"
 
   builtin:
@@ -207,6 +209,20 @@ media:
     public_address: 127.0.0.1
     port_min: 22000
     port_max: 23000
+
+  rtpengine:
+    # The ng protocol runs over UDP, so a request can be lost. rtpengine caches its
+    # answer against the request's cookie, which makes asking again a request for the
+    # same answer rather than for the work twice - so this driver asks again rather than
+    # failing a call for one lost datagram. The timeout bounds one attempt, not the
+    # operation: three at half a second is well inside the thirty-two seconds timer B
+    # gives a transaction that a fork has to share.
+    timeout_ms: 500
+    attempts: 3
+
+    # The address rtpengine should advertise in the descriptions it hands back. Leave it
+    # out and rtpengine's own interface configuration decides, which is usually right.
+    # media_address: 203.0.113.9
 
 http:
   address: 0.0.0.0

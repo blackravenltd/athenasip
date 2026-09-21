@@ -120,6 +120,20 @@ class MediaEngine : public plugins::Plugin {
   // What the engine currently holds for this call, for the admin API and diagnostics.
   virtual void query(plugins::Executor on, std::shared_ptr<Call> call, plugins::Handler<std::string> handler) = 0;
 
+  // Recording. Only meaningful when capabilities().record is set; the defaults decline,
+  // so a driver that cannot record does not have to say so twice. Where the recording
+  // goes is the engine's business and its own configuration: this node asks for a call
+  // to be recorded and does not handle the media, which is the whole point of an engine.
+  virtual void start_recording(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) {
+    (void)call;
+    _complete(std::move(on), std::move(handler), plugins::Status::failure("this engine does not record"));
+  }
+
+  virtual void stop_recording(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) {
+    (void)call;
+    _complete(std::move(on), std::move(handler), plugins::Status::failure("this engine does not record"));
+  }
+
   // Conference operations. Only meaningful when capabilities().conference is set; the
   // defaults below decline, so a bridge-only driver does not have to implement them.
   virtual void join(plugins::Executor on, std::shared_ptr<Call> call, std::size_t participant, plugins::StatusHandler handler) {
