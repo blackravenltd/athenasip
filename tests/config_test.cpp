@@ -208,3 +208,31 @@ TEST(ConfigTest, TimerCAboveTheRfcFloorIsTaken) {
   ASSERT_TRUE(ok);
   EXPECT_EQ(config->sip_timer_c_invite_proxy_ms, 300000u);
 }
+
+// RFC 4028 section 8.1: the minimum a proxy quotes in a 422 "MUST NOT be lower than 90
+// seconds". Section 4 explains why: it is a bit more than twice the longest a SIP
+// transaction can take, so below it a refresh could not complete before the session it
+// was refreshing expired.
+TEST(ConfigTest, ASessionMinimumBelowTheRfcFloorIsRefused) {
+  ConfigFile file(
+      "sip:\n  node_id: test-node\n"
+      "  session_min_se: 30\n");
+
+  bool ok = false;
+  auto config = file.load(ok);
+
+  ASSERT_TRUE(ok);
+  EXPECT_GE(config->sip_session_min_se, 90u);
+}
+
+TEST(ConfigTest, ASessionMinimumAboveTheRfcFloorIsTaken) {
+  ConfigFile file(
+      "sip:\n  node_id: test-node\n"
+      "  session_min_se: 600\n");
+
+  bool ok = false;
+  auto config = file.load(ok);
+
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(config->sip_session_min_se, 600u);
+}

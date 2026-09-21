@@ -233,11 +233,20 @@ Done on 2026-09-20; see `COMPLETED.md`. `types::Dialog`, the `Dialogs` observer,
 
 What it deliberately left, so it is not lost:
 
-- [ ] RFC 4028 section 8, the proxy's own say in the negotiation. `Config::sip_session_min_se`
-      exists and nothing reads it: an INVITE whose `Session-Expires` is below this node's
-      minimum should be answered 422 Session Interval Too Small with a `Min-SE` header,
-      and `Supported: timer` / `Require: timer` should be honoured. Until then the node
-      accepts whatever the two ends agree and only watches.
+- [x] RFC 4028 section 8, the proxy's own say in the negotiation, done on 2026-09-21.
+      `Config::sip_session_min_se` was configuration nothing read, and the node accepted
+      whatever the two ends agreed. 8.1 now applies to every INVITE and UPDATE: an
+      interval below the minimum is answered 422 Session Interval Too Small with `Min-SE`
+      when the caller advertises `Supported: timer`, and raised on the way through when
+      it does not, because a 422 a caller cannot read would only fail the call. A `Min-SE`
+      already in the request is raised and never lowered, the `refresher` parameter is
+      never touched, and a request that asked for no interval is still not given one -
+      that is the next item and a policy decision. 8.2 covers the other end: when the
+      caller asked for a timer and the callee answered without one, the 2xx gains the
+      remembered interval with `refresher=uac` and `Require: timer`, before the dialog
+      tracker reads it rather than after, or this node would watch nothing while the
+      caller refreshed on an interval this node handed it. The config floor of 90 the RFC
+      sets is enforced.
 - [ ] Requiring a session timer at all. A call between two endpoints that never offered
       one has no interval, so it never lapses and this node holds its state until a BYE
       arrives. That is correct - ending a call nobody said would end is worse - but it

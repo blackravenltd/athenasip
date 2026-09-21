@@ -55,6 +55,30 @@ This setting can be `true` even if the TCP server is enabled - in which case the
 be unencrypted, but the server will still reject attempts to initate unencrypted calls.
 
 
+#### `session_min_se`
+
+The shortest session interval this node will carry a call on, in seconds - Defaults to
+`90`.
+
+A session timer (RFC 4028) is how a call that has gone silent - one end powered off, a
+network that went away without a BYE - is eventually cleaned up rather than held for
+ever. The node keeps state for the length of the interval the two ends agree on, so how
+short that interval may be is its business as well as theirs.
+
+A caller that asks for less than this and advertises `Supported: timer` is answered
+`422 (Session Interval Too Small)` with this value in a `Min-SE` header, and is expected
+to ask again with something longer. A caller that does not advertise support cannot read
+that answer, so refusing it would only fail the call: its interval is raised to this
+value on the way through instead, and a `Min-SE` is added so the far end knows why.
+
+A call where neither end asked for a session timer still has no interval and is not given
+one. RFC 4028 allows a proxy to insert one; this node does not, because ending a call
+that nobody said would end is worse than holding its state.
+
+RFC 4028 sets a floor of 90 seconds, a little over twice the longest a SIP transaction
+can take, so that a refresh has time to complete before the session it refreshes expires.
+A lower value here is refused, with an error in the log, and the default kept.
+
 #### `timers`
 
 The SIP implementation timers and multipliers as specified in [RFC 3261](https://datatracker.ietf.org/doc/html/rfc3261).

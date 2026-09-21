@@ -17,6 +17,14 @@ sip:
   # public_address: 203.0.113.5
 
   allow_unencrypted: true
+
+  # RFC 4028 section 8: the shortest session interval this node will carry a call on.
+  # A caller that asks for less and understands session timers is answered 422 Session
+  # Interval Too Small with this value in Min-SE; one that does not understand them has
+  # its interval raised to this instead, because a 422 it cannot read would only fail the
+  # call. The RFC's own floor is 90 and a lower value here is refused.
+  session_min_se: 90
+
   timers:
     # Base units (milliseconds)
     t1_rtt_ms: 500                     # Default RTT estimate
