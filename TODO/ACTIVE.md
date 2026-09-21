@@ -293,14 +293,28 @@ What it deliberately left, so it is not lost:
         was learned over, that flow id being exactly what `channel_find` answers to, a
         binding learned over no channel recording no flow, and the flow and node making
         the round trip through Redis.
-- [ ] A data race in `WebsocketConnectionFor::is_open()`
-      (`src/servers/websocket_connection.h:70`), found by tsan on 2026-09-21 while
-      checking the contract v2 work and measured as pre-existing: the baseline tree
-      fails `WebsocketServerTest.CarriesSipWithoutTls` 12 times in 30 runs under tsan,
-      the same rate as the tree with the change. The websocket server's own thread and
-      the global io_context thread both touch the stream, and `is_open()` reads it
-      without the strand every other accessor on that connection has. The other
-      transports hand over to the Core strand; this one does not, and that is the fix.
+- [x] The transport's threading rule, done on 2026-09-21. `Connection::executor()` is the
+      executor a connection's stream belongs to, and `Channel` hands every operation on
+      the stream over to it: starting a read, starting a write, and the teardown in
+      `close()`. A socket is not safe for two threads and each server runs its own
+      io_context on its own thread, so the Core strand reaching in was a second thread
+      inside the stream. `UDPServer` already worked this way and says so in its own
+      comment; TCP, TLS and WebSocket did not.
+
+      Found by tsan as a data race in `WebsocketConnectionFor::is_open()`, called from
+      `Channel::close()` while beast's read op wrote the same field finishing the teardown
+      the far end started. Measured before and after on
+      `WebsocketServerTest.CarriesSipWithoutTls`: 12 failures in 30 runs at the baseline,
+      0 in 30 with the fix. Three tests pin the rule itself - the mock connection can be
+      given a strand of its own and records whether each call arrived on it.
+- [ ] Nothing queues writes on a channel. `Channel::_schedule_async_write` starts an
+      `async_write_some` whenever a message goes out, so two messages sent back to back
+      put two writes in flight on one socket: asio leaves the bytes interleaved and
+      beast's WebSocket stream refuses the second outright. It has not bitten because a
+      transaction sends one message at a time, and a forking proxy on one flow is what
+      would. The fix is a per-channel write queue, which is also where a partial write
+      wants handling - `async_write_some` is not obliged to take the whole buffer, and
+      nothing checks how much it took.
 - [ ] Outbound TLS. `channel_connect` refuses `tls://` rather than guessing at what a
       node trusts; the cluster CA decision in M4 is what settles it. Until then a TLS peer
       has to connect inwards.
