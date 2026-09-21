@@ -312,6 +312,67 @@ TEST(CoreTest, SubscriberUnregisterDropsTheBinding) {
   EXPECT_TRUE(f.store->location_list(7).empty());
 }
 
+// A socket belongs to the thread its server runs on, and asio sockets and beast's
+// WebSocket stream are not safe for two threads at once. The Core strand is a different
+// thread, so everything it wants done to the stream it hands over. Reaching in from the
+// strand is what tsan catches on a WebSocket whose peer is tearing down at the same
+// time, and it is the same defect on TCP and TLS whether or not tsan has seen it there.
+TEST(CoreTest, ChannelStartsItsReadOnTheConnectionsExecutor) {
+  Fixture f;
+
+  auto connection = std::make_shared<MockConnection>("tcp", "192.0.2.10");
+  connection->own_strand();
+
+  auto channel = std::make_shared<Channel>(f.logger, f.core, connection);
+  f.on_strand([&channel]() { channel->start(); });
+  f.settle();
+
+  EXPECT_TRUE(connection->read_on_own_executor);
+}
+
+TEST(CoreTest, ChannelStartsItsWriteOnTheConnectionsExecutor) {
+  Fixture f;
+
+  auto connection = std::make_shared<MockConnection>("tcp", "192.0.2.10");
+  connection->own_strand();
+
+  auto channel = std::make_shared<Channel>(f.logger, f.core, connection);
+  f.on_strand([&channel]() { channel->start(); });
+
+  auto message = std::make_shared<SIPMessage>();
+  message->header = std::make_shared<SIPHeader>();
+  message->header->type = SIPHeader::Type::Request;
+  message->header->request_method = "OPTIONS";
+  message->header->request_uri = std::make_shared<types::SIPUri>("sip:bob@example.com");
+
+  f.on_strand([&channel, &message]() { channel->send(message); });
+  f.settle();
+
+  ASSERT_EQ(connection->write_calls, 1);
+  EXPECT_TRUE(connection->write_on_own_executor);
+}
+
+// Closing is the case that bit: the far end goes away, the server's thread is inside the
+// stream finishing the read, and the node closes its end from the strand at the same
+// moment.
+TEST(CoreTest, ChannelTearsTheConnectionDownOnItsOwnExecutor) {
+  Fixture f;
+
+  auto connection = std::make_shared<MockConnection>("tcp", "192.0.2.10");
+  connection->own_strand();
+
+  auto channel = std::make_shared<Channel>(f.logger, f.core, connection);
+  f.on_strand([&channel]() { channel->start(); });
+
+  f.on_strand([&channel]() { channel->close(); });
+  f.settle();
+
+  ASSERT_EQ(connection->close_calls, 1);
+  EXPECT_TRUE(connection->is_open_on_own_executor);
+  EXPECT_TRUE(connection->shutdown_on_own_executor);
+  EXPECT_TRUE(connection->close_on_own_executor);
+}
+
 // Via is the proxy's, not the transport's: the transport must not invent one, or a
 // response would come back through a hop that never existed (RFC 3261 16.6 step 8).
 TEST(CoreTest, ChannelSendDoesNotAddAVia) {

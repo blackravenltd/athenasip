@@ -9,12 +9,16 @@
 #include <algorithm>  // For std::min
 #include <cstring>    // For std::memcpy
 
+#include "../global_io_context.h"
 #include "udp_server.h"
 
 namespace athenasip::servers {
 
 UDPConnection::UDPConnection(std::weak_ptr<UDPServer> udp_server, boost::asio::ip::udp::endpoint local_endpoint, boost::asio::ip::udp::endpoint remote_endpoint)
-    : _udp_server(udp_server), _local_endpoint(local_endpoint), _remote_endpoint(remote_endpoint), _is_open(false) {}
+    : _udp_server(udp_server), _local_endpoint(local_endpoint), _remote_endpoint(remote_endpoint), _is_open(false) {
+  auto server = _udp_server.lock();
+  _executor = server ? server->executor() : boost::asio::any_io_executor(detail::get_global_io_context().get_executor());
+}
 
 bool UDPConnection::start() {
   _is_open = true;

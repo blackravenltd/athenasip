@@ -26,6 +26,8 @@ class TCPConnection : public Connection {
 
   virtual bool start() override { return true; }
 
+  boost::asio::any_io_executor executor() override { return _socket->get_executor(); }
+
   virtual void async_read_some(boost::asio::mutable_buffer buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) override {
     _socket->async_read_some(buffer, handler);
   }
