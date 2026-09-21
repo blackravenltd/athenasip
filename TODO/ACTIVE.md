@@ -214,9 +214,17 @@ What it deliberately left, so it is not lost:
       16.7's response context is written to hold more than one branch, and the CANCEL
       path already walks it, so the change is in `_forward_next` rather than in the
       shape. Parked deliberately - it is listed under Parked.
-- [ ] Timer C (16.6 step 11). An INVITE branch that goes on receiving provisional
-      responses for ever is not currently given up on. Timer B bounds the branch that
-      never answers at all; this is the one that answers 180 and never stops.
+- [x] Timer C (16.6 step 11), done on 2026-09-21. The branch that answers 180 and never
+      stops is now given up on. Nothing else was watching it: the first provisional
+      response moves the INVITE client transaction to Proceeding and cancels timer B
+      (17.1.1.2), so from the first 100 Trying onwards the branch had no bound at all
+      and held the caller, the response context and the dialog for as long as the node
+      ran. The timer hangs off the response context, which is where 16.6 puts it, and is
+      reset by a 101 to 199 (16.7 step 2) but not by a 100. On firing it follows 16.8:
+      a branch that has answered provisionally is sent a CANCEL and given one more
+      interval to answer it, and one that ignores that has its client transaction
+      terminated and is treated as though a 408 came back. `sip.timers.c_invite_proxy_ms`
+      configures it, and a value at or below the RFC's three-minute floor is refused.
 
 ### Step 5 - Dialogs (RFC 3261 section 12)
 

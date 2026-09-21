@@ -179,3 +179,32 @@ TEST(ConfigTest, DefaultsNeedNoExternalService) {
   EXPECT_EQ(config->db_url, "memory://");
   EXPECT_EQ(config->media_url, "builtin://");
 }
+
+// RFC 3261 16.6 step 11: "The timer MUST be larger than 3 minutes." A node configured
+// under that would give up on calls that are only still ringing, so the value is refused
+// and the default kept rather than honoured.
+TEST(ConfigTest, TimerCBelowTheRfcFloorIsRefused) {
+  ConfigFile file(
+      "sip:\n  node_id: test-node\n"
+      "  timers:\n"
+      "    c_invite_proxy_ms: 60000\n");
+
+  bool ok = false;
+  auto config = file.load(ok);
+
+  ASSERT_TRUE(ok);
+  EXPECT_GT(config->sip_timer_c_invite_proxy_ms, 180000u);
+}
+
+TEST(ConfigTest, TimerCAboveTheRfcFloorIsTaken) {
+  ConfigFile file(
+      "sip:\n  node_id: test-node\n"
+      "  timers:\n"
+      "    c_invite_proxy_ms: 300000\n");
+
+  bool ok = false;
+  auto config = file.load(ok);
+
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(config->sip_timer_c_invite_proxy_ms, 300000u);
+}
