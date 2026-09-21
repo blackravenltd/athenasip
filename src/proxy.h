@@ -98,6 +98,13 @@ class Proxy : public TransactionUser {
     bool provisional = false;
     bool cancelled = false;
 
+    // RFC 4028 section 8.1: "The proxy MUST remember, for the duration of the
+    // transaction, whether the request contained the Supported header field with the
+    // value 'timer'", and the interval it forwarded. Section 8.2 needs both to answer a
+    // callee that says nothing about session timers at all.
+    bool session_timer_supported = false;
+    std::uint32_t session_interval = 0;
+
     // RFC 3261 16.6 step 11: timer C, and the client transaction it bounds. The fork is
     // serial, so there is one branch in flight and one of each at a time.
     std::shared_ptr<Timer> timer_c;
@@ -112,6 +119,19 @@ class Proxy : public TransactionUser {
     // branch must not be sent a second time.
     bool answered = false;
   };
+
+  // RFC 4028 section 8.1: this node's say in the session timer negotiation, applied to
+  // the request before any copy of it is forwarded. False when the request was answered
+  // 422 and must go no further.
+  bool _apply_session_timer(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction);
+
+  // RFC 4028 section 8.2: the 2xx for a session refresh request whose caller asked for a
+  // timer and whose callee answered without one.
+  void _complete_session_timer(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response);
+
+  // 422 with the Min-SE that RFC 4028 section 6 requires on it.
+  void _send_interval_too_small(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
+                                std::uint32_t minimum);
 
   // RFC 3261 16.3.4. The branch this node writes carries a hash of the fields that
   // decide where a request goes, so a request that comes back can be told apart from

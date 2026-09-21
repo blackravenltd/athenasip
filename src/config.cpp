@@ -46,7 +46,19 @@ bool Config::load_from_yaml(const std::string& filename) {
   if (sip["allow_unencrypted"]) sip_allow_unencrypted = sip["allow_unencrypted"].as<bool>();
   if (sip["event_prefix"]) sip_event_prefix = sip["event_prefix"].as<std::string>();
   if (sip["public_address"]) sip_public_address = sip["public_address"].as<std::string>();
-  if (sip["session_min_se"]) sip_session_min_se = sip["session_min_se"].as<uint32_t>();
+  if (sip["session_min_se"]) {
+    const auto configured = sip["session_min_se"].as<uint32_t>();
+
+    // RFC 4028 section 8.1: the minimum a proxy quotes in a 422 "MUST NOT be lower than
+    // 90 seconds", which section 4 explains is a bit more than twice the longest a SIP
+    // transaction can take. Below it a refresh could not complete before the session it
+    // was refreshing expired.
+    if (configured < 90) {
+      _logger->error("sip.session_min_se must be at least 90 (RFC 4028) - keeping " + std::to_string(sip_session_min_se));
+    } else {
+      sip_session_min_se = configured;
+    }
+  }
 
   // SIP Timers
   YAML::Node sip_timers = sip["timers"];
