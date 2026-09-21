@@ -84,11 +84,16 @@ void Channel::close() {
 
     // Ensure Connection Closed
     if (_connection) {
-      // Shutdown and close connection
-      if (_connection->is_open()) {
-        _connection->shutdown();
-        _connection->close();
-      }
+      // The socket belongs to its server's thread, which may be inside it right now
+      // finishing a read the far end has just ended. Tearing it down from here would be
+      // a second thread in a stream that is not safe for one, so hand it over and let
+      // the strand get on with the registry.
+      boost::asio::dispatch(_connection->executor(), [connection = _connection]() {
+        if (connection->is_open()) {
+          connection->shutdown();
+          connection->close();
+        }
+      });
 
       _logger->info("Closed");
 
@@ -191,13 +196,16 @@ void Channel::_schedule_async_write(std::string message) {
   // The buffer has to outlive the call, so it is owned by the completion handler.
   auto buffer = std::make_shared<std::string>(std::move(message));
 
-  _connection->async_write_some(boost::asio::buffer(*buffer), [this, self, buffer](boost::system::error_code ec, std::size_t) {
-    // The completion runs on the connection's own io_context thread, so hop back.
-    boost::asio::post(_core->strand(), [this, self, ec]() {
-      if (ec) {
-        _logger->error("Write Error " + ec.to_string());
-        close();
-      }
+  // Starting the write is touching the stream, so it happens where the stream lives.
+  boost::asio::dispatch(_connection->executor(), [this, self, buffer, connection = _connection]() {
+    connection->async_write_some(boost::asio::buffer(*buffer), [this, self, buffer](boost::system::error_code ec, std::size_t) {
+      // The completion runs on the connection's own io_context thread, so hop back.
+      boost::asio::post(_core->strand(), [this, self, ec]() {
+        if (ec) {
+          _logger->error("Write Error " + ec.to_string());
+          close();
+        }
+      });
     });
   });
 }
@@ -208,11 +216,14 @@ void Channel::_schedule_async_read() {
   // Are we already closed?
   if (!_connection) return;
 
-  // Schedule Read
-  _connection->async_read_some(boost::asio::buffer(_read_buffer), [this, self](boost::system::error_code ec, std::size_t length) {
-    // The completion runs on the connection's own io_context thread. Everything the
-    // body touches is strand-confined, so hop back before any of it.
-    boost::asio::post(_core->strand(), [this, self, ec, length]() { _on_read(ec, length); });
+  // Schedule Read, on the connection's own executor: only one read is outstanding at a
+  // time, so the buffer is this channel's until the completion hands it back.
+  boost::asio::dispatch(_connection->executor(), [this, self, connection = _connection]() {
+    connection->async_read_some(boost::asio::buffer(_read_buffer), [this, self](boost::system::error_code ec, std::size_t length) {
+      // The completion runs on the connection's own io_context thread. Everything the
+      // body touches is strand-confined, so hop back before any of it.
+      boost::asio::post(_core->strand(), [this, self, ec, length]() { _on_read(ec, length); });
+    });
   });
 }
 

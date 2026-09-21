@@ -35,6 +35,8 @@ class TLSConnection : public Connection {
     return true;
   }
 
+  boost::asio::any_io_executor executor() override { return _ssl_socket->lowest_layer().get_executor(); }
+
   virtual void async_read_some(boost::asio::mutable_buffer buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) override {
     _ssl_socket->async_read_some(buffer, [this, handler](boost::system::error_code ec, std::size_t length) {
       if (ec == boost::asio::ssl::error::stream_truncated) {
