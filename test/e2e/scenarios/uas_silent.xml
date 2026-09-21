@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+
+<!--
+  A callee that registers and then says nothing at all. It is what makes the node's
+  timer B observable: the binding exists, so the INVITE is forwarded and retransmitted,
+  and nothing ever answers it.
+-->
+<scenario name="Callee: registers and never answers">
+
+  <send retrans="500">
+    <![CDATA[
+
+      REGISTER sip:[field0] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:[field1]@[field0]>;tag=[call_number]
+      To: <sip:[field1]@[field0]>
+      Call-ID: [call_id]
+      CSeq: 1 REGISTER
+      Contact: <sip:[field1]@[local_ip]:[local_port];transport=[transport]>
+      Max-Forwards: 70
+      Expires: 3600
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <recv response="401" auth="true"/>
+
+  <send retrans="500">
+    <![CDATA[
+
+      REGISTER sip:[field0] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:[field1]@[field0]>;tag=[call_number]
+      To: <sip:[field1]@[field0]>
+      Call-ID: [call_id]
+      CSeq: 2 REGISTER
+      Contact: <sip:[field1]@[local_ip]:[local_port];transport=[transport]>
+      [authentication username=[field1] password=[field2]]
+      Max-Forwards: 70
+      Expires: 3600
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <recv response="200"/>
+
+  <!-- The INVITE arrives and is deliberately left unanswered. The node retransmits it
+       (RFC 3261 17.1.1.2, timer A) and gives up at timer B. -->
+  <recv request="INVITE" crlf="true"/>
+
+  <pause milliseconds="40000"/>
+
+</scenario>

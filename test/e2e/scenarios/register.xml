@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+
+<!--
+  RFC 3261 section 10 and 22.4: REGISTER is challenged, answered with Digest, and the
+  200 OK lists the binding with the expiry the registrar granted.
+
+  Also RFC 3608: the 200 OK carries a Service-Route naming the node, which is what tells
+  the client where to send everything after this.
+-->
+<scenario name="REGISTER with Digest">
+
+  <send retrans="500">
+    <![CDATA[
+
+      REGISTER sip:[field0] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:[field1]@[field0]>;tag=[call_number]
+      To: <sip:[field1]@[field0]>
+      Call-ID: [call_id]
+      CSeq: 1 REGISTER
+      Contact: <sip:[field1]@[local_ip]:[local_port];transport=[transport]>
+      Max-Forwards: 70
+      Expires: 3600
+      User-Agent: sipp-e2e
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <!-- The challenge, which sipp keeps for the credentials below. -->
+  <recv response="401" auth="true" rtd="true">
+    <action>
+      <ereg regexp="Digest" search_in="hdr" header="WWW-Authenticate:" check_it="true" assign_to="challenge"/>
+    </action>
+  </recv>
+
+  <send retrans="500">
+    <![CDATA[
+
+      REGISTER sip:[field0] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:[field1]@[field0]>;tag=[call_number]
+      To: <sip:[field1]@[field0]>
+      Call-ID: [call_id]
+      CSeq: 2 REGISTER
+      Contact: <sip:[field1]@[local_ip]:[local_port];transport=[transport]>
+      [authentication username=[field1] password=[field2]]
+      Max-Forwards: 70
+      Expires: 3600
+      User-Agent: sipp-e2e
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <recv response="200">
+    <action>
+      <!-- The binding is echoed back with what is left of its lifetime (10.3 step 8),
+           and the route to use from here on (RFC 3608). A 200 with neither is a
+           registration the client cannot act on. -->
+      <ereg regexp="expires=[0-9]+" search_in="hdr" header="Contact:" check_it="true" assign_to="granted"/>
+      <ereg regexp="lr" search_in="hdr" header="Service-Route:" check_it="true" assign_to="route"/>
+    </action>
+  </recv>
+
+  <Reference variables="challenge,granted,route"/>
+
+</scenario>
