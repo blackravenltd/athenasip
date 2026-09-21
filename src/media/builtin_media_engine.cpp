@@ -187,6 +187,20 @@ Result BuiltinMediaEngine::_map_media(std::shared_ptr<Call> call, const std::str
 
   sdp->set_connection(relay);
 
+  // RFC 8866 section 5.2: the o= line gives "an address of the machine from which the
+  // session was created", and a node that anchors media so the two ends never see each
+  // other's addresses hands one of them away in it regardless. The RFC allows exactly
+  // this substitution - "for privacy reasons, it is sometimes desirable to obfuscate the
+  // username and IP address of the session originator" - on the condition that the field
+  // stays globally unique. The username and session id the endpoint chose are what carry
+  // that uniqueness and are left alone; only the address is replaced. The version is the
+  // endpoint's too, and 3264's rule for incrementing it is its own item in the plan.
+  auto origin = sdp->origin();
+  origin.nettype = relay.nettype;
+  origin.addrtype = relay.addrtype;
+  origin.address = relay.address;
+  sdp->set_origin(origin);
+
   auto& participant = call->participants[flags.participant];
 
   for (auto& media : sdp->media()) {
@@ -287,7 +301,28 @@ std::string BuiltinMediaEngine::_query(std::shared_ptr<Call> call) {
   auto it = _allocated.find(call->id);
   const auto count = (it == _allocated.end()) ? 0u : it->second.size() * 2;
 
-  return "{\"call_id\":\"" + call->id + "\",\"engine\":\"builtin\",\"relay_sets\":" + std::to_string(count) + "}";
+  // How long every relay this call holds has been silent, which is the shortest idle of
+  // any of them: one stream still carrying is a call still up. RTP and RTCP both count,
+  // so a call on hold or one whose codec suppresses silence does not read as dead.
+  //
+  // A call the engine holds nothing for has no media to be idle, and says so with -1
+  // rather than with a number a caller might act on.
+  std::int64_t idle_ms = -1;
+
+  if (it != _allocated.end()) {
+    for (const auto& [id, relays] : it->second) {
+      for (const auto& relay : {relays.rtp, relays.rtcp}) {
+        if (!relay) continue;
+
+        const auto relay_idle = relay->idle_for().count();
+        if (idle_ms < 0 || relay_idle < idle_ms) idle_ms = relay_idle;
+      }
+    }
+  }
+
+  const auto idle_seconds = idle_ms < 0 ? std::string("null") : std::to_string(idle_ms / 1000);
+
+  return "{\"call_id\":\"" + call->id + "\",\"engine\":\"builtin\",\"relay_sets\":" + std::to_string(count) + ",\"idle_seconds\":" + idle_seconds + "}";
 }
 
 }  // namespace athenasip::media

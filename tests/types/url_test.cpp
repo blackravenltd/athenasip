@@ -4,10 +4,12 @@
 // Copyright (C) 2026 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
+#include "types/url.h"
+
 #include <gtest/gtest.h>
+
 #include <sstream>
 #include <stdexcept>
-#include "types/url.h"
 
 using namespace athenasip::types;
 
@@ -107,4 +109,107 @@ TEST(URLTest, HostlessUrlIsValid) {
   EXPECT_TRUE(url.is_valid());
   EXPECT_EQ(url.scheme, "memory");
   EXPECT_EQ(url.host, "");
+}
+
+// RFC 3986 3.2.3: port = *DIGIT. The regex this replaces read a non-numeric port as
+// part of the path and called the URL valid, so a typo in a datastore address surfaced
+// as a connection failure much later instead of as a bad URL.
+TEST(URLTest, APortThatIsNotDigitsIsNotAUrl) {
+  EXPECT_FALSE(isValidURL("redis://localhost:sixthreeseven"));
+  EXPECT_FALSE(isValidURL("redis://localhost:"));
+  EXPECT_FALSE(isValidURL("redis://localhost:6379x"));
+}
+
+TEST(URLTest, APortOutsideTheRangeIsNotAUrl) {
+  EXPECT_FALSE(isValidURL("redis://localhost:70000"));
+  EXPECT_FALSE(isValidURL("redis://localhost:999999999999"));
+}
+
+// RFC 3986 3.1: scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ).
+TEST(URLTest, ASchemeIsALetterFollowedByTheSchemeCharacters) {
+  EXPECT_TRUE(isValidURL("rtpengine+ng://media.example.com:22222"));
+  EXPECT_FALSE(isValidURL("1redis://localhost:6379"));
+  EXPECT_FALSE(isValidURL("re dis://localhost:6379"));
+  EXPECT_FALSE(isValidURL("://localhost:6379"));
+}
+
+// A scheme with no well-known port has to carry the one it was given, or to_string
+// hands back a URL that names no port at all.
+TEST(URLTest, ASchemeWithNoDefaultPortKeepsThePortItWasGiven) {
+  URL url("rtpengine://media.example.com:22222");
+
+  ASSERT_TRUE(url.is_valid());
+  ASSERT_TRUE(url.port.has_value());
+  EXPECT_EQ(url.port.value(), 22222);
+  EXPECT_EQ(url.to_string(), "rtpengine://media.example.com:22222");
+}
+
+// RFC 3986 3.1: "schemes are case-insensitive", which the default port has to be too.
+TEST(URLTest, TheDefaultPortIsFoundWhateverTheSchemeCase) {
+  URL url("REDIS://cache.example.com");
+
+  ASSERT_TRUE(url.is_valid());
+  ASSERT_TRUE(url.port.has_value());
+  EXPECT_EQ(url.port.value(), 6379);
+}
+
+// 3986 3.2.1: the ':' inside userinfo separates the two halves. Without one there is a
+// username and no password, rather than an empty password that to_string would write
+// back out as a trailing colon.
+TEST(URLTest, AUsernameWithNoPasswordHasNone) {
+  URL url("redis://alice@cache.example.com");
+
+  ASSERT_TRUE(url.is_valid());
+  EXPECT_EQ(url.username.value(), "alice");
+  EXPECT_FALSE(url.password.has_value());
+  EXPECT_EQ(url.to_string(), "redis://alice@cache.example.com");
+}
+
+// Parsing into an object that already holds a URL must leave nothing of the old one
+// behind, whether the new one parses or not.
+TEST(URLTest, ParsingAgainClearsWhatWentBefore) {
+  URL url("https://user:pass@example.com:8443/path?key=value#section");
+  ASSERT_TRUE(url.is_valid());
+
+  url.parse("memory://");
+
+  EXPECT_TRUE(url.is_valid());
+  EXPECT_EQ(url.scheme, "memory");
+  EXPECT_EQ(url.host, "");
+  EXPECT_EQ(url.path, "");
+  EXPECT_EQ(url.query, "");
+  EXPECT_EQ(url.fragment, "");
+  EXPECT_FALSE(url.username.has_value());
+  EXPECT_FALSE(url.password.has_value());
+  EXPECT_FALSE(url.port.has_value());
+
+  url.parse("redis://localhost:not-a-port");
+
+  EXPECT_FALSE(url.is_valid());
+  EXPECT_EQ(url.scheme, "redis");
+  EXPECT_EQ(url.host, "localhost");
+  EXPECT_FALSE(url.port.has_value());
+}
+
+// The URLs the shipped configuration actually holds.
+TEST(URLTest, TheConfiguredDriverUrlsParse) {
+  URL memory("memory://");
+  EXPECT_TRUE(memory.is_valid());
+  EXPECT_EQ(memory.scheme, "memory");
+
+  URL local("local://");
+  EXPECT_TRUE(local.is_valid());
+  EXPECT_EQ(local.scheme, "local");
+
+  URL redis("redis://127.0.0.1:6399");
+  EXPECT_TRUE(redis.is_valid());
+  EXPECT_EQ(redis.scheme, "redis");
+  EXPECT_EQ(redis.host, "127.0.0.1");
+  ASSERT_TRUE(redis.port.has_value());
+  EXPECT_EQ(redis.port.value(), 6399);
+
+  URL mqtt("mqtt://broker.example.com");
+  EXPECT_TRUE(mqtt.is_valid());
+  ASSERT_TRUE(mqtt.port.has_value());
+  EXPECT_EQ(mqtt.port.value(), 1883);
 }

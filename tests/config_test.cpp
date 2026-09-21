@@ -179,3 +179,84 @@ TEST(ConfigTest, DefaultsNeedNoExternalService) {
   EXPECT_EQ(config->db_url, "memory://");
   EXPECT_EQ(config->media_url, "builtin://");
 }
+
+// RFC 3261 16.6 step 11: "The timer MUST be larger than 3 minutes." A node configured
+// under that would give up on calls that are only still ringing, so the value is refused
+// and the default kept rather than honoured.
+TEST(ConfigTest, TimerCBelowTheRfcFloorIsRefused) {
+  ConfigFile file(
+      "sip:\n  node_id: test-node\n"
+      "  timers:\n"
+      "    c_invite_proxy_ms: 60000\n");
+
+  bool ok = false;
+  auto config = file.load(ok);
+
+  ASSERT_TRUE(ok);
+  EXPECT_GT(config->sip_timer_c_invite_proxy_ms, 180000u);
+}
+
+TEST(ConfigTest, TimerCAboveTheRfcFloorIsTaken) {
+  ConfigFile file(
+      "sip:\n  node_id: test-node\n"
+      "  timers:\n"
+      "    c_invite_proxy_ms: 300000\n");
+
+  bool ok = false;
+  auto config = file.load(ok);
+
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(config->sip_timer_c_invite_proxy_ms, 300000u);
+}
+
+// RFC 4028 section 8.1: the minimum a proxy quotes in a 422 "MUST NOT be lower than 90
+// seconds". Section 4 explains why: it is a bit more than twice the longest a SIP
+// transaction can take, so below it a refresh could not complete before the session it
+// was refreshing expired.
+TEST(ConfigTest, ASessionMinimumBelowTheRfcFloorIsRefused) {
+  ConfigFile file(
+      "sip:\n  node_id: test-node\n"
+      "  session_min_se: 30\n");
+
+  bool ok = false;
+  auto config = file.load(ok);
+
+  ASSERT_TRUE(ok);
+  EXPECT_GE(config->sip_session_min_se, 90u);
+}
+
+TEST(ConfigTest, ASessionMinimumAboveTheRfcFloorIsTaken) {
+  ConfigFile file(
+      "sip:\n  node_id: test-node\n"
+      "  session_min_se: 600\n");
+
+  bool ok = false;
+  auto config = file.load(ok);
+
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(config->sip_session_min_se, 600u);
+}
+
+// The configuration this project ships as its example has to be one the node accepts.
+// It is the first thing anybody copies, and every setting in it is written as its own
+// default, so a key that has been renamed or removed shows up here rather than in
+// somebody's log.
+TEST(ConfigTest, TheShippedExampleConfigurationLoads) {
+  const std::string path = std::string(ATHENA_TEST_SOURCE_DIR) + "/config/config.example.yaml";
+  ASSERT_TRUE(std::filesystem::exists(path)) << path;
+
+  auto logger = std::make_shared<MockLogger>();
+  auto config = std::make_shared<Config>(logger);
+
+  ASSERT_TRUE(config->load_from_yaml(path));
+
+  // Spot-check the values the file claims are the defaults, because a comment that has
+  // drifted from the code is worse than no comment.
+  EXPECT_EQ(config->sip_media_timeout, 300u);
+  EXPECT_EQ(config->sip_session_expires, 1800u);
+  EXPECT_EQ(config->sip_session_min_se, 90u);
+  EXPECT_EQ(config->sip_max_call_duration, 0u);
+  EXPECT_FALSE(config->sip_require_session_timer);
+  EXPECT_EQ(config->sip_timer_c_invite_proxy_ms, 240000u);
+  EXPECT_EQ(config->sip_connect_timeout_ms, 4000u);
+}

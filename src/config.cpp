@@ -44,9 +44,39 @@ bool Config::load_from_yaml(const std::string& filename) {
   // Previously present in the YAML and the docs but never read, so setting it had no
   // effect at all.
   if (sip["allow_unencrypted"]) sip_allow_unencrypted = sip["allow_unencrypted"].as<bool>();
-  if (sip["event_prefix"]) sip_event_prefix = sip["event_prefix"].as<std::string>();
   if (sip["public_address"]) sip_public_address = sip["public_address"].as<std::string>();
-  if (sip["session_min_se"]) sip_session_min_se = sip["session_min_se"].as<uint32_t>();
+  if (sip["media_timeout"]) sip_media_timeout = sip["media_timeout"].as<uint32_t>();
+  if (sip["max_call_duration"]) sip_max_call_duration = sip["max_call_duration"].as<uint32_t>();
+  if (sip["require_session_timer"]) sip_require_session_timer = sip["require_session_timer"].as<bool>();
+
+  if (sip["session_expires"]) {
+    const auto configured = sip["session_expires"].as<uint32_t>();
+
+    // RFC 4028 section 4: "SIP entities MUST be prepared to handle Session-Expires header
+    // field values of any duration greater than 90 seconds, but entities that insert the
+    // Session-Expires header field SHOULD NOT choose values of less than 30 minutes."
+    // Zero is not a short interval, it is the switch that says not to insert one.
+    if (configured != 0 && configured < 90) {
+      _logger->error("sip.session_expires must be at least 90 (RFC 4028) - keeping " + std::to_string(sip_session_expires));
+    } else {
+      if (configured != 0 && configured < 1800) _logger->warn("sip.session_expires below the 1800 RFC 4028 recommends for an inserted interval");
+      sip_session_expires = configured;
+    }
+  }
+
+  if (sip["session_min_se"]) {
+    const auto configured = sip["session_min_se"].as<uint32_t>();
+
+    // RFC 4028 section 8.1: the minimum a proxy quotes in a 422 "MUST NOT be lower than
+    // 90 seconds", which section 4 explains is a bit more than twice the longest a SIP
+    // transaction can take. Below it a refresh could not complete before the session it
+    // was refreshing expired.
+    if (configured < 90) {
+      _logger->error("sip.session_min_se must be at least 90 (RFC 4028) - keeping " + std::to_string(sip_session_min_se));
+    } else {
+      sip_session_min_se = configured;
+    }
+  }
 
   // SIP Timers
   YAML::Node sip_timers = sip["timers"];
@@ -64,6 +94,19 @@ bool Config::load_from_yaml(const std::string& filename) {
     if (sip_timers["i_server_invite_duration"]) sip_timer_i_server_invite_duration = sip_timers["i_server_invite_duration"].as<uint16_t>();
     if (sip_timers["j_server_non_invite_duration"]) sip_timer_j_server_non_invite_duration = sip_timers["j_server_non_invite_duration"].as<uint16_t>();
     if (sip_timers["k_non_invite_duration"]) sip_timer_k_non_invite_duration = sip_timers["k_non_invite_duration"].as<uint16_t>();
+
+    if (sip_timers["c_invite_proxy_ms"]) {
+      const auto configured = sip_timers["c_invite_proxy_ms"].as<uint32_t>();
+
+      // RFC 3261 16.6 step 11: "The timer MUST be larger than 3 minutes." A shorter one
+      // would give up on calls that are only still ringing, so it is refused rather
+      // than honoured.
+      if (configured <= 180000) {
+        _logger->error("sip.timers.c_invite_proxy_ms must be larger than 180000 - keeping " + std::to_string(sip_timer_c_invite_proxy_ms));
+      } else {
+        sip_timer_c_invite_proxy_ms = configured;
+      }
+    }
   }
 
   if (sip["connect_timeout_ms"]) sip_connect_timeout_ms = sip["connect_timeout_ms"].as<uint32_t>();
@@ -241,46 +284,6 @@ bool Config::load_from_yaml(const std::string& filename) {
     } else {
       _logger->error("Missing 'events.url'");
       return false;
-    }
-  }
-
-  // --- Parse the 'rtprelay' section ---
-  YAML::Node rtprelay = config["rtprelay"];
-  if (rtprelay) {
-    if (rtprelay["enable"])
-      rtprelay_enable = rtprelay["enable"].as<bool>();
-    else
-      rtprelay_enable = true;
-
-    if (rtprelay["address"])
-      rtprelay_address = rtprelay["address"].as<std::string>();
-    else
-      rtprelay_address = "0.0.0.0";
-
-    if (rtprelay["public_address"])
-      rtprelay_public_address = rtprelay["public_address"].as<std::string>();
-    else
-      rtprelay_public_address = "0.0.0.0";
-
-    // The documented spelling is port_min / port_max. This read min_port / max_port,
-    // so every configured range was silently ignored and the defaults used.
-    if (rtprelay["port_min"]) {
-      try {
-        rtprelay_min_port = rtprelay["port_min"].as<uint16_t>();
-      } catch (const std::exception& e) {
-        _logger->error("Invalid value for 'rtprelay.port_min': " + std::string(e.what()));
-      }
-    } else {
-      rtprelay_min_port = 22000;
-    }
-    if (rtprelay["port_max"]) {
-      try {
-        rtprelay_max_port = rtprelay["port_max"].as<uint16_t>();
-      } catch (const std::exception& e) {
-        _logger->error("Invalid value for 'rtprelay.port_max': " + std::string(e.what()));
-      }
-    } else {
-      rtprelay_max_port = 23000;
     }
   }
 

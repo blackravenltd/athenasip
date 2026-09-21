@@ -6,12 +6,14 @@
 //
 #include "proxy.h"
 
+#include <chrono>
 #include <utility>
 
 #include "call.h"
 #include "channel.h"
 #include "core.h"
 #include "headers/cseq_header.h"
+#include "headers/session_expires_header.h"
 #include "headers/sip_identity_header.h"
 #include "headers/uint_header.h"
 #include "headers/via_header.h"
@@ -118,6 +120,29 @@ void set_top_via_transport(const std::shared_ptr<SIPMessage>& message, const std
   via->version = (slash == std::string::npos ? std::string("SIP/2.0") : via->version.substr(0, slash)) + "/" + transport;
 }
 
+// RFC 4028 sections 4 and 5: both fields are delta-seconds, and Min-SE shares the type
+// because the only thing it does not carry is a refresher parameter.
+headers::SessionExpiresHeader* session_field_of(const std::shared_ptr<SIPMessage>& message, const std::string& field) {
+  if (!message->header->contains(field)) return nullptr;
+  return message->header->headers_map[field][0]->as<headers::SessionExpiresHeader>();
+}
+
+// RFC 3261 20.37 and 20.32: Supported and Require are comma-separated option tags, which
+// the header table already splits into one value each.
+bool has_option_tag(const std::shared_ptr<SIPMessage>& message, const std::string& field, const std::string& tag) {
+  if (!message->header->contains(field)) return false;
+
+  for (const auto& value : message->header->headers_map[field]) {
+    if (Util::to_lower(Util::trim(value->to_string())) == tag) return true;
+  }
+
+  return false;
+}
+
+// RFC 4028 section 4: a session interval is negotiated on an INVITE or an UPDATE and
+// nowhere else.
+bool is_session_refresh(const std::string& method) { return method == "INVITE" || method == "UPDATE"; }
+
 // The loop half of a branch this node wrote, or empty for a branch it did not.
 std::string branch_loop_token(const std::string& branch) {
   const std::string cookie = kMagicCookie;
@@ -152,6 +177,11 @@ void Proxy::on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<tran
     _logger->info("Request has been here before with nothing changed - 482");
     return _send_status(transaction, request, 482, "Loop Detected");
   }
+
+  // RFC 4028 section 8.1, before any copy of the request goes anywhere: an interval this
+  // node will not keep state for is either refused or raised, depending on whether the
+  // caller knows what a session timer is.
+  if (!_apply_session_timer(request, transaction)) return;
 
   // RFC 3261 16.4, then 16.5.
   _preprocess_routes(request);
@@ -245,6 +275,12 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
   context->request = request;
   context->server = transaction;
   context->loop_token = loop_token;
+
+  // RFC 4028 section 8.1: remembered for the duration of the transaction, and read again
+  // in 8.2 when the final response comes back. Taken after _apply_session_timer has had
+  // its say, so the interval is the one actually forwarded.
+  context->session_timer_supported = has_option_tag(request, "Supported", "timer");
+  if (auto* session = session_field_of(request, "Session-Expires"); session != nullptr) context->session_interval = session->delta_seconds;
 
   // A route set that still has values in it decides the hop, and the Request-URI is
   // left alone (16.6 step 6). This is the whole of in-dialog routing: the Record-Route
@@ -464,6 +500,7 @@ void Proxy::_write_forward(const std::shared_ptr<Context>& context, const std::s
   context->forwarded = copy;
   context->forwarded_flow = channel;
   context->provisional = false;
+  context->timer_c_cancelled = false;
 
   // Dead entries would otherwise pile up for the life of the node: a context that is
   // answered by a 2xx leaves through _on_response and never comes back here.
@@ -473,7 +510,7 @@ void Proxy::_write_forward(const std::shared_ptr<Context>& context, const std::s
 
   auto self = shared_from_this();
 
-  core->client_transaction_start(
+  context->client = core->client_transaction_start(
       copy, channel, [this, self, context](std::shared_ptr<SIPMessage> response) { _on_response(context, response); },
       [this, self, context]() {
         // Timer B or F. RFC 3261 16.7: a branch that never answered is a 408, and the
@@ -486,9 +523,14 @@ void Proxy::_write_forward(const std::shared_ptr<Context>& context, const std::s
 
         if (!context->best) context->best = timeout;
 
+        _timer_c_cancel(context);
         context->forwarded = nullptr;
         _forward_next(context);
       });
+
+  // RFC 3261 16.6 step 11: "Timer C MUST be set for each client transaction when an
+  // INVITE request is proxied."
+  _timer_c_start(context);
 }
 
 void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response) {
@@ -501,14 +543,24 @@ void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::sha
     response->header->remove_value("Via", [&top](std::shared_ptr<headers::Header> header) { return header == top; });
   }
 
+  const int code = response->header->response_code;
+
+  // RFC 4028 section 8.2 goes first, because the dialog tracker below takes the session
+  // interval from what this response says. Running it afterwards would leave this node
+  // watching nothing while the caller refreshed on an interval this node had handed it.
+  if (is_2xx(code)) _complete_session_timer(context, response);
+
   // Section 12 is tracked, not routed on: the dialog record is what tells this node a
   // call is up and when it ends, and it is built from what goes past.
   if (auto core = _core.lock()) core->dialogs()->observe_response(context->request, response);
 
-  const int code = response->header->response_code;
-
   if (!is_final(code)) {
     context->provisional = true;
+
+    // 16.7 step 2: a provisional response of 101 to 199 resets timer C, because the
+    // branch is demonstrably still working on the call. A 100 Trying is excluded by
+    // name - it says the next hop received the INVITE, not that anyone is ringing.
+    if (code > 100) _timer_c_start(context);
 
     // 9.1: a CANCEL waits for a provisional response, because before one there is
     // nothing at the far end that knows the transaction. This is where that wait ends.
@@ -518,7 +570,9 @@ void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::sha
     return;
   }
 
+  _timer_c_cancel(context);
   context->forwarded = nullptr;
+  context->client = nullptr;
 
   // The caller already has its final response - a 487 for a CANCEL, or the answer from
   // an earlier branch. What this branch says now is only the end of its own transaction.
@@ -624,6 +678,9 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
 
 bool Proxy::_prepare_forward(const std::shared_ptr<SIPMessage>& copy, const std::shared_ptr<Channel>& channel, const Target& target,
                              const std::string& loop_token) const {
+  auto core = _core.lock();
+  if (!core) return false;
+
   auto& header = copy->header;
 
   // RFC 3261 16.6 step 2: the Request-URI becomes the target this hop is for.
@@ -654,7 +711,7 @@ bool Proxy::_prepare_forward(const std::shared_ptr<SIPMessage>& copy, const std:
     auto record_route = std::make_shared<SIPUri>();
     record_route->valid = true;
     record_route->scheme = (transport == "tls" || Util::to_lower(header->request_uri->scheme) == "sips") ? "sips" : "sip";
-    record_route->host = local.address().to_string();
+    record_route->host = core->advertised_address(local.address().to_string());
     record_route->port = local.port();
 
     // 19.1.1: lr says this node is a loose router, which is what stops the next hop
@@ -692,8 +749,8 @@ bool Proxy::_prepare_forward(const std::shared_ptr<SIPMessage>& copy, const std:
   // transactions while both still say where they have been.
   const auto branch = std::string(kMagicCookie) + loop_token + "." + Util::generate_random_string("", 12);
 
-  auto via = std::make_shared<ViaHeader>("SIP/2.0/" + Util::to_upper(transport) + " " + local.address().to_string() + ":" + std::to_string(local.port()) +
-                                         ";branch=" + branch);
+  auto via = std::make_shared<ViaHeader>("SIP/2.0/" + Util::to_upper(transport) + " " + core->advertised_address(local.address().to_string()) + ":" +
+                                         std::to_string(local.port()) + ";branch=" + branch);
 
   header->add_start("Via", via);
   copy->branch = branch;
@@ -737,6 +794,227 @@ void Proxy::on_cancel(std::shared_ptr<SIPMessage> cancel, std::shared_ptr<transa
   terminated->header->response_message = "Request Terminated";
 
   invite_transaction->send(terminated);
+}
+
+bool Proxy::_apply_session_timer(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction) {
+  auto core = _core.lock();
+  if (!core) return true;
+
+  if (!is_session_refresh(request->header->request_method)) return true;
+
+  auto* session = session_field_of(request, "Session-Expires");
+
+  // A request that offered no interval gets this node's, which is 8.1's other half.
+  if (session == nullptr || session->delta_seconds == 0) {
+    _insert_session_timer(request);
+    return true;
+  }
+
+  const std::uint32_t minimum = core->config->sip_session_min_se;
+  if (minimum == 0 || session->delta_seconds >= minimum) return true;
+
+  // 8.1: "If the request contains a Supported header field with a value 'timer', the
+  // proxy MAY reject the INVITE request with a 422 (Session Interval Too Small) response
+  // if the session interval in the Session-Expires header field is smaller than the
+  // minimum interval defined by the proxy's local policy." A caller that understands
+  // session timers understands the 422, and will come back with an interval this node
+  // will hold state for.
+  if (has_option_tag(request, "Supported", "timer")) {
+    _logger->info("Session-Expires of " + std::to_string(session->delta_seconds) + "s is below this node's minimum - 422");
+    _send_interval_too_small(transaction, request, minimum);
+    return false;
+  }
+
+  // 8.1 again, for a caller that does not: "the proxy cannot usefully reject the request,
+  // as this would result in a call failure. Rather, the proxy SHOULD insert a Min-SE
+  // header field containing its minimum interval." The 422 would be answered by nobody,
+  // so the interval is raised on the way through instead and the far end is told what the
+  // floor was. A Min-SE already in the request is raised and never lowered.
+  std::uint32_t floor = minimum;
+
+  if (auto* min_se = session_field_of(request, "Min-SE"); min_se != nullptr) {
+    if (min_se->delta_seconds < minimum) min_se->delta_seconds = minimum;
+    floor = min_se->delta_seconds;
+  } else {
+    request->header->add("Min-SE", std::make_shared<headers::SessionExpiresHeader>(minimum));
+  }
+
+  // "The proxy MUST then increase the Session-Expires header field value to be equal to
+  // the value in the Min-SE header field." The refresher parameter is not touched: 8.1
+  // says in as many words that it is not the proxy's to insert or modify.
+  _logger->info("Raising a Session-Expires of " + std::to_string(session->delta_seconds) + "s to " + std::to_string(floor) +
+                "s - the caller does not support timer");
+
+  session->delta_seconds = floor;
+  return true;
+}
+
+void Proxy::_insert_session_timer(const std::shared_ptr<SIPMessage>& request) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  // Nothing to insert, or something already there to leave alone. A Session-Expires of
+  // zero is malformed rather than absent, and adding a second header beside it would make
+  // it worse.
+  if (core->config->sip_session_expires == 0) return;
+  if (session_field_of(request, "Session-Expires") != nullptr) return;
+
+  // 8.1: the interval "may contain any desired expiration time the proxy would like, but
+  // not with a duration lower than the value in the Min-SE header field in the request,
+  // if it is present".
+  std::uint32_t interval = core->config->sip_session_expires;
+  if (auto* min_se = session_field_of(request, "Min-SE"); min_se != nullptr && min_se->delta_seconds > interval) interval = min_se->delta_seconds;
+
+  // "The proxy MUST NOT include a refresher parameter in the header field value." Which
+  // end refreshes is settled between the endpoints in the 2xx (section 9 Table 2), and a
+  // UAS whose caller does not understand session timers takes it on itself - which is
+  // what makes inserting one safe rather than a way of breaking calls to old equipment.
+  request->header->add("Session-Expires", std::make_shared<headers::SessionExpiresHeader>(interval));
+
+  _logger->debug("Call asked for no session interval - offering " + std::to_string(interval) + "s");
+
+  // 8.1: "If the request did not contain a Supported header field with the value 'timer',
+  // the proxy MAY insert a Require header field with the value 'timer' into the request.
+  // However, this is NOT RECOMMENDED. This allows the proxy to insist on a session timer
+  // for the session." Insisting means a callee that does not implement RFC 4028 answers
+  // 420 Bad Extension and the call fails, rather than going on without an expiry, which
+  // is why it is off unless somebody has said they want it.
+  if (!core->config->sip_require_session_timer) return;
+  if (has_option_tag(request, "Supported", "timer")) return;
+  if (has_option_tag(request, "Require", "timer")) return;
+
+  _logger->debug("Requiring the session timer this node offered");
+  request->header->add("Require", "timer");
+}
+
+void Proxy::_complete_session_timer(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response) {
+  if (!is_session_refresh(context->request->header->request_method)) return;
+
+  // RFC 4028 section 8.2: "If the received response contains a Session-Expires header
+  // field, no modification of the response is needed."
+  if (session_field_of(response, "Session-Expires") != nullptr) return;
+
+  // The callee said nothing about session timers. If the caller said nothing either then
+  // there is no session expiration and the response goes up as it arrived; this node does
+  // not invent one for two ends that never asked.
+  if (!context->session_timer_supported || context->session_interval == 0) return;
+
+  // "Because there is no Session-Expires or Require header field in the response, the
+  // proxy knows that it is the first session-timer-aware proxy to receive the response.
+  // This proxy MUST insert a Session-Expires header field into the response with the
+  // value it remembered from the forwarded request."
+  auto session = std::make_shared<headers::SessionExpiresHeader>(context->session_interval);
+
+  // "It MUST set the value of the 'refresher' parameter to 'uac'." The callee cannot
+  // refresh a session it does not know it has.
+  session->refresher = "uac";
+  response->header->add("Session-Expires", session);
+
+  // "The proxy MUST add the 'timer' option tag to any Require header field in the
+  // response, and if none was present, add the Require header field with that value."
+  if (!has_option_tag(response, "Require", "timer")) response->header->add("Require", "timer");
+
+  _logger->info("Callee answered without a session timer - telling the caller its own interval stands, refreshed by it");
+}
+
+void Proxy::_send_interval_too_small(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
+                                     std::uint32_t minimum) {
+  if (!transaction) return;
+
+  auto response = request->generate_response();
+  response->header->response_code = 422;
+  response->header->response_message = "Session Interval Too Small";
+
+  // RFC 4028 section 6: "The 422 response MUST contain a Min-SE header field with the
+  // minimum timer for that server." Without it the caller has nothing to retry with.
+  response->header->add("Min-SE", std::make_shared<headers::SessionExpiresHeader>(minimum));
+
+  if (auto core = _core.lock()) core->dialogs()->observe_response(request, response);
+
+  transaction->send(response);
+}
+
+void Proxy::_timer_c_start(const std::shared_ptr<Context>& context) {
+  _timer_c_cancel(context);
+
+  auto core = _core.lock();
+
+  // 16.6 step 11 sets the timer for a client transaction, so that is what it is tied to
+  // and not to the copy of the request: _cancel_branch lets go of the copy once the
+  // CANCEL is away, and the branch it was cancelling is still outstanding after that.
+  if (!core || !context->client) return;
+
+  // Only an INVITE gets one. It is the only method whose client transaction can sit in
+  // Proceeding indefinitely; a non-INVITE branch is bounded by timer F whatever it
+  // answers (RFC 3261 17.1.2.2).
+  if (context->request->header->request_method != "INVITE") return;
+
+  auto timers = core->timer_source();
+  if (!timers) return;
+
+  // Weak on both sides: a timer set for four minutes must not be what keeps the node's
+  // proxy or a finished response context alive.
+  std::weak_ptr<TransactionUser> weak_self = weak_from_this();
+  std::weak_ptr<Context> weak_context = context;
+
+  context->timer_c = timers->schedule(std::chrono::milliseconds(core->config->sip_timer_c_invite_proxy_ms), [weak_self, weak_context]() {
+    auto self = std::static_pointer_cast<Proxy>(weak_self.lock());
+    auto held = weak_context.lock();
+
+    if (self && held) self->_on_timer_c(held);
+  });
+}
+
+void Proxy::_timer_c_cancel(const std::shared_ptr<Context>& context) {
+  if (!context->timer_c) return;
+
+  context->timer_c->cancel();
+  context->timer_c = nullptr;
+}
+
+void Proxy::_on_timer_c(const std::shared_ptr<Context>& context) {
+  context->timer_c = nullptr;
+
+  // RFC 3261 16.8, the first half: "If the client transaction has received a provisional
+  // response, the proxy MUST generate a CANCEL request matching that transaction." The
+  // far end believes it is ringing somebody, and dropping the branch silently would
+  // leave it ringing. 16.8 offers a reset of the timer instead of terminating the
+  // transaction, and that is what happens here, so a far end that answers the CANCEL
+  // ends its branch the ordinary way, through a 487 and _on_response.
+  if (context->provisional && !context->timer_c_cancelled) {
+    _logger->info("Timer C fired on a branch that is still provisional - cancelling it");
+
+    context->timer_c_cancelled = true;
+    _cancel_branch(context);
+    _timer_c_start(context);
+    return;
+  }
+
+  // The second half, and the other end of that choice. Either the branch never answered
+  // at all, in which case 16.8 says to behave as though a 408 had come back, or it
+  // ignored the CANCEL and its transaction is terminated here rather than left waiting
+  // on a response that is not coming.
+  _logger->info("Timer C fired on a branch that will not finish - giving up on it");
+
+  if (context->client) {
+    context->client->terminate();
+    context->client = nullptr;
+  }
+
+  context->forwarded = nullptr;
+
+  // The caller has its answer already; this is only the end of a branch it is no longer
+  // waiting on.
+  if (context->answered) return;
+
+  if (!context->best) {
+    auto timeout = context->request->generate_response();
+    timeout->header->response_code = 408;
+    timeout->header->response_message = "Request Timeout";
+    context->best = timeout;
+  }
+
+  _forward_next(context);
 }
 
 void Proxy::_cancel_branch(const std::shared_ptr<Context>& context) {

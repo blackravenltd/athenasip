@@ -1,7 +1,8 @@
 # AthenaSIP - Active Work
 
-Milestone 1 is complete and tagged `0.2.0`. Work happens on `develop`; `main` carries
-the last release. Line numbers refer to the current tree; update them as files move.
+Milestone 1 is complete. Work happens on `develop`; `main` carries the last release, and
+`0.5.0` is the current one. Line numbers refer to the current tree; update them as files
+move.
 
 What M2 builds on, all landed in M1: the header, URI, identity and message model follow
 RFC 3261; `Core` runs on a single strand with no locks; `memory://` and `redis://` are
@@ -10,15 +11,22 @@ relay driver are in; `Call` is multi-party; all four RFC 3261 section 17 transac
 state machines exist and are wired in behind a matcher, with `Registrar` and `Proxy` as
 the transaction users.
 
-M2 steps 1 to 6 have landed since: the transaction users, the plugin contract (one
-registry, async datastore and media engine), a structured `SIPUri`, the rest of
-section 16, dialog tracking and media on the signalling path. 371 tests, clean under
-asan and tsan, the Redis suite verified against a real server.
+**Milestone 2 is essentially done as of 0.5.0.** Steps 1 to 6 and 8 to 10 are closed, and
+what is left in each is recorded against it as work that defers itself to M3, M4 or the
+Parked list. The sipp harness passes all eight scenarios, which is what principle 2 asks
+for: compliance proven rather than asserted. 472 tests, clean under asan and tsan, the
+Redis suite verified against a real server.
 
-Step 7 is mostly done: the WSS listener, outbound flows and RFC 3261 18.1.1 have
-landed. What is left of it is the per-connection flow identity on a binding, which is a
-plugin contract change and wants to share an `API_VERSION` bump with the one step 2 left
-outstanding.
+What is left of step 7 is the per-connection flow identity on a binding, which is a plugin
+contract change and wants to share an `API_VERSION` bump with the one step 2 left
+outstanding. Step 4's RFC 3263 and step 5's remaining items are M3 and M4 by their own
+terms.
+
+A node now decides for itself when a call it is holding is over, which nothing before
+0.5.0 did: `sip.media_timeout` reads the relay, `sip.session_expires` offers a timer to a
+call that asked for none, and `sip.max_call_duration` is the blunt backstop. All three
+release the call and send no BYE, which is what RFC 4028 section 8.3 allows a proxy and
+no more.
 
 An architecture review on 2026-09-18 compared the Principles, the tree and the RFCs.
 Its findings are merged into Milestone 2 below, which is ordered by priority: work the
@@ -176,11 +184,22 @@ What it deliberately left, so it is not lost:
       it replaces ran over every To, From and Contact that arrived and could not express
       a quoted display name containing `<` or `;` at all. `star` gives a Contact of `*`
       its own home (20.10) and the registrar no longer recognises it by shape.
-- [ ] `types::URL` (`src/types/url.cpp`) is the last regex worth replacing. Off the
-      message path - it only parses config URLs at startup - so it is tidiness, and
-      cheap. `Util::is_ipv4` (`src/util.cpp:153`) also uses one and does see network
-      data, but the pattern is anchored with no nested quantifiers, so it is linear and
-      not the same hazard.
+- [x] `types::URL` (`src/types/url.cpp`) is hand-written, done on 2026-09-21. The last
+      regex worth replacing, and it was hiding two things: a port that was not digits
+      was read as part of the path and the URL called valid, so a typo in a datastore
+      address surfaced as a connection failure much later; and `to_string` dropped the
+      port of any scheme with no well-known one, which is every scheme this project
+      invents. Parsing into an object now clears what went before, and the default-port
+      lookup is case-insensitive the way RFC 3986 3.1 says a scheme is.
+- [ ] IPv6 literals in a config URL. `redis://[::1]:6379` parses to nonsense - it always
+      has - because the authority is split on the first colon. RFC 3986 3.2.2 puts the
+      literal in brackets for exactly this reason, so the fix is to read a bracketed
+      host whole, and to put the brackets back in `to_string` when the host holds a
+      colon. Small, but it changes what `host` hands the datastore and media drivers,
+      so it is its own piece of work.
+- [ ] `Util::is_ipv4` (`src/util.cpp:153`) still uses a regex and does see network data,
+      but the pattern is anchored with no nested quantifiers, so it is linear and not
+      the same hazard. Left deliberately.
 
 ### Step 4 - Proxy core, the rest of section 16
 
@@ -203,9 +222,17 @@ What it deliberately left, so it is not lost:
       16.7's response context is written to hold more than one branch, and the CANCEL
       path already walks it, so the change is in `_forward_next` rather than in the
       shape. Parked deliberately - it is listed under Parked.
-- [ ] Timer C (16.6 step 11). An INVITE branch that goes on receiving provisional
-      responses for ever is not currently given up on. Timer B bounds the branch that
-      never answers at all; this is the one that answers 180 and never stops.
+- [x] Timer C (16.6 step 11), done on 2026-09-21. The branch that answers 180 and never
+      stops is now given up on. Nothing else was watching it: the first provisional
+      response moves the INVITE client transaction to Proceeding and cancels timer B
+      (17.1.1.2), so from the first 100 Trying onwards the branch had no bound at all
+      and held the caller, the response context and the dialog for as long as the node
+      ran. The timer hangs off the response context, which is where 16.6 puts it, and is
+      reset by a 101 to 199 (16.7 step 2) but not by a 100. On firing it follows 16.8:
+      a branch that has answered provisionally is sent a CANCEL and given one more
+      interval to answer it, and one that ignores that has its client transaction
+      terminated and is treated as though a 408 came back. `sip.timers.c_invite_proxy_ms`
+      configures it, and a value at or below the RFC's three-minute floor is refused.
 
 ### Step 5 - Dialogs (RFC 3261 section 12)
 
@@ -214,17 +241,52 @@ Done on 2026-09-20; see `COMPLETED.md`. `types::Dialog`, the `Dialogs` observer,
 
 What it deliberately left, so it is not lost:
 
-- [ ] RFC 4028 section 8, the proxy's own say in the negotiation. `Config::sip_session_min_se`
-      exists and nothing reads it: an INVITE whose `Session-Expires` is below this node's
-      minimum should be answered 422 Session Interval Too Small with a `Min-SE` header,
-      and `Supported: timer` / `Require: timer` should be honoured. Until then the node
-      accepts whatever the two ends agree and only watches.
-- [ ] Requiring a session timer at all. A call between two endpoints that never offered
-      one has no interval, so it never lapses and this node holds its state until a BYE
-      arrives. That is correct - ending a call nobody said would end is worse - but it
-      means a stuck call is only cleaned up by a restart. Inserting `Session-Expires` on
-      the way through is the fix and it is a policy decision, so it waits for the config
-      to have somewhere to say it.
+- [x] RFC 4028 section 8, the proxy's own say in the negotiation, done on 2026-09-21.
+      `Config::sip_session_min_se` was configuration nothing read, and the node accepted
+      whatever the two ends agreed. 8.1 now applies to every INVITE and UPDATE: an
+      interval below the minimum is answered 422 Session Interval Too Small with `Min-SE`
+      when the caller advertises `Supported: timer`, and raised on the way through when
+      it does not, because a 422 a caller cannot read would only fail the call. A `Min-SE`
+      already in the request is raised and never lowered, the `refresher` parameter is
+      never touched, and a request that asked for no interval is still not given one -
+      that is the next item and a policy decision. 8.2 covers the other end: when the
+      caller asked for a timer and the callee answered without one, the 2xx gains the
+      remembered interval with `refresher=uac` and `Require: timer`, before the dialog
+      tracker reads it rather than after, or this node would watch nothing while the
+      caller refreshed on an interval this node handed it. The config floor of 90 the RFC
+      sets is enforced.
+- [x] A stuck call is cleaned up by something other than a restart, done on 2026-09-21,
+      and not by the session timer. A call between two endpoints that never offered one
+      has no interval and never lapses, and inserting `Session-Expires` only helps where
+      the far end implements RFC 4028 - which is precisely not the case that leaks. The
+      media plane answers it instead: `RTPRelaySet` records when it last carried a packet,
+      the engine reports the shortest idle of a call's relays as `idle_seconds` through
+      `query()`, and `sip.media_timeout` (300s, 0 off) is what the sweep on `Core` acts
+      on. RTCP counts with RTP so hold and silence suppression do not read as dead, and
+      RFC 4028 section 8.3 is followed to the letter: the node releases the call and sends
+      no BYE, because it is on the path of the dialog and not an end of it.
+- [x] Inserting `Session-Expires` where a call offered none, 8.1's other half, done on
+      2026-09-21. `sip.session_expires`, 1800 by default per section 4's recommendation
+      and 0 to leave such a call alone. It covers the gap the media sweep cannot: a call
+      whose media goes end to end is invisible to the sweep, and this reaches any call
+      whose far end implements RFC 4028. Safe by construction - section 9 Table 2 has a
+      timer-aware UAS take the refreshing itself when the UAC cannot, and 8.2 leaves the
+      call with no expiration at all when neither end does, which is where it started. An
+      interval already in the request is untouched, an inserted one is never below a
+      `Min-SE` the request carried, and no `refresher` is ever named: 8.1 forbids it.
+- [x] `sip.max_call_duration`, off by default, done on 2026-09-21. The backstop for the
+      call neither of the others reaches: media end to end, and two endpoints that have
+      never heard of RFC 4028. Measured from the dialog's confirmation on the steady clock
+      for the same reason the session deadline is. The sweep on `Core` does both questions
+      now, and the cheaper one - how long the call has been up - runs first and needs no
+      engine.
+- [x] `sip.require_session_timer`, off by default, done on 2026-09-21. RFC 4028 8.1 allows
+      `Require: timer` and calls it NOT RECOMMENDED in the same breath, and the reason is
+      concrete: an endpoint that does not implement the extension answers 420 Bad
+      Extension, so the call fails outright rather than going without an expiry. 8.1 also
+      says to add it only where the caller said nothing about session timers, which is
+      what the code does. Documented with the failure mode spelled out rather than the
+      option alone.
 - [ ] Tearing a lapsed call down towards the endpoints. On expiry this node discards its
       state, which is what RFC 4028 section 8 asks of a proxy; sending a BYE to both ends
       would be acting as a user agent in a dialog it only sits on the path of. When the
@@ -247,11 +309,15 @@ What it deliberately left, so it is not lost:
       end. That is the right failure for a proxy, but it is a policy decision with
       nowhere to say it: `anchor` or `passthrough` per realm is an M3 item and this is
       the same knob.
-- [ ] The `o=` line keeps the endpoint's own address (RFC 8866 section 5.2). It is an
-      identifier for the session rather than somewhere to send to, so nothing breaks,
-      but a node anchoring media to hide topology is leaking the far end's address in
-      it. rtpengine rewrites it; the builtin driver's scope is `c=`, `m=` ports and
-      `a=rtcp`.
+- [x] The `o=` line carries this node's address, done on 2026-09-21. Every `c=`, `m=`
+      port and `a=rtcp` was rewritten and the `o=` was not, so a node anchoring media so
+      that neither end learns the other's address handed one of them away in it anyway.
+      RFC 8866 section 5.2 allows the substitution in as many words - "for privacy
+      reasons, it is sometimes desirable to obfuscate the username and IP address of the
+      session originator" - on the condition that the field stays globally unique, so the
+      username and session id the endpoint chose are kept and only the address, nettype
+      and addrtype are replaced. Those two are what carry the uniqueness. The version is
+      the endpoint's as well; incrementing it is the next item.
 - [ ] RFC 3264 section 8's version rule: an offer that changes the description must
       increment the `o=` version, and a re-offer this node rewrote does not. It matters
       once a re-INVITE changes the stream rather than repeating it, which is hold and
@@ -392,20 +458,45 @@ and node endpoints the harness and a web client need.
       - The port allocator was a function whose result was captured with `$(...)`, so the
         counter was incremented in a subshell and every scenario got the same port.
 
-      **What the four call scenarios are still failing on**, for whoever picks this up:
+      **All eight scenarios pass as of 2026-09-21**, including the RTP one. What the four
+      call scenarios had been failing on, since each is worth knowing:
 
-      - The callee scenarios register and then wait for an INVITE in one sipp scenario,
-        and sipp binds a scenario instance to one Call-ID: the INVITE arrives with the
-        caller's Call-ID and is discarded as unmappable. The fix is the ordinary sipp
-        shape - register in a separate short run, then a pure UAS scenario that starts
-        with `recv request="INVITE"` and takes whatever call arrives.
-      - The node writes `0.0.0.0` into its own Via and Record-Route on a UDP flow,
-        because both are built from `connection->local_endpoint()` and the UDP listener
-        is bound to the wildcard. `Service-Route` had the same bug and is fixed;
-        Via and Record-Route are the M4 "public contact addresses" item, and the harness
-        has now shown it bites on a single node rather than only behind a balancer.
+      - The node wrote `0.0.0.0` into its own Via and Record-Route on a UDP flow, both
+        being built from `connection->local_endpoint()` with the listener on the
+        wildcard. This was the one real server bug of the four. `Core::advertised_address`
+        now answers it for all three of Via, Record-Route and Service-Route, and
+        `channel_register` files the advertised address as one of this node's own, or the
+        Record-Route it wrote comes back as a Route it does not recognise and 16.3.4
+        catches the BYE as a loop. The rest of the M4 "public contact addresses" item -
+        the localnet split, per-transport public ports, and working the address out
+        rather than being told - is untouched and still M4.
+      - The callee scenarios registered and then waited for an INVITE in one sipp
+        scenario, and sipp binds a scenario instance to one call: the INVITE arrives with
+        the caller's Call-ID and was discarded as unmappable. Registration is its own
+        short run now, on the port the UAS run then listens on.
+      - `cancel_after_180.xml` built the CANCEL with `[branch]`, which sipp derives per
+        message, so it named a transaction the node had never seen - and the node was
+        right to say so (RFC 3261 9.1 requires the CANCEL's Via to be identical to the
+        INVITE's, branch included). The branch is read back off the 180, whose top Via is
+        the one that went out, and used for the CANCEL and for the ACK to the 487, which
+        17.1.1.3 requires to match as well.
+      - Every scenario gives its callee a port of its own, and a REGISTER from a new port
+        is a new binding rather than a replacement, so the second scenario to run had the
+        node forking to the first one's dead port. Each pair now clears the account's
+        bindings first with a `Contact: *` and `Expires: 0` (10.2.2) - from a port of its
+        own, because sharing the UAS port made the two runs one transaction under 17.2.3
+        and the second REGISTER came back answered with the first one's response.
+      - `invite_media.xml` named the G.711 capture at sipp's upstream path; Debian's
+        package puts it in `/usr/share/sip-tester/`.
 
-      The RTP assertions have not been reached yet, so nothing is known about them.
+      `run.sh` now writes the node's own log to `results/node.log` before it tears the
+      containers down. Without it a failing scenario is two sipp traces and a guess.
+
+      **One deviation the harness surfaced and nobody has fixed**: a CANCEL that matches
+      no transaction is answered 200 and dropped. RFC 3261 16.10 says a proxy that finds
+      no response context "MUST statelessly forward the CANCEL request", because the
+      request it names may have been forwarded statelessly too. Worth doing with the
+      stateless path in M3.
 - [x] `Dialog` unit tests, done with step 5 on 2026-09-20. `tests/dialogs_test.cpp` has
       19 of them, RFC-derived in the same style as the transaction tests: the dialog the
       2xx establishes, each end's target and sequence, re-INVITE moving the target, BYE
@@ -416,9 +507,6 @@ and node endpoints the harness and a web client need.
       can route back to. Done on 2026-09-21 and running. The node image builds Boost from
       source because Debian ships 1.83 and this needs 1.87 or newer; it is its own layer
       and cached after the first build.
-- [ ] GitHub Actions: build (Debug + ASan), unit tests, sipp harness. Deferred at Tom's
-      call, confirmed again on 2026-09-21; listed so it is not forgotten.
-
 ### Step 10 - Smaller items surfaced by the review
 
 - [x] Digest with SHA-256 (RFC 8760) alongside MD5, done on 2026-09-21. An account
@@ -576,20 +664,16 @@ extension for what they do not cover, in this order:
       The list itself comes from the same discovery bus as `GET /api/v1/nodes`, so this
       is a way of carrying an answer the node already has, not a new source of truth.
 
-- [ ] Public contact addresses, which are not the node's local ones. `Via` and
-      `Record-Route` are built from `connection->local_endpoint()` today
-      (`src/proxy.cpp`, `src/channel.cpp`). Behind a balancer, in a container, or on the
-      single NAT'd public IP with port forwarding that is the normal SOHO deployment,
-      that address is a private one nothing outside can reach. A node on `192.168.1.10`
-      forwarded from `203.0.113.5` must write `203.0.113.5` into both, per transport and
-      with its own port, because the forwarded port is not always the local one.
-      Two consequences, and the second is the one that bites:
-      - `Core::is_local_address` has to hold the public addresses as well as the
-        observed local ones. It is additive already (`local_address_add`), so the
-        startup path adds the configured ones. Without that, the Record-Route this node
-        wrote comes back as a Route naming `203.0.113.5`, the node does not recognise
-        itself in it, and it forwards the request to itself - a loop, caught by 16.3.4
-        as a 482 instead of routing the BYE.
+- [ ] Public contact addresses, which are not the node's local ones. The first half of
+      this landed on 2026-09-21, because the sipp harness showed it bites on one node and
+      not only behind a balancer: `Core::advertised_address` returns `sip.public_address`
+      when it is set and the flow's own address otherwise, and `Via`, `Record-Route` and
+      `Service-Route` all go through it. `channel_register` files the advertised address
+      alongside the observed one, so a Route naming it is recognised as this node - the
+      second consequence below, which was the one that bit. What is left:
+      - The public port, which is not always the local one. A node behind port
+        forwarding writes its local port into both fields today, and the forwarded port
+        is what the far end has to come back to. It has to be configured per transport.
       - A client on the same LAN reaching the public address depends on the router
         hairpinning, and plenty do not. So the address a node advertises depends on who
         is asking: a `localnet` list of private prefixes, the local address to anything
@@ -645,7 +729,7 @@ extension for what they do not cover, in this order:
       that generate the cluster CA and per-node certificates with sensible defaults, and
       `athenasip check` that validates config and connectivity to Redis, MQTT, rtpengine
       and peers. No OpenSSL incantations in the docs.
-- [ ] `docker-compose.cluster.yml` with two nodes; sipp E2E across nodes in CI.
+- [ ] `docker-compose.cluster.yml` with two nodes, and the sipp harness run across them.
 - [ ] Chaos test: kill node A mid-registration-cycle, assert re-REGISTER on node B and
       a new call completes within one registration interval.
 

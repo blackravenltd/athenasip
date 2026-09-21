@@ -283,6 +283,18 @@ class SDP {
     return line ? Origin::parse(line->value) : Origin();
   }
 
+  // Replaces the o= line. It never inserts one: RFC 8866 section 5 makes the field
+  // mandatory and parse() refuses a description without it, so there is always one to
+  // replace and a description that reached here has passed that.
+  void set_origin(const Origin& origin) {
+    for (auto& line : _session_lines) {
+      if (line.type == 'o') {
+        line.value = origin.to_string();
+        return;
+      }
+    }
+  }
+
   std::vector<std::string> session_attributes() const {
     std::vector<std::string> result;
     for (const auto& line : _session_lines) {

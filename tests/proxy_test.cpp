@@ -9,12 +9,13 @@
 #include <memory>
 #include <string>
 
+#include "headers/sip_identity_header.h"
 #include "headers/uint_header.h"
 #include "headers/via_header.h"
-
 #include "helpers/proxy_fixture_helper.h"
 
 using namespace athenasip;
+using athenasip::headers::SIPIdentityHeader;
 using athenasip::headers::UIntHeader;
 using athenasip::headers::ViaHeader;
 
@@ -298,4 +299,48 @@ TEST(ProxyTest, TheAckForANonTwoHundredIsAbsorbedAndNotPassedOn) {
   f.receive(f.caller, ack);
 
   EXPECT_EQ(acks_to_callee(), 1);
+}
+
+// A UDP listener binds the wildcard, so its local endpoint is 0.0.0.0. Building the Via
+// and the Record-Route from that put 0.0.0.0 in both, which is an address no endpoint can
+// come back to - the BYE and every re-INVITE in the dialog are routed by the
+// Record-Route, and the response is routed by the Via. The sipp harness showed it: four
+// call scenarios could not complete on a node that had been told its own address.
+TEST(ProxyTest, TheViaAndRecordRouteNameTheAddressThisNodeAdvertises) {
+  ProxyFixture f("203.0.113.5");
+  f.bind_bob();
+
+  f.receive(f.caller, f.invite());
+
+  auto forwarded = f.request_with(f.callee_connection, "INVITE");
+  ASSERT_NE(forwarded, nullptr);
+
+  auto top = forwarded->header->headers_map["Via"][0]->as<ViaHeader>();
+  ASSERT_NE(top, nullptr);
+  EXPECT_EQ(top->host.rfind("203.0.113.5:", 0), 0u) << "Via sent-by was " << top->host;
+
+  ASSERT_TRUE(forwarded->header->contains("Record-Route"));
+  auto record_route = forwarded->header->headers_map["Record-Route"][0]->as<SIPIdentityHeader>();
+  ASSERT_NE(record_route, nullptr);
+  ASSERT_NE(record_route->value->uri, nullptr);
+  EXPECT_EQ(record_route->value->uri->host, "203.0.113.5");
+}
+
+// The other half of the same change, and the one that would bite silently. A node that
+// writes 203.0.113.5 into a Record-Route gets it back as a Route on the BYE, and has to
+// know itself in it: RFC 3261 16.4 says a proxy removes a Route naming itself. Without
+// that it forwards the request to itself and 16.3.4 catches the loop as a 482.
+TEST(ProxyTest, TheAdvertisedAddressIsRecognisedAsThisNode) {
+  ProxyFixture f("203.0.113.5");
+  f.bind_bob();
+
+  f.receive(f.caller, f.invite());
+  ASSERT_NE(f.request_with(f.callee_connection, "INVITE"), nullptr);
+
+  auto forwarded = f.request_with(f.callee_connection, "INVITE");
+  auto record_route = forwarded->header->headers_map["Record-Route"][0]->as<SIPIdentityHeader>();
+  ASSERT_NE(record_route, nullptr);
+
+  const auto port = record_route->value->uri->port.value_or(5060);
+  EXPECT_TRUE(f.core->is_local_address("203.0.113.5", port));
 }

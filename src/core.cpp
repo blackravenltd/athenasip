@@ -7,11 +7,15 @@
 
 #include "core.h"
 
+#include <algorithm>
 #include <atomic>
 #include <boost/asio/connect.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <boost/json.hpp>
 #include <chrono>
+#include <optional>
+#include <unordered_set>
 
 #include "channel.h"
 #include "events/topics.h"
@@ -34,6 +38,30 @@ using namespace athenasip::types;
 using namespace athenasip::transactions;
 
 namespace athenasip {
+
+namespace {
+
+// The engine's query() answers with a JSON document, and idle_seconds is how long every
+// relay it holds for the call has been silent. Absent, null or unparseable all mean the
+// same thing here: this engine is not saying, so nothing is decided from it.
+std::optional<std::uint32_t> idle_seconds_of(const std::string& document) {
+  try {
+    const auto parsed = boost::json::parse(document);
+    if (!parsed.is_object()) return std::nullopt;
+
+    const auto* value = parsed.as_object().if_contains("idle_seconds");
+    if (value == nullptr || !value->is_int64()) return std::nullopt;
+
+    const auto seconds = value->as_int64();
+    if (seconds < 0) return std::nullopt;
+
+    return static_cast<std::uint32_t>(seconds);
+  } catch (const std::exception&) {
+    return std::nullopt;
+  }
+}
+
+}  // namespace
 
 Core::Core(std::shared_ptr<Logger> logger, std::shared_ptr<Config> _config, std::shared_ptr<athenasip::datastores::Datastore> _datastore,
            std::shared_ptr<events::EventSystem> _events)
@@ -138,7 +166,18 @@ bool Core::channel_register(std::string endpoint, std::shared_ptr<Channel> chann
 
   // Where the far end reached us is where a Record-Route this node writes will point,
   // so it is what a Route coming back has to be recognised against (RFC 3261 16.4).
-  if (channel->_connection) local_address_add(channel->_connection->local_endpoint_name());
+  if (channel->_connection) {
+    local_address_add(channel->_connection->local_endpoint_name());
+
+    // And the address it advertises on that flow, which is the one it actually wrote.
+    // Without this the Record-Route comes back as a Route naming the public address,
+    // the node does not know itself in its own route set, and it forwards the request
+    // to itself - a loop, caught by 16.3.4 as a 482 instead of routing the BYE.
+    const auto local = channel->_connection->local_endpoint();
+    const auto advertised = advertised_address(local.address().to_string());
+
+    if (advertised != local.address().to_string()) local_address_add(advertised + ":" + std::to_string(local.port()));
+  }
 
   events->publish(events::topics::node_channel(config->sip_node_id, channel->_connection->transport_name(), channel->_connection->remote_endpoint_name()),
                   "{\"status\":\"registered\",\"at\":\"" + Util::get_zulu_time() + "\"}");
@@ -666,17 +705,103 @@ std::shared_ptr<Call> Core::call_get(std::string callId) {
 
 // Media
 
-void Core::media_register(std::shared_ptr<media::MediaEngine> engine) { media = std::move(engine); }
+void Core::media_register(std::shared_ptr<media::MediaEngine> engine) {
+  media = std::move(engine);
 
-// RTP Relays
-
-void Core::rtprelay_register(std::shared_ptr<rtp::RTPRelay> relay) { _rtprelay = relay; }
-
-void Core::rtprelay_start() {
-  if (_rtprelay) _rtprelay->start();
+  // Nothing to ask an engine until there is one, and the media half of the sweep is the
+  // half that needs it.
+  _call_sweep_schedule();
 }
-void Core::rtprelay_stop() {
-  if (_rtprelay) _rtprelay->stop();
+
+void Core::_call_sweep_schedule() {
+  if (_call_sweep_timer) {
+    _call_sweep_timer->cancel();
+    _call_sweep_timer.reset();
+  }
+
+  const auto media_timeout = media ? config->sip_media_timeout : 0;
+  const auto max_duration = config->sip_max_call_duration;
+
+  if (media_timeout == 0 && max_duration == 0) return;
+
+  // A quarter of whichever bound is shorter, so a call is noticed within a quarter of the
+  // limit that catches it, and never more often than every fifteen seconds: each pass is
+  // a walk over every live call and a round trip to the engine for each one of them.
+  std::uint32_t shortest = media_timeout;
+  if (max_duration > 0 && (shortest == 0 || max_duration < shortest)) shortest = max_duration;
+
+  const auto interval = std::max<std::uint32_t>(shortest / 4, 15);
+
+  std::weak_ptr<Core> weak_self = weak_from_this();
+
+  _call_sweep_timer = _timer_source->schedule(std::chrono::seconds(interval), [weak_self]() {
+    if (auto self = weak_self.lock()) self->_call_sweep();
+  });
+}
+
+void Core::_call_sweep() {
+  _call_sweep_timer.reset();
+
+  const auto media_timeout = config->sip_media_timeout;
+  const auto max_duration = config->sip_max_call_duration;
+  const auto now = _timer_source->now();
+
+  const bool ask_media = media_timeout > 0 && media && media->is_connected();
+
+  // Confirmed dialogs only. A call still being set up has relay ports and no media by
+  // definition - nothing flows until somebody answers - and what bounds that is timer C
+  // and timer B, not this.
+  std::unordered_set<std::string> seen;
+
+  for (const auto& dialog : dialogs()->all()) {
+    if (!dialog || dialog->state != types::Dialog::State::Confirmed) continue;
+    if (!seen.insert(dialog->call_id).second) continue;
+
+    // The cap first, because it needs nothing but the clock and it applies to calls the
+    // media question cannot reach.
+    if (max_duration > 0 && dialog->confirmed_monotonic.time_since_epoch().count() != 0) {
+      const auto up_for = std::chrono::duration_cast<std::chrono::seconds>(now - dialog->confirmed_monotonic).count();
+
+      if (up_for >= static_cast<std::int64_t>(max_duration)) {
+        _end_held_call(dialog->call_id, "has been up for " + std::to_string(up_for) + "s, which is the configured maximum");
+        continue;
+      }
+    }
+
+    if (!ask_media) continue;
+
+    auto call = call_get(dialog->call_id);
+    if (!call) continue;
+
+    std::weak_ptr<Core> weak_self = weak_from_this();
+    const auto call_id = dialog->call_id;
+
+    media->query(strand(), call, [weak_self, call_id, media_timeout](plugins::Result<std::string> held) {
+      auto self = weak_self.lock();
+      if (!self || !held.ok) return;
+
+      const auto idle = idle_seconds_of(held.value);
+
+      // No reading is not the same as a long one. An engine holding nothing for this
+      // call, or one whose query says nothing about idleness, leaves the call alone.
+      if (!idle.has_value() || *idle < media_timeout) return;
+
+      self->_end_held_call(call_id, "has carried no media for " + std::to_string(*idle) + "s");
+    });
+  }
+
+  _call_sweep_schedule();
+}
+
+void Core::_end_held_call(const std::string& call_id, const std::string& reason) {
+  _logger->info("Call " + call_id + " " + reason + " - letting it go");
+
+  // Terminating the dialogs is the whole of it: the change callback is what writes the
+  // call record and releases the engine's ports, exactly as it does when a session timer
+  // lapses. No BYE goes anywhere (RFC 4028 section 8.3).
+  for (const auto& dialog : dialogs()->all()) {
+    if (dialog && dialog->call_id == call_id) dialogs()->terminate(dialog);
+  }
 }
 
 void Core::admin_register(std::shared_ptr<api::AdminAPI> adminAPI) { _adminAPI = adminAPI; }
@@ -687,16 +812,6 @@ void Core::admin_start() {
 
 void Core::admin_stop() {
   if (_adminAPI) _adminAPI->stop();
-}
-
-std::shared_ptr<RTPRelaySet> Core::rtprelay_allocate() {
-  if (!_rtprelay) return nullptr;
-  return _rtprelay->allocate_relay_set();
-}
-
-void Core::rtprelay_release(std::shared_ptr<RTPRelaySet> relay) {
-  if (!_rtprelay) return;
-  _rtprelay->release_relay_set(relay);
 }
 
 }  // namespace athenasip
