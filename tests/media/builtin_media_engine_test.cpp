@@ -531,3 +531,66 @@ TEST(BuiltinMediaEngineTest, TheOriginKeepsWhatMakesItUnique) {
   engine->release(call);
   engine->close();
 }
+
+// A phone that loses power sends no BYE. Nothing in the signalling plane will ever say
+// the call ended, so a proxy holding relay ports for it holds them until it restarts -
+// and the ports are a finite pool. The media plane knows what the signalling plane
+// cannot: whether anything is still crossing the relay.
+//
+// query() carries it, because it is already the contract's diagnostics call and a new
+// field in its document costs no version of the plugin contract.
+TEST(BuiltinMediaEngineTest, QueryReportsHowLongTheMediaHasBeenSilent) {
+  auto engine = make_engine(24000, 24040);
+  auto call = make_call();
+
+  // A call the engine holds nothing for has no media to be idle, and says so rather than
+  // reporting a number a caller might act on.
+  EXPECT_NE(engine->query(call).find("\"idle_seconds\":null"), std::string::npos);
+
+  ASSERT_TRUE(engine->offer(call, kOffer, Flags{}).ok);
+
+  // Freshly allocated, and measured from allocation rather than from zero: a call whose
+  // media has not begun yet reads as young, not as infinitely idle.
+  EXPECT_NE(engine->query(call).find("\"idle_seconds\":0"), std::string::npos);
+
+  engine->release(call);
+  EXPECT_NE(engine->query(call).find("\"idle_seconds\":null"), std::string::npos);
+}
+
+// The reading is what a packet arriving resets, and any relay of the call still carrying
+// keeps the call live: the figure is the shortest idle of all of them. RTCP is relayed
+// through a set of its own and counts the same, which is what stops a call on hold or one
+// whose codec suppresses silence from reading as dead (RFC 3550 section 6: reports are
+// sent for the life of the session whether or not there is anything to carry).
+TEST(BuiltinMediaEngineTest, APacketArrivingIsWhatSaysTheCallIsAlive) {
+  auto engine = make_engine(24050, 24090);
+  auto call = make_call();
+
+  const auto mapped = engine->offer(call, kOffer, Flags{});
+  ASSERT_TRUE(mapped.ok) << mapped.error;
+
+  SDP rewritten;
+  ASSERT_TRUE(rewritten.parse(mapped.sdp));
+  const auto rtp_port = rewritten.media()[0].description.port;
+  ASSERT_NE(rtp_port, 0);
+
+  boost::asio::io_context io;
+  boost::asio::ip::udp::socket leg(io, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0));
+  const boost::asio::ip::udp::endpoint relay(boost::asio::ip::make_address("127.0.0.1"), rtp_port);
+
+  leg.send_to(boost::asio::buffer("packet", 6), relay);
+
+  // The relay reads on the global io_context thread, so the store lands a moment after
+  // the send returns.
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  bool seen = false;
+
+  while (std::chrono::steady_clock::now() < deadline && !seen) {
+    seen = engine->query(call).find("\"idle_seconds\":0") != std::string::npos;
+    if (!seen) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
+
+  EXPECT_TRUE(seen) << "query said " << engine->query(call);
+
+  engine->release(call);
+}
