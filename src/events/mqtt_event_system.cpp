@@ -8,6 +8,7 @@
 
 #include <boost/asio/dispatch.hpp>
 #include <boost/asio/post.hpp>
+#include <chrono>
 #include <cstddef>
 #include <exception>
 #include <limits>
@@ -16,6 +17,7 @@
 #include <utility>
 
 #include "../config.h"
+#include "../util.h"
 
 namespace athenasip::events {
 namespace {
@@ -34,6 +36,15 @@ std::uint16_t parse_port(const std::string& value, std::uint16_t default_port) {
 }
 
 std::string prefixed_topic(const std::string& prefix, const std::string& event_name) { return prefix + event_name; }
+
+// A prefix is a topic level, and levels are separated by '/'. Concatenating one that
+// does not end in a separator produces "athenasipnodes/sip-0001/status", which is a
+// topic no filter anybody writes will match and a misconfiguration nothing complains
+// about. Given with or without the separator, it means the same thing.
+std::string normalise_prefix(std::string prefix) {
+  if (!prefix.empty() && prefix.back() != '/') prefix += '/';
+  return prefix;
+}
 
 bool remove_prefix(const std::string& prefix, std::string& topic) {
   if (prefix.empty()) {
@@ -78,6 +89,12 @@ std::unordered_map<std::string, std::string> parse_query(std::string value) {
   return result;
 }
 
+// Unique to this instance, because MQTT makes a repeated client identifier mean "the
+// other one is stale, disconnect it" and two clients trading that back and forth is a
+// bus that carries nothing. configure() replaces this with the node id when there is
+// one, which is stable across restarts and unique across the cluster by definition.
+std::string default_client_id() { return Util::generate_random_string("athenasip-", 12); }
+
 }  // namespace
 
 MQTTEventSystem::MQTTEventSystem(std::shared_ptr<athenasip::loggers::Logger> logger, std::string prefix, std::string broker_host, std::uint16_t broker_port,
@@ -92,7 +109,13 @@ MQTTEventSystem::MQTTEventSystem(std::shared_ptr<athenasip::loggers::Logger> log
       _password(std::move(password)),
       _keep_alive_seconds(keep_alive_seconds),
       _mqtt_strand(boost::asio::make_strand(_mqtt_io_context)),
-      _client(_mqtt_strand) {}
+      _client(_mqtt_strand) {
+  // Not in the initialiser list: members are initialised in declaration order, so a
+  // flag computed there from a parameter the line above has moved from reads whatever
+  // the move left behind.
+  _client_id_was_given = !_client_id.empty();
+  if (!_client_id_was_given) _client_id = default_client_id();
+}
 
 MQTTEventSystem::MQTTEventSystem(std::shared_ptr<athenasip::loggers::Logger> logger, std::shared_ptr<types::URL> url) : MQTTEventSystem(std::move(logger)) {
   apply_url(std::move(url));
@@ -111,6 +134,9 @@ void MQTTEventSystem::connect(plugins::Executor on, plugins::StatusHandler handl
   if (!_connected.compare_exchange_strong(expected, true)) {
     return _complete(std::move(on), std::move(handler), plugins::Status::success());
   }
+
+  // A previous run that stopped from inside its own thread leaves the object joinable.
+  if (_mqtt_thread.joinable()) _mqtt_thread.join();
 
   _mqtt_io_context.restart();
   _mqtt_work_guard.emplace(_mqtt_io_context.get_executor());
@@ -155,37 +181,106 @@ void MQTTEventSystem::connect(plugins::Executor on, plugins::StatusHandler handl
     subscribe_events_on_mqtt(current_subscription_events(), nullptr);
   });
 
-  _logger->debug("Connected");
-  _complete(std::move(on), std::move(handler), plugins::Status::success());
+  await_broker(std::move(on), std::move(handler));
+}
+
+// boost.mqtt5 is an always-online client: async_run starts it and it queues, retries
+// and reconnects on its own, so nothing about starting it says the broker is there.
+// Reporting success on that alone means a node with the wrong broker address starts
+// up, says the event system connected, and has no bus at all - and once discovery runs
+// on this bus that is a cluster that never forms and never says why.
+//
+// So connect() answers on a round trip. Subscribing to a filter nothing publishes to
+// costs one SUBSCRIBE and one SUBACK, puts nothing on the bus, and cannot come back
+// until the broker has answered. The wait is bounded, because an always-online client
+// would otherwise keep trying for ever while main waits for it.
+void MQTTEventSystem::await_broker(plugins::Executor on, plugins::StatusHandler handler) {
+  auto self = shared_from_this();
+  auto answered = std::make_shared<std::atomic_bool>(false);
+  auto timer = std::make_shared<boost::asio::steady_timer>(_mqtt_strand);
+
+  const auto probe = prefixed_topic(_prefix, "probe/" + _client_id);
+
+  timer->expires_after(std::chrono::milliseconds(_connect_timeout_ms));
+  timer->async_wait([this, self, answered, on, handler](const boost::system::error_code& ec) mutable {
+    if (ec || answered->exchange(true)) return;
+
+    _logger->error("No answer from the broker at " + _broker_host + ":" + std::to_string(_broker_port) + " within " + std::to_string(_connect_timeout_ms) +
+                   "ms");
+
+    close_without_callback();
+    _complete(std::move(on), std::move(handler), plugins::Status::failure("no answer from the broker at " + _broker_host + ":" + std::to_string(_broker_port)));
+  });
+
+  boost::asio::dispatch(_mqtt_strand, [this, self, probe, answered, timer, on, handler]() mutable {
+    std::vector<mqtt::subscribe_topic> topics{mqtt::subscribe_topic{
+        probe, mqtt::subscribe_options{mqtt::qos_e::at_most_once, mqtt::no_local_e::no, mqtt::retain_as_published_e::retain, mqtt::retain_handling_e::send}}};
+
+    _client.async_subscribe(
+        std::move(topics), mqtt::subscribe_props{},
+        [this, self, answered, timer, on, handler](mqtt::error_code ec, std::vector<mqtt::reason_code> reasons, mqtt::suback_props props) mutable {
+          (void)reasons;
+          (void)props;
+
+          timer->cancel();
+          if (answered->exchange(true)) return;
+
+          if (ec) {
+            _logger->error("Could not reach the broker: " + ec.message());
+            close_without_callback();
+            _complete(std::move(on), std::move(handler), plugins::Status::failure("could not reach the broker: " + ec.message()));
+            return;
+          }
+
+          _logger->info("Connected to " + _broker_host + ":" + std::to_string(_broker_port) + " as " + _client_id);
+          _complete(std::move(on), std::move(handler), plugins::Status::success());
+        });
+  });
 }
 
 void MQTTEventSystem::close() {
-  auto self = shared_from_this();
+  const bool was_connected = _connected.exchange(false);
 
-  bool expected = true;
-  if (!_connected.compare_exchange_strong(expected, false)) {
+  if (was_connected) _logger->debug("Closing");
+
+  stop_client();
+
+  if (was_connected) _logger->info("Closed");
+}
+
+void MQTTEventSystem::close_without_callback() noexcept {
+  try {
+    stop_client();
+  } catch (...) {
+    // Destructors must not throw.
+  }
+}
+
+// The flag and the thread are two different questions, and closing used to ask only
+// the first. The client's own run loop clears _connected when the broker drops it, and
+// after that every close was a no-op: the thread stayed joinable, and destroying a
+// std::thread that is still joinable terminates the process. A node whose broker went
+// away and was then shut down would die on the way out.
+void MQTTEventSystem::stop_client() {
+  _connected.store(false);
+
+  if (!_mqtt_thread.joinable()) return;
+
+  if (_mqtt_thread.get_id() == std::this_thread::get_id()) {
+    // Called from the client's own thread, which cannot join itself. Ask it to finish
+    // and let run() return; the join belongs to whoever owns this object.
+    _client.async_disconnect([](mqtt::error_code) {});
+    _mqtt_work_guard.reset();
     return;
   }
 
-  _logger->debug("Closing");
-
-  boost::asio::post(_mqtt_strand, [this, self]() {
-    _client.async_disconnect([this, self](mqtt::error_code ec) {
-      if (ec && ec != boost::asio::error::operation_aborted) {
-        _logger->error("MQTT disconnect failed: " + ec.message());
-      }
-    });
-  });
+  boost::asio::post(_mqtt_strand, [this]() { _client.async_disconnect([](mqtt::error_code) {}); });
   _mqtt_work_guard.reset();
-
-  if (_mqtt_thread.joinable() && _mqtt_thread.get_id() != std::this_thread::get_id()) {
-    _mqtt_thread.join();
-  }
+  _mqtt_thread.join();
 
   _broker_subscribed_events.clear();
+  _events_by_identifier.clear();
   _receive_active = false;
-
-  _logger->info("Closed");
 }
 
 bool MQTTEventSystem::is_connected() const { return _connected.load(); }
@@ -304,10 +399,12 @@ void MQTTEventSystem::unsubscribe_all(plugins::Executor on, plugins::StatusHandl
 void MQTTEventSystem::apply_url(std::shared_ptr<types::URL> url) {
   _broker_host = "127.0.0.1";
   _broker_port = 1883;
-  _client_id = "athenasip-events";
+  _client_id = default_client_id();
+  _client_id_was_given = false;
   _username.clear();
   _password.clear();
   _keep_alive_seconds = 30;
+  _connect_timeout_ms = 5000;
 
   if (!url) {
     return;
@@ -387,6 +484,7 @@ void MQTTEventSystem::apply_url(std::shared_ptr<types::URL> url) {
   auto it = params.find("client_id");
   if (it != params.end() && !it->second.empty()) {
     _client_id = it->second;
+    _client_id_was_given = true;
   }
 
   it = params.find("keep_alive");
@@ -395,6 +493,16 @@ void MQTTEventSystem::apply_url(std::shared_ptr<types::URL> url) {
   }
   if (it != params.end() && !it->second.empty()) {
     _keep_alive_seconds = parse_port(it->second, _keep_alive_seconds);
+  }
+
+  it = params.find("connect_timeout_ms");
+  if (it != params.end() && !it->second.empty()) {
+    try {
+      const auto value = std::stol(it->second);
+      if (value > 0) _connect_timeout_ms = static_cast<std::uint32_t>(value);
+    } catch (const std::exception&) {
+      _logger->warn("Ignoring an unreadable connect_timeout_ms: " + it->second);
+    }
   }
 
   it = params.find("username");
@@ -412,11 +520,18 @@ void MQTTEventSystem::apply_url(std::shared_ptr<types::URL> url) {
     _prefix = it->second;
   }
 
+  _prefix = normalise_prefix(std::move(_prefix));
+
   (void)path;
 }
 
 bool MQTTEventSystem::configure(const YAML::Node& own_root, const Config& system) {
-  (void)system;
+  // A client identifier has to be unique on the broker, and the node id already is by
+  // definition: two nodes sharing one is two nodes nobody can tell apart. Taking it
+  // from there means an operator who configures nothing still gets a cluster whose
+  // nodes do not disconnect each other, and one who wants to say it explicitly still
+  // can.
+  if (!_client_id_was_given && !system.sip_node_id.empty()) _client_id = "athenasip-" + system.sip_node_id;
 
   if (!own_root || !own_root.IsMap()) {
     return true;
@@ -425,11 +540,16 @@ bool MQTTEventSystem::configure(const YAML::Node& own_root, const Config& system
   // The URL selects the broker; anything else about the connection belongs here. The
   // query-string forms still parse, so an existing config keeps working, but the
   // section wins where both are given.
-  if (own_root["client_id"]) _client_id = own_root["client_id"].as<std::string>();
+  if (own_root["client_id"]) {
+    _client_id = own_root["client_id"].as<std::string>();
+    _client_id_was_given = true;
+  }
+
   if (own_root["keep_alive"]) _keep_alive_seconds = static_cast<std::uint16_t>(own_root["keep_alive"].as<int>());
+  if (own_root["connect_timeout_ms"]) _connect_timeout_ms = static_cast<std::uint32_t>(own_root["connect_timeout_ms"].as<int>());
   if (own_root["username"]) _username = own_root["username"].as<std::string>();
   if (own_root["password"]) _password = own_root["password"].as<std::string>();
-  if (own_root["prefix"]) _prefix = own_root["prefix"].as<std::string>();
+  if (own_root["prefix"]) _prefix = normalise_prefix(own_root["prefix"].as<std::string>());
 
   return true;
 }
@@ -449,27 +569,6 @@ void MQTTEventSystem::run_mqtt_io_context() {
     _logger->error(std::string("io_context failed: ") + e.what());
   } catch (...) {
     _logger->error("io_context failed: unknown exception");
-  }
-}
-
-void MQTTEventSystem::close_without_callback() noexcept {
-  bool expected = true;
-  if (!_connected.compare_exchange_strong(expected, false)) {
-    return;
-  }
-
-  try {
-    boost::asio::post(_mqtt_strand, [this]() { _client.async_disconnect([](mqtt::error_code) {}); });
-    _mqtt_work_guard.reset();
-
-    if (_mqtt_thread.joinable() && _mqtt_thread.get_id() != std::this_thread::get_id()) {
-      _mqtt_thread.join();
-    }
-
-    _broker_subscribed_events.clear();
-    _receive_active = false;
-  } catch (...) {
-    // Destructors must not throw.
   }
 }
 
@@ -553,14 +652,14 @@ void MQTTEventSystem::subscribe_events_on_mqtt(std::vector<std::string> event_na
     return;
   }
 
-  std::vector<std::string> to_subscribe;
-  to_subscribe.reserve(event_names.size());
+  // Each filter goes in a SUBSCRIBE of its own, because a subscription identifier is a
+  // property of the packet and applies to every filter in it. One packet per filter is
+  // what lets a received message say which subscription it arrived for.
+  std::vector<std::pair<std::string, std::string>> to_subscribe;  // logical, prefixed
 
   for (const auto& event_name : event_names) {
     auto topic_filter = prefixed_topic(_prefix, event_name);
-    if (_broker_subscribed_events.insert(topic_filter).second) {
-      to_subscribe.push_back(std::move(topic_filter));
-    }
+    if (_broker_subscribed_events.insert(topic_filter).second) to_subscribe.emplace_back(event_name, std::move(topic_filter));
   }
 
   if (to_subscribe.empty()) {
@@ -569,79 +668,66 @@ void MQTTEventSystem::subscribe_events_on_mqtt(std::vector<std::string> event_na
     return;
   }
 
-  std::vector<mqtt::subscribe_topic> topics;
-  topics.reserve(to_subscribe.size());
-
-  for (const auto& event_name : to_subscribe) {
-    _logger->info("subscribing to event: " + event_name);
-    topics.push_back(mqtt::subscribe_topic{event_name, mqtt::subscribe_options{mqtt::qos_e::at_most_once, mqtt::no_local_e::no,
-                                                                               mqtt::retain_as_published_e::retain, mqtt::retain_handling_e::send}});
-  }
+  // One completion for the batch: it answers when the last SUBSCRIBE has, and reports
+  // the first failure if there was one.
+  auto outstanding = std::make_shared<std::size_t>(to_subscribe.size());
+  auto failure = std::make_shared<std::string>();
+  auto answer = std::make_shared<Completion>(std::move(completion));
 
   auto self = shared_from_this();
-  _client.async_subscribe(std::move(topics), mqtt::subscribe_props{},
-                          [this, self, to_subscribe = std::move(to_subscribe), completion = std::move(completion)](
-                              mqtt::error_code ec, std::vector<mqtt::reason_code> reasons, mqtt::suback_props props) mutable {
-                            (void)props;
 
-                            if (!_connected.load()) {
-                              finish(completion, plugins::Status::failure("subscribe rejected while closed"));
-                              return;
-                            }
+  for (auto& [event_name, topic_filter] : to_subscribe) {
+    const auto identifier = _next_subscription_identifier++;
+    _events_by_identifier[identifier] = event_name;
 
-                            if (ec) {
-                              for (const auto& event_name : to_subscribe) {
-                                _broker_subscribed_events.erase(event_name);
-                              }
-                              _logger->error("subscribe failed: " + ec.message());
-                              finish(completion, plugins::Status::failure("subscribe failed: " + ec.message()));
-                              return;
-                            }
+    _logger->info("subscribing to event: " + topic_filter);
 
-                            if (reasons.empty()) {
-                              for (const auto& event_name : to_subscribe) {
-                                _broker_subscribed_events.erase(event_name);
-                              }
-                              _logger->error("subscribe failed: empty SUBACK reason list");
-                              finish(completion, plugins::Status::failure("subscribe failed: empty SUBACK reason list"));
-                              return;
-                            }
+    std::vector<mqtt::subscribe_topic> topics{mqtt::subscribe_topic{
+        topic_filter,
+        mqtt::subscribe_options{mqtt::qos_e::at_most_once, mqtt::no_local_e::no, mqtt::retain_as_published_e::retain, mqtt::retain_handling_e::send}}};
 
-                            bool all_accepted = true;
-                            bool any_accepted = false;
+    mqtt::subscribe_props props;
+    props[mqtt::prop::subscription_identifier] = identifier;
 
-                            for (std::size_t i = 0; i < to_subscribe.size(); ++i) {
-                              const auto& event_name = to_subscribe[i];
+    _client.async_subscribe(std::move(topics), std::move(props),
+                            [this, self, identifier, topic_filter, outstanding, failure, answer](mqtt::error_code ec, std::vector<mqtt::reason_code> reasons,
+                                                                                                 mqtt::suback_props suback) mutable {
+                              (void)suback;
 
-                              if (i >= reasons.size()) {
-                                all_accepted = false;
-                                _broker_subscribed_events.erase(event_name);
-                                _logger->error("subscribe rejected: event=" + event_name + ", missing SUBACK reason");
-                                continue;
-                              }
+                              const bool closed = !_connected.load();
 
-                              const auto& reason = reasons[i];
-                              const std::uint8_t code = reason.value();
+                              if (closed || ec) {
+                                _broker_subscribed_events.erase(topic_filter);
+                                _events_by_identifier.erase(identifier);
 
-                              if (code >= 0x80) {
-                                all_accepted = false;
-                                _broker_subscribed_events.erase(event_name);
-                                _logger->error("subscribe rejected: event=" + event_name + ", reason=" + std::to_string(static_cast<unsigned>(code)) + " (" +
-                                               reason.message() + ")");
+                                if (failure->empty()) *failure = closed ? "subscribe rejected while closed" : ("subscribe failed: " + ec.message());
+                                if (!closed) _logger->error("subscribe failed: " + ec.message());
                               } else {
-                                any_accepted = true;
-                                _logger->info("subscribe accepted: event=" + event_name + ", reason=" + std::to_string(static_cast<unsigned>(code)) + " (" +
-                                              reason.message() + ")");
+                                // A broker that refuses a filter says so per topic. Holding on to a
+                                // subscription it never made would leave the caller a handle to nothing.
+                                for (const auto& reason : reasons) {
+                                  if (reason) {
+                                    _broker_subscribed_events.erase(topic_filter);
+                                    _events_by_identifier.erase(identifier);
+
+                                    if (failure->empty()) *failure = "subscribe refused: " + reason.message();
+                                    _logger->error("subscribe refused for " + topic_filter + ": " + reason.message());
+                                    break;
+                                  }
+                                }
                               }
-                            }
 
-                            if (any_accepted) {
+                              if (--*outstanding > 0) return;
+
+                              if (!failure->empty()) {
+                                finish(*answer, plugins::Status::failure(*failure));
+                                return;
+                              }
+
                               ensure_receive_loop();
-                            }
-
-                            finish(completion,
-                                   all_accepted && any_accepted ? plugins::Status::success() : plugins::Status::failure("the broker refused a subscription"));
-                          });
+                              finish(*answer, plugins::Status::success());
+                            });
+  }
 }
 
 void MQTTEventSystem::ensure_receive_loop() {
@@ -657,7 +743,6 @@ void MQTTEventSystem::receive_next() {
   auto self = shared_from_this();
 
   _client.async_receive([this, self](mqtt::error_code ec, std::string topic, std::string payload, mqtt::publish_props props) {
-    (void)props;
     _receive_active = false;
 
     if (!_connected.load()) {
@@ -676,18 +761,19 @@ void MQTTEventSystem::receive_next() {
       }
 
       _broker_subscribed_events.clear();
+      _events_by_identifier.clear();
       subscribe_events_on_mqtt(current_subscription_events(), nullptr);
       return;
     }
 
     _logger->debug("received event: " + topic + " with message: " + payload);
 
-    dispatch_event(std::move(topic), std::move(payload));
+    dispatch_event(std::move(topic), std::move(payload), props);
     ensure_receive_loop();
   });
 }
 
-void MQTTEventSystem::dispatch_event(std::string event_name, std::string message) {
+void MQTTEventSystem::dispatch_event(std::string event_name, std::string message, const mqtt::publish_props& props) {
   if (!TopicFilter::is_valid_topic(event_name)) {
     _logger->error("Dropping invalid received event topic: " + event_name);
     return;
@@ -704,10 +790,49 @@ void MQTTEventSystem::dispatch_event(std::string event_name, std::string message
     return;
   }
 
-  const auto to_publish = collect_matching_subscriptions(event_name);
+  // Which of this client's subscriptions the message arrived for, when the broker says
+  // (MQTT 5 section 3.3.2.3.8). It may send one copy per matching subscription, each
+  // naming its own, or one copy naming them all; both end up delivering to each
+  // matching subscriber exactly once.
+  //
+  // Matching the topic against every local filter instead is what a client has to do
+  // when the broker says nothing, and it is wrong whenever two of this client's filters
+  // match: the broker sends a copy for each, and each copy is then fanned out to both
+  // filters' subscribers.
+  const auto& identifiers = props[mqtt::prop::subscription_identifier];
 
-  for (const auto& sub : to_publish) {
+  if (!identifiers.empty()) {
+    std::unordered_set<std::shared_ptr<Subscription>> to_publish;
+
+    for (const auto identifier : identifiers) {
+      const auto found = _events_by_identifier.find(identifier);
+      if (found == _events_by_identifier.end()) continue;
+
+      const auto subscribers = subscribers_of(found->second);
+      to_publish.insert(subscribers.begin(), subscribers.end());
+    }
+
+    deliver_to(to_publish, event_name, message);
+    return;
+  }
+
+  deliver_to(collect_matching_subscriptions(event_name), event_name, message);
+}
+
+std::unordered_set<std::shared_ptr<Subscription>> MQTTEventSystem::subscribers_of(const std::string& filter) const {
+  std::scoped_lock lock(_subscriptions_mutex);
+
+  const auto found = _subscriptions.find(filter);
+  if (found == _subscriptions.end()) return {};
+
+  return found->second;
+}
+
+void MQTTEventSystem::deliver_to(const std::unordered_set<std::shared_ptr<Subscription>>& subscribers, const std::string& event_name,
+                                 const std::string& message) {
+  for (const auto& sub : subscribers) {
     auto self = shared_from_this();
+
     boost::asio::post(_callback_io_context, [this, self, event_name, message, sub]() {
       try {
         sub->callback(event_name, message);

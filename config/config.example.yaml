@@ -190,8 +190,23 @@ events:
   url: "local://"
 
   mqtt:
-    client_id: sip-0001
+    # Unique on the broker, because MQTT makes a repeated client identifier mean "the
+    # other one is stale, disconnect it" and two nodes sharing one would trade the
+    # connection back and forth for as long as both ran. Left unset it is this node's
+    # id, which is unique across the cluster by definition, so most deployments should
+    # leave it out.
+    # client_id: athenasip-sip-0001
+
     keep_alive: 30
+
+    # How long to wait for the broker to answer at startup, in milliseconds. The client
+    # queues and reconnects on its own, so without a bound a node with the wrong broker
+    # address would wait at startup rather than say so.
+    connect_timeout_ms: 5000
+
+    # A topic level in front of everything this node publishes and subscribes to, so
+    # two clusters can share one broker. The separator is added if it is left off.
+    prefix: "athenasip/"
 
 media:
   # builtin:// relays plain RTP from this process and needs nothing else installed.
