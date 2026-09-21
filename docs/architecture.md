@@ -101,5 +101,5 @@ they are built.
 `TODO/ACTIVE.md` is the plan and the decisions behind it; `TODO/COMPLETED.md` is what
 has landed. This document describes the shape, not the schedule.
 
-`design.md`, `goals.md`, `scripting.md` and `modules/` predate the 2026-09-17 scope
-reset and have not been audited against it. Treat them as history until they have been.
+`design.md` is the transport layering in more detail, `plugins.md` is the contract,
+`events.md` is the topic scheme, and `scripting.md` says why there is no scripting.
