@@ -358,8 +358,8 @@ std::shared_ptr<headers::Header> Registrar::_service_route(const std::shared_ptr
   // The address the node was told to advertise, when it was told one. A UDP listener is
   // bound to the wildcard, so its local endpoint is 0.0.0.0 - and a Service-Route
   // pointing at 0.0.0.0 is a route the client cannot use, which is worse than sending
-  // none at all.
-  route->host = core->config->sip_public_address.empty() ? local.address().to_string() : core->config->sip_public_address;
+  // none at all. The same rule now decides the Via and the Record-Route.
+  route->host = core->advertised_address(local.address().to_string());
   route->port = local.port();
 
   // 19.1.1 again: loose routing, so the next hop does not rewrite the Request-URI.
