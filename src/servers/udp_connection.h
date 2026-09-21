@@ -25,6 +25,8 @@ class UDPConnection : public Connection {
 
   virtual bool start() override;
 
+  boost::asio::any_io_executor executor() override { return _executor; }
+
   virtual void async_read_some(boost::asio::mutable_buffer buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) override;
 
   virtual void async_write_some(boost::asio::const_buffer buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) override;
@@ -46,6 +48,11 @@ class UDPConnection : public Connection {
 
  protected:
   std::weak_ptr<UDPServer> _udp_server;
+
+  // Taken at construction, because the executor has to answer after the server has gone
+  // and a channel is still tearing itself down.
+  boost::asio::any_io_executor _executor;
+
   boost::asio::ip::udp::endpoint _local_endpoint;
   boost::asio::ip::udp::endpoint _remote_endpoint;
 

@@ -50,7 +50,11 @@ std::string Util::trim(const std::string& str, const std::string& trimmable) {
   return (first == std::string::npos) ? "" : str.substr(first, last - first + 1);
 }
 
-std::string Util::md5(const std::string& input) {
+namespace {
+
+// One body for both digests: the only thing that differs is which EVP_MD is asked for,
+// and duplicating the context handling twice is how the two drift apart.
+std::string digest_hex(const EVP_MD* algorithm, const std::string& input) {
   // Buffer to hold the digest. EVP_MAX_MD_SIZE is guaranteed to be large enough.
   unsigned char digest[EVP_MAX_MD_SIZE];
   unsigned int digest_len = 0;
@@ -59,8 +63,7 @@ std::string Util::md5(const std::string& input) {
   EVP_MD_CTX* ctx = EVP_MD_CTX_new();
   if (!ctx) throw std::runtime_error("EVP_MD_CTX_new failed");
 
-  // Initialize the digest context for MD5.
-  if (EVP_DigestInit_ex(ctx, EVP_md5(), nullptr) != 1) {
+  if (EVP_DigestInit_ex(ctx, algorithm, nullptr) != 1) {
     EVP_MD_CTX_free(ctx);
     throw std::runtime_error("EVP_DigestInit_ex failed");
   }
@@ -88,6 +91,12 @@ std::string Util::md5(const std::string& input) {
   }
   return oss.str();
 }
+
+}  // namespace
+
+std::string Util::md5(const std::string& input) { return digest_hex(EVP_md5(), input); }
+
+std::string Util::sha256(const std::string& input) { return digest_hex(EVP_sha256(), input); }
 
 std::filesystem::path Util::expand_path(const std::string& path) {
   std::filesystem::path p(path);
@@ -166,6 +175,19 @@ std::string Util::to_iso8601(const std::time_t& t) {
 }
 
 std::size_t Util::hash_combine(std::size_t seed, std::size_t hash_value) { return seed ^ (hash_value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2)); }
+
+std::uint64_t Util::stable_id(const std::string& name) {
+  std::uint64_t hash = 1469598103934665603ULL;
+
+  for (const unsigned char c : name) {
+    hash ^= c;
+    hash *= 1099511628211ULL;
+  }
+
+  // Never zero: zero is what an id nobody set looks like, and a binding pointing at
+  // account zero would be indistinguishable from a binding pointing at nothing.
+  return hash == 0 ? 1 : hash;
+}
 
 std::string Util::generate_random_string(const std::string& prefix, uint16_t length) {
   std::ostringstream tag;

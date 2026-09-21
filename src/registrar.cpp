@@ -10,6 +10,7 @@
 #include <ctime>
 #include <utility>
 
+#include "channel.h"
 #include "core.h"
 #include "headers/authorization_header.h"
 #include "headers/sip_identity_header.h"
@@ -37,6 +38,14 @@ bool is_star_contact(const std::shared_ptr<SIPHeader>& header) {
 
   return contact->value->star;
 }
+
+// RFC 3261 10.3 step 7 draws the line itself: an interval of an hour or more is never
+// too brief, whatever minimum a realm is configured with.
+constexpr std::uint32_t kNeverTooBrief = 3600;
+
+// The longest registration granted, and the default asked for, when the realm names no
+// maximum of its own.
+constexpr std::uint32_t kDefaultMaximumExpiry = 3600;
 
 }  // namespace
 
@@ -81,7 +90,7 @@ void Registrar::_on_realm(std::shared_ptr<SIPMessage> request, std::shared_ptr<t
   if (!core) return;
 
   // RFC 3261 10.3 step 5: an address of record this registrar does not serve is a 404.
-  // A subscriber that does not exist inside a realm we do serve is challenged instead,
+  // An account that does not exist inside a realm we do serve is challenged instead,
   // so a REGISTER sweep cannot enumerate accounts.
   if (!realm) {
     _logger->info("REGISTER for unserved domain " + aor->uri->host + " - 404");
@@ -124,27 +133,48 @@ void Registrar::_on_nonce_checked(std::shared_ptr<SIPMessage> request, std::shar
   if (!core) return;
 
   auto self = shared_from_this();
-  core->subscriber_get(aor, [this, self, request, transaction, aor, realm, auth](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
+  core->account_get(aor, [this, self, request, transaction, aor, realm, auth](plugins::Result<std::shared_ptr<types::Account>> found) {
     if (!found.ok) {
-      _logger->error("REGISTER could not read the subscriber - " + found.error);
+      _logger->error("REGISTER could not read the account - " + found.error);
       return _send_status(transaction, request, 500, "Server Internal Error");
     }
 
-    _on_subscriber(request, transaction, aor, realm, auth, found.value);
+    _on_account(request, transaction, aor, realm, auth, found.value);
   });
 }
 
-void Registrar::_on_subscriber(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
-                               std::shared_ptr<types::SIPIdentity> aor, std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Authorization> auth,
-                               std::shared_ptr<types::Subscriber> subscriber) {
-  if (!subscriber) {
-    _logger->info("REGISTER for unknown subscriber " + aor->to_string() + " - challenging");
+void Registrar::_on_account(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
+                            std::shared_ptr<types::SIPIdentity> aor, std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Authorization> auth,
+                            std::shared_ptr<types::Account> account) {
+  if (!account) {
+    _logger->info("REGISTER for unknown account " + aor->to_string() + " - challenging");
+    return _send_challenge(transaction, request, realm);
+  }
+
+  // RFC 8760: the client answered one of the challenges, and which one it answered says
+  // which hash to check with. Absent means MD5, which is what RFC 2617 3.2.1 says and
+  // what every client that has never heard of anything else sends.
+  const auto algorithm = Util::to_upper(auth->contains_field("algorithm") ? auth->fields["algorithm"] : "MD5");
+
+  if (algorithm != "MD5" && algorithm != "SHA-256") {
+    _logger->info("REGISTER with an unsupported Digest algorithm " + algorithm + " - challenging");
+    return _send_challenge(transaction, request, realm);
+  }
+
+  const auto& stored = algorithm == "SHA-256" ? account->ha1_sha256 : account->ha1;
+
+  // An account with no credential for the algorithm it answered with cannot be checked.
+  // Challenging again is the honest answer: the next challenge carries both algorithms
+  // and the client can come back with the other one.
+  if (stored.empty()) {
+    _logger->info("REGISTER answered with " + algorithm + " but " + aor->to_string() + " has no credential for it - challenging");
     return _send_challenge(transaction, request, realm);
   }
 
   // RFC 2617: HA1 is stored, so the check is HA1:nonce:HA2 with HA2 over method and URI.
-  const auto expected =
-      Util::to_lower(Util::md5(subscriber->ha1 + ":" + auth->fields["nonce"] + ":" + Util::md5(request->header->request_method + ":" + auth->fields["uri"])));
+  const auto hash = [&algorithm](const std::string& input) { return algorithm == "SHA-256" ? Util::sha256(input) : Util::md5(input); };
+
+  const auto expected = Util::to_lower(hash(stored + ":" + auth->fields["nonce"] + ":" + hash(request->header->request_method + ":" + auth->fields["uri"])));
 
   if (expected != Util::to_lower(auth->fields["response"])) {
     _logger->info("REGISTER Digest response mismatch for " + aor->to_string() + " - challenging");
@@ -153,19 +183,22 @@ void Registrar::_on_subscriber(std::shared_ptr<SIPMessage> request, std::shared_
 
   request->authenticated = true;
 
-  _apply_bindings(request, transaction, realm, subscriber);
+  _apply_bindings(request, transaction, realm, account);
 }
 
 void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
-                                std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Subscriber> subscriber) {
+                                std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Account> account) {
   auto core = _core.lock();
   if (!core) return;
 
-  const auto expires = _requested_expiry(request, realm);
+  const auto requested = _requested_expiry(request, realm);
+  const auto expires = _granted_expiry(requested, realm);
 
   // A REGISTER with no Contact is a query for the current bindings (RFC 3261 10.2.2).
+  // Step 6 skips to the last step for one of those, so step 7 never runs and there is
+  // no interval to find too brief.
   if (!request->header->contains("Contact")) {
-    return _send_ok(transaction, request, subscriber, expires);
+    return _send_ok(transaction, request, account, expires);
   }
 
   auto self = shared_from_this();
@@ -178,7 +211,7 @@ void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared
 
     // Every binding goes, which means reading them first and then removing them one at
     // a time: each removal is its own round trip.
-    return core->location_list(subscriber->id, [this, self, request, transaction, subscriber](plugins::Result<std::vector<types::Location>> found) {
+    return core->location_list(account->id, [this, self, request, transaction, account](plugins::Result<std::vector<types::Location>> found) {
       if (!found.ok) {
         _logger->error("REGISTER could not list the bindings - " + found.error);
         return _send_status(transaction, request, 500, "Server Internal Error");
@@ -189,7 +222,7 @@ void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared
         if (location.contact) bindings->push_back(Binding{location.contact, 0});
       }
 
-      _write_bindings(request, transaction, subscriber, bindings, 0, 0);
+      _write_bindings(request, transaction, account, bindings, 0, 0);
     });
   }
 
@@ -200,69 +233,72 @@ void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared
     if (contact == nullptr || contact->value == nullptr || contact->value->uri == nullptr) continue;
 
     // A per-contact expires parameter overrides the Expires header for that one binding.
-    auto contact_expires = expires;
+    auto contact_requested = requested;
     const auto tag = contact->value->tags.find("expires");
     if (tag != contact->value->tags.end()) {
       try {
-        contact_expires = static_cast<std::uint32_t>(std::stoul(tag->second));
+        contact_requested = static_cast<std::uint32_t>(std::stoul(tag->second));
       } catch (const std::exception&) {
         return _send_status(transaction, request, 400, "Bad Request");
       }
-
-      if (realm->registration_timeout > 0) contact_expires = std::min(contact_expires, realm->registration_timeout);
     }
 
-    bindings->push_back(Binding{contact->value->uri, contact_expires});
+    // Step 7 refuses the whole request on the first contact it will not honour, rather
+    // than registering some of them: "It then skips the remaining steps."
+    if (_is_too_brief(contact_requested, realm)) {
+      _logger->info("REGISTER asked for " + std::to_string(contact_requested) + "s, below the realm minimum - 423");
+      return _send_interval_too_brief(transaction, request, realm);
+    }
+
+    bindings->push_back(Binding{contact->value->uri, _granted_expiry(contact_requested, realm)});
   }
 
-  _write_bindings(request, transaction, subscriber, bindings, 0, expires);
+  _write_bindings(request, transaction, account, bindings, 0, expires);
 }
 
 void Registrar::_write_bindings(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
-                                std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<std::vector<Binding>> bindings, std::size_t index,
+                                std::shared_ptr<types::Account> account, std::shared_ptr<std::vector<Binding>> bindings, std::size_t index,
                                 std::uint32_t expires_seconds) {
   auto core = _core.lock();
   if (!core) return;
 
   if (index >= bindings->size()) {
-    return _send_ok(transaction, request, subscriber, expires_seconds);
+    return _send_ok(transaction, request, account, expires_seconds);
   }
 
   const auto binding = (*bindings)[index];
   auto channel = request->channel.lock();
   auto self = shared_from_this();
 
-  auto next = [this, self, request, transaction, subscriber, bindings, index, expires_seconds]() {
-    _write_bindings(request, transaction, subscriber, bindings, index + 1, expires_seconds);
+  auto next = [this, self, request, transaction, account, bindings, index, expires_seconds]() {
+    _write_bindings(request, transaction, account, bindings, index + 1, expires_seconds);
   };
 
   if (binding.expires == 0) {
     // A removal that fails is logged and the rest still go: the client asked for all of
     // them and a partial answer is better than none.
-    return core->subscriber_unregister(subscriber, binding.contact, channel, [next](plugins::Status) { next(); });
+    return core->account_unregister(account, binding.contact, channel, [next](plugins::Status) { next(); });
   }
 
-  core->subscriber_register(subscriber, binding.contact, channel, binding.expires, _path_of(request),
-                            [this, self, request, transaction, subscriber, next](plugins::Status status) {
-                              if (!status.ok) {
-                                _logger->error("REGISTER could not store the binding for " + subscriber->identity->to_string() + " - " + status.error);
-                                return _send_status(transaction, request, 500, "Server Internal Error");
-                              }
+  core->account_register(account, binding.contact, channel, binding.expires, _path_of(request),
+                         [this, self, request, transaction, account, next](plugins::Status status) {
+                           if (!status.ok) {
+                             _logger->error("REGISTER could not store the binding for " + account->identity->to_string() + " - " + status.error);
+                             return _send_status(transaction, request, 500, "Server Internal Error");
+                           }
 
-                              next();
-                            });
+                           next();
+                         });
 }
 
 std::uint32_t Registrar::_requested_expiry(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<types::Realm>& realm) const {
-  const std::uint32_t maximum = realm && realm->registration_timeout > 0 ? realm->registration_timeout : 3600;
-
   if (request->header->contains("Contact")) {
     auto contact = request->header->headers_map["Contact"][0]->as<SIPIdentityHeader>();
     if (contact != nullptr && contact->value != nullptr) {
       const auto tag = contact->value->tags.find("expires");
       if (tag != contact->value->tags.end()) {
         try {
-          return std::min(static_cast<std::uint32_t>(std::stoul(tag->second)), maximum);
+          return static_cast<std::uint32_t>(std::stoul(tag->second));
         } catch (const std::exception&) {
           // Fall through to the Expires header.
         }
@@ -272,10 +308,27 @@ std::uint32_t Registrar::_requested_expiry(const std::shared_ptr<SIPMessage>& re
 
   if (request->header->contains("Expires")) {
     auto expires = request->header->headers_map["Expires"][0]->as<UIntHeader>();
-    if (expires != nullptr) return std::min(static_cast<std::uint32_t>(expires->value), maximum);
+    if (expires != nullptr) return static_cast<std::uint32_t>(expires->value);
   }
 
-  return maximum;
+  // "If there is neither, a locally-configured default value MUST be taken as the
+  // requested expiration." The realm's own maximum is that default.
+  return realm && realm->registration_timeout > 0 ? realm->registration_timeout : kDefaultMaximumExpiry;
+}
+
+std::uint32_t Registrar::_granted_expiry(std::uint32_t requested, const std::shared_ptr<types::Realm>& realm) const {
+  const std::uint32_t maximum = realm && realm->registration_timeout > 0 ? realm->registration_timeout : kDefaultMaximumExpiry;
+  return std::min(requested, maximum);
+}
+
+bool Registrar::_is_too_brief(std::uint32_t requested, const std::shared_ptr<types::Realm>& realm) const {
+  if (!realm || realm->registration_minimum == 0) return false;
+
+  // "If and only if the requested expiration interval is greater than zero AND smaller
+  // than one hour AND less than a registrar-configured minimum". Zero is a removal, not
+  // a short registration, and an hour is long enough by the RFC's own reckoning however
+  // the realm is configured.
+  return requested > 0 && requested < kNeverTooBrief && requested < realm->registration_minimum;
 }
 
 std::string Registrar::_path_of(const std::shared_ptr<SIPMessage>& request) const {
@@ -290,8 +343,38 @@ std::string Registrar::_path_of(const std::shared_ptr<SIPMessage>& request) cons
   return path;
 }
 
+std::shared_ptr<headers::Header> Registrar::_service_route(const std::shared_ptr<SIPMessage>& request) const {
+  auto core = _core.lock();
+  auto channel = request->channel.lock();
+  if (!core || !channel || !channel->_connection) return nullptr;
+
+  const auto local = channel->_connection->local_endpoint();
+  const auto transport = Util::to_lower(channel->_connection->transport_name());
+
+  auto route = std::make_shared<types::SIPUri>();
+  route->valid = true;
+  route->scheme = (transport == "tls" || transport == "wss") ? "sips" : "sip";
+
+  // The address the node was told to advertise, when it was told one. A UDP listener is
+  // bound to the wildcard, so its local endpoint is 0.0.0.0 - and a Service-Route
+  // pointing at 0.0.0.0 is a route the client cannot use, which is worse than sending
+  // none at all.
+  route->host = core->config->sip_public_address.empty() ? local.address().to_string() : core->config->sip_public_address;
+  route->port = local.port();
+
+  // 19.1.1 again: loose routing, so the next hop does not rewrite the Request-URI.
+  route->set_parameter("lr", "");
+  if (transport != "udp") route->set_parameter("transport", transport);
+
+  auto identity = std::make_shared<types::SIPIdentity>();
+  identity->wrapped = true;
+  identity->uri = route;
+
+  return std::make_shared<headers::SIPIdentityHeader>(identity);
+}
+
 void Registrar::_send_ok(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
-                         const std::shared_ptr<types::Subscriber>& subscriber, std::uint32_t expires_seconds) {
+                         const std::shared_ptr<types::Account>& account, std::uint32_t expires_seconds) {
   auto core = _core.lock();
   if (!core) return;
 
@@ -300,7 +383,7 @@ void Registrar::_send_ok(const std::shared_ptr<transactions::TransactionBase>& t
   // RFC 3261 10.3 step 8: list every binding that is now current, each with the time it
   // has left, so a client that lost track can resynchronise from the response alone.
   // Reading them is a round trip, so the response is built in the handler.
-  core->location_list(subscriber->id, [this, self, transaction, request, expires_seconds](plugins::Result<std::vector<types::Location>> found) {
+  core->location_list(account->id, [this, self, transaction, request, expires_seconds](plugins::Result<std::vector<types::Location>> found) {
     auto response = request->generate_response();
     response->header->response_code = 200;
     response->header->response_message = "OK";
@@ -330,6 +413,14 @@ void Registrar::_send_ok(const std::shared_ptr<transactions::TransactionBase>& t
 
     response->header->add("Expires", std::make_shared<UIntHeader>(expires_seconds));
 
+    // RFC 3608: where everything after this registration should go. The client reached
+    // this node over a flow this node holds, and its own Contact is often unroutable -
+    // a browser's always is - so telling it to route back through here is what makes
+    // the next request work at all. It is also half of failover: a client that
+    // re-registers somewhere else is told that node's route by that node, and needs no
+    // DNS to learn it.
+    if (auto service_route = _service_route(request)) response->header->add("Service-Route", service_route);
+
     transaction->send(response);
   });
 }
@@ -339,6 +430,20 @@ void Registrar::_send_status(const std::shared_ptr<transactions::TransactionBase
   auto response = request->generate_response();
   response->header->response_code = code;
   response->header->response_message = reason;
+
+  transaction->send(response);
+}
+
+void Registrar::_send_interval_too_brief(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
+                                         const std::shared_ptr<types::Realm>& realm) {
+  auto response = request->generate_response();
+  response->header->response_code = 423;
+  response->header->response_message = "Interval Too Brief";
+
+  // "This response MUST contain a Min-Expires header field that states the minimum
+  // expiration interval the registrar is willing to honor." Without it the client has
+  // nothing to retry with, which is the whole reason 423 is not just a 400.
+  response->header->add("Min-Expires", std::make_shared<UIntHeader>(realm ? realm->registration_minimum : 0));
 
   transaction->send(response);
 }
@@ -368,10 +473,23 @@ void Registrar::_send_challenge(const std::shared_ptr<transactions::TransactionB
       return _send_status(transaction, request, 500, "Server Internal Error");
     }
 
-    // No algorithm parameter: RFC 3261 25.1 makes it a token and the serialiser quotes
-    // every field it holds, so sending one would be malformed. MD5 is the default when
-    // it is absent (RFC 2617 3.2.1). RFC 8760 SHA-256 arrives with it.
-    response->header->add("WWW-Authenticate", "Digest realm=\"" + realm->name + "\", nonce=\"" + nonce.value + "\"");
+    // RFC 8760 section 2.1: one challenge per algorithm, most preferred first, and the
+    // client answers the first one it supports. SHA-256 leads because a client that can
+    // do better than MD5 should, and MD5 follows because nearly every SIP client can do
+    // nothing else (RFC 3261 22.4 knows only MD5).
+    //
+    // A challenge is sent before this node knows which account is answering, so both go
+    // out every time. An account with no SHA-256 credential - one imported as a bare MD5
+    // hash - is re-challenged for MD5 alone when it answers with SHA-256.
+    for (const auto& algorithm : {std::string("SHA-256"), std::string("MD5")}) {
+      types::Authorization challenge;
+      challenge.type = "Digest";
+      challenge.fields["realm"] = realm->name;
+      challenge.fields["nonce"] = nonce.value;
+      challenge.fields["algorithm"] = algorithm;
+
+      response->header->add("WWW-Authenticate", challenge.to_string());
+    }
 
     transaction->send(response);
   });

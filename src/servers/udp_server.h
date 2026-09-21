@@ -28,6 +28,10 @@ class UDPServer : public Server {
   // Returns the local endpoint of the UDP socket as a TCP endpoint.
   boost::asio::ip::tcp::endpoint local_endpoint();
 
+  // The strand below, for the connections hanging off this server: one socket serves all
+  // of them, so it is their executor too.
+  boost::asio::any_io_executor executor() { return _strand; }
+
   // Remove a connection from the mapping (e.g. after shutdown).
   void remove_connection(const std::string& key);
 

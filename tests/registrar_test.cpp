@@ -12,9 +12,8 @@
 #include "headers/authorization_header.h"
 #include "headers/sip_identity_header.h"
 #include "headers/uint_header.h"
-#include "util.h"
-
 #include "helpers/core_fixture_helper.h"
+#include "util.h"
 
 using namespace athenasip;
 using athenasip::headers::AuthorizationHeader;
@@ -26,8 +25,16 @@ namespace {
 // RFC 2617: HA1 is MD5(user:realm:password), and it is what the datastore stores.
 const std::string kHa1 = Util::md5("alice:example.com:secret");
 
+// RFC 8760: the same credential under SHA-256, which is a different hash of the same
+// password rather than anything derivable from the first.
+const std::string kHa1Sha256 = Util::sha256("alice:example.com:secret");
+
 std::string digest_response(const std::string& ha1, const std::string& nonce, const std::string& method, const std::string& uri) {
   return Util::md5(ha1 + ":" + nonce + ":" + Util::md5(method + ":" + uri));
+}
+
+std::string digest_response_sha256(const std::string& ha1, const std::string& nonce, const std::string& method, const std::string& uri) {
+  return Util::sha256(ha1 + ":" + nonce + ":" + Util::sha256(method + ":" + uri));
 }
 
 struct Fixture : CoreFixture {
@@ -36,7 +43,7 @@ struct Fixture : CoreFixture {
 
   Fixture() {
     seed_realm("example.com");
-    seed_subscriber(7, "sip:alice@example.com", kHa1);
+    seed_account(7, "sip:alice@example.com", kHa1);
     channel = make_channel("192.0.2.10", &connection);
   }
 
@@ -60,9 +67,23 @@ struct Fixture : CoreFixture {
            digest_response(kHa1, nonce, "REGISTER", uri) + "\"";
   }
 
+  // What a client that read the SHA-256 challenge sends back.
+  std::string credentials_sha256(const std::string& nonce, const std::string& uri = "sip:example.com") {
+    return "Digest username=\"alice\", realm=\"example.com\", nonce=\"" + nonce + "\", uri=\"" + uri + "\", algorithm=SHA-256, response=\"" +
+           digest_response_sha256(kHa1Sha256, nonce, "REGISTER", uri) + "\"";
+  }
+
   std::string fresh_nonce() {
     auto realm = store->realm_get_by_name("example.com");
     return mint_nonce(realm);
+  }
+
+  // RFC 3261 10.3 step 7's registrar-configured minimum. It is off on a new realm, so a
+  // test that wants one has to say so.
+  void set_registration_minimum(std::uint32_t minimum) {
+    auto realm = store->realm_get_by_name("example.com");
+    realm->registration_minimum = minimum;
+    store->realm_update(realm);
   }
 };
 
@@ -119,9 +140,9 @@ TEST(RegistrarTest, ARegisterForAnUnservedDomainIs404) {
   EXPECT_NE(f.response_with(f.connection, 404), nullptr);
 }
 
-// A subscriber that does not exist inside a realm we do serve is challenged rather than
+// An account that does not exist inside a realm we do serve is challenged rather than
 // refused, so a REGISTER sweep cannot tell an absent account from a wrong password.
-TEST(RegistrarTest, AnUnknownSubscriberInAServedRealmIsChallenged) {
+TEST(RegistrarTest, AnUnknownAccountInAServedRealmIsChallenged) {
   Fixture f;
 
   const auto nonce = f.fresh_nonce();
@@ -269,6 +290,128 @@ TEST(RegistrarTest, PathIsRecordedOnTheBinding) {
   EXPECT_NE(locations[0].path.find("edge.example.com"), std::string::npos);
 }
 
+// RFC 8760 section 2.1: one challenge per algorithm, most preferred first. A client
+// that can do better than MD5 has to be offered the chance, and one that cannot has to
+// still find something it understands.
+TEST(RegistrarTest, TheChallengeOffersSha256ThenMd5) {
+  Fixture f;
+
+  f.receive(f.channel, f.register_request());
+
+  auto response = f.response_with(f.connection, 401);
+  ASSERT_NE(response, nullptr);
+  ASSERT_TRUE(response->header->contains("WWW-Authenticate"));
+
+  const auto& challenges = response->header->headers_map["WWW-Authenticate"];
+  ASSERT_EQ(challenges.size(), 2u);
+
+  auto first = challenges[0]->as<AuthorizationHeader>();
+  auto second = challenges[1]->as<AuthorizationHeader>();
+  ASSERT_NE(first, nullptr);
+  ASSERT_NE(second, nullptr);
+
+  EXPECT_EQ(Util::to_upper(first->value->fields["algorithm"]), "SHA-256");
+  EXPECT_EQ(Util::to_upper(second->value->fields["algorithm"]), "MD5");
+
+  // Both carry a nonce, because a client answering either has to have one.
+  EXPECT_FALSE(first->value->fields["nonce"].empty());
+  EXPECT_FALSE(second->value->fields["nonce"].empty());
+}
+
+// RFC 3261 25.1: algorithm is a token. Quoting it is malformed, and a client that
+// checks will refuse the challenge.
+TEST(RegistrarTest, TheAlgorithmIsSentAsATokenNotAQuotedString) {
+  Fixture f;
+
+  f.receive(f.channel, f.register_request());
+
+  ASSERT_NE(f.response_with(f.connection, 401), nullptr);
+  EXPECT_NE(f.connection->written.find("algorithm=SHA-256"), std::string::npos);
+  EXPECT_EQ(f.connection->written.find("algorithm=\"SHA-256\""), std::string::npos);
+}
+
+// The point of offering it: an account with a SHA-256 credential authenticates with one.
+TEST(RegistrarTest, ASha256ResponseAuthenticates) {
+  Fixture f;
+
+  // Provisioned from a password, so it has both credentials.
+  auto account = f.store->account_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
+  ASSERT_NE(account, nullptr);
+  account->ha1_sha256 = kHa1Sha256;
+  ASSERT_TRUE(f.store->account_update(account));
+
+  f.receive(f.channel, f.register_request(f.credentials_sha256(f.fresh_nonce())));
+
+  ASSERT_NE(f.response_with(f.connection, 200), nullptr);
+  EXPECT_EQ(f.store->location_list(7).size(), 1u);
+}
+
+// An account imported as a bare MD5 hash has no SHA-256 credential. Answering the
+// SHA-256 challenge cannot be checked against nothing, so it is challenged again rather
+// than let in or answered 500.
+TEST(RegistrarTest, ASha256ResponseFromAnMd5OnlyAccountIsChallenged) {
+  Fixture f;
+
+  f.receive(f.channel, f.register_request(f.credentials_sha256(f.fresh_nonce())));
+
+  EXPECT_NE(f.response_with(f.connection, 401), nullptr);
+  EXPECT_TRUE(f.store->location_list(7).empty());
+}
+
+// MD5 is what nearly every SIP client speaks and it keeps working, with or without the
+// algorithm parameter the client may now send back.
+TEST(RegistrarTest, AnMd5ResponseStillAuthenticates) {
+  Fixture f;
+
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce())));
+
+  ASSERT_NE(f.response_with(f.connection, 200), nullptr);
+  EXPECT_EQ(f.store->location_list(7).size(), 1u);
+}
+
+// RFC 3608: the 200 OK tells the client where to send everything that follows. Without
+// it a client with an unroutable Contact - a browser's always is - has nowhere to send
+// its next request but the address it happened to be configured with, and a client that
+// re-registers on another node keeps talking to the one it left.
+TEST(RegistrarTest, TheOkCarriesAServiceRouteForThisNode) {
+  Fixture f;
+
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "600"));
+
+  auto response = f.response_with(f.connection, 200);
+  ASSERT_NE(response, nullptr);
+
+  ASSERT_TRUE(response->header->contains("Service-Route"));
+
+  auto route = response->header->headers_map["Service-Route"][0]->as<SIPIdentityHeader>();
+  ASSERT_NE(route, nullptr);
+  ASSERT_NE(route->value, nullptr);
+  ASSERT_NE(route->value->uri, nullptr);
+
+  // The node as the flow reached it, and loose routing: a Service-Route without lr
+  // would have the next hop rewrite the Request-URI on the way through.
+  EXPECT_EQ(route->value->uri->host, "192.0.2.1");
+  EXPECT_TRUE(route->value->uri->has_parameter("lr"));
+}
+
+// A UDP listener is bound to the wildcard, so the address the flow arrived on is
+// 0.0.0.0 and a Service-Route built from it is a route the client cannot use. Found by
+// the sipp harness, which received exactly that.
+TEST(RegistrarTest, TheServiceRouteUsesTheAdvertisedAddress) {
+  Fixture f;
+  f.config->sip_public_address = "203.0.113.5";
+
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "600"));
+
+  auto response = f.response_with(f.connection, 200);
+  ASSERT_NE(response, nullptr);
+  ASSERT_TRUE(response->header->contains("Service-Route"));
+
+  auto route = response->header->headers_map["Service-Route"][0]->as<SIPIdentityHeader>();
+  ASSERT_NE(route, nullptr);
+  EXPECT_EQ(route->value->uri->host, "203.0.113.5");
+}
+
 // RFC 3261 17.2.2: the transaction absorbs a retransmitted REGISTER and answers it from
 // what it last sent. The registrar must not see it twice, or it would write the binding
 // again and issue a second challenge.
@@ -297,4 +440,104 @@ TEST(RegistrarTest, ARetransmittedRegisterIsAnsweredWithoutReachingTheRegistrarA
   ASSERT_NE(first, nullptr);
   ASSERT_NE(second, nullptr);
   EXPECT_EQ(first->value->fields["nonce"], second->value->fields["nonce"]);
+}
+
+// RFC 3261 10.3 step 7: a registrar may refuse an interval shorter than it is willing to
+// honour, and the refusal "MUST contain a Min-Expires header field that states the
+// minimum expiration interval the registrar is willing to honor". Capping the expiry
+// silently, which is what this did before, is legal but leaves a client that wanted a
+// short registration with no way to learn what it may ask for.
+TEST(RegistrarTest, AnIntervalBelowTheRealmMinimumIsRefusedWithMinExpires) {
+  Fixture f;
+  f.set_registration_minimum(120);
+
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "30"));
+
+  auto response = f.response_with(f.connection, 423);
+  ASSERT_NE(response, nullptr);
+  EXPECT_EQ(response->header->response_message, "Interval Too Brief");
+
+  ASSERT_TRUE(response->header->contains("Min-Expires"));
+  auto minimum = response->header->headers_map["Min-Expires"][0]->as<UIntHeader>();
+  ASSERT_NE(minimum, nullptr);
+  EXPECT_EQ(minimum->value, 120u);
+
+  // "It then skips the remaining steps": the binding is not written.
+  EXPECT_TRUE(f.store->location_list(7).empty());
+}
+
+// The interval can also arrive on the Contact rather than in an Expires header, and step
+// 7 reads that one first.
+TEST(RegistrarTest, AContactExpiresParameterBelowTheMinimumIsRefusedToo) {
+  Fixture f;
+  f.set_registration_minimum(120);
+
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "", "<sip:alice@192.0.2.10:5060>;expires=30"));
+
+  EXPECT_NE(f.response_with(f.connection, 423), nullptr);
+  EXPECT_TRUE(f.store->location_list(7).empty());
+}
+
+// "If and only if the requested expiration interval is greater than zero AND smaller
+// than one hour AND less than a registrar-configured minimum". An hour is long enough
+// however the realm is configured.
+TEST(RegistrarTest, AnIntervalOfAnHourIsNeverTooBrief) {
+  Fixture f;
+  f.set_registration_minimum(7200);
+
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "3600"));
+
+  EXPECT_NE(f.response_with(f.connection, 200), nullptr);
+  EXPECT_EQ(f.store->location_list(7).size(), 1u);
+}
+
+// Zero is a removal (10.2.1.3), not a registration that is too short to be worth
+// keeping, and refusing it would leave a client unable to unregister.
+TEST(RegistrarTest, AZeroExpiryIsNeverTooBrief) {
+  Fixture f;
+  f.set_registration_minimum(120);
+
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "600"));
+  ASSERT_EQ(f.store->location_list(7).size(), 1u);
+
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "0", "", "z9hG4bK-reg-2"));
+
+  EXPECT_NE(f.response_with(f.connection, 200), nullptr);
+  EXPECT_TRUE(f.store->location_list(7).empty());
+}
+
+// The RFC's own advice is that a registrar should accept brief registrations, so a realm
+// that has not been given a minimum honours whatever it is asked for.
+TEST(RegistrarTest, WithNoMinimumABriefRegistrationIsGranted) {
+  Fixture f;
+
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "30"));
+
+  auto response = f.response_with(f.connection, 200);
+  ASSERT_NE(response, nullptr);
+
+  auto expires = response->header->headers_map["Expires"][0]->as<UIntHeader>();
+  ASSERT_NE(expires, nullptr);
+  EXPECT_EQ(expires->value, 30u);
+}
+
+// Step 6 skips to the last step when there is no Contact, so step 7 never runs: a query
+// for the current bindings carries an Expires that is nobody's registration.
+TEST(RegistrarTest, AQueryIsNotRefusedAsTooBrief) {
+  Fixture f;
+  f.set_registration_minimum(120);
+
+  std::string raw = "REGISTER sip:example.com SIP/2.0\r\n";
+  raw += "Via: SIP/2.0/UDP 192.0.2.10:5060;branch=z9hG4bK-query\r\n";
+  raw += "From: <sip:alice@example.com>;tag=alice\r\n";
+  raw += "To: <sip:alice@example.com>\r\n";
+  raw += "Call-ID: call-registrar\r\n";
+  raw += "CSeq: 1 REGISTER\r\n";
+  raw += "Expires: 30\r\n";
+  raw += "Authorization: " + f.credentials(f.fresh_nonce()) + "\r\n";
+  raw += "\r\n";
+
+  f.receive(f.channel, raw);
+
+  EXPECT_NE(f.response_with(f.connection, 200), nullptr);
 }

@@ -12,7 +12,6 @@
 #include "headers/sip_identity_header.h"
 #include "headers/uint_header.h"
 #include "headers/via_header.h"
-
 #include "helpers/proxy_fixture_helper.h"
 
 using namespace athenasip;
@@ -132,6 +131,32 @@ TEST(ProxyRouteTest, AnInDialogByeTransitsOnItsRouteSet) {
 
   // And this node is on the path, so the Via chain is two deep.
   EXPECT_EQ(forwarded->header->headers_map["Via"].size(), 2u);
+}
+
+// RFC 3261 16.6 step 7 and RFC 5923: a second request to a hop this node already has a
+// flow to goes out on that flow. Opening a second connection per request would leave a
+// node holding one socket per in-dialog request, and for a client behind NAT the new
+// one would not reach it at all - the flow the client opened is the only way back.
+TEST(ProxyRouteTest, ASecondInDialogRequestReusesTheFirstOnesFlow) {
+  Fixture f;
+  f.bind_bob();
+
+  f.receive(f.caller, in_dialog("BYE", "sip:bob@192.0.2.20:5060", "<sip:192.0.2.1:5060;lr>", "z9hG4bK-bye-1"));
+  ASSERT_NE(f.request_with(f.callee_connection, "BYE"), nullptr);
+
+  const auto after_first = f.callee_connection->write_calls;
+  ASSERT_GT(after_first, 0);
+
+  f.receive(f.caller, in_dialog("BYE", "sip:bob@192.0.2.20:5060", "<sip:192.0.2.1:5060;lr>", "z9hG4bK-bye-2"));
+
+  // The same connection carried it: a second flow would have written somewhere else and
+  // left this one where it was.
+  EXPECT_GT(f.callee_connection->write_calls, after_first);
+
+  // And the registry still holds one channel for that hop, which is the one we started
+  // with.
+  auto found = f.on_strand([&f]() { return f.core->channel_find("udp", "192.0.2.20", 5060); });
+  EXPECT_EQ(found, f.callee);
 }
 
 // RFC 3261 16.6 step 6: with a route set in play the top Route decides the hop and the
@@ -295,7 +320,7 @@ TEST(ProxyRouteTest, ARequestThatComesBackChangedIsASpiralAndNot482) {
 
   EXPECT_EQ(f.response_with(f.caller_connection, 482), nullptr);
 
-  // It was processed as an ordinary request: nobody@example.com has no subscriber.
+  // It was processed as an ordinary request: nobody@example.com has no account.
   EXPECT_NE(f.response_with(f.caller_connection, 404), nullptr);
 }
 

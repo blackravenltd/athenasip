@@ -128,13 +128,26 @@ Done on 2026-09-18; see `COMPLETED.md`. The matcher, the four machines wired int
 `Core::process_message`, `Registrar`, `Proxy`, the event-bus INVITE path deleted and Via
 moved out of `Channel`. What it deliberately left for later, so it is not lost:
 
-- [ ] RFC 2543 fallback transaction matching, for a request whose branch carries no magic
-      cookie. Deferred by the step; needed for interop with pre-3261 endpoints only.
+- [x] RFC 2543 fallback transaction matching, done on 2026-09-21. A request whose topmost
+      Via carries no branch, or one with no magic cookie, is keyed by 17.2.3's fallback
+      tuple - Request-URI, From tag, Call-ID, CSeq number, the whole topmost Via and the
+      method - instead of by branch and sent-by. Both forms are strings in the one table,
+      so nothing above the matcher knows which kind it holds. The To tag is the one field
+      of the rule left out, with the reason recorded at `_legacy_key`: it would stop an
+      ACK ever matching the INVITE that has no tag, and the case it exists for is already
+      covered because a 2xx terminates the server transaction (17.2.1). A branchless
+      request used to be answered 400 for want of an identifier.
 - [ ] Serial forking tries each binding in turn but sends every attempt down the one flow
       the subscriber registered on, because that is all a single node knows. Per-binding
       flow routing is RFC 5626 in M3, and `Location.flow_id` exists for it.
-- [ ] 423 Interval Too Brief with `Min-Expires` (10.3 step 7). The registrar caps the
-      expiry rather than refusing a short one, which is legal but not the whole rule.
+- [x] 423 Interval Too Brief with `Min-Expires`, done on 2026-09-21. `Realm` grew a
+      `registration_minimum` beside its `registration_timeout`, provisioned over the API
+      and zero by default, because the RFC's own advice in step 7 is that a registrar
+      should accept brief registrations unless the refreshes are costing it something.
+      When it is set, the three conditions are all of them: greater than zero, under an
+      hour, and under the minimum - a zero expiry is a removal and an hour is never too
+      brief. The refusal quotes the minimum in `Min-Expires`, which is what makes it
+      something a client can act on, and registers none of the contacts.
 
 ### Step 2 - Plugin contract v1
 
@@ -147,10 +160,9 @@ What it deliberately left, so it is not lost:
       a time because each step starts the next from its own completion. Correct, and
       slower than one MGET would be. Worth doing when a node has enough bindings for it
       to show.
-- [ ] `EventSystem` is on the registry and the `Plugin` base but its operations still
-      take a completion callback of their own shape rather than the contract's
-      `Executor` + `Handler`. It is off the call path by decision, so this is tidiness
-      rather than a stall, but the contract should be one contract.
+- [x] `EventSystem` takes the contract's `Executor` and handlers, done on 2026-09-21 as
+      half of contract v2. The fire-and-forget `publish(name, message)` stayed, because
+      the bus is observability and is never on the call setup path.
 
 ### Step 3 - SIPUri is a real URI (RFC 3261 section 19.1)
 
@@ -293,14 +305,25 @@ What it deliberately left, so it is not lost:
         was learned over, that flow id being exactly what `channel_find` answers to, a
         binding learned over no channel recording no flow, and the flow and node making
         the round trip through Redis.
-- [ ] A data race in `WebsocketConnectionFor::is_open()`
-      (`src/servers/websocket_connection.h:70`), found by tsan on 2026-09-21 while
-      checking the contract v2 work and measured as pre-existing: the baseline tree
-      fails `WebsocketServerTest.CarriesSipWithoutTls` 12 times in 30 runs under tsan,
-      the same rate as the tree with the change. The websocket server's own thread and
-      the global io_context thread both touch the stream, and `is_open()` reads it
-      without the strand every other accessor on that connection has. The other
-      transports hand over to the Core strand; this one does not, and that is the fix.
+- [x] The transport's threading rule, done on 2026-09-21. `Connection::executor()` is the
+      executor a connection's stream belongs to, and `Channel` hands every operation on
+      the stream over to it: starting a read, starting a write, and the teardown in
+      `close()`. A socket is not safe for two threads and each server runs its own
+      io_context on its own thread, so the Core strand reaching in was a second thread
+      inside the stream. `UDPServer` already worked this way and says so in its own
+      comment; TCP, TLS and WebSocket did not.
+
+      Found by tsan as a data race in `WebsocketConnectionFor::is_open()`, called from
+      `Channel::close()` while beast's read op wrote the same field finishing the teardown
+      the far end started. Measured before and after on
+      `WebsocketServerTest.CarriesSipWithoutTls`: 12 failures in 30 runs at the baseline,
+      0 in 30 with the fix. Three tests pin the rule itself - the mock connection can be
+      given a strand of its own and records whether each call arrived on it.
+- [x] A write queue on the channel, done on 2026-09-21. One write in flight at a time,
+      the rest queued on the strand, and a short write resumed from where it stopped -
+      `async_write_some` is not obliged to take the whole buffer, and nothing was
+      checking how much it took. `Channel::write` was a declaration with no definition;
+      it is now the way raw bytes go out, and what the tests drive.
 - [ ] Outbound TLS. `channel_connect` refuses `tls://` rather than guessing at what a
       node trusts; the cluster CA decision in M4 is what settles it. Until then a TLS peer
       has to connect inwards.
@@ -308,57 +331,125 @@ What it deliberately left, so it is not lost:
       the listener's own socket so the source port is the one the far end answers to, and
       that socket belongs to `UDPServer` rather than to the channel registry. Needed for a
       UDP trunk, not for anything in M2.
-- [ ] Connection reuse for responses and in-dialog requests works as it stands - a
-      response goes back on the server transaction's own channel, and an in-dialog request
-      is routed by its Route set through `channel_find` - but nothing tests that a second
-      in-dialog request reuses the first one's connection rather than opening another.
+- [x] Connection reuse is tested, done on 2026-09-21: a second in-dialog request goes
+      out on the flow the first one used, and the registry still holds one channel for
+      that hop. Opening a second connection per request would leave a node holding one
+      socket per request, and for a client behind NAT the new one would not reach it at
+      all.
 
 ### Step 8 - Admin API, part 1 (provisioning)
 
-- [ ] OpenAPI 3 document at `docs/api/openapi.yaml`, versioned under `/api/v1`.
-- [ ] Bearer-token auth middleware with `admin` and `client` scopes; tokens in config
-      for now.
-- [ ] `GET/POST/PUT/DELETE /api/v1/realms`, `/api/v1/realms/{realm}/subscribers`
-      (HA1 computed server-side from password), `GET /api/v1/registrations`. The
-      datastore's create/update split is what lets these answer 409.
-- [ ] JSON body parsing and error envelope in `AdminAPI` (`src/api/admin_api.cpp`).
-- [ ] `StaticMiddleware` path from `config->http_files_path`, not `"../admin"`
-      (`src/main.cpp`).
-- [ ] The admin API is off the strand. Provisioning goes to the datastore directly with
-      the API's own executor, which the async contract exists for; only reads of Core's
-      registries (live calls, channels) go through `call_on_strand`. Written before step
-      2 as "reaches Core through `call_on_strand`" for everything, which would put every
-      admin request on the call path.
+Done on 2026-09-21. Realms, accounts and registrations under `/api/v1`, with the health
+and node endpoints the harness and a web client need.
+
+- [x] OpenAPI 3 document at `docs/api/openapi.yaml`, versioned under `/api/v1`.
+- [x] Bearer tokens with `admin` and `client` scopes, from `http.api.tokens`. A route
+      names the scope it needs where it is declared, so adding one cannot accidentally
+      leave it open, and a request with no matching token is refused - an API enabled
+      with no tokens is one nobody can call.
+- [x] `GET/POST/PUT/DELETE /api/v1/realms` and `/api/v1/realms/{realm}/accounts`, HA1
+      computed here from the password and never given back, and `GET
+      /api/v1/registrations`. The datastore's create/update split is what lets these
+      answer 409 rather than overwrite.
+- [x] JSON body parsing and one error envelope: a code a client branches on and a
+      message a person reads.
+- [x] `StaticMiddleware` path from `config->http_files_path`.
+- [x] The admin API is off the strand: provisioning goes to the datastore with the API's
+      own executor. The middleware chain had to learn to keep its session alive first,
+      because it only ever held one for a middleware that answered inline.
+
+      What is left for part 2, with the live registries: reads of Core's own state -
+      calls in progress, channels open - which do need `call_on_strand`, and nothing in
+      provisioning does.
 
 ### Step 9 - Test harness
 
-- [ ] `test/e2e/` with sipp scenarios: REGISTER with Digest, INVITE/180/200/ACK/BYE,
-      CANCEL before and after 180, 486, 408 on timer B, retransmission over UDP,
-      RTP through the builtin relay (RTP sequence check, not silence).
-- [ ] `Dialog` unit tests on `MockConnection` and `ManualTimerSource`, in the same
-      RFC-derived style as the transaction tests. `Registrar` and `Proxy` have theirs
-      (`tests/registrar_test.cpp`, `tests/proxy_test.cpp`, since step 1).
-- [ ] `docker-compose.test.yml`: athenasip + sipp.
-- [ ] GitHub Actions: build (Debug + ASan), unit tests, sipp harness. Deferred for now
-      at Tom's call; listed so it is not forgotten.
+- [x] `test/e2e/` with sipp scenarios, written on 2026-09-21: REGISTER with Digest, a
+      wrong password, a retransmitted REGISTER, INVITE/180/200/ACK/BYE, CANCEL after
+      180, 486, 408 on timer B, and a call with RTP through the builtin relay. Each
+      asserts on what the RFC requires rather than on what the node currently does, and
+      `run.sh` provisions the realm and the accounts over the admin API first, which is
+      the same path an operator uses.
+
+      Run on 2026-09-21 against sipp 3.7.3: **4 of 8 pass** - `register`,
+      `register-wrong-password`, `register-retransmit` and `invite-timeout`. Digest
+      authenticates end to end against a real client, and it picks the SHA-256 challenge
+      rather than the MD5 one, so the RFC 8760 ordering worry was unfounded: sipp is
+      built with SHA256 support and follows section 2.4.
+
+      Four harness bugs were fixed getting there, and each is worth knowing:
+
+      - `run.sh` computed the repository root as `test/` rather than the root.
+      - sipp expands a `[field]` before it reads the `[authentication]` keyword around
+        it, so the nested form emitted `alice[authentication username= password=...]` -
+        a header line with no colon, which the node correctly answered 400. The
+        credentials go on the command line now.
+      - sipp runs as PID 1 in every container and builds its branch from the pid and the
+        call number, so two scenarios in a row sent the same branch from the same
+        address. The node treated the second as a retransmission and replayed its last
+        answer, which looked exactly like a wrong password being accepted. Each scenario
+        gets its own source port now.
+      - The port allocator was a function whose result was captured with `$(...)`, so the
+        counter was incremented in a subshell and every scenario got the same port.
+
+      **What the four call scenarios are still failing on**, for whoever picks this up:
+
+      - The callee scenarios register and then wait for an INVITE in one sipp scenario,
+        and sipp binds a scenario instance to one Call-ID: the INVITE arrives with the
+        caller's Call-ID and is discarded as unmappable. The fix is the ordinary sipp
+        shape - register in a separate short run, then a pure UAS scenario that starts
+        with `recv request="INVITE"` and takes whatever call arrives.
+      - The node writes `0.0.0.0` into its own Via and Record-Route on a UDP flow,
+        because both are built from `connection->local_endpoint()` and the UDP listener
+        is bound to the wildcard. `Service-Route` had the same bug and is fixed;
+        Via and Record-Route are the M4 "public contact addresses" item, and the harness
+        has now shown it bites on a single node rather than only behind a balancer.
+
+      The RTP assertions have not been reached yet, so nothing is known about them.
+- [x] `Dialog` unit tests, done with step 5 on 2026-09-20. `tests/dialogs_test.cpp` has
+      19 of them, RFC-derived in the same style as the transaction tests: the dialog the
+      2xx establishes, each end's target and sequence, re-INVITE moving the target, BYE
+      from either end, CANCEL before and after answer, sips over TLS, and the RFC 4028
+      session timer. This item was written before they existed.
+- [x] `docker-compose.test.yml`: one node and two sipp containers on a network of their
+      own, with fixed addresses because a callee has to register at an address the node
+      can route back to. Done on 2026-09-21 and running. The node image builds Boost from
+      source because Debian ships 1.83 and this needs 1.87 or newer; it is its own layer
+      and cached after the first build.
+- [ ] GitHub Actions: build (Debug + ASan), unit tests, sipp harness. Deferred at Tom's
+      call, confirmed again on 2026-09-21; listed so it is not forgotten.
 
 ### Step 10 - Smaller items surfaced by the review
 
-- [ ] Digest with SHA-256 (RFC 8760) alongside MD5, selected by the `algorithm`
-      parameter. `Util::md5` is the only hash today.
-- [ ] Decide whether `Subscriber` becomes `Account`. It collides with SUBSCRIBE
-      (RFC 6665, M6), and renaming costs more the later it happens.
-- [ ] `RTPProxyClient` is compiled into `athena_core` and nothing constructs it. Take
-      it out of the build path the way Lua was, per the Parked note.
-- [ ] `docs/architecture.md` is stale and contradicts the Decisions (it lists DynamoDB,
-      NATS, RabbitMQ, Kafka and SQS as planned). The file was renamed from
-      `architecure.md` on 2026-09-20, which fixed the broken `README.md:23` link; the
-      contents are still the pre-reset ones. Rewrite it from the Architecture section
-      above; `docs/plugins.md` (step 2) is the companion it should point at. Those backends are
-      things the plugin contract makes possible, not things the core plans to build;
-      the doc should say that or it reads as a roadmap the project cannot keep. `design.md`,
-      `goals.md`, `scripting.md` and `modules/` predate the reset and need the same
-      audit before anything is assumed from them.
+- [x] Digest with SHA-256 (RFC 8760) alongside MD5, done on 2026-09-21. An account
+      carries a credential per algorithm, both computed while the password is in hand
+      because neither can be derived from the other. The registrar challenges with
+      SHA-256 then MD5 and checks against whichever the client answered with; an account
+      imported as a bare MD5 hash is challenged again rather than let in. Sending the
+      algorithm at all needed the Authorization serialiser to stop quoting tokens.
+- [x] `Subscriber` is `Account`, decided with Tom and done on 2026-09-21. It would have
+      collided with SUBSCRIBE (RFC 6665) the moment presence arrived in M6. The Datastore
+      contract kept its shape and changed its vocabulary, so `API_VERSION` is 3; the
+      Redis keys moved with it, and the event topic is `account/<uri>/status`.
+- [x] `RTPProxyClient` is out of the build path, done on 2026-09-21, the way Lua is: it
+      stays in the tree as the start of an rtpproxy driver and is not compiled until
+      someone writes one.
+- [x] `docs/architecture.md` rewritten on 2026-09-21 from the Architecture section
+      above: the strand and what is not on it, the transport layering, the plugin
+      registry with the two implementations per kind, the cluster shape and the media
+      model. It says in as many words that DynamoDB, NATS and Kafka are things the
+      contract makes possible rather than things the core plans to build, and it points
+      at `docs/plugins.md`.
+- [x] The rest of the documentation audited on 2026-09-21. `design.md` was still right
+      about the transport layering and wrong about everything that has happened since, so
+      it gained the threading rule, the flow id and the write queue, and its three broken
+      source links were fixed. `goals.md` was an empty file and is gone. `scripting.md`
+      described a Lua engine that is not compiled; it now says so, and says what routing
+      policy comes back as. `modules/` no longer exists. `quick_start.md` told the reader
+      to install rtpproxy and log in as accounts that never existed; it is now the actual
+      quick start, provisioning over the admin API. `README.md` claimed TLS-only defaults
+      the shipped configuration does not set and listed WebSockets as a future feature
+      two milestones after they landed.
 
 ---
 
@@ -422,6 +513,68 @@ the shape it forces is this:
   browsers cannot use it, so they get a balancer or a provisioned list from
   `GET /api/v1/client/config`. RFC 5626 outbound with two flows to two nodes is the
   strongest form of this and removes the reconnect window entirely.
+
+### Client failover without infrastructure
+
+Decided with Tom on 2026-09-21. A realm should survive a node dying without the operator
+having to run DNS they control, which is what principle 3 asks for and what RFC 3263
+alone does not give. The answer is the standard mechanisms first and an optional
+extension for what they do not cover, in this order:
+
+- [x] RFC 3608 Service-Route, done on 2026-09-21. The 200 OK to REGISTER carries this
+      node, on the flow the REGISTER arrived over, with `lr`. It names
+      `sip.public_address` when one is set: the sipp harness received
+      `<sip:0.0.0.0:5060;lr>` on a UDP flow, which is a route no client can use. It tells a client where to
+      send everything that follows, which for a client whose Contact is unroutable - a
+      browser's always is - is the only thing that makes the next request work. It is
+      also half of failover: a client that re-registers on another node is told that
+      node's route by that node and needs no DNS to learn it. `Path` and `Service-Route`
+      are registered header types now, so both are parsed rather than echoed.
+- [x] `GET /api/v1/nodes`, done on 2026-09-21. The cluster as a node knows it, with a
+      URI per enabled transport. One entry today, because nothing discovers the others
+      yet; the shape is what the discovery bus below fills in. A browser reads it over
+      the HTTP it is already speaking and needs no SIP extension at all, which is why it
+      is the first thing built rather than the last. `sip.public_address` is what a node
+      advertises; a node on a wildcard bind knows every address it answers on and none a
+      client should use, so it has to be told.
+- [ ] Feed `GET /api/v1/nodes` from the discovery bus: the retained `nodes/<id>/status`
+      messages already carry each node's SIP and inter-node TLS addresses, which is the
+      same list. `GET /api/v1/client/config` is then the bootstrap blob a web client
+      fetches - the node list plus what the realm expects of it - rather than a second
+      inventory.
+- [ ] RFC 5626 outbound, server side. This is the strongest standard answer and the one
+      that removes the reconnect window entirely: a client registers two flows, to two
+      nodes, and keeps both up. It needs `+sip.instance` and `reg-id` on the binding, a
+      flow token in the Path this node writes, `Supported`/`Require: outbound`, and the
+      keep-alives of section 4.4. It changes what identifies a binding - instance and
+      reg-id rather than contact alone - so it is a Datastore contract change and an
+      `API_VERSION` bump, and it wants doing in one go with the flow routing M3 needs.
+- [ ] RFC 3263, properly: NAPTR then SRV then A/AAAA when resolving a next hop.
+      `Core::channel_connect` does the last of those and says so. It is the standard way
+      a client finds a realm and the standard way this node finds a trunk, and it is
+      what makes a node list unnecessary for clients that can do it. The resolver is
+      hand-rolled per the dependency rule, which is why it is a step of its own rather
+      than a line in another one.
+- [ ] `AthenaSIP-Alternate-Server`, the optional extension, and last because it is what
+      the standards above do not cover: a client that cannot do outbound and has no DNS
+      still has to learn where else to go. Four conditions, and it is not worth shipping
+      without them:
+      - Honoured only over a transport that authenticated the server - TLS or WSS with a
+        verified certificate. Digest authenticates the client to us, not us to the
+        client, so over anything else this is a redirection primitive handed to whoever
+        can forge a response.
+      - Negotiated by option tag, sent only to a client that advertised
+        `Supported: athenasip-failover`. Unknown headers are ignored anyway, so this
+        costs nothing and keeps the header off the wire for everyone else.
+      - The value borrows Contact's grammar rather than inventing one: name-addr with
+        parameters, `q` for preference, `expires` for how long the list is good. A stale
+        list is the failure mode to design for, so the lifetime is not optional.
+      - The name is vendor-prefixed because the header is ours and unregistered
+        (RFC 6648 killed `X-`). If it is ever worth standardising the name changes, which
+        is the other reason the option tag rather than the header name is what gets
+        negotiated.
+      The list itself comes from the same discovery bus as `GET /api/v1/nodes`, so this
+      is a way of carrying an answer the node already has, not a new source of truth.
 
 - [ ] Public contact addresses, which are not the node's local ones. `Via` and
       `Record-Route` are built from `connection->local_endpoint()` today

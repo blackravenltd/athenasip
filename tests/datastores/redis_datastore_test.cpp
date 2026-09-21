@@ -49,15 +49,16 @@ std::shared_ptr<types::Realm> make_realm(const std::string& name) {
   realm->id = 1;
   realm->nonce_secret = "secret";
   realm->registration_timeout = 3600;
+  realm->registration_minimum = 60;
   return realm;
 }
 
-std::shared_ptr<types::Subscriber> make_subscriber(uint64_t id, const std::string& uri) {
-  auto subscriber = std::make_shared<types::Subscriber>();
-  subscriber->id = id;
-  subscriber->identity = std::make_shared<types::SIPIdentity>(uri);
-  subscriber->ha1 = "deadbeef";
-  return subscriber;
+std::shared_ptr<types::Account> make_account(uint64_t id, const std::string& uri) {
+  auto account = std::make_shared<types::Account>();
+  account->id = id;
+  account->identity = std::make_shared<types::SIPIdentity>(uri);
+  account->ha1 = "deadbeef";
+  return account;
 }
 
 // Unique per run so repeated runs against the same Redis do not collide.
@@ -92,6 +93,7 @@ TEST(RedisDatastoreTest, RealmRoundTripsThroughRedis) {
   ASSERT_NE(found, nullptr);
   EXPECT_EQ(found->nonce_secret, "secret");
   EXPECT_EQ(found->registration_timeout, 3600u);
+  EXPECT_EQ(found->registration_minimum, 60u);
 
   auto changed = make_realm(name);
   changed->nonce_secret = "rotated";
@@ -120,50 +122,75 @@ TEST(RedisDatastoreTest, RealmListComesFromTheIndex) {
   EXPECT_EQ(datastore->realm_list().size(), before);
 }
 
-TEST(RedisDatastoreTest, SubscriberRoundTripsThroughRedis) {
+TEST(RedisDatastoreTest, AccountRoundTripsThroughRedis) {
   REQUIRE_REDIS(datastore);
   const auto realm = "subs-" + unique_suffix() + ".example";
   const auto uri = "sip:alice@" + realm;
 
-  auto subscriber = make_subscriber(4242, uri);
-  ASSERT_TRUE(datastore->subscriber_create(subscriber));
-  EXPECT_FALSE(datastore->subscriber_create(subscriber));
+  auto account = make_account(4242, uri);
+  ASSERT_TRUE(datastore->account_create(account));
+  EXPECT_FALSE(datastore->account_create(account));
 
-  auto found = datastore->subscriber_get(std::make_shared<types::SIPIdentity>(uri));
+  auto found = datastore->account_get(std::make_shared<types::SIPIdentity>(uri));
   ASSERT_NE(found, nullptr);
   EXPECT_EQ(found->id, 4242u);
   EXPECT_EQ(found->ha1, "deadbeef");
 
-  EXPECT_EQ(datastore->subscriber_list(realm).size(), 1u);
+  EXPECT_EQ(datastore->account_list(realm).size(), 1u);
 
-  EXPECT_TRUE(datastore->subscriber_delete(subscriber->identity));
-  EXPECT_EQ(datastore->subscriber_get(std::make_shared<types::SIPIdentity>(uri)), nullptr);
-  EXPECT_EQ(datastore->subscriber_list(realm).size(), 0u);
+  EXPECT_TRUE(datastore->account_delete(account->identity));
+  EXPECT_EQ(datastore->account_get(std::make_shared<types::SIPIdentity>(uri)), nullptr);
+  EXPECT_EQ(datastore->account_list(realm).size(), 0u);
 }
 
 TEST(RedisDatastoreTest, RegistrationsAreListedFromTheLocationIndex) {
   REQUIRE_REDIS(datastore);
   const auto realm = "loc-" + unique_suffix() + ".example";
-  auto subscriber = make_subscriber(5150, "sip:bob@" + realm);
+  auto account = make_account(5150, "sip:bob@" + realm);
 
-  ASSERT_TRUE(datastore->subscriber_create(subscriber));
+  ASSERT_TRUE(datastore->account_create(account));
 
   auto first = std::make_shared<types::SIPUri>("sip:bob@192.0.2.10:5060");
   auto second = std::make_shared<types::SIPUri>("sip:bob@10.0.0.4:5060");
 
-  ASSERT_TRUE(datastore->subscriber_register(subscriber, first, 3600, ""));
-  ASSERT_TRUE(datastore->subscriber_register(subscriber, second, 3600, ""));
+  ASSERT_TRUE(datastore->account_register(account, first, 3600, ""));
+  ASSERT_TRUE(datastore->account_register(account, second, 3600, ""));
 
   auto locations = datastore->location_list(5150);
   ASSERT_EQ(locations.size(), 2u);
-  for (const auto& location : locations) EXPECT_EQ(location.subscriber_id, 5150u);
+  for (const auto& location : locations) EXPECT_EQ(location.account_id, 5150u);
 
-  ASSERT_TRUE(datastore->subscriber_unregister(subscriber, first));
+  ASSERT_TRUE(datastore->account_unregister(account, first));
   EXPECT_EQ(datastore->location_list(5150).size(), 1u);
 
-  // Deleting the subscriber takes the remaining binding with it.
-  ASSERT_TRUE(datastore->subscriber_delete(subscriber->identity));
+  // Deleting the account takes the remaining binding with it.
+  ASSERT_TRUE(datastore->account_delete(account->identity));
   EXPECT_TRUE(datastore->location_list(5150).empty());
+}
+
+// The second credential makes the round trip, and an account without one reads back as
+// an account without one rather than as a broken row.
+TEST(RedisDatastoreTest, TheSha256CredentialRoundTripsAndIsOptional) {
+  REQUIRE_REDIS(datastore);
+  const auto realm = "sha-" + unique_suffix() + ".example";
+
+  auto both = make_account(4243, "sip:alice@" + realm);
+  both->ha1_sha256 = "sha256-hash";
+  ASSERT_TRUE(datastore->account_create(both));
+
+  auto found = datastore->account_get(std::make_shared<types::SIPIdentity>("sip:alice@" + realm));
+  ASSERT_NE(found, nullptr);
+  EXPECT_EQ(found->ha1_sha256, "sha256-hash");
+
+  auto md5_only = make_account(4244, "sip:bob@" + realm);
+  ASSERT_TRUE(datastore->account_create(md5_only));
+
+  auto imported = datastore->account_get(std::make_shared<types::SIPIdentity>("sip:bob@" + realm));
+  ASSERT_NE(imported, nullptr);
+  EXPECT_TRUE(imported->ha1_sha256.empty());
+
+  ASSERT_TRUE(datastore->account_delete(both->identity));
+  ASSERT_TRUE(datastore->account_delete(md5_only->identity));
 }
 
 // A binding written by one node has to be usable by another, which is the whole reason
@@ -172,9 +199,9 @@ TEST(RedisDatastoreTest, RegistrationsAreListedFromTheLocationIndex) {
 TEST(RedisDatastoreTest, RegistrationRoundTripsTheFlowAndTheNode) {
   REQUIRE_REDIS(datastore);
   const auto realm = "flow-" + unique_suffix() + ".example";
-  auto subscriber = make_subscriber(5151, "sip:bob@" + realm);
+  auto account = make_account(5151, "sip:bob@" + realm);
 
-  ASSERT_TRUE(datastore->subscriber_create(subscriber));
+  ASSERT_TRUE(datastore->account_create(account));
 
   types::Location binding;
   binding.contact = std::make_shared<types::SIPUri>("sip:bob@192.0.2.10:5060");
@@ -182,7 +209,7 @@ TEST(RedisDatastoreTest, RegistrationRoundTripsTheFlowAndTheNode) {
   binding.flow_id = "tcp://192.0.2.10:5060";
   binding.node_id = "node-a";
 
-  ASSERT_TRUE(datastore->subscriber_register(subscriber, binding, 3600));
+  ASSERT_TRUE(datastore->account_register(account, binding, 3600));
 
   auto locations = datastore->location_list(5151);
   ASSERT_EQ(locations.size(), 1u);
@@ -190,7 +217,7 @@ TEST(RedisDatastoreTest, RegistrationRoundTripsTheFlowAndTheNode) {
   EXPECT_EQ(locations[0].flow_id, "tcp://192.0.2.10:5060");
   EXPECT_EQ(locations[0].node_id, "node-a");
 
-  ASSERT_TRUE(datastore->subscriber_delete(subscriber->identity));
+  ASSERT_TRUE(datastore->account_delete(account->identity));
 }
 
 // A single node writes neither, and reading back an empty flow is not the same as
@@ -198,17 +225,17 @@ TEST(RedisDatastoreTest, RegistrationRoundTripsTheFlowAndTheNode) {
 TEST(RedisDatastoreTest, RegistrationWithoutAFlowLeavesItEmpty) {
   REQUIRE_REDIS(datastore);
   const auto realm = "noflow-" + unique_suffix() + ".example";
-  auto subscriber = make_subscriber(5152, "sip:bob@" + realm);
+  auto account = make_account(5152, "sip:bob@" + realm);
 
-  ASSERT_TRUE(datastore->subscriber_create(subscriber));
-  ASSERT_TRUE(datastore->subscriber_register(subscriber, std::make_shared<types::SIPUri>("sip:bob@192.0.2.11:5060"), 3600, ""));
+  ASSERT_TRUE(datastore->account_create(account));
+  ASSERT_TRUE(datastore->account_register(account, std::make_shared<types::SIPUri>("sip:bob@192.0.2.11:5060"), 3600, ""));
 
   auto locations = datastore->location_list(5152);
   ASSERT_EQ(locations.size(), 1u);
   EXPECT_TRUE(locations[0].flow_id.empty());
   EXPECT_TRUE(locations[0].node_id.empty());
 
-  ASSERT_TRUE(datastore->subscriber_delete(subscriber->identity));
+  ASSERT_TRUE(datastore->account_delete(account->identity));
 }
 
 TEST(RedisDatastoreTest, NonceRoundTripsAndIsRefusedWhenAlreadyExpired) {
@@ -264,7 +291,7 @@ TEST(RedisDatastoreTest, UpdateOfSomethingAbsentFails) {
   const auto suffix = unique_suffix();
 
   EXPECT_FALSE(datastore->realm_update(make_realm("absent-" + suffix + ".example")));
-  EXPECT_FALSE(datastore->subscriber_update(make_subscriber(1, "sip:nobody@absent-" + suffix + ".example")));
+  EXPECT_FALSE(datastore->account_update(make_account(1, "sip:nobody@absent-" + suffix + ".example")));
 
   auto call = std::make_shared<Call>();
   call->id = "absent-call-" + suffix;

@@ -16,7 +16,7 @@ A `Server` is responsible for listening on a specific transport protocol and net
 
 Servers are local to nodes and not shared between them.
 
-* The Server abstract class [server.h](src/servers/server.h)
+* The Server abstract class: [`src/servers/server.h`](../src/servers/server.h)
 
 ---
 
@@ -26,7 +26,9 @@ A `Connection` represents a transport-level communication path between AthenaSIP
 
 Connections are local to servers and not shared between them.
 
-* The Connection abstract class [server.h](src/servers/connection.h)
+A connection belongs to the thread its server's `io_context` runs on, and a socket is not safe for two threads at once. Everything that touches the stream - starting a read, starting a write, closing it - runs on `Connection::executor()`, and the Core strand hands the work over rather than doing it itself.
+
+* The Connection abstract class: [`src/servers/connection.h`](../src/servers/connection.h)
 
 ---
 
@@ -34,12 +36,17 @@ Connections are local to servers and not shared between them.
 
 A `Channel` is the first level to operate with SIP awareness. It builds upon `Connection` and is responsible for converting byte streams into complete SIP messages and vice versa. A channel manages message framing, parsing, and serialization. It forms the boundary between the transport layer and the SIP core. Importantly, it is not a SIP session or dialog, but simply a message-level conduit.
 
-A Channel is composed of exactly one connection.
+A Channel is composed of exactly one connection, and is known by one name: `transport://host:port`. That name is the key the channel registry files it under, the key `Core::channel_find` answers to, and the flow id a registration binding records (RFC 5626), so that a node holding a binding can find the connection again without re-resolving a Contact that, for a browser or a NAT'd client, resolves to nothing reachable.
 
-* The Channel class [channel.h](src/channel.h)
+A channel writes one message at a time. Two writes in flight on one socket interleave their bytes, so anything sent while a write is outstanding waits behind it.
+
+* The Channel class: [`src/channel.h`](../src/channel.h)
 
 ---
 
 ### Design Intent
 
 These abstractions ensure AthenaSIP remains transport-agnostic at its core. Nodes form the cluster, Servers manage listening and setup, Connections manage raw communication, and Channels manage protocol framing. This separation allows AthenaSIP to support multiple protocols cleanly and makes it easy to extend or replace components as needed.
+
+Above the transport are the transaction layer and the transaction users, which
+[`architecture.md`](architecture.md) describes.

@@ -75,16 +75,15 @@ struct Fixture {
     return future.get();
   }
 
-  bool register_binding(const std::shared_ptr<types::Subscriber>& subscriber, const std::shared_ptr<types::SIPUri>& contact,
-                        const std::shared_ptr<Channel>& channel, std::uint32_t expires_seconds) {
-    return await_on_strand(
-               [&](plugins::StatusHandler handler) { core->subscriber_register(subscriber, contact, channel, expires_seconds, "", std::move(handler)); })
+  bool register_binding(const std::shared_ptr<types::Account>& account, const std::shared_ptr<types::SIPUri>& contact, const std::shared_ptr<Channel>& channel,
+                        std::uint32_t expires_seconds) {
+    return await_on_strand([&](plugins::StatusHandler handler) { core->account_register(account, contact, channel, expires_seconds, "", std::move(handler)); })
         .ok;
   }
 
-  bool unregister_binding(const std::shared_ptr<types::Subscriber>& subscriber, const std::shared_ptr<types::SIPUri>& contact,
+  bool unregister_binding(const std::shared_ptr<types::Account>& account, const std::shared_ptr<types::SIPUri>& contact,
                           const std::shared_ptr<Channel>& channel) {
-    return await_on_strand([&](plugins::StatusHandler handler) { core->subscriber_unregister(subscriber, contact, channel, std::move(handler)); }).ok;
+    return await_on_strand([&](plugins::StatusHandler handler) { core->account_unregister(account, contact, channel, std::move(handler)); }).ok;
   }
 
   // Core is strand-confined, so tests reach it the same way the rest of the system
@@ -114,18 +113,18 @@ struct Fixture {
     return transaction;
   }
 
-  std::shared_ptr<types::Subscriber> seed_subscriber(uint64_t id, const std::string& uri) {
+  std::shared_ptr<types::Account> seed_account(uint64_t id, const std::string& uri) {
     auto realm = std::make_shared<types::Realm>("example.com");
     realm->id = 1;
     store->realm_create(realm);
 
-    auto subscriber = std::make_shared<types::Subscriber>();
-    subscriber->id = id;
-    subscriber->identity = std::make_shared<types::SIPIdentity>(uri);
-    subscriber->ha1 = "deadbeef";
-    store->subscriber_create(subscriber);
+    auto account = std::make_shared<types::Account>();
+    account->id = id;
+    account->identity = std::make_shared<types::SIPIdentity>(uri);
+    account->ha1 = "deadbeef";
+    store->account_create(account);
 
-    return subscriber;
+    return account;
   }
 };
 
@@ -213,29 +212,29 @@ TEST(CoreTest, ChannelCloseIsIdempotent) {
 
 // RFC 3261 10.3 step 7: a successful REGISTER stores the contact as a binding. Without
 // it the registrar has nothing to route to.
-TEST(CoreTest, SubscriberRegisterStoresTheContact) {
+TEST(CoreTest, AccountRegisterStoresTheContact) {
   Fixture f;
 
-  auto subscriber = f.seed_subscriber(7, "sip:alice@example.com");
+  auto account = f.seed_account(7, "sip:alice@example.com");
   auto contact = std::make_shared<types::SIPUri>("sip:alice@192.0.2.10:5060");
   auto channel = f.make_channel("192.0.2.10");
 
-  ASSERT_TRUE(f.register_binding(subscriber, contact, channel, 3600));
+  ASSERT_TRUE(f.register_binding(account, contact, channel, 3600));
 
   auto locations = f.store->location_list(7);
   ASSERT_EQ(locations.size(), 1u);
   EXPECT_EQ(locations[0].contact->host, "192.0.2.10");
 }
 
-TEST(CoreTest, SubscriberRegisterIsRepeatable) {
+TEST(CoreTest, AccountRegisterIsRepeatable) {
   Fixture f;
 
-  auto subscriber = f.seed_subscriber(7, "sip:alice@example.com");
+  auto account = f.seed_account(7, "sip:alice@example.com");
   auto contact = std::make_shared<types::SIPUri>("sip:alice@192.0.2.10:5060");
   auto channel = f.make_channel("192.0.2.10");
 
-  ASSERT_TRUE(f.register_binding(subscriber, contact, channel, 3600));
-  ASSERT_TRUE(f.register_binding(subscriber, contact, channel, 3600));
+  ASSERT_TRUE(f.register_binding(account, contact, channel, 3600));
+  ASSERT_TRUE(f.register_binding(account, contact, channel, 3600));
 
   EXPECT_EQ(f.store->location_list(7).size(), 1u);
 }
@@ -244,14 +243,14 @@ TEST(CoreTest, SubscriberRegisterIsRepeatable) {
 // A browser or a NAT'd client has a Contact that resolves to nothing reachable, so the
 // flow is the only way back to it, and a second node cannot ask for a flow without
 // knowing whose it is.
-TEST(CoreTest, SubscriberRegisterRecordsTheFlowItWasLearnedOver) {
+TEST(CoreTest, AccountRegisterRecordsTheFlowItWasLearnedOver) {
   Fixture f;
 
-  auto subscriber = f.seed_subscriber(7, "sip:alice@example.com");
+  auto account = f.seed_account(7, "sip:alice@example.com");
   auto contact = std::make_shared<types::SIPUri>("sip:alice@192.0.2.10:5060");
   auto channel = f.make_channel("192.0.2.10");
 
-  ASSERT_TRUE(f.register_binding(subscriber, contact, channel, 3600));
+  ASSERT_TRUE(f.register_binding(account, contact, channel, 3600));
 
   auto locations = f.store->location_list(7);
   ASSERT_EQ(locations.size(), 1u);
@@ -265,11 +264,11 @@ TEST(CoreTest, SubscriberRegisterRecordsTheFlowItWasLearnedOver) {
 TEST(CoreTest, TheRecordedFlowIdIsWhatChannelFindAnswersTo) {
   Fixture f;
 
-  auto subscriber = f.seed_subscriber(7, "sip:alice@example.com");
+  auto account = f.seed_account(7, "sip:alice@example.com");
   auto contact = std::make_shared<types::SIPUri>("sip:alice@192.0.2.10:5060");
   auto channel = f.make_channel("192.0.2.10");
 
-  ASSERT_TRUE(f.register_binding(subscriber, contact, channel, 3600));
+  ASSERT_TRUE(f.register_binding(account, contact, channel, 3600));
 
   auto locations = f.store->location_list(7);
   ASSERT_EQ(locations.size(), 1u);
@@ -282,13 +281,13 @@ TEST(CoreTest, TheRecordedFlowIdIsWhatChannelFindAnswersTo) {
 
 // A binding learned over no channel - a provisioned contact, or a REGISTER replayed by
 // another node - records no flow rather than an invented one.
-TEST(CoreTest, SubscriberRegisterWithoutAChannelRecordsNoFlow) {
+TEST(CoreTest, AccountRegisterWithoutAChannelRecordsNoFlow) {
   Fixture f;
 
-  auto subscriber = f.seed_subscriber(7, "sip:alice@example.com");
+  auto account = f.seed_account(7, "sip:alice@example.com");
   auto contact = std::make_shared<types::SIPUri>("sip:alice@192.0.2.10:5060");
 
-  ASSERT_TRUE(f.register_binding(subscriber, contact, nullptr, 3600));
+  ASSERT_TRUE(f.register_binding(account, contact, nullptr, 3600));
 
   auto locations = f.store->location_list(7);
   ASSERT_EQ(locations.size(), 1u);
@@ -297,19 +296,126 @@ TEST(CoreTest, SubscriberRegisterWithoutAChannelRecordsNoFlow) {
 }
 
 // Unregistering drops the binding, so nothing is left for target determination to find.
-TEST(CoreTest, SubscriberUnregisterDropsTheBinding) {
+TEST(CoreTest, AccountUnregisterDropsTheBinding) {
   Fixture f;
 
-  auto subscriber = f.seed_subscriber(7, "sip:alice@example.com");
+  auto account = f.seed_account(7, "sip:alice@example.com");
   auto contact = std::make_shared<types::SIPUri>("sip:alice@192.0.2.10:5060");
   auto channel = f.make_channel("192.0.2.10");
 
-  ASSERT_TRUE(f.register_binding(subscriber, contact, channel, 3600));
+  ASSERT_TRUE(f.register_binding(account, contact, channel, 3600));
   ASSERT_EQ(f.store->location_list(7).size(), 1u);
 
-  ASSERT_TRUE(f.unregister_binding(subscriber, contact, channel));
+  ASSERT_TRUE(f.unregister_binding(account, contact, channel));
 
   EXPECT_TRUE(f.store->location_list(7).empty());
+}
+
+// A socket belongs to the thread its server runs on, and asio sockets and beast's
+// WebSocket stream are not safe for two threads at once. The Core strand is a different
+// thread, so everything it wants done to the stream it hands over. Reaching in from the
+// strand is what tsan catches on a WebSocket whose peer is tearing down at the same
+// time, and it is the same defect on TCP and TLS whether or not tsan has seen it there.
+TEST(CoreTest, ChannelStartsItsReadOnTheConnectionsExecutor) {
+  Fixture f;
+
+  auto connection = std::make_shared<MockConnection>("tcp", "192.0.2.10");
+  connection->own_strand();
+
+  auto channel = std::make_shared<Channel>(f.logger, f.core, connection);
+  f.on_strand([&channel]() { channel->start(); });
+  f.settle();
+
+  EXPECT_TRUE(connection->read_on_own_executor);
+}
+
+TEST(CoreTest, ChannelStartsItsWriteOnTheConnectionsExecutor) {
+  Fixture f;
+
+  auto connection = std::make_shared<MockConnection>("tcp", "192.0.2.10");
+  connection->own_strand();
+
+  auto channel = std::make_shared<Channel>(f.logger, f.core, connection);
+  f.on_strand([&channel]() { channel->start(); });
+
+  auto message = std::make_shared<SIPMessage>();
+  message->header = std::make_shared<SIPHeader>();
+  message->header->type = SIPHeader::Type::Request;
+  message->header->request_method = "OPTIONS";
+  message->header->request_uri = std::make_shared<types::SIPUri>("sip:bob@example.com");
+
+  f.on_strand([&channel, &message]() { channel->send(message); });
+  f.settle();
+
+  ASSERT_EQ(connection->write_calls, 1);
+  EXPECT_TRUE(connection->write_on_own_executor);
+}
+
+// Closing is the case that bit: the far end goes away, the server's thread is inside the
+// stream finishing the read, and the node closes its end from the strand at the same
+// moment.
+TEST(CoreTest, ChannelTearsTheConnectionDownOnItsOwnExecutor) {
+  Fixture f;
+
+  auto connection = std::make_shared<MockConnection>("tcp", "192.0.2.10");
+  connection->own_strand();
+
+  auto channel = std::make_shared<Channel>(f.logger, f.core, connection);
+  f.on_strand([&channel]() { channel->start(); });
+
+  f.on_strand([&channel]() { channel->close(); });
+  f.settle();
+
+  ASSERT_EQ(connection->close_calls, 1);
+  EXPECT_TRUE(connection->is_open_on_own_executor);
+  EXPECT_TRUE(connection->shutdown_on_own_executor);
+  EXPECT_TRUE(connection->close_on_own_executor);
+}
+
+// Two outstanding writes on one socket interleave their bytes: asio leaves the caller
+// with two messages arriving as neither, and beast's WebSocket stream refuses the
+// second outright. A transaction sends one message at a time today, and a forking proxy
+// on one flow is what would find this.
+TEST(CoreTest, ASecondMessageWaitsForTheFirstWriteToFinish) {
+  Fixture f;
+
+  std::shared_ptr<MockConnection> connection;
+  auto channel = f.make_channel("192.0.2.10", &connection);
+  connection->defer_writes = true;
+
+  f.on_strand([&channel]() {
+    channel->write("FIRST\r\n");
+    channel->write("SECOND\r\n");
+  });
+  f.settle();
+
+  // Only the first one is on the wire.
+  EXPECT_EQ(connection->write_calls, 1);
+  EXPECT_EQ(connection->written, "FIRST\r\n");
+
+  // Answering it releases the second.
+  f.on_strand([&connection]() { connection->complete_write(); });
+  f.settle();
+
+  EXPECT_EQ(connection->write_calls, 2);
+  EXPECT_EQ(connection->written, "FIRST\r\nSECOND\r\n");
+}
+
+// async_write_some is not obliged to take the whole buffer. A short write that nobody
+// resumes is a truncated SIP message, which the far end either rejects or waits for
+// forever.
+TEST(CoreTest, AShortWriteIsResumedUntilTheMessageIsOut) {
+  Fixture f;
+
+  std::shared_ptr<MockConnection> connection;
+  auto channel = f.make_channel("192.0.2.10", &connection);
+  connection->write_limit = 4;
+
+  f.on_strand([&channel]() { channel->write("ABCDEFGHIJ"); });
+  f.settle();
+
+  EXPECT_EQ(connection->written, "ABCDEFGHIJ");
+  EXPECT_EQ(connection->write_calls, 3);
 }
 
 // Via is the proxy's, not the transport's: the transport must not invent one, or a

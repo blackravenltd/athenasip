@@ -136,6 +136,19 @@ class Authorization {
   /// Converts this header back into a std::string.
   /// The format will be:
   ///     <type> key=value, key="value", ...
+  // RFC 7616 section 3 and RFC 3261 25.1: whether a parameter is a token or a quoted
+  // string is fixed by the grammar, not by what its value happens to look like.
+  // algorithm, stale and nc are tokens, and quoting one is malformed - which is why
+  // this server could not send an algorithm at all until now.
+  //
+  // qop is the awkward one: quoted in a challenge and a token in the credentials a
+  // client sends back. This server writes challenges, so it is quoted here; a UAC
+  // sending its own credentials will have to say which it is building.
+  static bool is_token_parameter(const std::string& name) {
+    const auto lowered = Util::to_lower(name);
+    return lowered == "algorithm" || lowered == "stale" || lowered == "nc";
+  }
+
   std::string to_string() const {
     std::string result = type;
     bool first = true;
@@ -146,6 +159,12 @@ class Authorization {
       } else {
         result += ", ";
       }
+
+      if (is_token_parameter(kv.first)) {
+        result += kv.first + "=" + kv.second;
+        continue;
+      }
+
       result += kv.first + "=\"" + kv.second + "\"";
     }
     return result;

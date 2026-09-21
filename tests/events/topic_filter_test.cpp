@@ -77,17 +77,17 @@ TEST(TopicFilterTest, LevelCountMustMatchWithoutMultiLevelWildcard) {
   EXPECT_FALSE(TopicFilter::matches("nodes/sip-0001/status", "nodes/sip-0001"));
 }
 
-// This is the shape that made the subscriber callback fire on the node's own status
-// publish: a trailing '#' under the subscriber prefix matches every sibling topic.
-TEST(TopicFilterTest, SubscriberHashFilterMatchesStatusAndInvite) {
-  const std::string hash = "subscriber/sip:alice@example.com/#";
-  EXPECT_TRUE(TopicFilter::matches(hash, "subscriber/sip:alice@example.com/status"));
-  EXPECT_TRUE(TopicFilter::matches(hash, "subscriber/sip:alice@example.com/invite"));
+// This is the shape that made the account callback fire on the node's own status
+// publish: a trailing '#' under the account prefix matches every sibling topic.
+TEST(TopicFilterTest, AccountHashFilterMatchesStatusAndInvite) {
+  const std::string hash = "account/sip:alice@example.com/#";
+  EXPECT_TRUE(TopicFilter::matches(hash, "account/sip:alice@example.com/status"));
+  EXPECT_TRUE(TopicFilter::matches(hash, "account/sip:alice@example.com/invite"));
 
   // The narrow filter the Core actually uses takes the invite topic only.
-  const std::string invite = "subscriber/sip:alice@example.com/invite";
-  EXPECT_TRUE(TopicFilter::matches(invite, "subscriber/sip:alice@example.com/invite"));
-  EXPECT_FALSE(TopicFilter::matches(invite, "subscriber/sip:alice@example.com/status"));
+  const std::string invite = "account/sip:alice@example.com/invite";
+  EXPECT_TRUE(TopicFilter::matches(invite, "account/sip:alice@example.com/invite"));
+  EXPECT_FALSE(TopicFilter::matches(invite, "account/sip:alice@example.com/status"));
 }
 
 TEST(TopicFilterTest, InvalidArgumentsNeverMatch) {

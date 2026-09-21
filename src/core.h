@@ -52,7 +52,7 @@ class Proxy;
 class Registrar;
 
 // Core runs on a single strand. Every registry it owns - channels, transactions, calls
-// and the subscriber-to-channel index - is touched only from that strand, so none of
+// and the account-to-channel index - is touched only from that strand, so none of
 // them needs a lock. Servers each run their own io_context on their own thread and post
 // into the strand rather than reaching into Core directly.
 //
@@ -99,19 +99,18 @@ class Core : public std::enable_shared_from_this<Core> {
   void server_start_all();
   void server_stop_all();
 
-  // Realms, subscribers and nonces all live in the datastore, which is async by
+  // Realms, accounts and nonces all live in the datastore, which is async by
   // contract, so these are too: the handler runs back on the strand once the datastore
   // answers. Nothing here blocks, because blocking here would stop every call on the
   // node rather than only the one that asked.
   void realm_get_by_name(std::string realm, plugins::Handler<std::shared_ptr<Realm>> handler);
 
-  // Subscribers
-  void subscriber_get(std::shared_ptr<SIPIdentity> identity, plugins::Handler<std::shared_ptr<Subscriber>> handler);
-  void subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel,
-                           std::uint32_t expires_seconds, std::string path, plugins::StatusHandler handler);
-  void subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel,
-                             plugins::StatusHandler handler);
-  void location_list(std::uint64_t subscriber_id, plugins::Handler<std::vector<types::Location>> handler);
+  // Accounts
+  void account_get(std::shared_ptr<SIPIdentity> identity, plugins::Handler<std::shared_ptr<Account>> handler);
+  void account_register(std::shared_ptr<Account> account, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel, std::uint32_t expires_seconds,
+                        std::string path, plugins::StatusHandler handler);
+  void account_unregister(std::shared_ptr<Account> account, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel, plugins::StatusHandler handler);
+  void location_list(std::uint64_t account_id, plugins::Handler<std::vector<types::Location>> handler);
 
   // Channels
 
@@ -125,7 +124,7 @@ class Core : public std::enable_shared_from_this<Core> {
   bool channel_register(std::string endpoint, std::shared_ptr<Channel> channel);
   bool channel_unregister(std::string endpoint, std::shared_ptr<Channel> channel);
   void channel_close_all();
-  std::shared_ptr<Channel> subscriber_get_channel(std::shared_ptr<Subscriber> subscriber);
+  std::shared_ptr<Channel> account_get_channel(std::shared_ptr<Account> account);
 
   // The live flow to a next hop, or null when this node has none (RFC 3261 16.6 step 7).
   // Channels are filed under channel_key, which is what a next hop resolves to once its
@@ -234,7 +233,7 @@ class Core : public std::enable_shared_from_this<Core> {
 
   // All of the following are strand-confined. No locks.
   std::unordered_map<std::string, std::shared_ptr<Channel>> _channels;
-  std::unordered_map<uint64_t, std::shared_ptr<Channel>> _channels_by_subscriber;
+  std::unordered_map<uint64_t, std::shared_ptr<Channel>> _channels_by_account;
   std::set<std::string> _local_addresses;
 
   std::vector<std::shared_ptr<Server>> _servers;
