@@ -28,13 +28,10 @@ class Config {
 
   // SIP configuration
   std::string sip_node_id;
-  uint32_t sip_registration_timeout = 5000;
 
   // Allow SIP over an unencrypted transport. WSS is required for browsers, and TLS is
   // what a cluster talks, so this is the switch that permits plain UDP, TCP and WS.
   bool sip_allow_unencrypted = true;
-
-  std::string sip_event_prefix;
 
   // The address this node tells the outside world to reach it on. A node bound to
   // 0.0.0.0 knows every address it answers on and none that a client should use, so
@@ -177,13 +174,6 @@ class Config {
 
   // Media configuration
   std::string media_url = "builtin://";  // or "rtpengine://host:port"
-
-  // Built-in RTP relay configuration
-  bool rtprelay_enable = false;
-  std::string rtprelay_address;
-  std::string rtprelay_public_address;
-  uint16_t rtprelay_min_port = 22000;
-  uint16_t rtprelay_max_port = 23000;
 
   // HTTP configuration
   std::string http_address;

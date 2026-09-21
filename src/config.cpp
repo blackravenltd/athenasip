@@ -44,7 +44,6 @@ bool Config::load_from_yaml(const std::string& filename) {
   // Previously present in the YAML and the docs but never read, so setting it had no
   // effect at all.
   if (sip["allow_unencrypted"]) sip_allow_unencrypted = sip["allow_unencrypted"].as<bool>();
-  if (sip["event_prefix"]) sip_event_prefix = sip["event_prefix"].as<std::string>();
   if (sip["public_address"]) sip_public_address = sip["public_address"].as<std::string>();
   if (sip["media_timeout"]) sip_media_timeout = sip["media_timeout"].as<uint32_t>();
   if (sip["max_call_duration"]) sip_max_call_duration = sip["max_call_duration"].as<uint32_t>();
@@ -285,46 +284,6 @@ bool Config::load_from_yaml(const std::string& filename) {
     } else {
       _logger->error("Missing 'events.url'");
       return false;
-    }
-  }
-
-  // --- Parse the 'rtprelay' section ---
-  YAML::Node rtprelay = config["rtprelay"];
-  if (rtprelay) {
-    if (rtprelay["enable"])
-      rtprelay_enable = rtprelay["enable"].as<bool>();
-    else
-      rtprelay_enable = true;
-
-    if (rtprelay["address"])
-      rtprelay_address = rtprelay["address"].as<std::string>();
-    else
-      rtprelay_address = "0.0.0.0";
-
-    if (rtprelay["public_address"])
-      rtprelay_public_address = rtprelay["public_address"].as<std::string>();
-    else
-      rtprelay_public_address = "0.0.0.0";
-
-    // The documented spelling is port_min / port_max. This read min_port / max_port,
-    // so every configured range was silently ignored and the defaults used.
-    if (rtprelay["port_min"]) {
-      try {
-        rtprelay_min_port = rtprelay["port_min"].as<uint16_t>();
-      } catch (const std::exception& e) {
-        _logger->error("Invalid value for 'rtprelay.port_min': " + std::string(e.what()));
-      }
-    } else {
-      rtprelay_min_port = 22000;
-    }
-    if (rtprelay["port_max"]) {
-      try {
-        rtprelay_max_port = rtprelay["port_max"].as<uint16_t>();
-      } catch (const std::exception& e) {
-        _logger->error("Invalid value for 'rtprelay.port_max': " + std::string(e.what()));
-      }
-    } else {
-      rtprelay_max_port = 23000;
     }
   }
 
