@@ -26,7 +26,7 @@ void TCPServer::start() {
 
   // Do the first start_accept on that thread
   boost::asio::post(_io_context, [this]() {
-    _logger->info("Listening on " + _acceptor.local_endpoint().address().to_string() + ":" + std::to_string(_port) + " (tcp://)");
+    _logger->info("Listening on " + _acceptor.local_endpoint().address().to_string() + ":" + std::to_string(_acceptor.local_endpoint().port()) + " (tcp://)");
     start_accept();
   });
 

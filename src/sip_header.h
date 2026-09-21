@@ -108,6 +108,12 @@ class SIPHeader {
   std::string to_string() const;
   std::string first_line() const;
 
+  // What arrived, for a log line. first_line() is for serialisation and throws on a
+  // request whose start line did not parse, and a log line is not allowed to be the
+  // thing that kills a node: the read handler that would carry that exception has the
+  // process's only stack under it.
+  std::string summary() const;
+
   // Returns true if there is at least one header with the given field name.
   bool contains(const std::string& field) const;
 
