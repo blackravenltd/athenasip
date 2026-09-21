@@ -12,9 +12,8 @@
 #include "headers/authorization_header.h"
 #include "headers/sip_identity_header.h"
 #include "headers/uint_header.h"
-#include "util.h"
-
 #include "helpers/core_fixture_helper.h"
+#include "util.h"
 
 using namespace athenasip;
 using athenasip::headers::AuthorizationHeader;
@@ -36,7 +35,7 @@ struct Fixture : CoreFixture {
 
   Fixture() {
     seed_realm("example.com");
-    seed_subscriber(7, "sip:alice@example.com", kHa1);
+    seed_account(7, "sip:alice@example.com", kHa1);
     channel = make_channel("192.0.2.10", &connection);
   }
 
@@ -119,9 +118,9 @@ TEST(RegistrarTest, ARegisterForAnUnservedDomainIs404) {
   EXPECT_NE(f.response_with(f.connection, 404), nullptr);
 }
 
-// A subscriber that does not exist inside a realm we do serve is challenged rather than
+// An account that does not exist inside a realm we do serve is challenged rather than
 // refused, so a REGISTER sweep cannot tell an absent account from a wrong password.
-TEST(RegistrarTest, AnUnknownSubscriberInAServedRealmIsChallenged) {
+TEST(RegistrarTest, AnUnknownAccountInAServedRealmIsChallenged) {
   Fixture f;
 
   const auto nonce = f.fresh_nonce();

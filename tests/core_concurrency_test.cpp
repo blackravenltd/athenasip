@@ -132,9 +132,9 @@ TEST(CoreConcurrencyTest, ChannelRegistrySurvivesConcurrentChannels) {
   EXPECT_NO_THROW(f.core->call_on_strand([&]() { f.core->channel_close_all(); }));
 }
 
-// subscriber_get_channel used operator[], which inserts an empty entry for an unknown
-// subscriber: a mutation inside a getter, and one that grew the map under lookup load.
-TEST(CoreConcurrencyTest, SubscriberChannelLookupIsSafeAndDoesNotInsert) {
+// account_get_channel used operator[], which inserts an empty entry for an unknown
+// account: a mutation inside a getter, and one that grew the map under lookup load.
+TEST(CoreConcurrencyTest, AccountChannelLookupIsSafeAndDoesNotInsert) {
   ConcurrentFixture f;
   std::vector<std::thread> threads;
   std::atomic<int> found{0};
@@ -142,17 +142,17 @@ TEST(CoreConcurrencyTest, SubscriberChannelLookupIsSafeAndDoesNotInsert) {
   for (int t = 0; t < kThreads; ++t) {
     threads.emplace_back([&f, &found, t]() {
       for (int i = 0; i < kIterations; ++i) {
-        auto subscriber = std::make_shared<types::Subscriber>();
-        subscriber->id = static_cast<uint64_t>((t * kIterations) + i);
-        subscriber->identity = std::make_shared<types::SIPIdentity>("sip:nobody@example.com");
+        auto account = std::make_shared<types::Account>();
+        account->id = static_cast<uint64_t>((t * kIterations) + i);
+        account->identity = std::make_shared<types::SIPIdentity>("sip:nobody@example.com");
 
-        if (f.core->call_on_strand([&]() { return f.core->subscriber_get_channel(subscriber); }) != nullptr) found.fetch_add(1);
+        if (f.core->call_on_strand([&]() { return f.core->account_get_channel(account); }) != nullptr) found.fetch_add(1);
       }
     });
   }
 
   for (auto& thread : threads) thread.join();
 
-  // No subscriber was ever registered, so no lookup can find a channel.
+  // No account was ever registered, so no lookup can find a channel.
   EXPECT_EQ(found.load(), 0);
 }

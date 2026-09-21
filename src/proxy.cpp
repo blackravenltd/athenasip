@@ -297,25 +297,25 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
     // holds for it are the target set.
     auto identity = std::make_shared<SIPIdentity>(request->header->request_uri->to_string());
 
-    core->subscriber_get(identity, [this, self, context](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
+    core->account_get(identity, [this, self, context](plugins::Result<std::shared_ptr<types::Account>> found) {
       auto core = _core.lock();
       if (!core) return;
 
       const auto& request = context->request;
 
       if (!found.ok) {
-        _logger->error("Could not read the subscriber for " + request->header->request_uri->to_string() + " - " + found.error);
+        _logger->error("Could not read the account for " + request->header->request_uri->to_string() + " - " + found.error);
         return _send_status(context->server, request, 500, "Server Internal Error");
       }
 
       if (!found.value) {
-        _logger->info("No subscriber for " + request->header->request_uri->to_string() + " - 404");
+        _logger->info("No account for " + request->header->request_uri->to_string() + " - 404");
         return _send_status(context->server, request, 404, "Not Found");
       }
 
-      auto subscriber = found.value;
+      auto account = found.value;
 
-      core->location_list(subscriber->id, [this, self, context, subscriber](plugins::Result<std::vector<types::Location>> bindings) {
+      core->location_list(account->id, [this, self, context, account](plugins::Result<std::vector<types::Location>> bindings) {
         auto core = _core.lock();
         if (!core) return;
 
@@ -331,10 +331,10 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
           return _send_status(context->server, request, 480, "Temporarily Unavailable");
         }
 
-        // One node, one flow per subscriber: the request goes back down the connection
+        // One node, one flow per account: the request goes back down the connection
         // the callee registered on. Per-binding flow routing is RFC 5626, and
         // Location::flow_id exists for it.
-        auto flow = core->subscriber_get_channel(subscriber);
+        auto flow = core->account_get_channel(account);
 
         for (const auto& binding : bindings.value) {
           Target target;

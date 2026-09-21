@@ -14,7 +14,7 @@
 #include "sip_identity.h"
 
 namespace athenasip::types {
-class Subscriber {
+class Account {
  public:
   uint64_t id;
   std::shared_ptr<SIPIdentity> identity;

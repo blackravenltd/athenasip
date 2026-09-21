@@ -12,7 +12,6 @@
 #include "headers/sip_identity_header.h"
 #include "headers/uint_header.h"
 #include "headers/via_header.h"
-
 #include "helpers/proxy_fixture_helper.h"
 
 using namespace athenasip;
@@ -295,7 +294,7 @@ TEST(ProxyRouteTest, ARequestThatComesBackChangedIsASpiralAndNot482) {
 
   EXPECT_EQ(f.response_with(f.caller_connection, 482), nullptr);
 
-  // It was processed as an ordinary request: nobody@example.com has no subscriber.
+  // It was processed as an ordinary request: nobody@example.com has no account.
   EXPECT_NE(f.response_with(f.caller_connection, 404), nullptr);
 }
 

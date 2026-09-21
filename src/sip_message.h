@@ -12,8 +12,8 @@
 #include <string>
 
 #include "sip_header.h"
+#include "types/account.h"
 #include "types/sip_uri.h"
-#include "types/subscriber.h"
 #include "util.h"
 
 using namespace athenasip::types;
@@ -37,7 +37,7 @@ class SIPMessage {
   uint16_t source_port;
   std::weak_ptr<Channel> channel;
   std::weak_ptr<Call> call;
-  std::weak_ptr<Subscriber> subscriber;
+  std::weak_ptr<Account> account;
   std::shared_ptr<SIPUri> contact;
   bool authenticated = false;
 
