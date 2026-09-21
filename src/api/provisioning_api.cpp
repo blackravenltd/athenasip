@@ -123,6 +123,7 @@ void ProvisioningAPI::_realm_create(RouteContext context) {
 
   if (const auto expiry = uint_field(*body, "nonce_expiry")) realm->nonce_expiry = *expiry;
   if (const auto timeout = uint_field(*body, "registration_timeout")) realm->registration_timeout = *timeout;
+  if (const auto minimum = uint_field(*body, "registration_minimum")) realm->registration_minimum = *minimum;
 
   auto self = shared_from_this();
   _datastore->realm_create(_executor, realm, [self, context, realm](plugins::Status status) mutable {
@@ -160,6 +161,7 @@ void ProvisioningAPI::_realm_update(RouteContext context) {
     if (const auto secret = string_field(*body, "nonce_secret")) realm->nonce_secret = *secret;
     if (const auto expiry = uint_field(*body, "nonce_expiry")) realm->nonce_expiry = *expiry;
     if (const auto timeout = uint_field(*body, "registration_timeout")) realm->registration_timeout = *timeout;
+    if (const auto minimum = uint_field(*body, "registration_minimum")) realm->registration_minimum = *minimum;
 
     self->_datastore->realm_update(self->_executor, realm, [context, realm](plugins::Status status) mutable {
       if (!status.ok) {
@@ -550,6 +552,7 @@ boost::json::object ProvisioningAPI::_realm_json(const types::Realm& realm) {
   object["id"] = realm.id;
   object["nonce_expiry"] = realm.nonce_expiry;
   object["registration_timeout"] = realm.registration_timeout;
+  object["registration_minimum"] = realm.registration_minimum;
 
   // nonce_secret is deliberately absent. It is the key this node mints nonces with, and
   // an API that hands it back is an API that leaks it into every log that records a

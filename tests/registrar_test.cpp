@@ -77,6 +77,14 @@ struct Fixture : CoreFixture {
     auto realm = store->realm_get_by_name("example.com");
     return mint_nonce(realm);
   }
+
+  // RFC 3261 10.3 step 7's registrar-configured minimum. It is off on a new realm, so a
+  // test that wants one has to say so.
+  void set_registration_minimum(std::uint32_t minimum) {
+    auto realm = store->realm_get_by_name("example.com");
+    realm->registration_minimum = minimum;
+    store->realm_update(realm);
+  }
 };
 
 }  // namespace
@@ -432,4 +440,104 @@ TEST(RegistrarTest, ARetransmittedRegisterIsAnsweredWithoutReachingTheRegistrarA
   ASSERT_NE(first, nullptr);
   ASSERT_NE(second, nullptr);
   EXPECT_EQ(first->value->fields["nonce"], second->value->fields["nonce"]);
+}
+
+// RFC 3261 10.3 step 7: a registrar may refuse an interval shorter than it is willing to
+// honour, and the refusal "MUST contain a Min-Expires header field that states the
+// minimum expiration interval the registrar is willing to honor". Capping the expiry
+// silently, which is what this did before, is legal but leaves a client that wanted a
+// short registration with no way to learn what it may ask for.
+TEST(RegistrarTest, AnIntervalBelowTheRealmMinimumIsRefusedWithMinExpires) {
+  Fixture f;
+  f.set_registration_minimum(120);
+
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "30"));
+
+  auto response = f.response_with(f.connection, 423);
+  ASSERT_NE(response, nullptr);
+  EXPECT_EQ(response->header->response_message, "Interval Too Brief");
+
+  ASSERT_TRUE(response->header->contains("Min-Expires"));
+  auto minimum = response->header->headers_map["Min-Expires"][0]->as<UIntHeader>();
+  ASSERT_NE(minimum, nullptr);
+  EXPECT_EQ(minimum->value, 120u);
+
+  // "It then skips the remaining steps": the binding is not written.
+  EXPECT_TRUE(f.store->location_list(7).empty());
+}
+
+// The interval can also arrive on the Contact rather than in an Expires header, and step
+// 7 reads that one first.
+TEST(RegistrarTest, AContactExpiresParameterBelowTheMinimumIsRefusedToo) {
+  Fixture f;
+  f.set_registration_minimum(120);
+
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "", "<sip:alice@192.0.2.10:5060>;expires=30"));
+
+  EXPECT_NE(f.response_with(f.connection, 423), nullptr);
+  EXPECT_TRUE(f.store->location_list(7).empty());
+}
+
+// "If and only if the requested expiration interval is greater than zero AND smaller
+// than one hour AND less than a registrar-configured minimum". An hour is long enough
+// however the realm is configured.
+TEST(RegistrarTest, AnIntervalOfAnHourIsNeverTooBrief) {
+  Fixture f;
+  f.set_registration_minimum(7200);
+
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "3600"));
+
+  EXPECT_NE(f.response_with(f.connection, 200), nullptr);
+  EXPECT_EQ(f.store->location_list(7).size(), 1u);
+}
+
+// Zero is a removal (10.2.1.3), not a registration that is too short to be worth
+// keeping, and refusing it would leave a client unable to unregister.
+TEST(RegistrarTest, AZeroExpiryIsNeverTooBrief) {
+  Fixture f;
+  f.set_registration_minimum(120);
+
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "600"));
+  ASSERT_EQ(f.store->location_list(7).size(), 1u);
+
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "0", "", "z9hG4bK-reg-2"));
+
+  EXPECT_NE(f.response_with(f.connection, 200), nullptr);
+  EXPECT_TRUE(f.store->location_list(7).empty());
+}
+
+// The RFC's own advice is that a registrar should accept brief registrations, so a realm
+// that has not been given a minimum honours whatever it is asked for.
+TEST(RegistrarTest, WithNoMinimumABriefRegistrationIsGranted) {
+  Fixture f;
+
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "30"));
+
+  auto response = f.response_with(f.connection, 200);
+  ASSERT_NE(response, nullptr);
+
+  auto expires = response->header->headers_map["Expires"][0]->as<UIntHeader>();
+  ASSERT_NE(expires, nullptr);
+  EXPECT_EQ(expires->value, 30u);
+}
+
+// Step 6 skips to the last step when there is no Contact, so step 7 never runs: a query
+// for the current bindings carries an Expires that is nobody's registration.
+TEST(RegistrarTest, AQueryIsNotRefusedAsTooBrief) {
+  Fixture f;
+  f.set_registration_minimum(120);
+
+  std::string raw = "REGISTER sip:example.com SIP/2.0\r\n";
+  raw += "Via: SIP/2.0/UDP 192.0.2.10:5060;branch=z9hG4bK-query\r\n";
+  raw += "From: <sip:alice@example.com>;tag=alice\r\n";
+  raw += "To: <sip:alice@example.com>\r\n";
+  raw += "Call-ID: call-registrar\r\n";
+  raw += "CSeq: 1 REGISTER\r\n";
+  raw += "Expires: 30\r\n";
+  raw += "Authorization: " + f.credentials(f.fresh_nonce()) + "\r\n";
+  raw += "\r\n";
+
+  f.receive(f.channel, raw);
+
+  EXPECT_NE(f.response_with(f.connection, 200), nullptr);
 }

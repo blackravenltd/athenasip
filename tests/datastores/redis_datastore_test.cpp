@@ -49,6 +49,7 @@ std::shared_ptr<types::Realm> make_realm(const std::string& name) {
   realm->id = 1;
   realm->nonce_secret = "secret";
   realm->registration_timeout = 3600;
+  realm->registration_minimum = 60;
   return realm;
 }
 
@@ -92,6 +93,7 @@ TEST(RedisDatastoreTest, RealmRoundTripsThroughRedis) {
   ASSERT_NE(found, nullptr);
   EXPECT_EQ(found->nonce_secret, "secret");
   EXPECT_EQ(found->registration_timeout, 3600u);
+  EXPECT_EQ(found->registration_minimum, 60u);
 
   auto changed = make_realm(name);
   changed->nonce_secret = "rotated";

@@ -140,8 +140,14 @@ moved out of `Channel`. What it deliberately left for later, so it is not lost:
 - [ ] Serial forking tries each binding in turn but sends every attempt down the one flow
       the subscriber registered on, because that is all a single node knows. Per-binding
       flow routing is RFC 5626 in M3, and `Location.flow_id` exists for it.
-- [ ] 423 Interval Too Brief with `Min-Expires` (10.3 step 7). The registrar caps the
-      expiry rather than refusing a short one, which is legal but not the whole rule.
+- [x] 423 Interval Too Brief with `Min-Expires`, done on 2026-09-21. `Realm` grew a
+      `registration_minimum` beside its `registration_timeout`, provisioned over the API
+      and zero by default, because the RFC's own advice in step 7 is that a registrar
+      should accept brief registrations unless the refreshes are costing it something.
+      When it is set, the three conditions are all of them: greater than zero, under an
+      hour, and under the minimum - a zero expiry is a removal and an hour is never too
+      brief. The refusal quotes the minimum in `Min-Expires`, which is what makes it
+      something a client can act on, and registers none of the contacts.
 
 ### Step 2 - Plugin contract v1
 

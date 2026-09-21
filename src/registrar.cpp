@@ -39,6 +39,14 @@ bool is_star_contact(const std::shared_ptr<SIPHeader>& header) {
   return contact->value->star;
 }
 
+// RFC 3261 10.3 step 7 draws the line itself: an interval of an hour or more is never
+// too brief, whatever minimum a realm is configured with.
+constexpr std::uint32_t kNeverTooBrief = 3600;
+
+// The longest registration granted, and the default asked for, when the realm names no
+// maximum of its own.
+constexpr std::uint32_t kDefaultMaximumExpiry = 3600;
+
 }  // namespace
 
 Registrar::Registrar(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<Core> core)
@@ -183,9 +191,12 @@ void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared
   auto core = _core.lock();
   if (!core) return;
 
-  const auto expires = _requested_expiry(request, realm);
+  const auto requested = _requested_expiry(request, realm);
+  const auto expires = _granted_expiry(requested, realm);
 
   // A REGISTER with no Contact is a query for the current bindings (RFC 3261 10.2.2).
+  // Step 6 skips to the last step for one of those, so step 7 never runs and there is
+  // no interval to find too brief.
   if (!request->header->contains("Contact")) {
     return _send_ok(transaction, request, account, expires);
   }
@@ -222,19 +233,24 @@ void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared
     if (contact == nullptr || contact->value == nullptr || contact->value->uri == nullptr) continue;
 
     // A per-contact expires parameter overrides the Expires header for that one binding.
-    auto contact_expires = expires;
+    auto contact_requested = requested;
     const auto tag = contact->value->tags.find("expires");
     if (tag != contact->value->tags.end()) {
       try {
-        contact_expires = static_cast<std::uint32_t>(std::stoul(tag->second));
+        contact_requested = static_cast<std::uint32_t>(std::stoul(tag->second));
       } catch (const std::exception&) {
         return _send_status(transaction, request, 400, "Bad Request");
       }
-
-      if (realm->registration_timeout > 0) contact_expires = std::min(contact_expires, realm->registration_timeout);
     }
 
-    bindings->push_back(Binding{contact->value->uri, contact_expires});
+    // Step 7 refuses the whole request on the first contact it will not honour, rather
+    // than registering some of them: "It then skips the remaining steps."
+    if (_is_too_brief(contact_requested, realm)) {
+      _logger->info("REGISTER asked for " + std::to_string(contact_requested) + "s, below the realm minimum - 423");
+      return _send_interval_too_brief(transaction, request, realm);
+    }
+
+    bindings->push_back(Binding{contact->value->uri, _granted_expiry(contact_requested, realm)});
   }
 
   _write_bindings(request, transaction, account, bindings, 0, expires);
@@ -276,15 +292,13 @@ void Registrar::_write_bindings(std::shared_ptr<SIPMessage> request, std::shared
 }
 
 std::uint32_t Registrar::_requested_expiry(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<types::Realm>& realm) const {
-  const std::uint32_t maximum = realm && realm->registration_timeout > 0 ? realm->registration_timeout : 3600;
-
   if (request->header->contains("Contact")) {
     auto contact = request->header->headers_map["Contact"][0]->as<SIPIdentityHeader>();
     if (contact != nullptr && contact->value != nullptr) {
       const auto tag = contact->value->tags.find("expires");
       if (tag != contact->value->tags.end()) {
         try {
-          return std::min(static_cast<std::uint32_t>(std::stoul(tag->second)), maximum);
+          return static_cast<std::uint32_t>(std::stoul(tag->second));
         } catch (const std::exception&) {
           // Fall through to the Expires header.
         }
@@ -294,10 +308,27 @@ std::uint32_t Registrar::_requested_expiry(const std::shared_ptr<SIPMessage>& re
 
   if (request->header->contains("Expires")) {
     auto expires = request->header->headers_map["Expires"][0]->as<UIntHeader>();
-    if (expires != nullptr) return std::min(static_cast<std::uint32_t>(expires->value), maximum);
+    if (expires != nullptr) return static_cast<std::uint32_t>(expires->value);
   }
 
-  return maximum;
+  // "If there is neither, a locally-configured default value MUST be taken as the
+  // requested expiration." The realm's own maximum is that default.
+  return realm && realm->registration_timeout > 0 ? realm->registration_timeout : kDefaultMaximumExpiry;
+}
+
+std::uint32_t Registrar::_granted_expiry(std::uint32_t requested, const std::shared_ptr<types::Realm>& realm) const {
+  const std::uint32_t maximum = realm && realm->registration_timeout > 0 ? realm->registration_timeout : kDefaultMaximumExpiry;
+  return std::min(requested, maximum);
+}
+
+bool Registrar::_is_too_brief(std::uint32_t requested, const std::shared_ptr<types::Realm>& realm) const {
+  if (!realm || realm->registration_minimum == 0) return false;
+
+  // "If and only if the requested expiration interval is greater than zero AND smaller
+  // than one hour AND less than a registrar-configured minimum". Zero is a removal, not
+  // a short registration, and an hour is long enough by the RFC's own reckoning however
+  // the realm is configured.
+  return requested > 0 && requested < kNeverTooBrief && requested < realm->registration_minimum;
 }
 
 std::string Registrar::_path_of(const std::shared_ptr<SIPMessage>& request) const {
@@ -399,6 +430,20 @@ void Registrar::_send_status(const std::shared_ptr<transactions::TransactionBase
   auto response = request->generate_response();
   response->header->response_code = code;
   response->header->response_message = reason;
+
+  transaction->send(response);
+}
+
+void Registrar::_send_interval_too_brief(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
+                                         const std::shared_ptr<types::Realm>& realm) {
+  auto response = request->generate_response();
+  response->header->response_code = 423;
+  response->header->response_message = "Interval Too Brief";
+
+  // "This response MUST contain a Min-Expires header field that states the minimum
+  // expiration interval the registrar is willing to honor." Without it the client has
+  // nothing to retry with, which is the whole reason 423 is not just a 400.
+  response->header->add("Min-Expires", std::make_shared<UIntHeader>(realm ? realm->registration_minimum : 0));
 
   transaction->send(response);
 }
