@@ -83,6 +83,27 @@ Only calls this node anchors are covered. Where the media engine declined the de
 - a WebRTC offer at the plain-RTP relay - or media otherwise goes end to end, there is
 nothing to observe and the call is left alone.
 
+#### `session_expires`
+
+The session interval this node offers a call that asked for none, in seconds - Defaults to
+`1800`. Zero leaves such a call without one.
+
+RFC 4028 section 8.1 lets a proxy add a `Session-Expires` to a request that carried none,
+which is how a call gets an expiry when the caller never thought to ask for one. It is
+worth having alongside `media_timeout` because the two cover different gaps: the media
+sweep only sees calls this node anchors, and this only helps where the far end implements
+RFC 4028.
+
+It cannot break a call. A callee that does not implement session timers answers without
+one, and section 8.2 then leaves the call with no expiration at all - exactly where it
+started. A callee that does implement them takes the refreshing on itself when the caller
+cannot, which section 9's Table 2 requires of it. This node never names a refresher: 8.1
+forbids a proxy from doing so, and which end refreshes is for the endpoints to settle.
+
+An interval already in the request is left alone, and an inserted one is never lower than
+a `Min-SE` the request carried. Section 4 puts the absolute floor at 90 seconds and
+recommends 1800; a value below 90 is refused and one below 1800 is taken with a warning.
+
 #### `session_min_se`
 
 The shortest session interval this node will carry a call on, in seconds - Defaults to

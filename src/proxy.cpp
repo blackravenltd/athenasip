@@ -804,10 +804,11 @@ bool Proxy::_apply_session_timer(const std::shared_ptr<SIPMessage>& request, con
 
   auto* session = session_field_of(request, "Session-Expires");
 
-  // A request that offered no interval is left alone. 8.1 allows a proxy to insert one,
-  // which is how a node insists that every call it carries has an end it can see, but
-  // that is a policy decision and it is recorded in the plan rather than taken here.
-  if (session == nullptr || session->delta_seconds == 0) return true;
+  // A request that offered no interval gets this node's, which is 8.1's other half.
+  if (session == nullptr || session->delta_seconds == 0) {
+    _insert_session_timer(request);
+    return true;
+  }
 
   const std::uint32_t minimum = core->config->sip_session_min_se;
   if (minimum == 0 || session->delta_seconds >= minimum) return true;
@@ -846,6 +847,31 @@ bool Proxy::_apply_session_timer(const std::shared_ptr<SIPMessage>& request, con
 
   session->delta_seconds = floor;
   return true;
+}
+
+void Proxy::_insert_session_timer(const std::shared_ptr<SIPMessage>& request) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  // Nothing to insert, or something already there to leave alone. A Session-Expires of
+  // zero is malformed rather than absent, and adding a second header beside it would make
+  // it worse.
+  if (core->config->sip_session_expires == 0) return;
+  if (session_field_of(request, "Session-Expires") != nullptr) return;
+
+  // 8.1: the interval "may contain any desired expiration time the proxy would like, but
+  // not with a duration lower than the value in the Min-SE header field in the request,
+  // if it is present".
+  std::uint32_t interval = core->config->sip_session_expires;
+  if (auto* min_se = session_field_of(request, "Min-SE"); min_se != nullptr && min_se->delta_seconds > interval) interval = min_se->delta_seconds;
+
+  // "The proxy MUST NOT include a refresher parameter in the header field value." Which
+  // end refreshes is settled between the endpoints in the 2xx (section 9 Table 2), and a
+  // UAS whose caller does not understand session timers takes it on itself - which is
+  // what makes inserting one safe rather than a way of breaking calls to old equipment.
+  request->header->add("Session-Expires", std::make_shared<headers::SessionExpiresHeader>(interval));
+
+  _logger->debug("Call asked for no session interval - offering " + std::to_string(interval) + "s");
 }
 
 void Proxy::_complete_session_timer(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response) {

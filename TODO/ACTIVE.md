@@ -257,12 +257,15 @@ What it deliberately left, so it is not lost:
       on. RTCP counts with RTP so hold and silence suppression do not read as dead, and
       RFC 4028 section 8.3 is followed to the letter: the node releases the call and sends
       no BYE, because it is on the path of the dialog and not an end of it.
-- [ ] Inserting `Session-Expires` where a call offered none, which is 8.1's other half and
-      still worth having: it gets an expiry onto every call whose far end knows what a
-      session timer is, which the media sweep cannot see when media goes end to end.
-      `sip.session_expires`, 1800 by default per section 4's recommendation. Safe by
-      construction - section 9 Table 2 has a timer-aware UAS take the refreshing itself
-      when the UAC is not, and 8.2 leaves no expiration at all when neither end is.
+- [x] Inserting `Session-Expires` where a call offered none, 8.1's other half, done on
+      2026-09-21. `sip.session_expires`, 1800 by default per section 4's recommendation
+      and 0 to leave such a call alone. It covers the gap the media sweep cannot: a call
+      whose media goes end to end is invisible to the sweep, and this reaches any call
+      whose far end implements RFC 4028. Safe by construction - section 9 Table 2 has a
+      timer-aware UAS take the refreshing itself when the UAC cannot, and 8.2 leaves the
+      call with no expiration at all when neither end does, which is where it started. An
+      interval already in the request is untouched, an inserted one is never below a
+      `Min-SE` the request carried, and no `refresher` is ever named: 8.1 forbids it.
 - [ ] `sip.max_call_duration`, off by default: the hard backstop for a call this node does
       not anchor, where there is no media to watch.
 - [ ] `sip.require_session_timer`, off by default. RFC 4028 8.1 calls `Require: timer`

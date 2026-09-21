@@ -125,6 +125,11 @@ class Proxy : public TransactionUser {
   // 422 and must go no further.
   bool _apply_session_timer(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction);
 
+  // RFC 4028 section 8.1's other half: the interval this node puts on a request that
+  // asked for none, so that a call whose far end knows what a session timer is gets one
+  // whether or not the near end thought to ask.
+  void _insert_session_timer(const std::shared_ptr<SIPMessage>& request);
+
   // RFC 4028 section 8.2: the 2xx for a session refresh request whose caller asked for a
   // timer and whose callee answered without one.
   void _complete_session_timer(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response);

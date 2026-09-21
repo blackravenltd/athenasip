@@ -48,6 +48,21 @@ bool Config::load_from_yaml(const std::string& filename) {
   if (sip["public_address"]) sip_public_address = sip["public_address"].as<std::string>();
   if (sip["media_timeout"]) sip_media_timeout = sip["media_timeout"].as<uint32_t>();
 
+  if (sip["session_expires"]) {
+    const auto configured = sip["session_expires"].as<uint32_t>();
+
+    // RFC 4028 section 4: "SIP entities MUST be prepared to handle Session-Expires header
+    // field values of any duration greater than 90 seconds, but entities that insert the
+    // Session-Expires header field SHOULD NOT choose values of less than 30 minutes."
+    // Zero is not a short interval, it is the switch that says not to insert one.
+    if (configured != 0 && configured < 90) {
+      _logger->error("sip.session_expires must be at least 90 (RFC 4028) - keeping " + std::to_string(sip_session_expires));
+    } else {
+      if (configured != 0 && configured < 1800) _logger->warn("sip.session_expires below the 1800 RFC 4028 recommends for an inserted interval");
+      sip_session_expires = configured;
+    }
+  }
+
   if (sip["session_min_se"]) {
     const auto configured = sip["session_min_se"].as<uint32_t>();
 

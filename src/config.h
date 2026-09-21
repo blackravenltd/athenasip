@@ -43,6 +43,18 @@ class Config {
   // which is right on a single-homed host and useless on a wildcard bind.
   std::string sip_public_address;
 
+  // RFC 4028 section 8.1: the session interval this node puts on a call that asked for
+  // none, in seconds. Zero leaves such a call without one.
+  //
+  // It is what gets an expiry onto a call whose caller never mentioned session timers but
+  // whose callee knows what they are - section 9 Table 2 has a timer-aware UAS take the
+  // refreshing itself when the UAC cannot. Where neither end implements RFC 4028, section
+  // 8.2 leaves the call with no expiration at all and `sip_media_timeout` is what
+  // eventually notices.
+  //
+  // Section 4 recommends 1800 and sets an absolute floor of 90.
+  uint32_t sip_session_expires = 1800;
+
   // RFC 4028 section 5: the shortest session interval this node will let a call
   // negotiate, and the floor the RFC itself sets is 90 seconds. A proxy that keeps state
   // for a call has a stake in how often it is told the call is still there, and rejecting
