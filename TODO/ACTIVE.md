@@ -390,9 +390,16 @@ What it deliberately left, so it is not lost:
       model. It says in as many words that DynamoDB, NATS and Kafka are things the
       contract makes possible rather than things the core plans to build, and it points
       at `docs/plugins.md`.
-- [ ] `design.md`, `goals.md`, `scripting.md` and `modules/` predate the 2026-09-17 reset
-      and have not been audited against it. `architecture.md` now says so at the bottom,
-      which stops them being read as current, but they still need going through.
+- [x] The rest of the documentation audited on 2026-09-21. `design.md` was still right
+      about the transport layering and wrong about everything that has happened since, so
+      it gained the threading rule, the flow id and the write queue, and its three broken
+      source links were fixed. `goals.md` was an empty file and is gone. `scripting.md`
+      described a Lua engine that is not compiled; it now says so, and says what routing
+      policy comes back as. `modules/` no longer exists. `quick_start.md` told the reader
+      to install rtpproxy and log in as accounts that never existed; it is now the actual
+      quick start, provisioning over the admin API. `README.md` claimed TLS-only defaults
+      the shipped configuration does not set and listed WebSockets as a future feature
+      two milestones after they landed.
 
 ---
 

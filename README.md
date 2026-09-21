@@ -4,45 +4,53 @@
 
 **Project Status: ALPHA - DO NOT USE**
 
-AthenaSIP is a **modern, cloud-native SIP server** designed for security, scalability, and ease of use. It provides **out-of-the-box** support for SIP signaling, secure media relay, and event-driven processing, with a flexible architecture that adapts to both **standalone** and **distributed** deployments.
+AthenaSIP is a multi-master, clusterable SIP server built for standards compliance and
+for being possible to run without a telecoms background. It ships with everything a
+single node needs in-process, and every external piece it can use is a plugin behind one
+contract.
 
-## Key Features
-* **Secure by Default** – TLS-only SIP, with SRTP and DTLS-SRTP enforced.
-* **Standalone or Pluggable** – Ready-to-use with built-in components but fully extensible for scaling using industry-standard OSS databases, event systems and media proxies.  
-* **Cloud-Native & Scalable** – Stateless design enables seamless scaling and clustering.
-* **Minimal Configuration** – Designed for rapid deployment with automatic defaults.
-* **API-Driven** – Exposes a RESTful API for management, monitoring, and automation, works with [AthenaSIP Admin](https://github.com/blackravenltd/athenasip-admin) - a React based administration client. 
-* **WebRTC-Ready** *(Future)* – Planned support for SIP over WebSockets, STUN/TURN/ICE.
+## What it is
 
+* **Standards first.** RFC 3261 in full - the four transaction machines, timers A to K,
+  section 16 proxy behaviour - plus 3263, 3327, 3581, 4028, 5626, 7118, 8760 and 8866.
+  Compliance is proven by a sipp harness rather than asserted.
+* **Runs on its own.** The defaults are `memory://`, `local://` and `builtin://`: one
+  process, no database, no broker, no media server. Redis, MQTT and rtpengine are what
+  it uses when you want them.
+* **Pluggable by contract.** `Datastore`, `EventSystem` and `MediaEngine` are plugin
+  kinds behind one registry keyed by URL scheme. The contract is versioned and async,
+  and the in-tree drivers use exactly the contract an external one would.
+* **Browser-ready.** SIP over WebSocket and secure WebSocket (RFC 7118) are here now,
+  because a browser is a first-class client rather than a later port.
+* **API-driven.** Realms, accounts and registrations are provisioned over a JSON API
+  with bearer tokens, described by [an OpenAPI document](docs/api/openapi.yaml). The
+  React admin client is [AthenaSIP Admin](https://github.com/blackravenltd/athenasip-admin).
+
+## What it is not, yet
+
+Clustering is designed and not built: one node works, and the second node is Milestone 4
+in [`TODO/ACTIVE.md`](TODO/ACTIVE.md). WebRTC needs rtpengine, which is Milestone 3.
+Conferencing and presence are further out. The plan is in the repository rather than in
+a roadmap page, so it says what is true.
+
+Plaintext UDP and TCP are enabled by default today for evaluation. TLS everywhere is the
+intent and `sip.allow_unencrypted` is the switch, but calling it TLS-only would be a
+claim the shipped configuration does not support.
 
 ## Documentation
 
+* [Quick Start](docs/quick_start.md) - two accounts calling each other, from nothing
 * [Installation](docs/installation.md)
-* [Quick Start](docs/quick_start.md)
+* [Compiling](docs/compiling.md)
 * [Configuration](docs/configuration.md)
-* [Architecture](docs/architecture.md)
+* [Architecture](docs/architecture.md) - the shape, and why it is that shape
+* [Design](docs/design.md) - the transport layering
+* [Writing a plugin](docs/plugins.md)
+* [Events](docs/events.md) - the topic scheme
+* [Admin API](docs/api/openapi.yaml)
 
-For more information, please see the [docs](docs/) directory.
-
-## Project Goals
-
-### Security & Privacy First
-AthenaSIP is built with **strong security defaults**—SIP communication is **TLS-only by default**, with **SRTP and DTLS-SRTP enforced** for media. Plaintext SIP (UDP/TCP) and RTP must be explicitly enabled. The server also ensures **strict cipher policies** and modern cryptographic standards.
-
-### Self-Contained Yet Extensible
-AthenaSIP includes everything needed for a complete SIP solution **out of the box**—an integrated **database, eventing system, and RTP relay**—allowing immediate use without complex setup. However, all major components are **pluggable**, allowing users to swap in external datastores, event systems, and media relays as needed.
-
-### Cloud-Native & Soft-Clusterable
-Designed for **stateless** operation, AthenaSIP can scale horizontally, making it suitable for **containerized and distributed environments** like Kubernetes. It allows **soft clustering**, meaning it can dynamically distribute SIP signaling and media handling across multiple nodes.
-
-### Minimal Configuration, Maximum Usability
-AthenaSIP is designed to **work out of the box** with sensible defaults. This makes it easy to evaluate, deploy, and integrate into existing infrastructures **without deep SIP expertise**.
-
-### API-First & Automation-Ready
-AthenaSIP exposes a **RESTful JSON API** for managing SIP routing, user authentication, monitoring, and call handling. This enables easy integration with external **admin interfaces, analytics platforms, and automation tools**.
-
-### Future-Proof & WebRTC-Ready *(Planned)*
-Future releases will introduce **SIP over WebSockets (RFC 7118), STUN/TURN/ICE support**, and advanced WebRTC capabilities—allowing seamless interoperability between **SIP-based systems and browser-based clients**.
+The plan and the decisions behind it are in [`TODO/ACTIVE.md`](TODO/ACTIVE.md); what has
+landed is in [`TODO/COMPLETED.md`](TODO/COMPLETED.md).
 
 ## License
 
