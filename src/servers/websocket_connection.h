@@ -46,6 +46,8 @@ class WebsocketConnectionFor : public Connection, public std::enable_shared_from
     return true;
   }
 
+  boost::asio::any_io_executor executor() override { return _ws->get_executor(); }
+
   void async_read_some(boost::asio::mutable_buffer buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) override {
     auto self = this->shared_from_this();
     _ws->async_read_some(buffer, [self, handler](boost::system::error_code ec, std::size_t length) {

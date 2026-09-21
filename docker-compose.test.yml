@@ -1,0 +1,75 @@
+#
+# AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
+#
+# Copyright (C) 2026 Tom Cully <mail@tomcully.com>
+# Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
+#
+# The end-to-end harness: one node and sipp on a network of their own.
+#
+#   test/e2e/run.sh
+#
+# runs it. The node uses memory:// and local://, so the harness needs no Redis and no
+# broker: what is being tested is RFC 3261 behaviour, and a datastore that survives a
+# restart is not part of it.
+
+services:
+  athenasip:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: athenasip-e2e
+    volumes:
+      - ./test/e2e/config:/root/.athenasip:ro
+    networks:
+      e2e:
+        ipv4_address: 172.31.0.10
+    healthcheck:
+      # The API's own answer, which is 503 until the datastore is connected, so the
+      # scenarios cannot start against a node that is not serving yet.
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/v1/health"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+      start_period: 2s
+
+  # Two of them, because a call needs two ends and each has to be registered at an
+  # address the node can route back to. They are started by test/e2e/run.sh with the
+  # scenario as their arguments, never by "compose up", which is what the profile does.
+  sipp-uas:
+    build:
+      context: ./test/e2e
+      dockerfile: Dockerfile.sipp
+    profiles: [e2e]
+    volumes:
+      - ./test/e2e:/e2e:ro
+      - ./test/e2e/results:/results
+    networks:
+      e2e:
+        ipv4_address: 172.31.0.20
+    depends_on:
+      athenasip:
+        condition: service_healthy
+
+  sipp-uac:
+    build:
+      context: ./test/e2e
+      dockerfile: Dockerfile.sipp
+    profiles: [e2e]
+    volumes:
+      - ./test/e2e:/e2e:ro
+      - ./test/e2e/results:/results
+    networks:
+      e2e:
+        ipv4_address: 172.31.0.21
+    depends_on:
+      athenasip:
+        condition: service_healthy
+
+networks:
+  e2e:
+    driver: bridge
+    ipam:
+      config:
+        # Fixed addresses, because a UAS has to be registered at an address the node can
+        # route back to and a scenario cannot ask what the bridge decided.
+        - subnet: 172.31.0.0/24

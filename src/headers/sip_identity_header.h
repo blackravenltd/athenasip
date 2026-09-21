@@ -40,6 +40,12 @@ struct SIPIdentityHeaderRegister {
     // value is a string.
     Header::register_factory("Route", reg);
     Header::register_factory("Record-Route", reg);
+
+    // RFC 3327 and RFC 3608: Path and Service-Route are the same grammar again, and
+    // both are route sets this node has to read rather than echo - Service-Route is one
+    // it writes, and a value it cannot parse is one it cannot check it wrote correctly.
+    Header::register_factory("Path", reg);
+    Header::register_factory("Service-Route", reg);
   }
 };
 static SIPIdentityHeaderRegister s_sipIdentityHeaderRegister;

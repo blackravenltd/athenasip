@@ -4,15 +4,15 @@
 // Copyright (C) 2026 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
+#include "config.h"
+
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include <filesystem>
 #include <fstream>
 #include <memory>
 #include <string>
-#include <unistd.h>
-
-#include "config.h"
 
 #include "mocks/logger_mock.h"
 
@@ -138,6 +138,37 @@ TEST(ConfigTest, ASecureWebsocketListenerWithoutCertificatesIsRefused) {
 
 // The node ships defaulting to what needs no external service, which is the whole of the
 // "easy to install" principle in one line: a config that says nothing has to start.
+// A listener turned off does not need a port. Refusing to start over the port of
+// something that will never listen is the kind of thing that makes a server feel
+// hostile to configure, and principle 3 is that it should not.
+TEST(ConfigTest, AListenerThatIsOffNeedsNoPort) {
+  ConfigFile file(
+      "sip:\n  node_id: test-node\n"
+      "tls:\n  enable: false\n"
+      "udp:\n  enable: true\n  port: 5060\n");
+
+  bool ok = false;
+  auto config = file.load(ok);
+
+  ASSERT_TRUE(ok);
+  EXPECT_FALSE(config->tls_enable);
+  EXPECT_TRUE(config->udp_enable);
+  EXPECT_EQ(config->udp_port, 5060);
+}
+
+// A listener that is on still does: binding somewhere nobody asked for is worse than
+// saying the configuration is incomplete.
+TEST(ConfigTest, AListenerThatIsOnStillNeedsAPort) {
+  ConfigFile file(
+      "sip:\n  node_id: test-node\n"
+      "udp:\n  enable: true\n");
+
+  bool ok = false;
+  file.load(ok);
+
+  EXPECT_FALSE(ok);
+}
+
 TEST(ConfigTest, DefaultsNeedNoExternalService) {
   ConfigFile file("sip:\n  node_id: test-node\n");
 

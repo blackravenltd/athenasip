@@ -1,47 +1,29 @@
 # AthenaSIP - Scripting
 
-AthenaSIP is programmable via the [Lua](https://www.lua.org/) language:
+**Scripting is parked.** There is no scripting in AthenaSIP today, and the Lua sources
+in `src/script/` are not compiled: `CMakeLists.txt` filters them out, and the runtime
+carries no Lua dependency.
 
-* Authentication
-* Routing
-* Call Forwarding
-* Media Control
+This page is kept so the decision is written down where somebody looking for scripting
+will find it.
 
-## Configuration
+## Why
 
+Scripting was in the tree before it had a use. A routing language is a large surface -
+an API, a sandbox, a lifecycle, a debugging story - and every one of those is a promise
+to the people who write against it. Carrying that promise for a feature nothing in the
+project needed yet was the wrong order.
 
-## Files
+## What it comes back as
 
-## AthenaSIP Global Functions and Tables
+Routing policy is what scripting was for, and routing policy is a plugin kind. When it
+returns it registers through the same contract as `Datastore`, `EventSystem` and
+`MediaEngine` - versioned, async, with its own configuration root - rather than being a
+core feature with its own rules.
 
-### include
+That also means Lua is not the only possible answer. A routing-policy plugin can be a
+script host, a static table, or a service somewhere else, and the core does not have to
+know which.
 
-```lua
-include("/path/to/script")
-```
-
-The `include` function loads the file supplied in the argument.
-
-### print
-
-```lua
-print("Any String")
-```
-
-The `print` function outputs to the log at INFO level. This function is an alias for `log.info()` (see below).
-
-### log
-
-```lua
-log.debug("A debug log message")
-log.info("A info log message")
-log.warn("A warn log message")
-log.error("A error log message")
-```
-
-The `log` table exposes the logger:
-
-* `log.debug(string)` - Log the supplied string at DEBUG level
-* `log.info(string)` - Log the supplied string at INFO level
-* `log.warn(string)` - Log the supplied string at WARN level
-* `log.error(string)` - Log the supplied string at ERROR level
+[`plugins.md`](plugins.md) is the contract it would use. `TODO/ACTIVE.md` has the
+decision under Parked.

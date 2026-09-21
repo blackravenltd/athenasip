@@ -42,18 +42,17 @@ class MemoryDatastore : public Datastore {
   void realm_delete(plugins::Executor on, std::string realm_name, plugins::StatusHandler handler) override;
   void realm_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::Realm>>> handler) override;
 
-  void subscriber_get(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity,
-                      plugins::Handler<std::shared_ptr<types::Subscriber>> handler) override;
-  void subscriber_create(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, plugins::StatusHandler handler) override;
-  void subscriber_update(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, plugins::StatusHandler handler) override;
-  void subscriber_delete(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity, plugins::StatusHandler handler) override;
-  void subscriber_list(plugins::Executor on, std::string realm_name, plugins::Handler<std::vector<std::shared_ptr<types::Subscriber>>> handler) override;
+  void account_get(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity, plugins::Handler<std::shared_ptr<types::Account>> handler) override;
+  void account_create(plugins::Executor on, std::shared_ptr<types::Account> account, plugins::StatusHandler handler) override;
+  void account_update(plugins::Executor on, std::shared_ptr<types::Account> account, plugins::StatusHandler handler) override;
+  void account_delete(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity, plugins::StatusHandler handler) override;
+  void account_list(plugins::Executor on, std::string realm_name, plugins::Handler<std::vector<std::shared_ptr<types::Account>>> handler) override;
 
-  void subscriber_register(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, types::Location binding, std::uint32_t expires_seconds,
-                           plugins::StatusHandler handler) override;
-  void subscriber_unregister(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact,
-                             plugins::StatusHandler handler) override;
-  void location_list(plugins::Executor on, std::uint64_t subscriber_id, plugins::Handler<std::vector<types::Location>> handler) override;
+  void account_register(plugins::Executor on, std::shared_ptr<types::Account> account, types::Location binding, std::uint32_t expires_seconds,
+                        plugins::StatusHandler handler) override;
+  void account_unregister(plugins::Executor on, std::shared_ptr<types::Account> account, std::shared_ptr<types::SIPUri> contact,
+                          plugins::StatusHandler handler) override;
+  void location_list(plugins::Executor on, std::uint64_t account_id, plugins::Handler<std::vector<types::Location>> handler) override;
 
   void nonce_create(plugins::Executor on, std::string nonce, std::time_t expires_at, plugins::StatusHandler handler) override;
   void nonce_check(plugins::Executor on, std::string nonce, plugins::Handler<bool> handler) override;
@@ -73,15 +72,15 @@ class MemoryDatastore : public Datastore {
   bool _realm_delete(const std::string& realm_name);
   std::vector<std::shared_ptr<types::Realm>> _realm_list();
 
-  std::shared_ptr<types::Subscriber> _subscriber_get(std::shared_ptr<types::SIPIdentity> identity);
-  bool _subscriber_create(std::shared_ptr<types::Subscriber> subscriber);
-  bool _subscriber_update(std::shared_ptr<types::Subscriber> subscriber);
-  bool _subscriber_delete(std::shared_ptr<types::SIPIdentity> identity);
-  std::vector<std::shared_ptr<types::Subscriber>> _subscriber_list(const std::string& realm_name);
+  std::shared_ptr<types::Account> _account_get(std::shared_ptr<types::SIPIdentity> identity);
+  bool _account_create(std::shared_ptr<types::Account> account);
+  bool _account_update(std::shared_ptr<types::Account> account);
+  bool _account_delete(std::shared_ptr<types::SIPIdentity> identity);
+  std::vector<std::shared_ptr<types::Account>> _account_list(const std::string& realm_name);
 
-  bool _subscriber_register(const std::shared_ptr<types::Subscriber>& subscriber, types::Location binding, std::uint32_t expires_seconds);
-  bool _subscriber_unregister(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact);
-  std::vector<types::Location> _location_list(std::uint64_t subscriber_id);
+  bool _account_register(const std::shared_ptr<types::Account>& account, types::Location binding, std::uint32_t expires_seconds);
+  bool _account_unregister(std::shared_ptr<types::Account> account, std::shared_ptr<types::SIPUri> contact);
+  std::vector<types::Location> _location_list(std::uint64_t account_id);
 
   bool _nonce_create(const std::string& nonce, const std::time_t& expires_at);
   bool _nonce_check(std::string nonce);
@@ -91,8 +90,8 @@ class MemoryDatastore : public Datastore {
   std::shared_ptr<Call> _call_get(const std::string& id);
   std::vector<std::shared_ptr<Call>> _call_list();
 
-  static std::string _subscriber_key(const std::string& realm_name, const std::string& user);
-  static std::string _location_key(std::uint64_t subscriber_id, const std::string& user, const std::string& host, std::uint16_t port);
+  static std::string _account_key(const std::string& realm_name, const std::string& user);
+  static std::string _location_key(std::uint64_t account_id, const std::string& user, const std::string& host, std::uint16_t port);
 
   // Called with _mutex held.
   void _prune_expired();
@@ -104,7 +103,7 @@ class MemoryDatastore : public Datastore {
   bool _connected = false;
 
   std::unordered_map<std::string, std::shared_ptr<types::Realm>> _realms;
-  std::unordered_map<std::string, std::shared_ptr<types::Subscriber>> _subscribers;
+  std::unordered_map<std::string, std::shared_ptr<types::Account>> _accounts;
   std::unordered_map<std::string, types::Location> _locations;
   std::unordered_map<std::string, std::time_t> _nonces;
   std::unordered_map<std::string, std::shared_ptr<Call>> _calls;

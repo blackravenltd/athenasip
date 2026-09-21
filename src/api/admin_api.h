@@ -49,6 +49,16 @@ class AdminAPI {
   void start();
   void stop();
 
+  // The port actually being listened on, which is not the configured one when that was
+  // zero and the operating system chose. A test binds without picking a number that
+  // something else on the machine may already hold.
+  std::uint16_t port() const;
+
+  // The executor the API runs on. Provisioning hands this to the datastore so answers
+  // come back on the API's own thread: the admin API is not on the Core strand and must
+  // never put a request on the call path.
+  net::any_io_executor executor() { return _io_context.get_executor(); }
+
   // Static helper middleware functions for common responses.
   // These functions return a middleware that sends the appropriate HTTP response and stops the chain.
   static HttpMiddleware send_status_end(uint16_t code, std::string message);

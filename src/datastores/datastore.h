@@ -17,11 +17,11 @@
 #include "../loggers/logger.h"
 #include "../plugins/plugin.h"
 #include "../plugins/plugin_registry.h"
+#include "../types/account.h"
 #include "../types/location.h"
 #include "../types/realm.h"
 #include "../types/sip_identity.h"
 #include "../types/sip_uri.h"
-#include "../types/subscriber.h"
 #include "../types/url.h"
 
 namespace athenasip::datastores {
@@ -35,7 +35,7 @@ namespace athenasip::datastores {
 // plugin contract, so it cannot be made async later without breaking every plugin
 // written against it.
 //
-// A read that finds nothing succeeds with an empty value. "No such subscriber" and
+// A read that finds nothing succeeds with an empty value. "No such account" and
 // "the datastore is unreachable" are different answers and callers act on them
 // differently: one is a 404, the other a 500.
 class Datastore : public plugins::Plugin {
@@ -58,13 +58,12 @@ class Datastore : public plugins::Plugin {
   virtual void realm_delete(plugins::Executor on, std::string realm_name, plugins::StatusHandler handler) = 0;
   virtual void realm_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::Realm>>> handler) = 0;
 
-  // Subscribers.
-  virtual void subscriber_get(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity,
-                              plugins::Handler<std::shared_ptr<types::Subscriber>> handler) = 0;
-  virtual void subscriber_create(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, plugins::StatusHandler handler) = 0;
-  virtual void subscriber_update(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, plugins::StatusHandler handler) = 0;
-  virtual void subscriber_delete(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity, plugins::StatusHandler handler) = 0;
-  virtual void subscriber_list(plugins::Executor on, std::string realm_name, plugins::Handler<std::vector<std::shared_ptr<types::Subscriber>>> handler) = 0;
+  // Accounts.
+  virtual void account_get(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity, plugins::Handler<std::shared_ptr<types::Account>> handler) = 0;
+  virtual void account_create(plugins::Executor on, std::shared_ptr<types::Account> account, plugins::StatusHandler handler) = 0;
+  virtual void account_update(plugins::Executor on, std::shared_ptr<types::Account> account, plugins::StatusHandler handler) = 0;
+  virtual void account_delete(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity, plugins::StatusHandler handler) = 0;
+  virtual void account_list(plugins::Executor on, std::string realm_name, plugins::Handler<std::vector<std::shared_ptr<types::Account>>> handler) = 0;
 
   // Registrations (RFC 3261 section 10 bindings). The binding carries what the node knows
   // about it that the Contact URI does not say: the RFC 3327 Path recorded at
@@ -74,14 +73,14 @@ class Datastore : public plugins::Plugin {
   //
   // A struct rather than a growing parameter list: the binding is one thing, and the
   // fields a cluster needs are exactly the ones a single node leaves empty.
-  virtual void subscriber_register(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, types::Location binding, std::uint32_t expires_seconds,
-                                   plugins::StatusHandler handler) = 0;
-  virtual void subscriber_unregister(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact,
-                                     plugins::StatusHandler handler) = 0;
+  virtual void account_register(plugins::Executor on, std::shared_ptr<types::Account> account, types::Location binding, std::uint32_t expires_seconds,
+                                plugins::StatusHandler handler) = 0;
+  virtual void account_unregister(plugins::Executor on, std::shared_ptr<types::Account> account, std::shared_ptr<types::SIPUri> contact,
+                                  plugins::StatusHandler handler) = 0;
 
-  // Every live binding for a subscriber. Target determination needs all of them
+  // Every live binding for an account. Target determination needs all of them
   // (RFC 3261 16.5). Expired bindings are not returned.
-  virtual void location_list(plugins::Executor on, std::uint64_t subscriber_id, plugins::Handler<std::vector<types::Location>> handler) = 0;
+  virtual void location_list(plugins::Executor on, std::uint64_t account_id, plugins::Handler<std::vector<types::Location>> handler) = 0;
 
   virtual void nonce_create(plugins::Executor on, std::string nonce, std::time_t expires_at, plugins::StatusHandler handler) = 0;
   virtual void nonce_check(plugins::Executor on, std::string nonce, plugins::Handler<bool> handler) = 0;

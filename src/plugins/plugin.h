@@ -30,7 +30,17 @@ namespace athenasip::plugins {
 // so that the flow it was learned over and the node holding that flow can be recorded;
 // and EventSystem's operations take the contract's Executor and handlers rather than a
 // completion callback of their own shape, so that the contract is one contract.
-inline constexpr std::uint32_t API_VERSION = 2;
+//
+// 3 (2026-09-21): types::Subscriber is types::Account and every Datastore operation
+// named after it follows, because SUBSCRIBE is a SIP method (RFC 6665) and the two
+// would have collided the moment presence arrived. The shape of the calls is unchanged;
+// only the word is. Redis keys changed with them, so a store provisioned under 2 is
+// read as empty under 3 rather than half-read.
+//
+// 4 (2026-09-21): types::Account carries a second credential, ha1_sha256, so an account
+// can answer a Digest challenge with SHA-256 (RFC 8760) as well as MD5. A store that
+// does not carry it leaves accounts able to authenticate with MD5 alone.
+inline constexpr std::uint32_t API_VERSION = 4;
 
 // The kinds AthenaSIP registers today. A kind is a plain string rather than an enum so
 // that a plugin can introduce one the core was not built knowing about.

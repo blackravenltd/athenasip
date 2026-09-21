@@ -47,3 +47,6 @@ admin/*
 
 # macOS
 .DS_Store
+
+# Scenario logs from the end-to-end harness
+test/e2e/results/

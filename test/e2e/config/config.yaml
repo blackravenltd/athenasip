@@ -1,0 +1,88 @@
+#
+# AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
+#
+# Copyright (C) 2026 Tom Cully <mail@tomcully.com>
+# Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
+#
+# The node the harness talks to. Everything in-process: nothing here is testing Redis or
+# a broker, and a harness that needs them is a harness that fails for reasons that have
+# nothing to do with SIP.
+
+sip:
+  node_id: e2e-node
+  event_prefix: athenasip
+
+  # The address inside the compose network, so Via, Record-Route and the node list all
+  # name something sipp can reach.
+  public_address: 172.31.0.10
+
+  allow_unencrypted: true
+
+  timers:
+    t1_rtt_ms: 500
+    t2_max_retransmit_interval_ms: 4000
+    t4_network_propagation_ms: 5000
+    a_invite_initial: 1
+    b_invite_timeout: 64
+    d_invite_duration: 64
+    e_non_invite_initial: 1
+    f_non_invite_timeout: 64
+    k_non_invite_duration: 1
+    g_server_invite_initial: 1
+    h_server_invite_timeout: 64
+    i_server_invite_duration: 1
+    j_server_non_invite_duration: 64
+    retransmit_max_interval: 8
+    retransmit_max_attempts: 7
+
+udp:
+  enable: true
+  address: 0.0.0.0
+  port: 5060
+
+tcp:
+  enable: true
+  address: 0.0.0.0
+  port: 5060
+
+tls:
+  enable: false
+
+websocket:
+  enable: true
+  address: 0.0.0.0
+  port: 9500
+  tls: false
+
+rtprelay:
+  enable: false
+
+datastore:
+  url: "memory://"
+
+events:
+  url: "local://"
+
+media:
+  url: "builtin://"
+
+  builtin:
+    bind_address: 0.0.0.0
+    public_address: 172.31.0.10
+    port_min: 22000
+    port_max: 23000
+
+http:
+  address: 0.0.0.0
+  port: 8080
+
+  api:
+    enable: true
+    tokens:
+      - token: "e2e-admin"
+        scopes: [admin]
+      - token: "e2e-client"
+        scopes: [client]
+
+  files:
+    enable: false

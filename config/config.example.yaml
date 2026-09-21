@@ -10,6 +10,12 @@ sip:
   node_id: sip-0001
   event_prefix: athenasip
 
+  # The address this node tells the outside world to reach it on. A node bound to
+  # 0.0.0.0 answers on every address it has and can name none of them to a client, so
+  # anything that has to point somebody at this node - GET /api/v1/nodes, and cluster
+  # failover later - needs this set. Leave it out on a single-homed host.
+  # public_address: 203.0.113.5
+
   allow_unencrypted: true
   timers:
     # Base units (milliseconds)
@@ -107,6 +113,15 @@ http:
   
   api:
     enable: true
+
+    # Bearer tokens, with what each one may do. admin provisions realms and accounts;
+    # client reads the node list and who is registered. A request with no matching token
+    # is refused, so an API switched on with no tokens is one nobody can call.
+    tokens:
+      - token: "change-me-admin"
+        scopes: [admin]
+      - token: "change-me-client"
+        scopes: [client]
 
   files:
     enable: true

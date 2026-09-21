@@ -62,6 +62,12 @@ AdminAPI::AdminAPI(std::shared_ptr<athenasip::loggers::Logger> logger, const std
 // Destructor: stops the server.
 AdminAPI::~AdminAPI() { stop(); }
 
+std::uint16_t AdminAPI::port() const {
+  boost::system::error_code ec;
+  const auto endpoint = _acceptor.local_endpoint(ec);
+  return ec ? 0 : endpoint.port();
+}
+
 // Start the server: begin accepting connections and run the io_context in a new thread.
 void AdminAPI::start() {
   _logger->debug("Starting AdminAPI server...");
@@ -150,7 +156,12 @@ void HttpSession::do_read() {
 // If a middleware calls next(false), the chain stops and the response is sent.
 void HttpSession::process_middleware_chain(std::size_t index, std::shared_ptr<http::response<http::string_body>> res) {
   if (index < _server.middlewares.size()) {
-    auto next = [this, index, res](bool continueChain) {
+    // self, because a middleware may answer asynchronously - the provisioning routes go
+    // to the datastore and come back when it does - and the session has to outlive the
+    // wait. Without it the chain is only safe for middleware that answers inline.
+    auto self = shared_from_this();
+
+    auto next = [this, self, index, res](bool continueChain) {
       if (continueChain) {
         process_middleware_chain(index + 1, res);
       } else {

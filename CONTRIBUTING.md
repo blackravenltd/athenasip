@@ -56,8 +56,8 @@ Tests are GoogleTest under `tests/`, mirroring the `src/` layout. Run the `asan`
 
 ## Style
 
-- Formatting is `.clang-format` (Google base, 160 columns). `bin/format_all.sh` applies
-  it. Two-space indent, `#pragma once`, braces on the same line.
+- Formatting is `.clang-format` (Google base, 160 columns), applied by `clang-format -i`
+  on the files you changed. Two-space indent, `#pragma once`, braces on the same line.
 - `snake_case` for functions, methods, variables and files. `PascalCase` for types.
   Private and protected members are prefixed with `_`. Namespaces are
   `athenasip::<subsystem>`.
