@@ -6,55 +6,118 @@
 //
 #include "url.h"
 
+#include <algorithm>
+#include <cctype>
+#include <limits>
+
 namespace athenasip::types {
+
+namespace {
+
+// RFC 3986 3.1: scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ).
+bool is_scheme(const std::string& value) {
+  if (value.empty() || !std::isalpha(static_cast<unsigned char>(value.front()))) return false;
+
+  return std::all_of(value.begin() + 1, value.end(), [](unsigned char c) { return std::isalnum(c) || c == '+' || c == '-' || c == '.'; });
+}
+
+std::string to_lower(std::string value) {
+  std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return value;
+}
+
+}  // namespace
 
 URL::URL() = default;
 
 URL::URL(const std::string& url) { parse(url); }
 
 void URL::parse(const std::string& url) {
-  // Use std::regex to parse the URL
-  // The host is optional: "memory://" and "file:///path" have none. A scheme on its
-  // own is still a usable URL for a driver that takes no address.
-  static const std::regex pattern(R"(^([a-zA-Z][a-zA-Z0-9+.-]*):\/\/(?:([^:\/?#]*)?:?([^@\/?#]*)?@)?([^:\/?#]*)(?::(\d+))?([^?#]*)(?:\?([^#]*))?(?:#(.*))?$)");
-  std::smatch matches;
-
-  // Default is invalid
   _valid = false;
+  scheme.clear();
+  username.reset();
+  password.reset();
+  host.clear();
+  port.reset();
+  path.clear();
+  query.clear();
+  fragment.clear();
 
-  // If the URL matches
-  if (std::regex_match(url, matches, pattern)) {
-    try {
-      scheme = matches[1];
+  // Hand-written rather than a regex, like the header, URI and identity parsers: the
+  // grammar is a sequence of splits on delimiters that cannot appear unescaped in what
+  // they delimit, and each split below names the rule it comes from.
+  const auto separator = url.find("://");
+  if (separator == std::string::npos || !is_scheme(url.substr(0, separator))) return;
 
-      // User/Password is optional
-      username = matches[2].matched ? std::optional<std::string>{matches[2]} : std::nullopt;
-      password = matches[3].matched ? std::optional<std::string>{matches[3]} : std::nullopt;
-      host = matches[4];
+  scheme = url.substr(0, separator);
 
-      // Port is also optional
-      if (matches[5].matched && !matches[5].str().empty()) {
-        int _port = std::stoi(matches[5].str());
-        if (_port < 0 || _port > std::numeric_limits<uint16_t>::max()) {
-          throw std::out_of_range("The value is out of the range for uint16_t.");
-        }
-        port = static_cast<uint16_t>(_port);
-      } else {
-        // Infer port from scheme
-        auto it = defaultPorts.find(scheme);
-        port = (it != defaultPorts.end()) ? std::optional<uint16_t>{it->second} : std::nullopt;
-      }
+  std::string rest = url.substr(separator + 3);
 
-      path = matches[6].matched ? matches[6].str() : "/";  // Default path is "/"
-      query = matches[7].matched ? matches[7].str() : "";
-      fragment = matches[8].matched ? matches[8].str() : "";
+  // 3986 3.5 then 3.4: the fragment runs to the end of the URL and the query to the
+  // fragment, so taking those off first is what leaves the rest unambiguous.
+  const auto hash = rest.find('#');
+  if (hash != std::string::npos) {
+    fragment = rest.substr(hash + 1);
+    rest.erase(hash);
+  }
 
-      // If we reach here, the URL is valid.
-      _valid = true;
-    } catch (const std::exception&) {
-      // Something went wrong. Assume invalid.
+  const auto question = rest.find('?');
+  if (question != std::string::npos) {
+    query = rest.substr(question + 1);
+    rest.erase(question);
+  }
+
+  // 3986 3.2: the authority ends at the first '/', which is the first character of the
+  // path. A URL with no '/' has no path, and "memory://" has neither.
+  const auto slash = rest.find('/');
+  if (slash != std::string::npos) {
+    path = rest.substr(slash);
+    rest.erase(slash);
+  }
+
+  // 3986 3.2.1: userinfo is everything before the '@', and its own ':' separates the
+  // two halves. No ':' means a username and no password, rather than an empty one.
+  const auto at = rest.find('@');
+  if (at != std::string::npos) {
+    const auto userinfo = rest.substr(0, at);
+    rest.erase(0, at + 1);
+
+    const auto divider = userinfo.find(':');
+    if (divider == std::string::npos) {
+      username = userinfo;
+    } else {
+      username = userinfo.substr(0, divider);
+      password = userinfo.substr(divider + 1);
     }
   }
+
+  const auto colon = rest.find(':');
+  if (colon == std::string::npos) {
+    host = rest;
+    port = _default_port(scheme);
+    _valid = true;
+    return;
+  }
+
+  host = rest.substr(0, colon);
+
+  // 3986 3.2.3: port = *DIGIT. Anything else after the colon is a configuration mistake
+  // worth refusing, rather than something to read as part of a hostname and then fail
+  // to connect to much later.
+  const auto digits = rest.substr(colon + 1);
+  if (digits.empty() || digits.find_first_not_of("0123456789") != std::string::npos) return;
+  if (digits.size() > 5) return;
+
+  const auto value = std::stoul(digits);
+  if (value > std::numeric_limits<uint16_t>::max()) return;
+
+  port = static_cast<uint16_t>(value);
+  _valid = true;
+}
+
+std::optional<uint16_t> URL::_default_port(const std::string& scheme) {
+  const auto found = defaultPorts.find(to_lower(scheme));
+  return found == defaultPorts.end() ? std::nullopt : std::optional<uint16_t>{found->second};
 }
 
 std::string URL::to_string() const {
@@ -67,17 +130,12 @@ std::string URL::to_string() const {
     url += "@";
   }
   url += host;
-  // Only add the port if it's not the default port for the scheme
-  if (port.has_value()) {
-    // Convert the scheme to lowercase to match the keys in defaultPorts map
-    std::string schemeLower = scheme;
-    std::transform(schemeLower.begin(), schemeLower.end(), schemeLower.begin(), [](unsigned char c) { return std::tolower(c); });
 
-    auto it = defaultPorts.find(schemeLower);
-    if ((it != defaultPorts.end()) && (it->second != port.value())) {
-      // Add port only if it's not the default port for the scheme
-      url += ":" + std::to_string(port.value());
-    }
+  // The port is left off only when it is the one the scheme implies anyway. A scheme
+  // with no well-known port has to carry it, or the port is lost.
+  if (port.has_value()) {
+    const auto standard = _default_port(scheme);
+    if (!standard.has_value() || *standard != *port) url += ":" + std::to_string(*port);
   }
   url += path;
   if (!query.empty()) {
@@ -111,8 +169,7 @@ const std::map<std::string, uint16_t> URL::defaultPorts = {{"http", 80},        
                                                            {"pop3s", 995},                        // POP3 over SSL
                                                            {"redis", 6379},      {"mongodb", 27017},   {"cassandra", 9042},
                                                            {"memcached", 11211}, {"rabbitmq", 5672},   {"mqtt", 1883},
-                                                           {"mqtts", 8883},
-                                                           {"coap", 5683},       {"amqp", 5671},  // AMQP over TLS
+                                                           {"mqtts", 8883},      {"coap", 5683},       {"amqp", 5671},  // AMQP over TLS
                                                            {"rsync", 873},       {"rdp", 3389},        {"elasticsearch", 9200},
                                                            {"kibana", 5601},     {"zookeeper", 2181}};
 
