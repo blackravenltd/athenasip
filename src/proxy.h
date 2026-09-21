@@ -196,7 +196,8 @@ class Proxy : public TransactionUser {
   //
   // `then` runs when the message is ready to go: inline when there was nothing to do,
   // and on the strand from the engine's handler when there was.
-  void _anchor_media(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<SIPMessage>& message, std::function<void()> then);
+  void _anchor_media(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<SIPMessage>& message, const std::shared_ptr<Channel>& outgoing,
+                     std::function<void()> then);
 
   // RFC 3261 16.7 step 6: what goes back when every branch has been tried.
   void _send_best(const std::shared_ptr<Context>& context);

@@ -44,7 +44,13 @@ namespace athenasip::plugins {
 // record capability a driver already advertises is one a caller can act on. Both
 // decline by default, as the conference operations do, so a driver that does not record
 // is unchanged.
-inline constexpr std::uint32_t API_VERSION = 5;
+// 6 (2026-09-22): media::Flags carries a target Profile, which says what the
+// description the engine is about to produce has to be rather than what the one it was
+// handed is. Only the caller knows: the transport of the flow a message is going out
+// on is what distinguishes a browser from a desk phone before the browser has
+// described itself, and an engine sees neither. Mirror is the default and is what
+// every engine did before.
+inline constexpr std::uint32_t API_VERSION = 6;
 
 // The kinds AthenaSIP registers today. A kind is a plain string rather than an enum so
 // that a plugin can introduce one the core was not built knowing about.

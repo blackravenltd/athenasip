@@ -441,7 +441,7 @@ void Proxy::_forward_to(const std::shared_ptr<Context>& context, const Target& t
   // Step 6: the media engine has its say on the body before the copy goes anywhere, and
   // it is a round trip, so the send is the other side of it.
   auto self = shared_from_this();
-  _anchor_media(context->request, copy, [this, self, context, copy, channel]() { _send_forward(context, copy, channel); });
+  _anchor_media(context->request, copy, channel, [this, self, context, copy, channel]() { _send_forward(context, copy, channel); });
 }
 
 void Proxy::_send_forward(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& copy, const std::shared_ptr<Channel>& channel) {
@@ -622,10 +622,13 @@ void Proxy::_forward_response(const std::shared_ptr<Context>& context, const std
   auto self = shared_from_this();
   auto server = context->server;
 
-  _anchor_media(context->request, response, [self, server, response]() { server->send(response); });
+  // A response goes back down the flow the request came in on, so that flow is the one
+  // whose transport says what the far leg of this direction is.
+  _anchor_media(context->request, response, context->request->channel.lock(), [self, server, response]() { server->send(response); });
 }
 
-void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<SIPMessage>& message, std::function<void()> then) {
+void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<SIPMessage>& message, const std::shared_ptr<Channel>& outgoing,
+                          std::function<void()> then) {
   auto core = _core.lock();
   if (!core || !core->media || !has_sdp(message)) return then();
 
@@ -651,6 +654,12 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
 
   auto flags = media::Flags::from_sdp(message->body);
   flags.participant = *participant;
+
+  // What the far leg needs, which the description in hand cannot say. The engine knows
+  // neither where this message is going nor over what, and the transport of that flow
+  // is the only thing that distinguishes a browser from a desk phone before the
+  // browser has described itself.
+  if (outgoing && outgoing->_connection) flags.target = media::Flags::profile_for_transport(outgoing->_connection->transport_name());
 
   auto self = shared_from_this();
 
