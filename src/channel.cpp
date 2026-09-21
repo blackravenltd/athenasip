@@ -107,6 +107,12 @@ void Channel::close() {
   });
 }
 
+void Channel::write(std::string message) {
+  auto self(shared_from_this());
+
+  boost::asio::dispatch(_core->strand(), [this, self, message = std::move(message)]() mutable { _schedule_async_write(std::move(message)); });
+}
+
 void Channel::send(std::shared_ptr<SIPMessage> message) {
   auto self(shared_from_this());
 
@@ -189,25 +195,63 @@ void Channel::_stamp_via(const std::shared_ptr<SIPMessage>& message) {
 }
 
 void Channel::_schedule_async_write(std::string message) {
-  auto self(shared_from_this());
-
   if (!_connection) return;
 
-  // The buffer has to outlive the call, so it is owned by the completion handler.
-  auto buffer = std::make_shared<std::string>(std::move(message));
+  // The buffer has to outlive the write, so the queue owns it.
+  _write_queue.push_back(std::make_shared<std::string>(std::move(message)));
+
+  // Already writing: the completion will pick this up. Starting a second write here is
+  // what puts two of them on one socket.
+  if (_writing) return;
+
+  _write_next();
+}
+
+void Channel::_write_next() {
+  if (!_connection || _write_queue.empty()) {
+    _writing = false;
+    return;
+  }
+
+  _writing = true;
+
+  auto self(shared_from_this());
+  auto buffer = _write_queue.front();
+  const auto offset = _write_offset;
 
   // Starting the write is touching the stream, so it happens where the stream lives.
-  boost::asio::dispatch(_connection->executor(), [this, self, buffer, connection = _connection]() {
-    connection->async_write_some(boost::asio::buffer(*buffer), [this, self, buffer](boost::system::error_code ec, std::size_t) {
-      // The completion runs on the connection's own io_context thread, so hop back.
-      boost::asio::post(_core->strand(), [this, self, ec]() {
-        if (ec) {
-          _logger->error("Write Error " + ec.to_string());
-          close();
-        }
-      });
-    });
+  boost::asio::dispatch(_connection->executor(), [this, self, buffer, offset, connection = _connection]() {
+    connection->async_write_some(boost::asio::buffer(buffer->data() + offset, buffer->size() - offset),
+                                 [this, self, buffer](boost::system::error_code ec, std::size_t length) {
+                                   // The completion runs on the connection's own io_context thread, so hop back.
+                                   boost::asio::post(_core->strand(), [this, self, ec, length]() { _on_write(ec, length); });
+                                 });
   });
+}
+
+void Channel::_on_write(boost::system::error_code ec, std::size_t length) {
+  if (ec) {
+    _logger->error("Write Error " + ec.to_string());
+
+    // Nothing queued behind a failed write is going anywhere: the channel is closing.
+    _write_queue.clear();
+    _write_offset = 0;
+    _writing = false;
+
+    close();
+    return;
+  }
+
+  // async_write_some is not obliged to take the whole buffer, and a short write that
+  // nobody resumes is a truncated SIP message on the wire.
+  _write_offset += length;
+
+  if (!_write_queue.empty() && _write_offset >= _write_queue.front()->size()) {
+    _write_queue.pop_front();
+    _write_offset = 0;
+  }
+
+  _write_next();
 }
 
 void Channel::_schedule_async_read() {

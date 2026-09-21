@@ -372,6 +372,52 @@ TEST(CoreTest, ChannelTearsTheConnectionDownOnItsOwnExecutor) {
   EXPECT_TRUE(connection->close_on_own_executor);
 }
 
+// Two outstanding writes on one socket interleave their bytes: asio leaves the caller
+// with two messages arriving as neither, and beast's WebSocket stream refuses the
+// second outright. A transaction sends one message at a time today, and a forking proxy
+// on one flow is what would find this.
+TEST(CoreTest, ASecondMessageWaitsForTheFirstWriteToFinish) {
+  Fixture f;
+
+  std::shared_ptr<MockConnection> connection;
+  auto channel = f.make_channel("192.0.2.10", &connection);
+  connection->defer_writes = true;
+
+  f.on_strand([&channel]() {
+    channel->write("FIRST\r\n");
+    channel->write("SECOND\r\n");
+  });
+  f.settle();
+
+  // Only the first one is on the wire.
+  EXPECT_EQ(connection->write_calls, 1);
+  EXPECT_EQ(connection->written, "FIRST\r\n");
+
+  // Answering it releases the second.
+  f.on_strand([&connection]() { connection->complete_write(); });
+  f.settle();
+
+  EXPECT_EQ(connection->write_calls, 2);
+  EXPECT_EQ(connection->written, "FIRST\r\nSECOND\r\n");
+}
+
+// async_write_some is not obliged to take the whole buffer. A short write that nobody
+// resumes is a truncated SIP message, which the far end either rejects or waits for
+// forever.
+TEST(CoreTest, AShortWriteIsResumedUntilTheMessageIsOut) {
+  Fixture f;
+
+  std::shared_ptr<MockConnection> connection;
+  auto channel = f.make_channel("192.0.2.10", &connection);
+  connection->write_limit = 4;
+
+  f.on_strand([&channel]() { channel->write("ABCDEFGHIJ"); });
+  f.settle();
+
+  EXPECT_EQ(connection->written, "ABCDEFGHIJ");
+  EXPECT_EQ(connection->write_calls, 3);
+}
+
 // Via is the proxy's, not the transport's: the transport must not invent one, or a
 // response would come back through a hop that never existed (RFC 3261 16.6 step 8).
 TEST(CoreTest, ChannelSendDoesNotAddAVia) {

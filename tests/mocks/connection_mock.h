@@ -6,6 +6,7 @@
 //
 #pragma once
 
+#include <algorithm>
 #include <boost/asio.hpp>
 #include <cstddef>
 #include <functional>
@@ -57,10 +58,33 @@ class MockConnection : public athenasip::servers::Connection {
 
   void async_write_some(boost::asio::const_buffer buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) override {
     write_on_own_executor = on_own_executor();
-    written.append(static_cast<const char*>(buffer.data()), boost::asio::buffer_size(buffer));
+
+    // A real socket may take less than it was given. write_limit is how a test says so.
+    const auto offered = boost::asio::buffer_size(buffer);
+    const auto taken = write_limit > 0 ? std::min(write_limit, offered) : offered;
+
+    written.append(static_cast<const char*>(buffer.data()), taken);
     write_calls++;
 
-    if (handler) handler(write_error, boost::asio::buffer_size(buffer));
+    // Held rather than answered, so a test can see what the channel does while a write
+    // is still in flight.
+    if (defer_writes) {
+      pending_write = std::move(handler);
+      pending_write_bytes = taken;
+      return;
+    }
+
+    if (handler) handler(write_error, taken);
+  }
+
+  // Answer the write that was held. Returns false when there was none.
+  bool complete_write() {
+    auto handler = std::move(pending_write);
+    pending_write = nullptr;
+    if (!handler) return false;
+
+    handler(write_error, pending_write_bytes);
+    return true;
   }
 
   boost::asio::ip::tcp::endpoint remote_endpoint() override { return _remote; }
@@ -94,6 +118,12 @@ class MockConnection : public athenasip::servers::Connection {
   int shutdown_calls = 0;
   boost::system::error_code write_error;
   std::function<void(const boost::system::error_code&, std::size_t)> pending_read;
+
+  // Write behaviour a test can steer: hold the completion, and take only so many bytes.
+  bool defer_writes = false;
+  std::size_t write_limit = 0;
+  std::function<void(const boost::system::error_code&, std::size_t)> pending_write;
+  std::size_t pending_write_bytes = 0;
 
   // Where each operation was called from. Nothing may touch the stream from anywhere but
   // the connection's own executor.
