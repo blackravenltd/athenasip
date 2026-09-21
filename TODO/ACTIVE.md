@@ -307,14 +307,11 @@ What it deliberately left, so it is not lost:
       `WebsocketServerTest.CarriesSipWithoutTls`: 12 failures in 30 runs at the baseline,
       0 in 30 with the fix. Three tests pin the rule itself - the mock connection can be
       given a strand of its own and records whether each call arrived on it.
-- [ ] Nothing queues writes on a channel. `Channel::_schedule_async_write` starts an
-      `async_write_some` whenever a message goes out, so two messages sent back to back
-      put two writes in flight on one socket: asio leaves the bytes interleaved and
-      beast's WebSocket stream refuses the second outright. It has not bitten because a
-      transaction sends one message at a time, and a forking proxy on one flow is what
-      would. The fix is a per-channel write queue, which is also where a partial write
-      wants handling - `async_write_some` is not obliged to take the whole buffer, and
-      nothing checks how much it took.
+- [x] A write queue on the channel, done on 2026-09-21. One write in flight at a time,
+      the rest queued on the strand, and a short write resumed from where it stopped -
+      `async_write_some` is not obliged to take the whole buffer, and nothing was
+      checking how much it took. `Channel::write` was a declaration with no definition;
+      it is now the way raw bytes go out, and what the tests drive.
 - [ ] Outbound TLS. `channel_connect` refuses `tls://` rather than guessing at what a
       node trusts; the cluster CA decision in M4 is what settles it. Until then a TLS peer
       has to connect inwards.
@@ -322,10 +319,11 @@ What it deliberately left, so it is not lost:
       the listener's own socket so the source port is the one the far end answers to, and
       that socket belongs to `UDPServer` rather than to the channel registry. Needed for a
       UDP trunk, not for anything in M2.
-- [ ] Connection reuse for responses and in-dialog requests works as it stands - a
-      response goes back on the server transaction's own channel, and an in-dialog request
-      is routed by its Route set through `channel_find` - but nothing tests that a second
-      in-dialog request reuses the first one's connection rather than opening another.
+- [x] Connection reuse is tested, done on 2026-09-21: a second in-dialog request goes
+      out on the flow the first one used, and the registry still holds one channel for
+      that hop. Opening a second connection per request would leave a node holding one
+      socket per request, and for a client behind NAT the new one would not reach it at
+      all.
 
 ### Step 8 - Admin API, part 1 (provisioning)
 
@@ -346,33 +344,55 @@ What it deliberately left, so it is not lost:
 
 ### Step 9 - Test harness
 
-- [ ] `test/e2e/` with sipp scenarios: REGISTER with Digest, INVITE/180/200/ACK/BYE,
-      CANCEL before and after 180, 486, 408 on timer B, retransmission over UDP,
-      RTP through the builtin relay (RTP sequence check, not silence).
-- [ ] `Dialog` unit tests on `MockConnection` and `ManualTimerSource`, in the same
-      RFC-derived style as the transaction tests. `Registrar` and `Proxy` have theirs
-      (`tests/registrar_test.cpp`, `tests/proxy_test.cpp`, since step 1).
-- [ ] `docker-compose.test.yml`: athenasip + sipp.
-- [ ] GitHub Actions: build (Debug + ASan), unit tests, sipp harness. Deferred for now
-      at Tom's call; listed so it is not forgotten.
+- [x] `test/e2e/` with sipp scenarios, written on 2026-09-21: REGISTER with Digest, a
+      wrong password, a retransmitted REGISTER, INVITE/180/200/ACK/BYE, CANCEL after
+      180, 486, 408 on timer B, and a call with RTP through the builtin relay. Each
+      asserts on what the RFC requires rather than on what the node currently does, and
+      `run.sh` provisions the realm and the accounts over the admin API first, which is
+      the same path an operator uses.
+
+      **Not yet run.** Docker was not available on the machine where they were written,
+      so they are checked for well-formedness and shell syntax and nothing more. The
+      first run is likely to need corrections, and two are worth expecting: whether
+      sipp picks the MD5 challenge when RFC 8760 puts SHA-256 first (section 2.4 warns
+      that a client may take the first one blindly, and if sipp does, the fix is a
+      configurable algorithm order rather than a change of behaviour), and whether the
+      RTP assertions hold with sipp's own pcap playback.
+- [x] `Dialog` unit tests, done with step 5 on 2026-09-20. `tests/dialogs_test.cpp` has
+      19 of them, RFC-derived in the same style as the transaction tests: the dialog the
+      2xx establishes, each end's target and sequence, re-INVITE moving the target, BYE
+      from either end, CANCEL before and after answer, sips over TLS, and the RFC 4028
+      session timer. This item was written before they existed.
+- [x] `docker-compose.test.yml`: one node and two sipp containers on a network of their
+      own, with fixed addresses because a callee has to register at an address the node
+      can route back to. Done on 2026-09-21, unrun for the same reason as above.
+- [ ] GitHub Actions: build (Debug + ASan), unit tests, sipp harness. Deferred at Tom's
+      call, confirmed again on 2026-09-21; listed so it is not forgotten.
 
 ### Step 10 - Smaller items surfaced by the review
 
-- [ ] Digest with SHA-256 (RFC 8760) alongside MD5, selected by the `algorithm`
-      parameter. `Util::md5` is the only hash today.
-- [ ] Decide whether `Subscriber` becomes `Account`. It collides with SUBSCRIBE
-      (RFC 6665, M6), and renaming costs more the later it happens.
-- [ ] `RTPProxyClient` is compiled into `athena_core` and nothing constructs it. Take
-      it out of the build path the way Lua was, per the Parked note.
-- [ ] `docs/architecture.md` is stale and contradicts the Decisions (it lists DynamoDB,
-      NATS, RabbitMQ, Kafka and SQS as planned). The file was renamed from
-      `architecure.md` on 2026-09-20, which fixed the broken `README.md:23` link; the
-      contents are still the pre-reset ones. Rewrite it from the Architecture section
-      above; `docs/plugins.md` (step 2) is the companion it should point at. Those backends are
-      things the plugin contract makes possible, not things the core plans to build;
-      the doc should say that or it reads as a roadmap the project cannot keep. `design.md`,
-      `goals.md`, `scripting.md` and `modules/` predate the reset and need the same
-      audit before anything is assumed from them.
+- [x] Digest with SHA-256 (RFC 8760) alongside MD5, done on 2026-09-21. An account
+      carries a credential per algorithm, both computed while the password is in hand
+      because neither can be derived from the other. The registrar challenges with
+      SHA-256 then MD5 and checks against whichever the client answered with; an account
+      imported as a bare MD5 hash is challenged again rather than let in. Sending the
+      algorithm at all needed the Authorization serialiser to stop quoting tokens.
+- [x] `Subscriber` is `Account`, decided with Tom and done on 2026-09-21. It would have
+      collided with SUBSCRIBE (RFC 6665) the moment presence arrived in M6. The Datastore
+      contract kept its shape and changed its vocabulary, so `API_VERSION` is 3; the
+      Redis keys moved with it, and the event topic is `account/<uri>/status`.
+- [x] `RTPProxyClient` is out of the build path, done on 2026-09-21, the way Lua is: it
+      stays in the tree as the start of an rtpproxy driver and is not compiled until
+      someone writes one.
+- [x] `docs/architecture.md` rewritten on 2026-09-21 from the Architecture section
+      above: the strand and what is not on it, the transport layering, the plugin
+      registry with the two implementations per kind, the cluster shape and the media
+      model. It says in as many words that DynamoDB, NATS and Kafka are things the
+      contract makes possible rather than things the core plans to build, and it points
+      at `docs/plugins.md`.
+- [ ] `design.md`, `goals.md`, `scripting.md` and `modules/` predate the 2026-09-17 reset
+      and have not been audited against it. `architecture.md` now says so at the bottom,
+      which stops them being read as current, but they still need going through.
 
 ---
 
