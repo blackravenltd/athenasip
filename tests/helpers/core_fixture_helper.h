@@ -121,11 +121,15 @@ struct CoreFixture {
     return realm;
   }
 
-  std::shared_ptr<athenasip::types::Account> seed_account(std::uint64_t id, const std::string& uri, const std::string& ha1) {
+  // ha1_sha256 is empty by default, which is an account that can only answer an MD5
+  // challenge - exactly what an account imported as a bare MD5 hash looks like.
+  std::shared_ptr<athenasip::types::Account> seed_account(std::uint64_t id, const std::string& uri, const std::string& ha1,
+                                                          const std::string& ha1_sha256 = "") {
     auto account = std::make_shared<athenasip::types::Account>();
     account->id = id;
     account->identity = std::make_shared<athenasip::types::SIPIdentity>(uri);
     account->ha1 = ha1;
+    account->ha1_sha256 = ha1_sha256;
     store->account_create(account);
     return account;
   }

@@ -107,9 +107,10 @@ std::shared_ptr<types::Account> MemoryDatastore::_account_get(std::shared_ptr<ty
 
   // Hand back the identity the caller asked with, as the Redis driver does, so the
   // returned account carries the tags of this request.
-  auto account = std::make_shared<types::Account>();
-  account->id = it->second->id;
-  account->ha1 = it->second->ha1;
+  // Every field the stored account has, not a chosen few: a copy that forgets one is a
+  // credential that silently does not exist, which is exactly what happened to
+  // ha1_sha256 the moment it was added.
+  auto account = std::make_shared<types::Account>(*it->second);
   account->identity = std::move(identity);
   return account;
 }

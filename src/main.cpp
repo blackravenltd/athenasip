@@ -13,6 +13,8 @@
 #include <string>
 
 #include "api/admin_api.h"
+#include "api/provisioning_api.h"
+#include "api/router.h"
 #include "api/static_middleware.h"
 #include "build_version.h"
 #include "config.h"
@@ -189,14 +191,28 @@ int main(int argc, char* argv[]) {
   // scripting->start();
 
   // HTTP Admin API
+  std::shared_ptr<api::Router> api_router;
+  std::shared_ptr<api::ProvisioningAPI> provisioning;
+
   if (config->http_api_enable || config->http_files_enable) {
     auto adminAPI = std::make_shared<api::AdminAPI>(logger, config->http_address, config->http_port);
+
     if (config->http_api_enable) {
+      // The API talks to the datastore on its own executor. It is not on the Core
+      // strand and must not be: an admin listing accounts cannot be allowed to hold up
+      // a call, which is what the async plugin contract is for.
+      api_router = std::make_shared<api::Router>(std::make_shared<api::BearerAuth>(config->http_api_tokens));
+      provisioning = std::make_shared<api::ProvisioningAPI>(logger, datastore, adminAPI->executor(), config, version->to_string());
+      provisioning->register_routes(*api_router);
+
+      adminAPI->middlewares.push_back(api_router->middleware("/api/"));
     }
+
     if (config->http_files_enable) {
       StaticOptions so;
-      adminAPI->middlewares.push_back(api::StaticMiddleware::add("../admin", so));
+      adminAPI->middlewares.push_back(api::StaticMiddleware::add(config->http_files_path, so));
     }
+
     adminAPI->middlewares.push_back(api::AdminAPI::send_404_end());
     core->admin_register(adminAPI);
     core->admin_start();

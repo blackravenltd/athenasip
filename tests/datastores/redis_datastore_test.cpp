@@ -166,6 +166,31 @@ TEST(RedisDatastoreTest, RegistrationsAreListedFromTheLocationIndex) {
   EXPECT_TRUE(datastore->location_list(5150).empty());
 }
 
+// The second credential makes the round trip, and an account without one reads back as
+// an account without one rather than as a broken row.
+TEST(RedisDatastoreTest, TheSha256CredentialRoundTripsAndIsOptional) {
+  REQUIRE_REDIS(datastore);
+  const auto realm = "sha-" + unique_suffix() + ".example";
+
+  auto both = make_account(4243, "sip:alice@" + realm);
+  both->ha1_sha256 = "sha256-hash";
+  ASSERT_TRUE(datastore->account_create(both));
+
+  auto found = datastore->account_get(std::make_shared<types::SIPIdentity>("sip:alice@" + realm));
+  ASSERT_NE(found, nullptr);
+  EXPECT_EQ(found->ha1_sha256, "sha256-hash");
+
+  auto md5_only = make_account(4244, "sip:bob@" + realm);
+  ASSERT_TRUE(datastore->account_create(md5_only));
+
+  auto imported = datastore->account_get(std::make_shared<types::SIPIdentity>("sip:bob@" + realm));
+  ASSERT_NE(imported, nullptr);
+  EXPECT_TRUE(imported->ha1_sha256.empty());
+
+  ASSERT_TRUE(datastore->account_delete(both->identity));
+  ASSERT_TRUE(datastore->account_delete(md5_only->identity));
+}
+
 // A binding written by one node has to be usable by another, which is the whole reason
 // the flow and the node holding it are on it (RFC 5626). They survive the round trip
 // through Redis or they are of no use to the node that reads them back.

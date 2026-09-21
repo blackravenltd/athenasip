@@ -65,6 +65,10 @@ class Registrar : public TransactionUser {
   // RFC 3327: every Path header, in order, as one field value.
   std::string _path_of(const std::shared_ptr<SIPMessage>& request) const;
 
+  // RFC 3608: this node, on the flow the REGISTER arrived over, for the client to route
+  // everything that follows through. Null when there is no flow to name.
+  std::shared_ptr<headers::Header> _service_route(const std::shared_ptr<SIPMessage>& request) const;
+
   // 200 OK carrying a Contact for every live binding with its remaining lifetime, and an
   // Expires header (RFC 3261 10.3 step 8).
   void _send_ok(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,

@@ -36,7 +36,11 @@ namespace athenasip::plugins {
 // would have collided the moment presence arrived. The shape of the calls is unchanged;
 // only the word is. Redis keys changed with them, so a store provisioned under 2 is
 // read as empty under 3 rather than half-read.
-inline constexpr std::uint32_t API_VERSION = 3;
+//
+// 4 (2026-09-21): types::Account carries a second credential, ha1_sha256, so an account
+// can answer a Digest challenge with SHA-256 (RFC 8760) as well as MD5. A store that
+// does not carry it leaves accounts able to authenticate with MD5 alone.
+inline constexpr std::uint32_t API_VERSION = 4;
 
 // The kinds AthenaSIP registers today. A kind is a plain string rather than an enum so
 // that a plugin can introduce one the core was not built knowing about.
