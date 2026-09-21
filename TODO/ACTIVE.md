@@ -128,8 +128,15 @@ Done on 2026-09-18; see `COMPLETED.md`. The matcher, the four machines wired int
 `Core::process_message`, `Registrar`, `Proxy`, the event-bus INVITE path deleted and Via
 moved out of `Channel`. What it deliberately left for later, so it is not lost:
 
-- [ ] RFC 2543 fallback transaction matching, for a request whose branch carries no magic
-      cookie. Deferred by the step; needed for interop with pre-3261 endpoints only.
+- [x] RFC 2543 fallback transaction matching, done on 2026-09-21. A request whose topmost
+      Via carries no branch, or one with no magic cookie, is keyed by 17.2.3's fallback
+      tuple - Request-URI, From tag, Call-ID, CSeq number, the whole topmost Via and the
+      method - instead of by branch and sent-by. Both forms are strings in the one table,
+      so nothing above the matcher knows which kind it holds. The To tag is the one field
+      of the rule left out, with the reason recorded at `_legacy_key`: it would stop an
+      ACK ever matching the INVITE that has no tag, and the case it exists for is already
+      covered because a 2xx terminates the server transaction (17.2.1). A branchless
+      request used to be answered 400 for want of an identifier.
 - [ ] Serial forking tries each binding in turn but sends every attempt down the one flow
       the subscriber registered on, because that is all a single node knows. Per-binding
       flow routing is RFC 5626 in M3, and `Location.flow_id` exists for it.
