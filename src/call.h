@@ -9,7 +9,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <ctime>
-#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -34,8 +33,6 @@ class Channel;
 // focus URI (RFC 4579). Nothing here assumes there are exactly two legs.
 class Call {
  public:
-  using ChannelsFn = std::function<void(std::shared_ptr<Channel> channel)>;
-
   enum State { Initial, Trying, Ringing, Connected, Closing, Closed };
 
   static std::string state_to_string(const State s) {
@@ -79,12 +76,6 @@ class Call {
 
     // The party that started the call.
     bool originator = false;
-
-    void stop_streams() {
-      for (const auto& [id, stream] : streams) {
-        if (stream) stream->stop();
-      }
-    }
   };
 
   std::string id;
@@ -118,15 +109,6 @@ class Call {
     return nullptr;
   }
 
-  // Everyone who is not the originator. For a two-party call this is the one callee.
-  std::vector<const Participant*> targets() const {
-    std::vector<const Participant*> result;
-    for (const auto& participant : participants) {
-      if (!participant.originator) result.push_back(&participant);
-    }
-    return result;
-  }
-
   // The index of the leg that started the call, or of one that did not. The media
   // contract addresses a participant by index, so a caller that knows which end a
   // session description came from has to be able to turn that into one.
@@ -135,31 +117,6 @@ class Call {
       if (participants[i].originator == originator_wanted) return i;
     }
     return std::nullopt;
-  }
-
-  // The leg for a dialog, or null. A two-party call has one of each.
-  Participant* participant_for(const std::shared_ptr<Dialog>& dialog) {
-    for (auto& participant : participants) {
-      if (participant.dialog == dialog) return &participant;
-    }
-    return nullptr;
-  }
-
-  bool contains_channel(const std::shared_ptr<Channel>& channel) const {
-    for (const auto& participant : participants) {
-      if (participant.channel.lock() == channel) return true;
-    }
-    return false;
-  }
-
-  void with_all_channels(ChannelsFn callback) const {
-    for (const auto& participant : participants) {
-      if (auto channel = participant.channel.lock()) callback(channel);
-    }
-  }
-
-  void stop_streams() {
-    for (auto& participant : participants) participant.stop_streams();
   }
 };
 
