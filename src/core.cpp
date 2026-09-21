@@ -804,17 +804,6 @@ void Core::_end_held_call(const std::string& call_id, const std::string& reason)
   }
 }
 
-// RTP Relays
-
-void Core::rtprelay_register(std::shared_ptr<rtp::RTPRelay> relay) { _rtprelay = relay; }
-
-void Core::rtprelay_start() {
-  if (_rtprelay) _rtprelay->start();
-}
-void Core::rtprelay_stop() {
-  if (_rtprelay) _rtprelay->stop();
-}
-
 void Core::admin_register(std::shared_ptr<api::AdminAPI> adminAPI) { _adminAPI = adminAPI; }
 
 void Core::admin_start() {
@@ -823,16 +812,6 @@ void Core::admin_start() {
 
 void Core::admin_stop() {
   if (_adminAPI) _adminAPI->stop();
-}
-
-std::shared_ptr<RTPRelaySet> Core::rtprelay_allocate() {
-  if (!_rtprelay) return nullptr;
-  return _rtprelay->allocate_relay_set();
-}
-
-void Core::rtprelay_release(std::shared_ptr<RTPRelaySet> relay) {
-  if (!_rtprelay) return;
-  _rtprelay->release_relay_set(relay);
 }
 
 }  // namespace athenasip

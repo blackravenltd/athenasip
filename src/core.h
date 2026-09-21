@@ -206,13 +206,6 @@ class Core : public std::enable_shared_from_this<Core> {
   bool call_unregister(std::string callId);
   std::shared_ptr<Call> call_get(std::string callId);
 
-  // RTPRelay
-  void rtprelay_register(std::shared_ptr<rtp::RTPRelay> relay);
-  void rtprelay_start();
-  void rtprelay_stop();
-  std::shared_ptr<rtp::RTPRelaySet> rtprelay_allocate();
-  void rtprelay_release(std::shared_ptr<rtp::RTPRelaySet> relay);
-
   // Admin API
   void admin_register(std::shared_ptr<api::AdminAPI> adminAPI);
   void admin_start();
@@ -251,7 +244,6 @@ class Core : public std::enable_shared_from_this<Core> {
 
   std::vector<std::shared_ptr<Server>> _servers;
 
-  std::shared_ptr<rtp::RTPRelay> _rtprelay;
   std::shared_ptr<api::AdminAPI> _adminAPI;
 
   std::shared_ptr<ExpirySet<std::string>> _nonce_cache;
