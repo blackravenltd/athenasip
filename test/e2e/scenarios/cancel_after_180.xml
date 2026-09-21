@@ -73,7 +73,18 @@
   </send>
 
   <recv response="100" optional="true"/>
-  <recv response="180"/>
+
+  <recv response="180">
+    <action>
+      <!-- RFC 3261 9.1: "The Via header field in the CANCEL request MUST be identical to
+           the top Via header field value in the request being cancelled, including the
+           branch parameter." sipp's [branch] is derived per message, so it cannot be
+           used for the CANCEL or for the ACK. The node strips its own Via from the
+           response, so the top Via here is the one that went out on the INVITE and the
+           branch is read straight back off it. -->
+      <ereg regexp="branch=([^;[:space:]]+)" search_in="hdr" header="Via:" check_it="true" assign_to="via,invite_branch"/>
+    </action>
+  </recv>
 
   <!-- 9.1: the CANCEL repeats the INVITE's own top Via branch, which is what names the
        transaction being cancelled. -->
@@ -81,7 +92,7 @@
     <![CDATA[
 
       CANCEL sip:[field3]@[field0] SIP/2.0
-      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[$invite_branch]
       From: <sip:[field1]@[field0]>;tag=[call_number]
       To: <sip:[field3]@[field0]>
       Call-ID: [call_id]
@@ -99,7 +110,7 @@
     <![CDATA[
 
       ACK sip:[field3]@[field0] SIP/2.0
-      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[$invite_branch]
       From: <sip:[field1]@[field0]>;tag=[call_number]
       [last_To:]
       Call-ID: [call_id]
@@ -109,5 +120,7 @@
 
     ]]>
   </send>
+
+  <Reference variables="via,invite_branch"/>
 
 </scenario>

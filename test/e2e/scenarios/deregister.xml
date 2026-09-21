@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+
+<!--
+  RFC 3261 10.2.2: a single Contact of "*" with Expires 0 removes every binding an
+  address of record has, whatever address each one points at.
+
+  The harness needs this because every scenario gives its callee a port of its own, and
+  a REGISTER from a new port is a new binding rather than a replacement. Without it the
+  second scenario to run leaves the node forking to the first scenario's port, which
+  nothing is listening on any more, and the call fails on a timeout that has nothing to
+  do with what was being tested.
+-->
+<scenario name="Remove every binding">
+
+  <send retrans="500">
+    <![CDATA[
+
+      REGISTER sip:[field0] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:[field1]@[field0]>;tag=[call_number]
+      To: <sip:[field1]@[field0]>
+      Call-ID: [call_id]
+      CSeq: 1 REGISTER
+      Contact: *
+      Max-Forwards: 70
+      Expires: 0
+      User-Agent: sipp-e2e
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <recv response="401" auth="true"/>
+
+  <send retrans="500">
+    <![CDATA[
+
+      REGISTER sip:[field0] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:[field1]@[field0]>;tag=[call_number]
+      To: <sip:[field1]@[field0]>
+      Call-ID: [call_id]
+      CSeq: 2 REGISTER
+      Contact: *
+      [authentication]
+      Max-Forwards: 70
+      Expires: 0
+      User-Agent: sipp-e2e
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <recv response="200"/>
+
+</scenario>

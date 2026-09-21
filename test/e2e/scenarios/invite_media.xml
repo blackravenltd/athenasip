@@ -106,7 +106,7 @@
   <!-- Two seconds of G.711, which is what sipp ships as a capture. -->
   <nop>
     <action>
-      <exec play_pcap_audio="/usr/share/sipp/pcap/g711a.pcap"/>
+      <exec play_pcap_audio="/usr/share/sip-tester/g711a.pcap"/>
     </action>
   </nop>
 

@@ -424,20 +424,45 @@ and node endpoints the harness and a web client need.
       - The port allocator was a function whose result was captured with `$(...)`, so the
         counter was incremented in a subshell and every scenario got the same port.
 
-      **What the four call scenarios are still failing on**, for whoever picks this up:
+      **All eight scenarios pass as of 2026-09-21**, including the RTP one. What the four
+      call scenarios had been failing on, since each is worth knowing:
 
-      - The callee scenarios register and then wait for an INVITE in one sipp scenario,
-        and sipp binds a scenario instance to one Call-ID: the INVITE arrives with the
-        caller's Call-ID and is discarded as unmappable. The fix is the ordinary sipp
-        shape - register in a separate short run, then a pure UAS scenario that starts
-        with `recv request="INVITE"` and takes whatever call arrives.
-      - The node writes `0.0.0.0` into its own Via and Record-Route on a UDP flow,
-        because both are built from `connection->local_endpoint()` and the UDP listener
-        is bound to the wildcard. `Service-Route` had the same bug and is fixed;
-        Via and Record-Route are the M4 "public contact addresses" item, and the harness
-        has now shown it bites on a single node rather than only behind a balancer.
+      - The node wrote `0.0.0.0` into its own Via and Record-Route on a UDP flow, both
+        being built from `connection->local_endpoint()` with the listener on the
+        wildcard. This was the one real server bug of the four. `Core::advertised_address`
+        now answers it for all three of Via, Record-Route and Service-Route, and
+        `channel_register` files the advertised address as one of this node's own, or the
+        Record-Route it wrote comes back as a Route it does not recognise and 16.3.4
+        catches the BYE as a loop. The rest of the M4 "public contact addresses" item -
+        the localnet split, per-transport public ports, and working the address out
+        rather than being told - is untouched and still M4.
+      - The callee scenarios registered and then waited for an INVITE in one sipp
+        scenario, and sipp binds a scenario instance to one call: the INVITE arrives with
+        the caller's Call-ID and was discarded as unmappable. Registration is its own
+        short run now, on the port the UAS run then listens on.
+      - `cancel_after_180.xml` built the CANCEL with `[branch]`, which sipp derives per
+        message, so it named a transaction the node had never seen - and the node was
+        right to say so (RFC 3261 9.1 requires the CANCEL's Via to be identical to the
+        INVITE's, branch included). The branch is read back off the 180, whose top Via is
+        the one that went out, and used for the CANCEL and for the ACK to the 487, which
+        17.1.1.3 requires to match as well.
+      - Every scenario gives its callee a port of its own, and a REGISTER from a new port
+        is a new binding rather than a replacement, so the second scenario to run had the
+        node forking to the first one's dead port. Each pair now clears the account's
+        bindings first with a `Contact: *` and `Expires: 0` (10.2.2) - from a port of its
+        own, because sharing the UAS port made the two runs one transaction under 17.2.3
+        and the second REGISTER came back answered with the first one's response.
+      - `invite_media.xml` named the G.711 capture at sipp's upstream path; Debian's
+        package puts it in `/usr/share/sip-tester/`.
 
-      The RTP assertions have not been reached yet, so nothing is known about them.
+      `run.sh` now writes the node's own log to `results/node.log` before it tears the
+      containers down. Without it a failing scenario is two sipp traces and a guess.
+
+      **One deviation the harness surfaced and nobody has fixed**: a CANCEL that matches
+      no transaction is answered 200 and dropped. RFC 3261 16.10 says a proxy that finds
+      no response context "MUST statelessly forward the CANCEL request", because the
+      request it names may have been forwarded statelessly too. Worth doing with the
+      stateless path in M3.
 - [x] `Dialog` unit tests, done with step 5 on 2026-09-20. `tests/dialogs_test.cpp` has
       19 of them, RFC-derived in the same style as the transaction tests: the dialog the
       2xx establishes, each end's target and sequence, re-INVITE moving the target, BYE
