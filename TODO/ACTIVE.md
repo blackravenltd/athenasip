@@ -605,20 +605,16 @@ extension for what they do not cover, in this order:
       The list itself comes from the same discovery bus as `GET /api/v1/nodes`, so this
       is a way of carrying an answer the node already has, not a new source of truth.
 
-- [ ] Public contact addresses, which are not the node's local ones. `Via` and
-      `Record-Route` are built from `connection->local_endpoint()` today
-      (`src/proxy.cpp`, `src/channel.cpp`). Behind a balancer, in a container, or on the
-      single NAT'd public IP with port forwarding that is the normal SOHO deployment,
-      that address is a private one nothing outside can reach. A node on `192.168.1.10`
-      forwarded from `203.0.113.5` must write `203.0.113.5` into both, per transport and
-      with its own port, because the forwarded port is not always the local one.
-      Two consequences, and the second is the one that bites:
-      - `Core::is_local_address` has to hold the public addresses as well as the
-        observed local ones. It is additive already (`local_address_add`), so the
-        startup path adds the configured ones. Without that, the Record-Route this node
-        wrote comes back as a Route naming `203.0.113.5`, the node does not recognise
-        itself in it, and it forwards the request to itself - a loop, caught by 16.3.4
-        as a 482 instead of routing the BYE.
+- [ ] Public contact addresses, which are not the node's local ones. The first half of
+      this landed on 2026-09-21, because the sipp harness showed it bites on one node and
+      not only behind a balancer: `Core::advertised_address` returns `sip.public_address`
+      when it is set and the flow's own address otherwise, and `Via`, `Record-Route` and
+      `Service-Route` all go through it. `channel_register` files the advertised address
+      alongside the observed one, so a Route naming it is recognised as this node - the
+      second consequence below, which was the one that bit. What is left:
+      - The public port, which is not always the local one. A node behind port
+        forwarding writes its local port into both fields today, and the forwarded port
+        is what the far end has to come back to. It has to be configured per transport.
       - A client on the same LAN reaching the public address depends on the router
         hairpinning, and plenty do not. So the address a node advertises depends on who
         is asking: a `localnet` list of private prefixes, the local address to anything

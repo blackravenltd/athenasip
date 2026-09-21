@@ -678,6 +678,9 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
 
 bool Proxy::_prepare_forward(const std::shared_ptr<SIPMessage>& copy, const std::shared_ptr<Channel>& channel, const Target& target,
                              const std::string& loop_token) const {
+  auto core = _core.lock();
+  if (!core) return false;
+
   auto& header = copy->header;
 
   // RFC 3261 16.6 step 2: the Request-URI becomes the target this hop is for.
@@ -708,7 +711,7 @@ bool Proxy::_prepare_forward(const std::shared_ptr<SIPMessage>& copy, const std:
     auto record_route = std::make_shared<SIPUri>();
     record_route->valid = true;
     record_route->scheme = (transport == "tls" || Util::to_lower(header->request_uri->scheme) == "sips") ? "sips" : "sip";
-    record_route->host = local.address().to_string();
+    record_route->host = core->advertised_address(local.address().to_string());
     record_route->port = local.port();
 
     // 19.1.1: lr says this node is a loose router, which is what stops the next hop
@@ -746,8 +749,8 @@ bool Proxy::_prepare_forward(const std::shared_ptr<SIPMessage>& copy, const std:
   // transactions while both still say where they have been.
   const auto branch = std::string(kMagicCookie) + loop_token + "." + Util::generate_random_string("", 12);
 
-  auto via = std::make_shared<ViaHeader>("SIP/2.0/" + Util::to_upper(transport) + " " + local.address().to_string() + ":" + std::to_string(local.port()) +
-                                         ";branch=" + branch);
+  auto via = std::make_shared<ViaHeader>("SIP/2.0/" + Util::to_upper(transport) + " " + core->advertised_address(local.address().to_string()) + ":" +
+                                         std::to_string(local.port()) + ";branch=" + branch);
 
   header->add_start("Via", via);
   copy->branch = branch;

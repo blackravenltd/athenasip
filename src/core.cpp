@@ -138,7 +138,18 @@ bool Core::channel_register(std::string endpoint, std::shared_ptr<Channel> chann
 
   // Where the far end reached us is where a Record-Route this node writes will point,
   // so it is what a Route coming back has to be recognised against (RFC 3261 16.4).
-  if (channel->_connection) local_address_add(channel->_connection->local_endpoint_name());
+  if (channel->_connection) {
+    local_address_add(channel->_connection->local_endpoint_name());
+
+    // And the address it advertises on that flow, which is the one it actually wrote.
+    // Without this the Record-Route comes back as a Route naming the public address,
+    // the node does not know itself in its own route set, and it forwards the request
+    // to itself - a loop, caught by 16.3.4 as a 482 instead of routing the BYE.
+    const auto local = channel->_connection->local_endpoint();
+    const auto advertised = advertised_address(local.address().to_string());
+
+    if (advertised != local.address().to_string()) local_address_add(advertised + ":" + std::to_string(local.port()));
+  }
 
   events->publish(events::topics::node_channel(config->sip_node_id, channel->_connection->transport_name(), channel->_connection->remote_endpoint_name()),
                   "{\"status\":\"registered\",\"at\":\"" + Util::get_zulu_time() + "\"}");

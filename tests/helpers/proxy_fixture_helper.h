@@ -25,7 +25,12 @@ struct ProxyFixture : CoreFixture {
 
   std::shared_ptr<athenasip::types::Account> bob;
 
-  ProxyFixture() {
+  // The public address is taken before any channel opens, because that is the order a
+  // node starts in: the configuration is read, then the listeners bind. What a flow
+  // registers as this node's own address depends on it.
+  explicit ProxyFixture(const std::string& public_address = "") {
+    if (!public_address.empty()) config->sip_public_address = public_address;
+
     seed_realm("example.com");
     seed_account(1, "sip:alice@example.com", "alice-ha1");
     bob = seed_account(2, "sip:bob@example.com", "bob-ha1");

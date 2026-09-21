@@ -158,6 +158,14 @@ class Core : public std::enable_shared_from_this<Core> {
   void local_address_add(std::string host_port);
   bool is_local_address(const std::string& host, std::uint16_t port) const;
 
+  // The address this node writes into a Via, a Record-Route or a Service-Route: the one
+  // it was told to advertise, or the address the flow is actually on when it was told
+  // nothing. A UDP listener is bound to the wildcard, so its local endpoint is 0.0.0.0,
+  // and anything pointing the far end at 0.0.0.0 is something it cannot come back to.
+  std::string advertised_address(const std::string& local_address) const {
+    return config->sip_public_address.empty() ? local_address : config->sip_public_address;
+  }
+
   // Nonce
   void nonce_create(std::shared_ptr<Realm> realm, plugins::Handler<std::string> handler);
   void nonce_check(std::string nonce, plugins::Handler<bool> handler);
