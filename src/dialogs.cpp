@@ -227,6 +227,7 @@ void Dialogs::observe_response(const std::shared_ptr<SIPMessage>& request, const
   if (is_2xx(code) && dialog->state != Dialog::State::Confirmed) {
     dialog->state = Dialog::State::Confirmed;
     dialog->confirmed_at = std::time(nullptr);
+    dialog->confirmed_monotonic = _timers->now();
 
     // RFC 4028 section 7.1: the 2xx carries what the two ends settled on, which is the
     // only value worth recording - what the INVITE asked for is a request, not an
@@ -271,6 +272,7 @@ std::shared_ptr<Dialog> Dialogs::_for_tag(const std::string& call_id, const std:
   forked->callee_tag = callee_tag;
   forked->state = Dialog::State::Early;
   forked->confirmed_at = 0;
+  forked->confirmed_monotonic = {};
   forked->terminated_at = 0;
 
   branches.push_back(forked);

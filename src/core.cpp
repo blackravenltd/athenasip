@@ -708,45 +708,67 @@ std::shared_ptr<Call> Core::call_get(std::string callId) {
 void Core::media_register(std::shared_ptr<media::MediaEngine> engine) {
   media = std::move(engine);
 
-  // Nothing to ask until there is an engine to ask.
-  _media_sweep_schedule();
+  // Nothing to ask an engine until there is one, and the media half of the sweep is the
+  // half that needs it.
+  _call_sweep_schedule();
 }
 
-void Core::_media_sweep_schedule() {
-  if (_media_sweep_timer) {
-    _media_sweep_timer->cancel();
-    _media_sweep_timer.reset();
+void Core::_call_sweep_schedule() {
+  if (_call_sweep_timer) {
+    _call_sweep_timer->cancel();
+    _call_sweep_timer.reset();
   }
 
-  if (config->sip_media_timeout == 0 || !media) return;
+  const auto media_timeout = media ? config->sip_media_timeout : 0;
+  const auto max_duration = config->sip_max_call_duration;
 
-  // A quarter of the timeout, so a call that has gone quiet is noticed within a quarter
-  // of it, and never more often than every fifteen seconds however short the timeout is
-  // set: each pass is a walk over every live call and a round trip to the engine for each
-  // one of them.
-  const auto interval = std::max<std::uint32_t>(config->sip_media_timeout / 4, 15);
+  if (media_timeout == 0 && max_duration == 0) return;
+
+  // A quarter of whichever bound is shorter, so a call is noticed within a quarter of the
+  // limit that catches it, and never more often than every fifteen seconds: each pass is
+  // a walk over every live call and a round trip to the engine for each one of them.
+  std::uint32_t shortest = media_timeout;
+  if (max_duration > 0 && (shortest == 0 || max_duration < shortest)) shortest = max_duration;
+
+  const auto interval = std::max<std::uint32_t>(shortest / 4, 15);
 
   std::weak_ptr<Core> weak_self = weak_from_this();
 
-  _media_sweep_timer = _timer_source->schedule(std::chrono::seconds(interval), [weak_self]() {
-    if (auto self = weak_self.lock()) self->_media_sweep();
+  _call_sweep_timer = _timer_source->schedule(std::chrono::seconds(interval), [weak_self]() {
+    if (auto self = weak_self.lock()) self->_call_sweep();
   });
 }
 
-void Core::_media_sweep() {
-  _media_sweep_timer.reset();
+void Core::_call_sweep() {
+  _call_sweep_timer.reset();
 
-  const auto timeout = config->sip_media_timeout;
-  if (timeout == 0 || !media || !media->is_connected()) return _media_sweep_schedule();
+  const auto media_timeout = config->sip_media_timeout;
+  const auto max_duration = config->sip_max_call_duration;
+  const auto now = _timer_source->now();
+
+  const bool ask_media = media_timeout > 0 && media && media->is_connected();
 
   // Confirmed dialogs only. A call still being set up has relay ports and no media by
   // definition - nothing flows until somebody answers - and what bounds that is timer C
   // and timer B, not this.
-  std::unordered_set<std::string> asked;
+  std::unordered_set<std::string> seen;
 
   for (const auto& dialog : dialogs()->all()) {
     if (!dialog || dialog->state != types::Dialog::State::Confirmed) continue;
-    if (!asked.insert(dialog->call_id).second) continue;
+    if (!seen.insert(dialog->call_id).second) continue;
+
+    // The cap first, because it needs nothing but the clock and it applies to calls the
+    // media question cannot reach.
+    if (max_duration > 0 && dialog->confirmed_monotonic.time_since_epoch().count() != 0) {
+      const auto up_for = std::chrono::duration_cast<std::chrono::seconds>(now - dialog->confirmed_monotonic).count();
+
+      if (up_for >= static_cast<std::int64_t>(max_duration)) {
+        _end_held_call(dialog->call_id, "has been up for " + std::to_string(up_for) + "s, which is the configured maximum");
+        continue;
+      }
+    }
+
+    if (!ask_media) continue;
 
     auto call = call_get(dialog->call_id);
     if (!call) continue;
@@ -754,7 +776,7 @@ void Core::_media_sweep() {
     std::weak_ptr<Core> weak_self = weak_from_this();
     const auto call_id = dialog->call_id;
 
-    media->query(strand(), call, [weak_self, call_id, timeout](plugins::Result<std::string> held) {
+    media->query(strand(), call, [weak_self, call_id, media_timeout](plugins::Result<std::string> held) {
       auto self = weak_self.lock();
       if (!self || !held.ok) return;
 
@@ -762,17 +784,17 @@ void Core::_media_sweep() {
 
       // No reading is not the same as a long one. An engine holding nothing for this
       // call, or one whose query says nothing about idleness, leaves the call alone.
-      if (!idle.has_value() || *idle < timeout) return;
+      if (!idle.has_value() || *idle < media_timeout) return;
 
-      self->_end_idle_call(call_id, *idle);
+      self->_end_held_call(call_id, "has carried no media for " + std::to_string(*idle) + "s");
     });
   }
 
-  _media_sweep_schedule();
+  _call_sweep_schedule();
 }
 
-void Core::_end_idle_call(const std::string& call_id, std::uint32_t idle_seconds) {
-  _logger->info("Call " + call_id + " has carried no media for " + std::to_string(idle_seconds) + "s - letting it go");
+void Core::_end_held_call(const std::string& call_id, const std::string& reason) {
+  _logger->info("Call " + call_id + " " + reason + " - letting it go");
 
   // Terminating the dialogs is the whole of it: the change callback is what writes the
   // call record and releases the engine's ports, exactly as it does when a session timer

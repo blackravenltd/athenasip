@@ -268,20 +268,25 @@ class Core : public std::enable_shared_from_this<Core> {
 
   std::unordered_map<std::string, std::shared_ptr<Call>> _calls;
 
-  // The media-inactivity sweep. A call between endpoints that never negotiated a session
-  // timer has no expiry of its own, and a phone that loses power sends no BYE, so without
-  // this the node holds that call's dialog, record and relay ports until it restarts.
-  // Armed when an engine is registered, because there is nothing to ask until then.
-  std::shared_ptr<Timer> _media_sweep_timer;
+  // The sweep that decides a call this node is holding is over. A call between endpoints
+  // that never negotiated a session timer has no expiry of its own, and a phone that
+  // loses power sends no BYE, so without this the node holds that call's dialog, record
+  // and relay ports until it restarts.
+  //
+  // Two questions, because neither covers everything. How long the media has been silent
+  // reaches any call this node anchors and says nothing about one whose media went end to
+  // end; how long the call has been up reaches every call and cannot tell a live one from
+  // a dead one.
+  std::shared_ptr<Timer> _call_sweep_timer;
 
-  void _media_sweep_schedule();
-  void _media_sweep();
+  void _call_sweep_schedule();
+  void _call_sweep();
 
   // RFC 4028 section 8.3, which is the only thing a proxy may do about a call it has
   // decided is over: "the proxy MAY remove associated call state, and MAY free any
   // resources associated with the call. Unlike the UA, it MUST NOT send a BYE." This node
   // is on the path of the dialog, not an end of it.
-  void _end_idle_call(const std::string& call_id, std::uint32_t idle_seconds);
+  void _end_held_call(const std::string& call_id, const std::string& reason);
 };
 
 }  // namespace athenasip

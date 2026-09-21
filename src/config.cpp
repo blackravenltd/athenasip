@@ -47,6 +47,8 @@ bool Config::load_from_yaml(const std::string& filename) {
   if (sip["event_prefix"]) sip_event_prefix = sip["event_prefix"].as<std::string>();
   if (sip["public_address"]) sip_public_address = sip["public_address"].as<std::string>();
   if (sip["media_timeout"]) sip_media_timeout = sip["media_timeout"].as<uint32_t>();
+  if (sip["max_call_duration"]) sip_max_call_duration = sip["max_call_duration"].as<uint32_t>();
+  if (sip["require_session_timer"]) sip_require_session_timer = sip["require_session_timer"].as<bool>();
 
   if (sip["session_expires"]) {
     const auto configured = sip["session_expires"].as<uint32_t>();

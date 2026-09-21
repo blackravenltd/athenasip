@@ -29,6 +29,23 @@ sip:
   # nothing to watch.
   media_timeout: 300
 
+  # The longest this node will hold any call open, in seconds. Zero, the default, is no
+  # cap at all.
+  #
+  # The backstop for what the other two cannot see: a call whose media went end to end
+  # has nothing for media_timeout to watch, and two endpoints that neither implement
+  # RFC 4028 get no session timer however willing this node is to offer one. Blunt - set
+  # it and a legitimate call of that length is cut - so set it only if you know your
+  # calls.
+  max_call_duration: 0
+
+  # Insist on a session timer by putting Require: timer on a request whose caller did not
+  # advertise support for one. RFC 4028 8.1 calls this NOT RECOMMENDED and so does this
+  # file: an endpoint that does not implement the extension answers 420 Bad Extension and
+  # the call fails outright. Reasonable on a closed fleet where every handset is known,
+  # wrong on anything a stranger can call.
+  require_session_timer: false
+
   # RFC 4028 section 8.1: the session interval this node offers a call that asked for
   # none, in seconds. Zero leaves such a call without one.
   #

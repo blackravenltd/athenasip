@@ -266,13 +266,19 @@ What it deliberately left, so it is not lost:
       call with no expiration at all when neither end does, which is where it started. An
       interval already in the request is untouched, an inserted one is never below a
       `Min-SE` the request carried, and no `refresher` is ever named: 8.1 forbids it.
-- [ ] `sip.max_call_duration`, off by default: the hard backstop for a call this node does
-      not anchor, where there is no media to watch.
-- [ ] `sip.require_session_timer`, off by default. RFC 4028 8.1 calls `Require: timer`
-      NOT RECOMMENDED and the reason is concrete: an endpoint that does not implement the
-      extension answers 420 Bad Extension and the call fails outright rather than
-      degrading. Fine on a closed fleet, wrong on anything public-facing, and the
-      documentation has to say so.
+- [x] `sip.max_call_duration`, off by default, done on 2026-09-21. The backstop for the
+      call neither of the others reaches: media end to end, and two endpoints that have
+      never heard of RFC 4028. Measured from the dialog's confirmation on the steady clock
+      for the same reason the session deadline is. The sweep on `Core` does both questions
+      now, and the cheaper one - how long the call has been up - runs first and needs no
+      engine.
+- [x] `sip.require_session_timer`, off by default, done on 2026-09-21. RFC 4028 8.1 allows
+      `Require: timer` and calls it NOT RECOMMENDED in the same breath, and the reason is
+      concrete: an endpoint that does not implement the extension answers 420 Bad
+      Extension, so the call fails outright rather than going without an expiry. 8.1 also
+      says to add it only where the caller said nothing about session timers, which is
+      what the code does. Documented with the failure mode spelled out rather than the
+      option alone.
 - [ ] Tearing a lapsed call down towards the endpoints. On expiry this node discards its
       state, which is what RFC 4028 section 8 asks of a proxy; sending a BYE to both ends
       would be acting as a user agent in a dialog it only sits on the path of. When the
