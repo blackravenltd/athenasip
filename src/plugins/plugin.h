@@ -40,7 +40,11 @@ namespace athenasip::plugins {
 // 4 (2026-09-21): types::Account carries a second credential, ha1_sha256, so an account
 // can answer a Digest challenge with SHA-256 (RFC 8760) as well as MD5. A store that
 // does not carry it leaves accounts able to authenticate with MD5 alone.
-inline constexpr std::uint32_t API_VERSION = 4;
+// 5 (2026-09-21): MediaEngine gains start_recording and stop_recording, so that the
+// record capability a driver already advertises is one a caller can act on. Both
+// decline by default, as the conference operations do, so a driver that does not record
+// is unchanged.
+inline constexpr std::uint32_t API_VERSION = 5;
 
 // The kinds AthenaSIP registers today. A kind is a plain string rather than an enum so
 // that a plugin can introduce one the core was not built knowing about.
