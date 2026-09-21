@@ -1,0 +1,21 @@
+#
+# AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
+#
+# Copyright (C) 2026 Tom Cully <mail@tomcully.com>
+# Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
+#
+# sipp, from Debian's own package rather than a registry image nobody in this project
+# controls. curl comes with it because the harness provisions over the admin API before
+# it makes a call.
+
+FROM debian:trixie-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        sip-tester \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /e2e
+
+ENTRYPOINT ["sipp"]
