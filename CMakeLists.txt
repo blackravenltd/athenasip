@@ -198,5 +198,5 @@ if(ATHENA_BUILD_TESTING)
     endif()
 
     include(GoogleTest)
-    gtest_discover_tests(athenasip_tests)
+    gtest_discover_tests(athenasip_tests DISCOVERY_TIMEOUT 60)
 endif()
