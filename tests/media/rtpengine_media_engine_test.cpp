@@ -388,6 +388,103 @@ TEST(RtpengineMediaEngineTest, RecordingIsAskedForByName) {
   engine->close();
 }
 
+// The profile is what the caller knows and the engine does not: which side of the
+// bridge is the browser. Without it rtpengine mirrors what it was handed, so a WebRTC
+// offer produces a WebRTC offer to the desk phone, which is the one call Milestone 3
+// exists to make work.
+TEST(RtpengineMediaEngineTest, TheWebRtcProfileAsksRtpengineForIceDtlsAndSavpf) {
+  FakeRtpengine fake;
+  fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
+  fake.answer("offer", ok_with_sdp("v=0\r\no=- 1 1 IN IP4 203.0.113.9\r\ns=-\r\nt=0 0\r\nm=audio 30000 UDP/TLS/RTP/SAVPF 111\r\n"));
+
+  auto engine = make_engine(fake);
+  ASSERT_TRUE(engine->connect());
+
+  Flags flags;
+  flags.participant = 0;
+  flags.target = Flags::Profile::WebRtc;
+
+  ASSERT_TRUE(engine->offer(make_call(), kOffer, flags).ok);
+
+  auto request = fake.last("offer");
+  ASSERT_TRUE(request.has_value());
+
+  EXPECT_EQ(request->string_at("ICE"), "force");
+
+  // Passive, because the browser is the end that starts the DTLS handshake.
+  EXPECT_EQ(request->string_at("DTLS"), "passive");
+  EXPECT_EQ(request->string_at("transport-protocol"), "UDP/TLS/RTP/SAVPF");
+
+  const auto* mux = request->find("rtcp-mux");
+  ASSERT_NE(mux, nullptr);
+  ASSERT_EQ(mux->values().size(), 2u);
+  EXPECT_EQ(mux->values()[0].string(), "offer");
+  EXPECT_EQ(mux->values()[1].string(), "require");
+
+  engine->close();
+}
+
+TEST(RtpengineMediaEngineTest, ThePlainRtpProfileStripsWhatAPhoneCannotUse) {
+  FakeRtpengine fake;
+  fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
+  fake.answer("offer", ok_with_sdp("v=0\r\no=- 1 1 IN IP4 203.0.113.9\r\ns=-\r\nt=0 0\r\nm=audio 30000 RTP/AVP 0\r\n"));
+
+  auto engine = make_engine(fake);
+  ASSERT_TRUE(engine->connect());
+
+  Flags flags;
+  flags.participant = 0;
+  flags.target = Flags::Profile::PlainRtp;
+
+  // Even where the offer in hand is a browser's, which is exactly the case that has to
+  // come out the other side as something a phone can answer.
+  flags.ice = true;
+  flags.dtls = true;
+  flags.rtcp_mux = true;
+
+  ASSERT_TRUE(engine->offer(make_call(), kOffer, flags).ok);
+
+  auto request = fake.last("offer");
+  ASSERT_TRUE(request.has_value());
+
+  EXPECT_EQ(request->string_at("ICE"), "remove");
+  EXPECT_EQ(request->string_at("DTLS"), "off");
+  EXPECT_EQ(request->string_at("transport-protocol"), "RTP/AVP");
+
+  const auto* mux = request->find("rtcp-mux");
+  ASSERT_NE(mux, nullptr);
+  ASSERT_EQ(mux->values().size(), 1u);
+  EXPECT_EQ(mux->values()[0].string(), "demux");
+
+  engine->close();
+}
+
+// Nothing said means nothing sent, which leaves rtpengine doing what it did before the
+// profile existed. That is the right answer for a caller that cannot tell.
+TEST(RtpengineMediaEngineTest, TheMirrorProfileSaysNothingAboutIceOrDtls) {
+  FakeRtpengine fake;
+  fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
+  fake.answer("offer", ok_with_sdp("v=0\r\no=- 1 1 IN IP4 203.0.113.9\r\ns=-\r\nt=0 0\r\nm=audio 30000 RTP/AVP 0\r\n"));
+
+  auto engine = make_engine(fake);
+  ASSERT_TRUE(engine->connect());
+
+  Flags flags;
+  flags.participant = 0;
+  flags.target = Flags::Profile::Mirror;
+
+  ASSERT_TRUE(engine->offer(make_call(), kOffer, flags).ok);
+
+  auto request = fake.last("offer");
+  ASSERT_TRUE(request.has_value());
+
+  EXPECT_EQ(request->find("ICE"), nullptr);
+  EXPECT_EQ(request->find("DTLS"), nullptr);
+  EXPECT_EQ(request->find("transport-protocol"), nullptr);
+
+  engine->close();
+}
+
 TEST(RtpengineMediaEngineTest, CapabilitiesAreBridgeRecordAndTranscodeButNotConference) {
   FakeRtpengine fake;
   auto engine = make_engine(fake);

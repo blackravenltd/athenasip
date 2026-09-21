@@ -32,6 +32,39 @@ unsigned positive_or(const YAML::Node& node, unsigned fallback) {
   return static_cast<unsigned>(value);
 }
 
+// RFC 8838, RFC 8842 and RFC 5764 through rtpengine's own vocabulary. What a leg needs
+// is not what the leg on the other side sent, and with no flag at all rtpengine mirrors
+// what it was handed: a WebRTC offer produces a WebRTC offer to the callee, which is
+// right for browser to browser and exactly wrong for browser to desk phone.
+//
+// DTLS is passive towards a browser because the browser is the one that starts the
+// handshake, and rtcp-mux is required there because a browser will not offer separate
+// RTCP (RFC 5761, and what every implementation does).
+void apply_profile(Bencode& command, Flags::Profile profile, bool source_wants_mux) {
+  switch (profile) {
+    case Flags::Profile::WebRtc:
+      command.set("ICE", Bencode(std::string("force")));
+      command.set("DTLS", Bencode(std::string("passive")));
+      command.set("transport-protocol", Bencode(std::string("UDP/TLS/RTP/SAVPF")));
+      command.set("rtcp-mux", Bencode::list({Bencode(std::string("offer")), Bencode(std::string("require"))}));
+      return;
+
+    case Flags::Profile::PlainRtp:
+      command.set("ICE", Bencode(std::string("remove")));
+      command.set("DTLS", Bencode(std::string("off")));
+      command.set("transport-protocol", Bencode(std::string("RTP/AVP")));
+      command.set("rtcp-mux", Bencode::list({Bencode(std::string("demux"))}));
+      return;
+
+    case Flags::Profile::Mirror:
+      // Nothing said, so rtpengine keeps what it was given. Offering mux onward only
+      // where the end that sent this asked for it, because an endpoint that did not is
+      // an endpoint that may not understand it.
+      if (source_wants_mux) command.set("rtcp-mux", Bencode::list({Bencode(std::string("offer"))}));
+      return;
+  }
+}
+
 }  // namespace
 
 RtpengineMediaEngine::RtpengineMediaEngine(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<types::URL> url)
@@ -406,18 +439,9 @@ void RtpengineMediaEngine::offer(plugins::Executor on, std::shared_ptr<Call> cal
   // other's address (RFC 8866 section 5.2).
   command.set("replace", Bencode::list({Bencode(std::string("origin")), Bencode(std::string("session-connection"))}));
 
-  // Offered onward only when the end that sent this asked for it. rtpengine demuxes on
-  // the other side if that end declines, which is what makes offering it safe (RFC
-  // 5761).
-  if (flags.rtcp_mux) command.set("rtcp-mux", Bencode::list({Bencode(std::string("offer"))}));
+  apply_profile(command, flags.target, flags.rtcp_mux);
 
   if (!_media_address.empty()) command.set("media-address", Bencode(_media_address));
-
-  // ICE, DTLS and the transport-protocol mapping are deliberately not set here. With no
-  // flag rtpengine mirrors what it was given, which is right for a call whose two ends
-  // are alike and wrong for a browser calling a desk phone, and choosing between them
-  // needs to know what the far end is - which is the per-realm media policy item in
-  // TODO/ACTIVE.md, not something to guess at here.
 
   auto self = shared_from_this();
 
@@ -444,7 +468,7 @@ void RtpengineMediaEngine::answer(plugins::Executor on, std::shared_ptr<Call> ca
   command.set("sdp", Bencode(std::move(sdp)));
   command.set("replace", Bencode::list({Bencode(std::string("origin")), Bencode(std::string("session-connection"))}));
 
-  if (flags.rtcp_mux) command.set("rtcp-mux", Bencode::list({Bencode(std::string("accept"))}));
+  apply_profile(command, flags.target, flags.rtcp_mux);
   if (!_media_address.empty()) command.set("media-address", Bencode(_media_address));
 
   auto self = shared_from_this();
