@@ -88,9 +88,15 @@ bool Config::load_from_yaml(const std::string& filename) {
         _logger->error("Invalid value for 'tls.port': " + std::string(e.what()));
         return false;
       }
-    } else {
+    } else if (tls_enable) {
+      // Only when the listener is switched on. A section that says enable: false and
+      // nothing else is a listener turned off, not a configuration error, and refusing
+      // to start over the port of something that will never listen is the kind of thing
+      // that makes a server feel hostile to configure.
       _logger->error("Missing 'tls.port'");
       return false;
+    } else {
+      tls_port = 5061;
     }
 
     if (tls["cert_pem_filename"])
@@ -128,9 +134,15 @@ bool Config::load_from_yaml(const std::string& filename) {
         _logger->error("Invalid value for 'tcp.port': " + std::string(e.what()));
         return false;
       }
-    } else {
+    } else if (tcp_enable) {
+      // Only when the listener is switched on. A section that says enable: false and
+      // nothing else is a listener turned off, not a configuration error, and refusing
+      // to start over the port of something that will never listen is the kind of thing
+      // that makes a server feel hostile to configure.
       _logger->error("Missing 'tcp.port'");
       return false;
+    } else {
+      tcp_port = 5060;
     }
   }
 
@@ -154,9 +166,15 @@ bool Config::load_from_yaml(const std::string& filename) {
         _logger->error("Invalid value for 'udp.port': " + std::string(e.what()));
         return false;
       }
-    } else {
+    } else if (udp_enable) {
+      // Only when the listener is switched on. A section that says enable: false and
+      // nothing else is a listener turned off, not a configuration error, and refusing
+      // to start over the port of something that will never listen is the kind of thing
+      // that makes a server feel hostile to configure.
       _logger->error("Missing 'udp.port'");
       return false;
+    } else {
+      udp_port = 5060;
     }
   }
 
@@ -180,9 +198,15 @@ bool Config::load_from_yaml(const std::string& filename) {
         _logger->error("Invalid value for 'websocket.port': " + std::string(e.what()));
         return false;
       }
-    } else {
+    } else if (websocket_enable) {
+      // Only when the listener is switched on. A section that says enable: false and
+      // nothing else is a listener turned off, not a configuration error, and refusing
+      // to start over the port of something that will never listen is the kind of thing
+      // that makes a server feel hostile to configure.
       _logger->error("Missing 'websocket.port'");
       return false;
+    } else {
+      websocket_port = 9500;
     }
 
     if (websocket["tls"]) websocket_tls = websocket["tls"].as<bool>();

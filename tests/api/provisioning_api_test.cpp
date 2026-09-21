@@ -223,11 +223,36 @@ TEST(ProvisioningApiTest, AnAccountIsCreatedWithItsHa1ComputedHere) {
   EXPECT_EQ(account->ha1, Util::to_lower(Util::md5("alice:example.com:secret")));
 }
 
+// The realm in the path reaches the handler. This is not as obvious as it looks: the
+// handler reads the parameter and moves the context into the datastore call in the same
+// expression, and a parameter read by reference points into a map that has already been
+// moved from. It cost a 404 that said "no such realm: " with nothing after the colon,
+// on Linux, from code that worked on macOS.
+TEST(ProvisioningApiTest, ThePathParameterReachesTheHandler) {
+  ApiFixture f;
+
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+
+  auto response = f.post("/api/v1/realms/example.com/accounts", R"({"user":"alice","password":"secret"})");
+  ASSERT_EQ(response.status, 201u);
+
+  auto listed = f.get("/api/v1/realms/example.com/accounts");
+  ASSERT_EQ(listed.status, 200u);
+
+  const auto accounts = listed.json();
+  ASSERT_EQ(accounts.as_array().size(), 1u);
+  EXPECT_EQ(accounts.as_array()[0].at("realm").as_string(), "example.com");
+}
+
 TEST(ProvisioningApiTest, AnAccountInARealmThatDoesNotExistIs404) {
   ApiFixture f;
 
   auto response = f.post("/api/v1/realms/nowhere.example/accounts", R"({"user":"alice","password":"secret"})");
   EXPECT_EQ(response.status, 404u);
+
+  // Naming it is what distinguishes "that realm is not here" from "the path parameter
+  // never arrived", which is a 404 that looks identical until you read the message.
+  EXPECT_NE(response.body.find("nowhere.example"), std::string::npos);
 }
 
 TEST(ProvisioningApiTest, AnAccountWithNoCredentialIsRefused) {

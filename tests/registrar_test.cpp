@@ -386,6 +386,24 @@ TEST(RegistrarTest, TheOkCarriesAServiceRouteForThisNode) {
   EXPECT_TRUE(route->value->uri->has_parameter("lr"));
 }
 
+// A UDP listener is bound to the wildcard, so the address the flow arrived on is
+// 0.0.0.0 and a Service-Route built from it is a route the client cannot use. Found by
+// the sipp harness, which received exactly that.
+TEST(RegistrarTest, TheServiceRouteUsesTheAdvertisedAddress) {
+  Fixture f;
+  f.config->sip_public_address = "203.0.113.5";
+
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "600"));
+
+  auto response = f.response_with(f.connection, 200);
+  ASSERT_NE(response, nullptr);
+  ASSERT_TRUE(response->header->contains("Service-Route"));
+
+  auto route = response->header->headers_map["Service-Route"][0]->as<SIPIdentityHeader>();
+  ASSERT_NE(route, nullptr);
+  EXPECT_EQ(route->value->uri->host, "203.0.113.5");
+}
+
 // RFC 3261 17.2.2: the transaction absorbs a retransmitted REGISTER and answers it from
 // what it last sent. The registrar must not see it twice, or it would write the binding
 // again and issue a second challenge.

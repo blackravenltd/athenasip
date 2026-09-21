@@ -19,7 +19,7 @@
       Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
       From: <sip:[field1]@[field0]>;tag=[call_number]
       To: <sip:[field1]@[field0]>
-      Call-ID: reg-[call_id]
+      Call-ID: [call_id]
       CSeq: 1 REGISTER
       Contact: <sip:[field1]@[local_ip]:[local_port];transport=[transport]>
       Max-Forwards: 70
@@ -38,10 +38,10 @@
       Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
       From: <sip:[field1]@[field0]>;tag=[call_number]
       To: <sip:[field1]@[field0]>
-      Call-ID: reg-[call_id]
+      Call-ID: [call_id]
       CSeq: 2 REGISTER
       Contact: <sip:[field1]@[local_ip]:[local_port];transport=[transport]>
-      [authentication username=[field1] password=[field2]]
+      [authentication]
       Max-Forwards: 70
       Expires: 3600
       Content-Length: 0

@@ -17,7 +17,7 @@
 
 set -eu
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 COMPOSE="docker compose -f docker-compose.test.yml"
 NODE="172.31.0.10"
@@ -32,6 +32,19 @@ rm -f "${RESULTS}"/*.log "${RESULTS}"/*.err 2>/dev/null || true
 passed=0
 failed=0
 failures=""
+
+# Every scenario gets a port of its own. sipp runs as PID 1 in a container and derives
+# its branch from the pid and the call number, so two scenarios in a row produce the
+# same branch from the same address - which is a retransmission as far as RFC 3261
+# 17.2.3 is concerned, and the node correctly replays its last answer instead of
+# treating it as a new request. A different source port is a different sent-by, and the
+# transactions stop colliding.
+next_port=5100
+
+# Not a function that echoes: $(...) is a subshell, and a counter incremented in one
+# stays there. Every scenario would have come back with the same port, which is the
+# collision this exists to avoid.
+allocate_port() { next_port=$((next_port + 2)); }
 
 cleanup() {
   ${COMPOSE} --profile e2e down --remove-orphans >/dev/null 2>&1 || true
@@ -67,11 +80,17 @@ api -X POST "${API}/realms/example.com/accounts" -d '{"user":"bob","password":"b
 api -X POST "${API}/realms/example.com/accounts" -d '{"user":"carol","password":"carol-secret"}' >/dev/null
 
 # One end only: a scenario that registers and asserts on what came back.
+#
+# The credentials go on the command line rather than into the scenario. sipp expands a
+# [field] before it reads the [authentication] keyword around it, so the nested form
+# produces a header line that is not a header line at all.
 run_one() {
   name="$1"
   scenario="$2"
   csv="$3"
-  timeout="$4"
+  user="$4"
+  password="$5"
+  timeout="$6"
 
   case "${name}" in
     *${FILTER}*) ;;
@@ -80,8 +99,13 @@ run_one() {
 
   echo "  ${name}"
 
+  allocate_port
+  uac_port="${next_port}"
+
   if ${COMPOSE} run --rm sipp-uac \
       -sf "/e2e/scenarios/${scenario}" -inf "/e2e/${csv}" \
+      -au "${user}" -ap "${password}" \
+      -p "${uac_port}" -cid_str "${name}-%u-%p@%s" \
       -m 1 -r 1 -timeout "${timeout}" -timeout_error \
       -trace_err -error_file "/results/${name}.err" \
       -nostdin "${NODE}:5060" >"${RESULTS}/${name}.log" 2>&1; then
@@ -98,9 +122,11 @@ run_pair() {
   name="$1"
   uas_scenario="$2"
   uas_csv="$3"
-  uac_scenario="$4"
-  uac_csv="$5"
-  timeout="$6"
+  uas_user="$4"
+  uac_scenario="$5"
+  uac_csv="$6"
+  uac_user="$7"
+  timeout="$8"
 
   case "${name}" in
     *${FILTER}*) ;;
@@ -109,9 +135,17 @@ run_pair() {
 
   echo "  ${name}"
 
+  allocate_port
+  uas_port="${next_port}"
+
+  allocate_port
+  uac_port="${next_port}"
+
   ${COMPOSE} run -d --name "e2e-uas-${name}" sipp-uas \
     -sf "/e2e/scenarios/${uas_scenario}" -inf "/e2e/${uas_csv}" \
-    -p 6000 -m 1 -r 1 -timeout "${timeout}" -timeout_error \
+    -au "${uas_user}" -ap "${uas_user}-secret" \
+    -p "${uas_port}" -cid_str "${name}-uas-%u-%p@%s" \
+    -m 1 -r 1 -timeout "${timeout}" -timeout_error \
     -trace_err -error_file "/results/${name}-uas.err" \
     -nostdin "${NODE}:5060" >/dev/null 2>&1
 
@@ -121,7 +155,9 @@ run_pair() {
 
   if ${COMPOSE} run --rm sipp-uac \
       -sf "/e2e/scenarios/${uac_scenario}" -inf "/e2e/${uac_csv}" \
-      -p 6001 -m 1 -r 1 -timeout "${timeout}" -timeout_error \
+      -au "${uac_user}" -ap "${uac_user}-secret" \
+      -p "${uac_port}" -cid_str "${name}-%u-%p@%s" \
+      -m 1 -r 1 -timeout "${timeout}" -timeout_error \
       -trace_err -error_file "/results/${name}.err" \
       -nostdin "${NODE}:5060" >"${RESULTS}/${name}.log" 2>&1; then
     passed=$((passed + 1))
@@ -137,17 +173,17 @@ run_pair() {
 
 echo "Running scenarios..."
 
-run_one register              register.xml              alice.csv 20s
-run_one register-wrong-password register_unauthorised.xml alice.csv 20s
-run_one register-retransmit   register_retransmit.xml   alice.csv 20s
+run_one register                register.xml              alice.csv alice alice-secret       20s
+run_one register-wrong-password register_unauthorised.xml alice.csv alice not-the-password  20s
+run_one register-retransmit     register_retransmit.xml   alice.csv alice alice-secret      20s
 
-run_pair invite-bye     uas.xml         bob.csv   invite_bye.xml        alice.csv 30s
-run_pair cancel-ringing uas_ringing.xml bob.csv   cancel_after_180.xml  alice.csv 30s
-run_pair busy           uas_busy.xml    bob.csv   invite_busy.xml       alice.csv 30s
-run_pair media          uas_media.xml   bob.csv   invite_media.xml      alice.csv 40s
+run_pair invite-bye     uas.xml         bob.csv   bob   invite_bye.xml       alice.csv          alice 30s
+run_pair cancel-ringing uas_ringing.xml bob.csv   bob   cancel_after_180.xml alice.csv          alice 30s
+run_pair busy           uas_busy.xml    bob.csv   bob   invite_busy.xml      alice.csv          alice 30s
+run_pair media          uas_media.xml   bob.csv   bob   invite_media.xml     alice.csv          alice 40s
 
 # Last, because timer B is 64*T1 and this one waits it out.
-run_pair invite-timeout uas_silent.xml  carol.csv invite_timeout.xml    alice-to-carol.csv 60s
+run_pair invite-timeout uas_silent.xml  carol.csv carol invite_timeout.xml   alice-to-carol.csv alice 60s
 
 echo
 echo "${passed} passed, ${failed} failed"
