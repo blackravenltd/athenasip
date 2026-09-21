@@ -113,6 +113,10 @@ struct ApiFixture {
     return request(http::verb::post, target, token, body);
   }
 
+  Response put(const std::string& target, const std::string& body, const std::string& token = "admin-token") {
+    return request(http::verb::put, target, token, body);
+  }
+
   Response get(const std::string& target, const std::string& token = "admin-token") { return request(http::verb::get, target, token); }
 };
 
@@ -191,6 +195,26 @@ TEST(ProvisioningApiTest, TheNonceSecretIsNeverReturned) {
 
   EXPECT_EQ(created.body.find("do-not-leak"), std::string::npos);
   EXPECT_EQ(f.get("/api/v1/realms/example.com").body.find("do-not-leak"), std::string::npos);
+}
+
+// The registration bounds are realm policy, so they are provisioned rather than
+// configured per node. registration_minimum is what a 423 Interval Too Brief quotes in
+// Min-Expires (RFC 3261 10.3 step 7), and it is off until somebody sets it.
+TEST(ProvisioningApiTest, TheRegistrationBoundsAreProvisionedAndReturned) {
+  ApiFixture f;
+
+  auto created = f.post("/api/v1/realms", R"({"name":"example.com"})");
+  ASSERT_EQ(created.status, 201u);
+  EXPECT_EQ(created.json().at("registration_minimum").as_int64(), 0);
+
+  auto updated = f.put("/api/v1/realms/example.com", R"({"registration_minimum":120})");
+  ASSERT_EQ(updated.status, 200u);
+  EXPECT_EQ(updated.json().at("registration_minimum").as_int64(), 120);
+
+  // A PUT that named only the minimum left the maximum alone.
+  EXPECT_EQ(updated.json().at("registration_timeout").as_int64(), f.get("/api/v1/realms/example.com").json().at("registration_timeout").as_int64());
+
+  EXPECT_EQ(f.get("/api/v1/realms/example.com").json().at("registration_minimum").as_int64(), 120);
 }
 
 TEST(ProvisioningApiTest, AnUnknownRealmIs404) {

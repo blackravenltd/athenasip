@@ -487,6 +487,12 @@ components:
         registration_timeout:
           type: integer
           description: The longest registration this realm grants, in seconds
+        registration_minimum:
+          type: integer
+          description: >-
+            The shortest registration this realm accepts, in seconds. Zero, the default,
+            accepts any. A shorter one is refused with 423 Interval Too Brief carrying
+            this value in Min-Expires (RFC 3261 10.3).
 
     RealmCreate:
       type: object
@@ -501,6 +507,8 @@ components:
           type: integer
         registration_timeout:
           type: integer
+        registration_minimum:
+          type: integer
 
     RealmUpdate:
       type: object
@@ -510,6 +518,8 @@ components:
         nonce_expiry:
           type: integer
         registration_timeout:
+          type: integer
+        registration_minimum:
           type: integer
 
     Account:

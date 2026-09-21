@@ -664,6 +664,7 @@ std::string RedisDatastore::_serialise_realm(const std::shared_ptr<types::Realm>
   obj["nonce_secret"] = realm->nonce_secret;
   obj["nonce_expiry"] = realm->nonce_expiry;
   obj["registration_timeout"] = realm->registration_timeout;
+  obj["registration_minimum"] = realm->registration_minimum;
   return boost::json::serialize(obj);
 }
 
@@ -676,6 +677,7 @@ std::shared_ptr<types::Realm> RedisDatastore::_parse_realm(const std::string& va
   realm->nonce_secret = json_string(obj, "nonce_secret");
   realm->nonce_expiry = json_uint32(obj, "nonce_expiry");
   realm->registration_timeout = json_uint32(obj, "registration_timeout");
+  realm->registration_minimum = json_uint32(obj, "registration_minimum");
   return realm;
 }
 
