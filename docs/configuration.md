@@ -7,46 +7,55 @@ AthenaSIP uses a YAML configuration file. The server will search, in order:
 
 ## Configuration
 
+`config/config.example.yaml` is the annotated reference: every setting appears in it with
+its own default and a note on what it is for, so a line deleted from a copy of it changes
+nothing. This page is the longer prose for the settings that need it.
+
+A working configuration is much shorter than the example. A node id, one listener and the
+driver URLs will run:
+
 ```yaml
 sip:
-  realm: "sip.athenasip.org"
-  nonce_secret: "your_nonce_secret_here"
-  allow_unencrypted: true
+  node_id: sip-0001
 
-tcp:
+udp:
   enable: true
   address: 0.0.0.0
   port: 5060
 
-tls:
-  enable: true
-  address: 0.0.0.0
-  port: 5061
-  cert_pem_filename: "../tls/snakeoil.cer"
-  key_pem_filename: "../tls/snakeoil.key"
-
-rtprelay:
-  enable: true
-  address: 0.0.0.0
-  public_address: 0.0.0.0
-  port_min: 22000
-  port_max: 23000
-
-db:
+datastore:
   url: "memory://"
+
+events:
+  url: "local://"
+
+media:
+  url: "builtin://"
 ```
 
 ### `sip` Section
 
 This section configures the server itself.
 
-#### `realm`
+#### `node_id`
 
-The default SIP realm of the server.
+This node's name, which must be unique across the cluster. It identifies the node on the
+event bus and in `GET /api/v1/nodes`, so two nodes sharing one is two nodes nobody can
+tell apart.
 
-#### `nonce_secret`
+#### `public_address`
 
-The secret for constucting authentication nonces. 
+The address this node tells the outside world to reach it on, and what it writes into the
+`Via`, `Record-Route` and `Service-Route` it generates.
+
+A listener bound to `0.0.0.0` answers on every address the host has and can name none of
+them, so without this those fields say `0.0.0.0` and nothing can route back. Leave it
+unset on a single-homed host, where the address of the flow itself is right; set it in a
+container, behind a load balancer, or on a NAT'd public IP.
+
+Realms and their nonce secrets are not configured here. They are provisioned over the
+admin API - `POST /api/v1/realms` - because a cluster shares them and a file on one node
+does not.
 
 #### `allow_unencrypted`
 
@@ -290,34 +299,11 @@ The filename for the PEM format server certificate.
 
 The filename for the PEM format server key.
 
-### `rtprelay`
+### `datastore` Section
 
-Configures the built-in UDP/RDP relay. The relay exposes pairs of ports and relays UDP packets
-between them, sending outgoing packets to the source endpoint of the first packet received. 
-
-#### `enable`
-
-Whether to enable the UDP/RDP relay, defaults to `true` if the section is present.
-  
-#### `address`
-
-The address to bind to, e.g. `0.0.0.0`
-
-#### `public_address`
-
-The IP address to advertise (and replace in SDP) - this should be a real public IP address.
-
-#### `port_min`
-
-The first port in the available port range for the relay, e.g. `22000`
-
-#### `port_max`
-
-The last port in the available port range for the relay, e.g. `23000`
-
-### `db` Section
-
-This section configures the database.
+Where realms, accounts, registrations, nonces and call records live. One of the three
+plugin kinds: the URL's scheme picks the driver, and a section named after that driver
+carries anything the URL cannot express.
 
 #### `url`
 
