@@ -151,8 +151,10 @@ void ProvisioningAPI::_realm_update(RouteContext context) {
     return context.done();
   }
 
+  const auto realm_name = context.parameter("realm");
+
   auto self = shared_from_this();
-  _with_realm(context.parameter("realm"), std::move(context), [self, body](std::shared_ptr<types::Realm> realm, RouteContext context) {
+  _with_realm(realm_name, std::move(context), [self, body](std::shared_ptr<types::Realm> realm, RouteContext context) {
     // Only what was given. A PUT that left out a field and silently reset it to the
     // default would be a way to lose a nonce secret without being told.
     if (const auto secret = string_field(*body, "nonce_secret")) realm->nonce_secret = *secret;
@@ -172,9 +174,11 @@ void ProvisioningAPI::_realm_update(RouteContext context) {
 }
 
 void ProvisioningAPI::_realm_delete(RouteContext context) {
+  const auto realm_name = context.parameter("realm");
+
   auto self = shared_from_this();
 
-  _with_realm(context.parameter("realm"), std::move(context), [self](std::shared_ptr<types::Realm> realm, RouteContext context) {
+  _with_realm(realm_name, std::move(context), [self](std::shared_ptr<types::Realm> realm, RouteContext context) {
     self->_datastore->realm_delete(self->_executor, realm->name, [context](plugins::Status status) mutable {
       if (!status.ok) {
         write_error(context.response, http::status::internal_server_error, "datastore_error", status.error);
@@ -190,9 +194,11 @@ void ProvisioningAPI::_realm_delete(RouteContext context) {
 // Accounts
 
 void ProvisioningAPI::_account_list(RouteContext context) {
+  const auto realm_name = context.parameter("realm");
+
   auto self = shared_from_this();
 
-  _with_realm(context.parameter("realm"), std::move(context), [self](std::shared_ptr<types::Realm> realm, RouteContext context) {
+  _with_realm(realm_name, std::move(context), [self](std::shared_ptr<types::Realm> realm, RouteContext context) {
     self->_datastore->account_list(self->_executor, realm->name, [context](plugins::Result<std::vector<std::shared_ptr<types::Account>>> result) mutable {
       if (!result.ok) {
         write_error(context.response, http::status::internal_server_error, "datastore_error", result.error);
@@ -217,8 +223,10 @@ void ProvisioningAPI::_account_create(RouteContext context) {
     return context.done();
   }
 
+  const auto realm_name = context.parameter("realm");
+
   auto self = shared_from_this();
-  _with_realm(context.parameter("realm"), std::move(context), [self, body](std::shared_ptr<types::Realm> realm, RouteContext context) {
+  _with_realm(realm_name, std::move(context), [self, body](std::shared_ptr<types::Realm> realm, RouteContext context) {
     const auto user = string_field(*body, "user");
     if (!user || user->empty()) {
       write_error(context.response, http::status::bad_request, "invalid_request", "user is required");

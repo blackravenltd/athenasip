@@ -37,10 +37,12 @@ struct RouteContext {
   // the handler finished on.
   std::function<void()> done;
 
-  const std::string& parameter(const std::string& name) const {
-    static const std::string empty;
+  // By value, deliberately. A reference into this map outlives nothing: the usual
+  // shape here is to read a parameter and move the context into a handler in the same
+  // call, and a reference would then point into a map that has already been moved from.
+  std::string parameter(const std::string& name) const {
     const auto it = parameters.find(name);
-    return it == parameters.end() ? empty : it->second;
+    return it == parameters.end() ? std::string() : it->second;
   }
 };
 

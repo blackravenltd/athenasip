@@ -358,13 +358,41 @@ and node endpoints the harness and a web client need.
       `run.sh` provisions the realm and the accounts over the admin API first, which is
       the same path an operator uses.
 
-      **Not yet run.** Docker was not available on the machine where they were written,
-      so they are checked for well-formedness and shell syntax and nothing more. The
-      first run is likely to need corrections, and two are worth expecting: whether
-      sipp picks the MD5 challenge when RFC 8760 puts SHA-256 first (section 2.4 warns
-      that a client may take the first one blindly, and if sipp does, the fix is a
-      configurable algorithm order rather than a change of behaviour), and whether the
-      RTP assertions hold with sipp's own pcap playback.
+      Run on 2026-09-21 against sipp 3.7.3: **4 of 8 pass** - `register`,
+      `register-wrong-password`, `register-retransmit` and `invite-timeout`. Digest
+      authenticates end to end against a real client, and it picks the SHA-256 challenge
+      rather than the MD5 one, so the RFC 8760 ordering worry was unfounded: sipp is
+      built with SHA256 support and follows section 2.4.
+
+      Four harness bugs were fixed getting there, and each is worth knowing:
+
+      - `run.sh` computed the repository root as `test/` rather than the root.
+      - sipp expands a `[field]` before it reads the `[authentication]` keyword around
+        it, so the nested form emitted `alice[authentication username= password=...]` -
+        a header line with no colon, which the node correctly answered 400. The
+        credentials go on the command line now.
+      - sipp runs as PID 1 in every container and builds its branch from the pid and the
+        call number, so two scenarios in a row sent the same branch from the same
+        address. The node treated the second as a retransmission and replayed its last
+        answer, which looked exactly like a wrong password being accepted. Each scenario
+        gets its own source port now.
+      - The port allocator was a function whose result was captured with `$(...)`, so the
+        counter was incremented in a subshell and every scenario got the same port.
+
+      **What the four call scenarios are still failing on**, for whoever picks this up:
+
+      - The callee scenarios register and then wait for an INVITE in one sipp scenario,
+        and sipp binds a scenario instance to one Call-ID: the INVITE arrives with the
+        caller's Call-ID and is discarded as unmappable. The fix is the ordinary sipp
+        shape - register in a separate short run, then a pure UAS scenario that starts
+        with `recv request="INVITE"` and takes whatever call arrives.
+      - The node writes `0.0.0.0` into its own Via and Record-Route on a UDP flow,
+        because both are built from `connection->local_endpoint()` and the UDP listener
+        is bound to the wildcard. `Service-Route` had the same bug and is fixed;
+        Via and Record-Route are the M4 "public contact addresses" item, and the harness
+        has now shown it bites on a single node rather than only behind a balancer.
+
+      The RTP assertions have not been reached yet, so nothing is known about them.
 - [x] `Dialog` unit tests, done with step 5 on 2026-09-20. `tests/dialogs_test.cpp` has
       19 of them, RFC-derived in the same style as the transaction tests: the dialog the
       2xx establishes, each end's target and sequence, re-INVITE moving the target, BYE
@@ -372,7 +400,9 @@ and node endpoints the harness and a web client need.
       session timer. This item was written before they existed.
 - [x] `docker-compose.test.yml`: one node and two sipp containers on a network of their
       own, with fixed addresses because a callee has to register at an address the node
-      can route back to. Done on 2026-09-21, unrun for the same reason as above.
+      can route back to. Done on 2026-09-21 and running. The node image builds Boost from
+      source because Debian ships 1.83 and this needs 1.87 or newer; it is its own layer
+      and cached after the first build.
 - [ ] GitHub Actions: build (Debug + ASan), unit tests, sipp harness. Deferred at Tom's
       call, confirmed again on 2026-09-21; listed so it is not forgotten.
 
@@ -479,7 +509,9 @@ alone does not give. The answer is the standard mechanisms first and an optional
 extension for what they do not cover, in this order:
 
 - [x] RFC 3608 Service-Route, done on 2026-09-21. The 200 OK to REGISTER carries this
-      node, on the flow the REGISTER arrived over, with `lr`. It tells a client where to
+      node, on the flow the REGISTER arrived over, with `lr`. It names
+      `sip.public_address` when one is set: the sipp harness received
+      `<sip:0.0.0.0:5060;lr>` on a UDP flow, which is a route no client can use. It tells a client where to
       send everything that follows, which for a client whose Contact is unroutable - a
       browser's always is - is the only thing that makes the next request work. It is
       also half of failover: a client that re-registers on another node is told that

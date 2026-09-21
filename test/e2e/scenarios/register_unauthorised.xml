@@ -37,7 +37,7 @@
       Call-ID: [call_id]
       CSeq: 2 REGISTER
       Contact: <sip:[field1]@[local_ip]:[local_port];transport=[transport]>
-      [authentication username=[field1] password=not-the-password]
+      [authentication]
       Max-Forwards: 70
       Expires: 3600
       Content-Length: 0

@@ -313,8 +313,9 @@ std::string Registrar::_path_of(const std::shared_ptr<SIPMessage>& request) cons
 }
 
 std::shared_ptr<headers::Header> Registrar::_service_route(const std::shared_ptr<SIPMessage>& request) const {
+  auto core = _core.lock();
   auto channel = request->channel.lock();
-  if (!channel || !channel->_connection) return nullptr;
+  if (!core || !channel || !channel->_connection) return nullptr;
 
   const auto local = channel->_connection->local_endpoint();
   const auto transport = Util::to_lower(channel->_connection->transport_name());
@@ -322,7 +323,12 @@ std::shared_ptr<headers::Header> Registrar::_service_route(const std::shared_ptr
   auto route = std::make_shared<types::SIPUri>();
   route->valid = true;
   route->scheme = (transport == "tls" || transport == "wss") ? "sips" : "sip";
-  route->host = local.address().to_string();
+
+  // The address the node was told to advertise, when it was told one. A UDP listener is
+  // bound to the wildcard, so its local endpoint is 0.0.0.0 - and a Service-Route
+  // pointing at 0.0.0.0 is a route the client cannot use, which is worse than sending
+  // none at all.
+  route->host = core->config->sip_public_address.empty() ? local.address().to_string() : core->config->sip_public_address;
   route->port = local.port();
 
   // 19.1.1 again: loose routing, so the next hop does not rewrite the Request-URI.
