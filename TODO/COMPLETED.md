@@ -1,8 +1,13 @@
 # AthenaSIP - Completed Work
 
-Reconstructed from git history (135 commits, 2025-02-06 to 2026-07-12) and the
-current source. Items are what exists and works in the tree as of `8651ced` plus the
-uncommitted working tree on 2026-09-17.
+What has landed, oldest first. Each section says what shipped and, where it matters, why
+it took the shape it did; `ACTIVE.md` is the plan and this is the record.
+
+The sections down to "Refactors landed" are the state of the tree as it was found on
+2026-09-17, reconstructed from 135 commits between 2025-02-06 and 2026-07-12. They use
+the names of that time: `Subscriber` became `Account` on 2026-09-21, and the MySQL,
+PostgreSQL, SQLite, Lua and tinyxml2 pieces they list were deleted or parked the same
+week, under Milestone 1. Everything after that is dated as it landed.
 
 ## Foundations
 
@@ -111,7 +116,7 @@ uncommitted working tree on 2026-09-17.
 - [x] `RTPProxyClient`: rtpproxy text protocol client (V, U, L, R, D commands) on a
       strand, async send/receive with response parsing (`src/rtp/rtp_proxy_client.*`).
 - [x] `MediaStream` / `Call::streams` model. (Wiring into INVITE was removed in the
-      transactions refactor; see ACTIVE.md section 3.)
+      transactions refactor and came back as Milestone 2 step 6, below.)
 
 ## Admin / HTTP
 
@@ -128,8 +133,8 @@ uncommitted working tree on 2026-09-17.
 ## Tests (`tests/`, GoogleTest)
 
 - [x] DelayedTask, ExpiryMap, ExpirySet, Util, Version, URL, header registry,
-      LocalEventSystem. Helpers for pumping the global io_context. (Currently broken by
-      the snake_case rename; see ACTIVE.md section 4.)
+      LocalEventSystem. Helpers for pumping the global io_context. (Broken by the
+      snake_case rename at the time, and fixed under Milestone 1 below.)
 
 ## Refactors landed
 
@@ -793,7 +798,8 @@ and gives the TU logic somewhere to live.
       that its hop is unreachable would try the next target twice.
 - [x] No NAPTR and no SRV: RFC 3263 is a step of its own, and this resolves the host the URI
       named the way 16.6 step 7 falls back to without service records. UDP and TLS outbound
-      are refused rather than faked, for reasons recorded under step 7 in `ACTIVE.md`.
+      are refused rather than faked; outbound TLS waits on the cluster CA (M4) and
+      outbound UDP to an unknown host on the UDP trunk work (M3), both in `ACTIVE.md`.
 - [x] RFC 3261 18.1.1: a request over 1300 bytes with the path MTU unknown leaves over TCP
       rather than UDP, with the top Via rewritten to say so, and falls back to UDP when TCP
       is refused. The decision is made where the final bytes exist, after the media engine
@@ -806,3 +812,383 @@ and gives the TU logic somewhere to live.
 - [x] 20 tests. The WSS ones complete a real TLS handshake against the listener, carry a
       REGISTER over the frames and read the 401 back; the 18.1.1 ones read what this node
       actually wrote off a real TCP socket. 371 tests, clean under asan and tsan.
+
+## Milestone 2 step 7 - Transports, part 2 (2026-09-21)
+
+- [x] Plugin contract v2. The flow identity and the `EventSystem` realignment landed in
+      one `API_VERSION` bump rather than two, so a plugin author migrates once. The
+      reason is recorded above the constant in `src/plugins/plugin.h`.
+      - `Datastore::subscriber_register` takes the binding as a `types::Location` in
+        place of the `contact` + `path` pair, so the flow and the node holding it can be
+        recorded. The store still fills `subscriber_id`, `registered_at`, `expires_at`
+        and `nat`; everything else on the binding is the caller's. Redis writes
+        `flow_id` and `node_id` only when they are set.
+      - `Channel::flow_id()` is `transport://host:port`, taken once at construction and
+        built by `Core::channel_key`, which is now the only place that key is spelled:
+        `Channel::start`, `Channel::close`, `Core::channel_find` and
+        `Core::channel_connect` all go through it. A key built two ways is a lookup that
+        silently misses.
+      - `Core::subscriber_register` keeps its own signature and builds the `Location`:
+        contact and path from the registrar, `node_id` from the config, `flow_id` from
+        the channel the REGISTER arrived over. The registrar's call site is unchanged.
+      - `EventSystem` now has the shape `Datastore` and `MediaEngine` have:
+        `connect(Executor, StatusHandler)`, a synchronous `close()`, `is_connected()`,
+        and `publish` / `subscribe` / `unsubscribe` / `unsubscribe_all` on the contract's
+        executor and handlers. `subscribe` hands the `Subscription` back through its
+        handler, because a broker has to be asked before the subscription exists, and
+        the MQTT driver drops one the broker refused rather than leaving the caller a
+        handle to nothing. The fire-and-forget `publish(name, message)` stays: the bus
+        is observability and is never on the call setup path. `main.cpp` connects it
+        through the `connect_and_wait` helper it already used for the other two.
+      - `tests/helpers/sync_event_system_helper.h` is the blocking view of a bus, as
+        `SyncDatastore` is of a store. The tests cover the binding recording the flow it
+        was learned over, that flow id being exactly what `channel_find` answers to, a
+        binding learned over no channel recording no flow, and the flow and node making
+        the round trip through Redis.
+- [x] The transport's threading rule. `Connection::executor()` is the executor a
+      connection's stream belongs to, and `Channel` hands every operation on the stream
+      over to it: starting a read, starting a write, and the teardown in `close()`. A
+      socket is not safe for two threads and each server runs its own io_context on its
+      own thread, so the Core strand reaching in was a second thread inside the stream.
+      `UDPServer` already worked this way and says so in its own comment; TCP, TLS and
+      WebSocket did not. Found by tsan as a data race in
+      `WebsocketConnectionFor::is_open()`, called from `Channel::close()` while beast's
+      read op wrote the same field finishing the teardown the far end started. Measured
+      before and after on `WebsocketServerTest.CarriesSipWithoutTls`: 12 failures in 30
+      runs at the baseline, 0 in 30 with the fix. Three tests pin the rule itself: the
+      mock connection can be given a strand of its own and records whether each call
+      arrived on it.
+- [x] A write queue on the channel. One write in flight at a time, the rest queued on the
+      strand, and a short write resumed from where it stopped - `async_write_some` is not
+      obliged to take the whole buffer, and nothing was checking how much it took.
+      `Channel::write` was a declaration with no definition; it is now the way raw bytes
+      go out, and what the tests drive.
+- [x] Connection reuse is tested: a second in-dialog request goes out on the flow the
+      first one used, and the registry still holds one channel for that hop. Opening a
+      second connection per request would leave a node holding one socket per request,
+      and for a client behind NAT the new one would not reach it at all.
+
+Left for later, and recorded in `ACTIVE.md`: outbound TLS (M4, with the cluster CA) and
+outbound UDP to a host this node has never heard from (M3, with the UDP trunk).
+
+## Milestone 2 step 8 - Admin API, part 1: provisioning (2026-09-21)
+
+- [x] OpenAPI 3 document at `docs/api/openapi.yaml`, versioned under `/api/v1`.
+- [x] Bearer tokens with `admin` and `client` scopes, from `http.api.tokens`. A route
+      names the scope it needs where it is declared, so adding one cannot accidentally
+      leave it open, and a request with no matching token is refused - an API enabled
+      with no tokens is one nobody can call.
+- [x] `GET/POST/PUT/DELETE /api/v1/realms` and `/api/v1/realms/{realm}/accounts`, HA1
+      computed here from the password and never given back, and `GET
+      /api/v1/registrations` with the node and flow of each binding. The datastore's
+      create/update split is what lets these answer 409 rather than overwrite.
+- [x] JSON body parsing and one error envelope: a code a client branches on and a
+      message a person reads.
+- [x] `StaticMiddleware` path from `config->http_files_path`.
+- [x] The admin API is off the strand: provisioning goes to the datastore with the API's
+      own executor. The middleware chain had to learn to keep its session alive first,
+      because it only ever held one for a middleware that answered inline. What part 2
+      adds, the live registries, does need `call_on_strand`; nothing in provisioning
+      does.
+- [x] `GET /api/v1/nodes`: the cluster as a node knows it, with a URI per enabled
+      transport. One entry today, because nothing discovers the others yet; the shape
+      is what M4's discovery bus fills in. A browser reads it over the HTTP it is
+      already speaking and needs no SIP extension at all, which is why it is the first
+      failover piece built rather than the last. `sip.public_address` is what a node
+      advertises; a node on a wildcard bind knows every address it answers on and none
+      a client should use, so it has to be told.
+
+## Milestone 2 step 9 - Test harness (2026-09-21)
+
+- [x] `test/e2e/` with sipp scenarios: REGISTER with Digest, a wrong password, a
+      retransmitted REGISTER, INVITE/180/200/ACK/BYE, CANCEL after 180, 486, 408 on
+      timer B, and a call with RTP through the builtin relay. Each asserts on what the
+      RFC requires rather than on what the node currently does, and `run.sh` provisions
+      the realm and the accounts over the admin API first, which is the same path an
+      operator uses. `docker-compose.test.yml` puts one node and two sipp containers on
+      a network of their own, with fixed addresses because a callee has to register at
+      an address the node can route back to. The node image builds Boost from source
+      because Debian ships 1.83 and this needs 1.87 or newer; it is its own layer and
+      cached after the first build. `run.sh` writes the node's own log to
+      `results/node.log` before it tears the containers down, because without it a
+      failing scenario is two sipp traces and a guess.
+- [x] All eight scenarios pass against sipp 3.7.3. Digest authenticates end to end
+      against a real client, and it picks the SHA-256 challenge rather than the MD5 one,
+      so the RFC 8760 ordering worry was unfounded: sipp is built with SHA256 support and
+      follows section 2.4.
+- [x] The one real server bug the harness found: the node wrote `0.0.0.0` into its own
+      Via and Record-Route on a UDP flow, both being built from
+      `connection->local_endpoint()` with the listener on the wildcard.
+      `Core::advertised_address` now answers `sip.public_address` when it is set and the
+      flow's own address otherwise, for all three of Via, Record-Route and Service-Route,
+      and `channel_register` files the advertised address as one of this node's own, or
+      the Record-Route it wrote comes back as a Route it does not recognise and 16.3.4
+      catches the BYE as a loop. The public port per transport and the localnet split
+      are still M4.
+- [x] Harness bugs fixed on the way, each worth knowing: `run.sh` computed the
+      repository root as `test/`; sipp expands a `[field]` before it reads the
+      `[authentication]` keyword around it, so credentials go on the command line; sipp
+      runs as PID 1 in every container and builds its branch from the pid and the call
+      number, so each scenario gets its own source port or the second looks like a
+      retransmission of the first; the port allocator's counter was incremented in a
+      `$(...)` subshell; a callee scenario cannot register and then wait for an INVITE
+      in one run, because sipp binds a scenario instance to one call, so registration
+      is its own short run; `cancel_after_180.xml` built the CANCEL with `[branch]`,
+      which sipp derives per message, and the branch is now read back off the 180 (9.1
+      requires the CANCEL's Via to be identical to the INVITE's); every scenario gives
+      its callee a port of its own and clears the account's bindings first with a
+      `Contact: *` and `Expires: 0` (10.2.2), from a port of its own so the two REGISTERs
+      are not one transaction under 17.2.3; `invite_media.xml` named the G.711 capture
+      at sipp's upstream path where Debian's package puts it in `/usr/share/sip-tester/`.
+- [x] One deviation the harness surfaced and did not fix: a CANCEL matching no response
+      context is answered 200 and dropped where 16.10 says to forward it statelessly.
+      It is an M3 item in `ACTIVE.md`.
+- [x] `Dialog` unit tests, 19 of them in `tests/dialogs_test.cpp`, had already landed
+      with step 5.
+
+## Milestone 2 step 10 - Smaller items surfaced by the review (2026-09-21)
+
+- [x] Digest with SHA-256 (RFC 8760) alongside MD5. An account carries a credential per
+      algorithm, both computed while the password is in hand because neither can be
+      derived from the other. The registrar challenges with SHA-256 then MD5 and checks
+      against whichever the client answered with; an account imported as a bare MD5 hash
+      is challenged again rather than let in. Sending the algorithm at all needed the
+      Authorization serialiser to stop quoting tokens.
+- [x] `Subscriber` is `Account`, decided with Tom. It would have collided with SUBSCRIBE
+      (RFC 6665) the moment presence arrived in M6. The Datastore contract kept its
+      shape and changed its vocabulary, so `API_VERSION` is 3; the Redis keys moved with
+      it, and the event topic is `account/<uri>/status`.
+- [x] `RTPProxyClient` is out of the build path, the way Lua is: it stays in the tree as
+      the start of an rtpproxy driver and is not compiled until someone writes one.
+- [x] `docs/architecture.md` rewritten from the Architecture section of the plan: the
+      strand and what is not on it, the transport layering, the plugin registry with the
+      two implementations per kind, the cluster shape and the media model. It says in
+      as many words that DynamoDB, NATS and Kafka are things the contract makes possible
+      rather than things the core plans to build, and it points at `docs/plugins.md`.
+- [x] The rest of the documentation audited. `design.md` was still right about the
+      transport layering and wrong about everything that has happened since, so it
+      gained the threading rule, the flow id and the write queue, and its three broken
+      source links were fixed. `goals.md` was an empty file and is gone. `scripting.md`
+      described a Lua engine that is not compiled; it now says so, and says what routing
+      policy comes back as. `modules/` no longer exists. `quick_start.md` told the reader
+      to install rtpproxy and log in as accounts that never existed; it is now the actual
+      quick start, provisioning over the admin API. `README.md` claimed TLS-only defaults
+      the shipped configuration does not set and listed WebSockets as a future feature
+      two milestones after they landed.
+
+## Milestone 2 - the leftovers closed (2026-09-21)
+
+Items the steps had deferred to themselves, done before 0.5.0.
+
+### Transactions and registrar
+
+- [x] RFC 2543 fallback transaction matching. A request whose topmost Via carries no
+      branch, or one with no magic cookie, is keyed by 17.2.3's fallback tuple -
+      Request-URI, From tag, Call-ID, CSeq number, the whole topmost Via and the method -
+      instead of by branch and sent-by. Both forms are strings in the one table, so
+      nothing above the matcher knows which kind it holds. The To tag is the one field
+      of the rule left out, with the reason recorded at `_legacy_key`: it would stop an
+      ACK ever matching the INVITE that has no tag, and the case it exists for is already
+      covered because a 2xx terminates the server transaction (17.2.1). A branchless
+      request used to be answered 400 for want of an identifier.
+- [x] 423 Interval Too Brief with `Min-Expires`. `Realm` grew a `registration_minimum`
+      beside its `registration_timeout`, provisioned over the API and zero by default,
+      because the RFC's own advice in step 7 is that a registrar should accept brief
+      registrations unless the refreshes are costing it something. When it is set, the
+      three conditions are all of them: greater than zero, under an hour, and under the
+      minimum - a zero expiry is a removal and an hour is never too brief. The refusal
+      quotes the minimum in `Min-Expires`, which is what makes it something a client can
+      act on, and registers none of the contacts.
+- [x] RFC 3608 Service-Route. The 200 OK to REGISTER carries this node, on the flow the
+      REGISTER arrived over, with `lr`, naming `sip.public_address` when one is set. It
+      tells a client where to send everything that follows, which for a client whose
+      Contact is unroutable - a browser's always is - is the only thing that makes the
+      next request work. It is also half of failover: a client that re-registers on
+      another node is told that node's route by that node and needs no DNS to learn it.
+      `Path` and `Service-Route` are registered header types now, so both are parsed
+      rather than echoed.
+
+### Proxy
+
+- [x] Timer C (16.6 step 11). The branch that answers 180 and never stops is now given
+      up on. Nothing else was watching it: the first provisional response moves the
+      INVITE client transaction to Proceeding and cancels timer B (17.1.1.2), so from
+      the first 100 Trying onwards the branch had no bound at all and held the caller,
+      the response context and the dialog for as long as the node ran. The timer hangs
+      off the response context, which is where 16.6 puts it, and is reset by a 101 to
+      199 (16.7 step 2) but not by a 100. On firing it follows 16.8: a branch that has
+      answered provisionally is sent a CANCEL and given one more interval to answer it,
+      and one that ignores that has its client transaction terminated and is treated as
+      though a 408 came back. `sip.timers.c_invite_proxy_ms` configures it, and a value
+      at or below the RFC's three-minute floor is refused.
+- [x] The `o=` line carries this node's address. Every `c=`, `m=` port and `a=rtcp` was
+      rewritten and the `o=` was not, so a node anchoring media so that neither end
+      learns the other's address handed one of them away in it anyway. RFC 8866 section
+      5.2 allows the substitution in as many words, on the condition that the field stays
+      globally unique, so the username and session id the endpoint chose are kept and
+      only the address, nettype and addrtype are replaced.
+
+### Deciding a call is over
+
+Nothing before 0.5.0 let a node decide for itself that a call it was holding had ended.
+All of these release the call and send no BYE, which is what RFC 4028 section 8.3 allows
+a proxy and no more; `config.example.yaml` has the table of which reaches which call.
+
+- [x] RFC 4028 section 8, the proxy's own say in the negotiation.
+      `Config::sip_session_min_se` was configuration nothing read, and the node accepted
+      whatever the two ends agreed. 8.1 now applies to every INVITE and UPDATE: an
+      interval below the minimum is answered 422 Session Interval Too Small with `Min-SE`
+      when the caller advertises `Supported: timer`, and raised on the way through when
+      it does not, because a 422 a caller cannot read would only fail the call. A `Min-SE`
+      already in the request is raised and never lowered, and the `refresher` parameter
+      is never touched. 8.2 covers the other end: when the caller asked for a timer and
+      the callee answered without one, the 2xx gains the remembered interval with
+      `refresher=uac` and `Require: timer`, before the dialog tracker reads it rather
+      than after, or this node would watch nothing while the caller refreshed on an
+      interval this node handed it. The config floor of 90 the RFC sets is enforced.
+- [x] `sip.media_timeout` (300s, 0 off). A call between two endpoints that never offered
+      a timer has no interval and never lapses, and inserting `Session-Expires` only
+      helps where the far end implements RFC 4028, which is precisely not the case that
+      leaks. The media plane answers it instead: `RTPRelaySet` records when it last
+      carried a packet, the engine reports the shortest idle of a call's relays as
+      `idle_seconds` through `query()`, and the sweep on `Core` acts on it. RTCP counts
+      with RTP so hold and silence suppression do not read as dead.
+- [x] `sip.session_expires`, 1800 by default per section 4's recommendation and 0 to
+      leave such a call alone: 8.1's other half, inserting `Session-Expires` where a call
+      offered none. It covers the gap the media sweep cannot, a call whose media goes end
+      to end, and reaches any call whose far end implements RFC 4028. Safe by
+      construction: section 9 Table 2 has a timer-aware UAS take the refreshing itself
+      when the UAC cannot, and 8.2 leaves the call with no expiration at all when neither
+      end does, which is where it started. An interval already in the request is
+      untouched, an inserted one is never below a `Min-SE` the request carried, and no
+      `refresher` is ever named, because 8.1 forbids it.
+- [x] `sip.max_call_duration`, off by default. The backstop for the call neither of the
+      others reaches: media end to end, and two endpoints that have never heard of RFC
+      4028. Measured from the dialog's confirmation on the steady clock for the same
+      reason the session deadline is. The sweep on `Core` does both questions now, and
+      the cheaper one, how long the call has been up, runs first and needs no engine.
+- [x] `sip.require_session_timer`, off by default. RFC 4028 8.1 allows `Require: timer`
+      and calls it NOT RECOMMENDED in the same breath, and the reason is concrete: an
+      endpoint that does not implement the extension answers 420 Bad Extension, so the
+      call fails outright rather than going without an expiry. 8.1 also says to add it
+      only where the caller said nothing about session timers, which is what the code
+      does. Documented with the failure mode spelled out rather than the option alone.
+
+### Types
+
+- [x] `types::URL` (`src/types/url.cpp`) is hand-written. The last regex worth
+      replacing, and it was hiding two things: a port that was not digits was read as
+      part of the path and the URL called valid, so a typo in a datastore address
+      surfaced as a connection failure much later; and `to_string` dropped the port of
+      any scheme with no well-known one, which is every scheme this project invents.
+      Parsing into an object now clears what went before, and the default-port lookup is
+      case-insensitive the way RFC 3986 3.1 says a scheme is.
+
+## Releases
+
+- 0.2.0 (2026-09-18): Milestone 1 complete. The strand, the sanitizers, the media
+  engine interface and the datastore write operations.
+- 0.3.0 (2026-09-18): the four section 17 state machines, the matcher, `Registrar` and
+  `Proxy` as the transaction users, SDP against RFC 8866, injectable timers.
+- 0.4.0 (2026-09-21): section 16 complete in the proxy, dialogs and RFC 4028, media on
+  the signalling path, WSS, outbound flows, plugin contract v2.
+- 0.5.0 (2026-09-21): a node that knows when a call is over, the sipp harness passing,
+  the admin API, SHA-256 Digest, `Account`, and the documentation audit.
+
+## Milestone 2 - complete (0.5.0, 2026-09-21)
+
+A standards-compliant call on one node: INVITE / 18x / 200 / ACK / BYE / CANCEL between
+two accounts over UDP, TCP, TLS, WS and WSS, plain RTP through the builtin engine,
+provisioned through the admin API, verified by sipp. 472 tests at the tag, clean under
+asan and tsan, the Redis suite verified against a real server. The items each step left
+for later are in `ACTIVE.md` under the milestone that picks them up.
+
+## After 0.5.0
+
+### Each branch goes down its own binding's flow (2026-09-21, working tree)
+
+- [x] RFC 5626's routing half, and the last of step 1's leftovers. A user registered
+      from a desk phone and a browser had two bindings and one connection, because
+      `Core` kept one flow per account - the last to register - and the fork sent both
+      attempts down it, so one device rang twice and the other never. Each `Target` now
+      takes the flow its own binding recorded: `Proxy::_flow_for` asks
+      `Core::channel_find(flow_id)` for the flow the registration was made over and falls
+      back to resolving the Contact when the binding named no flow or the flow has since
+      closed, which is right for a desk phone with a routable address and hopeless for a
+      browser, whose attempt then fails and the fork moves on. `Core::account_get_channel`
+      and the account-to-channel index are gone. 430 Flow Failed for a binding whose flow
+      has gone is RFC 5626 section 11 and is in M4 with the rest of outbound.
+- [x] `tests/proxy_flow_routing_test.cpp`: the invariant stated so that it holds
+      whichever order the bindings come back in - every INVITE written to a connection
+      names, in its Request-URI, the device on the other end of that connection. 474
+      tests.
+
+### The rtpengine media engine (2026-09-21, working tree)
+
+M3's first item, and the engine the milestone is named for: ICE, DTLS and SRTP are what
+a browser requires, and the builtin relay declines them rather than answering an offer
+it cannot carry.
+
+- [x] `Bencode` (`src/media/bencode.*`), hand-written per the dependency rule and small
+      enough that the rule costs nothing. A dictionary is a vector of pairs kept sorted
+      by key rather than a `std::map`: canonical bencode wants byte order anyway, only
+      `std::vector` is guaranteed to hold an incomplete type, and a request that encodes
+      the same way every time is one a test can compare and a retransmission cannot
+      accidentally change. The decoder reads datagrams off a socket, so it is written
+      the way the SIP parsers are - recursion bounded at 32, every length checked
+      against what is actually there, an integer refused rather than wrapped, and the
+      two spellings of one number ("i007e", "i-0e") refused because the protocol is
+      keyed by exact bytes.
+- [x] `RtpengineMediaEngine` (`rtpengine://host:port`), with the ng protocol's `ping`,
+      `offer`, `answer`, `delete`, `query`, `start recording` and `stop recording`.
+      Capabilities are `bridge`, `record` and `transcode`; not `conference`, because
+      rtpengine's publish/subscribe is an M6 item and claiming it would have a caller
+      ask for a mix and get a relay.
+- [x] `connect()` is a ping that has to be answered `pong`. A UDP socket opens whether
+      or not anything is listening, so without it a node would start, report a media
+      engine, and fail the first call instead of failing to start.
+- [x] Retransmission, because the ng protocol is UDP and a request can be lost.
+      rtpengine caches its answer against the request's cookie, which makes asking again
+      a request for the same answer rather than for the work twice. `timeout_ms` bounds
+      one attempt rather than the operation: three at half a second is well inside the
+      thirty-two seconds timer B gives a transaction that a fork has to share.
+- [x] The tags. rtpengine files media under the tag of the end that offered it, so an
+      offer names the offering participant's own tag and an answer names the offerer as
+      from and the answerer as to - the reverse of the participant that handed over the
+      SDP. Getting this the wrong way round makes a second, unrelated call rather than
+      an error anybody would see, which is why it has a test of its own.
+- [x] `replace: [origin, session-connection]` on every offer and answer, which is the
+      substitution the builtin engine makes by hand and what keeps a node that anchors
+      media from handing one end the other's address (RFC 8866 section 5.2).
+- [x] `query` answers `idle_seconds` in the shape the call sweep already reads, from the
+      per-stream `last packet` rtpengine reports: the shortest idle across the call,
+      because one stream still carrying is a call still up. A stream nothing has ever
+      arrived on is idle from when the call was created rather than not idle at all,
+      which is what the builtin relay reports too - its counter starts when the relay
+      does - and what stops a call that never carried media living for ever.
+- [x] The socket is held by `shared_ptr` behind a mutex and closed on the strand by a
+      handler that owns it, because `close()` is called from the shutdown path and a
+      socket is not safe for two threads. That is the same rule the transport follows
+      for a connection's stream, and it was learned there the hard way.
+- [x] `MediaEngine::start_recording` and `stop_recording` on the contract, declining by
+      default the way the conference operations do, so the `record` capability a driver
+      advertises is one a caller can act on. `API_VERSION` is 5.
+- [x] Fixed on the way: `register_builtin_media_engines` and its two siblings were
+      non-inline functions in headers, so a second translation unit including one was a
+      duplicate symbol. Only ever included once until now.
+- [x] `gtest_discover_tests` is given a 60 second `DISCOVERY_TIMEOUT`. Listing the
+      binary's tests takes 2.3s idle and had been exceeding the 5 second default on a
+      loaded machine, which fails the build rather than a test.
+- [x] 30 tests. `tests/helpers/fake_rtpengine_helper.h` is an rtpengine that is not
+      rtpengine: a UDP socket on localhost that decodes the ng datagram, records it, and
+      answers what the test told it to, because a driver for a wire protocol is only as
+      good as what it puts on the wire and the only way to assert on that is to be the
+      other end of the socket. It also makes the two otherwise untestable cases easy: an
+      engine that answers an error, and one that does not answer at all.
+
+What this deliberately does not do, recorded against the next M3 item: no `ICE`, `DTLS`
+or `transport-protocol` flag is sent, so rtpengine mirrors what it was handed. That is
+right for a call whose two ends are alike and wrong for a browser calling a desk phone,
+and choosing between them needs to know what the far leg is - which at offer time is the
+flow's transport and the realm's policy, not anything in the description this node was
+given.
