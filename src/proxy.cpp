@@ -367,16 +367,15 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
           return _send_status(context->server, request, 480, "Temporarily Unavailable");
         }
 
-        // One node, one flow per account: the request goes back down the connection
-        // the callee registered on. Per-binding flow routing is RFC 5626, and
-        // Location::flow_id exists for it.
-        auto flow = core->account_get_channel(account);
-
+        // RFC 5626: each binding goes back down the flow it was registered over, not down
+        // whichever flow the account most recently used. A user registered from a desk
+        // phone and a browser has two bindings and two flows, and sending both attempts
+        // down one of them reaches one of the two devices twice and the other never.
         for (const auto& binding : bindings.value) {
           Target target;
           target.uri = binding.contact;
           target.next_hop = binding.contact;
-          target.flow = flow ? flow : _flow_to(*binding.contact);
+          target.flow = _flow_for(binding);
 
           context->targets.push_back(target);
         }
@@ -1120,6 +1119,24 @@ bool Proxy::_names_this_node(const SIPUri& uri) const {
 
   const auto hop = _next_hop_of(uri);
   return core->is_local_address(hop.host, hop.port);
+}
+
+std::shared_ptr<Channel> Proxy::_flow_for(const types::Location& binding) const {
+  auto core = _core.lock();
+  if (!core || !binding.contact) return nullptr;
+
+  // The flow the registration was made over, when it is still open. This is the whole of
+  // RFC 5626's routing: a browser's Contact URI has nothing listening behind it and a
+  // NAT'd client's names the wrong side of the NAT, so the connection they registered on
+  // is the only way back to either.
+  if (auto flow = core->channel_find(binding.flow_id)) return flow;
+
+  // No flow recorded, or one that has since closed. The Contact is all there is, which is
+  // right for a desk phone with a routable address and hopeless for a browser - and a
+  // binding whose flow has gone is a binding whose client has gone, so the attempt fails
+  // and the fork moves on to the next one. Answering 430 Flow Failed instead is RFC 5626
+  // section 11 and wants the registrar to act on it.
+  return _flow_to(*binding.contact);
 }
 
 std::shared_ptr<Channel> Proxy::_flow_to(const SIPUri& uri) const {

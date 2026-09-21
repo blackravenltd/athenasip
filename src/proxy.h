@@ -19,6 +19,7 @@
 #include "timer_source.h"
 #include "transaction_user.h"
 #include "transactions/transaction_base.h"
+#include "types/location.h"
 
 namespace athenasip {
 
@@ -217,6 +218,12 @@ class Proxy : public TransactionUser {
 
   bool _names_this_node(const SIPUri& uri) const;
   std::shared_ptr<Channel> _flow_to(const SIPUri& uri) const;
+
+  // RFC 5626: the flow a binding was registered over is the route back to it, and for a
+  // browser or a NAT'd client it is the only one - their Contact resolves to nothing
+  // reachable. Null when the binding named no flow or the flow has since closed, and the
+  // Contact is then all there is to go on.
+  std::shared_ptr<Channel> _flow_for(const types::Location& binding) const;
 
   static NextHop _next_hop_of(const SIPUri& uri);
 
