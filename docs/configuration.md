@@ -83,6 +83,40 @@ Only calls this node anchors are covered. Where the media engine declined the de
 - a WebRTC offer at the plain-RTP relay - or media otherwise goes end to end, there is
 nothing to observe and the call is left alone.
 
+#### `max_call_duration`
+
+The longest this node will hold any call open, in seconds - Defaults to `0`, which is no
+cap at all.
+
+This is the backstop for what the other two mechanisms cannot see. `media_timeout` only
+reaches a call this node anchors; `session_expires` only reaches one whose far end
+implements RFC 4028. A call that is neither - media end to end, and two endpoints that
+have never heard of session timers - is held until the node restarts, and this is the only
+thing that catches it.
+
+It is blunt by nature. There is nothing in it about whether the call is alive: set it to
+four hours and a legitimate four-hour call is cut. Set it only on a deployment that knows
+what its calls look like, and prefer the other two where they reach.
+
+Like them, when it fires the node releases the call and says nothing to either end
+(RFC 4028 section 8.3).
+
+#### `require_session_timer`
+
+Whether to insist on a session timer by putting `Require: timer` on a request whose caller
+did not advertise support - Defaults to `false`, and it should usually stay that way.
+
+RFC 4028 section 8.1 allows it and calls it NOT RECOMMENDED in the same breath. The
+consequence is concrete: an endpoint that does not implement the extension answers
+`420 (Bad Extension)`, so the call **fails outright** rather than merely going without an
+expiry. That can be a reasonable trade on a closed fleet where every handset is known and
+a call with no expiry is the worse outcome. It is the wrong one on anything a stranger can
+call.
+
+With it off, a caller that cannot do session timers is still offered one through
+`session_expires`, and the callee decides whether the session gets a timer. That is the
+same protection without the failure mode.
+
 #### `session_expires`
 
 The session interval this node offers a call that asked for none, in seconds - Defaults to

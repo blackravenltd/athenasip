@@ -872,6 +872,19 @@ void Proxy::_insert_session_timer(const std::shared_ptr<SIPMessage>& request) {
   request->header->add("Session-Expires", std::make_shared<headers::SessionExpiresHeader>(interval));
 
   _logger->debug("Call asked for no session interval - offering " + std::to_string(interval) + "s");
+
+  // 8.1: "If the request did not contain a Supported header field with the value 'timer',
+  // the proxy MAY insert a Require header field with the value 'timer' into the request.
+  // However, this is NOT RECOMMENDED. This allows the proxy to insist on a session timer
+  // for the session." Insisting means a callee that does not implement RFC 4028 answers
+  // 420 Bad Extension and the call fails, rather than going on without an expiry, which
+  // is why it is off unless somebody has said they want it.
+  if (!core->config->sip_require_session_timer) return;
+  if (has_option_tag(request, "Supported", "timer")) return;
+  if (has_option_tag(request, "Require", "timer")) return;
+
+  _logger->debug("Requiring the session timer this node offered");
+  request->header->add("Require", "timer");
 }
 
 void Proxy::_complete_session_timer(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response) {

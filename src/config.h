@@ -55,6 +55,18 @@ class Config {
   // Section 4 recommends 1800 and sets an absolute floor of 90.
   uint32_t sip_session_expires = 1800;
 
+  // RFC 4028 section 8.1: whether to insist on a session timer by putting Require: timer
+  // on a request whose caller did not advertise support. Off by default, and it should
+  // usually stay off.
+  //
+  // The RFC calls it NOT RECOMMENDED, and the reason is concrete: an endpoint that does
+  // not implement the extension answers 420 Bad Extension, so the call fails outright
+  // rather than merely going without an expiry. That is a reasonable trade on a closed
+  // fleet where every handset is known, and the wrong one on anything a stranger can
+  // call. Where it is off, a caller that cannot do session timers still gets one offered
+  // (`sip_session_expires`) and the callee decides.
+  bool sip_require_session_timer = false;
+
   // RFC 4028 section 5: the shortest session interval this node will let a call
   // negotiate, and the floor the RFC itself sets is 90 seconds. A proxy that keeps state
   // for a call has a stake in how often it is told the call is still there, and rejecting
@@ -77,6 +89,17 @@ class Config {
   uint16_t sip_timer_k_non_invite_duration = 1;
 
   bool sip_timer_reliable_transport_retransmits = false;
+
+  // The longest this node will hold any call open, in seconds. Zero, the default, means
+  // no cap at all.
+  //
+  // The backstop for the calls the other two mechanisms cannot see: one whose media went
+  // end to end has nothing for `sip_media_timeout` to watch, and one between two
+  // endpoints that neither implement RFC 4028 gets no session timer however willing this
+  // node is to offer one. A blunt instrument, which is why it is off - set this and a
+  // legitimate call of that length is cut - but on a deployment that knows its calls are
+  // never hours long it is the only thing that catches the rest.
+  uint32_t sip_max_call_duration = 0;
 
   // How long a call may carry no media at all before this node stops holding it open,
   // in seconds. Zero turns it off.

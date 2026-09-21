@@ -293,3 +293,52 @@ TEST(ProxySessionTimerTest, NeitherEndSupportingTheTimerLeavesNoSessionExpiratio
   ASSERT_NE(dialog, nullptr);
   EXPECT_EQ(dialog->session_interval, 0u);
 }
+
+// RFC 4028 section 8.1: "If the request did not contain a Supported header field with the
+// value 'timer', the proxy MAY insert a Require header field with the value 'timer' into
+// the request. However, this is NOT RECOMMENDED."
+//
+// Insisting is what turns a callee that does not implement the extension from a call with
+// no expiry into a call that fails with 420 Bad Extension, so it is off unless an operator
+// has said they want it and knows every handset on the fleet.
+TEST(ProxySessionTimerTest, RequiringTheTimerIsOffUnlessAskedFor) {
+  ProxyFixture f;
+  f.bind_bob();
+
+  f.receive(f.caller, invite_with_timer(""));
+
+  auto forwarded = f.request_with(f.callee_connection, "INVITE");
+  ASSERT_NE(forwarded, nullptr);
+
+  ASSERT_NE(field_of(forwarded, "Session-Expires"), nullptr);
+  EXPECT_FALSE(has_require_timer(forwarded));
+}
+
+TEST(ProxySessionTimerTest, RequiringTheTimerPutsItOnTheRequest) {
+  ProxyFixture f;
+  f.config->sip_require_session_timer = true;
+  f.bind_bob();
+
+  f.receive(f.caller, invite_with_timer(""));
+
+  auto forwarded = f.request_with(f.callee_connection, "INVITE");
+  ASSERT_NE(forwarded, nullptr);
+
+  EXPECT_TRUE(has_require_timer(forwarded));
+}
+
+// 8.1 puts the Require on only where the caller said nothing about session timers: "This
+// header field is not needed if a Supported header field was in the request; in this case,
+// the proxy would already be sure the session timer can be used for the session."
+TEST(ProxySessionTimerTest, RequiringTheTimerIsSkippedWhenTheCallerAlreadySupportsIt) {
+  ProxyFixture f;
+  f.config->sip_require_session_timer = true;
+  f.bind_bob();
+
+  f.receive(f.caller, invite_with_timer("1800", "Supported: timer\r\n"));
+
+  auto forwarded = f.request_with(f.callee_connection, "INVITE");
+  ASSERT_NE(forwarded, nullptr);
+
+  EXPECT_FALSE(has_require_timer(forwarded));
+}

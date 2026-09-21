@@ -187,3 +187,74 @@ TEST(CoreMediaSweepTest, ACallTheEngineHoldsNothingForIsLeftAlone) {
 
   EXPECT_EQ(f.dialogs().size(), 1u);
 }
+
+// The backstop for the calls the media question cannot reach: one whose media went end to
+// end has nothing to watch, and one between two endpoints that neither implement RFC 4028
+// gets no session timer however willing this node is to offer one.
+//
+// It is blunt by nature - a legitimate call of that length is cut - which is why it is
+// off unless somebody sets it.
+TEST(CoreMediaSweepTest, ACallLongerThanTheMaximumIsLetGo) {
+  SweepFixture f;
+  f.config->sip_media_timeout = 0;
+  f.config->sip_max_call_duration = 3600;
+
+  f.connect_call();
+  ASSERT_EQ(f.dialogs().size(), 1u);
+
+  f.advance(std::chrono::seconds(3000));
+  EXPECT_EQ(f.dialogs().size(), 1u);
+
+  f.advance(std::chrono::seconds(1200));
+  EXPECT_EQ(f.dialogs().size(), 0u);
+}
+
+// It reaches a call this node anchors nothing for, which is the whole point of having it
+// as well as the media timeout.
+TEST(CoreMediaSweepTest, TheMaximumReachesACallWithNoMediaToWatch) {
+  SweepFixture f;
+  f.config->sip_media_timeout = 300;
+  f.config->sip_max_call_duration = 1800;
+
+  f.connect_call();
+  f.engine->holds_media = false;
+  ASSERT_EQ(f.dialogs().size(), 1u);
+
+  // The media question says nothing about this call at all.
+  f.advance(std::chrono::seconds(900));
+  EXPECT_EQ(f.dialogs().size(), 1u);
+
+  f.advance(std::chrono::seconds(1200));
+  EXPECT_EQ(f.dialogs().size(), 0u);
+}
+
+// Zero is off, and a node with no cap holds a call for as long as the endpoints keep it.
+TEST(CoreMediaSweepTest, AMaximumOfZeroNeverEndsACall) {
+  SweepFixture f;
+  f.config->sip_media_timeout = 300;
+  f.config->sip_max_call_duration = 0;
+
+  f.connect_call();
+  f.engine->idle_seconds = 0;
+  ASSERT_EQ(f.dialogs().size(), 1u);
+
+  f.advance(std::chrono::hours(12));
+
+  EXPECT_EQ(f.dialogs().size(), 1u);
+}
+
+// Section 8.3 again, for the other half of the sweep: whatever made this node decide the
+// call is over, it says nothing to either end about it.
+TEST(CoreMediaSweepTest, TheMaximumSendsNoByeEither) {
+  SweepFixture f;
+  f.config->sip_media_timeout = 0;
+  f.config->sip_max_call_duration = 60;
+
+  f.connect_call();
+  f.advance(std::chrono::seconds(120));
+
+  ASSERT_EQ(f.dialogs().size(), 0u);
+
+  EXPECT_TRUE(ProxyFixture::requests_with(f.caller_connection, "BYE").empty());
+  EXPECT_TRUE(ProxyFixture::requests_with(f.callee_connection, "BYE").empty());
+}
