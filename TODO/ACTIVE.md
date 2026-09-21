@@ -448,9 +448,6 @@ and node endpoints the harness and a web client need.
       can route back to. Done on 2026-09-21 and running. The node image builds Boost from
       source because Debian ships 1.83 and this needs 1.87 or newer; it is its own layer
       and cached after the first build.
-- [ ] GitHub Actions: build (Debug + ASan), unit tests, sipp harness. Deferred at Tom's
-      call, confirmed again on 2026-09-21; listed so it is not forgotten.
-
 ### Step 10 - Smaller items surfaced by the review
 
 - [x] Digest with SHA-256 (RFC 8760) alongside MD5, done on 2026-09-21. An account
@@ -677,7 +674,7 @@ extension for what they do not cover, in this order:
       that generate the cluster CA and per-node certificates with sensible defaults, and
       `athenasip check` that validates config and connectivity to Redis, MQTT, rtpengine
       and peers. No OpenSSL incantations in the docs.
-- [ ] `docker-compose.cluster.yml` with two nodes; sipp E2E across nodes in CI.
+- [ ] `docker-compose.cluster.yml` with two nodes, and the sipp harness run across them.
 - [ ] Chaos test: kill node A mid-registration-cycle, assert re-REGISTER on node B and
       a new call completes within one registration interval.
 
