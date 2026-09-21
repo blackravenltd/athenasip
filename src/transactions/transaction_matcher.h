@@ -11,6 +11,8 @@
 #include <string>
 #include <unordered_map>
 
+#include "../headers/cseq_header.h"
+#include "../headers/via_header.h"
 #include "../sip_message.h"
 #include "transaction_base.h"
 
@@ -18,8 +20,8 @@ namespace athenasip::transactions {
 
 // RFC 3261 17.1.3 and 17.2.3: which transaction a message belongs to.
 //
-// A transaction is identified by the branch of the topmost Via, the sent-by of that Via
-// and the method. Two of the cases are not the obvious one:
+// A request from a 3261 implementation is identified by the branch of the topmost Via,
+// the sent-by of that Via and the method. Two of the cases are not the obvious one:
 //
 //   - An ACK for a non-2xx belongs to the INVITE server transaction that sent the final
 //     response, not to a transaction of its own. Its CSeq method is ACK, so the key is
@@ -28,13 +30,21 @@ namespace athenasip::transactions {
 //     INVITE transaction it cancels (9.2). Finding that one forces the method to INVITE
 //     as well.
 //
-// RFC 2543 fallback matching, for requests whose branch carries no magic cookie, is
-// deferred.
+// A request whose topmost Via carries no branch, or one that does not begin with the
+// z9hG4bK magic cookie, came from an RFC 2543 implementation, which had no transaction
+// identifier to offer. 17.2.3's fallback names it by the fields that were the same
+// across a retransmission then: Request-URI, From tag, Call-ID, CSeq number, topmost
+// Via and method, hashed into one token for the reasons at `_legacy_key`. Both forms
+// are strings in the one table, so nothing above this layer has to know which kind it
+// is holding.
 class TransactionMatcher {
  public:
-  // branch|sent-by|method. The separators matter: without them "abc" + "INVITE" and
-  // "abcI" + "NVITE" are the same string. Empty when the message carries no Via or
-  // CSeq, which is not a transaction we can name.
+  // branch|sent-by|method, or 2543-<digest>|method for a request with no usable branch. The
+  // separators matter: without them "abc" + "INVITE" and "abcI" + "NVITE" are the same
+  // string. Empty when the message carries no Via or CSeq, which is not a transaction
+  // we can name, and for a response with no magic cookie: 17.2.3's fallback includes
+  // the Request-URI, which a response does not have, so a response can only ever be
+  // matched by its branch.
   static std::string key(const std::shared_ptr<SIPMessage>& message, const std::string& method_override = "");
 
   void add(const std::string& key, std::shared_ptr<TransactionBase> transaction);
@@ -59,6 +69,9 @@ class TransactionMatcher {
   void terminate_all();
 
  private:
+  static std::string _legacy_key(const std::shared_ptr<SIPMessage>& request, const headers::ViaHeader& via, const headers::CSeqHeader& cseq,
+                                 const std::string& method);
+
   std::unordered_map<std::string, std::shared_ptr<TransactionBase>> _transactions;
 };
 
