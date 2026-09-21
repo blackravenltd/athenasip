@@ -1,7 +1,8 @@
 # AthenaSIP - Active Work
 
-Milestone 1 is complete and tagged `0.2.0`. Work happens on `develop`; `main` carries
-the last release. Line numbers refer to the current tree; update them as files move.
+Milestone 1 is complete. Work happens on `develop`; `main` carries the last release, and
+`0.5.0` is the current one. Line numbers refer to the current tree; update them as files
+move.
 
 What M2 builds on, all landed in M1: the header, URI, identity and message model follow
 RFC 3261; `Core` runs on a single strand with no locks; `memory://` and `redis://` are
@@ -10,15 +11,22 @@ relay driver are in; `Call` is multi-party; all four RFC 3261 section 17 transac
 state machines exist and are wired in behind a matcher, with `Registrar` and `Proxy` as
 the transaction users.
 
-M2 steps 1 to 6 have landed since: the transaction users, the plugin contract (one
-registry, async datastore and media engine), a structured `SIPUri`, the rest of
-section 16, dialog tracking and media on the signalling path. 371 tests, clean under
-asan and tsan, the Redis suite verified against a real server.
+**Milestone 2 is essentially done as of 0.5.0.** Steps 1 to 6 and 8 to 10 are closed, and
+what is left in each is recorded against it as work that defers itself to M3, M4 or the
+Parked list. The sipp harness passes all eight scenarios, which is what principle 2 asks
+for: compliance proven rather than asserted. 472 tests, clean under asan and tsan, the
+Redis suite verified against a real server.
 
-Step 7 is mostly done: the WSS listener, outbound flows and RFC 3261 18.1.1 have
-landed. What is left of it is the per-connection flow identity on a binding, which is a
-plugin contract change and wants to share an `API_VERSION` bump with the one step 2 left
-outstanding.
+What is left of step 7 is the per-connection flow identity on a binding, which is a plugin
+contract change and wants to share an `API_VERSION` bump with the one step 2 left
+outstanding. Step 4's RFC 3263 and step 5's remaining items are M3 and M4 by their own
+terms.
+
+A node now decides for itself when a call it is holding is over, which nothing before
+0.5.0 did: `sip.media_timeout` reads the relay, `sip.session_expires` offers a timer to a
+call that asked for none, and `sip.max_call_duration` is the blunt backstop. All three
+release the call and send no BYE, which is what RFC 4028 section 8.3 allows a proxy and
+no more.
 
 An architecture review on 2026-09-18 compared the Principles, the tree and the RFCs.
 Its findings are merged into Milestone 2 below, which is ordered by priority: work the
