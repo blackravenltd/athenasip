@@ -6,7 +6,11 @@
 //
 #include <gtest/gtest.h>
 
+#include <boost/asio.hpp>
+#include <chrono>
 #include <memory>
+#include <string>
+#include <thread>
 
 #include "config.h"
 #include "media/builtin_media_engine.h"
@@ -290,4 +294,182 @@ TEST(BuiltinMediaEngineTest, ResolvesThroughTheDriverRegistry) {
   EXPECT_TRUE(engine->capabilities().bridge);
 
   EXPECT_EQ(MediaEngine::create_driver(logger, "nosuchscheme://host"), nullptr);
+}
+
+// RFC 3605. The relay's RTCP port comes out of the same pool as its RTP port and is not
+// reliably the one above it, so an endpoint left to assume the convention would send its
+// receiver reports into somebody else's call. The attribute is written whether or not
+// the far end offered one.
+TEST(BuiltinMediaEngineTest, AlwaysNamesTheRtcpPortItListensOn) {
+  auto engine = make_engine(23850, 23890);
+  auto call = make_call();
+
+  const char* offer_without_rtcp =
+      "v=0\r\n"
+      "o=alice 2890844526 2890844526 IN IP4 198.51.100.1\r\n"
+      "s=-\r\n"
+      "c=IN IP4 198.51.100.1\r\n"
+      "t=0 0\r\n"
+      "m=audio 49170 RTP/AVP 0\r\n"
+      "a=rtpmap:0 PCMU/8000\r\n";
+
+  const auto result = engine->offer(call, offer_without_rtcp, Flags{});
+  ASSERT_TRUE(result.ok) << result.error;
+
+  SDP rewritten;
+  ASSERT_TRUE(rewritten.parse(result.sdp));
+  ASSERT_EQ(rewritten.media().size(), 1u);
+
+  std::string rtcp;
+  for (const auto& attribute : rewritten.media()[0].attributes()) {
+    if (attribute.rfind("rtcp:", 0) == 0) rtcp = attribute;
+  }
+
+  ASSERT_FALSE(rtcp.empty()) << "no a=rtcp in " << result.sdp;
+
+  const auto port = std::stoul(rtcp.substr(5, rtcp.find(' ') - 5));
+  EXPECT_GE(port, 23850u);
+  EXPECT_LT(port, 23890u);
+  EXPECT_NE(port, rewritten.media()[0].description.port);
+
+  engine->release(call);
+}
+
+// What a bridge is for. Each leg is told where to send by the description it is given
+// back, and a packet one leg sends has to come out at the other. Nothing here assumes
+// how the relay is arranged - only that the two ports the two legs were handed carry
+// media between them.
+TEST(BuiltinMediaEngineTest, BridgesMediaBetweenTheTwoLegs) {
+  auto engine = make_engine(23900, 23940);
+  auto call = make_call();
+
+  // The caller's offer goes on to the callee, so the port in what comes back is where
+  // the callee sends.
+  Flags from_caller;
+  from_caller.participant = 0;
+
+  const auto to_callee = engine->offer(call, kOffer, from_caller);
+  ASSERT_TRUE(to_callee.ok) << to_callee.error;
+
+  const char* answer =
+      "v=0\r\n"
+      "o=bob 2890844600 2890844600 IN IP4 198.51.100.2\r\n"
+      "s=-\r\n"
+      "c=IN IP4 198.51.100.2\r\n"
+      "t=0 0\r\n"
+      "m=audio 6000 RTP/AVP 0\r\n"
+      "a=rtpmap:0 PCMU/8000\r\n"
+      "a=rtcp:6001\r\n";
+
+  Flags from_callee;
+  from_callee.participant = 1;
+
+  const auto to_caller = engine->answer(call, answer, from_callee);
+  ASSERT_TRUE(to_caller.ok) << to_caller.error;
+
+  SDP callee_side, caller_side;
+  ASSERT_TRUE(callee_side.parse(to_callee.sdp));
+  ASSERT_TRUE(caller_side.parse(to_caller.sdp));
+
+  boost::asio::io_context io;
+  boost::asio::ip::udp::socket caller(io, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0));
+  boost::asio::ip::udp::socket callee(io, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0));
+
+  const boost::asio::ip::udp::endpoint caller_sends_to(boost::asio::ip::make_address("127.0.0.1"), caller_side.media()[0].description.port);
+  const boost::asio::ip::udp::endpoint callee_sends_to(boost::asio::ip::make_address("127.0.0.1"), callee_side.media()[0].description.port);
+
+  // A relay learns where a leg is from the first packet it sends, so the first packet
+  // each way is what registers the leg rather than what crosses. Real RTP behaves the
+  // same: the first few packets are lost while both ends latch.
+  auto pump = [&]() {
+    caller.send_to(boost::asio::buffer("from-caller", 11), caller_sends_to);
+    callee.send_to(boost::asio::buffer("from-callee", 11), callee_sends_to);
+  };
+
+  auto received = [&](boost::asio::ip::udp::socket& socket) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+
+    while (std::chrono::steady_clock::now() < deadline) {
+      if (socket.available() > 0) {
+        char buffer[64] = {};
+        boost::asio::ip::udp::endpoint from;
+        const auto bytes = socket.receive_from(boost::asio::buffer(buffer), from);
+        return std::string(buffer, bytes);
+      }
+
+      pump();
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
+    return std::string();
+  };
+
+  EXPECT_EQ(received(callee), "from-caller");
+  EXPECT_EQ(received(caller), "from-callee");
+
+  engine->release(call);
+}
+
+// What an offer needs is in the offer. Reading it from the transport would be wrong in
+// both directions: a browser reaches a node over WSS and a desk phone can too, and the
+// same browser offer relayed in over UDP by another proxy still wants ICE and DTLS.
+TEST(MediaFlagsTest, ReadsWhatAWebRtcOfferAsksFor) {
+  const char* webrtc =
+      "v=0\r\n"
+      "o=- 4611731400430051336 2 IN IP4 127.0.0.1\r\n"
+      "s=-\r\n"
+      "t=0 0\r\n"
+      "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n"
+      "c=IN IP4 0.0.0.0\r\n"
+      "a=rtpmap:111 opus/48000/2\r\n"
+      "a=ice-ufrag:4ZcD\r\n"
+      "a=fingerprint:sha-256 AA:BB:CC\r\n"
+      "a=rtcp-mux\r\n";
+
+  const auto flags = Flags::from_sdp(webrtc);
+
+  EXPECT_TRUE(flags.ice);
+  EXPECT_TRUE(flags.dtls);
+  EXPECT_TRUE(flags.srtp);
+  EXPECT_TRUE(flags.rtcp_mux);
+}
+
+TEST(MediaFlagsTest, PlainRtpAsksForNothing) {
+  const auto flags = Flags::from_sdp(kOffer);
+
+  EXPECT_FALSE(flags.ice);
+  EXPECT_FALSE(flags.dtls);
+  EXPECT_FALSE(flags.srtp);
+  EXPECT_FALSE(flags.rtcp_mux);
+}
+
+// RFC 4568: SDES puts the keys in the description and the profile is a plain secure one.
+// There is no DTLS and no ICE in it, and saying otherwise would send the offer to the
+// wrong engine.
+TEST(MediaFlagsTest, TheSecureProfileAloneIsEnoughToSaySrtp) {
+  const char* sdes =
+      "v=0\r\n"
+      "o=alice 1 1 IN IP4 198.51.100.1\r\n"
+      "s=-\r\n"
+      "c=IN IP4 198.51.100.1\r\n"
+      "t=0 0\r\n"
+      "m=audio 49170 RTP/SAVP 0\r\n"
+      "a=rtpmap:0 PCMU/8000\r\n";
+
+  const auto flags = Flags::from_sdp(sdes);
+
+  EXPECT_TRUE(flags.srtp);
+  EXPECT_FALSE(flags.ice);
+  EXPECT_FALSE(flags.dtls);
+}
+
+// Nothing readable claims nothing. The engine that is handed the description is what
+// refuses it, and guessing here would have it refuse for the wrong reason.
+TEST(MediaFlagsTest, AnUnreadableDescriptionClaimsNothing) {
+  const auto flags = Flags::from_sdp("this is not a session description");
+
+  EXPECT_FALSE(flags.ice);
+  EXPECT_FALSE(flags.dtls);
+  EXPECT_FALSE(flags.srtp);
+  EXPECT_FALSE(flags.rtcp_mux);
 }

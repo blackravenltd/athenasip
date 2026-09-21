@@ -6,6 +6,7 @@
 //
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <ctime>
 #include <functional>
@@ -124,6 +125,16 @@ class Call {
       if (!participant.originator) result.push_back(&participant);
     }
     return result;
+  }
+
+  // The index of the leg that started the call, or of one that did not. The media
+  // contract addresses a participant by index, so a caller that knows which end a
+  // session description came from has to be able to turn that into one.
+  std::optional<std::size_t> participant_index(bool originator_wanted) const {
+    for (std::size_t i = 0; i < participants.size(); ++i) {
+      if (participants[i].originator == originator_wanted) return i;
+    }
+    return std::nullopt;
   }
 
   // The leg for a dialog, or null. A two-party call has one of each.

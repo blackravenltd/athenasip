@@ -88,15 +88,25 @@ class SyncDatastore {
         [this, realm_name](auto on, auto handler) { _store->subscriber_list(std::move(on), realm_name, std::move(handler)); });
   }
 
-  bool subscriber_register(std::shared_ptr<athenasip::types::Subscriber> subscriber, std::shared_ptr<athenasip::types::SIPUri> contact,
-                           std::uint32_t expires_seconds, const std::string& path) {
-    return _status([this, subscriber, contact, expires_seconds, path](auto on, auto handler) {
-      _store->subscriber_register(std::move(on), subscriber, contact, expires_seconds, path, std::move(handler));
+  bool subscriber_register(std::shared_ptr<athenasip::types::Subscriber> subscriber, athenasip::types::Location binding, std::uint32_t expires_seconds) {
+    return _status([this, subscriber, binding, expires_seconds](auto on, auto handler) {
+      _store->subscriber_register(std::move(on), subscriber, binding, expires_seconds, std::move(handler));
     });
   }
 
+  // The single-node case: a contact and a path, with no flow and no node holding one.
+  bool subscriber_register(std::shared_ptr<athenasip::types::Subscriber> subscriber, std::shared_ptr<athenasip::types::SIPUri> contact,
+                           std::uint32_t expires_seconds, const std::string& path) {
+    athenasip::types::Location binding;
+    binding.contact = std::move(contact);
+    binding.path = path;
+
+    return subscriber_register(std::move(subscriber), std::move(binding), expires_seconds);
+  }
+
   bool subscriber_unregister(std::shared_ptr<athenasip::types::Subscriber> subscriber, std::shared_ptr<athenasip::types::SIPUri> contact) {
-    return _status([this, subscriber, contact](auto on, auto handler) { _store->subscriber_unregister(std::move(on), subscriber, contact, std::move(handler)); });
+    return _status(
+        [this, subscriber, contact](auto on, auto handler) { _store->subscriber_unregister(std::move(on), subscriber, contact, std::move(handler)); });
   }
 
   std::vector<athenasip::types::Location> location_list(std::uint64_t subscriber_id) {

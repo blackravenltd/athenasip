@@ -16,8 +16,8 @@
 #include "core.h"
 #include "datastores/memory_datastore.h"
 #include "events/local_event_system.h"
-
 #include "helpers/sync_datastore_helper.h"
+#include "helpers/sync_event_system_helper.h"
 #include "mocks/connection_mock.h"
 #include "mocks/logger_mock.h"
 
@@ -36,6 +36,7 @@ struct ConcurrentFixture {
   std::shared_ptr<MemoryDatastore> datastore;
   std::shared_ptr<SyncDatastore> store;
   std::shared_ptr<events::LocalEventSystem> event_system;
+  std::shared_ptr<SyncEventSystem> bus;
   std::shared_ptr<Core> core;
 
   ConcurrentFixture() {
@@ -47,7 +48,8 @@ struct ConcurrentFixture {
     store->connect();
 
     event_system = std::make_shared<events::LocalEventSystem>(logger);
-    event_system->connect();
+    bus = std::make_shared<SyncEventSystem>(event_system);
+    bus->connect();
 
     core = std::make_shared<Core>(logger, config, datastore, event_system);
   }

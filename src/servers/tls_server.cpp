@@ -7,6 +7,7 @@
 #include "tls_server.h"
 
 #include "../channel.h"
+#include "tls_context.h"
 
 using namespace athenasip;
 using namespace boost::asio;
@@ -18,21 +19,9 @@ TLSServer::TLSServer(std::shared_ptr<Logger> logger, std::shared_ptr<Core> core,
     : Server(std::make_unique<LoggerScoped>("tls_server", logger), core),
       _port(port),
       _acceptor(_io_context, ip::tcp::endpoint(ip::make_address(bind_address), port)),
-      ctx(ssl::context::sslv23) {}
+      ctx(ssl::context::tls_server) {}
 
-bool TLSServer::set_certificates(std::string cert, std::string key) {
-  try {
-    ctx.use_certificate_chain_file(cert);
-    _logger->info("Using Certificate PEM: " + cert);
-    ctx.use_private_key_file(key, ssl::context::pem);
-    _logger->info("Using Key PEM: " + key);
-  } catch (const std::exception& e) {
-    _logger->error("Exception While Loading Certificates: " + std::string(e.what()));
-    return false;
-  }
-
-  return true;
-}
+bool TLSServer::set_certificates(std::string cert, std::string key) { return load_tls_certificates(_logger, ctx, cert, key); }
 
 void TLSServer::start() {
   _logger->debug("Starting...");

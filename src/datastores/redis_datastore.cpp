@@ -438,10 +438,11 @@ void RedisDatastore::subscriber_list(plugins::Executor on, std::string realm_nam
   });
 }
 
-void RedisDatastore::subscriber_register(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact,
-                                         std::uint32_t expires_seconds, std::string path, plugins::StatusHandler handler) {
-  if (!subscriber || !contact) return _complete(on, handler, plugins::Status::failure("subscriber_register: no subscriber or contact"));
+void RedisDatastore::subscriber_register(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, types::Location binding,
+                                         std::uint32_t expires_seconds, plugins::StatusHandler handler) {
+  if (!subscriber || !binding.contact) return _complete(on, handler, plugins::Status::failure("subscriber_register: no subscriber or contact"));
 
+  const auto contact = binding.contact;
   const std::uint16_t port = contact->port.value_or(0);
   const auto now = static_cast<std::int64_t>(std::time(nullptr));
   const bool is_nat = Util::is_ipv4(contact->host) && Util::is_ipv4_private(contact->host);
@@ -461,7 +462,12 @@ void RedisDatastore::subscriber_register(plugins::Executor on, std::shared_ptr<t
   location["registered_at"] = now;
   location["expires_at"] = now + ttl;
   location["nat"] = is_nat ? "Y" : "N";
-  if (!path.empty()) location["path"] = path;
+  if (!binding.path.empty()) location["path"] = binding.path;
+
+  // What a second node needs to use this binding: which flow it was learned over and who
+  // holds it. Empty on a single node, which is why they are written only when set.
+  if (!binding.flow_id.empty()) location["flow_id"] = binding.flow_id;
+  if (!binding.node_id.empty()) location["node_id"] = binding.node_id;
 
   const auto key = _location_key(subscriber->id, contact->user, contact->host, port);
   const auto index = _location_index_key(subscriber->id);

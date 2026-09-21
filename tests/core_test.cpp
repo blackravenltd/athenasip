@@ -4,6 +4,8 @@
 // Copyright (C) 2026 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
+#include "core.h"
+
 #include <gtest/gtest.h>
 
 #include <future>
@@ -11,15 +13,14 @@
 #include <vector>
 
 #include "channel.h"
-#include "core.h"
 #include "datastores/memory_datastore.h"
 #include "events/local_event_system.h"
 #include "headers/via_header.h"
-#include "transactions/non_invite_server_transaction.h"
-
 #include "helpers/sync_datastore_helper.h"
+#include "helpers/sync_event_system_helper.h"
 #include "mocks/connection_mock.h"
 #include "mocks/logger_mock.h"
+#include "transactions/non_invite_server_transaction.h"
 
 using namespace athenasip;
 using athenasip::datastores::MemoryDatastore;
@@ -32,6 +33,7 @@ struct Fixture {
   std::shared_ptr<MemoryDatastore> datastore;
   std::shared_ptr<SyncDatastore> store;
   std::shared_ptr<events::LocalEventSystem> event_system;
+  std::shared_ptr<SyncEventSystem> bus;
   std::shared_ptr<Core> core;
   std::shared_ptr<ManualTimerSource> timers = std::make_shared<ManualTimerSource>();
 
@@ -46,7 +48,8 @@ struct Fixture {
     store->connect();
 
     event_system = std::make_shared<events::LocalEventSystem>(logger);
-    event_system->connect();
+    bus = std::make_shared<SyncEventSystem>(event_system);
+    bus->connect();
 
     core = std::make_shared<Core>(logger, config, datastore, event_system);
     core->timer_source_set(timers);
@@ -74,9 +77,8 @@ struct Fixture {
 
   bool register_binding(const std::shared_ptr<types::Subscriber>& subscriber, const std::shared_ptr<types::SIPUri>& contact,
                         const std::shared_ptr<Channel>& channel, std::uint32_t expires_seconds) {
-    return await_on_strand([&](plugins::StatusHandler handler) {
-             core->subscriber_register(subscriber, contact, channel, expires_seconds, "", std::move(handler));
-           })
+    return await_on_strand(
+               [&](plugins::StatusHandler handler) { core->subscriber_register(subscriber, contact, channel, expires_seconds, "", std::move(handler)); })
         .ok;
   }
 
@@ -236,6 +238,62 @@ TEST(CoreTest, SubscriberRegisterIsRepeatable) {
   ASSERT_TRUE(f.register_binding(subscriber, contact, channel, 3600));
 
   EXPECT_EQ(f.store->location_list(7).size(), 1u);
+}
+
+// RFC 5626: the binding records the flow it was learned over and the node holding it.
+// A browser or a NAT'd client has a Contact that resolves to nothing reachable, so the
+// flow is the only way back to it, and a second node cannot ask for a flow without
+// knowing whose it is.
+TEST(CoreTest, SubscriberRegisterRecordsTheFlowItWasLearnedOver) {
+  Fixture f;
+
+  auto subscriber = f.seed_subscriber(7, "sip:alice@example.com");
+  auto contact = std::make_shared<types::SIPUri>("sip:alice@192.0.2.10:5060");
+  auto channel = f.make_channel("192.0.2.10");
+
+  ASSERT_TRUE(f.register_binding(subscriber, contact, channel, 3600));
+
+  auto locations = f.store->location_list(7);
+  ASSERT_EQ(locations.size(), 1u);
+  EXPECT_EQ(locations[0].flow_id, "tcp://192.0.2.10:5060");
+  EXPECT_EQ(locations[0].node_id, "test-node");
+}
+
+// The recorded flow id is the registry's own key, not a second spelling of it. A key
+// built two ways is a lookup that silently misses, and the point of recording the flow
+// is that the node can find the connection again.
+TEST(CoreTest, TheRecordedFlowIdIsWhatChannelFindAnswersTo) {
+  Fixture f;
+
+  auto subscriber = f.seed_subscriber(7, "sip:alice@example.com");
+  auto contact = std::make_shared<types::SIPUri>("sip:alice@192.0.2.10:5060");
+  auto channel = f.make_channel("192.0.2.10");
+
+  ASSERT_TRUE(f.register_binding(subscriber, contact, channel, 3600));
+
+  auto locations = f.store->location_list(7);
+  ASSERT_EQ(locations.size(), 1u);
+  EXPECT_EQ(locations[0].flow_id, channel->flow_id());
+  EXPECT_EQ(locations[0].flow_id, Core::channel_key("TCP", "192.0.2.10", 5060));
+
+  auto found = f.on_strand([&]() { return f.core->channel_find("tcp", "192.0.2.10", 5060); });
+  EXPECT_EQ(found, channel);
+}
+
+// A binding learned over no channel - a provisioned contact, or a REGISTER replayed by
+// another node - records no flow rather than an invented one.
+TEST(CoreTest, SubscriberRegisterWithoutAChannelRecordsNoFlow) {
+  Fixture f;
+
+  auto subscriber = f.seed_subscriber(7, "sip:alice@example.com");
+  auto contact = std::make_shared<types::SIPUri>("sip:alice@192.0.2.10:5060");
+
+  ASSERT_TRUE(f.register_binding(subscriber, contact, nullptr, 3600));
+
+  auto locations = f.store->location_list(7);
+  ASSERT_EQ(locations.size(), 1u);
+  EXPECT_TRUE(locations[0].flow_id.empty());
+  EXPECT_EQ(locations[0].node_id, "test-node");
 }
 
 // Unregistering drops the binding, so nothing is left for target determination to find.
