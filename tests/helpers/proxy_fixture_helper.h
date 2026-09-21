@@ -12,7 +12,7 @@
 
 #include "core_fixture_helper.h"
 
-// A node with two subscribers on it, Alice calling and Bob answering, driven as a
+// A node with two accounts on it, Alice calling and Bob answering, driven as a
 // transport drives it. Every channel the mock builds is local to 192.0.2.1:5060, which
 // is what the node's own Record-Route and Via name and what a Route coming back has to
 // be recognised against.
@@ -23,12 +23,12 @@ struct ProxyFixture : CoreFixture {
   std::shared_ptr<MockConnection> callee_connection;
   std::shared_ptr<athenasip::Channel> callee;
 
-  std::shared_ptr<athenasip::types::Subscriber> bob;
+  std::shared_ptr<athenasip::types::Account> bob;
 
   ProxyFixture() {
     seed_realm("example.com");
-    seed_subscriber(1, "sip:alice@example.com", "alice-ha1");
-    bob = seed_subscriber(2, "sip:bob@example.com", "bob-ha1");
+    seed_account(1, "sip:alice@example.com", "alice-ha1");
+    bob = seed_account(2, "sip:bob@example.com", "bob-ha1");
 
     caller = make_channel("192.0.2.10", &caller_connection);
     callee = make_channel("192.0.2.20", &callee_connection);

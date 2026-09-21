@@ -1,7 +1,7 @@
 # AthenaSIP - Writing a Plugin
 
 Almost everything AthenaSIP talks to is a plugin: the datastore that holds realms,
-subscribers and bindings; the event system it publishes to; the media engine that
+accounts and bindings; the event system it publishes to; the media engine that
 anchors RTP. Routing policy and others follow. They all register through one contract,
 and the ones that ship in the tree use exactly the contract an external plugin uses.
 
@@ -136,7 +136,7 @@ template <typename T> struct Result { bool ok; std::string error; T value; };
 ```
 
 A read that finds nothing **succeeds** with an empty value. A read that could not happen
-**fails** with an error. "No such subscriber" is a 404 and "Redis is unreachable" is a
+**fails** with an error. "No such account" is a 404 and "Redis is unreachable" is a
 500, and a driver that reports them the same way makes that distinction impossible
 upstream.
 

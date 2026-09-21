@@ -194,7 +194,7 @@ The URL of the datastore. AthenaSIP ships with two:
 | In memory                  | `memory` | `memory://`              |
 |[Redis](https://redis.io/)  | `redis`  | `redis://127.0.0.1:6379` |
 
-`memory://` keeps realms, subscribers, registrations, nonces and calls in the server
+`memory://` keeps realms, accounts, registrations, nonces and calls in the server
 process. It needs no external service and nothing survives a restart, which makes it
 the right choice for a single node you are trying out, and for the tests.
 

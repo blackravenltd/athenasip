@@ -79,18 +79,16 @@ struct CoreFixture {
     return future.get();
   }
 
-  bool register_binding(const std::shared_ptr<athenasip::types::Subscriber>& subscriber, const std::shared_ptr<athenasip::types::SIPUri>& contact,
+  bool register_binding(const std::shared_ptr<athenasip::types::Account>& account, const std::shared_ptr<athenasip::types::SIPUri>& contact,
                         const std::shared_ptr<athenasip::Channel>& channel, std::uint32_t expires_seconds, const std::string& path = "") {
-    return await_on_strand([&](athenasip::plugins::StatusHandler handler) {
-             core->subscriber_register(subscriber, contact, channel, expires_seconds, path, std::move(handler));
-           })
+    return await_on_strand(
+               [&](athenasip::plugins::StatusHandler handler) { core->account_register(account, contact, channel, expires_seconds, path, std::move(handler)); })
         .ok;
   }
 
-  bool unregister_binding(const std::shared_ptr<athenasip::types::Subscriber>& subscriber, const std::shared_ptr<athenasip::types::SIPUri>& contact,
+  bool unregister_binding(const std::shared_ptr<athenasip::types::Account>& account, const std::shared_ptr<athenasip::types::SIPUri>& contact,
                           const std::shared_ptr<athenasip::Channel>& channel) {
-    return await_on_strand([&](athenasip::plugins::StatusHandler handler) { core->subscriber_unregister(subscriber, contact, channel, std::move(handler)); })
-        .ok;
+    return await_on_strand([&](athenasip::plugins::StatusHandler handler) { core->account_unregister(account, contact, channel, std::move(handler)); }).ok;
   }
 
   std::string mint_nonce(const std::shared_ptr<athenasip::types::Realm>& realm) {
@@ -123,13 +121,13 @@ struct CoreFixture {
     return realm;
   }
 
-  std::shared_ptr<athenasip::types::Subscriber> seed_subscriber(std::uint64_t id, const std::string& uri, const std::string& ha1) {
-    auto subscriber = std::make_shared<athenasip::types::Subscriber>();
-    subscriber->id = id;
-    subscriber->identity = std::make_shared<athenasip::types::SIPIdentity>(uri);
-    subscriber->ha1 = ha1;
-    store->subscriber_create(subscriber);
-    return subscriber;
+  std::shared_ptr<athenasip::types::Account> seed_account(std::uint64_t id, const std::string& uri, const std::string& ha1) {
+    auto account = std::make_shared<athenasip::types::Account>();
+    account->id = id;
+    account->identity = std::make_shared<athenasip::types::SIPIdentity>(uri);
+    account->ha1 = ha1;
+    store->account_create(account);
+    return account;
   }
 
   // Raw SIP in, exactly as the read loop hands it over.
