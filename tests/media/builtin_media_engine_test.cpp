@@ -4,6 +4,8 @@
 // Copyright (C) 2026 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
+#include "media/builtin_media_engine.h"
+
 #include <gtest/gtest.h>
 
 #include <boost/asio.hpp>
@@ -12,14 +14,12 @@
 #include <string>
 #include <thread>
 
+#include "../helpers/sync_media_engine_helper.h"
+#include "../mocks/logger_mock.h"
 #include "config.h"
-#include "media/builtin_media_engine.h"
 #include "media/media_engine.h"
 #include "media/media_engine_drivers.h"
 #include "sdp.h"
-
-#include "../helpers/sync_media_engine_helper.h"
-#include "../mocks/logger_mock.h"
 
 using namespace athenasip;
 using athenasip::media::BuiltinMediaEngine;
@@ -472,4 +472,62 @@ TEST(MediaFlagsTest, AnUnreadableDescriptionClaimsNothing) {
   EXPECT_FALSE(flags.dtls);
   EXPECT_FALSE(flags.srtp);
   EXPECT_FALSE(flags.rtcp_mux);
+}
+
+// RFC 8866 section 5.2: the o= line gives "an address of the machine from which the
+// session was created". A node anchoring media so that neither end learns the other's
+// address was handing one of them away in it regardless - every c= and m= was rewritten
+// and the o= was not.
+//
+// The RFC allows the substitution outright: "For privacy reasons, it is sometimes
+// desirable to obfuscate the username and IP address of the session originator. If this
+// is a concern, an arbitrary <username> and private <unicast-address> MAY be chosen to
+// populate the o= line, provided that these are selected in a manner that does not
+// affect the global uniqueness of the field."
+TEST(BuiltinMediaEngineTest, TheOriginAddressIsThisNodeAndNotTheEndpoint) {
+  auto engine = make_engine(23900, 23940);
+  auto call = make_call();
+
+  const auto result = engine->offer(call, kOffer, Flags{});
+  ASSERT_TRUE(result.ok);
+
+  SDP rewritten;
+  ASSERT_TRUE(rewritten.parse(result.sdp));
+
+  const auto origin = rewritten.origin();
+  EXPECT_EQ(origin.address, "203.0.113.5");
+  EXPECT_EQ(origin.nettype, "IN");
+  EXPECT_EQ(origin.addrtype, "IP4");
+
+  // The endpoint's address appears nowhere at all now, which is the whole point.
+  EXPECT_EQ(result.sdp.find("198.51.100.1"), std::string::npos);
+
+  engine->release(call);
+  engine->close();
+}
+
+// The same paragraph's condition: the substitution must not "affect the global
+// uniqueness of the field". Uniqueness is the tuple of username, session id, nettype,
+// addrtype and address, so replacing the address alone leaves the endpoint's username
+// and session id to carry it - two calls through this node stay distinguishable.
+TEST(BuiltinMediaEngineTest, TheOriginKeepsWhatMakesItUnique) {
+  auto engine = make_engine(23950, 23990);
+  auto call = make_call();
+
+  const auto result = engine->offer(call, kOffer, Flags{});
+  ASSERT_TRUE(result.ok);
+
+  SDP rewritten;
+  ASSERT_TRUE(rewritten.parse(result.sdp));
+
+  const auto origin = rewritten.origin();
+  EXPECT_EQ(origin.username, "alice");
+  EXPECT_EQ(origin.sessionId, "2890844526");
+
+  // The version is the endpoint's as well. RFC 3264 section 8's rule for incrementing it
+  // when this node changes a re-offer is its own item, and is not this.
+  EXPECT_EQ(origin.sessionVersion, "2890844526");
+
+  engine->release(call);
+  engine->close();
 }
