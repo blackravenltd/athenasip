@@ -6,6 +6,8 @@
 //
 #pragma once
 
+#include <cstdint>
+
 #include "server.h"
 #include "tcp_connection.h"
 
@@ -19,6 +21,10 @@ class TCPServer : public Server {
 
   void start() override;
   void stop() override;
+
+  // The port actually being listened on. Not the configured one when that was zero and
+  // the operating system chose, which is what a test binds and what a node logs.
+  std::uint16_t port() const { return _acceptor.local_endpoint().port(); }
 
  protected:
   void _handle_accept(const boost::system::error_code& error, std::shared_ptr<boost::asio::ip::tcp::socket> new_connection);
