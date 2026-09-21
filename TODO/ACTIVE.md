@@ -176,11 +176,22 @@ What it deliberately left, so it is not lost:
       it replaces ran over every To, From and Contact that arrived and could not express
       a quoted display name containing `<` or `;` at all. `star` gives a Contact of `*`
       its own home (20.10) and the registrar no longer recognises it by shape.
-- [ ] `types::URL` (`src/types/url.cpp`) is the last regex worth replacing. Off the
-      message path - it only parses config URLs at startup - so it is tidiness, and
-      cheap. `Util::is_ipv4` (`src/util.cpp:153`) also uses one and does see network
-      data, but the pattern is anchored with no nested quantifiers, so it is linear and
-      not the same hazard.
+- [x] `types::URL` (`src/types/url.cpp`) is hand-written, done on 2026-09-21. The last
+      regex worth replacing, and it was hiding two things: a port that was not digits
+      was read as part of the path and the URL called valid, so a typo in a datastore
+      address surfaced as a connection failure much later; and `to_string` dropped the
+      port of any scheme with no well-known one, which is every scheme this project
+      invents. Parsing into an object now clears what went before, and the default-port
+      lookup is case-insensitive the way RFC 3986 3.1 says a scheme is.
+- [ ] IPv6 literals in a config URL. `redis://[::1]:6379` parses to nonsense - it always
+      has - because the authority is split on the first colon. RFC 3986 3.2.2 puts the
+      literal in brackets for exactly this reason, so the fix is to read a bracketed
+      host whole, and to put the brackets back in `to_string` when the host holds a
+      colon. Small, but it changes what `host` hands the datastore and media drivers,
+      so it is its own piece of work.
+- [ ] `Util::is_ipv4` (`src/util.cpp:153`) still uses a regex and does see network data,
+      but the pattern is anchored with no nested quantifiers, so it is linear and not
+      the same hazard. Left deliberately.
 
 ### Step 4 - Proxy core, the rest of section 16
 
