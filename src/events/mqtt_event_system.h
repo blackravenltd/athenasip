@@ -10,6 +10,7 @@
 #include <boost/asio/executor_work_guard.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <boost/asio/strand.hpp>
 #include <boost/mqtt5.hpp>
 #include <cstdint>
@@ -38,7 +39,7 @@ namespace mqtt = boost::mqtt5;
 class MQTTEventSystem final : public EventSystem, public std::enable_shared_from_this<MQTTEventSystem> {
  public:
   explicit MQTTEventSystem(std::shared_ptr<athenasip::loggers::Logger> logger, std::string prefix = "athenasip/", std::string broker_host = "127.0.0.1",
-                           std::uint16_t broker_port = 1883, std::string client_id = "athenasip-events", std::string username = {}, std::string password = {},
+                           std::uint16_t broker_port = 1883, std::string client_id = {}, std::string username = {}, std::string password = {},
                            std::uint16_t keep_alive_seconds = 30);
   MQTTEventSystem(std::shared_ptr<athenasip::loggers::Logger> logger, std::shared_ptr<types::URL> url);
   ~MQTTEventSystem() override;
@@ -87,11 +88,23 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
 
   std::string _broker_host;
   std::uint16_t _broker_port;
+  // MQTT requires a client identifier to be unique on the broker, and a broker that
+  // sees a second connection with one it already has disconnects the first. Two nodes
+  // sharing a default would kick each other off for as long as both were running, so
+  // there is no shared default: unconfigured, it is this node's id, and failing that a
+  // value nothing else will pick.
   std::string _client_id;
+  bool _client_id_was_given = false;
   std::string _username;
   std::string _password;
   std::uint16_t _keep_alive_seconds;
   std::string _prefix;
+
+  // How long connect() waits for the broker to answer before reporting that it is not
+  // there. boost.mqtt5 is an always-online client: it queues and reconnects for ever,
+  // so without a bound a node with the wrong broker address would hang at startup
+  // instead of saying so.
+  std::uint32_t _connect_timeout_ms = 5000;
 
   asio::io_context _mqtt_io_context;
   MQTTStrand _mqtt_strand;
@@ -106,23 +119,38 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
 
   // Accessed only on _mqtt_strand while the MQTT event loop is running.
   std::unordered_set<std::string> _broker_subscribed_events;
+
+  // MQTT 5 subscription identifiers, which are how a client knows which of its own
+  // subscriptions a message arrived for. Without them a message matching two of this
+  // client's filters is delivered once per filter and fanned out to every matching
+  // subscriber, so each one sees it twice.
+  std::unordered_map<std::int32_t, std::string> _events_by_identifier;
+  std::int32_t _next_subscription_identifier = 1;
+
   bool _receive_active = false;
 
   void apply_url(std::shared_ptr<types::URL> url);
+  void await_broker(plugins::Executor on, plugins::StatusHandler handler);
   void configure_client();
   void run_mqtt_io_context();
   void close_without_callback() noexcept;
+
+  // Stops the client and its thread. Safe to call twice, and safe from the client's
+  // own thread, where it cannot join itself.
+  void stop_client();
 
   void clear_local_subscriptions();
   void remove_subscription(const std::shared_ptr<Subscription>& subscription);
 
   [[nodiscard]] std::vector<std::string> current_subscription_events() const;
   [[nodiscard]] std::unordered_set<std::shared_ptr<Subscription>> collect_matching_subscriptions(std::string event_name) const;
+  [[nodiscard]] std::unordered_set<std::shared_ptr<Subscription>> subscribers_of(const std::string& filter) const;
 
   void subscribe_events_on_mqtt(std::vector<std::string> event_names, Completion completion);
   void ensure_receive_loop();
   void receive_next();
-  void dispatch_event(std::string event_name, std::string message);
+  void dispatch_event(std::string event_name, std::string message, const mqtt::publish_props& props);
+  void deliver_to(const std::unordered_set<std::shared_ptr<Subscription>>& subscribers, const std::string& event_name, const std::string& message);
 };
 
 }  // namespace athenasip::events

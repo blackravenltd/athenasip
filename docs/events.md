@@ -68,4 +68,27 @@ events:
 ```
 
 The prefix is applied on publish and subscribe, and stripped on delivery, so the topics
-above are what the application sees either way.
+above are what the application sees either way. It is a topic level, so the separator
+is added when it is left off: `athenasip` and `athenasip/` mean the same thing.
+
+The settings can also go in an `events.mqtt` section, which is the form
+`config/config.example.yaml` shows and which wins where both are given.
+
+## Client identifiers
+
+MQTT requires a client identifier to be unique on the broker, and a broker that sees a
+second connection using one it already has disconnects the first. Two nodes sharing one
+would trade the connection back and forth for as long as both were running, and the bus
+would carry nothing.
+
+So there is no shared default. Unset, the identifier is this node's `sip.node_id`,
+which is unique across the cluster by definition; `events.mqtt.client_id` overrides it
+where something else is needed.
+
+## Connecting
+
+The client queues what it is given and reconnects on its own, so starting it says
+nothing about whether the broker is there. `connect()` therefore answers on a round
+trip to the broker rather than on having started, bounded by
+`events.mqtt.connect_timeout_ms` (5000 by default). A node whose broker address is
+wrong says so at startup rather than running with a bus that carries nothing.
