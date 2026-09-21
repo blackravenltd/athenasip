@@ -11,11 +11,10 @@
 #include <memory>
 #include <string>
 
-#include "media/builtin_media_engine.h"
-#include "sdp.h"
-
 #include "helpers/proxy_fixture_helper.h"
 #include "helpers/sync_media_engine_helper.h"
+#include "media/builtin_media_engine.h"
+#include "sdp.h"
 
 using namespace athenasip;
 

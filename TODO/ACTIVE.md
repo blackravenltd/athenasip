@@ -247,12 +247,29 @@ What it deliberately left, so it is not lost:
       tracker reads it rather than after, or this node would watch nothing while the
       caller refreshed on an interval this node handed it. The config floor of 90 the RFC
       sets is enforced.
-- [ ] Requiring a session timer at all. A call between two endpoints that never offered
-      one has no interval, so it never lapses and this node holds its state until a BYE
-      arrives. That is correct - ending a call nobody said would end is worse - but it
-      means a stuck call is only cleaned up by a restart. Inserting `Session-Expires` on
-      the way through is the fix and it is a policy decision, so it waits for the config
-      to have somewhere to say it.
+- [x] A stuck call is cleaned up by something other than a restart, done on 2026-09-21,
+      and not by the session timer. A call between two endpoints that never offered one
+      has no interval and never lapses, and inserting `Session-Expires` only helps where
+      the far end implements RFC 4028 - which is precisely not the case that leaks. The
+      media plane answers it instead: `RTPRelaySet` records when it last carried a packet,
+      the engine reports the shortest idle of a call's relays as `idle_seconds` through
+      `query()`, and `sip.media_timeout` (300s, 0 off) is what the sweep on `Core` acts
+      on. RTCP counts with RTP so hold and silence suppression do not read as dead, and
+      RFC 4028 section 8.3 is followed to the letter: the node releases the call and sends
+      no BYE, because it is on the path of the dialog and not an end of it.
+- [ ] Inserting `Session-Expires` where a call offered none, which is 8.1's other half and
+      still worth having: it gets an expiry onto every call whose far end knows what a
+      session timer is, which the media sweep cannot see when media goes end to end.
+      `sip.session_expires`, 1800 by default per section 4's recommendation. Safe by
+      construction - section 9 Table 2 has a timer-aware UAS take the refreshing itself
+      when the UAC is not, and 8.2 leaves no expiration at all when neither end is.
+- [ ] `sip.max_call_duration`, off by default: the hard backstop for a call this node does
+      not anchor, where there is no media to watch.
+- [ ] `sip.require_session_timer`, off by default. RFC 4028 8.1 calls `Require: timer`
+      NOT RECOMMENDED and the reason is concrete: an endpoint that does not implement the
+      extension answers 420 Bad Extension and the call fails outright rather than
+      degrading. Fine on a closed fleet, wrong on anything public-facing, and the
+      documentation has to say so.
 - [ ] Tearing a lapsed call down towards the endpoints. On expiry this node discards its
       state, which is what RFC 4028 section 8 asks of a proxy; sending a BYE to both ends
       would be acting as a user agent in a dialog it only sits on the path of. When the

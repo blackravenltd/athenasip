@@ -18,6 +18,17 @@ sip:
 
   allow_unencrypted: true
 
+  # How long a call may carry no media at all before this node stops holding it open,
+  # in seconds. Zero turns it off.
+  #
+  # A phone that loses power sends no BYE, and a call between two endpoints that never
+  # negotiated a session timer has no expiry of its own, so without this the node holds
+  # that call's dialog, its record and its relay ports until it restarts - and the ports
+  # are a finite pool. RTCP counts as well as RTP, so a call on hold is not silent here.
+  # Only calls this node anchors are covered; where media goes end to end there is
+  # nothing to watch.
+  media_timeout: 300
+
   # RFC 4028 section 8: the shortest session interval this node will carry a call on.
   # A caller that asks for less and understands session timers is answered 422 Session
   # Interval Too Small with this value in Min-SE; one that does not understand them has
