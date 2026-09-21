@@ -44,6 +44,12 @@ class Channel : public std::enable_shared_from_this<Channel> {
   void start();
   void close();
 
+  // The name this flow is known by, everywhere: the key the registry files it under,
+  // the key channel_find answers to, and the flow id a binding learned over this
+  // channel records (RFC 5626). Taken once at construction, because close() gives up
+  // the connection and a closing channel still has to say which flow it was.
+  const std::string& flow_id() const { return _flow_id; }
+
   State state = State::Normal;
 
   std::shared_ptr<SIPMessage> _incoming_message;
@@ -55,6 +61,8 @@ class Channel : public std::enable_shared_from_this<Channel> {
  protected:
   std::shared_ptr<Logger> _logger;
   std::shared_ptr<Core> _core;
+
+  std::string _flow_id;
 
   std::array<char, 65535> _read_buffer;
   std::string _buffer;

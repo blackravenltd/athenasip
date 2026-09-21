@@ -50,7 +50,8 @@ using namespace athenasip::servers;
 namespace athenasip {
 
 Channel::Channel(std::shared_ptr<Logger> logger, std::shared_ptr<Core> core, std::shared_ptr<Connection> connection) : _connection(connection), _core(core) {
-  _logger = std::make_unique<LoggerScoped>("channel " + _connection->transport_name() + "://" + _connection->remote_endpoint_name(), logger);
+  _flow_id = Core::channel_key(_connection->transport_name(), _connection->remote_endpoint_name());
+  _logger = std::make_unique<LoggerScoped>("channel " + _flow_id, logger);
 }
 
 void Channel::start() {
@@ -64,7 +65,7 @@ void Channel::start() {
     state = State::Normal;
 
     // Register callback
-    _core->channel_register(_connection->transport_name() + "://" + _connection->remote_endpoint_name(), self);
+    _core->channel_register(_flow_id, self);
 
     // REGISTER timeout
     // TODO: Make rational
@@ -92,7 +93,7 @@ void Channel::close() {
       _logger->info("Closed");
 
       // Unregister Connection
-      _core->channel_unregister(_connection->transport_name() + "://" + _connection->remote_endpoint_name(), self);
+      _core->channel_unregister(_flow_id, self);
 
       _connection.reset();
     }

@@ -74,10 +74,20 @@ void Core::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shar
   // used to be skipped whenever the subscriber record already existed, which is always,
   // so no contact was ever stored and the registrar had nothing to route to.
   //
+  // What the node knows and the Contact does not: the flow the REGISTER arrived over and
+  // that this node is the one holding it. A browser or a NAT'd client has a Contact that
+  // resolves to nothing reachable, so the flow is the only way back to it (RFC 5626), and
+  // a second node has to know whose flow it is before it can ask for it.
+  types::Location binding;
+  binding.contact = contact;
+  binding.path = std::move(path);
+  binding.node_id = config->sip_node_id;
+  if (channel) binding.flow_id = channel->flow_id();
+
   // The channel index and the event both wait for the write: a binding nobody stored is
   // not one to announce.
   datastore->subscriber_register(
-      _strand, subscriber, contact, expires_seconds, std::move(path), [this, subscriber, contact, channel, handler](plugins::Status status) mutable {
+      _strand, subscriber, std::move(binding), expires_seconds, [this, subscriber, contact, channel, handler](plugins::Status status) mutable {
         if (!status.ok) {
           _logger->error("Cannot register subscriber identity " + subscriber->identity->to_string() + " - " + status.error);
           if (handler) handler(status);
@@ -117,6 +127,12 @@ std::shared_ptr<Channel> Core::subscriber_get_channel(std::shared_ptr<Subscriber
 
 // Channels
 
+std::string Core::channel_key(const std::string& transport, const std::string& host, std::uint16_t port) {
+  return channel_key(transport, host + ":" + std::to_string(port));
+}
+
+std::string Core::channel_key(const std::string& transport, const std::string& endpoint) { return Util::to_lower(transport) + "://" + endpoint; }
+
 bool Core::channel_register(std::string endpoint, std::shared_ptr<Channel> channel) {
   _channels[endpoint] = channel;
 
@@ -150,7 +166,7 @@ bool Core::channel_unregister(std::string endpoint, std::shared_ptr<Channel> cha
 }
 
 std::shared_ptr<Channel> Core::channel_find(const std::string& transport, const std::string& host, std::uint16_t port) {
-  auto search = _channels.find(Util::to_lower(transport) + "://" + host + ":" + std::to_string(port));
+  auto search = _channels.find(channel_key(transport, host, port));
   if (search == _channels.end()) return nullptr;
   return search->second;
 }
@@ -163,7 +179,7 @@ void Core::channel_connect(std::string transport, std::string host, std::uint16_
 
   transport = Util::to_lower(transport);
 
-  const auto key = transport + "://" + host + ":" + std::to_string(port);
+  const auto key = channel_key(transport, host, port);
 
   if (auto existing = channel_find(transport, host, port)) return handler(ChannelResult::success(existing));
 

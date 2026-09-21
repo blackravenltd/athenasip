@@ -66,11 +66,16 @@ class Datastore : public plugins::Plugin {
   virtual void subscriber_delete(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity, plugins::StatusHandler handler) = 0;
   virtual void subscriber_list(plugins::Executor on, std::string realm_name, plugins::Handler<std::vector<std::shared_ptr<types::Subscriber>>> handler) = 0;
 
-  // Registrations (RFC 3261 section 10 bindings). expires_seconds is the lifetime the
-  // registrar negotiated with the client, and path the RFC 3327 Path header recorded at
-  // registration, empty when there was none.
-  virtual void subscriber_register(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact,
-                                   std::uint32_t expires_seconds, std::string path, plugins::StatusHandler handler) = 0;
+  // Registrations (RFC 3261 section 10 bindings). The binding carries what the node knows
+  // about it that the Contact URI does not say: the RFC 3327 Path recorded at
+  // registration, the flow it was learned over (RFC 5626) and which node holds that flow.
+  // Its registered_at and expires_at are the store's to fill from expires_seconds, which
+  // is the lifetime the registrar negotiated with the client and told the client about.
+  //
+  // A struct rather than a growing parameter list: the binding is one thing, and the
+  // fields a cluster needs are exactly the ones a single node leaves empty.
+  virtual void subscriber_register(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, types::Location binding, std::uint32_t expires_seconds,
+                                   plugins::StatusHandler handler) = 0;
   virtual void subscriber_unregister(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact,
                                      plugins::StatusHandler handler) = 0;
 

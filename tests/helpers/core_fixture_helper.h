@@ -13,16 +13,16 @@
 #include <utility>
 #include <vector>
 
+#include "../mocks/connection_mock.h"
+#include "../mocks/logger_mock.h"
 #include "channel.h"
 #include "core.h"
 #include "datastores/memory_datastore.h"
 #include "events/local_event_system.h"
 #include "headers/uint_header.h"
-#include "timer_source.h"
-
-#include "../mocks/connection_mock.h"
 #include "sync_datastore_helper.h"
-#include "../mocks/logger_mock.h"
+#include "sync_event_system_helper.h"
+#include "timer_source.h"
 
 // A Core with a memory datastore, a local event system and a manual clock, driven the
 // way a transport drives it: raw SIP in through a Channel, raw SIP out through the
@@ -37,6 +37,10 @@ struct CoreFixture {
   // async, and a test is not on the Core strand.
   std::shared_ptr<SyncDatastore> store;
   std::shared_ptr<athenasip::events::LocalEventSystem> event_system;
+
+  // The bus contract is async for the same reason the datastore's is, so connecting it
+  // goes through the same kind of blocking view.
+  std::shared_ptr<SyncEventSystem> bus;
   std::shared_ptr<athenasip::ManualTimerSource> timers = std::make_shared<athenasip::ManualTimerSource>();
   std::shared_ptr<athenasip::Core> core;
 
@@ -49,7 +53,8 @@ struct CoreFixture {
     store->connect();
 
     event_system = std::make_shared<athenasip::events::LocalEventSystem>(logger);
-    event_system->connect();
+    bus = std::make_shared<SyncEventSystem>(event_system);
+    bus->connect();
 
     core = std::make_shared<athenasip::Core>(logger, config, datastore, event_system);
     core->timer_source_set(timers);
@@ -84,9 +89,7 @@ struct CoreFixture {
 
   bool unregister_binding(const std::shared_ptr<athenasip::types::Subscriber>& subscriber, const std::shared_ptr<athenasip::types::SIPUri>& contact,
                           const std::shared_ptr<athenasip::Channel>& channel) {
-    return await_on_strand([&](athenasip::plugins::StatusHandler handler) {
-             core->subscriber_unregister(subscriber, contact, channel, std::move(handler));
-           })
+    return await_on_strand([&](athenasip::plugins::StatusHandler handler) { core->subscriber_unregister(subscriber, contact, channel, std::move(handler)); })
         .ok;
   }
 
@@ -102,7 +105,7 @@ struct CoreFixture {
   }
 
   std::shared_ptr<athenasip::Channel> make_channel(const std::string& remote_address, std::shared_ptr<MockConnection>* out = nullptr,
-                                                  const std::string& transport = "udp", std::uint16_t remote_port = 5060) {
+                                                   const std::string& transport = "udp", std::uint16_t remote_port = 5060) {
     auto connection = std::make_shared<MockConnection>(transport, remote_address, remote_port);
     if (out) *out = connection;
 
