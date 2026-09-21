@@ -267,6 +267,21 @@ class Core : public std::enable_shared_from_this<Core> {
   void _on_dialog_change(const std::shared_ptr<types::Dialog>& dialog);
 
   std::unordered_map<std::string, std::shared_ptr<Call>> _calls;
+
+  // The media-inactivity sweep. A call between endpoints that never negotiated a session
+  // timer has no expiry of its own, and a phone that loses power sends no BYE, so without
+  // this the node holds that call's dialog, record and relay ports until it restarts.
+  // Armed when an engine is registered, because there is nothing to ask until then.
+  std::shared_ptr<Timer> _media_sweep_timer;
+
+  void _media_sweep_schedule();
+  void _media_sweep();
+
+  // RFC 4028 section 8.3, which is the only thing a proxy may do about a call it has
+  // decided is over: "the proxy MAY remove associated call state, and MAY free any
+  // resources associated with the call. Unlike the UA, it MUST NOT send a BYE." This node
+  // is on the path of the dialog, not an end of it.
+  void _end_idle_call(const std::string& call_id, std::uint32_t idle_seconds);
 };
 
 }  // namespace athenasip

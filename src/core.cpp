@@ -7,11 +7,15 @@
 
 #include "core.h"
 
+#include <algorithm>
 #include <atomic>
 #include <boost/asio/connect.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <boost/json.hpp>
 #include <chrono>
+#include <optional>
+#include <unordered_set>
 
 #include "channel.h"
 #include "events/topics.h"
@@ -34,6 +38,30 @@ using namespace athenasip::types;
 using namespace athenasip::transactions;
 
 namespace athenasip {
+
+namespace {
+
+// The engine's query() answers with a JSON document, and idle_seconds is how long every
+// relay it holds for the call has been silent. Absent, null or unparseable all mean the
+// same thing here: this engine is not saying, so nothing is decided from it.
+std::optional<std::uint32_t> idle_seconds_of(const std::string& document) {
+  try {
+    const auto parsed = boost::json::parse(document);
+    if (!parsed.is_object()) return std::nullopt;
+
+    const auto* value = parsed.as_object().if_contains("idle_seconds");
+    if (value == nullptr || !value->is_int64()) return std::nullopt;
+
+    const auto seconds = value->as_int64();
+    if (seconds < 0) return std::nullopt;
+
+    return static_cast<std::uint32_t>(seconds);
+  } catch (const std::exception&) {
+    return std::nullopt;
+  }
+}
+
+}  // namespace
 
 Core::Core(std::shared_ptr<Logger> logger, std::shared_ptr<Config> _config, std::shared_ptr<athenasip::datastores::Datastore> _datastore,
            std::shared_ptr<events::EventSystem> _events)
@@ -677,7 +705,82 @@ std::shared_ptr<Call> Core::call_get(std::string callId) {
 
 // Media
 
-void Core::media_register(std::shared_ptr<media::MediaEngine> engine) { media = std::move(engine); }
+void Core::media_register(std::shared_ptr<media::MediaEngine> engine) {
+  media = std::move(engine);
+
+  // Nothing to ask until there is an engine to ask.
+  _media_sweep_schedule();
+}
+
+void Core::_media_sweep_schedule() {
+  if (_media_sweep_timer) {
+    _media_sweep_timer->cancel();
+    _media_sweep_timer.reset();
+  }
+
+  if (config->sip_media_timeout == 0 || !media) return;
+
+  // A quarter of the timeout, so a call that has gone quiet is noticed within a quarter
+  // of it, and never more often than every fifteen seconds however short the timeout is
+  // set: each pass is a walk over every live call and a round trip to the engine for each
+  // one of them.
+  const auto interval = std::max<std::uint32_t>(config->sip_media_timeout / 4, 15);
+
+  std::weak_ptr<Core> weak_self = weak_from_this();
+
+  _media_sweep_timer = _timer_source->schedule(std::chrono::seconds(interval), [weak_self]() {
+    if (auto self = weak_self.lock()) self->_media_sweep();
+  });
+}
+
+void Core::_media_sweep() {
+  _media_sweep_timer.reset();
+
+  const auto timeout = config->sip_media_timeout;
+  if (timeout == 0 || !media || !media->is_connected()) return _media_sweep_schedule();
+
+  // Confirmed dialogs only. A call still being set up has relay ports and no media by
+  // definition - nothing flows until somebody answers - and what bounds that is timer C
+  // and timer B, not this.
+  std::unordered_set<std::string> asked;
+
+  for (const auto& dialog : dialogs()->all()) {
+    if (!dialog || dialog->state != types::Dialog::State::Confirmed) continue;
+    if (!asked.insert(dialog->call_id).second) continue;
+
+    auto call = call_get(dialog->call_id);
+    if (!call) continue;
+
+    std::weak_ptr<Core> weak_self = weak_from_this();
+    const auto call_id = dialog->call_id;
+
+    media->query(strand(), call, [weak_self, call_id, timeout](plugins::Result<std::string> held) {
+      auto self = weak_self.lock();
+      if (!self || !held.ok) return;
+
+      const auto idle = idle_seconds_of(held.value);
+
+      // No reading is not the same as a long one. An engine holding nothing for this
+      // call, or one whose query says nothing about idleness, leaves the call alone.
+      if (!idle.has_value() || *idle < timeout) return;
+
+      self->_end_idle_call(call_id, *idle);
+    });
+  }
+
+  _media_sweep_schedule();
+}
+
+void Core::_end_idle_call(const std::string& call_id, std::uint32_t idle_seconds) {
+  _logger->info("Call " + call_id + " has carried no media for " + std::to_string(idle_seconds) + "s - letting it go");
+
+  // Terminating the dialogs is the whole of it: the change callback is what writes the
+  // call record and releases the engine's ports, exactly as it does when a session timer
+  // lapses. No BYE goes anywhere (RFC 4028 section 8.3).
+  for (const auto& dialog : dialogs()->all()) {
+    if (dialog && dialog->call_id == call_id) dialogs()->terminate(dialog);
+  }
+}
 
 // RTP Relays
 

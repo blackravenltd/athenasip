@@ -55,6 +55,34 @@ This setting can be `true` even if the TCP server is enabled - in which case the
 be unencrypted, but the server will still reject attempts to initate unencrypted calls.
 
 
+#### `media_timeout`
+
+How long a call may carry no media at all before this node stops holding it open, in
+seconds - Defaults to `300`. Zero turns it off.
+
+A phone that loses power sends no BYE. A call between two endpoints that never negotiated
+a session timer (see `session_min_se`) has no expiry of its own either, so nothing in the
+signalling plane will ever say that call ended - and the node goes on holding its dialog,
+its call record and its relay ports. The ports come from a finite pool, so left long
+enough a node stops being able to anchor new calls. Only a restart clears them.
+
+The media plane knows what the signalling plane cannot: the relay records when it last
+carried a packet. RTCP counts as well as RTP, which is what keeps a call on hold, or one
+whose codec suppresses silence, from reading as dead - RFC 3550 has reports sent for the
+life of the session whether or not there is anything to carry.
+
+Being wrong means cutting the media on a call that is still up, so the default is minutes
+rather than seconds. Shorten it only if you know your endpoints.
+
+When it fires the node releases the call and says nothing to either end. RFC 4028 section
+8.3 is explicit that a proxy "MUST NOT send a BYE": this node is on the path of the
+dialog, not an end of it. Both endpoints run their own timers and will each send their
+own when they notice.
+
+Only calls this node anchors are covered. Where the media engine declined the description
+- a WebRTC offer at the plain-RTP relay - or media otherwise goes end to end, there is
+nothing to observe and the call is left alone.
+
 #### `session_min_se`
 
 The shortest session interval this node will carry a call on, in seconds - Defaults to

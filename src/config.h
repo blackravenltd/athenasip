@@ -66,6 +66,23 @@ class Config {
 
   bool sip_timer_reliable_transport_retransmits = false;
 
+  // How long a call may carry no media at all before this node stops holding it open,
+  // in seconds. Zero turns it off.
+  //
+  // A call between two endpoints that never negotiated a session timer has no expiry, so
+  // a phone that loses power - which sends no BYE - leaves this node holding its dialog,
+  // its call record and its relay ports until the process restarts, and the ports are a
+  // finite pool. Nothing in the signalling plane will ever say that call ended. The media
+  // plane will: the relay knows when it last carried a packet.
+  //
+  // Minutes rather than seconds, because being wrong means cutting the media on a call
+  // that is still up. RTCP counts as well as RTP, so a call on hold or one whose codec
+  // suppresses silence is not silent here (RFC 3550 section 6).
+  //
+  // Only calls this node anchors are covered. Where the engine declined the description,
+  // or a realm is set to pass media through, there is nothing to watch.
+  uint32_t sip_media_timeout = 300;
+
   // RFC 3261 16.6 step 11: how long a proxied INVITE branch may go on answering
   // provisionally before this node gives up on it. Timer B does not cover this - the
   // first provisional response moves the client transaction to Proceeding and cancels
