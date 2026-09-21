@@ -147,10 +147,9 @@ What it deliberately left, so it is not lost:
       a time because each step starts the next from its own completion. Correct, and
       slower than one MGET would be. Worth doing when a node has enough bindings for it
       to show.
-- [ ] `EventSystem` is on the registry and the `Plugin` base but its operations still
-      take a completion callback of their own shape rather than the contract's
-      `Executor` + `Handler`. It is off the call path by decision, so this is tidiness
-      rather than a stall, but the contract should be one contract.
+- [x] `EventSystem` takes the contract's `Executor` and handlers, done on 2026-09-21 as
+      half of contract v2. The fire-and-forget `publish(name, message)` stayed, because
+      the bus is observability and is never on the call setup path.
 
 ### Step 3 - SIPUri is a real URI (RFC 3261 section 19.1)
 
@@ -327,20 +326,28 @@ What it deliberately left, so it is not lost:
 
 ### Step 8 - Admin API, part 1 (provisioning)
 
-- [ ] OpenAPI 3 document at `docs/api/openapi.yaml`, versioned under `/api/v1`.
-- [ ] Bearer-token auth middleware with `admin` and `client` scopes; tokens in config
-      for now.
-- [ ] `GET/POST/PUT/DELETE /api/v1/realms`, `/api/v1/realms/{realm}/subscribers`
-      (HA1 computed server-side from password), `GET /api/v1/registrations`. The
-      datastore's create/update split is what lets these answer 409.
-- [ ] JSON body parsing and error envelope in `AdminAPI` (`src/api/admin_api.cpp`).
-- [ ] `StaticMiddleware` path from `config->http_files_path`, not `"../admin"`
-      (`src/main.cpp`).
-- [ ] The admin API is off the strand. Provisioning goes to the datastore directly with
-      the API's own executor, which the async contract exists for; only reads of Core's
-      registries (live calls, channels) go through `call_on_strand`. Written before step
-      2 as "reaches Core through `call_on_strand`" for everything, which would put every
-      admin request on the call path.
+Done on 2026-09-21. Realms, accounts and registrations under `/api/v1`, with the health
+and node endpoints the harness and a web client need.
+
+- [x] OpenAPI 3 document at `docs/api/openapi.yaml`, versioned under `/api/v1`.
+- [x] Bearer tokens with `admin` and `client` scopes, from `http.api.tokens`. A route
+      names the scope it needs where it is declared, so adding one cannot accidentally
+      leave it open, and a request with no matching token is refused - an API enabled
+      with no tokens is one nobody can call.
+- [x] `GET/POST/PUT/DELETE /api/v1/realms` and `/api/v1/realms/{realm}/accounts`, HA1
+      computed here from the password and never given back, and `GET
+      /api/v1/registrations`. The datastore's create/update split is what lets these
+      answer 409 rather than overwrite.
+- [x] JSON body parsing and one error envelope: a code a client branches on and a
+      message a person reads.
+- [x] `StaticMiddleware` path from `config->http_files_path`.
+- [x] The admin API is off the strand: provisioning goes to the datastore with the API's
+      own executor. The middleware chain had to learn to keep its session alive first,
+      because it only ever held one for a middleware that answered inline.
+
+      What is left for part 2, with the live registries: reads of Core's own state -
+      calls in progress, channels open - which do need `call_on_strand`, and nothing in
+      provisioning does.
 
 ### Step 9 - Test harness
 
