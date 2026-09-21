@@ -29,6 +29,15 @@ sip:
   # nothing to watch.
   media_timeout: 300
 
+  # RFC 4028 section 8.1: the session interval this node offers a call that asked for
+  # none, in seconds. Zero leaves such a call without one.
+  #
+  # Safe by construction: a callee that does not implement session timers ignores it and
+  # the call ends up with no expiry at all (section 8.2), and one that does takes the
+  # refreshing on itself when the caller cannot (section 9, Table 2). Section 4 sets the
+  # floor at 90 and recommends 1800.
+  session_expires: 1800
+
   # RFC 4028 section 8: the shortest session interval this node will carry a call on.
   # A caller that asks for less and understands session timers is answered 422 Session
   # Interval Too Small with this value in Min-SE; one that does not understand them has

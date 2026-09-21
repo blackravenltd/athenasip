@@ -150,11 +150,54 @@ TEST(ProxySessionTimerTest, AnAcceptableIntervalIsForwardedUntouched) {
   EXPECT_FALSE(forwarded->header->contains("Min-SE"));
 }
 
-// A request that asked for no interval at all is not given one. 8.1 allows a proxy to
-// insert one, but a call between two ends that never mentioned session timers has no
-// interval by design, and inserting one is a policy decision this node does not take.
-TEST(ProxySessionTimerTest, ARequestWithNoIntervalIsNotGivenOne) {
+// RFC 4028 section 8.1: "A proxy MAY insert a Session-Expires header field in the request
+// before forwarding it if none was present in the request." This is what gets an expiry
+// onto a call whose caller never mentioned session timers but whose callee knows what one
+// is - and section 9 Table 2 is why it is safe rather than a way of breaking calls: a
+// timer-aware UAS handed an interval by a UAC that does not support the extension takes
+// the refreshing on itself.
+TEST(ProxySessionTimerTest, ARequestWithNoIntervalIsGivenThisNodes) {
   ProxyFixture f;
+  f.bind_bob();
+
+  f.receive(f.caller, invite_with_timer(""));
+
+  auto forwarded = f.request_with(f.callee_connection, "INVITE");
+  ASSERT_NE(forwarded, nullptr);
+
+  auto* session = field_of(forwarded, "Session-Expires");
+  ASSERT_NE(session, nullptr);
+  EXPECT_EQ(session->delta_seconds, 1800u);
+
+  // "The proxy MUST NOT include a refresher parameter in the header field value."
+  EXPECT_TRUE(session->refresher.empty());
+
+  // And no Min-SE: this node did not raise anything, and 8.1 forbids adding one to a
+  // request that supports timer at all.
+  EXPECT_FALSE(forwarded->header->contains("Min-SE"));
+}
+
+// "not with a duration lower than the value in the Min-SE header field in the request, if
+// it is present". The caller's floor wins over this node's preference.
+TEST(ProxySessionTimerTest, AnInsertedIntervalRespectsTheRequestsMinSe) {
+  ProxyFixture f;
+  f.bind_bob();
+
+  f.receive(f.caller, invite_with_timer("", "Min-SE: 3600\r\n"));
+
+  auto forwarded = f.request_with(f.callee_connection, "INVITE");
+  ASSERT_NE(forwarded, nullptr);
+
+  auto* session = field_of(forwarded, "Session-Expires");
+  ASSERT_NE(session, nullptr);
+  EXPECT_EQ(session->delta_seconds, 3600u);
+}
+
+// Zero is the switch that says do not insert, and a node set that way leaves a call that
+// asked for no interval exactly as it arrived.
+TEST(ProxySessionTimerTest, InsertionIsOffWhenTheNodeHasNoIntervalToOffer) {
+  ProxyFixture f;
+  f.config->sip_session_expires = 0;
   f.bind_bob();
 
   f.receive(f.caller, invite_with_timer(""));
@@ -230,6 +273,10 @@ TEST(ProxySessionTimerTest, ACalleeThatAnswersWithATimerIsLeftAlone) {
 TEST(ProxySessionTimerTest, NeitherEndSupportingTheTimerLeavesNoSessionExpiration) {
   ProxyFixture f;
   f.bind_bob();
+
+  // This node offered an interval on the way through; the callee said nothing about it,
+  // and neither did the caller. 8.2: "the proxy forwards the response upstream normally.
+  // There is no session expiration for this session."
 
   f.receive(f.caller, invite_with_timer(""));
   ASSERT_NE(f.request_with(f.callee_connection, "INVITE"), nullptr);
