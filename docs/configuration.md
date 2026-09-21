@@ -60,7 +60,10 @@ be unencrypted, but the server will still reject attempts to initate unencrypted
 The SIP implementation timers and multipliers as specified in [RFC 3261](https://datatracker.ietf.org/doc/html/rfc3261).
 Please note for nearly all normal use cases, you should not adjust these from their defaults.
 
-**NOTE:** There's no C or K Timers (obsolete in RFC 3261).
+**NOTE:** Timers A to K are the transaction timers of RFC 3261 section 17, and every one
+of them is expressed as a multiple of T1 or T4. Timer C is the exception: it belongs to
+the proxy rather than to a transaction (section 16.6 step 11), so it is an absolute
+value in milliseconds.
 
 ##### `t1_rtt_ms`
 
@@ -120,6 +123,30 @@ Maximum time to retransmit final response.
 ##### `i_server_invite_duration`
 
 The SIP Timer I (Server INVITE transaction termination timer) multipler of T4 above - Defaults to `1` (5s).
+
+##### `j_server_non_invite_duration`
+
+The SIP Timer J (Server non-INVITE transaction termination timer) multipler of T1 above - Defaults to `64` (32s).
+
+##### `k_non_invite_duration`
+
+The SIP Timer K (Client non-INVITE transaction termination timer) multipler of T4 above - Defaults to `1` (5s).
+
+##### `c_invite_proxy_ms`
+
+The SIP Timer C (how long a proxied INVITE may go on answering provisionally without
+finishing), in milliseconds - Defaults to `240000` (4 minutes).
+
+This is the one timer that is not a multiple of T1 or T4, because it is the proxy's and
+not a transaction's (RFC 3261 section 16.6 step 11). It is what gives up on a callee that
+starts ringing and then goes silent: Timer B bounds a branch that never answers at all,
+but the first provisional response ends Timer B, and from then until Timer C fires
+nothing else is watching. When it fires the node cancels the branch, and if the branch
+ignores that too it is abandoned and the caller is answered.
+
+RFC 3261 requires this to be larger than 3 minutes. A smaller value is refused, with an
+error in the log, and the default kept - a shorter timer would hang up on calls that are
+only still ringing.
 
 ### `tcp` Section
 

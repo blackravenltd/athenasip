@@ -6,6 +6,7 @@
 //
 #include "proxy.h"
 
+#include <chrono>
 #include <utility>
 
 #include "call.h"
@@ -464,6 +465,7 @@ void Proxy::_write_forward(const std::shared_ptr<Context>& context, const std::s
   context->forwarded = copy;
   context->forwarded_flow = channel;
   context->provisional = false;
+  context->timer_c_cancelled = false;
 
   // Dead entries would otherwise pile up for the life of the node: a context that is
   // answered by a 2xx leaves through _on_response and never comes back here.
@@ -473,7 +475,7 @@ void Proxy::_write_forward(const std::shared_ptr<Context>& context, const std::s
 
   auto self = shared_from_this();
 
-  core->client_transaction_start(
+  context->client = core->client_transaction_start(
       copy, channel, [this, self, context](std::shared_ptr<SIPMessage> response) { _on_response(context, response); },
       [this, self, context]() {
         // Timer B or F. RFC 3261 16.7: a branch that never answered is a 408, and the
@@ -486,9 +488,14 @@ void Proxy::_write_forward(const std::shared_ptr<Context>& context, const std::s
 
         if (!context->best) context->best = timeout;
 
+        _timer_c_cancel(context);
         context->forwarded = nullptr;
         _forward_next(context);
       });
+
+  // RFC 3261 16.6 step 11: "Timer C MUST be set for each client transaction when an
+  // INVITE request is proxied."
+  _timer_c_start(context);
 }
 
 void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response) {
@@ -510,6 +517,11 @@ void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::sha
   if (!is_final(code)) {
     context->provisional = true;
 
+    // 16.7 step 2: a provisional response of 101 to 199 resets timer C, because the
+    // branch is demonstrably still working on the call. A 100 Trying is excluded by
+    // name - it says the next hop received the INVITE, not that anyone is ringing.
+    if (code > 100) _timer_c_start(context);
+
     // 9.1: a CANCEL waits for a provisional response, because before one there is
     // nothing at the far end that knows the transaction. This is where that wait ends.
     if (context->cancelled) return _cancel_branch(context);
@@ -518,7 +530,9 @@ void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::sha
     return;
   }
 
+  _timer_c_cancel(context);
   context->forwarded = nullptr;
+  context->client = nullptr;
 
   // The caller already has its final response - a 487 for a CANCEL, or the answer from
   // an earlier branch. What this branch says now is only the end of its own transaction.
@@ -737,6 +751,89 @@ void Proxy::on_cancel(std::shared_ptr<SIPMessage> cancel, std::shared_ptr<transa
   terminated->header->response_message = "Request Terminated";
 
   invite_transaction->send(terminated);
+}
+
+void Proxy::_timer_c_start(const std::shared_ptr<Context>& context) {
+  _timer_c_cancel(context);
+
+  auto core = _core.lock();
+
+  // 16.6 step 11 sets the timer for a client transaction, so that is what it is tied to
+  // and not to the copy of the request: _cancel_branch lets go of the copy once the
+  // CANCEL is away, and the branch it was cancelling is still outstanding after that.
+  if (!core || !context->client) return;
+
+  // Only an INVITE gets one. It is the only method whose client transaction can sit in
+  // Proceeding indefinitely; a non-INVITE branch is bounded by timer F whatever it
+  // answers (RFC 3261 17.1.2.2).
+  if (context->request->header->request_method != "INVITE") return;
+
+  auto timers = core->timer_source();
+  if (!timers) return;
+
+  // Weak on both sides: a timer set for four minutes must not be what keeps the node's
+  // proxy or a finished response context alive.
+  std::weak_ptr<TransactionUser> weak_self = weak_from_this();
+  std::weak_ptr<Context> weak_context = context;
+
+  context->timer_c = timers->schedule(std::chrono::milliseconds(core->config->sip_timer_c_invite_proxy_ms), [weak_self, weak_context]() {
+    auto self = std::static_pointer_cast<Proxy>(weak_self.lock());
+    auto held = weak_context.lock();
+
+    if (self && held) self->_on_timer_c(held);
+  });
+}
+
+void Proxy::_timer_c_cancel(const std::shared_ptr<Context>& context) {
+  if (!context->timer_c) return;
+
+  context->timer_c->cancel();
+  context->timer_c = nullptr;
+}
+
+void Proxy::_on_timer_c(const std::shared_ptr<Context>& context) {
+  context->timer_c = nullptr;
+
+  // RFC 3261 16.8, the first half: "If the client transaction has received a provisional
+  // response, the proxy MUST generate a CANCEL request matching that transaction." The
+  // far end believes it is ringing somebody, and dropping the branch silently would
+  // leave it ringing. 16.8 offers a reset of the timer instead of terminating the
+  // transaction, and that is what happens here, so a far end that answers the CANCEL
+  // ends its branch the ordinary way, through a 487 and _on_response.
+  if (context->provisional && !context->timer_c_cancelled) {
+    _logger->info("Timer C fired on a branch that is still provisional - cancelling it");
+
+    context->timer_c_cancelled = true;
+    _cancel_branch(context);
+    _timer_c_start(context);
+    return;
+  }
+
+  // The second half, and the other end of that choice. Either the branch never answered
+  // at all, in which case 16.8 says to behave as though a 408 had come back, or it
+  // ignored the CANCEL and its transaction is terminated here rather than left waiting
+  // on a response that is not coming.
+  _logger->info("Timer C fired on a branch that will not finish - giving up on it");
+
+  if (context->client) {
+    context->client->terminate();
+    context->client = nullptr;
+  }
+
+  context->forwarded = nullptr;
+
+  // The caller has its answer already; this is only the end of a branch it is no longer
+  // waiting on.
+  if (context->answered) return;
+
+  if (!context->best) {
+    auto timeout = context->request->generate_response();
+    timeout->header->response_code = 408;
+    timeout->header->response_message = "Request Timeout";
+    context->best = timeout;
+  }
+
+  _forward_next(context);
 }
 
 void Proxy::_cancel_branch(const std::shared_ptr<Context>& context) {

@@ -66,6 +66,14 @@ class Config {
 
   bool sip_timer_reliable_transport_retransmits = false;
 
+  // RFC 3261 16.6 step 11: how long a proxied INVITE branch may go on answering
+  // provisionally before this node gives up on it. Timer B does not cover this - the
+  // first provisional response moves the client transaction to Proceeding and cancels
+  // Timer B (17.1.1.2) - so without timer C a branch that says 180 Ringing and then
+  // goes quiet is never given up on at all. The RFC's floor is "larger than 3 minutes";
+  // four is comfortably past it and still less than anyone waits for a phone to answer.
+  uint32_t sip_timer_c_invite_proxy_ms = 240000;
+
   // How long this node will spend opening a flow to a next hop it has none to (RFC 3261
   // 16.6 step 7). Not an RFC timer - the RFC does not give one - but it has to be
   // bounded: the operating system's own connect timeout is well over a minute, and Timer

@@ -41,6 +41,11 @@ sip:
     # Non-INVITE server transaction
     j_server_non_invite_duration: 64          # J = 64 * T1
 
+    # Proxy INVITE (RFC 3261 16.6 step 11). Not a multiple of T1: this one is the
+    # proxy's rather than a transaction's, and the RFC requires it to be over 3 minutes.
+    # It is what gives up on a callee that rings and then goes silent.
+    c_invite_proxy_ms: 240000                 # C = 4 minutes
+
     # Retransmit cap (optional safety net)
     retransmit_max_interval: 8        # T2 = 8 * T1 (derived from T2 value, capped)
     retransmit_max_attempts: 7        # Approximate exponential retry cap (T1 * 2^6 ~ 32s)

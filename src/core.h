@@ -183,6 +183,11 @@ class Core : public std::enable_shared_from_this<Core> {
   // Tests drive the section 17 timers from a ManualTimerSource rather than a real clock.
   void timer_source_set(std::shared_ptr<TimerSource> source) { _timer_source = std::move(source); }
 
+  // For the transaction users that keep timers of their own: timer C is the proxy's
+  // (RFC 3261 16.6 step 11), not the transaction layer's. Read at schedule time rather
+  // than held, so a source a test swaps in afterwards is the one that gets used.
+  std::shared_ptr<TimerSource> timer_source() const { return _timer_source; }
+
   // Dialogs (RFC 3261 section 12). Tracked, not owned: the node is on the path of every
   // request in a dialog because it record-routed, and it watches them go by so that it
   // knows when a call has ended. Nothing routes on this.

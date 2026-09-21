@@ -64,6 +64,19 @@ bool Config::load_from_yaml(const std::string& filename) {
     if (sip_timers["i_server_invite_duration"]) sip_timer_i_server_invite_duration = sip_timers["i_server_invite_duration"].as<uint16_t>();
     if (sip_timers["j_server_non_invite_duration"]) sip_timer_j_server_non_invite_duration = sip_timers["j_server_non_invite_duration"].as<uint16_t>();
     if (sip_timers["k_non_invite_duration"]) sip_timer_k_non_invite_duration = sip_timers["k_non_invite_duration"].as<uint16_t>();
+
+    if (sip_timers["c_invite_proxy_ms"]) {
+      const auto configured = sip_timers["c_invite_proxy_ms"].as<uint32_t>();
+
+      // RFC 3261 16.6 step 11: "The timer MUST be larger than 3 minutes." A shorter one
+      // would give up on calls that are only still ringing, so it is refused rather
+      // than honoured.
+      if (configured <= 180000) {
+        _logger->error("sip.timers.c_invite_proxy_ms must be larger than 180000 - keeping " + std::to_string(sip_timer_c_invite_proxy_ms));
+      } else {
+        sip_timer_c_invite_proxy_ms = configured;
+      }
+    }
   }
 
   if (sip["connect_timeout_ms"]) sip_connect_timeout_ms = sip["connect_timeout_ms"].as<uint32_t>();
