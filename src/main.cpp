@@ -137,9 +137,12 @@ int main(int argc, char* argv[]) {
     return -3;
   }
   // Attempt Events connection
-  if (!events->connect()) {
+  const auto events_connected =
+      connect_and_wait([&events](plugins::Executor on, plugins::StatusHandler handler) { events->connect(std::move(on), std::move(handler)); });
+
+  if (!events_connected.ok) {
     datastore->close();
-    logger->error("Event System Connection Failed: " + config->events_url);
+    logger->error("Event System Connection Failed: " + config->events_url + " - " + events_connected.error);
     return -3;
   }
 

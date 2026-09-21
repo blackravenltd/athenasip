@@ -4,17 +4,17 @@
 // Copyright (C) 2026 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
+#include "datastores/redis_datastore.h"
+
 #include <gtest/gtest.h>
 
 #include <cstdlib>
 #include <memory>
 #include <string>
 
-#include "datastores/redis_datastore.h"
-#include "types/url.h"
-
 #include "../helpers/sync_datastore_helper.h"
 #include "../mocks/logger_mock.h"
+#include "types/url.h"
 
 using namespace athenasip;
 using athenasip::datastores::RedisDatastore;
@@ -65,10 +65,10 @@ std::string unique_suffix() { return std::to_string(std::time(nullptr)) + "-" + 
 
 }  // namespace
 
-#define REQUIRE_REDIS(datastore)                                                     \
-  auto datastore = make_datastore();                                                 \
+#define REQUIRE_REDIS(datastore)                                                      \
+  auto datastore = make_datastore();                                                  \
   if (!datastore) GTEST_SKIP() << "no Redis: set ATHENA_TEST_REDIS_URL to run these"; \
-  do {                                                                               \
+  do {                                                                                \
   } while (0)
 
 TEST(RedisDatastoreTest, ConnectsAndReportsConnected) {
@@ -164,6 +164,51 @@ TEST(RedisDatastoreTest, RegistrationsAreListedFromTheLocationIndex) {
   // Deleting the subscriber takes the remaining binding with it.
   ASSERT_TRUE(datastore->subscriber_delete(subscriber->identity));
   EXPECT_TRUE(datastore->location_list(5150).empty());
+}
+
+// A binding written by one node has to be usable by another, which is the whole reason
+// the flow and the node holding it are on it (RFC 5626). They survive the round trip
+// through Redis or they are of no use to the node that reads them back.
+TEST(RedisDatastoreTest, RegistrationRoundTripsTheFlowAndTheNode) {
+  REQUIRE_REDIS(datastore);
+  const auto realm = "flow-" + unique_suffix() + ".example";
+  auto subscriber = make_subscriber(5151, "sip:bob@" + realm);
+
+  ASSERT_TRUE(datastore->subscriber_create(subscriber));
+
+  types::Location binding;
+  binding.contact = std::make_shared<types::SIPUri>("sip:bob@192.0.2.10:5060");
+  binding.path = "<sip:edge.example.com;lr>";
+  binding.flow_id = "tcp://192.0.2.10:5060";
+  binding.node_id = "node-a";
+
+  ASSERT_TRUE(datastore->subscriber_register(subscriber, binding, 3600));
+
+  auto locations = datastore->location_list(5151);
+  ASSERT_EQ(locations.size(), 1u);
+  EXPECT_EQ(locations[0].path, "<sip:edge.example.com;lr>");
+  EXPECT_EQ(locations[0].flow_id, "tcp://192.0.2.10:5060");
+  EXPECT_EQ(locations[0].node_id, "node-a");
+
+  ASSERT_TRUE(datastore->subscriber_delete(subscriber->identity));
+}
+
+// A single node writes neither, and reading back an empty flow is not the same as
+// reading back the string "flow_id".
+TEST(RedisDatastoreTest, RegistrationWithoutAFlowLeavesItEmpty) {
+  REQUIRE_REDIS(datastore);
+  const auto realm = "noflow-" + unique_suffix() + ".example";
+  auto subscriber = make_subscriber(5152, "sip:bob@" + realm);
+
+  ASSERT_TRUE(datastore->subscriber_create(subscriber));
+  ASSERT_TRUE(datastore->subscriber_register(subscriber, std::make_shared<types::SIPUri>("sip:bob@192.0.2.11:5060"), 3600, ""));
+
+  auto locations = datastore->location_list(5152);
+  ASSERT_EQ(locations.size(), 1u);
+  EXPECT_TRUE(locations[0].flow_id.empty());
+  EXPECT_TRUE(locations[0].node_id.empty());
+
+  ASSERT_TRUE(datastore->subscriber_delete(subscriber->identity));
 }
 
 TEST(RedisDatastoreTest, NonceRoundTripsAndIsRefusedWhenAlreadyExpired) {

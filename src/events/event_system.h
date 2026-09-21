@@ -124,40 +124,44 @@ class Subscription {
   Subscription(std::string _event_name, EventCallbackFn _callback) : event_name(std::move(_event_name)), callback(std::move(_callback)) {}
 };
 
+// The event bus: observability, presence and discovery. It is never on the call setup
+// path, which is what makes the fire-and-forget publish below legitimate.
+//
+// Every operation that can be waited on takes the caller's executor and answers through
+// a handler, the same way Datastore and MediaEngine do. A broker is a network round trip
+// and the caller is usually on the Core strand, which must never wait; and one contract
+// the whole of which is shaped the same way is one thing for a plugin author to learn.
 class EventSystem : public plugins::Plugin {
  public:
-  using CallbackCompleteFn = std::function<void(bool)>;
-
   ~EventSystem() override = default;
 
   std::string kind() const final { return plugins::kinds::events; }
 
-  virtual bool connect() = 0;
-  virtual void connect(CallbackCompleteFn callback) {
-    const bool ok = connect();
-    if (callback) {
-      callback(ok);
-    }
-  }
+  // Lifecycle, as Datastore and MediaEngine have it: connect() is a round trip for a
+  // networked bus and answers through the handler; close() is teardown, synchronous and
+  // safe to call twice.
+  virtual void connect(plugins::Executor on, plugins::StatusHandler handler) = 0;
+  virtual void close() = 0;
+  virtual bool is_connected() const = 0;
 
-  virtual bool close() = 0;
-  virtual void close(CallbackCompleteFn callback) {
-    const bool ok = close();
-    if (callback) {
-      callback(ok);
-    }
-  }
+  // Fire and forget, and the reason the bus is not simply async like everything else:
+  // a node announcing a channel or a transaction has nothing to do with the answer, and
+  // making it wait for one would put the broker on the path of the call that caused it.
+  // It never blocks and never fails loudly; a driver logs what it could not send.
+  virtual void publish(std::string event_name, std::string message) = 0;
 
-  virtual void publish(std::string event_name, std::string message, CallbackCompleteFn callback) = 0;
-  virtual void publish(std::string event_name, std::string message) { publish(std::move(event_name), std::move(message), nullptr); }
-  virtual std::shared_ptr<Subscription> subscribe(std::string event_name, Subscription::EventCallbackFn event_callback, CallbackCompleteFn callback) = 0;
-  virtual std::shared_ptr<Subscription> subscribe(std::string event_name, Subscription::EventCallbackFn event_callback) {
-    return subscribe(std::move(event_name), std::move(event_callback), nullptr);
-  }
-  virtual void unsubscribe(std::shared_ptr<Subscription> subscription, CallbackCompleteFn callback) = 0;
-  virtual void unsubscribe(std::shared_ptr<Subscription> subscription) { unsubscribe(std::move(subscription), nullptr); }
-  virtual void unsubscribe_all(CallbackCompleteFn callback) = 0;
-  virtual void unsubscribe_all() { unsubscribe_all(nullptr); }
+  // The same publish for a caller that does care - provisioning, an admin action, a
+  // test - and is willing to hear that the broker refused it.
+  virtual void publish(plugins::Executor on, std::string event_name, std::string message, plugins::StatusHandler handler) = 0;
+
+  // The subscription handle comes back through the handler rather than by return,
+  // because a broker has to be asked before the subscription exists. Unsubscribing
+  // needs the handle, so a caller that intends to unsubscribe keeps it.
+  virtual void subscribe(plugins::Executor on, std::string event_name, Subscription::EventCallbackFn event_callback,
+                         plugins::Handler<std::shared_ptr<Subscription>> handler) = 0;
+
+  virtual void unsubscribe(plugins::Executor on, std::shared_ptr<Subscription> subscription, plugins::StatusHandler handler) = 0;
+  virtual void unsubscribe_all(plugins::Executor on, plugins::StatusHandler handler) = 0;
 
   template <typename T, typename = std::enable_if_t<std::is_base_of_v<EventSystem, T>>>
   static void register_driver(std::shared_ptr<loggers::Logger> logger, std::string scheme) {

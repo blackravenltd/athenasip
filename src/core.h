@@ -114,14 +114,22 @@ class Core : public std::enable_shared_from_this<Core> {
   void location_list(std::uint64_t subscriber_id, plugins::Handler<std::vector<types::Location>> handler);
 
   // Channels
+
+  // The one name a flow has: "transport://host:port", lowercased. The registry files a
+  // channel under it, channel_find answers to it, and a binding records it as the flow
+  // it was learned over (RFC 5626). Built here rather than at each call site, because a
+  // key built two ways is a lookup that silently misses.
+  static std::string channel_key(const std::string& transport, const std::string& host, std::uint16_t port);
+  static std::string channel_key(const std::string& transport, const std::string& endpoint);
+
   bool channel_register(std::string endpoint, std::shared_ptr<Channel> channel);
   bool channel_unregister(std::string endpoint, std::shared_ptr<Channel> channel);
   void channel_close_all();
   std::shared_ptr<Channel> subscriber_get_channel(std::shared_ptr<Subscriber> subscriber);
 
   // The live flow to a next hop, or null when this node has none (RFC 3261 16.6 step 7).
-  // Channels are filed under "transport://host:port", which is what a next hop resolves
-  // to once its URI has given up its transport, host and port.
+  // Channels are filed under channel_key, which is what a next hop resolves to once its
+  // URI has given up its transport, host and port.
   std::shared_ptr<Channel> channel_find(const std::string& transport, const std::string& host, std::uint16_t port);
 
   // The flow to a next hop, opening one when this node has none.

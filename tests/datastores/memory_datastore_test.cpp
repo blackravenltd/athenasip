@@ -4,15 +4,15 @@
 // Copyright (C) 2026 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
+#include "datastores/memory_datastore.h"
+
 #include <gtest/gtest.h>
 
 #include <memory>
 
-#include "datastores/memory_datastore.h"
-#include "types/url.h"
-
 #include "../helpers/sync_datastore_helper.h"
 #include "../mocks/logger_mock.h"
+#include "types/url.h"
 
 using namespace athenasip;
 using athenasip::datastores::MemoryDatastore;
@@ -103,6 +103,32 @@ TEST(MemoryDatastoreTest, RegistrationStoresAContactThatCanBeLookedUp) {
   ASSERT_EQ(locations.size(), 1u);
   EXPECT_EQ(locations[0].contact->host, "192.168.1.50");
   EXPECT_EQ(locations[0].contact->port.value(), 5060);
+}
+
+// The binding is what the caller gave, apart from the lifetime and the identity the
+// store settles. A store that kept only the contact would lose the flow the binding was
+// learned over (RFC 5626) and the node holding it, which is what a second node needs.
+TEST(MemoryDatastoreTest, RegistrationKeepsTheFlowAndTheNodeItWasGiven) {
+  auto datastore = make_datastore();
+  auto subscriber = make_subscriber(7, "sip:bob@example.com");
+
+  types::Location binding;
+  binding.contact = std::make_shared<types::SIPUri>("sip:bob@192.168.1.50:5060");
+  binding.path = "<sip:edge.example.com;lr>";
+  binding.flow_id = "tcp://192.168.1.50:5060";
+  binding.node_id = "node-a";
+
+  ASSERT_TRUE(datastore->subscriber_register(subscriber, binding, 3600));
+
+  auto locations = datastore->location_list(7);
+  ASSERT_EQ(locations.size(), 1u);
+  EXPECT_EQ(locations[0].path, "<sip:edge.example.com;lr>");
+  EXPECT_EQ(locations[0].flow_id, "tcp://192.168.1.50:5060");
+  EXPECT_EQ(locations[0].node_id, "node-a");
+
+  // The store's own fields, whatever the caller put there.
+  EXPECT_EQ(locations[0].subscriber_id, 7u);
+  EXPECT_GT(locations[0].expires_at, locations[0].registered_at);
 }
 
 // RFC 3261 10.2.1: a subscriber may register more than one contact, and all of them

@@ -104,12 +104,12 @@ std::string MQTTEventSystem::name() const { return "mqtt"; }
 
 std::string MQTTEventSystem::version() const { return "0.0.1"; }
 
-bool MQTTEventSystem::connect() {
+void MQTTEventSystem::connect(plugins::Executor on, plugins::StatusHandler handler) {
   auto self = shared_from_this();
 
   bool expected = false;
   if (!_connected.compare_exchange_strong(expected, true)) {
-    return true;
+    return _complete(std::move(on), std::move(handler), plugins::Status::success());
   }
 
   _mqtt_io_context.restart();
@@ -124,12 +124,12 @@ bool MQTTEventSystem::connect() {
     _mqtt_work_guard.reset();
     _connected.store(false);
     _logger->error(std::string("Failed to start MQTT thread: ") + e.what());
-    return false;
+    return _complete(std::move(on), std::move(handler), plugins::Status::failure(std::string("Failed to start MQTT thread: ") + e.what()));
   } catch (...) {
     _mqtt_work_guard.reset();
     _connected.store(false);
     _logger->error("Failed to start MQTT thread: unknown exception");
-    return false;
+    return _complete(std::move(on), std::move(handler), plugins::Status::failure("Failed to start MQTT thread: unknown exception"));
   }
 
   boost::asio::dispatch(_mqtt_strand, [this, self]() {
@@ -156,17 +156,15 @@ bool MQTTEventSystem::connect() {
   });
 
   _logger->debug("Connected");
-  return true;
+  _complete(std::move(on), std::move(handler), plugins::Status::success());
 }
 
-void MQTTEventSystem::connect(EventSystem::CallbackCompleteFn callback) { post_complete(std::move(callback), connect()); }
-
-bool MQTTEventSystem::close() {
+void MQTTEventSystem::close() {
   auto self = shared_from_this();
 
   bool expected = true;
   if (!_connected.compare_exchange_strong(expected, false)) {
-    return true;
+    return;
   }
 
   _logger->debug("Closing");
@@ -188,58 +186,65 @@ bool MQTTEventSystem::close() {
   _receive_active = false;
 
   _logger->info("Closed");
-  return true;
 }
 
-void MQTTEventSystem::close(EventSystem::CallbackCompleteFn callback) { post_complete(std::move(callback), close()); }
+bool MQTTEventSystem::is_connected() const { return _connected.load(); }
 
-void MQTTEventSystem::publish(std::string event_name, std::string message, EventSystem::CallbackCompleteFn callback) {
+void MQTTEventSystem::publish(std::string event_name, std::string message) { publish_event(std::move(event_name), std::move(message), nullptr); }
+
+void MQTTEventSystem::publish(plugins::Executor on, std::string event_name, std::string message, plugins::StatusHandler handler) {
+  publish_event(std::move(event_name), std::move(message), bind_completion(std::move(on), std::move(handler)));
+}
+
+void MQTTEventSystem::publish_event(std::string event_name, std::string message, Completion completion) {
   auto self = shared_from_this();
   const auto topic = prefixed_topic(_prefix, event_name);
 
   if (!TopicFilter::is_valid_topic(topic)) {
     _logger->error("Publish rejected for invalid event topic: " + topic);
-    post_complete(std::move(callback), false);
+    finish(completion, plugins::Status::failure("Publish rejected for invalid event topic: " + topic));
     return;
   }
 
   if (!_connected.load()) {
     _logger->error("Publish rejected while closed: " + topic);
-    post_complete(std::move(callback), false);
+    finish(completion, plugins::Status::failure("Publish rejected while closed: " + topic));
     return;
   }
 
   _logger->debug("Publishing event: " + topic + " with message: " + message);
 
-  boost::asio::dispatch(_mqtt_strand, [this, self, topic, message = std::move(message), callback = std::move(callback)]() mutable {
+  boost::asio::dispatch(_mqtt_strand, [this, self, topic, message = std::move(message), completion = std::move(completion)]() mutable {
     if (!_connected.load()) {
-      post_complete(std::move(callback), false);
+      finish(completion, plugins::Status::failure("Publish rejected while closed: " + topic));
       return;
     }
 
-    auto pub_callback = ([this, self, callback = std::move(callback)](mqtt::error_code ec) mutable {
+    auto pub_callback = ([this, self, topic, completion = std::move(completion)](mqtt::error_code ec) mutable {
       if (ec) {
         _logger->error("MQTT publish failed: " + ec.message());
-        post_complete(std::move(callback), false);
+        finish(completion, plugins::Status::failure("MQTT publish failed for " + topic + ": " + ec.message()));
         return;
       }
 
-      post_complete(std::move(callback), true);
+      finish(completion, plugins::Status::success());
     });
 
     _client.async_publish<mqtt::qos_e::at_most_once>(topic, std::move(message), mqtt::retain_e::no, mqtt::publish_props{}, std::move(pub_callback));
   });
 }
 
-std::shared_ptr<Subscription> MQTTEventSystem::subscribe(std::string event_name, Subscription::EventCallbackFn event_callback,
-                                                         EventSystem::CallbackCompleteFn callback) {
+void MQTTEventSystem::subscribe(plugins::Executor on, std::string event_name, Subscription::EventCallbackFn event_callback,
+                                plugins::Handler<std::shared_ptr<Subscription>> handler) {
+  using SubscriptionResult = plugins::Result<std::shared_ptr<Subscription>>;
+
   auto self = shared_from_this();
   const auto topic_filter = prefixed_topic(_prefix, event_name);
 
   if (!TopicFilter::is_valid_filter(topic_filter)) {
     _logger->error("Subscribe rejected for invalid event filter: " + topic_filter);
-    post_complete(std::move(callback), false);
-    return nullptr;
+    _complete(std::move(on), std::move(handler), SubscriptionResult::failure("Subscribe rejected for invalid event filter: " + topic_filter));
+    return;
   }
 
   _logger->debug("Subscribing to event: " + topic_filter);
@@ -254,47 +259,46 @@ std::shared_ptr<Subscription> MQTTEventSystem::subscribe(std::string event_name,
   }
 
   if (!_connected.load() || !first_local_subscription) {
-    post_complete(std::move(callback), true);
-    return sub;
-  }
-
-  boost::asio::dispatch(_mqtt_strand, [this, self, event_name = sub->event_name, callback = std::move(callback)]() mutable {
-    subscribe_events_on_mqtt(std::vector<std::string>{std::move(event_name)}, std::move(callback));
-  });
-
-  return sub;
-}
-
-void MQTTEventSystem::unsubscribe(std::shared_ptr<Subscription> subscription, EventSystem::CallbackCompleteFn callback) {
-  auto self = shared_from_this();
-
-  if (!subscription) {
-    post_complete(std::move(callback), false);
+    _complete(std::move(on), std::move(handler), SubscriptionResult::success(sub));
     return;
   }
 
-  {
-    std::scoped_lock lock(_subscriptions_mutex);
-    auto it = _subscriptions.find(subscription->event_name);
-    if (it != _subscriptions.end()) {
-      it->second.erase(subscription);
-      if (it->second.empty()) {
-        _subscriptions.erase(it);
-      }
+  // The handle only comes back once the broker has taken the subscription, and a
+  // subscription the broker refused is dropped rather than left behind: a caller
+  // holding a handle to nothing would never hear the events it asked for.
+  auto answer = [this, self, sub, on = std::move(on), handler = std::move(handler)](plugins::Status status) mutable {
+    if (!status.ok) {
+      remove_subscription(sub);
+      _complete(std::move(on), std::move(handler), SubscriptionResult::failure(std::move(status.error)));
+      return;
     }
+
+    _complete(std::move(on), std::move(handler), SubscriptionResult::success(sub));
+  };
+
+  boost::asio::dispatch(_mqtt_strand, [this, self, event_name = sub->event_name, answer = std::move(answer)]() mutable {
+    subscribe_events_on_mqtt(std::vector<std::string>{std::move(event_name)}, std::move(answer));
+  });
+}
+
+void MQTTEventSystem::unsubscribe(plugins::Executor on, std::shared_ptr<Subscription> subscription, plugins::StatusHandler handler) {
+  if (!subscription) {
+    _complete(std::move(on), std::move(handler), plugins::Status::failure("unsubscribe: no subscription"));
+    return;
   }
+
+  remove_subscription(subscription);
 
   // Deliberately do not UNSUBSCRIBE at the broker. Keeping the broker-side
   // subscription avoids races with a new local subscription to the same event.
   // Messages for events with no local subscribers are simply dropped.
-  post_complete(std::move(callback), true);
+  _complete(std::move(on), std::move(handler), plugins::Status::success());
 }
 
-void MQTTEventSystem::unsubscribe_all(EventSystem::CallbackCompleteFn callback) {
-  auto self = shared_from_this();
+void MQTTEventSystem::unsubscribe_all(plugins::Executor on, plugins::StatusHandler handler) {
   _logger->debug("Unsubscribing all subscriptions");
   clear_local_subscriptions();
-  post_complete(std::move(callback), true);
+  _complete(std::move(on), std::move(handler), plugins::Status::success());
 }
 
 void MQTTEventSystem::apply_url(std::shared_ptr<types::URL> url) {
@@ -469,18 +473,38 @@ void MQTTEventSystem::close_without_callback() noexcept {
   }
 }
 
-void MQTTEventSystem::post_complete(EventSystem::CallbackCompleteFn callback, bool ok) {
-  if (!callback) {
-    return;
+MQTTEventSystem::Completion MQTTEventSystem::bind_completion(plugins::Executor on, plugins::StatusHandler handler) {
+  if (!handler) {
+    return nullptr;
   }
 
   auto self = shared_from_this();
-  boost::asio::post(_callback_io_context, [self, callback = std::move(callback), ok]() mutable { callback(ok); });
+  return [self, on = std::move(on), handler = std::move(handler)](plugins::Status status) mutable { _complete(on, handler, std::move(status)); };
+}
+
+void MQTTEventSystem::finish(const Completion& completion, plugins::Status status) {
+  if (completion) {
+    completion(std::move(status));
+  }
 }
 
 void MQTTEventSystem::clear_local_subscriptions() {
   std::scoped_lock lock(_subscriptions_mutex);
   _subscriptions.clear();
+}
+
+void MQTTEventSystem::remove_subscription(const std::shared_ptr<Subscription>& subscription) {
+  std::scoped_lock lock(_subscriptions_mutex);
+
+  auto it = _subscriptions.find(subscription->event_name);
+  if (it == _subscriptions.end()) {
+    return;
+  }
+
+  it->second.erase(subscription);
+  if (it->second.empty()) {
+    _subscriptions.erase(it);
+  }
 }
 
 std::vector<std::string> MQTTEventSystem::current_subscription_events() const {
@@ -523,9 +547,9 @@ std::unordered_set<std::shared_ptr<Subscription>> MQTTEventSystem::collect_match
   return to_publish;
 }
 
-void MQTTEventSystem::subscribe_events_on_mqtt(std::vector<std::string> event_names, EventSystem::CallbackCompleteFn callback) {
+void MQTTEventSystem::subscribe_events_on_mqtt(std::vector<std::string> event_names, Completion completion) {
   if (!_connected.load()) {
-    post_complete(std::move(callback), false);
+    finish(completion, plugins::Status::failure("subscribe rejected while closed"));
     return;
   }
 
@@ -541,7 +565,7 @@ void MQTTEventSystem::subscribe_events_on_mqtt(std::vector<std::string> event_na
 
   if (to_subscribe.empty()) {
     ensure_receive_loop();
-    post_complete(std::move(callback), true);
+    finish(completion, plugins::Status::success());
     return;
   }
 
@@ -556,12 +580,12 @@ void MQTTEventSystem::subscribe_events_on_mqtt(std::vector<std::string> event_na
 
   auto self = shared_from_this();
   _client.async_subscribe(std::move(topics), mqtt::subscribe_props{},
-                          [this, self, to_subscribe = std::move(to_subscribe), callback = std::move(callback)](
+                          [this, self, to_subscribe = std::move(to_subscribe), completion = std::move(completion)](
                               mqtt::error_code ec, std::vector<mqtt::reason_code> reasons, mqtt::suback_props props) mutable {
                             (void)props;
 
                             if (!_connected.load()) {
-                              post_complete(std::move(callback), false);
+                              finish(completion, plugins::Status::failure("subscribe rejected while closed"));
                               return;
                             }
 
@@ -570,7 +594,7 @@ void MQTTEventSystem::subscribe_events_on_mqtt(std::vector<std::string> event_na
                                 _broker_subscribed_events.erase(event_name);
                               }
                               _logger->error("subscribe failed: " + ec.message());
-                              post_complete(std::move(callback), false);
+                              finish(completion, plugins::Status::failure("subscribe failed: " + ec.message()));
                               return;
                             }
 
@@ -579,7 +603,7 @@ void MQTTEventSystem::subscribe_events_on_mqtt(std::vector<std::string> event_na
                                 _broker_subscribed_events.erase(event_name);
                               }
                               _logger->error("subscribe failed: empty SUBACK reason list");
-                              post_complete(std::move(callback), false);
+                              finish(completion, plugins::Status::failure("subscribe failed: empty SUBACK reason list"));
                               return;
                             }
 
@@ -615,7 +639,8 @@ void MQTTEventSystem::subscribe_events_on_mqtt(std::vector<std::string> event_na
                               ensure_receive_loop();
                             }
 
-                            post_complete(std::move(callback), all_accepted && any_accepted);
+                            finish(completion,
+                                   all_accepted && any_accepted ? plugins::Status::success() : plugins::Status::failure("the broker refused a subscription"));
                           });
 }
 

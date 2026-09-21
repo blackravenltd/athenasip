@@ -13,6 +13,7 @@
 #include <boost/asio/strand.hpp>
 #include <boost/mqtt5.hpp>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -25,6 +26,7 @@
 #include "../global_io_context.h"
 #include "../loggers/logger.h"
 #include "../loggers/logger_scoped.h"
+#include "../plugins/plugin.h"
 #include "../types/url.h"
 #include "event_system.h"
 
@@ -51,21 +53,31 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
   MQTTEventSystem(MQTTEventSystem&&) = delete;
   MQTTEventSystem& operator=(MQTTEventSystem&&) = delete;
 
-  bool connect() override;
-  void connect(EventSystem::CallbackCompleteFn callback) override;
+  void connect(plugins::Executor on, plugins::StatusHandler handler) override;
+  void close() override;
+  bool is_connected() const override;
 
-  bool close() override;
-  void close(EventSystem::CallbackCompleteFn callback) override;
+  void publish(std::string event_name, std::string message) override;
+  void publish(plugins::Executor on, std::string event_name, std::string message, plugins::StatusHandler handler) override;
 
-  void publish(std::string event_name, std::string message, EventSystem::CallbackCompleteFn callback) override;
+  void subscribe(plugins::Executor on, std::string event_name, Subscription::EventCallbackFn event_callback,
+                 plugins::Handler<std::shared_ptr<Subscription>> handler) override;
 
-  std::shared_ptr<Subscription> subscribe(std::string event_name, Subscription::EventCallbackFn event_callback,
-                                          EventSystem::CallbackCompleteFn callback) override;
-
-  void unsubscribe(std::shared_ptr<Subscription> subscription, EventSystem::CallbackCompleteFn callback) override;
-  void unsubscribe_all(EventSystem::CallbackCompleteFn callback) override;
+  void unsubscribe(plugins::Executor on, std::shared_ptr<Subscription> subscription, plugins::StatusHandler handler) override;
+  void unsubscribe_all(plugins::Executor on, plugins::StatusHandler handler) override;
 
  private:
+  // A handler already bound to the executor it answers on. The broker work happens on
+  // the MQTT strand, several frames from the caller, and carrying one callable there is
+  // simpler than carrying an executor and a handler side by side. Null means the caller
+  // did not ask, which is the fire-and-forget publish.
+  using Completion = std::function<void(plugins::Status)>;
+
+  Completion bind_completion(plugins::Executor on, plugins::StatusHandler handler);
+  static void finish(const Completion& completion, plugins::Status status);
+
+  void publish_event(std::string event_name, std::string message, Completion completion);
+
   using MQTTClient = mqtt::mqtt_client<asio::ip::tcp::socket>;
   using MQTTStrand = asio::strand<asio::io_context::executor_type>;
   using MQTTWorkGuard = asio::executor_work_guard<asio::io_context::executor_type>;
@@ -101,13 +113,13 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
   void run_mqtt_io_context();
   void close_without_callback() noexcept;
 
-  void post_complete(EventSystem::CallbackCompleteFn callback, bool ok);
   void clear_local_subscriptions();
+  void remove_subscription(const std::shared_ptr<Subscription>& subscription);
 
   [[nodiscard]] std::vector<std::string> current_subscription_events() const;
   [[nodiscard]] std::unordered_set<std::shared_ptr<Subscription>> collect_matching_subscriptions(std::string event_name) const;
 
-  void subscribe_events_on_mqtt(std::vector<std::string> event_names, EventSystem::CallbackCompleteFn callback);
+  void subscribe_events_on_mqtt(std::vector<std::string> event_names, Completion completion);
   void ensure_receive_loop();
   void receive_next();
   void dispatch_event(std::string event_name, std::string message);
