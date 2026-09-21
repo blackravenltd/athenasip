@@ -4,6 +4,8 @@
 // Copyright (C) 2026 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
+#include "media/builtin_media_engine.h"
+
 #include <gtest/gtest.h>
 
 #include <boost/asio.hpp>
@@ -12,14 +14,12 @@
 #include <string>
 #include <thread>
 
+#include "../helpers/sync_media_engine_helper.h"
+#include "../mocks/logger_mock.h"
 #include "config.h"
-#include "media/builtin_media_engine.h"
 #include "media/media_engine.h"
 #include "media/media_engine_drivers.h"
 #include "sdp.h"
-
-#include "../helpers/sync_media_engine_helper.h"
-#include "../mocks/logger_mock.h"
 
 using namespace athenasip;
 using athenasip::media::BuiltinMediaEngine;
@@ -472,4 +472,125 @@ TEST(MediaFlagsTest, AnUnreadableDescriptionClaimsNothing) {
   EXPECT_FALSE(flags.dtls);
   EXPECT_FALSE(flags.srtp);
   EXPECT_FALSE(flags.rtcp_mux);
+}
+
+// RFC 8866 section 5.2: the o= line gives "an address of the machine from which the
+// session was created". A node anchoring media so that neither end learns the other's
+// address was handing one of them away in it regardless - every c= and m= was rewritten
+// and the o= was not.
+//
+// The RFC allows the substitution outright: "For privacy reasons, it is sometimes
+// desirable to obfuscate the username and IP address of the session originator. If this
+// is a concern, an arbitrary <username> and private <unicast-address> MAY be chosen to
+// populate the o= line, provided that these are selected in a manner that does not
+// affect the global uniqueness of the field."
+TEST(BuiltinMediaEngineTest, TheOriginAddressIsThisNodeAndNotTheEndpoint) {
+  auto engine = make_engine(23900, 23940);
+  auto call = make_call();
+
+  const auto result = engine->offer(call, kOffer, Flags{});
+  ASSERT_TRUE(result.ok);
+
+  SDP rewritten;
+  ASSERT_TRUE(rewritten.parse(result.sdp));
+
+  const auto origin = rewritten.origin();
+  EXPECT_EQ(origin.address, "203.0.113.5");
+  EXPECT_EQ(origin.nettype, "IN");
+  EXPECT_EQ(origin.addrtype, "IP4");
+
+  // The endpoint's address appears nowhere at all now, which is the whole point.
+  EXPECT_EQ(result.sdp.find("198.51.100.1"), std::string::npos);
+
+  engine->release(call);
+  engine->close();
+}
+
+// The same paragraph's condition: the substitution must not "affect the global
+// uniqueness of the field". Uniqueness is the tuple of username, session id, nettype,
+// addrtype and address, so replacing the address alone leaves the endpoint's username
+// and session id to carry it - two calls through this node stay distinguishable.
+TEST(BuiltinMediaEngineTest, TheOriginKeepsWhatMakesItUnique) {
+  auto engine = make_engine(23950, 23990);
+  auto call = make_call();
+
+  const auto result = engine->offer(call, kOffer, Flags{});
+  ASSERT_TRUE(result.ok);
+
+  SDP rewritten;
+  ASSERT_TRUE(rewritten.parse(result.sdp));
+
+  const auto origin = rewritten.origin();
+  EXPECT_EQ(origin.username, "alice");
+  EXPECT_EQ(origin.sessionId, "2890844526");
+
+  // The version is the endpoint's as well. RFC 3264 section 8's rule for incrementing it
+  // when this node changes a re-offer is its own item, and is not this.
+  EXPECT_EQ(origin.sessionVersion, "2890844526");
+
+  engine->release(call);
+  engine->close();
+}
+
+// A phone that loses power sends no BYE. Nothing in the signalling plane will ever say
+// the call ended, so a proxy holding relay ports for it holds them until it restarts -
+// and the ports are a finite pool. The media plane knows what the signalling plane
+// cannot: whether anything is still crossing the relay.
+//
+// query() carries it, because it is already the contract's diagnostics call and a new
+// field in its document costs no version of the plugin contract.
+TEST(BuiltinMediaEngineTest, QueryReportsHowLongTheMediaHasBeenSilent) {
+  auto engine = make_engine(24000, 24040);
+  auto call = make_call();
+
+  // A call the engine holds nothing for has no media to be idle, and says so rather than
+  // reporting a number a caller might act on.
+  EXPECT_NE(engine->query(call).find("\"idle_seconds\":null"), std::string::npos);
+
+  ASSERT_TRUE(engine->offer(call, kOffer, Flags{}).ok);
+
+  // Freshly allocated, and measured from allocation rather than from zero: a call whose
+  // media has not begun yet reads as young, not as infinitely idle.
+  EXPECT_NE(engine->query(call).find("\"idle_seconds\":0"), std::string::npos);
+
+  engine->release(call);
+  EXPECT_NE(engine->query(call).find("\"idle_seconds\":null"), std::string::npos);
+}
+
+// The reading is what a packet arriving resets, and any relay of the call still carrying
+// keeps the call live: the figure is the shortest idle of all of them. RTCP is relayed
+// through a set of its own and counts the same, which is what stops a call on hold or one
+// whose codec suppresses silence from reading as dead (RFC 3550 section 6: reports are
+// sent for the life of the session whether or not there is anything to carry).
+TEST(BuiltinMediaEngineTest, APacketArrivingIsWhatSaysTheCallIsAlive) {
+  auto engine = make_engine(24050, 24090);
+  auto call = make_call();
+
+  const auto mapped = engine->offer(call, kOffer, Flags{});
+  ASSERT_TRUE(mapped.ok) << mapped.error;
+
+  SDP rewritten;
+  ASSERT_TRUE(rewritten.parse(mapped.sdp));
+  const auto rtp_port = rewritten.media()[0].description.port;
+  ASSERT_NE(rtp_port, 0);
+
+  boost::asio::io_context io;
+  boost::asio::ip::udp::socket leg(io, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0));
+  const boost::asio::ip::udp::endpoint relay(boost::asio::ip::make_address("127.0.0.1"), rtp_port);
+
+  leg.send_to(boost::asio::buffer("packet", 6), relay);
+
+  // The relay reads on the global io_context thread, so the store lands a moment after
+  // the send returns.
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  bool seen = false;
+
+  while (std::chrono::steady_clock::now() < deadline && !seen) {
+    seen = engine->query(call).find("\"idle_seconds\":0") != std::string::npos;
+    if (!seen) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
+
+  EXPECT_TRUE(seen) << "query said " << engine->query(call);
+
+  engine->release(call);
 }

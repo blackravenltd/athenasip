@@ -2,50 +2,19 @@
 <!DOCTYPE scenario SYSTEM "sipp.dtd">
 
 <!--
-  A callee that registers and then says nothing at all. It is what makes the node's
-  timer B observable: the binding exists, so the INVITE is forwarded and retransmitted,
-  and nothing ever answers it.
+  A callee that says nothing at all. It is what makes the node's timer B observable: the
+  binding exists, because run.sh registered it first, so the INVITE is forwarded and
+  retransmitted, and nothing ever answers it.
 -->
-<scenario name="Callee: registers and never answers">
+<scenario name="Callee: never answers">
 
-  <send retrans="500">
-    <![CDATA[
-
-      REGISTER sip:[field0] SIP/2.0
-      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
-      From: <sip:[field1]@[field0]>;tag=[call_number]
-      To: <sip:[field1]@[field0]>
-      Call-ID: [call_id]
-      CSeq: 1 REGISTER
-      Contact: <sip:[field1]@[local_ip]:[local_port];transport=[transport]>
-      Max-Forwards: 70
-      Expires: 3600
-      Content-Length: 0
-
-    ]]>
-  </send>
-
-  <recv response="401" auth="true"/>
-
-  <send retrans="500">
-    <![CDATA[
-
-      REGISTER sip:[field0] SIP/2.0
-      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
-      From: <sip:[field1]@[field0]>;tag=[call_number]
-      To: <sip:[field1]@[field0]>
-      Call-ID: [call_id]
-      CSeq: 2 REGISTER
-      Contact: <sip:[field1]@[local_ip]:[local_port];transport=[transport]>
-      [authentication]
-      Max-Forwards: 70
-      Expires: 3600
-      Content-Length: 0
-
-    ]]>
-  </send>
-
-  <recv response="200"/>
+  <!--
+    No REGISTER here, deliberately. sipp binds a scenario to a single call, so a callee
+    that registered in this scenario could not then be handed the INVITE: it arrives with
+    the caller's Call-ID, sipp cannot map it to the call already running, and discards it
+    as unmappable. run.sh registers the callee in a run of its own, on the port this one
+    then listens on, so the binding points here.
+  -->
 
   <!-- The INVITE arrives and is deliberately left unanswered. The node retransmits it
        (RFC 3261 17.1.1.2, timer A) and gives up at timer B. -->

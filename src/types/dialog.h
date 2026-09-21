@@ -89,6 +89,11 @@ struct Dialog {
   // call by an hour.
   std::chrono::steady_clock::time_point session_deadline{};
 
+  // When the callee answered, on the steady clock and for the same reason. This is what
+  // a maximum call duration is measured from; `confirmed_at` is the wall-clock time for
+  // the call record, which is a different question with a different right answer.
+  std::chrono::steady_clock::time_point confirmed_monotonic{};
+
   // 12.1.1: Call-ID plus both tags. Empty while the callee has not answered, because
   // until then there is no dialog to have an identifier.
   std::string id() const;

@@ -158,6 +158,14 @@ class Core : public std::enable_shared_from_this<Core> {
   void local_address_add(std::string host_port);
   bool is_local_address(const std::string& host, std::uint16_t port) const;
 
+  // The address this node writes into a Via, a Record-Route or a Service-Route: the one
+  // it was told to advertise, or the address the flow is actually on when it was told
+  // nothing. A UDP listener is bound to the wildcard, so its local endpoint is 0.0.0.0,
+  // and anything pointing the far end at 0.0.0.0 is something it cannot come back to.
+  std::string advertised_address(const std::string& local_address) const {
+    return config->sip_public_address.empty() ? local_address : config->sip_public_address;
+  }
+
   // Nonce
   void nonce_create(std::shared_ptr<Realm> realm, plugins::Handler<std::string> handler);
   void nonce_check(std::string nonce, plugins::Handler<bool> handler);
@@ -183,6 +191,11 @@ class Core : public std::enable_shared_from_this<Core> {
   // Tests drive the section 17 timers from a ManualTimerSource rather than a real clock.
   void timer_source_set(std::shared_ptr<TimerSource> source) { _timer_source = std::move(source); }
 
+  // For the transaction users that keep timers of their own: timer C is the proxy's
+  // (RFC 3261 16.6 step 11), not the transaction layer's. Read at schedule time rather
+  // than held, so a source a test swaps in afterwards is the one that gets used.
+  std::shared_ptr<TimerSource> timer_source() const { return _timer_source; }
+
   // Dialogs (RFC 3261 section 12). Tracked, not owned: the node is on the path of every
   // request in a dialog because it record-routed, and it watches them go by so that it
   // knows when a call has ended. Nothing routes on this.
@@ -192,13 +205,6 @@ class Core : public std::enable_shared_from_this<Core> {
   bool call_register(std::shared_ptr<Call> call);
   bool call_unregister(std::string callId);
   std::shared_ptr<Call> call_get(std::string callId);
-
-  // RTPRelay
-  void rtprelay_register(std::shared_ptr<rtp::RTPRelay> relay);
-  void rtprelay_start();
-  void rtprelay_stop();
-  std::shared_ptr<rtp::RTPRelaySet> rtprelay_allocate();
-  void rtprelay_release(std::shared_ptr<rtp::RTPRelaySet> relay);
 
   // Admin API
   void admin_register(std::shared_ptr<api::AdminAPI> adminAPI);
@@ -238,7 +244,6 @@ class Core : public std::enable_shared_from_this<Core> {
 
   std::vector<std::shared_ptr<Server>> _servers;
 
-  std::shared_ptr<rtp::RTPRelay> _rtprelay;
   std::shared_ptr<api::AdminAPI> _adminAPI;
 
   std::shared_ptr<ExpirySet<std::string>> _nonce_cache;
@@ -254,6 +259,26 @@ class Core : public std::enable_shared_from_this<Core> {
   void _on_dialog_change(const std::shared_ptr<types::Dialog>& dialog);
 
   std::unordered_map<std::string, std::shared_ptr<Call>> _calls;
+
+  // The sweep that decides a call this node is holding is over. A call between endpoints
+  // that never negotiated a session timer has no expiry of its own, and a phone that
+  // loses power sends no BYE, so without this the node holds that call's dialog, record
+  // and relay ports until it restarts.
+  //
+  // Two questions, because neither covers everything. How long the media has been silent
+  // reaches any call this node anchors and says nothing about one whose media went end to
+  // end; how long the call has been up reaches every call and cannot tell a live one from
+  // a dead one.
+  std::shared_ptr<Timer> _call_sweep_timer;
+
+  void _call_sweep_schedule();
+  void _call_sweep();
+
+  // RFC 4028 section 8.3, which is the only thing a proxy may do about a call it has
+  // decided is over: "the proxy MAY remove associated call state, and MAY free any
+  // resources associated with the call. Unlike the UA, it MUST NOT send a BYE." This node
+  // is on the path of the dialog, not an end of it.
+  void _end_held_call(const std::string& call_id, const std::string& reason);
 };
 
 }  // namespace athenasip

@@ -179,13 +179,6 @@ int main(int argc, char* argv[]) {
   auto core = std::make_shared<Core>(logger, config, datastore, events);
   core->media_register(media_engine);
 
-  // Start RTPRelay
-  if (config->rtprelay_enable) {
-    auto rtprelay = std::make_shared<rtp::RTPRelay>(logger, config->rtprelay_address, config->rtprelay_min_port, config->rtprelay_max_port);
-    core->rtprelay_register(rtprelay);
-    core->rtprelay_start();
-  }
-
   // Script Engine
   // auto scripting = std::make_shared<script::LuaScriptEngine>(logger);
   // scripting->start();
@@ -283,7 +276,6 @@ int main(int argc, char* argv[]) {
         });
 
         core->server_stop_all();
-        core->rtprelay_stop();
         core->admin_stop();
 
         events->publish(events::topics::node_status(config->sip_node_id), "{\"stopped\":\"" + Util::get_zulu_time() + "\"}");

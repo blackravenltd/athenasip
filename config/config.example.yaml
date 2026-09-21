@@ -4,46 +4,144 @@
 # Copyright (C) 2025 Tom Cully <mail@tomcully.com>
 # Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 #
+# Every setting below is shown with its default, so a line you delete changes nothing.
+# A working configuration is much shorter than this file: a node_id, one listener and
+# the driver URLs will run.
+#
+# The full reference is docs/configuration.md.
+#
 
 sip:
-  # This must be unique in the cluster
+  # Unique across the cluster. It names this node on the event bus and in
+  # GET /api/v1/nodes, so two nodes sharing one is two nodes nobody can tell apart.
   node_id: sip-0001
-  event_prefix: athenasip
 
-  # The address this node tells the outside world to reach it on. A node bound to
-  # 0.0.0.0 answers on every address it has and can name none of them to a client, so
-  # anything that has to point somebody at this node - GET /api/v1/nodes, and cluster
-  # failover later - needs this set. Leave it out on a single-homed host.
+  # The address this node tells the outside world to reach it on, and what goes into the
+  # Via, the Record-Route and the Service-Route it writes.
+  #
+  # A listener bound to 0.0.0.0 answers on every address the host has and can name none
+  # of them, so without this those fields say 0.0.0.0 and nothing can route back here.
+  # Leave it out on a single-homed host, where the flow's own address is right; set it in
+  # a container, behind a load balancer, or on a NAT'd public IP.
   # public_address: 203.0.113.5
 
+  # Permit SIP over an unencrypted transport. WSS is what a browser needs and TLS is what
+  # a cluster talks, so this is the switch that allows plain UDP, TCP and WS.
   allow_unencrypted: true
+
+  # How long this node will spend opening a connection to a next hop it has no flow to
+  # (RFC 3261 16.6 step 7), in milliseconds. Not an RFC timer, but it has to be bounded:
+  # the operating system's own limit is well over a minute, and timer B gives the whole
+  # transaction thirty-two seconds, which a fork with several bindings has to share.
+  connect_timeout_ms: 4000
+
+  # --------------------------------------------------------------------------------
+  # Deciding a call is over
+  #
+  # A proxy holds state for every call it carries - the dialog, the call record, and the
+  # relay ports when it anchors media - and the ports are a finite pool. An endpoint that
+  # loses power sends no BYE, so something has to notice. These four are the ways of
+  # noticing, and they reach different calls:
+  #
+  #   media_timeout          any call this node anchors. Misses media that goes end to
+  #                          end.
+  #   session_expires        any call whose far end implements RFC 4028. Misses a call
+  #                          between two endpoints that do not.
+  #   max_call_duration      every call, but cannot tell a live one from a dead one.
+  #   require_session_timer  forces the issue, at the cost of failing calls to endpoints
+  #                          without the extension.
+  #
+  # The first two overlap enough that most deployments need nothing else. In every case
+  # this node releases the call and says nothing to either end: RFC 4028 section 8.3 is
+  # explicit that a proxy MUST NOT send a BYE, because it is on the path of the dialog
+  # and not an end of it. Both endpoints run their own timers.
+  # --------------------------------------------------------------------------------
+
+  # How long a call may carry no media at all before this node lets it go, in seconds.
+  # Zero turns it off.
+  #
+  # The relay knows when it last carried a packet, which is the one honest answer to
+  # "is this call still happening". RTCP counts as well as RTP, so a call on hold or one
+  # whose codec suppresses silence is not silent here (RFC 3550 section 6). Minutes
+  # rather than seconds: being wrong means cutting the media on a call that is still up.
+  media_timeout: 300
+
+  # The session interval this node offers a call that asked for none, in seconds
+  # (RFC 4028 section 8.1). Zero leaves such a call without one.
+  #
+  # It cannot break a call. A callee that does not implement session timers answers
+  # without one and the call ends up with no expiry - where it started. One that does
+  # takes the refreshing on itself when the caller cannot (section 9, Table 2). Section 4
+  # sets the floor at 90 and recommends 1800.
+  session_expires: 1800
+
+  # The shortest session interval this node will carry a call on, in seconds (RFC 4028
+  # section 8.1). This node keeps state for the length of the interval, so how short it
+  # may be is its business as well as the endpoints'.
+  #
+  # A caller that asks for less and advertises Supported: timer is answered 422 Session
+  # Interval Too Small with this value in Min-SE. One that does not advertise it cannot
+  # read that answer, so its interval is raised to this instead. The RFC's floor is 90
+  # and a lower value here is refused.
+  session_min_se: 90
+
+  # The longest this node will hold any call open, in seconds. Zero is no cap.
+  #
+  # The backstop for the call the others cannot reach: media end to end, and two
+  # endpoints that have never heard of RFC 4028. Blunt - there is nothing in it about
+  # whether the call is alive, so set it to four hours and a legitimate four-hour call is
+  # cut. Set it only on a deployment that knows what its calls look like.
+  max_call_duration: 0
+
+  # Insist on a session timer by putting Require: timer on a request whose caller did not
+  # advertise support for one.
+  #
+  # RFC 4028 section 8.1 allows this and calls it NOT RECOMMENDED in the same breath, and
+  # the consequence is concrete: an endpoint that does not implement the extension answers
+  # 420 Bad Extension, so the call FAILS rather than merely going without an expiry.
+  # Reasonable on a closed fleet where every handset is known; wrong on anything a
+  # stranger can call. With it off, session_expires still offers a timer and the callee
+  # decides.
+  require_session_timer: false
+
+  # --------------------------------------------------------------------------------
+  # RFC 3261 section 17 transaction timers. Almost nobody should change these. They are
+  # here because the RFC names them and a node that hid them would be harder to reason
+  # about, not because they are tuning knobs.
+  # --------------------------------------------------------------------------------
   timers:
-    # Base units (milliseconds)
-    t1_rtt_ms: 500                     # Default RTT estimate
-    t2_max_retransmit_interval_ms: 4000  # RFC default for max backoff cap
-    t4_network_propagation_ms: 5000     # Max expected network delay
+    # The base units, in milliseconds. Everything lettered below is a multiple of T1 or
+    # T4, which is how RFC 3261 defines them.
+    t1_rtt_ms: 500                        # round-trip estimate
+    t2_max_retransmit_interval_ms: 4000   # retransmission ceiling
+    t4_network_propagation_ms: 5000       # longest a message lingers in the network
 
     # INVITE client transaction
-    a_invite_initial: 1                 # A = 1 * T1
-    b_invite_timeout: 64               # B = 64 * T1
-    d_invite_duration: 64              # D = 64 * T1 (common default; not spec-fixed)
+    a_invite_initial: 1                   # A = 1 * T1, retransmit interval
+    b_invite_timeout: 64                  # B = 64 * T1, give up with no response at all
+    d_invite_duration: 64                 # D = 64 * T1, absorb response retransmissions
 
     # Non-INVITE client transaction
-    e_non_invite_initial: 1                # E = 1 * T1
-    f_non_invite_timeout: 64               # F = 64 * T1
-    k_non_invite_duration: 1               # K = 1 * T4
+    e_non_invite_initial: 1               # E = 1 * T1
+    f_non_invite_timeout: 64              # F = 64 * T1
+    k_non_invite_duration: 1              # K = 1 * T4
 
     # INVITE server transaction
-    g_server_invite_initial: 1                # G = 1 * T1
-    h_server_invite_timeout: 64               # H = 64 * T1
-    i_server_invite_duration: 1               # I = 1 * T4
+    g_server_invite_initial: 1            # G = 1 * T1, retransmit the final response
+    h_server_invite_timeout: 64           # H = 64 * T1, give up waiting for the ACK
+    i_server_invite_duration: 1           # I = 1 * T4, absorb ACK retransmissions
 
     # Non-INVITE server transaction
-    j_server_non_invite_duration: 64          # J = 64 * T1
+    j_server_non_invite_duration: 64      # J = 64 * T1
 
-    # Retransmit cap (optional safety net)
-    retransmit_max_interval: 8        # T2 = 8 * T1 (derived from T2 value, capped)
-    retransmit_max_attempts: 7        # Approximate exponential retry cap (T1 * 2^6 ~ 32s)
+    # Timer C, in milliseconds rather than a multiple, because it is the proxy's and not
+    # a transaction's (RFC 3261 16.6 step 11). It is what gives up on a callee that
+    # answers 180 and then goes quiet: the first provisional response cancels timer B, so
+    # from then until this fires nothing else is watching. The RFC requires it to be
+    # larger than 3 minutes, and a smaller value here is refused.
+    c_invite_proxy_ms: 240000             # 4 minutes
+
+# Transports. Every section is optional, and a node with none listens for nothing.
 
 udp:
   enable: true
@@ -66,6 +164,7 @@ websocket:
   enable: true
   address: 0.0.0.0
   port: 9500
+
   # RFC 7118 over TLS. A browser will not open an insecure WebSocket from a page served
   # over https, so a web client needs this; ws:// is for local development. Setting tls
   # without both files is a startup error rather than a silent fall back to ws://.
@@ -73,25 +172,25 @@ websocket:
   # cert_pem_filename: "../tls/snakeoil.cer"
   # key_pem_filename: "../tls/snakeoil.key"
 
-rtprelay:
-  enable: true
-  address: 0.0.0.0
-  public_address: 0.0.0.0
-  port_min: 22000
-  port_max: 23000
+# The three plugin kinds. Each is a URL whose scheme picks the driver, plus an optional
+# section named after that driver for what the URL cannot express. The URL on its own is
+# a working configuration.
 
 datastore:
-  # memory:// keeps everything in this process: no external service, nothing
-  # survives a restart. Use redis:// for a cluster or to keep registrations.
+  # memory:// keeps everything in this process: no external service, and nothing survives
+  # a restart. redis:// is what a cluster needs, and what keeps registrations.
   url: "memory://"
 
 events:
-  # local:// keeps events inside this process. mqtt:// publishes them to a broker,
-  # where they are also how nodes find each other.
-  url: "mqtt://127.0.0.1:1883/"
+  # The event bus carries observability, presence and node discovery. It is never on the
+  # call setup path, so a node whose bus is down still places calls.
+  #
+  # local:// keeps events inside this process. mqtt:// publishes them to a broker, where
+  # they are also how nodes find each other.
+  url: "local://"
 
   mqtt:
-    client_id: sip-01
+    client_id: sip-0001
     keep_alive: 30
 
 media:
@@ -99,18 +198,20 @@ media:
   # rtpengine://host:port is the production engine, and the one that does WebRTC.
   url: "builtin://"
 
-  # A driver reads the section named after it, for what the URL cannot express. The
-  # section is optional: the URL on its own is a working configuration.
   builtin:
+    # Where the relay binds, and the address it writes into the descriptions it hands
+    # out. The public one has to be somewhere the endpoints can actually send: 0.0.0.0 in
+    # a c= line is a black hole. On a NAT'd host it is the public address, and the port
+    # range below has to be forwarded to it as a contiguous block.
     bind_address: 0.0.0.0
-    public_address: 0.0.0.0
+    public_address: 127.0.0.1
     port_min: 22000
     port_max: 23000
 
 http:
   address: 0.0.0.0
   port: 8080
-  
+
   api:
     enable: true
 
@@ -126,7 +227,3 @@ http:
   files:
     enable: true
     path: "../admin/"
-
-  # websocket
-  #   enable: true
-

@@ -28,13 +28,10 @@ class Config {
 
   // SIP configuration
   std::string sip_node_id;
-  uint32_t sip_registration_timeout = 5000;
 
   // Allow SIP over an unencrypted transport. WSS is required for browsers, and TLS is
   // what a cluster talks, so this is the switch that permits plain UDP, TCP and WS.
   bool sip_allow_unencrypted = true;
-
-  std::string sip_event_prefix;
 
   // The address this node tells the outside world to reach it on. A node bound to
   // 0.0.0.0 knows every address it answers on and none that a client should use, so
@@ -42,6 +39,30 @@ class Config {
   // failover work in M4 - needs to be told. Empty means fall back to the bind address,
   // which is right on a single-homed host and useless on a wildcard bind.
   std::string sip_public_address;
+
+  // RFC 4028 section 8.1: the session interval this node puts on a call that asked for
+  // none, in seconds. Zero leaves such a call without one.
+  //
+  // It is what gets an expiry onto a call whose caller never mentioned session timers but
+  // whose callee knows what they are - section 9 Table 2 has a timer-aware UAS take the
+  // refreshing itself when the UAC cannot. Where neither end implements RFC 4028, section
+  // 8.2 leaves the call with no expiration at all and `sip_media_timeout` is what
+  // eventually notices.
+  //
+  // Section 4 recommends 1800 and sets an absolute floor of 90.
+  uint32_t sip_session_expires = 1800;
+
+  // RFC 4028 section 8.1: whether to insist on a session timer by putting Require: timer
+  // on a request whose caller did not advertise support. Off by default, and it should
+  // usually stay off.
+  //
+  // The RFC calls it NOT RECOMMENDED, and the reason is concrete: an endpoint that does
+  // not implement the extension answers 420 Bad Extension, so the call fails outright
+  // rather than merely going without an expiry. That is a reasonable trade on a closed
+  // fleet where every handset is known, and the wrong one on anything a stranger can
+  // call. Where it is off, a caller that cannot do session timers still gets one offered
+  // (`sip_session_expires`) and the callee decides.
+  bool sip_require_session_timer = false;
 
   // RFC 4028 section 5: the shortest session interval this node will let a call
   // negotiate, and the floor the RFC itself sets is 90 seconds. A proxy that keeps state
@@ -65,6 +86,42 @@ class Config {
   uint16_t sip_timer_k_non_invite_duration = 1;
 
   bool sip_timer_reliable_transport_retransmits = false;
+
+  // The longest this node will hold any call open, in seconds. Zero, the default, means
+  // no cap at all.
+  //
+  // The backstop for the calls the other two mechanisms cannot see: one whose media went
+  // end to end has nothing for `sip_media_timeout` to watch, and one between two
+  // endpoints that neither implement RFC 4028 gets no session timer however willing this
+  // node is to offer one. A blunt instrument, which is why it is off - set this and a
+  // legitimate call of that length is cut - but on a deployment that knows its calls are
+  // never hours long it is the only thing that catches the rest.
+  uint32_t sip_max_call_duration = 0;
+
+  // How long a call may carry no media at all before this node stops holding it open,
+  // in seconds. Zero turns it off.
+  //
+  // A call between two endpoints that never negotiated a session timer has no expiry, so
+  // a phone that loses power - which sends no BYE - leaves this node holding its dialog,
+  // its call record and its relay ports until the process restarts, and the ports are a
+  // finite pool. Nothing in the signalling plane will ever say that call ended. The media
+  // plane will: the relay knows when it last carried a packet.
+  //
+  // Minutes rather than seconds, because being wrong means cutting the media on a call
+  // that is still up. RTCP counts as well as RTP, so a call on hold or one whose codec
+  // suppresses silence is not silent here (RFC 3550 section 6).
+  //
+  // Only calls this node anchors are covered. Where the engine declined the description,
+  // or a realm is set to pass media through, there is nothing to watch.
+  uint32_t sip_media_timeout = 300;
+
+  // RFC 3261 16.6 step 11: how long a proxied INVITE branch may go on answering
+  // provisionally before this node gives up on it. Timer B does not cover this - the
+  // first provisional response moves the client transaction to Proceeding and cancels
+  // Timer B (17.1.1.2) - so without timer C a branch that says 180 Ringing and then
+  // goes quiet is never given up on at all. The RFC's floor is "larger than 3 minutes";
+  // four is comfortably past it and still less than anyone waits for a phone to answer.
+  uint32_t sip_timer_c_invite_proxy_ms = 240000;
 
   // How long this node will spend opening a flow to a next hop it has none to (RFC 3261
   // 16.6 step 7). Not an RFC timer - the RFC does not give one - but it has to be
@@ -117,13 +174,6 @@ class Config {
 
   // Media configuration
   std::string media_url = "builtin://";  // or "rtpengine://host:port"
-
-  // Built-in RTP relay configuration
-  bool rtprelay_enable = false;
-  std::string rtprelay_address;
-  std::string rtprelay_public_address;
-  uint16_t rtprelay_min_port = 22000;
-  uint16_t rtprelay_max_port = 23000;
 
   // HTTP configuration
   std::string http_address;
