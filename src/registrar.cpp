@@ -10,6 +10,7 @@
 #include <ctime>
 #include <utility>
 
+#include "channel.h"
 #include "core.h"
 #include "headers/authorization_header.h"
 #include "headers/sip_identity_header.h"
@@ -142,9 +143,30 @@ void Registrar::_on_account(std::shared_ptr<SIPMessage> request, std::shared_ptr
     return _send_challenge(transaction, request, realm);
   }
 
+  // RFC 8760: the client answered one of the challenges, and which one it answered says
+  // which hash to check with. Absent means MD5, which is what RFC 2617 3.2.1 says and
+  // what every client that has never heard of anything else sends.
+  const auto algorithm = Util::to_upper(auth->contains_field("algorithm") ? auth->fields["algorithm"] : "MD5");
+
+  if (algorithm != "MD5" && algorithm != "SHA-256") {
+    _logger->info("REGISTER with an unsupported Digest algorithm " + algorithm + " - challenging");
+    return _send_challenge(transaction, request, realm);
+  }
+
+  const auto& stored = algorithm == "SHA-256" ? account->ha1_sha256 : account->ha1;
+
+  // An account with no credential for the algorithm it answered with cannot be checked.
+  // Challenging again is the honest answer: the next challenge carries both algorithms
+  // and the client can come back with the other one.
+  if (stored.empty()) {
+    _logger->info("REGISTER answered with " + algorithm + " but " + aor->to_string() + " has no credential for it - challenging");
+    return _send_challenge(transaction, request, realm);
+  }
+
   // RFC 2617: HA1 is stored, so the check is HA1:nonce:HA2 with HA2 over method and URI.
-  const auto expected =
-      Util::to_lower(Util::md5(account->ha1 + ":" + auth->fields["nonce"] + ":" + Util::md5(request->header->request_method + ":" + auth->fields["uri"])));
+  const auto hash = [&algorithm](const std::string& input) { return algorithm == "SHA-256" ? Util::sha256(input) : Util::md5(input); };
+
+  const auto expected = Util::to_lower(hash(stored + ":" + auth->fields["nonce"] + ":" + hash(request->header->request_method + ":" + auth->fields["uri"])));
 
   if (expected != Util::to_lower(auth->fields["response"])) {
     _logger->info("REGISTER Digest response mismatch for " + aor->to_string() + " - challenging");
@@ -290,6 +312,30 @@ std::string Registrar::_path_of(const std::shared_ptr<SIPMessage>& request) cons
   return path;
 }
 
+std::shared_ptr<headers::Header> Registrar::_service_route(const std::shared_ptr<SIPMessage>& request) const {
+  auto channel = request->channel.lock();
+  if (!channel || !channel->_connection) return nullptr;
+
+  const auto local = channel->_connection->local_endpoint();
+  const auto transport = Util::to_lower(channel->_connection->transport_name());
+
+  auto route = std::make_shared<types::SIPUri>();
+  route->valid = true;
+  route->scheme = (transport == "tls" || transport == "wss") ? "sips" : "sip";
+  route->host = local.address().to_string();
+  route->port = local.port();
+
+  // 19.1.1 again: loose routing, so the next hop does not rewrite the Request-URI.
+  route->set_parameter("lr", "");
+  if (transport != "udp") route->set_parameter("transport", transport);
+
+  auto identity = std::make_shared<types::SIPIdentity>();
+  identity->wrapped = true;
+  identity->uri = route;
+
+  return std::make_shared<headers::SIPIdentityHeader>(identity);
+}
+
 void Registrar::_send_ok(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
                          const std::shared_ptr<types::Account>& account, std::uint32_t expires_seconds) {
   auto core = _core.lock();
@@ -330,6 +376,14 @@ void Registrar::_send_ok(const std::shared_ptr<transactions::TransactionBase>& t
 
     response->header->add("Expires", std::make_shared<UIntHeader>(expires_seconds));
 
+    // RFC 3608: where everything after this registration should go. The client reached
+    // this node over a flow this node holds, and its own Contact is often unroutable -
+    // a browser's always is - so telling it to route back through here is what makes
+    // the next request work at all. It is also half of failover: a client that
+    // re-registers somewhere else is told that node's route by that node, and needs no
+    // DNS to learn it.
+    if (auto service_route = _service_route(request)) response->header->add("Service-Route", service_route);
+
     transaction->send(response);
   });
 }
@@ -368,10 +422,23 @@ void Registrar::_send_challenge(const std::shared_ptr<transactions::TransactionB
       return _send_status(transaction, request, 500, "Server Internal Error");
     }
 
-    // No algorithm parameter: RFC 3261 25.1 makes it a token and the serialiser quotes
-    // every field it holds, so sending one would be malformed. MD5 is the default when
-    // it is absent (RFC 2617 3.2.1). RFC 8760 SHA-256 arrives with it.
-    response->header->add("WWW-Authenticate", "Digest realm=\"" + realm->name + "\", nonce=\"" + nonce.value + "\"");
+    // RFC 8760 section 2.1: one challenge per algorithm, most preferred first, and the
+    // client answers the first one it supports. SHA-256 leads because a client that can
+    // do better than MD5 should, and MD5 follows because nearly every SIP client can do
+    // nothing else (RFC 3261 22.4 knows only MD5).
+    //
+    // A challenge is sent before this node knows which account is answering, so both go
+    // out every time. An account with no SHA-256 credential - one imported as a bare MD5
+    // hash - is re-challenged for MD5 alone when it answers with SHA-256.
+    for (const auto& algorithm : {std::string("SHA-256"), std::string("MD5")}) {
+      types::Authorization challenge;
+      challenge.type = "Digest";
+      challenge.fields["realm"] = realm->name;
+      challenge.fields["nonce"] = nonce.value;
+      challenge.fields["algorithm"] = algorithm;
+
+      response->header->add("WWW-Authenticate", challenge.to_string());
+    }
 
     transaction->send(response);
   });

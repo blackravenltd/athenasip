@@ -323,6 +323,10 @@ void RedisDatastore::account_get(plugins::Executor on, std::shared_ptr<types::SI
       account->id = json_uint64(obj, "id");
       account->identity = std::move(identity);
       account->ha1 = json_string(obj, "ha1");
+
+      // Optional: an account imported as a bare MD5 hash has no SHA-256 credential, and
+      // a missing field is that rather than a broken row.
+      if (obj.if_contains("ha1_sha256")) account->ha1_sha256 = json_string(obj, "ha1_sha256");
       _complete(on, handler, Answer::success(std::move(account)));
     } catch (const std::exception& ex) {
       _logger->error("account_get: " + std::string(ex.what()));
@@ -679,6 +683,10 @@ std::string RedisDatastore::_serialise_account(const std::shared_ptr<types::Acco
   boost::json::object obj;
   obj["id"] = account->id;
   obj["ha1"] = account->ha1;
+
+  // Only when there is one: an account imported as a bare MD5 HA1 has no SHA-256
+  // credential, and writing an empty one would make it look like a hash of nothing.
+  if (!account->ha1_sha256.empty()) obj["ha1_sha256"] = account->ha1_sha256;
   obj["uri"] = account->identity->uri->to_string();
   return boost::json::serialize(obj);
 }

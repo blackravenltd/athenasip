@@ -45,6 +45,7 @@ bool Config::load_from_yaml(const std::string& filename) {
   // effect at all.
   if (sip["allow_unencrypted"]) sip_allow_unencrypted = sip["allow_unencrypted"].as<bool>();
   if (sip["event_prefix"]) sip_event_prefix = sip["event_prefix"].as<std::string>();
+  if (sip["public_address"]) sip_public_address = sip["public_address"].as<std::string>();
   if (sip["session_min_se"]) sip_session_min_se = sip["session_min_se"].as<uint32_t>();
 
   // SIP Timers
@@ -291,6 +292,32 @@ bool Config::load_from_yaml(const std::string& filename) {
         http_api_enable = http_api["enable"].as<bool>();
       else
         http_api_enable = true;
+
+      // No tokens is not an open API: a request with no token matching gets 401, so an
+      // API enabled without any is an API nobody can call. That is the safe way round.
+      YAML::Node tokens = http_api["tokens"];
+      if (tokens && tokens.IsSequence()) {
+        for (const auto& entry : tokens) {
+          ApiToken token;
+
+          if (entry["token"]) token.token = entry["token"].as<std::string>();
+
+          if (entry["scopes"] && entry["scopes"].IsSequence()) {
+            for (const auto& scope : entry["scopes"]) token.scopes.push_back(scope.as<std::string>());
+          }
+
+          if (token.token.empty()) {
+            _logger->error("Ignoring an 'http.api.tokens' entry with no token");
+            continue;
+          }
+
+          http_api_tokens.push_back(std::move(token));
+        }
+      }
+
+      if (http_api_enable && http_api_tokens.empty()) {
+        _logger->warn("http.api.enable is set with no tokens: every request will be refused");
+      }
     }
 
     YAML::Node http_files = http["files"];

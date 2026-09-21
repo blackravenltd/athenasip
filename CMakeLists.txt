@@ -118,6 +118,12 @@ list(REMOVE_ITEM ATHENA_SOURCES
 # runtime carries no Lua dependency until there is a real use for it.
 list(FILTER ATHENA_SOURCES EXCLUDE REGEX "/src/script/")
 
+# RTPProxyClient speaks the rtpproxy text protocol and nothing constructs it: rtpengine
+# and its ng protocol are the flagship engine, and the MediaEngine contract is how a
+# driver reaches the server now. It stays in the tree as the starting point for an
+# rtpproxy driver and out of the build until someone writes one.
+list(FILTER ATHENA_SOURCES EXCLUDE REGEX "/src/rtp/rtp_proxy_client")
+
 add_library(athena_core STATIC ${ATHENA_SOURCES})
 
 target_compile_features(athena_core PUBLIC cxx_std_20)

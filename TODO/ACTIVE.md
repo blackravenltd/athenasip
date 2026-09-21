@@ -437,6 +437,66 @@ the shape it forces is this:
   `GET /api/v1/client/config`. RFC 5626 outbound with two flows to two nodes is the
   strongest form of this and removes the reconnect window entirely.
 
+### Client failover without infrastructure
+
+Decided with Tom on 2026-09-21. A realm should survive a node dying without the operator
+having to run DNS they control, which is what principle 3 asks for and what RFC 3263
+alone does not give. The answer is the standard mechanisms first and an optional
+extension for what they do not cover, in this order:
+
+- [x] RFC 3608 Service-Route, done on 2026-09-21. The 200 OK to REGISTER carries this
+      node, on the flow the REGISTER arrived over, with `lr`. It tells a client where to
+      send everything that follows, which for a client whose Contact is unroutable - a
+      browser's always is - is the only thing that makes the next request work. It is
+      also half of failover: a client that re-registers on another node is told that
+      node's route by that node and needs no DNS to learn it. `Path` and `Service-Route`
+      are registered header types now, so both are parsed rather than echoed.
+- [x] `GET /api/v1/nodes`, done on 2026-09-21. The cluster as a node knows it, with a
+      URI per enabled transport. One entry today, because nothing discovers the others
+      yet; the shape is what the discovery bus below fills in. A browser reads it over
+      the HTTP it is already speaking and needs no SIP extension at all, which is why it
+      is the first thing built rather than the last. `sip.public_address` is what a node
+      advertises; a node on a wildcard bind knows every address it answers on and none a
+      client should use, so it has to be told.
+- [ ] Feed `GET /api/v1/nodes` from the discovery bus: the retained `nodes/<id>/status`
+      messages already carry each node's SIP and inter-node TLS addresses, which is the
+      same list. `GET /api/v1/client/config` is then the bootstrap blob a web client
+      fetches - the node list plus what the realm expects of it - rather than a second
+      inventory.
+- [ ] RFC 5626 outbound, server side. This is the strongest standard answer and the one
+      that removes the reconnect window entirely: a client registers two flows, to two
+      nodes, and keeps both up. It needs `+sip.instance` and `reg-id` on the binding, a
+      flow token in the Path this node writes, `Supported`/`Require: outbound`, and the
+      keep-alives of section 4.4. It changes what identifies a binding - instance and
+      reg-id rather than contact alone - so it is a Datastore contract change and an
+      `API_VERSION` bump, and it wants doing in one go with the flow routing M3 needs.
+- [ ] RFC 3263, properly: NAPTR then SRV then A/AAAA when resolving a next hop.
+      `Core::channel_connect` does the last of those and says so. It is the standard way
+      a client finds a realm and the standard way this node finds a trunk, and it is
+      what makes a node list unnecessary for clients that can do it. The resolver is
+      hand-rolled per the dependency rule, which is why it is a step of its own rather
+      than a line in another one.
+- [ ] `AthenaSIP-Alternate-Server`, the optional extension, and last because it is what
+      the standards above do not cover: a client that cannot do outbound and has no DNS
+      still has to learn where else to go. Four conditions, and it is not worth shipping
+      without them:
+      - Honoured only over a transport that authenticated the server - TLS or WSS with a
+        verified certificate. Digest authenticates the client to us, not us to the
+        client, so over anything else this is a redirection primitive handed to whoever
+        can forge a response.
+      - Negotiated by option tag, sent only to a client that advertised
+        `Supported: athenasip-failover`. Unknown headers are ignored anyway, so this
+        costs nothing and keeps the header off the wire for everyone else.
+      - The value borrows Contact's grammar rather than inventing one: name-addr with
+        parameters, `q` for preference, `expires` for how long the list is good. A stale
+        list is the failure mode to design for, so the lifetime is not optional.
+      - The name is vendor-prefixed because the header is ours and unregistered
+        (RFC 6648 killed `X-`). If it is ever worth standardising the name changes, which
+        is the other reason the option tag rather than the header name is what gets
+        negotiated.
+      The list itself comes from the same discovery bus as `GET /api/v1/nodes`, so this
+      is a way of carrying an answer the node already has, not a new source of truth.
+
 - [ ] Public contact addresses, which are not the node's local ones. `Via` and
       `Record-Route` are built from `connection->local_endpoint()` today
       (`src/proxy.cpp`, `src/channel.cpp`). Behind a balancer, in a container, or on the

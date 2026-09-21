@@ -131,6 +131,23 @@ TEST(MemoryDatastoreTest, RegistrationKeepsTheFlowAndTheNodeItWasGiven) {
   EXPECT_GT(locations[0].expires_at, locations[0].registered_at);
 }
 
+// RFC 8760: an account can hold a credential per algorithm, and a read that returns
+// only some of them is a credential that silently does not exist. This is the bug that
+// made a SHA-256 registration fail against an account that had the hash for it.
+TEST(MemoryDatastoreTest, EveryCredentialSurvivesARead) {
+  auto datastore = make_datastore();
+
+  auto account = make_account(7, "sip:bob@example.com");
+  account->ha1 = "md5-hash";
+  account->ha1_sha256 = "sha256-hash";
+  ASSERT_TRUE(datastore->account_create(account));
+
+  auto found = datastore->account_get(std::make_shared<types::SIPIdentity>("sip:bob@example.com"));
+  ASSERT_NE(found, nullptr);
+  EXPECT_EQ(found->ha1, "md5-hash");
+  EXPECT_EQ(found->ha1_sha256, "sha256-hash");
+}
+
 // RFC 3261 10.2.1: an account may register more than one contact, and all of them
 // are targets.
 TEST(MemoryDatastoreTest, MultipleContactsForOneAccountAreKept) {

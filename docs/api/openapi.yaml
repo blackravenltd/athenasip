@@ -1,0 +1,585 @@
+#
+# AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
+#
+# Copyright (C) 2026 Tom Cully <mail@tomcully.com>
+# Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
+#
+openapi: 3.0.3
+
+info:
+  title: AthenaSIP Admin API
+  version: "1.0.0"
+  description: |
+    Provisioning and read-only status for one AthenaSIP node.
+
+    Everything here goes straight to the datastore on the API's own executor. The API is
+    not on the Core strand and must not be: an operator listing accounts cannot be
+    allowed to hold up a call.
+
+    Authentication is a bearer token from the `http.api.tokens` section of the node
+    configuration, with one of two scopes. `admin` provisions realms and accounts;
+    `client` reads what a client may see - the node list and who is registered. A
+    request with no matching token is refused, so an API enabled with no tokens is one
+    nobody can call.
+  license:
+    name: GPL-3.0-or-later
+    url: https://www.gnu.org/licenses/gpl-3.0.html
+
+servers:
+  - url: http://{host}:{port}/api/v1
+    description: A node's admin listener, as configured under `http` in config.yaml
+    variables:
+      host:
+        default: 127.0.0.1
+      port:
+        default: "8080"
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: status
+    description: What this node is and whether it is serving
+  - name: realms
+    description: The SIP domains this node serves
+  - name: accounts
+    description: The accounts within a realm
+  - name: registrations
+    description: Where accounts are currently reachable
+
+paths:
+  /health:
+    get:
+      tags: [status]
+      summary: Whether this node is serving
+      description: |
+        Open, with no token: a container healthcheck and a load balancer reach it before
+        they have any credentials to present. It says the node is up and what it is, and
+        nothing about who is on it.
+
+        `503` when the datastore is not connected, because a node that cannot read its
+        own accounts cannot serve a REGISTER.
+      security: []
+      responses:
+        "200":
+          description: Serving
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        "503":
+          description: Not serving
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+
+  /nodes:
+    get:
+      tags: [status]
+      summary: The cluster as this node knows it
+      description: |
+        One entry per node, each with a URI per enabled SIP transport. A client reads
+        this to learn where else the realm is served from, over the HTTP it is already
+        speaking, which is what lets a browser fail over without DNS SRV it cannot use.
+
+        One entry today: nothing discovers the other nodes yet, and the entry for this
+        node is marked `self`.
+
+        The address is `sip.public_address` when it is set. A node bound to `0.0.0.0`
+        answers on every address it has and can name none of them to a client, so a node
+        that has not been told reports what it was bound to - which an operator can see
+        is unusable.
+      responses:
+        "200":
+          description: The nodes serving this realm
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Node"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /realms:
+    get:
+      tags: [realms]
+      summary: Every realm this node serves
+      responses:
+        "200":
+          description: The realms
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Realm"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [realms]
+      summary: Create a realm
+      description: |
+        `409` when the realm already exists rather than overwriting it: create and update
+        are separate operations in the datastore contract precisely so this can tell them
+        apart.
+
+        `nonce_secret` is generated when it is not given. A realm with no secret mints
+        Digest nonces keyed on nothing, and it is never returned by any endpoint.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RealmCreate"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Realm"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /realms/{realm}:
+    parameters:
+      - $ref: "#/components/parameters/Realm"
+    get:
+      tags: [realms]
+      summary: One realm
+      responses:
+        "200":
+          description: The realm
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Realm"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [realms]
+      summary: Update a realm
+      description: |
+        Only the fields given are changed. A body that leaves a field out leaves it
+        alone, rather than resetting it to a default - which would be a way to lose a
+        nonce secret without being told.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RealmUpdate"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Realm"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [realms]
+      summary: Delete a realm
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /realms/{realm}/accounts:
+    parameters:
+      - $ref: "#/components/parameters/Realm"
+    get:
+      tags: [accounts]
+      summary: Every account in a realm
+      responses:
+        "200":
+          description: The accounts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Account"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [accounts]
+      summary: Create an account
+      description: |
+        Give a `password` and the server computes HA1 from it (RFC 2617: the hash of
+        user, realm and password). That hash is the only form of the password this
+        server ever holds, and no endpoint returns it.
+
+        `ha1` is accepted instead, for importing accounts from somewhere that already
+        holds one.
+
+        The account id is derived from its URI rather than counted, so every node that
+        provisions the same account agrees about which account a registration belongs to
+        without a shared sequence.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccountCreate"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Account"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /realms/{realm}/accounts/{user}:
+    parameters:
+      - $ref: "#/components/parameters/Realm"
+      - $ref: "#/components/parameters/User"
+    get:
+      tags: [accounts]
+      summary: One account
+      responses:
+        "200":
+          description: The account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Account"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [accounts]
+      summary: Change an account's credential
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccountUpdate"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Account"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [accounts]
+      summary: Delete an account
+      description: Its registrations go with it.
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /registrations:
+    get:
+      tags: [registrations]
+      summary: Where accounts are currently reachable
+      description: |
+        Read only. A binding is written by a REGISTER and by nothing else.
+
+        `flow_id` and `node_id` are the cluster half of a binding: which connection it
+        was learned over (RFC 5626) and which node holds that connection. Both are empty
+        on a single node.
+      parameters:
+        - name: realm
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Only this realm's registrations. Every realm when it is left out.
+      responses:
+        "200":
+          description: The registrations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Registration"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: A token from `http.api.tokens`, with the `admin` or `client` scope.
+
+  parameters:
+    Realm:
+      name: realm
+      in: path
+      required: true
+      schema:
+        type: string
+      description: The realm name, which is the SIP domain.
+      example: example.com
+    User:
+      name: user
+      in: path
+      required: true
+      schema:
+        type: string
+      description: |
+        The user part of the account's SIP URI, percent-encoded. A user containing an `@`
+        or a `/` is one path segment, not two.
+      example: alice
+
+  responses:
+    BadRequest:
+      description: The request was not one this API understands
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: No token, or not one this node knows
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: A known token, without the scope this endpoint needs
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: No such realm or account
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: It already exists
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      description: |
+        One shape for every failure. The code is for a client to branch on and does not
+        change wording between releases; the message is for a person reading a log.
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - invalid_json
+                - invalid_request
+                - unauthorized
+                - forbidden
+                - not_found
+                - method_not_allowed
+                - conflict
+                - datastore_error
+            message:
+              type: string
+      example:
+        error:
+          code: conflict
+          message: realm example.com already exists
+
+    Health:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        node:
+          type: string
+          description: This node's `sip.node_id`
+        version:
+          type: string
+        datastore:
+          type: string
+          description: The datastore driver and its version, as it describes itself
+      example:
+        status: ok
+        node: sip-0001
+        version: 0.4.0
+        datastore: memory 0.0.1
+
+    Node:
+      type: object
+      properties:
+        id:
+          type: string
+        self:
+          type: boolean
+          description: Whether this is the node that answered
+        transports:
+          type: array
+          items:
+            $ref: "#/components/schemas/NodeTransport"
+      example:
+        id: sip-0001
+        self: true
+        transports:
+          - transport: wss
+            address: 203.0.113.5
+            port: 9500
+            uri: sips:203.0.113.5:9500;transport=wss
+
+    NodeTransport:
+      type: object
+      properties:
+        transport:
+          type: string
+          enum: [udp, tcp, tls, ws, wss]
+        address:
+          type: string
+        port:
+          type: integer
+        uri:
+          type: string
+          description: The SIP URI a client would use for this transport
+
+    Realm:
+      type: object
+      properties:
+        name:
+          type: string
+        id:
+          type: integer
+          format: int64
+        nonce_expiry:
+          type: integer
+          description: How long a Digest nonce stays good, in seconds
+        registration_timeout:
+          type: integer
+          description: The longest registration this realm grants, in seconds
+
+    RealmCreate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        nonce_secret:
+          type: string
+          description: Generated when it is not given, and never returned
+        nonce_expiry:
+          type: integer
+        registration_timeout:
+          type: integer
+
+    RealmUpdate:
+      type: object
+      properties:
+        nonce_secret:
+          type: string
+        nonce_expiry:
+          type: integer
+        registration_timeout:
+          type: integer
+
+    Account:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Derived from the URI, so every node agrees on it
+        uri:
+          type: string
+        user:
+          type: string
+        realm:
+          type: string
+      example:
+        id: 11400714819323198485
+        uri: sip:alice@example.com
+        user: alice
+        realm: example.com
+
+    AccountCreate:
+      type: object
+      required: [user]
+      description: One of `password` or `ha1` is required.
+      properties:
+        user:
+          type: string
+        password:
+          type: string
+          description: Turned into HA1 here and not stored
+        ha1:
+          type: string
+          description: For importing an account that already has one
+
+    AccountUpdate:
+      type: object
+      description: One of `password` or `ha1`.
+      properties:
+        password:
+          type: string
+        ha1:
+          type: string
+
+    Registration:
+      type: object
+      properties:
+        account:
+          type: string
+          description: The account's URI
+        account_id:
+          type: integer
+          format: int64
+        contact:
+          type: string
+        registered_at:
+          type: integer
+          format: int64
+        expires_at:
+          type: integer
+          format: int64
+        nat:
+          type: boolean
+          description: The contact is on a private address, so replies go back down the flow
+        node_id:
+          type: string
+          description: Which node holds the flow. Empty on a single node
+        flow_id:
+          type: string
+          description: The connection it was learned over (RFC 5626). Empty on a single node
+        path:
+          type: string
+          description: The RFC 3327 Path recorded at registration

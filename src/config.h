@@ -8,6 +8,7 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -34,6 +35,13 @@ class Config {
   bool sip_allow_unencrypted = true;
 
   std::string sip_event_prefix;
+
+  // The address this node tells the outside world to reach it on. A node bound to
+  // 0.0.0.0 knows every address it answers on and none that a client should use, so
+  // anything that has to name this node to somebody else - the node list, and the
+  // failover work in M4 - needs to be told. Empty means fall back to the bind address,
+  // which is right on a single-homed host and useless on a wildcard bind.
+  std::string sip_public_address;
 
   // RFC 4028 section 5: the shortest session interval this node will let a call
   // negotiate, and the floor the RFC itself sets is 90 seconds. A proxy that keeps state
@@ -110,7 +118,7 @@ class Config {
   // Media configuration
   std::string media_url = "builtin://";  // or "rtpengine://host:port"
 
-  // RTPProxyClient configuration
+  // Built-in RTP relay configuration
   bool rtprelay_enable = false;
   std::string rtprelay_address;
   std::string rtprelay_public_address;
@@ -123,6 +131,20 @@ class Config {
   bool http_api_enable = false;
   bool http_files_enable = false;
   std::string http_files_path;
+
+  // What a bearer token is allowed to do. admin provisions; client reads what a client
+  // may see. A token with no scope can do nothing, which is what an empty list means.
+  //
+  // Tokens live in the config for now. They belong in the datastore once there is
+  // anything to administer them with, and the shape here is what that would replace.
+  struct ApiToken {
+    std::string token;
+    std::vector<std::string> scopes;
+
+    bool has_scope(const std::string& scope) const { return std::find(scopes.begin(), scopes.end(), scope) != scopes.end(); }
+  };
+
+  std::vector<ApiToken> http_api_tokens;
 
   // Loads configuration from a YAML file.
   bool load_from_yaml(const std::string& filename);
