@@ -262,45 +262,45 @@ What it deliberately left, so it is not lost:
       and it is what steps below stand on.
 - [x] TCP fallback for UDP requests over 1300 bytes (18.1.1), done on 2026-09-20, with
       the top Via rewritten and a fall back to UDP when TCP is refused.
-- [ ] **In progress (2026-09-20): plugin contract v2.** Decided with Tom: the flow
-      identity and the `EventSystem` realignment land in one `API_VERSION` bump rather
-      than two, so a plugin author migrates once. `API_VERSION` is already 2 in
-      `src/plugins/plugin.h`, with the reason recorded above the constant.
+- [x] Plugin contract v2, done on 2026-09-21. The flow identity and the `EventSystem`
+      realignment landed in one `API_VERSION` bump rather than two, so a plugin author
+      migrates once. The reason is recorded above the constant in `src/plugins/plugin.h`.
 
-      Half of it is written. What is done:
-
-      - `Datastore::subscriber_register` now takes `types::Location binding` in place of
-        the `contact` + `path` pair, so the flow and the node holding it can be recorded.
-        The store still fills `registered_at`, `expires_at`, `subscriber_id` and `nat`
-        from `expires_seconds`; everything else on the binding is the caller's.
-      - `MemoryDatastore` and `RedisDatastore` are updated; Redis writes `flow_id` and
-        `node_id` only when set, and already read them back.
-
-      What is left:
-
-      - `Channel::flow_id()`: `transport://host:port`, the same key `channel_find` takes,
-        built in one place rather than the three that build it by hand today
-        (`Channel::start`, `Channel::close`, `Core::channel_find`). A key built two ways
-        is a lookup that silently misses.
+      - `Datastore::subscriber_register` takes the binding as a `types::Location` in
+        place of the `contact` + `path` pair, so the flow and the node holding it can be
+        recorded. The store still fills `subscriber_id`, `registered_at`, `expires_at`
+        and `nat`; everything else on the binding is the caller's. Redis writes
+        `flow_id` and `node_id` only when they are set.
+      - `Channel::flow_id()` is `transport://host:port`, taken once at construction and
+        built by `Core::channel_key`, which is now the only place that key is spelled:
+        `Channel::start`, `Channel::close`, `Core::channel_find` and
+        `Core::channel_connect` all go through it. A key built two ways is a lookup that
+        silently misses.
       - `Core::subscriber_register` keeps its own signature and builds the `Location`:
-        contact, path, `node_id` from the config, `flow_id` from the channel. The
-        registrar's call site does not change.
-      - `EventSystem`: `connect(Executor, StatusHandler)`, a synchronous `close()` and an
-        `is_connected()` to match `Datastore` and `MediaEngine`, and `publish` /
-        `subscribe` / `unsubscribe` / `unsubscribe_all` on the contract's `Executor` and
-        handlers. Keep the fire-and-forget `publish(name, message)`: the bus is
-        observability and is never on the call path, so a caller that does not care
-        whether the broker took it should be able to say so. `main.cpp` moves to the
-        `connect_and_wait` helper it already uses for the datastore and the media engine.
-      - Call sites: `src/core.cpp` (8 publishes), `src/main.cpp` (connect/close),
-        `tests/helpers/core_fixture_helper.h`, `tests/helpers/sync_datastore_helper.h`,
-        `tests/core_test.cpp`, `tests/core_concurrency_test.cpp`,
-        `tests/datastores/*_test.cpp`, `tests/events/internal_event_system_test.cpp`.
-      - A test that a binding records the flow it was learned over, and that the flow id
-        is the key `channel_find` answers to.
-
-      If the tree is mid-change and will not build, `git checkout -- src/datastores
-      src/plugins` puts it back to the last good commit and this note is the whole plan.
+        contact and path from the registrar, `node_id` from the config, `flow_id` from
+        the channel the REGISTER arrived over. The registrar's call site is unchanged.
+      - `EventSystem` now has the shape `Datastore` and `MediaEngine` have:
+        `connect(Executor, StatusHandler)`, a synchronous `close()`, `is_connected()`,
+        and `publish` / `subscribe` / `unsubscribe` / `unsubscribe_all` on the contract's
+        executor and handlers. `subscribe` hands the `Subscription` back through its
+        handler, because a broker has to be asked before the subscription exists, and
+        the MQTT driver drops one the broker refused rather than leaving the caller a
+        handle to nothing. The fire-and-forget `publish(name, message)` stays: the bus
+        is observability and is never on the call setup path. `main.cpp` connects it
+        through the `connect_and_wait` helper it already used for the other two.
+      - `tests/helpers/sync_event_system_helper.h` is the blocking view of a bus, as
+        `SyncDatastore` is of a store. The tests cover the binding recording the flow it
+        was learned over, that flow id being exactly what `channel_find` answers to, a
+        binding learned over no channel recording no flow, and the flow and node making
+        the round trip through Redis.
+- [ ] A data race in `WebsocketConnectionFor::is_open()`
+      (`src/servers/websocket_connection.h:70`), found by tsan on 2026-09-21 while
+      checking the contract v2 work and measured as pre-existing: the baseline tree
+      fails `WebsocketServerTest.CarriesSipWithoutTls` 12 times in 30 runs under tsan,
+      the same rate as the tree with the change. The websocket server's own thread and
+      the global io_context thread both touch the stream, and `is_open()` reads it
+      without the strand every other accessor on that connection has. The other
+      transports hand over to the Core strand; this one does not, and that is the fix.
 - [ ] Outbound TLS. `channel_connect` refuses `tls://` rather than guessing at what a
       node trusts; the cluster CA decision in M4 is what settles it. Until then a TLS peer
       has to connect inwards.
