@@ -179,10 +179,6 @@ int main(int argc, char* argv[]) {
   auto core = std::make_shared<Core>(logger, config, datastore, events);
   core->media_register(media_engine);
 
-  // Script Engine
-  // auto scripting = std::make_shared<script::LuaScriptEngine>(logger);
-  // scripting->start();
-
   // HTTP Admin API
   std::shared_ptr<api::Router> api_router;
   std::shared_ptr<api::ProvisioningAPI> provisioning;
