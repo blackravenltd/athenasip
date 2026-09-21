@@ -11,6 +11,7 @@
 #include <boost/asio.hpp>
 #include <chrono>
 #include <cstdint>
+#include <future>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -38,9 +39,17 @@ class RTPRelaySet : public std::enable_shared_from_this<RTPRelaySet> {
         _socket(_io_context, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address(_bind_address), _port)),
         _buffer(boost::asio::buffer(_recv_buffer)) {}
 
+  // A socket belongs to the thread its io_context runs on, and this one runs on the
+  // process io_context. Starting a read from whatever thread happened to call in is a
+  // second thread inside the socket, which is the rule the transport learned the hard
+  // way; the work is handed over instead. dispatch rather than post, so a caller that
+  // is already the io thread - which the Core strand is - runs it inline.
   void start() {
     _last_packet_ms.store(_now_ms(), std::memory_order_relaxed);
-    read();
+
+    auto self = shared_from_this();
+    boost::asio::dispatch(_io_context, [this, self]() { read(); });
+
     _logger->info("Started");
   }
 
@@ -56,8 +65,23 @@ class RTPRelaySet : public std::enable_shared_from_this<RTPRelaySet> {
   // are sent for the life of the session, whether or not there is anything to carry).
   std::chrono::milliseconds idle_for() const { return std::chrono::milliseconds(_now_ms() - _last_packet_ms.load(std::memory_order_relaxed)); }
 
+  // Closing goes to the io thread for the same reason, and then waits: the port is
+  // back in the pool the moment release_relay_set returns and the next allocation may
+  // bind it, so the socket has to be shut before then. The wait is bounded because a
+  // context that has already stopped will never run the work, and hanging a shutdown
+  // on that would be worse than a port that takes a moment longer to come back.
   void stop() {
-    _socket.close();
+    auto self = shared_from_this();
+    auto closed = std::make_shared<std::promise<void>>();
+    auto done = closed->get_future();
+
+    boost::asio::dispatch(_io_context, [this, self, closed]() {
+      boost::system::error_code ec;
+      _socket.close(ec);
+      closed->set_value();
+    });
+
+    done.wait_for(std::chrono::seconds(1));
     _logger->info("Stopped");
   }
 
@@ -107,11 +131,16 @@ class RTPRelaySet : public std::enable_shared_from_this<RTPRelaySet> {
             return;
           }
 
-          // Relay packet to all other registered endpoints
+          // The payload is copied rather than relayed out of the receive buffer. A send
+          // holds a reference to its buffer until it completes, and the next read is
+          // armed below and will write over that buffer, so relaying from it sends
+          // whatever arrived next instead of what was meant.
+          auto payload = std::make_shared<std::string>(_recv_buffer.data(), bytes_recvd);
+
           for (const auto& remote : remotes) {
             if (remote.first == endpointString) continue;
-            _socket.async_send_to(boost::asio::buffer(_buffer, bytes_recvd), *(remote.second), [this, self](boost::system::error_code, std::size_t) {
-              // No need to handle send result here
+            _socket.async_send_to(boost::asio::buffer(*payload), *(remote.second), [self, payload](boost::system::error_code, std::size_t) {
+              // Nothing to do with the result; the payload is held until it is sent.
             });
           }
 
