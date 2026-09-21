@@ -47,6 +47,10 @@ next_port=5100
 allocate_port() { next_port=$((next_port + 2)); }
 
 cleanup() {
+  # The node's own log, before the containers go. Without it a failing scenario is two
+  # sipp traces and a guess about what the node in the middle made of them.
+  docker logs athenasip-e2e >"${RESULTS}/node.log" 2>&1 || true
+
   ${COMPOSE} --profile e2e down --remove-orphans >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -141,6 +145,45 @@ run_pair() {
   allocate_port
   uac_port="${next_port}"
 
+  # A port of its own for the deregistration. It shares nothing with the UAS run but the
+  # account, and sharing the port would make them the same transaction: sipp derives its
+  # branch from the call number and message index, so two runs in a row send
+  # z9hG4bK-1-1-0, and branch plus sent-by plus method is exactly what RFC 3261 17.2.3
+  # matches on. The second REGISTER came back answered with the first one's response.
+  # The star Contact removes every binding whatever address it was made from (10.2.2),
+  # so this run has no reason to be on the UAS port.
+  allocate_port
+  dereg_port="${next_port}"
+
+  # Every scenario gives its callee a port of its own, and a REGISTER from a new port is
+  # a new binding rather than a replacement (RFC 3261 10.3 step 7). Left alone, the second
+  # scenario to run has the node forking to the first one's port, which nothing is
+  # listening on any more, and the call fails on a timeout that has nothing to do with
+  # what was being tested. A Contact of "*" with Expires 0 clears the lot (10.2.2).
+  ${COMPOSE} run --rm sipp-uas \
+    -sf "/e2e/scenarios/deregister.xml" -inf "/e2e/${uas_csv}" \
+    -au "${uas_user}" -ap "${uas_user}-secret" \
+    -p "${dereg_port}" -cid_str "${name}-uas-dereg-%u-%p@%s" \
+    -m 1 -r 1 -timeout 20s -timeout_error \
+    -nostdin "${NODE}:5060" >"${RESULTS}/${name}-uas-deregister.log" 2>&1 || true
+
+  # The callee registers in a run of its own, on the port the UAS run then listens on.
+  # It cannot be part of the UAS scenario: sipp binds a scenario to a single call, so the
+  # INVITE - which arrives with the caller's Call-ID - could not be mapped to the call
+  # that sent the REGISTER, and sipp discarded it as unmappable. That is what kept every
+  # two-ended scenario failing.
+  ${COMPOSE} run --rm sipp-uas \
+    -sf "/e2e/scenarios/register.xml" -inf "/e2e/${uas_csv}" \
+    -au "${uas_user}" -ap "${uas_user}-secret" \
+    -p "${uas_port}" -cid_str "${name}-uas-reg-%u-%p@%s" \
+    -m 1 -r 1 -timeout 20s -timeout_error \
+    -nostdin "${NODE}:5060" >"${RESULTS}/${name}-uas-register.log" 2>&1 || {
+      failed=$((failed + 1))
+      failures="${failures} ${name}"
+      echo "    failed to register the callee - see ${RESULTS}/${name}-uas-register.log"
+      return 0
+    }
+
   ${COMPOSE} run -d --name "e2e-uas-${name}" sipp-uas \
     -sf "/e2e/scenarios/${uas_scenario}" -inf "/e2e/${uas_csv}" \
     -au "${uas_user}" -ap "${uas_user}-secret" \
@@ -149,8 +192,7 @@ run_pair() {
     -trace_err -error_file "/results/${name}-uas.err" \
     -nostdin "${NODE}:5060" >/dev/null 2>&1
 
-  # The callee has to be registered before the caller dials it, and a registration is
-  # two round trips through Digest.
+  # The UAS run has to have the port open before the caller dials.
   sleep 2
 
   if ${COMPOSE} run --rm sipp-uac \
