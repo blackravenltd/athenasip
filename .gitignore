@@ -50,3 +50,4 @@ admin/*
 
 # Scenario logs from the end-to-end harness
 test/e2e/results/
+test/interop/generated/

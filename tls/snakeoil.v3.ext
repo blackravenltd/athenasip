@@ -1,7 +1,6 @@
-authorityKeyIdentifier=keyid,issuer
-basicConstraints=CA:FALSE
-keyUsage = digitalSignature, nonRepudiation, keyEncipherment, dataEncipherment
-subjectAltName = @alt_names
-[alt_names]
-DNS.1 = athenasip.org
-IP.1 = 127.0.0.1
+basicConstraints = CA:FALSE
+keyUsage = critical,digitalSignature,keyEncipherment
+extendedKeyUsage = serverAuth
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid,issuer
+subjectAltName = DNS:localhost, DNS:athenasip.org, DNS:sip.athenasip.org, IP:127.0.0.1, IP:0:0:0:0:0:0:0:1
