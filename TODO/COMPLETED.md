@@ -1094,6 +1094,11 @@ a proxy and no more; `config.example.yaml` has the table of which reaches which 
   the signalling path, WSS, outbound flows, plugin contract v2.
 - 0.5.0 (2026-09-21): a node that knows when a call is over, the sipp harness passing,
   the admin API, SHA-256 Digest, `Account`, and the documentation audit.
+- 0.6.0 (2026-09-22): RFC 5626 flow routing, the rtpengine media engine and the profile
+  that tells it which leg is the browser, and the behaviour tests that found eleven
+  bugs in code nothing had ever tested - among them a datagram that could crash the
+  node, a queue that could segfault it, an event bus that could not carry two nodes,
+  and a file server that could be walked out of.
 
 ## Milestone 2 - complete (0.5.0, 2026-09-21)
 
@@ -1103,9 +1108,9 @@ provisioned through the admin API, verified by sipp. 472 tests at the tag, clean
 asan and tsan, the Redis suite verified against a real server. The items each step left
 for later are in `ACTIVE.md` under the milestone that picks them up.
 
-## After 0.5.0
+## Milestone 3 - WebRTC and rtpengine, in progress
 
-### Each branch goes down its own binding's flow (2026-09-21, working tree)
+### Each branch goes down its own binding's flow (2026-09-21)
 
 - [x] RFC 5626's routing half, and the last of step 1's leftovers. A user registered
       from a desk phone and a browser had two bindings and one connection, because
@@ -1123,7 +1128,7 @@ for later are in `ACTIVE.md` under the milestone that picks them up.
       names, in its Request-URI, the device on the other end of that connection. 474
       tests.
 
-### The rtpengine media engine (2026-09-21, working tree)
+### The rtpengine media engine (2026-09-21)
 
 M3's first item, and the engine the milestone is named for: ICE, DTLS and SRTP are what
 a browser requires, and the builtin relay declines them rather than answering an offer
@@ -1192,3 +1197,113 @@ right for a call whose two ends are alike and wrong for a browser calling a desk
 and choosing between them needs to know what the far leg is - which at offer time is the
 flow's transport and the realm's policy, not anything in the description this node was
 given.
+
+### The media profile (2026-09-22)
+
+- [x] `media::Flags` carries a target `Profile` - `Mirror`, `PlainRtp` or `WebRtc` -
+      saying what the description this node is about to produce has to be, as distinct
+      from what the one in hand is. The rtpengine driver had been sending no ICE, DTLS
+      or `transport-protocol` flag at all, so rtpengine mirrored what it was handed and
+      a WebRTC offer produced a WebRTC offer to the callee: right for browser to
+      browser, and exactly wrong for the browser-to-desk-phone call the milestone
+      exists for.
+- [x] It could not be decided inside the engine, which is why it is on the contract.
+      The question is about the far leg and at offer time no description from that leg
+      exists; what does exist is the transport of the flow the message is going out on,
+      and a browser reaches a node over a WebSocket and nothing else (RFC 7118). The
+      proxy knows that flow and the engine sees neither it nor where the message is
+      going. `API_VERSION` is 6, and `Mirror` is the default, so a driver that ignores
+      the field behaves as it always has.
+- [x] The proxy sets it from the outgoing flow: the channel a request is forwarded on,
+      and for a response the flow the request arrived over, because that is the end the
+      answer goes back to. Reading the wrong end there is how a browser is handed an
+      answer with no ICE, so it has a test of its own.
+- [x] The driver maps it onto the ng protocol: `ICE` force or remove, `DTLS` passive or
+      off, `UDP/TLS/RTP/SAVPF` or `RTP/AVP`, and `rtcp-mux` offered and required or
+      demuxed. Passive towards a browser because the browser starts the handshake.
+- [x] 7 tests, including a recording engine that answers what the proxy told it, because
+      what is being asserted is what the proxy says to an engine rather than what an
+      engine does with it.
+
+### Behaviour tests for the code nothing had tested (2026-09-22)
+
+A coverage measurement found 76.9% of the shipped tree covered, with the gap
+concentrated in whole files no test linked: the MQTT event system, the TCP, TLS and UDP
+listeners, the static file middleware and the async queue. Tests written from the RFCs
+and from what each piece promises - not from what the code did - found nine bugs.
+
+- [x] **The transport, RFC 3261 18.3.** A datagram is one message, whole or not at all,
+      and Channel was treating it as a stream: whatever a datagram did not finish stayed
+      in the buffer waiting for the next one. A datagram whose Content-Length exceeds
+      its body MUST be discarded, and instead the next datagram became its body, so one
+      sender could swallow the next request on a flow they share. A datagram that was
+      not SIP left its bytes in the buffer, the next was appended to them, and the
+      result parsed as a request whose start line is nonsense - which `Channel::receive`
+      then logged by calling `first_line()`, which throws. That exception unwound out of
+      the read handler and through `io_context::run()`, so any peer could terminate the
+      node with two packets, or one on an established TCP connection. Framing is split
+      in two and named for the rule each half implements, a log line uses a summary that
+      cannot throw, and the read handler catches what the message path throws. 13 tests
+      over TCP, TLS and UDP against real listeners and real sockets.
+- [x] **The async queue.** It is the handover between a datagram arriving on the UDP
+      server's thread and a channel asking to read on the Core strand, and both queues
+      were mutated outside either mutex: eight threads pushing while eight registered
+      readers segfaults the process, reachable from UDP traffic on a live node. One
+      mutex covers both, held across the post as well as the pairing, because the order
+      handlers are queued in is the order the datagrams arrived in. 6 tests.
+- [x] **The static file middleware.** It treated the whole request target as a filename,
+      so `bundle.js?v=2` was a request for a file of that name: every built web
+      application cache-busts with a query string and the admin client is one, so a
+      second deployment served a blank page. Its containment check also compared
+      canonical paths as strings, so a directory whose name merely begins with the
+      document root's counted as inside it, and a symlink in the root is enough to reach
+      one. 10 tests, most of them ways of asking for something on the other side of the
+      boundary.
+- [x] **The MQTT event system**, which had no tests at all and four bugs that only
+      appear with two clients, which is every cluster. The client identifier defaulted
+      to a constant, and MQTT makes a repeated identifier mean "disconnect the other
+      one", so two nodes would trade the connection back and forth; it is the node id
+      now. A message matching two of one client's filters arrived twice at each, because
+      the broker sends a copy per subscription and the driver fanned every copy out to
+      every matching subscriber; each subscription now carries an MQTT 5 subscription
+      identifier and a message is routed by the one it names. `connect()` reported
+      success as soon as the client had started, which says nothing about the broker for
+      an always-online client, so a node with the wrong address ran with no bus; it
+      answers on a round trip now, bounded by `connect_timeout_ms`. Closing asked
+      whether the client was connected rather than whether its thread was running, and
+      the run loop clears that flag itself when the broker drops the connection, so a
+      node whose broker went away terminated on shutdown with a joinable thread. The
+      prefix was concatenated without a separator. 11 tests, skipped without
+      `ATHENA_TEST_MQTT_URL`, the way the Redis ones are.
+- [x] **Dead code deleted.** `SupportedHeader` was registered by a static object in a
+      header nothing includes, so it was in neither binary, and it was redundant anyway
+      because `Supported` is in the list-valued set and the parser already splits it.
+      Five `Call` helpers and `MediaStream::stop` had no call sites. `test/test/` was a
+      pair of empty directories left by a harness bug. The Lua engine and the rtpproxy
+      client stay: both are parked deliberately, with the reasons in `ACTIVE.md`.
+- [x] Three listeners gained the `port()` accessor the WebSocket one already had, so a
+      test can bind port zero, and all three log the port they actually got rather than
+      the one they were configured with. `register_builtin_datastores` and its two
+      siblings were non-inline functions in headers, which only worked while each was
+      included once. `gtest_discover_tests` has a 60 second timeout, because listing
+      takes 2.3s idle and was exceeding the 5 second default under load.
+
+### The relay's socket, and the coverage the tests bought (2026-09-22)
+
+- [x] `RTPRelaySet::start` called `read()` directly, so `async_receive_from` was issued
+      from whatever thread called in while the io thread was already using the same
+      socket, and `stop()` closed it from there too. ThreadSanitizer found it once the
+      async queue test made the process io thread start earlier in the run than it used
+      to. Both are handed to the io context now, with `dispatch` so a caller that is
+      already the io thread - which the Core strand is - runs inline; closing then
+      waits, because the port is back in the pool the moment `release_relay_set` returns
+      and the next allocation may bind it.
+- [x] The relayed payload is copied out of the receive buffer. A send holds a reference
+      to its buffer until it completes and the next read was armed immediately
+      afterwards, so a relay under load could forward whatever arrived next in place of
+      what it meant to.
+- [x] Coverage of the shipped tree, measured with llvm-cov across both binaries so that
+      a file no test links counts as zero rather than disappearing: 76.9% line and
+      81.0% function before this work, 86.3% and 90.5% after. Nine files had no
+      coverage at all and now only `main.cpp` has none. What is left below 80% is the
+      admin API's error paths, configuration parsing and the standard-output logger.
