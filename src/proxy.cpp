@@ -841,19 +841,18 @@ bool Proxy::_prepare_forward(const std::shared_ptr<SIPMessage>& copy, const std:
 
 void Proxy::on_cancel(std::shared_ptr<SIPMessage> cancel, std::shared_ptr<transactions::TransactionBase> cancel_transaction,
                       std::shared_ptr<transactions::TransactionBase> invite_transaction) {
-  // RFC 3261 9.2: the CANCEL is answered on its own transaction whether or not it names
-  // anything we still hold.
-  if (cancel_transaction) {
+  // RFC 3261 9.2: a CANCEL this node has a response context for is answered here,
+  // because this node is the one that will act on it. One it has no context for is
+  // forwarded instead, and answering it as well would send the caller two answers to
+  // one request.
+  if (cancel_transaction && invite_transaction) {
     auto ok = cancel->generate_response();
     ok->header->response_code = 200;
     ok->header->response_message = "OK";
     cancel_transaction->send(ok);
   }
 
-  if (!invite_transaction) {
-    _logger->info("CANCEL for an unknown transaction - answered 200 and dropped");
-    return;
-  }
+  if (!invite_transaction) return _forward_cancel_statelessly(cancel, cancel_transaction);
 
   // RFC 3261 16.10: the branches this node has already tried are cancelled in turn.
   // Without this the callee keeps ringing after the caller has hung up.
@@ -1139,6 +1138,72 @@ void Proxy::_cancel_branch(const std::shared_ptr<Context>& context) {
   core->client_transaction_start(cancel, channel, nullptr, nullptr);
 
   context->forwarded = nullptr;
+}
+
+// RFC 3261 16.10: "If a response context is not found, the element does not have any
+// knowledge of the request to apply the CANCEL to. It MUST statelessly forward the
+// CANCEL request." The reason is that the request it names may have been forwarded
+// statelessly, in which case there is nothing here to have kept.
+//
+// Answering it 200 and dropping it, which is what this did, tells the caller the
+// branch was cancelled when nothing downstream has been told anything.
+void Proxy::_forward_cancel_statelessly(const std::shared_ptr<SIPMessage>& cancel, const std::shared_ptr<transactions::TransactionBase>& transaction) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  // The same 16.4 processing any request gets: this node's own Route values have been
+  // honoured by the request arriving, and the last of them names the flow to use.
+  _preprocess_routes(cancel);
+
+  std::shared_ptr<SIPUri> next_hop;
+  if (cancel->header->contains("Route")) next_hop = route_uri(cancel->header->headers_map["Route"][0]);
+  if (!next_hop) next_hop = cancel->header->request_uri;
+
+  auto flow = next_hop ? _flow_to(*next_hop) : nullptr;
+  if (!flow) flow = core->channel_for_token(cancel->flow_token);
+
+  if (!flow) {
+    // Nowhere to send it. RFC 3261 9.2's answer for a CANCEL that matches nothing is
+    // 481, which is true of this node in a way that 200 was not.
+    _logger->info("CANCEL with no response context and nowhere to forward it - 481");
+    return _send_status(transaction, cancel, 481, "Call/Transaction Does Not Exist");
+  }
+
+  // 16.11: a stateless forward computes its branch from the request rather than at
+  // random, so a retransmitted CANCEL is forwarded as the same transaction rather than
+  // as a new one the far end has never seen.
+  const auto branch = std::string(kMagicCookie) + _loop_token(cancel);
+
+  const auto local = flow->_connection->local_endpoint();
+  const auto transport = Util::to_lower(flow->_connection->transport_name());
+
+  if (cancel->header->contains("Max-Forwards")) {
+    auto max_forwards = cancel->header->headers_map["Max-Forwards"][0]->as<UIntHeader>();
+
+    if (max_forwards != nullptr) {
+      if (max_forwards->value == 0) {
+        _logger->info("CANCEL has run out of hops - 483");
+        return _send_status(transaction, cancel, 483, "Too Many Hops");
+      }
+
+      max_forwards->value--;
+    }
+  } else {
+    cancel->header->add("Max-Forwards", std::make_shared<UIntHeader>(kDefaultMaxForwards));
+  }
+
+  auto via = std::make_shared<ViaHeader>("SIP/2.0/" + Util::to_upper(transport) + " " + core->advertised_address(local.address().to_string()) + ":" +
+                                         std::to_string(local.port()) + ";branch=" + branch);
+
+  cancel->header->add_start("Via", via);
+  cancel->branch = branch;
+
+  _logger->info("CANCEL with no response context, forwarded statelessly to " + flow->flow_id());
+
+  // No client transaction and no response context: the answer comes back matching
+  // neither and goes upstream through the stateless response path (16.7 step 1),
+  // which strips the Via added just above.
+  flow->send(cancel);
 }
 
 void Proxy::on_stray_response(std::shared_ptr<SIPMessage> response) {

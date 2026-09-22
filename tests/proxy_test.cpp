@@ -218,22 +218,71 @@ TEST(ProxyTest, ACancelAnswers200AndEndsTheInviteWith487) {
   EXPECT_NE(f.response_with(f.caller_connection, 487), nullptr);
 }
 
-// A CANCEL that names nothing we hold is still answered, because the client is waiting
-// on its own transaction for a reply either way.
-TEST(ProxyTest, ACancelForAnUnknownTransactionIsStillAnswered) {
-  Fixture f;
+namespace {
 
-  std::string cancel = "CANCEL sip:bob@example.com SIP/2.0\r\n";
-  cancel += "Via: SIP/2.0/UDP 192.0.2.10:5060;branch=z9hG4bK-nothing\r\n";
+std::string cancel_for(const std::string& request_uri, const std::string& branch = "z9hG4bK-nothing") {
+  std::string cancel = "CANCEL " + request_uri + " SIP/2.0\r\n";
+  cancel += "Via: SIP/2.0/UDP 192.0.2.10:5060;branch=" + branch + "\r\n";
   cancel += "From: <sip:alice@example.com>;tag=alice\r\n";
   cancel += "To: <sip:bob@example.com>\r\n";
   cancel += "Call-ID: call-proxy\r\n";
   cancel += "CSeq: 2 CANCEL\r\n";
+  cancel += "Max-Forwards: 70\r\n";
   cancel += "\r\n";
+  return cancel;
+}
 
-  f.receive(f.caller, cancel);
+}  // namespace
 
-  EXPECT_NE(f.response_with(f.caller_connection, 200), nullptr);
+// RFC 3261 16.10: a proxy with no response context for a CANCEL "MUST statelessly
+// forward" it, because the request it names may have been forwarded statelessly too.
+// Answering it 200 and dropping it told the caller the branch had been cancelled when
+// nothing downstream had been told anything.
+TEST(ProxyTest, ACancelWithNoContextIsForwardedOnwards) {
+  Fixture f;
+
+  f.receive(f.caller, cancel_for("sip:bob@192.0.2.20:5060"));
+
+  auto forwarded = ProxyFixture::request_with(f.callee_connection, "CANCEL");
+  ASSERT_NE(forwarded, nullptr);
+
+  // This node's Via is on top, so the answer can find its way back (16.7 step 1).
+  ASSERT_EQ(forwarded->header->headers_map["Via"].size(), 2u);
+  EXPECT_EQ(forwarded->header->headers_map["Via"][0]->as<ViaHeader>()->host.rfind("192.0.2.1", 0), 0u);
+
+  EXPECT_EQ(forwarded->header->headers_map["Max-Forwards"][0]->as<UIntHeader>()->value, 69u);
+
+  // And this node did not answer it itself: the answer is the one that comes back.
+  EXPECT_EQ(f.response_with(f.caller_connection, 200), nullptr);
+}
+
+// The far end sees the CANCEL once however many times the caller sends it. The
+// CANCEL has a server transaction of its own, so a retransmission is absorbed there
+// (RFC 3261 17.2.2) and never reaches the forwarding above. The branch the forward
+// computes is derived from the request rather than random for the same reason 16.11
+// asks it of a stateless proxy: it must not depend on how many times the request
+// arrived.
+TEST(ProxyTest, ARetransmittedCancelIsForwardedOnce) {
+  Fixture f;
+
+  f.caller_connection->reliable = false;
+
+  f.receive(f.caller, cancel_for("sip:bob@192.0.2.20:5060"));
+  f.receive(f.caller, cancel_for("sip:bob@192.0.2.20:5060"));
+
+  EXPECT_EQ(ProxyFixture::requests_with(f.callee_connection, "CANCEL").size(), 1u);
+}
+
+// Where there is no context and nowhere to forward it either, RFC 3261 9.2's answer
+// for a CANCEL that matches nothing is 481, which is true of this node in a way that
+// 200 was not.
+TEST(ProxyTest, ACancelWithNoContextAndNowhereToGoIs481) {
+  Fixture f;
+
+  f.receive(f.caller, cancel_for("sip:bob@example.com"));
+
+  EXPECT_NE(f.response_with(f.caller_connection, 481), nullptr);
+  EXPECT_EQ(f.response_with(f.caller_connection, 200), nullptr);
 }
 
 // RFC 3261 16.6: with more than one binding the proxy tries them in turn, and a failure
