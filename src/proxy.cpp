@@ -256,14 +256,28 @@ void Proxy::_preprocess_routes(const std::shared_ptr<SIPMessage>& request) const
   }
 
   // 16.4's second rule: a Route naming this node has been honoured by arriving here.
-  if (!header->contains("Route")) return;
+  //
+  // More than one may, because this node record-routes twice: one value for the
+  // interface a request arrived on and one for the interface it left on (RFC 5658).
+  // An in-dialog request comes back to whichever of them faces the end that sent it,
+  // and the one behind it is this node as well. Both are removed (RFC 5658 section
+  // 3.2) or the request would be forwarded to this node.
+  //
+  // The last one removed is the one facing the other end, and its flow token is how
+  // the request gets there. A Contact is not: a browser's resolves to nothing.
+  std::string flow_token;
 
-  auto top = header->headers_map["Route"][0];
-  auto uri = route_uri(top);
+  while (header->contains("Route")) {
+    auto top = header->headers_map["Route"][0];
+    auto uri = route_uri(top);
 
-  if (uri && _names_this_node(*uri)) {
+    if (!uri || !_names_this_node(*uri)) break;
+
+    flow_token = uri->user;
     header->remove_value("Route", [&top](std::shared_ptr<headers::Header> value) { return value == top; });
   }
+
+  request->flow_token = std::move(flow_token);
 }
 
 void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
@@ -300,6 +314,20 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
 
     _logger->info("Route header that is not a name-addr - 400");
     return _send_status(transaction, request, 400, "Bad Request");
+  }
+
+  // The route set is spent and this node was the last hop in it, so what is left is
+  // the remote target: the Contact the far end offered. For an endpoint with a
+  // routable address that is the answer, and for a browser it is nothing at all -
+  // which is what the flow token in the Record-Route this node wrote is for.
+  if (auto flow = core->channel_for_token(request->flow_token)) {
+    Target target;
+    target.uri = request->header->request_uri;
+    target.next_hop = request->header->request_uri;
+    target.flow = flow;
+
+    context->targets.push_back(target);
+    return _forward_next(context);
   }
 
   const auto host = Util::to_lower(request->header->request_uri->host);
@@ -730,25 +758,53 @@ bool Proxy::_prepare_forward(const std::shared_ptr<SIPMessage>& copy, const std:
   // ACK, the BYE and every re-INVITE back through this node, which a node that anchors
   // media and keeps call records has to have.
   //
-  // One value, naming the flow this hop goes out on. A call whose two ends are on
-  // different transports needs two (RFC 5658), and that waits for the transports step.
+  // Two values, and always two. RFC 5658 requires it of a proxy whose request arrives
+  // on one interface and leaves on another, which a browser calling a desk phone always
+  // is. Writing two whatever the transports are costs one header and buys the thing
+  // that actually makes such a call work: each value carries the flow token of the side
+  // it faces, so an in-dialog request can be sent back down a flow rather than to a
+  // Contact. A browser's Contact resolves to nothing, so without this the ACK and the
+  // BYE never reach it, whatever the transports were.
+  //
+  // The topmost names the interface the request is being sent on and the second the one
+  // it arrived on (RFC 5658 section 3), which is the order that gives each end the
+  // value facing it: a UAS takes the route set from the request in order, and a UAC
+  // takes it from the response reversed (RFC 3261 12.1.1, 12.1.2).
   if (header->request_method == "INVITE") {
-    auto record_route = std::make_shared<SIPUri>();
-    record_route->valid = true;
-    record_route->scheme = (transport == "tls" || Util::to_lower(header->request_uri->scheme) == "sips") ? "sips" : "sip";
-    record_route->host = core->advertised_address(local.address().to_string());
-    record_route->port = local.port();
+    const bool secure_request = Util::to_lower(header->request_uri->scheme) == "sips";
+    auto inbound = copy->channel.lock();
 
-    // 19.1.1: lr says this node is a loose router, which is what stops the next hop
-    // rewriting the Request-URI on its way back.
-    record_route->set_parameter("lr", "");
-    if (transport != "udp") record_route->set_parameter("transport", transport);
+    auto record_route_for = [&](const std::string& interface_transport, const std::string& address, std::uint16_t port, const std::string& token) {
+      auto uri = std::make_shared<SIPUri>();
+      uri->valid = true;
+      uri->scheme = (interface_transport == "tls" || secure_request) ? "sips" : "sip";
+      uri->host = core->advertised_address(address);
+      uri->port = port;
 
-    auto identity = std::make_shared<SIPIdentity>();
-    identity->wrapped = true;
-    identity->uri = record_route;
+      // RFC 5626 section 5.1: the flow token goes in the user part, where it is opaque
+      // to everyone but the node that wrote it.
+      uri->user = token;
 
-    header->add_start("Record-Route", std::make_shared<SIPIdentityHeader>(identity));
+      // 19.1.1: lr says this node is a loose router, which is what stops the next hop
+      // rewriting the Request-URI on its way back.
+      uri->set_parameter("lr", "");
+      if (interface_transport != "udp") uri->set_parameter("transport", interface_transport);
+
+      auto identity = std::make_shared<SIPIdentity>();
+      identity->wrapped = true;
+      identity->uri = uri;
+
+      return std::make_shared<SIPIdentityHeader>(identity);
+    };
+
+    // Added bottom first, because add_start puts each one in front of the last.
+    if (inbound && inbound->_connection) {
+      const auto arrived_on = inbound->_connection->local_endpoint();
+      header->add_start("Record-Route", record_route_for(Util::to_lower(inbound->_connection->transport_name()), arrived_on.address().to_string(),
+                                                         arrived_on.port(), inbound->flow_token()));
+    }
+
+    header->add_start("Record-Route", record_route_for(transport, local.address().to_string(), local.port(), channel->flow_token()));
   }
 
   // Step 6: a top Route without lr belongs to a strict router, which expects to find
