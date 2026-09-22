@@ -6,6 +6,7 @@
 //
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -72,6 +73,10 @@ class BuiltinMediaEngine : public MediaEngine {
   // relay pair per media description. Ported from the pre-reset SIPCore::_map_media.
   Result _map_media(std::shared_ptr<Call> call, const std::string& sdp_text, const Flags& flags);
 
+  // RFC 3264 section 8's version rule, applied to what this node emits rather than to
+  // what it was given.
+  void _apply_version(const std::shared_ptr<Call>& call, const Flags& flags, SDP& sdp);
+
   void _apply_url(const std::shared_ptr<types::URL>& url);
 
   // Port range sanity, applied after the URL and again after the config section.
@@ -96,10 +101,22 @@ class BuiltinMediaEngine : public MediaEngine {
     std::shared_ptr<rtp::RTPRelaySet> rtcp;
   };
 
+  // What was last handed to one leg, so that the version this node emits obeys RFC
+  // 3264 section 8: a description that changed must carry a higher version, and one
+  // that did not must carry the same. The endpoint's own version cannot answer it,
+  // because what this node emits is not what the endpoint sent.
+  struct LastEmitted {
+    // The body with the version field blanked, so that comparing two of them asks
+    // whether anything but the version changed.
+    std::string shape;
+    std::uint64_t version = 0;
+  };
+
   // Held per call and then per stream, which is the granularity a re-offer matches on
   // and the granularity release() gives back.
   mutable std::mutex _mutex;
   std::unordered_map<std::string, std::unordered_map<std::int64_t, StreamRelays>> _allocated;
+  std::unordered_map<std::string, std::unordered_map<std::size_t, LastEmitted>> _emitted;
 };
 
 }  // namespace athenasip::media

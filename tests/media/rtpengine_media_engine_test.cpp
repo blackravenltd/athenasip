@@ -11,6 +11,7 @@
 
 #include <ctime>
 #include <memory>
+#include <set>
 #include <string>
 
 #include "../helpers/fake_rtpengine_helper.h"
@@ -147,9 +148,14 @@ TEST(RtpengineMediaEngineTest, AnOfferNamesTheCallTheOffererAndTheDescription) {
   const auto* replace = request->find("replace");
   ASSERT_NE(replace, nullptr);
   ASSERT_TRUE(replace->is_list());
-  ASSERT_EQ(replace->values().size(), 2u);
-  EXPECT_EQ(replace->values()[0].string(), "origin");
-  EXPECT_EQ(replace->values()[1].string(), "session-connection");
+
+  // A list is a set here, so what matters is what is in it and not the order.
+  std::set<std::string> replacements;
+  for (const auto& value : replace->values()) replacements.insert(value.string());
+
+  // RFC 3264 section 8: the version is rtpengine's too, because what this node emits
+  // is not what the endpoint sent.
+  EXPECT_EQ(replacements, (std::set<std::string>{"origin", "sdp-version", "session-connection"}));
 
   engine->close();
 }
