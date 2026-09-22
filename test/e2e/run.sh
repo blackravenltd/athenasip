@@ -10,6 +10,7 @@
 #
 #   test/e2e/run.sh              every scenario
 #   test/e2e/run.sh register     only the ones whose name contains "register"
+#   test/e2e/run.sh --rtpengine  the same, with rtpengine on the media path
 #
 # Principle 2 says compliance is proven rather than asserted, and this is where that
 # happens: the unit tests say the code does what the RFC says, and this says a real
@@ -20,6 +21,17 @@ set -eu
 cd "$(dirname "$0")/../.."
 
 COMPOSE="docker compose -f docker-compose.test.yml"
+ENGINE="builtin"
+
+# The media engine is an overlay rather than a second harness: the scenarios, the
+# provisioning and the node are the same, so a scenario that passes against one engine
+# and fails against the other has found something in the engine.
+if [ "${1:-}" = "--rtpengine" ]; then
+  COMPOSE="${COMPOSE} -f docker-compose.rtpengine.yml"
+  ENGINE="rtpengine"
+  shift
+fi
+
 NODE="172.31.0.10"
 API="http://${NODE}:8080/api/v1"
 ADMIN_TOKEN="e2e-admin"
@@ -51,6 +63,14 @@ cleanup() {
   # sipp traces and a guess about what the node in the middle made of them.
   docker logs athenasip-e2e >"${RESULTS}/node.log" 2>&1 || true
 
+  # And the engine's, when there is one of its own. A media scenario passes whether the
+  # engine anchored the call or declined it - a declined description travels on
+  # untouched and the two ends reach each other directly - so the only thing that says
+  # which happened is what the engine has to say for itself.
+  if [ "${ENGINE}" = "rtpengine" ]; then
+    docker logs athenasip-e2e-rtpengine >"${RESULTS}/rtpengine.log" 2>&1 || true
+  fi
+
   ${COMPOSE} --profile e2e down --remove-orphans >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -63,6 +83,7 @@ api() {
 }
 
 echo "Building and starting the node..."
+echo "Media engine: ${ENGINE}"
 ${COMPOSE} up -d --build athenasip
 
 echo "Waiting for it to serve..."
@@ -213,6 +234,45 @@ run_pair() {
   docker rm -f "e2e-uas-${name}" >/dev/null 2>&1 || true
 }
 
+# A media scenario passes whether the engine relayed the call or declined it: a
+# declined description travels on untouched and the two sipp containers reach each
+# other directly, so the call completes and nothing says the engine did anything. The
+# engine's own counters are the only thing that does.
+#
+# Only rtpengine keeps counters this harness can read. The builtin relay's bridging is
+# proven by a unit test that sends real packets through it from two sockets.
+assert_media_relayed() {
+  [ "${ENGINE}" = "rtpengine" ] || return 0
+
+  case "media" in
+    *${FILTER}*) ;;
+    *) return 0 ;;
+  esac
+
+  stats=$(docker logs athenasip-e2e-rtpengine 2>&1 | grep -E '^\[.*Port .*<>.*[0-9]+ p,' || true)
+
+  relayed=$(echo "${stats}" | awk -F'SSRC [^,]*, ' '{print $2}' | awk -F' p,' '{s+=$1} END {print s+0}')
+  errors=$(echo "${stats}" | awk -F'b, ' '{print $2}' | awk -F' e,' '{s+=$1} END {print s+0}')
+
+  echo "  media-relayed (${relayed} packets, ${errors} errors)"
+
+  if [ "${relayed}" -eq 0 ]; then
+    failed=$((failed + 1))
+    failures="${failures} media-relayed"
+    echo "    failed - rtpengine relayed nothing, so the call did not go through it"
+    return 0
+  fi
+
+  if [ "${errors}" -ne 0 ]; then
+    failed=$((failed + 1))
+    failures="${failures} media-relayed"
+    echo "    failed - rtpengine rejected ${errors} packet(s); the offer and what was sent disagree"
+    return 0
+  fi
+
+  passed=$((passed + 1))
+}
+
 echo "Running scenarios..."
 
 run_one register                register.xml              alice.csv alice alice-secret       20s
@@ -223,6 +283,7 @@ run_pair invite-bye     uas.xml         bob.csv   bob   invite_bye.xml       ali
 run_pair cancel-ringing uas_ringing.xml bob.csv   bob   cancel_after_180.xml alice.csv          alice 30s
 run_pair busy           uas_busy.xml    bob.csv   bob   invite_busy.xml      alice.csv          alice 30s
 run_pair media          uas_media.xml   bob.csv   bob   invite_media.xml     alice.csv          alice 40s
+assert_media_relayed
 
 # Last, because timer B is 64*T1 and this one waits it out.
 run_pair invite-timeout uas_silent.xml  carol.csv carol invite_timeout.xml   alice-to-carol.csv alice 60s
