@@ -132,6 +132,11 @@ class Core : public std::enable_shared_from_this<Core> {
   // The same lookup by the name itself, which is what a binding recorded (RFC 5626).
   std::shared_ptr<Channel> channel_find(const std::string& flow_id);
 
+  // The flow an opaque token names, or null when it names none. The token is what this
+  // node put in the Record-Route it wrote, and it is the only way an in-dialog request
+  // reaches an endpoint whose Contact resolves to nothing - a browser's always does.
+  std::shared_ptr<Channel> channel_for_token(const std::string& token);
+
   // The flow to a next hop, opening one when this node has none.
   //
   // A registered client is reached on the connection this node accepted, which
@@ -240,6 +245,7 @@ class Core : public std::enable_shared_from_this<Core> {
 
   // All of the following are strand-confined. No locks.
   std::unordered_map<std::string, std::shared_ptr<Channel>> _channels;
+  std::unordered_map<std::string, std::shared_ptr<Channel>> _channels_by_token;
   std::set<std::string> _local_addresses;
 
   std::vector<std::shared_ptr<Server>> _servers;

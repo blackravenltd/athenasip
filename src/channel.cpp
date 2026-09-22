@@ -51,6 +51,7 @@ namespace athenasip {
 
 Channel::Channel(std::shared_ptr<Logger> logger, std::shared_ptr<Core> core, std::shared_ptr<Connection> connection) : _connection(connection), _core(core) {
   _flow_id = Core::channel_key(_connection->transport_name(), _connection->remote_endpoint_name());
+  _flow_token = Util::generate_random_string("f", 20);
   _logger = std::make_unique<LoggerScoped>("channel " + _flow_id, logger);
 }
 

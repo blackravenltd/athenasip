@@ -256,7 +256,9 @@ TEST(ProxyRouteTest, EachForkStartsFromTheRequestAsReceived) {
   for (const auto& attempt : forwarded) {
     EXPECT_EQ(attempt->header->headers_map["Via"].size(), 2u);
     EXPECT_EQ(attempt->header->headers_map["Max-Forwards"][0]->as<UIntHeader>()->value, 69u);
-    EXPECT_EQ(attempt->header->headers_map["Record-Route"].size(), 1u);
+    // Two per attempt and not four: the Record-Route of one branch is not inherited
+    // by the next (RFC 5658 asks for the pair, 16.6 step 1 for the fresh copy).
+    EXPECT_EQ(attempt->header->headers_map["Record-Route"].size(), 2u);
   }
 
   // Two branches of one fork are two transactions (16.6 step 8).
