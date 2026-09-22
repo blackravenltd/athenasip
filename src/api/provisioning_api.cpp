@@ -43,6 +43,16 @@ std::string ha1_sha256_of(const std::string& user, const std::string& realm_name
   return Util::to_lower(Util::sha256(user + ":" + realm_name + ":" + password));
 }
 
+// The realm's media policy, as two independent fields: whether to anchor, and how a
+// leg's profile is decided. Only what was given, like everything else here.
+void read_media_policy(const boost::json::object& body, types::MediaPolicy& policy) {
+  if (const auto anchor = body.if_contains("media_anchor"); anchor != nullptr && anchor->is_bool()) policy.anchor = anchor->as_bool();
+
+  if (const auto profiles = string_field(body, "media_profiles")) {
+    policy.profiles = types::MediaPolicy::profiles_from_string(*profiles, policy.profiles);
+  }
+}
+
 }  // namespace
 
 ProvisioningAPI::ProvisioningAPI(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<datastores::Datastore> datastore, plugins::Executor executor,
@@ -125,6 +135,8 @@ void ProvisioningAPI::_realm_create(RouteContext context) {
   if (const auto timeout = uint_field(*body, "registration_timeout")) realm->registration_timeout = *timeout;
   if (const auto minimum = uint_field(*body, "registration_minimum")) realm->registration_minimum = *minimum;
 
+  read_media_policy(*body, realm->media);
+
   auto self = shared_from_this();
   _datastore->realm_create(_executor, realm, [self, context, realm](plugins::Status status) mutable {
     if (!status.ok) {
@@ -162,6 +174,8 @@ void ProvisioningAPI::_realm_update(RouteContext context) {
     if (const auto expiry = uint_field(*body, "nonce_expiry")) realm->nonce_expiry = *expiry;
     if (const auto timeout = uint_field(*body, "registration_timeout")) realm->registration_timeout = *timeout;
     if (const auto minimum = uint_field(*body, "registration_minimum")) realm->registration_minimum = *minimum;
+
+    read_media_policy(*body, realm->media);
 
     self->_datastore->realm_update(self->_executor, realm, [context, realm](plugins::Status status) mutable {
       if (!status.ok) {
@@ -553,6 +567,8 @@ boost::json::object ProvisioningAPI::_realm_json(const types::Realm& realm) {
   object["nonce_expiry"] = realm.nonce_expiry;
   object["registration_timeout"] = realm.registration_timeout;
   object["registration_minimum"] = realm.registration_minimum;
+  object["media_anchor"] = realm.media.anchor;
+  object["media_profiles"] = types::MediaPolicy::to_string(realm.media.profiles);
 
   // nonce_secret is deliberately absent. It is the key this node mints nonces with, and
   // an API that hands it back is an API that leaks it into every log that records a

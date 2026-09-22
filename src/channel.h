@@ -55,6 +55,17 @@ class Channel : public std::enable_shared_from_this<Channel> {
   // the connection and a closing channel still has to say which flow it was.
   const std::string& flow_id() const { return _flow_id; }
 
+  // An opaque name for this flow, for the Record-Route this node writes (RFC 5626
+  // section 5.1 puts a flow token in the user part for exactly this). It is random
+  // rather than derived, because the flow id is the far end's address and a token that
+  // spelled it out would hand one end of an anchored call the other end's address in
+  // the route set - the thing anchoring the media is there to prevent.
+  //
+  // It lives as long as the channel does, which is as long as it is any use: a token
+  // naming a flow that has closed names nothing, and the socket does not survive a
+  // restart either.
+  const std::string& flow_token() const { return _flow_token; }
+
   State state = State::Normal;
 
   std::shared_ptr<SIPMessage> _incoming_message;
@@ -68,6 +79,7 @@ class Channel : public std::enable_shared_from_this<Channel> {
   std::shared_ptr<Core> _core;
 
   std::string _flow_id;
+  std::string _flow_token;
 
   std::array<char, 65535> _read_buffer;
   std::string _buffer;

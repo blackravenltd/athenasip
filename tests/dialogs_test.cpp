@@ -102,6 +102,9 @@ TEST(DialogsTest, EachEndsTargetIsItsOwnContact) {
 
 // RFC 3261 12.1.1: the route set is the Record-Route of the response. This node put
 // itself in it on the way out, which is the reason the BYE comes back through here.
+//
+// Twice, because it record-routes both interfaces (RFC 5658): one value for the flow
+// the request arrived on and one for the flow it left on. Both name this node.
 TEST(DialogsTest, TheRouteSetIsWhatThisNodeRecorded) {
   Fixture f;
   answer(f);
@@ -109,9 +112,16 @@ TEST(DialogsTest, TheRouteSetIsWhatThisNodeRecorded) {
   auto dialog = f.only_dialog();
   ASSERT_NE(dialog, nullptr);
 
-  ASSERT_EQ(dialog->route_set.size(), 1u);
-  EXPECT_EQ(dialog->route_set[0]->host, "192.0.2.1");
-  EXPECT_TRUE(dialog->route_set[0]->has_parameter("lr"));
+  ASSERT_EQ(dialog->route_set.size(), 2u);
+
+  for (const auto& route : dialog->route_set) {
+    EXPECT_EQ(route->host, "192.0.2.1");
+    EXPECT_TRUE(route->has_parameter("lr"));
+
+    // The flow token, which is what an in-dialog request is routed by once the route
+    // set is spent (RFC 5626 section 5.1).
+    EXPECT_FALSE(route->user.empty());
+  }
 }
 
 // RFC 3261 12.1: a provisional response carrying a To tag creates an early dialog, and

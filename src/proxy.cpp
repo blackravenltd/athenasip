@@ -256,14 +256,28 @@ void Proxy::_preprocess_routes(const std::shared_ptr<SIPMessage>& request) const
   }
 
   // 16.4's second rule: a Route naming this node has been honoured by arriving here.
-  if (!header->contains("Route")) return;
+  //
+  // More than one may, because this node record-routes twice: one value for the
+  // interface a request arrived on and one for the interface it left on (RFC 5658).
+  // An in-dialog request comes back to whichever of them faces the end that sent it,
+  // and the one behind it is this node as well. Both are removed (RFC 5658 section
+  // 3.2) or the request would be forwarded to this node.
+  //
+  // The last one removed is the one facing the other end, and its flow token is how
+  // the request gets there. A Contact is not: a browser's resolves to nothing.
+  std::string flow_token;
 
-  auto top = header->headers_map["Route"][0];
-  auto uri = route_uri(top);
+  while (header->contains("Route")) {
+    auto top = header->headers_map["Route"][0];
+    auto uri = route_uri(top);
 
-  if (uri && _names_this_node(*uri)) {
+    if (!uri || !_names_this_node(*uri)) break;
+
+    flow_token = uri->user;
     header->remove_value("Route", [&top](std::shared_ptr<headers::Header> value) { return value == top; });
   }
+
+  request->flow_token = std::move(flow_token);
 }
 
 void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
@@ -302,6 +316,20 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
     return _send_status(transaction, request, 400, "Bad Request");
   }
 
+  // The route set is spent and this node was the last hop in it, so what is left is
+  // the remote target: the Contact the far end offered. For an endpoint with a
+  // routable address that is the answer, and for a browser it is nothing at all -
+  // which is what the flow token in the Record-Route this node wrote is for.
+  if (auto flow = core->channel_for_token(request->flow_token)) {
+    Target target;
+    target.uri = request->header->request_uri;
+    target.next_hop = request->header->request_uri;
+    target.flow = flow;
+
+    context->targets.push_back(target);
+    return _forward_next(context);
+  }
+
   const auto host = Util::to_lower(request->header->request_uri->host);
   auto self = shared_from_this();
 
@@ -328,6 +356,11 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
       context->targets.push_back(target);
       return _forward_next(context);
     }
+
+    // The one place a realm is already in hand. Reading it again for every message
+    // with a body would be a datastore round trip on the media path, and an in-dialog
+    // re-INVITE never looks a realm up at all.
+    context->media_policy = found.value->media;
 
     // Ours. The Request-URI names an address of record and the bindings the registrar
     // holds for it are the target set.
@@ -441,7 +474,7 @@ void Proxy::_forward_to(const std::shared_ptr<Context>& context, const Target& t
   // Step 6: the media engine has its say on the body before the copy goes anywhere, and
   // it is a round trip, so the send is the other side of it.
   auto self = shared_from_this();
-  _anchor_media(context->request, copy, channel, [this, self, context, copy, channel]() { _send_forward(context, copy, channel); });
+  _anchor_media(context->request, copy, channel, context, [this, self, context, copy, channel]() { _send_forward(context, copy, channel); });
 }
 
 void Proxy::_send_forward(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& copy, const std::shared_ptr<Channel>& channel) {
@@ -624,11 +657,11 @@ void Proxy::_forward_response(const std::shared_ptr<Context>& context, const std
 
   // A response goes back down the flow the request came in on, so that flow is the one
   // whose transport says what the far leg of this direction is.
-  _anchor_media(context->request, response, context->request->channel.lock(), [self, server, response]() { server->send(response); });
+  _anchor_media(context->request, response, context->request->channel.lock(), context, [self, server, response]() { server->send(response); });
 }
 
 void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<SIPMessage>& message, const std::shared_ptr<Channel>& outgoing,
-                          std::function<void()> then) {
+                          const std::shared_ptr<Context>& context, std::function<void()> then) {
   auto core = _core.lock();
   if (!core || !core->media || !has_sdp(message)) return then();
 
@@ -638,6 +671,18 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
   // No call record and no dialog means nothing to anchor against - which end sent this
   // description is the one question the engine has to be told the answer to.
   if (!call || !dialog) return then();
+
+  // The policy is the realm's, decided once where the realm was in hand and kept on
+  // the call, because a re-INVITE arrives in-dialog with no realm to ask.
+  if (context && context->media_policy) call->media_policy = *context->media_policy;
+
+  const auto& policy = call->media_policy;
+
+  // A realm that does not want its media anchored gets what a node with no engine
+  // gives it: the description travels exactly as it arrived and the media goes end to
+  // end. That is the proxy behaviour RFC 3261 16.6 describes, chosen rather than
+  // fallen into.
+  if (!policy.anchor) return then();
 
   const bool is_response = message->header->type == SIPHeader::Type::Response;
   const bool request_from_caller = dialog->is_from_caller(tag_of(request, "From"));
@@ -659,7 +704,7 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
   // neither where this message is going nor over what, and the transport of that flow
   // is the only thing that distinguishes a browser from a desk phone before the
   // browser has described itself.
-  if (outgoing && outgoing->_connection) flags.target = media::Flags::profile_for_transport(outgoing->_connection->transport_name());
+  flags.target = _profile_under(policy, outgoing && outgoing->_connection ? outgoing->_connection->transport_name() : std::string());
 
   auto self = shared_from_this();
 
@@ -713,25 +758,53 @@ bool Proxy::_prepare_forward(const std::shared_ptr<SIPMessage>& copy, const std:
   // ACK, the BYE and every re-INVITE back through this node, which a node that anchors
   // media and keeps call records has to have.
   //
-  // One value, naming the flow this hop goes out on. A call whose two ends are on
-  // different transports needs two (RFC 5658), and that waits for the transports step.
+  // Two values, and always two. RFC 5658 requires it of a proxy whose request arrives
+  // on one interface and leaves on another, which a browser calling a desk phone always
+  // is. Writing two whatever the transports are costs one header and buys the thing
+  // that actually makes such a call work: each value carries the flow token of the side
+  // it faces, so an in-dialog request can be sent back down a flow rather than to a
+  // Contact. A browser's Contact resolves to nothing, so without this the ACK and the
+  // BYE never reach it, whatever the transports were.
+  //
+  // The topmost names the interface the request is being sent on and the second the one
+  // it arrived on (RFC 5658 section 3), which is the order that gives each end the
+  // value facing it: a UAS takes the route set from the request in order, and a UAC
+  // takes it from the response reversed (RFC 3261 12.1.1, 12.1.2).
   if (header->request_method == "INVITE") {
-    auto record_route = std::make_shared<SIPUri>();
-    record_route->valid = true;
-    record_route->scheme = (transport == "tls" || Util::to_lower(header->request_uri->scheme) == "sips") ? "sips" : "sip";
-    record_route->host = core->advertised_address(local.address().to_string());
-    record_route->port = local.port();
+    const bool secure_request = Util::to_lower(header->request_uri->scheme) == "sips";
+    auto inbound = copy->channel.lock();
 
-    // 19.1.1: lr says this node is a loose router, which is what stops the next hop
-    // rewriting the Request-URI on its way back.
-    record_route->set_parameter("lr", "");
-    if (transport != "udp") record_route->set_parameter("transport", transport);
+    auto record_route_for = [&](const std::string& interface_transport, const std::string& address, std::uint16_t port, const std::string& token) {
+      auto uri = std::make_shared<SIPUri>();
+      uri->valid = true;
+      uri->scheme = (interface_transport == "tls" || secure_request) ? "sips" : "sip";
+      uri->host = core->advertised_address(address);
+      uri->port = port;
 
-    auto identity = std::make_shared<SIPIdentity>();
-    identity->wrapped = true;
-    identity->uri = record_route;
+      // RFC 5626 section 5.1: the flow token goes in the user part, where it is opaque
+      // to everyone but the node that wrote it.
+      uri->user = token;
 
-    header->add_start("Record-Route", std::make_shared<SIPIdentityHeader>(identity));
+      // 19.1.1: lr says this node is a loose router, which is what stops the next hop
+      // rewriting the Request-URI on its way back.
+      uri->set_parameter("lr", "");
+      if (interface_transport != "udp") uri->set_parameter("transport", interface_transport);
+
+      auto identity = std::make_shared<SIPIdentity>();
+      identity->wrapped = true;
+      identity->uri = uri;
+
+      return std::make_shared<SIPIdentityHeader>(identity);
+    };
+
+    // Added bottom first, because add_start puts each one in front of the last.
+    if (inbound && inbound->_connection) {
+      const auto arrived_on = inbound->_connection->local_endpoint();
+      header->add_start("Record-Route", record_route_for(Util::to_lower(inbound->_connection->transport_name()), arrived_on.address().to_string(),
+                                                         arrived_on.port(), inbound->flow_token()));
+    }
+
+    header->add_start("Record-Route", record_route_for(transport, local.address().to_string(), local.port(), channel->flow_token()));
   }
 
   // Step 6: a top Route without lr belongs to a strict router, which expects to find
@@ -768,19 +841,18 @@ bool Proxy::_prepare_forward(const std::shared_ptr<SIPMessage>& copy, const std:
 
 void Proxy::on_cancel(std::shared_ptr<SIPMessage> cancel, std::shared_ptr<transactions::TransactionBase> cancel_transaction,
                       std::shared_ptr<transactions::TransactionBase> invite_transaction) {
-  // RFC 3261 9.2: the CANCEL is answered on its own transaction whether or not it names
-  // anything we still hold.
-  if (cancel_transaction) {
+  // RFC 3261 9.2: a CANCEL this node has a response context for is answered here,
+  // because this node is the one that will act on it. One it has no context for is
+  // forwarded instead, and answering it as well would send the caller two answers to
+  // one request.
+  if (cancel_transaction && invite_transaction) {
     auto ok = cancel->generate_response();
     ok->header->response_code = 200;
     ok->header->response_message = "OK";
     cancel_transaction->send(ok);
   }
 
-  if (!invite_transaction) {
-    _logger->info("CANCEL for an unknown transaction - answered 200 and dropped");
-    return;
-  }
+  if (!invite_transaction) return _forward_cancel_statelessly(cancel, cancel_transaction);
 
   // RFC 3261 16.10: the branches this node has already tried are cancelled in turn.
   // Without this the callee keeps ringing after the caller has hung up.
@@ -1068,6 +1140,72 @@ void Proxy::_cancel_branch(const std::shared_ptr<Context>& context) {
   context->forwarded = nullptr;
 }
 
+// RFC 3261 16.10: "If a response context is not found, the element does not have any
+// knowledge of the request to apply the CANCEL to. It MUST statelessly forward the
+// CANCEL request." The reason is that the request it names may have been forwarded
+// statelessly, in which case there is nothing here to have kept.
+//
+// Answering it 200 and dropping it, which is what this did, tells the caller the
+// branch was cancelled when nothing downstream has been told anything.
+void Proxy::_forward_cancel_statelessly(const std::shared_ptr<SIPMessage>& cancel, const std::shared_ptr<transactions::TransactionBase>& transaction) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  // The same 16.4 processing any request gets: this node's own Route values have been
+  // honoured by the request arriving, and the last of them names the flow to use.
+  _preprocess_routes(cancel);
+
+  std::shared_ptr<SIPUri> next_hop;
+  if (cancel->header->contains("Route")) next_hop = route_uri(cancel->header->headers_map["Route"][0]);
+  if (!next_hop) next_hop = cancel->header->request_uri;
+
+  auto flow = next_hop ? _flow_to(*next_hop) : nullptr;
+  if (!flow) flow = core->channel_for_token(cancel->flow_token);
+
+  if (!flow) {
+    // Nowhere to send it. RFC 3261 9.2's answer for a CANCEL that matches nothing is
+    // 481, which is true of this node in a way that 200 was not.
+    _logger->info("CANCEL with no response context and nowhere to forward it - 481");
+    return _send_status(transaction, cancel, 481, "Call/Transaction Does Not Exist");
+  }
+
+  // 16.11: a stateless forward computes its branch from the request rather than at
+  // random, so a retransmitted CANCEL is forwarded as the same transaction rather than
+  // as a new one the far end has never seen.
+  const auto branch = std::string(kMagicCookie) + _loop_token(cancel);
+
+  const auto local = flow->_connection->local_endpoint();
+  const auto transport = Util::to_lower(flow->_connection->transport_name());
+
+  if (cancel->header->contains("Max-Forwards")) {
+    auto max_forwards = cancel->header->headers_map["Max-Forwards"][0]->as<UIntHeader>();
+
+    if (max_forwards != nullptr) {
+      if (max_forwards->value == 0) {
+        _logger->info("CANCEL has run out of hops - 483");
+        return _send_status(transaction, cancel, 483, "Too Many Hops");
+      }
+
+      max_forwards->value--;
+    }
+  } else {
+    cancel->header->add("Max-Forwards", std::make_shared<UIntHeader>(kDefaultMaxForwards));
+  }
+
+  auto via = std::make_shared<ViaHeader>("SIP/2.0/" + Util::to_upper(transport) + " " + core->advertised_address(local.address().to_string()) + ":" +
+                                         std::to_string(local.port()) + ";branch=" + branch);
+
+  cancel->header->add_start("Via", via);
+  cancel->branch = branch;
+
+  _logger->info("CANCEL with no response context, forwarded statelessly to " + flow->flow_id());
+
+  // No client transaction and no response context: the answer comes back matching
+  // neither and goes upstream through the stateless response path (16.7 step 1),
+  // which strips the Via added just above.
+  flow->send(cancel);
+}
+
 void Proxy::on_stray_response(std::shared_ptr<SIPMessage> response) {
   auto core = _core.lock();
   if (!core) return;
@@ -1128,6 +1266,26 @@ bool Proxy::_names_this_node(const SIPUri& uri) const {
 
   const auto hop = _next_hop_of(uri);
   return core->is_local_address(hop.host, hop.port);
+}
+
+// What the realm says, and only where it says nothing specific does the transport
+// decide. A WebSocket means a browser almost everywhere, and "almost" is why a realm
+// can say otherwise: RFC 7118 is SIP over WebSocket and requires no WebRTC at all.
+media::Flags::Profile Proxy::_profile_under(const types::MediaPolicy& policy, const std::string& transport) {
+  switch (policy.profiles) {
+    case types::MediaPolicy::Profiles::Mirror:
+      return media::Flags::Profile::Mirror;
+    case types::MediaPolicy::Profiles::PlainRtp:
+      return media::Flags::Profile::PlainRtp;
+    case types::MediaPolicy::Profiles::WebRtc:
+      return media::Flags::Profile::WebRtc;
+    case types::MediaPolicy::Profiles::SrtpSdes:
+      return media::Flags::Profile::SrtpSdes;
+    case types::MediaPolicy::Profiles::FromTransport:
+      break;
+  }
+
+  return media::Flags::profile_for_transport(transport);
 }
 
 std::shared_ptr<Channel> Proxy::_flow_for(const types::Location& binding) const {

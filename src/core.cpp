@@ -152,6 +152,7 @@ std::string Core::channel_key(const std::string& transport, const std::string& e
 
 bool Core::channel_register(std::string endpoint, std::shared_ptr<Channel> channel) {
   _channels[endpoint] = channel;
+  _channels_by_token[channel->flow_token()] = channel;
 
   // Where the far end reached us is where a Record-Route this node writes will point,
   // so it is what a Route coming back has to be recognised against (RFC 3261 16.4).
@@ -188,6 +189,7 @@ bool Core::channel_unregister(std::string endpoint, std::shared_ptr<Channel> cha
   // address it resolved to and under the name it was asked for, and leaving the second
   // behind would be a route to a closed socket.
   const auto removed = std::erase_if(_channels, [&channel](const auto& entry) { return entry.second == channel; });
+  _channels_by_token.erase(channel->flow_token());
 
   _logger->debug("Unregistered Channel " + endpoint + (removed > 1 ? " and " + std::to_string(removed - 1) + " alias(es)" : ""));
   return true;
@@ -195,6 +197,15 @@ bool Core::channel_unregister(std::string endpoint, std::shared_ptr<Channel> cha
 
 std::shared_ptr<Channel> Core::channel_find(const std::string& transport, const std::string& host, std::uint16_t port) {
   return channel_find(channel_key(transport, host, port));
+}
+
+std::shared_ptr<Channel> Core::channel_for_token(const std::string& token) {
+  if (token.empty()) return nullptr;
+
+  auto search = _channels_by_token.find(token);
+  if (search == _channels_by_token.end()) return nullptr;
+
+  return search->second;
 }
 
 std::shared_ptr<Channel> Core::channel_find(const std::string& flow_id) {
@@ -300,6 +311,7 @@ void Core::channel_close_all() {
   channels.reserve(_channels.size());
   for (const auto& [endpoint, channel] : _channels) channels.push_back(channel);
   _channels.clear();
+  _channels_by_token.clear();
 
   for (const auto& channel : channels) channel->close();
 }

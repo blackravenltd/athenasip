@@ -56,7 +56,11 @@ struct Flags {
   //
   // Mirror leaves it to the engine, which is right for a call whose ends match and
   // wrong for one that does not. The others say plainly which.
-  enum class Profile { Mirror, PlainRtp, WebRtc };
+  // SrtpSdes is the desk phone that wants its media encrypted and has never heard of
+  // DTLS: RTP/SAVP with the keys in the description (RFC 4568), rather than a browser's
+  // UDP/TLS/RTP/SAVPF. Nothing about a flow says which of the two an endpoint is, so
+  // unlike the others this one is only ever chosen by a realm's policy.
+  enum class Profile { Mirror, PlainRtp, WebRtc, SrtpSdes };
 
   Profile target = Profile::Mirror;
 

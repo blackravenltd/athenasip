@@ -375,3 +375,24 @@ gives a transaction, which a fork with several bindings has to share.
 `media_address` is only needed where rtpengine cannot work out for itself which of its
 addresses to put in the SDP it hands back. Leave it unset and let rtpengine's own
 interface configuration decide.
+
+#### What is not configured here
+
+Whether a node anchors a realm's media, and how it decides what each leg of a call
+needs, belong to the realm rather than to the node: a cluster shares its realms and a
+file on one node does not. Both are provisioned over the admin API as `media_anchor`
+and `media_profiles` on a realm, and
+[`docs/api/openapi.yaml`](api/openapi.yaml) has the values.
+
+The short version. `media_anchor` off leaves every session description untouched and
+lets the media go end to end, which is what a node with no engine does and is right
+for two endpoints that can reach each other. `media_profiles` decides what the engine
+is asked to produce for a leg: `transport`, the default, reads it from the flow, so
+`ws` and `wss` are WebRTC and everything else is plain RTP. That is right wherever a
+WebSocket means a browser. It is wrong for a realm whose WebSocket clients are SIP
+phones, because RFC 7118 is SIP over WebSocket and requires no WebRTC at all, and
+`rtp` is the answer there. `webrtc` makes every leg WebRTC. `srtp` makes every leg SRTP
+with the keys in the description (RFC 4568), which is a desk phone that wants
+encryption and has never heard of DTLS, and no transport tells that apart from plain
+RTP so it can only be asked for. `mirror` says nothing and leaves the engine keeping
+whatever it was handed.

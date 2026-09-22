@@ -50,6 +50,15 @@ std::shared_ptr<Call> make_call() {
   return call;
 }
 
+const char* kAnswer =
+    "v=0\r\n"
+    "o=bob 2890844600 2890844600 IN IP4 198.51.100.2\r\n"
+    "s=-\r\n"
+    "c=IN IP4 198.51.100.2\r\n"
+    "t=0 0\r\n"
+    "m=audio 6000 RTP/AVP 0\r\n"
+    "a=rtpmap:0 PCMU/8000\r\n";
+
 const char* kOffer =
     "v=0\r\n"
     "o=alice 2890844526 2890844526 IN IP4 198.51.100.1\r\n"
@@ -539,6 +548,116 @@ TEST(BuiltinMediaEngineTest, TheOriginKeepsWhatMakesItUnique) {
 //
 // query() carries it, because it is already the contract's diagnostics call and a new
 // field in its document costs no version of the plugin contract.
+// RFC 3264 section 8: "the version number in the o= line MUST be incremented by one
+// from the previous SDP" when the description changes, and must not be when it has
+// not. The rule is about what this node emits, not about what it was given: the
+// addresses and the ports in what comes out are this node's, so passing the
+// endpoint's version through would tell the far end nothing had changed when the
+// ports had.
+TEST(BuiltinMediaEngineTest, ARepeatedOfferKeepsTheVersionItWasGiven) {
+  auto engine = make_engine(24600, 24620);
+  auto call = make_call();
+
+  Flags flags;
+  flags.participant = 0;
+
+  const auto first = engine->offer(call, kOffer, flags);
+  ASSERT_TRUE(first.ok) << first.error;
+
+  const auto again = engine->offer(call, kOffer, flags);
+  ASSERT_TRUE(again.ok) << again.error;
+
+  SDP one;
+  SDP two;
+  ASSERT_TRUE(one.parse(first.sdp));
+  ASSERT_TRUE(two.parse(again.sdp));
+
+  // The same stream, the same relay ports, so nothing about the description changed.
+  EXPECT_EQ(one.origin().sessionVersion, two.origin().sessionVersion);
+  EXPECT_EQ(first.sdp, again.sdp);
+
+  engine->close();
+}
+
+TEST(BuiltinMediaEngineTest, AnOfferThatChangesTheDescriptionCarriesAHigherVersion) {
+  auto engine = make_engine(24630, 24650);
+  auto call = make_call();
+
+  Flags flags;
+  flags.participant = 0;
+
+  const auto first = engine->offer(call, kOffer, flags);
+  ASSERT_TRUE(first.ok) << first.error;
+
+  // A second stream: this is the re-offer that adds video, and the far end has to be
+  // told that something changed.
+  const std::string with_video = std::string(kOffer) + "m=video 51372 RTP/AVP 96\r\na=rtpmap:96 VP8/90000\r\n";
+
+  const auto second = engine->offer(call, with_video, flags);
+  ASSERT_TRUE(second.ok) << second.error;
+
+  SDP one;
+  SDP two;
+  ASSERT_TRUE(one.parse(first.sdp));
+  ASSERT_TRUE(two.parse(second.sdp));
+
+  EXPECT_GT(std::stoull(two.origin().sessionVersion), std::stoull(one.origin().sessionVersion));
+
+  engine->close();
+}
+
+// The first description keeps the endpoint's own version, so a call that never
+// re-offers looks exactly as it did before this rule existed.
+TEST(BuiltinMediaEngineTest, TheFirstDescriptionKeepsTheEndpointsVersion) {
+  auto engine = make_engine(24660, 24680);
+  auto call = make_call();
+
+  Flags flags;
+  flags.participant = 0;
+
+  const auto first = engine->offer(call, kOffer, flags);
+  ASSERT_TRUE(first.ok) << first.error;
+
+  SDP produced;
+  ASSERT_TRUE(produced.parse(first.sdp));
+
+  SDP given;
+  ASSERT_TRUE(given.parse(kOffer));
+
+  EXPECT_EQ(produced.origin().sessionVersion, given.origin().sessionVersion);
+
+  engine->close();
+}
+
+// The two legs of a call are two descriptions and each has its own version. Sharing
+// one counter would have an answer's version jump because an offer had changed.
+TEST(BuiltinMediaEngineTest, EachLegHasAVersionOfItsOwn) {
+  auto engine = make_engine(24690, 24710);
+  auto call = make_call();
+
+  Flags caller;
+  caller.participant = 0;
+
+  Flags callee;
+  callee.participant = 1;
+
+  ASSERT_TRUE(engine->offer(call, kOffer, caller).ok);
+  const auto answered = engine->answer(call, kAnswer, callee);
+  ASSERT_TRUE(answered.ok) << answered.error;
+
+  SDP produced;
+  ASSERT_TRUE(produced.parse(answered.sdp));
+
+  SDP given;
+  ASSERT_TRUE(given.parse(kAnswer));
+
+  // Bob's first description, so it is still Bob's version rather than one carried over
+  // from Alice's leg.
+  EXPECT_EQ(produced.origin().sessionVersion, given.origin().sessionVersion);
+
+  engine->close();
+}
+
 TEST(BuiltinMediaEngineTest, QueryReportsHowLongTheMediaHasBeenSilent) {
   auto engine = make_engine(24000, 24040);
   auto call = make_call();
