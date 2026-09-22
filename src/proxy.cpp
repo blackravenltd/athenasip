@@ -367,16 +367,15 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
           return _send_status(context->server, request, 480, "Temporarily Unavailable");
         }
 
-        // One node, one flow per account: the request goes back down the connection
-        // the callee registered on. Per-binding flow routing is RFC 5626, and
-        // Location::flow_id exists for it.
-        auto flow = core->account_get_channel(account);
-
+        // RFC 5626: each binding goes back down the flow it was registered over, not down
+        // whichever flow the account most recently used. A user registered from a desk
+        // phone and a browser has two bindings and two flows, and sending both attempts
+        // down one of them reaches one of the two devices twice and the other never.
         for (const auto& binding : bindings.value) {
           Target target;
           target.uri = binding.contact;
           target.next_hop = binding.contact;
-          target.flow = flow ? flow : _flow_to(*binding.contact);
+          target.flow = _flow_for(binding);
 
           context->targets.push_back(target);
         }
@@ -442,7 +441,7 @@ void Proxy::_forward_to(const std::shared_ptr<Context>& context, const Target& t
   // Step 6: the media engine has its say on the body before the copy goes anywhere, and
   // it is a round trip, so the send is the other side of it.
   auto self = shared_from_this();
-  _anchor_media(context->request, copy, [this, self, context, copy, channel]() { _send_forward(context, copy, channel); });
+  _anchor_media(context->request, copy, channel, [this, self, context, copy, channel]() { _send_forward(context, copy, channel); });
 }
 
 void Proxy::_send_forward(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& copy, const std::shared_ptr<Channel>& channel) {
@@ -623,10 +622,13 @@ void Proxy::_forward_response(const std::shared_ptr<Context>& context, const std
   auto self = shared_from_this();
   auto server = context->server;
 
-  _anchor_media(context->request, response, [self, server, response]() { server->send(response); });
+  // A response goes back down the flow the request came in on, so that flow is the one
+  // whose transport says what the far leg of this direction is.
+  _anchor_media(context->request, response, context->request->channel.lock(), [self, server, response]() { server->send(response); });
 }
 
-void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<SIPMessage>& message, std::function<void()> then) {
+void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<SIPMessage>& message, const std::shared_ptr<Channel>& outgoing,
+                          std::function<void()> then) {
   auto core = _core.lock();
   if (!core || !core->media || !has_sdp(message)) return then();
 
@@ -652,6 +654,12 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
 
   auto flags = media::Flags::from_sdp(message->body);
   flags.participant = *participant;
+
+  // What the far leg needs, which the description in hand cannot say. The engine knows
+  // neither where this message is going nor over what, and the transport of that flow
+  // is the only thing that distinguishes a browser from a desk phone before the
+  // browser has described itself.
+  if (outgoing && outgoing->_connection) flags.target = media::Flags::profile_for_transport(outgoing->_connection->transport_name());
 
   auto self = shared_from_this();
 
@@ -1120,6 +1128,24 @@ bool Proxy::_names_this_node(const SIPUri& uri) const {
 
   const auto hop = _next_hop_of(uri);
   return core->is_local_address(hop.host, hop.port);
+}
+
+std::shared_ptr<Channel> Proxy::_flow_for(const types::Location& binding) const {
+  auto core = _core.lock();
+  if (!core || !binding.contact) return nullptr;
+
+  // The flow the registration was made over, when it is still open. This is the whole of
+  // RFC 5626's routing: a browser's Contact URI has nothing listening behind it and a
+  // NAT'd client's names the wrong side of the NAT, so the connection they registered on
+  // is the only way back to either.
+  if (auto flow = core->channel_find(binding.flow_id)) return flow;
+
+  // No flow recorded, or one that has since closed. The Contact is all there is, which is
+  // right for a desk phone with a routable address and hopeless for a browser - and a
+  // binding whose flow has gone is a binding whose client has gone, so the attempt fails
+  // and the fork moves on to the next one. Answering 430 Flow Failed instead is RFC 5626
+  // section 11 and wants the registrar to act on it.
+  return _flow_to(*binding.contact);
 }
 
 std::shared_ptr<Channel> Proxy::_flow_to(const SIPUri& uri) const {

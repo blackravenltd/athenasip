@@ -6,6 +6,8 @@
 //
 #pragma once
 
+#include <cstdint>
+
 #include "server.h"
 #include "tls_connection.h"
 
@@ -19,6 +21,10 @@ class TLSServer : public Server {
 
   void start() override;
   void stop() override;
+
+  // The port actually being listened on. Not the configured one when that was zero and
+  // the operating system chose, which is what a test binds and what a node logs.
+  std::uint16_t port() const { return _acceptor.local_endpoint().port(); }
 
   bool set_certificates(std::string cert, std::string key);
 

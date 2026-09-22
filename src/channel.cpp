@@ -122,7 +122,7 @@ void Channel::send(std::shared_ptr<SIPMessage> message) {
 void Channel::_send_on_strand(std::shared_ptr<SIPMessage> message) {
   // close() resets _connection, and a transaction can still be holding this channel.
   if (!_connection) {
-    _logger->info("Dropping " + message->header->first_line() + " - channel is closed");
+    _logger->info("Dropping " + message->header->summary() + " - channel is closed");
     return;
   }
 
@@ -145,19 +145,14 @@ void Channel::_send_on_strand(std::shared_ptr<SIPMessage> message) {
   message->header->clear("Content-Length");
   message->header->add("Content-Length", std::make_shared<UIntHeader>(message->body.size()));
 
-  // Log Message
-  _logger->info("< " + message->header->first_line());
-
-  // cout Outgoing (DEBUG)
-  message->print();
+  _logger->info("< " + message->header->summary());
 
   _schedule_async_write(message->to_string());
 }
 
 // Called from the read handler, which already runs on the Core strand.
 void Channel::receive(std::shared_ptr<SIPMessage> message) {
-  _logger->info("> " + message->header->first_line());
-  message->print();
+  _logger->info("> " + message->header->summary());
 
   message->channel = shared_from_this();
 
@@ -294,63 +289,126 @@ void Channel::_on_read(boost::system::error_code ec, std::size_t length) {
       // Add to buffer
       _buffer.append(_read_buffer.data(), length);
 
-      // Process input
-      if (_incoming_message) {
-        // We're waiting for the rest of a body for an existing message
-        if (_append_body()) {
-          // Message body is complete, process it
-          receive(_incoming_message);
-          _incoming_message = nullptr;
-        } else {
-          // Wait for more body
-        }
-      } else {
-        // Skip whitespace
-        while (_buffer.size() >= 2 && _buffer.substr(0, 2) == "\r\n") _buffer.erase(0, 2);
-
-        // Null message?
-        if (_buffer.size() != 0) {
-          // Look for header of a new message
-          size_t pos;
-          while ((pos = _buffer.find("\r\n\r\n")) != std::string::npos) {
-            std::string sip_header = _buffer.substr(0, pos);
-            _buffer.erase(0, pos + 4);
-            // Create a new SIPMessage
-            _incoming_message = std::make_shared<SIPMessage>();
-            _incoming_message->channel = shared_from_this();
-            _incoming_message->source_port = _connection->remote_endpoint().port();
-
-            // Get the header
-            _incoming_message->header = std::make_shared<SIPHeader>(sip_header);
-
-            // Get the Content-Length
-            if (_incoming_message->header->contains("Content-Length")) {
-              _incoming_message->body_length = _incoming_message->header->headers_map["Content-Length"][0]->as<UIntHeader>()->value;
-            }
-
-            // Process messages with or without bodies.
-            if (_incoming_message->body_length == 0) {
-              // Message With No Body
-              receive(_incoming_message);
-              _incoming_message = nullptr;
-            } else {
-              // Message has a body.
-              if (_append_body()) {
-                // Message body is complete, process it
-                receive(_incoming_message);
-                _incoming_message = nullptr;
-              } else {
-                // Wait for more body
-              }
-            }
-          }
-        }
+      // Nothing below may throw out of here. This is the read handler, so an exception
+      // from a message off the network unwinds through io_context::run() and takes the
+      // process with it: one malformed datagram from anybody would be the whole node.
+      try {
+        _frame();
+      } catch (const std::exception& e) {
+        _logger->error(std::string("Dropping a message that could not be handled - ") + e.what());
+        _buffer.clear();
+        _incoming_message = nullptr;
       }
 
       // Schedule Next Read
       if (_connection) _schedule_async_read();
     }
   }
+}
+
+// RFC 3261 18.3. A stream has no message boundaries, so Content-Length is what says
+// where a body ends and a message may arrive in as many reads as the network likes. A
+// datagram is one message on its own and nothing carries over between them, which is a
+// different rule and not a special case of the same one.
+void Channel::_frame() {
+  if (_connection && !_connection->is_reliable()) return _frame_datagram();
+
+  _frame_stream();
+}
+
+void Channel::_frame_stream() {
+  // Still short of a body promised by a header already read.
+  if (_incoming_message) {
+    if (!_append_body()) return;
+
+    receive(_incoming_message);
+    _incoming_message = nullptr;
+    return;
+  }
+
+  // A CRLF between messages is a keep-alive, not a message (RFC 5626 section 4.4.1).
+  while (_buffer.size() >= 2 && _buffer.compare(0, 2, "\r\n") == 0) _buffer.erase(0, 2);
+
+  // As many whole messages as the buffer holds. A stream may deliver several in one
+  // read and half of one in the next, and both have to come out right.
+  std::size_t split;
+
+  while ((split = _buffer.find("\r\n\r\n")) != std::string::npos) {
+    auto message = std::make_shared<SIPMessage>();
+    message->channel = shared_from_this();
+    message->source_port = _connection->remote_endpoint().port();
+    message->header = std::make_shared<SIPHeader>(_buffer.substr(0, split));
+
+    _buffer.erase(0, split + 4);
+
+    // RFC 3261 18.3: on a stream transport Content-Length is the only thing that says
+    // where the body ends. Absent, it is zero, which is what a request with no body
+    // carries.
+    if (message->header->contains("Content-Length")) {
+      auto length = message->header->headers_map["Content-Length"][0]->as<UIntHeader>();
+      if (length != nullptr) message->body_length = length->value;
+    }
+
+    _incoming_message = message;
+
+    if (!_append_body()) return;
+
+    receive(_incoming_message);
+    _incoming_message = nullptr;
+
+    while (_buffer.size() >= 2 && _buffer.compare(0, 2, "\r\n") == 0) _buffer.erase(0, 2);
+  }
+}
+
+// One datagram is one message, whole or not at all. A datagram that is not a whole
+// message is discarded and the next one starts clean: leaving a half-message behind
+// would let one sender's truncated request swallow the next request to arrive on a flow
+// they share, and on UDP every peer at one address and port shares a flow.
+void Channel::_frame_datagram() {
+  std::string datagram;
+  datagram.swap(_buffer);
+  _incoming_message = nullptr;
+
+  // A datagram of CRLFs is a keep-alive, not a message (RFC 5626 section 4.4.1).
+  std::size_t at = 0;
+  while (datagram.size() - at >= 2 && datagram.compare(at, 2, "\r\n") == 0) at += 2;
+  if (at >= datagram.size()) return;
+
+  const auto split = datagram.find("\r\n\r\n", at);
+
+  if (split == std::string::npos) {
+    _logger->warn("Datagram with no blank line after its headers, discarded");
+    return;
+  }
+
+  auto message = std::make_shared<SIPMessage>();
+  message->channel = shared_from_this();
+  message->source_port = _connection->remote_endpoint().port();
+  message->header = std::make_shared<SIPHeader>(datagram.substr(at, split - at));
+
+  std::size_t declared = 0;
+
+  if (message->header->contains("Content-Length")) {
+    auto length = message->header->headers_map["Content-Length"][0]->as<UIntHeader>();
+    if (length != nullptr) declared = length->value;
+  }
+
+  const auto carried = datagram.size() - (split + 4);
+
+  // "If the message has a Content-Length header field value that is greater than the
+  // size of the body, the message MUST be discarded." There is no later packet that
+  // completes a datagram, so waiting for one is waiting for something that cannot come.
+  if (declared > carried) {
+    _logger->warn("Datagram claims " + std::to_string(declared) + " bytes of body and carries " + std::to_string(carried) + ", discarded");
+    return;
+  }
+
+  // "If it is less than the size of the body, the body is truncated to that length."
+  // The bytes after it are not a second message: a datagram carries one.
+  message->body = datagram.substr(split + 4, declared);
+  message->body_length = static_cast<unsigned int>(declared);
+
+  receive(message);
 }
 
 bool Channel::_append_body() {

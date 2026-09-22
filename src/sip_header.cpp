@@ -297,6 +297,13 @@ std::string SIPHeader::to_string() const {
   return out;
 }
 
+std::string SIPHeader::summary() const {
+  if (type == Type::Response) return sip_version + " " + std::to_string(response_code) + " " + response_message;
+  if (request_uri) return request_method + " " + request_uri->to_string() + " " + sip_version;
+
+  return "(unparseable request line)";
+}
+
 std::string SIPHeader::first_line() const {
   switch (type) {
     case Type::Request:

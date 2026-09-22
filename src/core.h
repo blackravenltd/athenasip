@@ -51,9 +51,8 @@ namespace athenasip {
 class Proxy;
 class Registrar;
 
-// Core runs on a single strand. Every registry it owns - channels, transactions, calls
-// and the account-to-channel index - is touched only from that strand, so none of
-// them needs a lock. Servers each run their own io_context on their own thread and post
+// Core runs on a single strand. Every registry it owns - channels, transactions, dialogs
+// and calls - is touched only from that strand, so none of them needs a lock. Servers each run their own io_context on their own thread and post
 // into the strand rather than reaching into Core directly.
 //
 // Methods below are marked "on the strand" where they touch that state. Call them from
@@ -124,12 +123,14 @@ class Core : public std::enable_shared_from_this<Core> {
   bool channel_register(std::string endpoint, std::shared_ptr<Channel> channel);
   bool channel_unregister(std::string endpoint, std::shared_ptr<Channel> channel);
   void channel_close_all();
-  std::shared_ptr<Channel> account_get_channel(std::shared_ptr<Account> account);
 
   // The live flow to a next hop, or null when this node has none (RFC 3261 16.6 step 7).
   // Channels are filed under channel_key, which is what a next hop resolves to once its
   // URI has given up its transport, host and port.
   std::shared_ptr<Channel> channel_find(const std::string& transport, const std::string& host, std::uint16_t port);
+
+  // The same lookup by the name itself, which is what a binding recorded (RFC 5626).
+  std::shared_ptr<Channel> channel_find(const std::string& flow_id);
 
   // The flow to a next hop, opening one when this node has none.
   //
@@ -239,7 +240,6 @@ class Core : public std::enable_shared_from_this<Core> {
 
   // All of the following are strand-confined. No locks.
   std::unordered_map<std::string, std::shared_ptr<Channel>> _channels;
-  std::unordered_map<uint64_t, std::shared_ptr<Channel>> _channels_by_account;
   std::set<std::string> _local_addresses;
 
   std::vector<std::shared_ptr<Server>> _servers;

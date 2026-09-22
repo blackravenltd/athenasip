@@ -41,8 +41,18 @@ class StaticMiddleware {
   static HttpMiddleware add(const std::string& base_path, const StaticOptions& opts = StaticOptions()) {
     return
         [base_path, opts](const http::request<http::string_body>& req, std::shared_ptr<http::response<http::string_body>> res, std::function<void(bool)> next) {
-          // Convert the request target to a string.
+          // The target is a URI reference, not a path. A query and a fragment are
+          // separate components of it (RFC 3986 sections 3.4 and 3.5) and neither is
+          // part of the file being asked for, so "bundle.js?v=2" is a request for
+          // bundle.js. Every built web application cache-busts this way, and the admin
+          // client is one.
           std::string target = std::string(req.target());
+          if (const auto separator = target.find_first_of("?#"); separator != std::string::npos) target.erase(separator);
+
+          // Percent-encoding is deliberately not decoded. Nothing under a document root
+          // needs it, and a decoder here would have to be followed by the traversal
+          // check below rather than preceded by it, which is the order that has caught
+          // out every server that got this wrong.
 
           // 1. If the request target does not begin with opts.prefix, skip processing.
           if (target.find(opts.prefix) != 0) {
@@ -90,11 +100,19 @@ class StaticMiddleware {
             full_path = base_path + "/" + relative_path;
           }
 
-          // 4. Ensure the file is within the public base directory.
+          // 4. Ensure the file really is within the document root. Resolving it first
+          // is what catches a symlink, whose path says nothing about where it goes.
+          //
+          // Compared as paths and not as strings: "/srv/public-secrets/x" begins with
+          // "/srv/public" and is not inside it, so a prefix comparison hands out a
+          // sibling directory to anybody who can get a link into the root.
           try {
-            fs::path canonical_base = fs::canonical(base_path);
-            fs::path canonical_file = fs::canonical(full_path);
-            if (canonical_file.string().find(canonical_base.string()) != 0) {
+            const fs::path canonical_base = fs::canonical(base_path);
+            const fs::path canonical_file = fs::canonical(full_path);
+
+            const auto within = canonical_file.lexically_relative(canonical_base);
+
+            if (within.empty() || within.begin()->string() == "..") {
               next(true);
               return;
             }

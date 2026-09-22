@@ -49,6 +49,23 @@ struct Flags {
   // Call::participants. A multi-party call has more than two.
   std::size_t participant = 0;
 
+  // What the description this node is about to produce has to be, as opposed to what
+  // the one it was handed is. The two are the same question only when both ends of the
+  // call are alike; a browser calling a desk phone is exactly the case an engine
+  // exists for, and nothing in the offer says what is on the other side.
+  //
+  // Mirror leaves it to the engine, which is right for a call whose ends match and
+  // wrong for one that does not. The others say plainly which.
+  enum class Profile { Mirror, PlainRtp, WebRtc };
+
+  Profile target = Profile::Mirror;
+
+  // From the transport of the flow the message is going out on, which before the far
+  // leg has described itself is the only thing that says what it is. A browser cannot
+  // reach a node any other way than over a WebSocket (RFC 7118), and nothing else is
+  // assumed to want ICE and DTLS.
+  static Profile profile_for_transport(const std::string& transport);
+
   // Read from the description itself. The transport says nothing: a browser asks for
   // ICE and DTLS whether its offer arrived over WSS or over UDP, and a desk phone on
   // WSS is still plain RTP. It is also the only way a node can tell what an offer needs
@@ -119,6 +136,20 @@ class MediaEngine : public plugins::Plugin {
 
   // What the engine currently holds for this call, for the admin API and diagnostics.
   virtual void query(plugins::Executor on, std::shared_ptr<Call> call, plugins::Handler<std::string> handler) = 0;
+
+  // Recording. Only meaningful when capabilities().record is set; the defaults decline,
+  // so a driver that cannot record does not have to say so twice. Where the recording
+  // goes is the engine's business and its own configuration: this node asks for a call
+  // to be recorded and does not handle the media, which is the whole point of an engine.
+  virtual void start_recording(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) {
+    (void)call;
+    _complete(std::move(on), std::move(handler), plugins::Status::failure("this engine does not record"));
+  }
+
+  virtual void stop_recording(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) {
+    (void)call;
+    _complete(std::move(on), std::move(handler), plugins::Status::failure("this engine does not record"));
+  }
 
   // Conference operations. Only meaningful when capabilities().conference is set; the
   // defaults below decline, so a bridge-only driver does not have to implement them.
