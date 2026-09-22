@@ -122,8 +122,6 @@ void Core::account_register(std::shared_ptr<Account> account, std::shared_ptr<SI
           return;
         }
 
-        if (channel) _channels_by_account[account->id] = channel;
-
         events->publish(
             events::topics::account_status(account->identity->uri->to_string()),
             "{\"contact\":\"" + contact->to_string() + "\",\"node\":\"" + config->sip_node_id + "\",\"registered\":\"" + Util::get_zulu_time() + "\"}");
@@ -136,21 +134,12 @@ void Core::account_unregister(std::shared_ptr<Account> account, std::shared_ptr<
                               plugins::StatusHandler handler) {
   (void)channel;
 
-  _channels_by_account.erase(account->id);
-
   auto self = shared_from_this();
 
   datastore->account_unregister(_strand, account, contact, [this, self, account, handler](plugins::Status status) mutable {
     if (!status.ok) _logger->error("Cannot unregister account identity " + account->identity->to_string() + " - " + status.error);
     if (handler) handler(status);
   });
-}
-
-std::shared_ptr<Channel> Core::account_get_channel(std::shared_ptr<Account> account) {
-  // operator[] would insert an empty entry for an unknown account.
-  auto search = _channels_by_account.find(account->id);
-  if (search == _channels_by_account.end()) return nullptr;
-  return search->second;
 }
 
 // Channels
@@ -205,7 +194,13 @@ bool Core::channel_unregister(std::string endpoint, std::shared_ptr<Channel> cha
 }
 
 std::shared_ptr<Channel> Core::channel_find(const std::string& transport, const std::string& host, std::uint16_t port) {
-  auto search = _channels.find(channel_key(transport, host, port));
+  return channel_find(channel_key(transport, host, port));
+}
+
+std::shared_ptr<Channel> Core::channel_find(const std::string& flow_id) {
+  if (flow_id.empty()) return nullptr;
+
+  auto search = _channels.find(flow_id);
   if (search == _channels.end()) return nullptr;
   return search->second;
 }

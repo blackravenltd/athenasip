@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "../sdp.h"
+#include "../util.h"
 
 namespace athenasip::media {
 
@@ -56,6 +57,15 @@ Flags Flags::from_sdp(const std::string& sdp_text) {
   }
 
   return flags;
+}
+
+Flags::Profile Flags::profile_for_transport(const std::string& transport) {
+  const auto name = Util::to_lower(transport);
+
+  if (name.empty()) return Flags::Profile::Mirror;
+  if (name == "ws" || name == "wss") return Flags::Profile::WebRtc;
+
+  return Flags::Profile::PlainRtp;
 }
 
 }  // namespace athenasip::media

@@ -29,9 +29,11 @@ contract.
 ## What it is not, yet
 
 Clustering is designed and not built: one node works, and the second node is Milestone 4
-in [`TODO/ACTIVE.md`](TODO/ACTIVE.md). WebRTC needs rtpengine, which is Milestone 3.
-Conferencing and presence are further out. The plan is in the repository rather than in
-a roadmap page, so it says what is true.
+in [`TODO/ACTIVE.md`](TODO/ACTIVE.md). WebRTC has its engine - `rtpengine://` is in tree
+and the node tells it which leg is the browser - and has not yet been proven against a
+real browser, which is the rest of Milestone 3. Conferencing and presence are further
+out. The plan is in the repository rather than in a roadmap page, so it says what is
+true.
 
 Plaintext UDP and TCP are enabled by default today for evaluation. TLS everywhere is the
 intent and `sip.allow_unencrypted` is the switch, but calling it TLS-only would be a

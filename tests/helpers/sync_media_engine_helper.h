@@ -52,6 +52,42 @@ class SyncMediaEngine {
     return _media([&](athenasip::media::MediaEngine::MediaHandler handler) { _engine->answer(_executor(), call, sdp, flags, std::move(handler)); });
   }
 
+  athenasip::plugins::Status release_status(std::shared_ptr<athenasip::Call> call) {
+    std::promise<athenasip::plugins::Status> promise;
+    auto future = promise.get_future();
+
+    _engine->release(_executor(), std::move(call), [&promise](athenasip::plugins::Status status) { promise.set_value(std::move(status)); });
+
+    return future.get();
+  }
+
+  athenasip::plugins::Result<std::string> query_result(std::shared_ptr<athenasip::Call> call) {
+    std::promise<athenasip::plugins::Result<std::string>> promise;
+    auto future = promise.get_future();
+
+    _engine->query(_executor(), std::move(call), [&promise](athenasip::plugins::Result<std::string> result) { promise.set_value(std::move(result)); });
+
+    return future.get();
+  }
+
+  athenasip::plugins::Status start_recording(std::shared_ptr<athenasip::Call> call) {
+    std::promise<athenasip::plugins::Status> promise;
+    auto future = promise.get_future();
+
+    _engine->start_recording(_executor(), std::move(call), [&promise](athenasip::plugins::Status status) { promise.set_value(std::move(status)); });
+
+    return future.get();
+  }
+
+  athenasip::plugins::Status stop_recording(std::shared_ptr<athenasip::Call> call) {
+    std::promise<athenasip::plugins::Status> promise;
+    auto future = promise.get_future();
+
+    _engine->stop_recording(_executor(), std::move(call), [&promise](athenasip::plugins::Status status) { promise.set_value(std::move(status)); });
+
+    return future.get();
+  }
+
   bool release(std::shared_ptr<athenasip::Call> call) {
     std::promise<athenasip::plugins::Status> promise;
     auto future = promise.get_future();

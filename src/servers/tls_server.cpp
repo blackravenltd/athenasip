@@ -28,7 +28,7 @@ void TLSServer::start() {
 
   // Do the first start_accept on that thread
   boost::asio::post(_io_context, [this]() {
-    _logger->info("Listening on " + _acceptor.local_endpoint().address().to_string() + ":" + std::to_string(_port) + " (tls://)");
+    _logger->info("Listening on " + _acceptor.local_endpoint().address().to_string() + ":" + std::to_string(_acceptor.local_endpoint().port()) + " (tls://)");
     start_accept();
   });
 

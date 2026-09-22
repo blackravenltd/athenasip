@@ -19,7 +19,7 @@ and from the interface for its kind:
 |---|---|---|
 | `datastore` | `athenasip::datastores::Datastore` | `memory://`, `redis://` |
 | `events` | `athenasip::events::EventSystem` | `local://`, `mqtt://` |
-| `media` | `athenasip::media::MediaEngine` | `builtin://` |
+| `media` | `athenasip::media::MediaEngine` | `builtin://`, `rtpengine://` |
 
 A kind is a string, not an enum, so a plugin can introduce a kind the core was not built
 knowing about.

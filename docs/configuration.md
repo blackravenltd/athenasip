@@ -320,3 +320,58 @@ the right choice for a single node you are trying out, and for the tests.
 
 `redis://` is the canonical backend: registrations survive a restart and are shared
 across a cluster. `rediss://` and `redis+ssl://` are the same driver over TLS.
+
+### `media` Section
+
+Where the RTP goes. One of the three plugin kinds: the URL's scheme picks the driver,
+and a section named after that driver carries anything the URL cannot express.
+
+#### `url`
+
+The URL of the media engine. AthenaSIP ships with two:
+
+| Engine                                              | Scheme      | Example URL                  |
+|:----------------------------------------------------|:------------|:-----------------------------|
+| Built-in relay                                       | `builtin`   | `builtin://`                 |
+|[rtpengine](https://github.com/sipwise/rtpengine)     | `rtpengine` | `rtpengine://127.0.0.1:2223` |
+
+`builtin://` relays plain RTP from the server process and needs nothing installed. It
+advertises the `bridge` capability and nothing else, and it declines an offer that asks
+for ICE, DTLS or SRTP rather than answering one it cannot carry. That decline is not a
+failed call: the description travels on untouched and the media goes end to end.
+
+`rtpengine://host:port` is the canonical engine and the one that does WebRTC, because
+ICE, DTLS and SRTP are what a browser requires. It also records and transcodes. The port
+is rtpengine's ng control port, `2223` unless its own configuration says otherwise.
+
+#### `builtin`
+
+| Setting | Default | What it is |
+| --- | --- | --- |
+| `bind_address` | `0.0.0.0` | Where the relay binds |
+| `public_address` | `0.0.0.0` | The address written into the descriptions it hands out |
+| `port_min` | `22000` | The bottom of the RTP port range |
+| `port_max` | `23000` | The top of it |
+
+`public_address` has to be somewhere the endpoints can actually send: `0.0.0.0` in a
+`c=` line is a black hole. On a NAT'd host it is the public address, and the port range
+has to be forwarded to the host as a contiguous block.
+
+#### `rtpengine`
+
+| Setting | Default | What it is |
+| --- | --- | --- |
+| `timeout_ms` | `500` | How long to wait for one answer before asking again |
+| `attempts` | `3` | How many times to ask in all |
+| `media_address` | unset | The address rtpengine should advertise, when it should not choose |
+
+The ng protocol runs over UDP, so a request can be lost. rtpengine caches its answer
+against the request's cookie, which makes asking again a request for the same answer
+rather than for the work a second time, and this driver asks again rather than failing a
+call for one lost datagram. `timeout_ms` bounds one attempt and not the operation:
+three attempts at half a second is well inside the thirty-two seconds RFC 3261's timer B
+gives a transaction, which a fork with several bindings has to share.
+
+`media_address` is only needed where rtpengine cannot work out for itself which of its
+addresses to put in the SDP it hands back. Leave it unset and let rtpengine's own
+interface configuration decide.

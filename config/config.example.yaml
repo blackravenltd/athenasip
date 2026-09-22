@@ -190,12 +190,29 @@ events:
   url: "local://"
 
   mqtt:
-    client_id: sip-0001
+    # Unique on the broker, because MQTT makes a repeated client identifier mean "the
+    # other one is stale, disconnect it" and two nodes sharing one would trade the
+    # connection back and forth for as long as both ran. Left unset it is this node's
+    # id, which is unique across the cluster by definition, so most deployments should
+    # leave it out.
+    # client_id: athenasip-sip-0001
+
     keep_alive: 30
+
+    # How long to wait for the broker to answer at startup, in milliseconds. The client
+    # queues and reconnects on its own, so without a bound a node with the wrong broker
+    # address would wait at startup rather than say so.
+    connect_timeout_ms: 5000
+
+    # A topic level in front of everything this node publishes and subscribes to, so
+    # two clusters can share one broker. The separator is added if it is left off.
+    prefix: "athenasip/"
 
 media:
   # builtin:// relays plain RTP from this process and needs nothing else installed.
-  # rtpengine://host:port is the production engine, and the one that does WebRTC.
+  # rtpengine://host:port is the production engine, and the one that does WebRTC: ICE,
+  # DTLS and SRTP are what a browser requires and what the builtin relay declines rather
+  # than answers badly. The port is rtpengine's ng control port.
   url: "builtin://"
 
   builtin:
@@ -207,6 +224,20 @@ media:
     public_address: 127.0.0.1
     port_min: 22000
     port_max: 23000
+
+  rtpengine:
+    # The ng protocol runs over UDP, so a request can be lost. rtpengine caches its
+    # answer against the request's cookie, which makes asking again a request for the
+    # same answer rather than for the work twice - so this driver asks again rather than
+    # failing a call for one lost datagram. The timeout bounds one attempt, not the
+    # operation: three at half a second is well inside the thirty-two seconds timer B
+    # gives a transaction that a fork has to share.
+    timeout_ms: 500
+    attempts: 3
+
+    # The address rtpengine should advertise in the descriptions it hands back. Leave it
+    # out and rtpengine's own interface configuration decides, which is usually right.
+    # media_address: 203.0.113.9
 
 http:
   address: 0.0.0.0

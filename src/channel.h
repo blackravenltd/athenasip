@@ -90,6 +90,12 @@ class Channel : public std::enable_shared_from_this<Channel> {
   void _write_next();
   void _on_write(boost::system::error_code ec, std::size_t length);
 
+  // RFC 3261 18.3, which is two rules and not one: a stream is framed by Content-Length
+  // across as many reads as it takes, and a datagram is one whole message or nothing.
+  void _frame();
+  void _frame_stream();
+  void _frame_datagram();
+
   bool _append_body();
 
   // Strand-confined bodies behind the public hand-offs.

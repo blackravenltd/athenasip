@@ -11,11 +11,15 @@
 #include "../loggers/logger.h"
 #include "builtin_media_engine.h"
 #include "media_engine.h"
+#include "rtpengine_media_engine.h"
 
 namespace athenasip::media {
 
 // Two implementations, as with the datastores and event systems: one built in for a
-// zero-config single node, one canonical for production. rtpengine:// arrives in M3.
-void register_builtin_media_engines(std::shared_ptr<loggers::Logger> logger) { MediaEngine::register_driver<BuiltinMediaEngine>(logger, "builtin"); }
+// zero-config single node, one canonical for production.
+inline void register_builtin_media_engines(std::shared_ptr<loggers::Logger> logger) {
+  MediaEngine::register_driver<BuiltinMediaEngine>(logger, "builtin");
+  MediaEngine::register_driver<RtpengineMediaEngine>(logger, "rtpengine");
+}
 
 }  // namespace athenasip::media
