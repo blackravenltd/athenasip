@@ -1,13 +1,39 @@
 # AthenaSIP - Completed Work
 
-What has landed, oldest first. Each section says what shipped and, where it matters, why
-it took the shape it did; `ACTIVE.md` is the plan and this is the record.
+What has landed. The releases are indexed below; everything after them is the detail,
+oldest first. Each section says what shipped and, where it matters, why it took the
+shape it did. `ACTIVE.md` is the plan and this is the record.
 
 The sections down to "Refactors landed" are the state of the tree as it was found on
 2026-09-17, reconstructed from 135 commits between 2025-02-06 and 2026-07-12. They use
 the names of that time: `Subscriber` became `Account` on 2026-09-21, and the MySQL,
 PostgreSQL, SQLite, Lua and tinyxml2 pieces they list were deleted or parked the same
 week, under Milestone 1. Everything after that is dated as it landed.
+
+## Releases
+
+Newest first. The detail is below, oldest first.
+
+- **0.7.0** (2026-09-22): the mixed-transport call. A realm says what its calls ask of
+  the media engine, the node record-routes both interfaces and carries a flow token in
+  each so an in-dialog request can reach a browser, the SRTP profile arrives for a
+  phone that wants encryption without DTLS, and RFC 3264's version rule and RFC 3261's
+  stateless CANCEL forwarding close two recorded deviations.
+- **0.6.0** (2026-09-22): RFC 5626 flow routing, the rtpengine media engine, and the
+  media profile that tells it which leg is the browser. The behaviour tests written
+  alongside found eleven bugs in code nothing had ever tested, among them a datagram
+  that could crash the node, a queue that could segfault it, an event bus that could
+  not carry two nodes, and a file server that could be walked out of.
+- **0.5.0** (2026-09-21): a node that knows when a call is over, the sipp harness
+  passing, the admin API, SHA-256 Digest, `Account`, and the documentation audit.
+- **0.4.0** (2026-09-21): section 16 complete in the proxy, dialogs and RFC 4028, media
+  on the signalling path, WSS, outbound flows, plugin contract v2.
+- **0.3.0** (2026-09-18): the four section 17 state machines, the matcher, `Registrar`
+  and `Proxy` as the transaction users, SDP against RFC 8866, injectable timers.
+- **0.2.0** (2026-09-18): Milestone 1 complete. The strand, the sanitizers, the media
+  engine interface and the datastore write operations.
+
+Work since the last tag is at the end, under Milestone 3.
 
 ## Foundations
 
@@ -1084,26 +1110,6 @@ a proxy and no more; `config.example.yaml` has the table of which reaches which 
       Parsing into an object now clears what went before, and the default-port lookup is
       case-insensitive the way RFC 3986 3.1 says a scheme is.
 
-## Releases
-
-- 0.2.0 (2026-09-18): Milestone 1 complete. The strand, the sanitizers, the media
-  engine interface and the datastore write operations.
-- 0.3.0 (2026-09-18): the four section 17 state machines, the matcher, `Registrar` and
-  `Proxy` as the transaction users, SDP against RFC 8866, injectable timers.
-- 0.4.0 (2026-09-21): section 16 complete in the proxy, dialogs and RFC 4028, media on
-  the signalling path, WSS, outbound flows, plugin contract v2.
-- 0.5.0 (2026-09-21): a node that knows when a call is over, the sipp harness passing,
-  the admin API, SHA-256 Digest, `Account`, and the documentation audit.
-- 0.7.0 (2026-09-22): the mixed-transport call - a realm's media policy, the SRTP
-  profile, Record-Route on both interfaces with a flow token in each, RFC 3264's
-  version rule, and a CANCEL this node has no context for forwarded rather than
-  swallowed.
-- 0.6.0 (2026-09-22): RFC 5626 flow routing, the rtpengine media engine and the profile
-  that tells it which leg is the browser, and the behaviour tests that found eleven
-  bugs in code nothing had ever tested - among them a datagram that could crash the
-  node, a queue that could segfault it, an event bus that could not carry two nodes,
-  and a file server that could be walked out of.
-
 ## Milestone 2 - complete (0.5.0, 2026-09-21)
 
 A standards-compliant call on one node: INVITE / 18x / 200 / ACK / BYE / CANCEL between
@@ -1113,6 +1119,9 @@ asan and tsan, the Redis suite verified against a real server. The items each st
 for later are in `ACTIVE.md` under the milestone that picks them up.
 
 ## Milestone 3 - WebRTC and rtpengine, in progress
+
+Everything down to "The mixed-transport call" shipped in 0.6.0 and 0.7.0. What follows
+it is on `develop` and not yet tagged.
 
 ### Each branch goes down its own binding's flow (2026-09-21)
 
