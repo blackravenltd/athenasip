@@ -329,6 +329,11 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
       return _forward_next(context);
     }
 
+    // The one place a realm is already in hand. Reading it again for every message
+    // with a body would be a datastore round trip on the media path, and an in-dialog
+    // re-INVITE never looks a realm up at all.
+    context->media_policy = found.value->media;
+
     // Ours. The Request-URI names an address of record and the bindings the registrar
     // holds for it are the target set.
     auto identity = std::make_shared<SIPIdentity>(request->header->request_uri->to_string());
@@ -441,7 +446,7 @@ void Proxy::_forward_to(const std::shared_ptr<Context>& context, const Target& t
   // Step 6: the media engine has its say on the body before the copy goes anywhere, and
   // it is a round trip, so the send is the other side of it.
   auto self = shared_from_this();
-  _anchor_media(context->request, copy, channel, [this, self, context, copy, channel]() { _send_forward(context, copy, channel); });
+  _anchor_media(context->request, copy, channel, context, [this, self, context, copy, channel]() { _send_forward(context, copy, channel); });
 }
 
 void Proxy::_send_forward(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& copy, const std::shared_ptr<Channel>& channel) {
@@ -624,11 +629,11 @@ void Proxy::_forward_response(const std::shared_ptr<Context>& context, const std
 
   // A response goes back down the flow the request came in on, so that flow is the one
   // whose transport says what the far leg of this direction is.
-  _anchor_media(context->request, response, context->request->channel.lock(), [self, server, response]() { server->send(response); });
+  _anchor_media(context->request, response, context->request->channel.lock(), context, [self, server, response]() { server->send(response); });
 }
 
 void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<SIPMessage>& message, const std::shared_ptr<Channel>& outgoing,
-                          std::function<void()> then) {
+                          const std::shared_ptr<Context>& context, std::function<void()> then) {
   auto core = _core.lock();
   if (!core || !core->media || !has_sdp(message)) return then();
 
@@ -638,6 +643,18 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
   // No call record and no dialog means nothing to anchor against - which end sent this
   // description is the one question the engine has to be told the answer to.
   if (!call || !dialog) return then();
+
+  // The policy is the realm's, decided once where the realm was in hand and kept on
+  // the call, because a re-INVITE arrives in-dialog with no realm to ask.
+  if (context && context->media_policy) call->media_policy = *context->media_policy;
+
+  const auto& policy = call->media_policy;
+
+  // A realm that does not want its media anchored gets what a node with no engine
+  // gives it: the description travels exactly as it arrived and the media goes end to
+  // end. That is the proxy behaviour RFC 3261 16.6 describes, chosen rather than
+  // fallen into.
+  if (!policy.anchor) return then();
 
   const bool is_response = message->header->type == SIPHeader::Type::Response;
   const bool request_from_caller = dialog->is_from_caller(tag_of(request, "From"));
@@ -659,7 +676,7 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
   // neither where this message is going nor over what, and the transport of that flow
   // is the only thing that distinguishes a browser from a desk phone before the
   // browser has described itself.
-  if (outgoing && outgoing->_connection) flags.target = media::Flags::profile_for_transport(outgoing->_connection->transport_name());
+  flags.target = _profile_under(policy, outgoing && outgoing->_connection ? outgoing->_connection->transport_name() : std::string());
 
   auto self = shared_from_this();
 
@@ -1128,6 +1145,24 @@ bool Proxy::_names_this_node(const SIPUri& uri) const {
 
   const auto hop = _next_hop_of(uri);
   return core->is_local_address(hop.host, hop.port);
+}
+
+// What the realm says, and only where it says nothing specific does the transport
+// decide. A WebSocket means a browser almost everywhere, and "almost" is why a realm
+// can say otherwise: RFC 7118 is SIP over WebSocket and requires no WebRTC at all.
+media::Flags::Profile Proxy::_profile_under(const types::MediaPolicy& policy, const std::string& transport) {
+  switch (policy.profiles) {
+    case types::MediaPolicy::Profiles::Mirror:
+      return media::Flags::Profile::Mirror;
+    case types::MediaPolicy::Profiles::PlainRtp:
+      return media::Flags::Profile::PlainRtp;
+    case types::MediaPolicy::Profiles::WebRtc:
+      return media::Flags::Profile::WebRtc;
+    case types::MediaPolicy::Profiles::FromTransport:
+      break;
+  }
+
+  return media::Flags::profile_for_transport(transport);
 }
 
 std::shared_ptr<Channel> Proxy::_flow_for(const types::Location& binding) const {

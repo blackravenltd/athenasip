@@ -18,6 +18,7 @@
 #include "headers/header.h"
 #include "media_stream.h"
 #include "types/dialog.h"
+#include "types/realm.h"
 #include "types/sip_identity.h"
 #include "types/sip_uri.h"
 
@@ -84,6 +85,12 @@ class Call {
   // Set when the call is a conference and this node is routing to a focus (RFC 4579).
   // Empty for an ordinary two-party call.
   std::shared_ptr<SIPUri> focus;
+
+  // The realm's media policy, remembered when the call was set up. A re-INVITE travels
+  // in-dialog on its route set and never looks a realm up, so reading the policy again
+  // for each message would have hold and resume behave differently from the INVITE
+  // that started the call. It is decided once, where the realm is already in hand.
+  MediaPolicy media_policy;
 
   std::vector<Participant> participants;
 

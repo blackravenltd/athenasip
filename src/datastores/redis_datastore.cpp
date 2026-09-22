@@ -665,6 +665,8 @@ std::string RedisDatastore::_serialise_realm(const std::shared_ptr<types::Realm>
   obj["nonce_expiry"] = realm->nonce_expiry;
   obj["registration_timeout"] = realm->registration_timeout;
   obj["registration_minimum"] = realm->registration_minimum;
+  obj["media_anchor"] = realm->media.anchor;
+  obj["media_profiles"] = types::MediaPolicy::to_string(realm->media.profiles);
   return boost::json::serialize(obj);
 }
 
@@ -678,6 +680,12 @@ std::shared_ptr<types::Realm> RedisDatastore::_parse_realm(const std::string& va
   realm->nonce_expiry = json_uint32(obj, "nonce_expiry");
   realm->registration_timeout = json_uint32(obj, "registration_timeout");
   realm->registration_minimum = json_uint32(obj, "registration_minimum");
+
+  // A realm written before the policy existed has neither field, and the defaults are
+  // what that realm was already doing.
+  if (const auto* anchor = obj.if_contains("media_anchor"); anchor != nullptr && anchor->is_bool()) realm->media.anchor = anchor->as_bool();
+  realm->media.profiles = types::MediaPolicy::profiles_from_string(json_string(obj, "media_profiles"), realm->media.profiles);
+
   return realm;
 }
 
