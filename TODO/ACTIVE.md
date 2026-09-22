@@ -174,7 +174,10 @@ is left is a real browser at the other end of it, which is the verification item
 bottom, and the endpoint-side NAT work.
 
 - [ ] Record which rtpengine instance owns a call in the datastore so any node can
-      release it; support a pool of engines with health checks.
+      release it; support a pool of engines with health checks. The driver itself is
+      proven against rtpengine 9.4.0 now - `test/e2e/run.sh --rtpengine` runs every
+      scenario against one - so what is left here is the cluster's question rather than
+      the protocol's.
 - [ ] NAT handling for the client side: `rport` and `received` are already stamped on the
       way in (RFC 3581); what is missing is routing the response and the in-dialog
       request to where the request actually came from rather than where its Via and
@@ -190,8 +193,19 @@ bottom, and the endpoint-side NAT work.
       browser and a UDP phone, a delayed offer (INVITE with no body, offer in the 2xx,
       answer in the ACK, handled in the shape and untested), hold and resume, and a
       trunk.
+- [ ] A media assertion for the builtin relay to match the one rtpengine's counters
+      give. `test/e2e/run.sh --rtpengine` now fails when nothing was relayed; the
+      builtin run cannot tell, because the relay keeps no counters a harness can read
+      and a declined description looks exactly like a relayed one from outside. The
+      engine's `query` already reports idle time, so the admin API's live-calls page in
+      M5 is where this gets its answer.
 - [ ] Verify against AthenaPhone on UDP, TCP, TLS, WSS: register, audio call, video
       call, hold/resume, DTMF (RFC 4733 passthrough), blind transfer (REFER proxying).
+      `test/interop/` is the node to point it at, and `test/interop/smoke.py` says
+      whether the fixture is serving before anything else is blamed. Note that
+      AthenaPhone's media is WebRTC on every transport and this fixture offers plain
+      RTP, so signalling will be clean and media will not agree; that is the honest
+      result and the decision is AthenaPhone's.
 - [ ] Interop matrix documented: AthenaPhone, JsSIP in Chrome/Firefox/Safari, Linphone,
       a hardware desk phone, Asterisk as a trunk.
 
