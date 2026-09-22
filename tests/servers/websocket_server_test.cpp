@@ -4,6 +4,8 @@
 // Copyright (C) 2026 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
+#include "servers/websocket_server.h"
+
 #include <gtest/gtest.h>
 
 #include <boost/asio.hpp>
@@ -16,10 +18,8 @@
 #include <string>
 #include <vector>
 
-#include "servers/websocket_server.h"
-#include "sip_header.h"
-
 #include "../helpers/core_fixture_helper.h"
+#include "sip_header.h"
 
 using namespace athenasip;
 
@@ -170,6 +170,29 @@ TEST(WebsocketServerTest, ASecureListenerRefusesAPlainClient) {
 
 // The listener is not a web server. Anything that is not the SIP upgrade is answered and
 // closed, not upgraded.
+// RFC 7118 names no path, and every client picks its own: "/ws" is what Asterisk,
+// Kamailio and FreeSWITCH serve and what a client arrives configured with. This
+// listener has a port to itself and serves nothing but SIP, so there is nothing for a
+// path to distinguish, and refusing one refuses a client for a reason no RFC gives.
+TEST(WebsocketServerTest, AcceptsTheUpgradeOnWhateverPathTheClientAsks) {
+  WebsocketFixture fixture(false);
+
+  for (const auto* target : {"/", "/ws", "/sip", "/ws?token=x"}) {
+    net::io_context io;
+    websocket::stream<tcp::socket> ws(io);
+
+    net::connect(ws.next_layer(), std::vector<tcp::endpoint>{tcp::endpoint(net::ip::make_address("127.0.0.1"), fixture.port())});
+    ws.set_option(websocket::stream_base::decorator(offer_sip_subprotocol));
+
+    websocket::response_type response;
+    ASSERT_NO_THROW(ws.handshake(response, fixture.authority(), target)) << target;
+    EXPECT_EQ(response[http::field::sec_websocket_protocol], "sip") << target;
+
+    beast::error_code ec;
+    ws.close(websocket::close_code::normal, ec);
+  }
+}
+
 TEST(WebsocketServerTest, RefusesARequestThatIsNotAnUpgrade) {
   WebsocketFixture fixture(false);
 

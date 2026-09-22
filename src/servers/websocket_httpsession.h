@@ -64,8 +64,14 @@ class WebsocketHTTPSessionFor : public std::enable_shared_from_this<WebsocketHTT
 
     _logger->debug(std::string(http::to_string(_request.method())) + " " + std::string(_request.target()));
 
-    // Validate that the request is a GET for "/" and that it is a WebSocket upgrade.
-    if (_request.method() == http::verb::get && _request.target() == "/" && websocket::is_upgrade(_request)) {
+    // A GET that asks to be upgraded, whatever path it asks on.
+    //
+    // RFC 7118 names no path, and every SIP over WebSocket client picks its own: "/ws"
+    // is what Asterisk, Kamailio and FreeSWITCH serve and what a client is configured
+    // with out of habit. This listener has a port to itself and serves nothing but SIP,
+    // so there is nothing for a path to distinguish and refusing one is refusing a
+    // client for a reason the RFC does not give. It used to insist on "/".
+    if (_request.method() == http::verb::get && websocket::is_upgrade(_request)) {
       _do_upgrade();
       return;
     }
