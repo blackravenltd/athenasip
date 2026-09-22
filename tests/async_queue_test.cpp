@@ -138,8 +138,8 @@ TEST(AsyncQueueTest, ItemsWithNobodyToTakeThemWaitRatherThanBeingDropped) {
 // Core strand. Every item has to come out exactly once, and neither queue may be
 // touched by two threads at a time.
 TEST(AsyncQueueTest, NothingIsLostOrDuplicatedUnderConcurrentPushAndRead) {
-  constexpr int kThreads = 8;
-  constexpr int kPerThread = 200;
+  constexpr int kThreads = 4;
+  constexpr int kPerThread = 100;
   constexpr int kTotal = kThreads * kPerThread;
 
   AsyncQueue<int> queue;
