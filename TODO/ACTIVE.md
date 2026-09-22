@@ -12,8 +12,7 @@ machines sit behind a matcher with `Registrar` and `Proxy` as the transaction us
 `memory://` and `redis://`, `local://` and `mqtt://`, and `builtin://` and
 `rtpengine://` in tree; a node decides for itself when a call it is holding is over;
 provisioning is over a JSON API; and the sipp harness proves a call end to end on UDP.
-576 tests, clean under asan and tsan, with the Redis and MQTT suites verified against
-a real server and a real broker and the sipp harness passing all eight scenarios.
+577 tests, clean under asan and tsan.
 
 0.6.0 landed RFC 5626 flow routing, the rtpengine driver and the media profile that
 tells it which leg is the browser, and the behaviour tests that found eleven bugs in
@@ -22,8 +21,50 @@ calls ask of the engine, the node record-routes both interfaces and carries a fl
 token in each so an in-dialog request can reach a browser, and three recorded
 deviations from RFC 3261 and 3264 are closed. `COMPLETED.md` has the detail.
 
+Since 0.7.0, on `develop` and not yet tagged: a fixture for pointing a real SIP client
+at, and the sipp harness run against a real rtpengine. Both are recorded at the end of
+`COMPLETED.md`.
+
 Milestones are in priority order and so are the items inside each one: work top to
 bottom. Move items to `COMPLETED.md` as they land, with a note on what shipped.
+
+## How to prove it
+
+Four things, cheapest first. All of them should pass before anything is tagged.
+
+```
+cmake --preset tests && cmake --build build-tests -j8
+ATHENA_TEST_REDIS_URL=redis://127.0.0.1:6399 \
+ATHENA_TEST_MQTT_URL=mqtt://127.0.0.1:1883 ./build-tests/athenasip_tests
+```
+
+The unit suite. Redis and MQTT skip without those, so set both or the two canonical
+drivers go untested. Run it directly rather than through ctest: ctest launches a
+process per test and takes eleven minutes to do what this does in eleven seconds.
+
+```
+cmake --preset asan && cmake --build build-asan -j8 && ...
+cmake --preset tsan && cmake --build build-tsan -j8 && ...
+```
+
+Both sanitizers, before anything touching the transaction, channel or media paths.
+
+```
+test/e2e/run.sh                 the eight sipp scenarios, in-process relay
+test/e2e/run.sh --rtpengine     the same, with a real rtpengine on the media path
+```
+
+Compliance proven rather than asserted, which is principle 2. The rtpengine run also
+asserts the engine relayed the media rather than declining it, which the builtin run
+cannot.
+
+```
+test/interop/up.sh              a node for a real client to be pointed at
+test/interop/smoke.py           registers on UDP, TCP, TLS and WS
+```
+
+For interop. Run the smoke test before blaming a client: if it passes and the client
+does not, the difference is in the client.
 
 ## Principles
 
@@ -133,7 +174,7 @@ Everything below the transaction users is a plugin: datastores, event systems an
 engines today, routing policy and others later. They hang off the TU layer and register
 through one contract, so adding a kind or an implementation touches nothing above it.
 
-The tree matches the diagram as of 0.5.0, with one box not yet built: the local UA,
+The tree matches the diagram as of 0.7.0, with one box not yet built: the local UA,
 which is what would let a node send a BYE to both ends of a call it decided was over.
 `docs/architecture.md` describes the shape for a reader; this section is the target.
 

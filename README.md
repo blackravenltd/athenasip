@@ -50,6 +50,7 @@ claim the shipped configuration does not support.
 * [Writing a plugin](docs/plugins.md)
 * [Events](docs/events.md) - the topic scheme
 * [Admin API](docs/api/openapi.yaml)
+* [Interop fixture](test/interop/README.md) - a node to point a real SIP client at
 
 The plan and the decisions behind it are in [`TODO/ACTIVE.md`](TODO/ACTIVE.md); what has
 landed is in [`TODO/COMPLETED.md`](TODO/COMPLETED.md).
