@@ -221,6 +221,9 @@ class Proxy : public TransactionUser {
   void _timer_c_cancel(const std::shared_ptr<Context>& context);
   void _on_timer_c(const std::shared_ptr<Context>& context);
 
+  // RFC 3261 16.10: a CANCEL this node has no response context for.
+  void _forward_cancel_statelessly(const std::shared_ptr<SIPMessage>& cancel, const std::shared_ptr<transactions::TransactionBase>& transaction);
+
   void _send_status(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request, std::uint16_t code,
                     const std::string& reason);
 
