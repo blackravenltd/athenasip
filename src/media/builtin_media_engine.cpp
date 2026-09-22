@@ -118,6 +118,7 @@ void BuiltinMediaEngine::close() {
   {
     std::lock_guard<std::mutex> lock(_mutex);
     _allocated.clear();
+    _emitted.clear();
   }
 
   if (_relay) _relay->stop();
@@ -262,7 +263,58 @@ Result BuiltinMediaEngine::_map_media(std::shared_ptr<Call> call, const std::str
     if (!media.set_attribute("rtcp:", rtcp)) media.add_attribute(rtcp);
   }
 
+  _apply_version(call, flags, *sdp);
+
   return Result::success(sdp->to_string());
+}
+
+// RFC 3264 section 8: an offer that changes the description must carry a higher version
+// than the one before it, and one that does not must carry the same. The endpoint's own
+// version cannot be passed through to answer that, because what this node emits is not
+// what the endpoint sent: the addresses and the ports are this node's, and two offers
+// an endpoint considered identical can come out of here different - a stream released
+// and re-anchored gets other ports.
+//
+// So the version is this node's from the second description onwards. The first keeps
+// the endpoint's, which is what makes a call that never re-offers look exactly as it
+// did before.
+void BuiltinMediaEngine::_apply_version(const std::shared_ptr<Call>& call, const Flags& flags, SDP& sdp) {
+  auto origin = sdp.origin();
+
+  // The shape is the body with the version taken out, so that comparing two of them
+  // asks whether anything else changed.
+  auto blanked = origin;
+  blanked.sessionVersion = "0";
+  sdp.set_origin(blanked);
+
+  const auto shape = sdp.to_string();
+
+  std::uint64_t version = 0;
+
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+
+    auto& last = _emitted[call->id][flags.participant];
+
+    if (last.shape.empty()) {
+      // Nothing emitted yet, so the endpoint's own version is as good a starting point
+      // as any and leaves an unchanging call looking untouched.
+      version = 0;
+      try {
+        version = std::stoull(origin.sessionVersion);
+      } catch (const std::exception&) {
+        version = 0;
+      }
+    } else {
+      version = shape == last.shape ? last.version : last.version + 1;
+    }
+
+    last.shape = shape;
+    last.version = version;
+  }
+
+  origin.sessionVersion = std::to_string(version);
+  sdp.set_origin(origin);
 }
 
 bool BuiltinMediaEngine::_release(std::shared_ptr<Call> call) {
@@ -279,6 +331,7 @@ bool BuiltinMediaEngine::_release(std::shared_ptr<Call> call) {
 
     held = std::move(it->second);
     _allocated.erase(it);
+    _emitted.erase(call->id);
 
     if (_relay) {
       for (const auto& [id, relays] : held) {
