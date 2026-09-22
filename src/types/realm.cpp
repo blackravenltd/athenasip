@@ -20,6 +20,7 @@ MediaPolicy::Profiles MediaPolicy::profiles_from_string(const std::string& value
   if (name == "mirror") return Profiles::Mirror;
   if (name == "rtp") return Profiles::PlainRtp;
   if (name == "webrtc") return Profiles::WebRtc;
+  if (name == "srtp") return Profiles::SrtpSdes;
 
   return fallback;
 }
@@ -34,6 +35,8 @@ std::string MediaPolicy::to_string(Profiles value) {
       return "rtp";
     case Profiles::WebRtc:
       return "webrtc";
+    case Profiles::SrtpSdes:
+      return "srtp";
   }
 
   return "transport";

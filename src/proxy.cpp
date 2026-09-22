@@ -1158,6 +1158,8 @@ media::Flags::Profile Proxy::_profile_under(const types::MediaPolicy& policy, co
       return media::Flags::Profile::PlainRtp;
     case types::MediaPolicy::Profiles::WebRtc:
       return media::Flags::Profile::WebRtc;
+    case types::MediaPolicy::Profiles::SrtpSdes:
+      return media::Flags::Profile::SrtpSdes;
     case types::MediaPolicy::Profiles::FromTransport:
       break;
   }

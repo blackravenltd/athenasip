@@ -503,15 +503,17 @@ components:
             and wrong for anything behind a NAT.
         media_profiles:
           type: string
-          enum: [transport, mirror, rtp, webrtc]
+          enum: [transport, mirror, rtp, webrtc, srtp]
           default: transport
           description: >-
             How each leg's media profile is decided. transport reads it from the flow -
             ws and wss are WebRTC and everything else is plain RTP - which is right
             wherever a WebSocket means a browser. rtp is for a realm whose WebSocket
             clients are SIP phones, since RFC 7118 requires no WebRTC. webrtc makes
-            every leg WebRTC. mirror says nothing and lets the engine keep what it was
-            handed.
+            every leg WebRTC, and srtp makes every leg SRTP with the keys in the
+            description (RFC 4568), for a desk phone that wants encryption and has
+            never heard of DTLS. mirror says nothing and lets the engine keep what it
+            was handed.
 
     RealmCreate:
       type: object
@@ -532,7 +534,7 @@ components:
           type: boolean
         media_profiles:
           type: string
-          enum: [transport, mirror, rtp, webrtc]
+          enum: [transport, mirror, rtp, webrtc, srtp]
 
     RealmUpdate:
       type: object
@@ -549,7 +551,7 @@ components:
           type: boolean
         media_profiles:
           type: string
-          enum: [transport, mirror, rtp, webrtc]
+          enum: [transport, mirror, rtp, webrtc, srtp]
 
     Account:
       type: object

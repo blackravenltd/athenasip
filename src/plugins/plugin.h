@@ -50,7 +50,10 @@ namespace athenasip::plugins {
 // on is what distinguishes a browser from a desk phone before the browser has
 // described itself, and an engine sees neither. Mirror is the default and is what
 // every engine did before.
-inline constexpr std::uint32_t API_VERSION = 6;
+// 7 (2026-09-22): media::Flags::Profile gains SrtpSdes, for an endpoint that wants its
+// media encrypted and has never heard of DTLS (RFC 4568). A driver that switches on
+// the profile has a case it was not built for, which is what the version check is for.
+inline constexpr std::uint32_t API_VERSION = 7;
 
 // The kinds AthenaSIP registers today. A kind is a plain string rather than an enum so
 // that a plugin can introduce one the core was not built knowing about.
