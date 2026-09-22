@@ -1,0 +1,94 @@
+#
+# AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
+#
+# Copyright (C) 2026 Tom Cully <mail@tomcully.com>
+# Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
+#
+# The node a SIP client is pointed at to see whether the two agree. Everything is
+# in-process: nothing here is testing Redis or a broker, and a fixture that needs them
+# is a fixture that fails for reasons that have nothing to do with SIP.
+#
+# Rendered by up.sh, which is where the ports come from. They default to the ones
+# AthenaPhone's integration harness already uses for its Asterisk fixture, so pointing
+# that harness here is a host and a CA rather than a rewrite, and they can be moved so
+# that both fixtures run at once.
+#
+# The container binds the same number the host publishes. A node writes its own local
+# port into Via and Record-Route, so a mapping that translated the port would tell a
+# client to come back to one nothing is listening on.
+
+sip:
+  node_id: interop-node
+
+  # The client runs on the host and reaches the container through published ports, so
+  # this is the address it can actually come back to. Without it the node writes the
+  # container's own address into Via and Record-Route and nothing routes.
+  public_address: @PUBLIC_ADDRESS@
+
+  # UDP, TCP and WS are the point of this fixture. TLS is here too, and a client that
+  # wants it verifies against tls/ca/snakeca.crt.
+  allow_unencrypted: true
+
+  # Long enough that a registration does not lapse mid-test, short enough that a stale
+  # one does not outlive the container.
+  connect_timeout_ms: 4000
+
+udp:
+  enable: true
+  address: 0.0.0.0
+  port: @SIP_PORT@
+
+tcp:
+  enable: true
+  address: 0.0.0.0
+  port: @SIP_PORT@
+
+tls:
+  enable: true
+  address: 0.0.0.0
+  port: @TLS_PORT@
+  cert_pem_filename: "/tls/snakeoil.cer"
+  key_pem_filename: "/tls/snakeoil.key"
+
+# One WebSocket listener, plain, on the port Asterisk serves ws on. A node has one
+# websocket section, so it is ws or wss and not both; this fixture is the signalling
+# one, and a client that cannot be given a CA cannot verify wss anyway.
+websocket:
+  enable: true
+  address: 0.0.0.0
+  port: @WS_PORT@
+  tls: false
+
+datastore:
+  url: "memory://"
+
+events:
+  url: "local://"
+
+# Plain RTP through the in-process relay, which is what an ordinary SIP softphone on
+# UDP, TCP or TLS expects. A client whose media is WebRTC will register and signal
+# cleanly here and fail to agree on media, which is the honest result rather than one
+# arranged by configuration.
+media:
+  url: "builtin://"
+
+  builtin:
+    bind_address: 0.0.0.0
+    public_address: @PUBLIC_ADDRESS@
+    port_min: @RTP_MIN@
+    port_max: @RTP_MAX@
+
+http:
+  address: 0.0.0.0
+  port: @API_PORT@
+
+  api:
+    enable: true
+    tokens:
+      - token: "interop-admin"
+        scopes: [admin]
+      - token: "interop-client"
+        scopes: [client]
+
+  files:
+    enable: false
