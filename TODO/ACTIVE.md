@@ -1,6 +1,6 @@
 # AthenaSIP - Active Work
 
-Work happens on `develop`; `main` carries the last release, and `0.5.0` is the current
+Work happens on `develop`; `main` carries the last release, and `0.6.0` is the current
 one. Line numbers refer to the current tree; update them as files move.
 
 Milestones 1 and 2 are complete and recorded in `COMPLETED.md`. What M3 builds on: the
@@ -12,12 +12,12 @@ machines sit behind a matcher with `Registrar` and `Proxy` as the transaction us
 `memory://` and `redis://`, `local://` and `mqtt://`, and `builtin://` and
 `rtpengine://` in tree; a node decides for itself when a call it is holding is over;
 provisioning is over a JSON API; and the sipp harness proves a call end to end on UDP.
-504 tests, clean under asan and tsan, the Redis suite verified against a real server.
+551 tests and 86% line coverage of the shipped tree, clean under asan and tsan, with
+the Redis and MQTT suites verified against a real server and a real broker.
 
-Since 0.5.0, in the working tree: each fork branch goes down the flow its binding was
-registered over rather than the account's most recent flow, which was the routing half
-of RFC 5626; and `rtpengine://` is a driver, so the engine that does ICE, DTLS and SRTP
-is reachable by configuration. Both are recorded under "After 0.5.0" in `COMPLETED.md`.
+0.6.0 landed RFC 5626 flow routing, the rtpengine driver and the media profile that
+tells it which leg is the browser, and the behaviour tests that found eleven bugs in
+code nothing had ever tested. `COMPLETED.md` has the detail.
 
 Milestones are in priority order and so are the items inside each one: work top to
 bottom. Move items to `COMPLETED.md` as they land, with a note on what shipped.
@@ -151,9 +151,9 @@ mistaken for compliance:
   is the relay, and where it cannot anchor the message travels on untouched.
 - Outbound TLS and outbound UDP to a host this node has never heard from are refused
   rather than faked; M4 and M3.
-- The rtpengine driver sets no ICE, DTLS or transport-protocol flag, so rtpengine
-  mirrors what it was given. That is right for a call whose two ends are alike and
-  wrong for a browser calling a desk phone, which is the next M3 item.
+- Which profile a leg wants is read from the transport of its flow, so a SIP endpoint
+  that speaks WebSocket without WebRTC is offered ICE and DTLS it did not ask for. The
+  per-realm media policy below is where an operator says otherwise.
 
 ---
 
@@ -162,28 +162,24 @@ mistaken for compliance:
 Goal: AthenaPhone and JsSIP make audio and video calls to each other and to plain-RTP
 endpoints, media anchored in rtpengine.
 
-Three things the first WebRTC call needs are now in: WSS, each binding reached on the
-flow it registered over, and an rtpengine driver. What is left between here and that
-call is telling rtpengine which side of a bridge is the browser.
+Four things the first WebRTC call needs are now in: WSS, each binding reached on the
+flow it registered over, an rtpengine driver, and a media profile that tells it which
+leg is the browser. What is left is a real browser at the other end of it, which is the
+verification item below, and the per-realm policy for the cases the transport does not
+settle.
 
-- [ ] Per-call flags, and the one decision the driver cannot make on its own. The driver
-      sends `replace` and `rtcp-mux` and nothing else, so with no ICE, DTLS or
-      `transport-protocol` flag rtpengine mirrors what it was handed: a WebRTC offer
-      produces a WebRTC offer to the callee. That is right for browser to browser and
-      for phone to phone, and it is exactly wrong for browser to phone, which is the
-      call M3 exists for. The mapping wanted is `ICE=force`/`remove`, `DTLS=passive`,
-      `SDES`, `rtcp-mux-offer/accept` and RTP/AVP <-> UDP/TLS/RTP/SAVPF.
-      `media::Flags::from_sdp` reads what the *incoming* description needs, which is not
-      the question: what has to be produced is what the *far* leg needs, and at offer
-      time no description from that leg exists. The two things that do say something are
-      the transport of the flow the request is going out on, which the proxy knows and
-      the engine does not, and the realm's media policy. So this item and the one below
-      are one piece of work, and it is a `Flags` change and an `API_VERSION` bump.
-- [ ] Media policy per realm: `anchor` (default) or `passthrough` for WebRTC to WebRTC.
-      Today anchoring happens whenever an engine is configured, and an engine that
+- [ ] Media policy per realm, which is the second half of the profile work. The profile
+      a leg gets is read from the transport of its flow, which is right for a browser
+      and wrong for the SIP endpoint that speaks WebSocket without WebRTC, and there is
+      nowhere for an operator to say so. The same section answers the other policy
+      question: anchoring happens whenever an engine is configured, and `anchor` versus
+      `passthrough` for WebRTC to WebRTC has nowhere to be said either. An engine that
       declines means the description travels on untouched and the media goes end to
-      end. That is the right failure for a proxy, but it is a policy decision with
-      nowhere to say it.
+      end, which is the right failure for a proxy but not a decision anybody made.
+- [ ] `SDES` for an endpoint that wants SRTP without DTLS, which is a desk phone with
+      `RTP/SAVP` rather than a browser. `Flags::srtp` reads it off the description
+      already and the profile has nowhere to put it: it is a third profile rather than
+      a flag on the two that exist.
 - [ ] Record which rtpengine instance owns a call in the datastore so any node can
       release it; support a pool of engines with health checks.
 - [ ] Double Record-Route (RFC 5658), for a call whose two ends are on different
