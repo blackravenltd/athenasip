@@ -1,6 +1,6 @@
 # AthenaSIP - Active Work
 
-Work happens on `develop`; `main` carries the last release, and `0.6.0` is the current
+Work happens on `develop`; `main` carries the last release, and `0.7.0` is the current
 one. Line numbers refer to the current tree; update them as files move.
 
 Milestones 1 and 2 are complete and recorded in `COMPLETED.md`. What M3 builds on: the
@@ -12,12 +12,15 @@ machines sit behind a matcher with `Registrar` and `Proxy` as the transaction us
 `memory://` and `redis://`, `local://` and `mqtt://`, and `builtin://` and
 `rtpengine://` in tree; a node decides for itself when a call it is holding is over;
 provisioning is over a JSON API; and the sipp harness proves a call end to end on UDP.
-551 tests and 86% line coverage of the shipped tree, clean under asan and tsan, with
-the Redis and MQTT suites verified against a real server and a real broker.
+576 tests, clean under asan and tsan, with the Redis and MQTT suites verified against
+a real server and a real broker and the sipp harness passing all eight scenarios.
 
 0.6.0 landed RFC 5626 flow routing, the rtpengine driver and the media profile that
 tells it which leg is the browser, and the behaviour tests that found eleven bugs in
-code nothing had ever tested. `COMPLETED.md` has the detail.
+code nothing had ever tested. 0.7.0 is the mixed-transport call: a realm says what its
+calls ask of the engine, the node record-routes both interfaces and carries a flow
+token in each so an in-dialog request can reach a browser, and three recorded
+deviations from RFC 3261 and 3264 are closed. `COMPLETED.md` has the detail.
 
 Milestones are in priority order and so are the items inside each one: work top to
 bottom. Move items to `COMPLETED.md` as they land, with a note on what shipped.
@@ -134,26 +137,27 @@ The tree matches the diagram as of 0.5.0, with one box not yet built: the local 
 which is what would let a node send a BYE to both ends of a call it decided was over.
 `docs/architecture.md` describes the shape for a reader; this section is the target.
 
-### Known deviations from the standards, as of 0.5.0
+### Known deviations from the standards, as of 0.7.0
 
 Each is deliberate, each is an item below, and this list is so that none of them is
 mistaken for compliance:
 
-- A CANCEL matching no response context is answered 200 and dropped. RFC 3261 16.10
-  says a proxy that finds no context MUST statelessly forward it. Found by the sipp
-  harness; M3.
 - A next hop is resolved from its URI's transport, host and port with A/AAAA only. RFC
   3263's NAPTR and SRV are not done; M4.
 - RFC 5626 is routing only: a binding records its flow and the fork uses it. There is no
   `+sip.instance`, `reg-id`, `Flow-Timer` or keep-alive; M4.
 - Forking is serial. 16.7 allows it, and parallel forking is Parked.
+- A leg's media profile comes from the transport of its flow or from the realm, and
+  there is no per-endpoint say. A realm with both browsers and SIP-over-WebSocket
+  phones in it cannot have both.
 - A media-anchoring node rewrites the body it forwards, which 16.6 forbids a proxy. It
   is the relay, and where it cannot anchor the message travels on untouched.
 - Outbound TLS and outbound UDP to a host this node has never heard from are refused
   rather than faked; M4 and M3.
-- Which profile a leg wants is read from the transport of its flow, so a SIP endpoint
-  that speaks WebSocket without WebRTC is offered ICE and DTLS it did not ask for. The
-  per-realm media policy below is where an operator says otherwise.
+- Record-Route is written twice on every dialog-forming request rather than only where
+  the interfaces differ. RFC 5658 requires the pair in that case and permits it in
+  every case; the flow token in each value is what makes a call to a browser routable
+  in both directions, so both are always written.
 
 ---
 
@@ -162,30 +166,15 @@ mistaken for compliance:
 Goal: AthenaPhone and JsSIP make audio and video calls to each other and to plain-RTP
 endpoints, media anchored in rtpengine.
 
-Four things the first WebRTC call needs are now in: WSS, each binding reached on the
-flow it registered over, an rtpengine driver, and a media profile that tells it which
-leg is the browser. What is left is a real browser at the other end of it, which is the
-verification item below, and the per-realm policy for the cases the transport does not
-settle.
+What a browser call needs from the signalling is now in: WSS, each binding reached on
+the flow it registered over, an rtpengine driver, a media profile that says which leg
+is the browser and a realm that can override it, and a route set that carries a flow
+token so the ACK and the BYE reach an endpoint whose Contact resolves to nothing. What
+is left is a real browser at the other end of it, which is the verification item at the
+bottom, and the endpoint-side NAT work.
 
-- [ ] Media policy per realm, which is the second half of the profile work. The profile
-      a leg gets is read from the transport of its flow, which is right for a browser
-      and wrong for the SIP endpoint that speaks WebSocket without WebRTC, and there is
-      nowhere for an operator to say so. The same section answers the other policy
-      question: anchoring happens whenever an engine is configured, and `anchor` versus
-      `passthrough` for WebRTC to WebRTC has nowhere to be said either. An engine that
-      declines means the description travels on untouched and the media goes end to
-      end, which is the right failure for a proxy but not a decision anybody made.
-- [ ] `SDES` for an endpoint that wants SRTP without DTLS, which is a desk phone with
-      `RTP/SAVP` rather than a browser. `Flags::srtp` reads it off the description
-      already and the profile has nowhere to put it: it is a third profile rather than
-      a flag on the two that exist.
 - [ ] Record which rtpengine instance owns a call in the datastore so any node can
       release it; support a pool of engines with health checks.
-- [ ] Double Record-Route (RFC 5658), for a call whose two ends are on different
-      transports. One value naming the outbound flow is right for a call that is UDP to
-      UDP or WSS to WSS; a browser calling a desk phone needs two values and needs both
-      stripped on the way back. `_forward_to` writes the one value today.
 - [ ] NAT handling for the client side: `rport` and `received` are already stamped on the
       way in (RFC 3581); what is missing is routing the response and the in-dialog
       request to where the request actually came from rather than where its Via and
@@ -195,13 +184,6 @@ settle.
       by the listener's own socket so the source port is the one the far end answers to,
       and that socket belongs to `UDPServer` rather than to the channel registry. Needed
       for a UDP trunk, which the interop matrix below has.
-- [ ] RFC 3264 section 8's version rule: an offer that changes the description must
-      increment the `o=` version, and a re-offer this node rewrote does not. It matters
-      once a re-INVITE changes the stream rather than repeating it, which is hold and
-      resume.
-- [ ] CANCEL with no response context is forwarded statelessly (RFC 3261 16.10). The
-      proxy answers 200 and drops it today, at `Proxy::on_cancel`. Wants doing with the
-      stateless request path, which is the same piece of work.
 - [ ] Client provisioning endpoint: `GET /api/v1/client/config` returning WSS URL, ICE
       servers, and time-limited TURN credentials (coturn shared-secret scheme).
 - [ ] Harness scenarios for what M2 did not exercise: a WSS call, a call between a
