@@ -16,7 +16,7 @@
 
       REGISTER sip:[field0] SIP/2.0
       Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
-      From: <sip:[field1]@[field0]>;tag=[call_number]
+      From: <sip:[field1]@[field0]>;tag=uac-[call_number]
       To: <sip:[field1]@[field0]>
       Call-ID: [call_id]
       CSeq: 1 REGISTER
@@ -35,7 +35,7 @@
 
       REGISTER sip:[field0] SIP/2.0
       Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
-      From: <sip:[field1]@[field0]>;tag=[call_number]
+      From: <sip:[field1]@[field0]>;tag=uac-[call_number]
       To: <sip:[field1]@[field0]>
       Call-ID: [call_id]
       CSeq: 2 REGISTER
@@ -55,7 +55,7 @@
 
       INVITE sip:[field3]@[field0] SIP/2.0
       Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
-      From: <sip:[field1]@[field0]>;tag=[call_number]
+      From: <sip:[field1]@[field0]>;tag=uac-[call_number]
       To: <sip:[field3]@[field0]>
       Call-ID: [call_id]
       CSeq: 1 INVITE
@@ -85,7 +85,7 @@
 
       ACK sip:[field3]@[field0] SIP/2.0
       Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
-      From: <sip:[field1]@[field0]>;tag=[call_number]
+      From: <sip:[field1]@[field0]>;tag=uac-[call_number]
       [last_To:]
       Call-ID: [call_id]
       CSeq: 1 ACK
