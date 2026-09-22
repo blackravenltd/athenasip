@@ -217,6 +217,44 @@ TEST(ProvisioningApiTest, TheRegistrationBoundsAreProvisionedAndReturned) {
   EXPECT_EQ(f.get("/api/v1/realms/example.com").json().at("registration_minimum").as_int64(), 120);
 }
 
+// The two media questions a realm answers. Both have defaults that match what a node
+// did before it could be asked, so a realm provisioned without them is unchanged.
+TEST(ProvisioningApiTest, TheMediaPolicyIsProvisionedAndReturned) {
+  ApiFixture f;
+
+  auto created = f.post("/api/v1/realms", R"({"name":"example.com"})");
+  ASSERT_EQ(created.status, 201u);
+
+  EXPECT_TRUE(created.json().at("media_anchor").as_bool());
+  EXPECT_EQ(created.json().at("media_profiles").as_string(), "transport");
+
+  auto updated = f.put("/api/v1/realms/example.com", R"({"media_anchor":false,"media_profiles":"rtp"})");
+  ASSERT_EQ(updated.status, 200u);
+
+  EXPECT_FALSE(updated.json().at("media_anchor").as_bool());
+  EXPECT_EQ(updated.json().at("media_profiles").as_string(), "rtp");
+
+  auto read_back = f.get("/api/v1/realms/example.com");
+  EXPECT_FALSE(read_back.json().at("media_anchor").as_bool());
+  EXPECT_EQ(read_back.json().at("media_profiles").as_string(), "rtp");
+
+  // A PUT naming only one of them leaves the other where it was.
+  auto one = f.put("/api/v1/realms/example.com", R"({"media_profiles":"webrtc"})");
+  EXPECT_FALSE(one.json().at("media_anchor").as_bool());
+  EXPECT_EQ(one.json().at("media_profiles").as_string(), "webrtc");
+}
+
+// A word nobody recognises must not quietly change what a node does to media.
+TEST(ProvisioningApiTest, AnUnreadableMediaProfileLeavesTheRealmAlone) {
+  ApiFixture f;
+
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com","media_profiles":"webrtc"})").status, 201u);
+
+  auto updated = f.put("/api/v1/realms/example.com", R"({"media_profiles":"web-rtc"})");
+  ASSERT_EQ(updated.status, 200u);
+  EXPECT_EQ(updated.json().at("media_profiles").as_string(), "webrtc");
+}
+
 TEST(ProvisioningApiTest, AnUnknownRealmIs404) {
   ApiFixture f;
 

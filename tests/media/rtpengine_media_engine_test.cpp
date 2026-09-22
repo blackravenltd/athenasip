@@ -11,6 +11,7 @@
 
 #include <ctime>
 #include <memory>
+#include <set>
 #include <string>
 
 #include "../helpers/fake_rtpengine_helper.h"
@@ -147,9 +148,14 @@ TEST(RtpengineMediaEngineTest, AnOfferNamesTheCallTheOffererAndTheDescription) {
   const auto* replace = request->find("replace");
   ASSERT_NE(replace, nullptr);
   ASSERT_TRUE(replace->is_list());
-  ASSERT_EQ(replace->values().size(), 2u);
-  EXPECT_EQ(replace->values()[0].string(), "origin");
-  EXPECT_EQ(replace->values()[1].string(), "session-connection");
+
+  // A list is a set here, so what matters is what is in it and not the order.
+  std::set<std::string> replacements;
+  for (const auto& value : replace->values()) replacements.insert(value.string());
+
+  // RFC 3264 section 8: the version is rtpengine's too, because what this node emits
+  // is not what the endpoint sent.
+  EXPECT_EQ(replacements, (std::set<std::string>{"origin", "sdp-version", "session-connection"}));
 
   engine->close();
 }
@@ -455,6 +461,32 @@ TEST(RtpengineMediaEngineTest, ThePlainRtpProfileStripsWhatAPhoneCannotUse) {
   ASSERT_NE(mux, nullptr);
   ASSERT_EQ(mux->values().size(), 1u);
   EXPECT_EQ(mux->values()[0].string(), "demux");
+
+  engine->close();
+}
+
+// RFC 4568: the keys travel in the description, so there is no handshake to start and
+// no ICE to gather. A desk phone offered a browser's UDP/TLS/RTP/SAVPF cannot answer.
+TEST(RtpengineMediaEngineTest, TheSrtpProfileAsksForSavpWithNoDtls) {
+  FakeRtpengine fake;
+  fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
+  fake.answer("offer", ok_with_sdp("v=0\r\no=- 1 1 IN IP4 203.0.113.9\r\ns=-\r\nt=0 0\r\nm=audio 30000 RTP/SAVP 0\r\n"));
+
+  auto engine = make_engine(fake);
+  ASSERT_TRUE(engine->connect());
+
+  Flags flags;
+  flags.participant = 0;
+  flags.target = Flags::Profile::SrtpSdes;
+
+  ASSERT_TRUE(engine->offer(make_call(), kOffer, flags).ok);
+
+  auto request = fake.last("offer");
+  ASSERT_TRUE(request.has_value());
+
+  EXPECT_EQ(request->string_at("transport-protocol"), "RTP/SAVP");
+  EXPECT_EQ(request->string_at("DTLS"), "off");
+  EXPECT_EQ(request->string_at("ICE"), "remove");
 
   engine->close();
 }

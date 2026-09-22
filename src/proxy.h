@@ -10,16 +10,19 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 #include "loggers/logger.h"
+#include "media/media_engine.h"
 #include "sip_message.h"
 #include "timer_source.h"
 #include "transaction_user.h"
 #include "transactions/transaction_base.h"
 #include "types/location.h"
+#include "types/realm.h"
 
 namespace athenasip {
 
@@ -119,6 +122,10 @@ class Proxy : public TransactionUser {
     // A final response has gone upstream. The search is over, and a late answer from a
     // branch must not be sent a second time.
     bool answered = false;
+
+    // The realm's media policy, where target determination found a realm to read it
+    // from. An in-dialog request has none, and takes the one the call remembers.
+    std::optional<types::MediaPolicy> media_policy;
   };
 
   // RFC 4028 section 8.1: this node's say in the session timer negotiation, applied to
@@ -197,7 +204,7 @@ class Proxy : public TransactionUser {
   // `then` runs when the message is ready to go: inline when there was nothing to do,
   // and on the strand from the engine's handler when there was.
   void _anchor_media(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<SIPMessage>& message, const std::shared_ptr<Channel>& outgoing,
-                     std::function<void()> then);
+                     const std::shared_ptr<Context>& context, std::function<void()> then);
 
   // RFC 3261 16.7 step 6: what goes back when every branch has been tried.
   void _send_best(const std::shared_ptr<Context>& context);
@@ -214,6 +221,9 @@ class Proxy : public TransactionUser {
   void _timer_c_cancel(const std::shared_ptr<Context>& context);
   void _on_timer_c(const std::shared_ptr<Context>& context);
 
+  // RFC 3261 16.10: a CANCEL this node has no response context for.
+  void _forward_cancel_statelessly(const std::shared_ptr<SIPMessage>& cancel, const std::shared_ptr<transactions::TransactionBase>& transaction);
+
   void _send_status(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request, std::uint16_t code,
                     const std::string& reason);
 
@@ -227,6 +237,9 @@ class Proxy : public TransactionUser {
   std::shared_ptr<Channel> _flow_for(const types::Location& binding) const;
 
   static NextHop _next_hop_of(const SIPUri& uri);
+
+  // The realm's say over the transport's. Only FromTransport defers to the flow.
+  static media::Flags::Profile _profile_under(const types::MediaPolicy& policy, const std::string& transport);
 
   std::shared_ptr<loggers::Logger> _logger;
   std::weak_ptr<Core> _core;

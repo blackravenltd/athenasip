@@ -49,6 +49,16 @@ void apply_profile(Bencode& command, Flags::Profile profile, bool source_wants_m
       command.set("rtcp-mux", Bencode::list({Bencode(std::string("offer")), Bencode(std::string("require"))}));
       return;
 
+    case Flags::Profile::SrtpSdes:
+      // RFC 4568: the keys travel in the description, so there is no handshake and no
+      // ICE. RTP/SAVP rather than the browser's UDP/TLS/RTP/SAVPF, and rtpengine
+      // generates the crypto attributes from the profile alone.
+      command.set("ICE", Bencode(std::string("remove")));
+      command.set("DTLS", Bencode(std::string("off")));
+      command.set("transport-protocol", Bencode(std::string("RTP/SAVP")));
+      command.set("rtcp-mux", Bencode::list({Bencode(std::string("demux"))}));
+      return;
+
     case Flags::Profile::PlainRtp:
       command.set("ICE", Bencode(std::string("remove")));
       command.set("DTLS", Bencode(std::string("off")));
@@ -433,11 +443,16 @@ void RtpengineMediaEngine::offer(plugins::Executor on, std::shared_ptr<Call> cal
   if (!tags.to.empty()) command.set("to-tag", Bencode(tags.to));
   command.set("sdp", Bencode(std::move(sdp)));
 
-  // The two substitutions this node would otherwise make itself, and the ones the
-  // builtin relay does make: the o= line and the session-level c= name this node rather
-  // than the endpoint, so a call whose media is anchored does not hand one end the
-  // other's address (RFC 8866 section 5.2).
-  command.set("replace", Bencode::list({Bencode(std::string("origin")), Bencode(std::string("session-connection"))}));
+  // The substitutions this node would otherwise make itself, and the ones the builtin
+  // relay does make. The o= line and the session-level c= name this node rather than
+  // the endpoint, so a call whose media is anchored does not hand one end the other's
+  // address (RFC 8866 section 5.2).
+  //
+  // sdp-version puts the version in rtpengine's hands too, which is RFC 3264 section
+  // 8: what this node emits is not what the endpoint sent, so two offers the endpoint
+  // considered identical can come out of here different, and passing its version
+  // through would tell the far end nothing had changed.
+  command.set("replace", Bencode::list({Bencode(std::string("origin")), Bencode(std::string("session-connection")), Bencode(std::string("sdp-version"))}));
 
   apply_profile(command, flags.target, flags.rtcp_mux);
 
@@ -466,7 +481,7 @@ void RtpengineMediaEngine::answer(plugins::Executor on, std::shared_ptr<Call> ca
   command.set("from-tag", Bencode(tags.from));
   command.set("to-tag", Bencode(tags.to));
   command.set("sdp", Bencode(std::move(sdp)));
-  command.set("replace", Bencode::list({Bencode(std::string("origin")), Bencode(std::string("session-connection"))}));
+  command.set("replace", Bencode::list({Bencode(std::string("origin")), Bencode(std::string("session-connection")), Bencode(std::string("sdp-version"))}));
 
   apply_profile(command, flags.target, flags.rtcp_mux);
   if (!_media_address.empty()) command.set("media-address", Bencode(_media_address));

@@ -36,6 +36,11 @@ class SIPMessage {
   std::string branch;
   uint16_t source_port;
   std::weak_ptr<Channel> channel;
+
+  // The flow token recovered from a Route naming this node, when there was one
+  // (RFC 5626 section 5.1). It is what says where an in-dialog request goes once the
+  // route set is spent and the Contact left over resolves to nothing.
+  std::string flow_token;
   std::weak_ptr<Call> call;
   std::weak_ptr<Account> account;
   std::shared_ptr<SIPUri> contact;

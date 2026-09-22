@@ -1094,6 +1094,10 @@ a proxy and no more; `config.example.yaml` has the table of which reaches which 
   the signalling path, WSS, outbound flows, plugin contract v2.
 - 0.5.0 (2026-09-21): a node that knows when a call is over, the sipp harness passing,
   the admin API, SHA-256 Digest, `Account`, and the documentation audit.
+- 0.7.0 (2026-09-22): the mixed-transport call - a realm's media policy, the SRTP
+  profile, Record-Route on both interfaces with a flow token in each, RFC 3264's
+  version rule, and a CANCEL this node has no context for forwarded rather than
+  swallowed.
 - 0.6.0 (2026-09-22): RFC 5626 flow routing, the rtpengine media engine and the profile
   that tells it which leg is the browser, and the behaviour tests that found eleven
   bugs in code nothing had ever tested - among them a datagram that could crash the
@@ -1307,3 +1311,67 @@ and from what each piece promises - not from what the code did - found nine bugs
       81.0% function before this work, 86.3% and 90.5% after. Nine files had no
       coverage at all and now only `main.cpp` has none. What is left below 80% is the
       admin API's error paths, configuration parsing and the standard-output logger.
+
+### The mixed-transport call (2026-09-22)
+
+0.7.0. A browser calling a desk phone is the call Milestone 3 exists for, and what it
+needed was the signalling around the engine rather than the engine itself.
+
+- [x] **A realm says what its calls ask of the engine.** Two decisions had nowhere to be
+      made: anchoring happened whenever an engine was configured, and a leg's profile
+      was read from the transport of its flow, which is right wherever a WebSocket
+      means a browser and wrong for a realm whose WebSocket clients are SIP phones,
+      because RFC 7118 is SIP over WebSocket and requires no WebRTC. `media_anchor` off
+      leaves every description untouched and the media end to end, which is what a node
+      with no engine does and is now a choice rather than a default. `media_profiles`
+      is `transport`, `mirror`, `rtp`, `webrtc` or `srtp`. A name nobody recognises
+      leaves the policy alone, because changing what a node does to media over a
+      misspelling is the worse failure.
+- [x] The policy is read where the realm is already in hand, in target determination,
+      and kept on the call. Reading it again per message would put a datastore round
+      trip on the media path, and an in-dialog re-INVITE never looks a realm up, so
+      hold and resume would behave differently from the INVITE that started the call.
+      Provisioned over the admin API, persisted by both datastores, in the OpenAPI
+      document and the configuration guide.
+- [x] **The SRTP profile**, for a phone that wants its media encrypted and has never
+      heard of DTLS: RFC 4568 puts the keys in the description, so it is RTP/SAVP and
+      not a browser's UDP/TLS/RTP/SAVPF, and an endpoint offered the wrong one cannot
+      answer. No transport tells the two apart, so unlike the others this profile can
+      only be asked for. `API_VERSION` is 7.
+- [x] **Record-Route on both interfaces, with a flow token in each.** RFC 5658 requires
+      the pair of a proxy whose request arrives on one interface and leaves on another,
+      which a browser calling a desk phone always is. The pair is written in every case
+      because of the second reason: a browser's Contact resolves to nothing, so once
+      the route set was spent an in-dialog request had only the remote target to go on
+      and the ACK and the BYE of a call to a browser went nowhere however well the
+      INVITE had been routed. A call that cannot be hung up is worse than one that
+      cannot be made.
+- [x] Each value carries a flow token in its user part, where RFC 5626 section 5.1 puts
+      one. The topmost names the interface the request is sent on and the second the one
+      it arrived on, which leaves each end holding the value facing it: a UAS reads the
+      route set from the request in order and a UAC from the response reversed. This
+      node strips both of its own on the way back (RFC 5658 section 3.2, or it would
+      forward the request to itself) and the last one stripped names the flow. The token
+      is random rather than derived: the flow id is the far end's address, and a route
+      set that spelled it out would hand one end of an anchored call the other end's
+      address, which is what anchoring is there to prevent. It lives on the channel and
+      dies with it, and a token naming a closed flow falls back to the Contact.
+- [x] **RFC 3264 section 8's version rule.** An offer that changes the description must
+      carry a higher version and one that does not must carry the same, and the rule is
+      about what an offerer emits. Towards each far end this node is the offerer, so
+      passing the endpoint's version through said nothing: two offers an endpoint
+      considered identical can come out of here different, because a stream released
+      and re-anchored gets other ports. The builtin engine keeps the last description
+      it emitted per call and per leg with the version blanked, and emits the same
+      version when nothing else changed and one higher when it did; the first keeps the
+      endpoint's, so a call that never re-offers looks as it did before. rtpengine has
+      the rule natively and is asked for it with `sdp-version` in `replace`.
+- [x] **A CANCEL with no response context is forwarded** (RFC 3261 16.10), which the
+      sipp harness had recorded as a deviation in September. Answering it 200 and
+      dropping it told the caller the branch had been cancelled when nothing downstream
+      had been told anything. The 200 is now sent only where there is a context, because
+      answering and forwarding both sends the caller two answers to one request, and
+      where there is nowhere to forward it the answer is 481, which is what 9.2
+      prescribes and is true of this node in a way that 200 was not.
+- [x] 26 tests. 576 in all, clean under asan and tsan, and the sipp harness still passes
+      all eight scenarios.
