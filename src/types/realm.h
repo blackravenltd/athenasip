@@ -13,6 +13,46 @@
 
 namespace athenasip::types {
 
+// What a realm's calls ask of the media engine. These are the two questions an
+// operator has that the signalling cannot answer for itself: whether this node should
+// put itself in the media path at all, and how to decide what each leg of a call
+// needs when the leg has not yet said.
+struct MediaPolicy {
+  // Whether the node anchors media when an engine is configured. Off means every
+  // description travels untouched and the media goes end to end, which is right for
+  // two endpoints that can reach each other and wrong for anything behind a NAT.
+  bool anchor = true;
+
+  // How a leg's profile is decided. The engine cannot decide it: at offer time the far
+  // leg has not described itself, and the engine sees neither where a message is going
+  // nor over what.
+  enum class Profiles {
+    // ws and wss are WebRTC and everything else is plain RTP. Right wherever a
+    // WebSocket means a browser, which is almost everywhere.
+    FromTransport,
+
+    // Say nothing and let the engine keep what it was handed. For a realm whose calls
+    // are always like to like.
+    Mirror,
+
+    // Every leg is plain RTP, for a realm whose WebSocket clients are SIP phones
+    // rather than browsers: RFC 7118 is SIP over WebSocket and says nothing about
+    // WebRTC.
+    PlainRtp,
+
+    // Every leg is WebRTC.
+    WebRtc,
+  };
+
+  Profiles profiles = Profiles::FromTransport;
+
+  // "transport", "mirror", "rtp" or "webrtc". Anything else is the fallback, because a
+  // realm with a typo in it should keep working the way it did rather than change
+  // what it does to media.
+  static Profiles profiles_from_string(const std::string& value, Profiles fallback = Profiles::FromTransport);
+  static std::string to_string(Profiles value);
+};
+
 class Realm {
  public:
   // Constructors
@@ -36,6 +76,11 @@ class Realm {
   // request should only be rejected if the interval is so short that the refreshes
   // would degrade registrar performance".
   uint32_t registration_minimum = 0;
+
+  // What this realm's calls ask of the media engine. Defaults to anchoring and to
+  // reading each leg from its transport, which is what a node did before a realm could
+  // say otherwise.
+  MediaPolicy media;
 
   std::string to_string() const;
 };

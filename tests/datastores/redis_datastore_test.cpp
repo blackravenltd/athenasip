@@ -50,6 +50,8 @@ std::shared_ptr<types::Realm> make_realm(const std::string& name) {
   realm->nonce_secret = "secret";
   realm->registration_timeout = 3600;
   realm->registration_minimum = 60;
+  realm->media.anchor = false;
+  realm->media.profiles = types::MediaPolicy::Profiles::WebRtc;
   return realm;
 }
 
@@ -94,6 +96,11 @@ TEST(RedisDatastoreTest, RealmRoundTripsThroughRedis) {
   EXPECT_EQ(found->nonce_secret, "secret");
   EXPECT_EQ(found->registration_timeout, 3600u);
   EXPECT_EQ(found->registration_minimum, 60u);
+
+  // The media policy is a realm's and has to survive being written down, or a cluster
+  // would anchor differently depending on which node read the realm.
+  EXPECT_FALSE(found->media.anchor);
+  EXPECT_EQ(found->media.profiles, types::MediaPolicy::Profiles::WebRtc);
 
   auto changed = make_realm(name);
   changed->nonce_secret = "rotated";
