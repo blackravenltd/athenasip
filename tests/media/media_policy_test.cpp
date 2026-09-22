@@ -142,8 +142,8 @@ TEST(MediaPolicyTest, AnUnreadableProfileNameLeavesThePolicyAlone) {
 }
 
 TEST(MediaPolicyTest, EveryProfileNameSurvivesBeingWrittenDownAndReadBack) {
-  for (const auto profiles :
-       {MediaPolicy::Profiles::FromTransport, MediaPolicy::Profiles::Mirror, MediaPolicy::Profiles::PlainRtp, MediaPolicy::Profiles::WebRtc}) {
+  for (const auto profiles : {MediaPolicy::Profiles::FromTransport, MediaPolicy::Profiles::Mirror, MediaPolicy::Profiles::PlainRtp,
+                              MediaPolicy::Profiles::WebRtc, MediaPolicy::Profiles::SrtpSdes}) {
     EXPECT_EQ(MediaPolicy::profiles_from_string(MediaPolicy::to_string(profiles)), profiles);
   }
 }
@@ -169,6 +169,18 @@ TEST(MediaPolicyTest, ARealmCanSayEveryLegIsWebRtc) {
   const auto seen = f.engine->seen();
   ASSERT_FALSE(seen.empty());
   EXPECT_EQ(seen[0].target, Flags::Profile::WebRtc);
+}
+
+// Nothing about a flow distinguishes a desk phone that wants SRTP from one that does
+// not, so this profile can only be asked for.
+TEST(MediaPolicyTest, ARealmCanAskForSrtpWithTheKeysInTheDescription) {
+  PolicyFixture f(with_profiles(MediaPolicy::Profiles::SrtpSdes), "udp");
+
+  f.receive(f.caller, f.invite_with_body());
+
+  const auto seen = f.engine->seen();
+  ASSERT_FALSE(seen.empty());
+  EXPECT_EQ(seen[0].target, Flags::Profile::SrtpSdes);
 }
 
 TEST(MediaPolicyTest, ARealmCanLeaveItToTheEngine) {

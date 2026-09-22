@@ -49,6 +49,16 @@ void apply_profile(Bencode& command, Flags::Profile profile, bool source_wants_m
       command.set("rtcp-mux", Bencode::list({Bencode(std::string("offer")), Bencode(std::string("require"))}));
       return;
 
+    case Flags::Profile::SrtpSdes:
+      // RFC 4568: the keys travel in the description, so there is no handshake and no
+      // ICE. RTP/SAVP rather than the browser's UDP/TLS/RTP/SAVPF, and rtpengine
+      // generates the crypto attributes from the profile alone.
+      command.set("ICE", Bencode(std::string("remove")));
+      command.set("DTLS", Bencode(std::string("off")));
+      command.set("transport-protocol", Bencode(std::string("RTP/SAVP")));
+      command.set("rtcp-mux", Bencode::list({Bencode(std::string("demux"))}));
+      return;
+
     case Flags::Profile::PlainRtp:
       command.set("ICE", Bencode(std::string("remove")));
       command.set("DTLS", Bencode(std::string("off")));

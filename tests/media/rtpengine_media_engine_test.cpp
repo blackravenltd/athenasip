@@ -459,6 +459,32 @@ TEST(RtpengineMediaEngineTest, ThePlainRtpProfileStripsWhatAPhoneCannotUse) {
   engine->close();
 }
 
+// RFC 4568: the keys travel in the description, so there is no handshake to start and
+// no ICE to gather. A desk phone offered a browser's UDP/TLS/RTP/SAVPF cannot answer.
+TEST(RtpengineMediaEngineTest, TheSrtpProfileAsksForSavpWithNoDtls) {
+  FakeRtpengine fake;
+  fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
+  fake.answer("offer", ok_with_sdp("v=0\r\no=- 1 1 IN IP4 203.0.113.9\r\ns=-\r\nt=0 0\r\nm=audio 30000 RTP/SAVP 0\r\n"));
+
+  auto engine = make_engine(fake);
+  ASSERT_TRUE(engine->connect());
+
+  Flags flags;
+  flags.participant = 0;
+  flags.target = Flags::Profile::SrtpSdes;
+
+  ASSERT_TRUE(engine->offer(make_call(), kOffer, flags).ok);
+
+  auto request = fake.last("offer");
+  ASSERT_TRUE(request.has_value());
+
+  EXPECT_EQ(request->string_at("transport-protocol"), "RTP/SAVP");
+  EXPECT_EQ(request->string_at("DTLS"), "off");
+  EXPECT_EQ(request->string_at("ICE"), "remove");
+
+  engine->close();
+}
+
 // Nothing said means nothing sent, which leaves rtpengine doing what it did before the
 // profile existed. That is the right answer for a caller that cannot tell.
 TEST(RtpengineMediaEngineTest, TheMirrorProfileSaysNothingAboutIceOrDtls) {

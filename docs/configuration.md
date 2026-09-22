@@ -391,5 +391,8 @@ is asked to produce for a leg: `transport`, the default, reads it from the flow,
 `ws` and `wss` are WebRTC and everything else is plain RTP. That is right wherever a
 WebSocket means a browser. It is wrong for a realm whose WebSocket clients are SIP
 phones, because RFC 7118 is SIP over WebSocket and requires no WebRTC at all, and
-`rtp` is the answer there. `webrtc` makes every leg WebRTC, and `mirror` says nothing
-and leaves the engine keeping whatever it was handed.
+`rtp` is the answer there. `webrtc` makes every leg WebRTC. `srtp` makes every leg SRTP
+with the keys in the description (RFC 4568), which is a desk phone that wants
+encryption and has never heard of DTLS, and no transport tells that apart from plain
+RTP so it can only be asked for. `mirror` says nothing and leaves the engine keeping
+whatever it was handed.

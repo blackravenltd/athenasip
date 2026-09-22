@@ -42,11 +42,17 @@ struct MediaPolicy {
 
     // Every leg is WebRTC.
     WebRtc,
+
+    // Every leg is SRTP with the keys in the description (RFC 4568), which is a desk
+    // phone that wants encryption and has never heard of DTLS. No transport tells
+    // these apart from plain RTP, so this one can only be asked for.
+    SrtpSdes,
   };
 
   Profiles profiles = Profiles::FromTransport;
 
-  // "transport", "mirror", "rtp" or "webrtc". Anything else is the fallback, because a
+  // "transport", "mirror", "rtp", "webrtc" or "srtp". Anything else is the fallback,
+  // because a
   // realm with a typo in it should keep working the way it did rather than change
   // what it does to media.
   static Profiles profiles_from_string(const std::string& value, Profiles fallback = Profiles::FromTransport);
