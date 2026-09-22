@@ -122,6 +122,8 @@ TEST(MqttEventSystemTest, ConnectFailsWhenNoBrokerIsThere) {
 
   EXPECT_FALSE(bus.connect());
   EXPECT_FALSE(bus.is_connected());
+
+  bus.close();
 }
 
 TEST(MqttEventSystemTest, ConnectsAndReportsConnected) {
