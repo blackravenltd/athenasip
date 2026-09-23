@@ -1441,3 +1441,154 @@ and the rtpengine driver had only ever spoken to a fake socket of my own writing
       sipp's A-law capture, so every packet carried a payload type the SDP did not
       name; the relay does not inspect payloads and rtpengine, correctly, dropped all
       101 of them.
+
+### A leg is profiled from what it has said, not from its transport (2026-09-23)
+
+The first Milestone 3 item, and the thing that made a browser calling an AthenaPhone
+fail: AthenaPhone's media is WebRTC on every transport it signals over, so reading a
+leg from its flow offered it RTP/AVP it cannot answer.
+
+- [x] **A participant remembers its own profile.** `Call::Participant::profile` is set
+      from every description that arrives from that leg, read before the engine
+      rewrites the body, and read back when producing for that leg. A description says
+      exactly whether the end that wrote it asked for ICE, DTLS or SRTP, which is not a
+      guess in the way its transport is. `media::Profile` moved out of `Flags` into
+      `media/media_profile.h` so a `Call` can hold one; `Flags::Profile` is still the
+      name the plugin contract uses.
+- [x] **The realm no longer contradicts a leg that has spoken.** The policy was applied
+      to every description including answers, so under `media_profiles: webrtc` an
+      answer going back to a plain-RTP caller was told WebRTC - worse than the
+      transport guess it replaced. The realm's setting, and where it has none the
+      transport of the outgoing flow, now decide only for the first description
+      produced towards a leg this node has never heard describe itself.
+- [x] **The delayed offer falls out of the same memory.** Where the INVITE carries no
+      description the 2xx is the offer and the ACK the answer, and the ACK's answer is
+      now produced for what the callee said rather than for a request body that says
+      nothing.
+- [x] **A description that will not parse teaches this node nothing.** `Flags::stated()`
+      is empty unless the SDP was readable, so a leg is never quoted on something it
+      did not say.
+- [x] Six tests, four of which failed first. 583 in all, clean under asan and tsan.
+      Removes the deviation of the same name from `ACTIVE.md`.
+
+### The fixture a browser can actually use (2026-09-23)
+
+Two Milestone 3 items that turned out to be one problem: a browser on the host and a
+phone on the LAN cannot reach anything the end-to-end harness builds, because it keeps
+every container on a closed bridge. Everything below is about being reachable.
+
+- [x] **rtpengine, reachable.** `test/interop/docker-compose.rtpengine.yml`, selected by
+      `up.sh --rtpengine`. The engine is given `--interface=<its own address>!<this
+      host's address>`, so it binds what it has inside Docker and writes into the
+      description what the client can send to, and its media range is published to the
+      host - an address a packet cannot arrive on being no better than the container's
+      own. Proven by asking it for an offer over ng: `c=IN IP4 10.35.1.132` on port
+      23000, with all 21 published ports held open on the host.
+- [x] **The fixture moves off loopback.** `up.sh` works out this host's address on its
+      own network, advertises it, names the realm after it and publishes every port on
+      `0.0.0.0`. `ATHENA_INTEROP_PUBLIC_ADDRESS` and `ATHENA_INTEROP_BIND` override both
+      halves; loopback is still the default without `--rtpengine`.
+- [x] **TLS off loopback did not verify, and the fixture's own smoke test found it.**
+      The checked-in certificate names loopback and nothing else, so a fixture
+      advertising this machine's address served one that did not name what the client
+      dialled - the same failure as the unverifiable CA, arrived at from the other side.
+      `tls/generate.sh` gained `--server-only --out DIR <name>...`, which signs for the
+      addresses asked for with the existing CA, so a client that already trusts
+      `tls/ca/snakeca.crt` needs nothing new; `up.sh` runs it whenever the fixture is
+      off loopback, with a random serial so a fixture run never rewrites the checked-in
+      `snakeca.srl`. All four transports registered after that.
+- [x] **The engine is one line of config.** `config.yaml.template` carries both driver
+      blocks and a rendered `media.url`, because a plugin reads its own YAML root and
+      the one that was not selected reads nothing. The node is the same node either
+      way, which is the plugin contract doing its job.
+- [x] **A reload of a client-side route answered 404.** `StaticMiddleware` served files
+      and nothing else, so every page of the admin console worked only if you had
+      navigated to it from somewhere else. A path with no extension, no empty segment,
+      not under `/api/` and asked for with GET or HEAD now gets `index.html` - the
+      document that knows how to route it. A missing asset still 404s, because a bundle
+      that answers 200 with HTML in it is far worse to debug; an unknown path below the
+      API still 404s, because answering it with a web page would be a lie about what
+      this node serves; and `//etc/hosts` is not a route either, having an empty
+      segment, which is somebody trying the root as a prefix rather than a page being
+      opened.
+- [x] **The MIME map could not name what a built bundle is made of.** `.svg` was
+      `image/svg` rather than `image/svg+xml`, and `.mjs`, `.map`, `.ico`, `.woff`,
+      `.woff2` and `.wasm` were absent, so they arrived as `application/octet-stream` -
+      which a browser refuses for a module script.
+- [x] `up.sh --admin` mounts the admin client's build read-only at `/admin` and turns
+      `http.files` on, refusing to start a node that would serve nothing and saying how
+      to build it. Mounted rather than checked in: a bundle copied into this tree is one
+      that goes stale.
+- [x] `smoke.py --realm` follows `--host`, since the realm is named for the address
+      dialled and that is no longer always `127.0.0.1`.
+- [x] Checked against the real node with the admin build mounted: `/` and
+      `/diagnostics/softphone` 200 as `text/html`, the bundle 200s as
+      `application/javascript`, a missing asset and an unknown API path 404,
+      `/api/v1/health` still answers, all four transports still register. Four new
+      tests, one of which failed first, and both harness runs unchanged.
+
+### A browser calls a browser through this node and rtpengine (2026-09-23)
+
+The first "to the first call" item, and the first time media has gone end to end
+through AthenaSIP between two real WebRTC endpoints rather than between two sipp
+containers reading a capture file. The decision that the admin client's softphone is
+the harness's browser page is dated 2026-09-23 in `ACTIVE.md`.
+
+- [x] `test/interop/browser.sh`: brings the interop fixture up with `--rtpengine
+      --admin`, runs the Playwright spec that lives beside the page in
+      `../athenasip-admin`, and takes the fixture down on the way out so a failed run
+      never leaves a node published on `0.0.0.0`. It checks what the other repository
+      owes it first - the built page, Playwright, a downloaded Chromium - and says how
+      to fix each, rather than starting containers it cannot drive.
+- [x] `up.sh` writes `generated/fixture.env` every run: what the fixture actually turned
+      out to be, including the LAN address it detected. The wrapper sources it, so
+      nothing guesses an address or a port a second time and the alt-port case needs no
+      special handling anywhere.
+- [x] **Two calls, both directions, passing.** 1001 calls 1002 and hangs up; 1002 calls
+      1001 and the callee hangs up. Both ends of both calls: `call connected`, ICE
+      connected, DTLS connected, Opus, packets in both directions, none lost. The
+      selected remote candidate is `10.35.1.132:23000`, `:23010`, `:23014` - the LAN
+      address rtpengine advertises and the ports the host publishes, which is the item
+      above proven from the endpoint's side rather than from the engine's.
+- [x] rtpengine's own view of the same calls, which is the second witness: ~2500 packets
+      per leg, `UDP/TLS/RTP/SAVPF`, `AEAD_AES_256_GCM`, flags including `DTLS
+      fingerprint verified`, `rtcp-mux`, `ICE`, `trickle ICE`, 0 errors and 0 loss.
+- [x] **One bug, and it was in the page.** The first run failed on both tests with the
+      media flowing: `iceConnectionState` never reported connected because JsSIP
+      announces an outgoing call's peer connection before it announces the session, so
+      the page's controller subscribed too late. Found by putting the engine's counters
+      beside the browser's, which is the whole reason for having two witnesses; fixed in
+      `athenasip-admin` with a regression test.
+
+### The counters, and a runbook for the call a person has to make (2026-09-23)
+
+Everything the last Milestone 3 item needs except the device and the person.
+
+- [x] `test/interop/media-stats.py`: what rtpengine did with the media, asked of
+      rtpengine over its ng protocol, with nothing installed. Lists the calls the engine
+      is holding or queries one, and prints per leg the protocol, the crypto suite,
+      where the packets came from, how many there were, and the flags that matter -
+      `DTLS fingerprint verified`, `ICE`, `rtcp-mux`. `--watch` follows a call live. A
+      call with no relayed packet says so in as many words, because that is the failure
+      the tool exists to make visible: a declined description travels on untouched and
+      the two endpoints reach each other directly, which looks identical from outside.
+      Reading these previously meant hand-writing bencode inside the container.
+- [x] The ng control port is published, on loopback and only ever on loopback whatever
+      the media is published on, because anything that can reach it can redirect
+      anybody's media.
+- [x] **Its own first bug.** `--watch` wrote nothing at all when its output was a file
+      rather than a terminal: Python block-buffers to a pipe and being stopped lost the
+      lot. Flushed every time round now, and SIGTERM raises rather than killing it where
+      it stands, because watching is the mode whose output is read while it is still
+      being written.
+- [x] `test/interop/UAT.md`: the runbook for the call nothing can automate, and the
+      record to fill in. What to bring up, how to point AthenaPhone at it, what to
+      listen for, what to capture, and what each failure means. It says plainly that the
+      node logs first lines and not bodies, so the session descriptions have to come off
+      the two endpoints - and that gap is now an item of its own.
+- [x] `docs/testing.md`: the five layers in one place, what each answers that the one
+      before it cannot, and the exact commands. `ACTIVE.md` points at it rather than
+      carrying a second copy that drifts.
+- [x] Proven by running the browser call three more times through the wrapper, passing
+      each time, with the counters read live: 209 packets and climbing across two legs,
+      `UDP/TLS/RTP/SAVPF`, `AEAD_AES_256_GCM`, 0 errors.

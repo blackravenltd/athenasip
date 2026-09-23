@@ -12,7 +12,7 @@ machines sit behind a matcher with `Registrar` and `Proxy` as the transaction us
 `memory://` and `redis://`, `local://` and `mqtt://`, and `builtin://` and
 `rtpengine://` in tree; a node decides for itself when a call it is holding is over;
 provisioning is over a JSON API; and the sipp harness proves a call end to end on UDP.
-577 tests, clean under asan and tsan.
+587 tests, clean under asan and tsan.
 
 0.6.0 landed RFC 5626 flow routing, the rtpengine driver and the media profile that
 tells it which leg is the browser, and the behaviour tests that found eleven bugs in
@@ -24,50 +24,34 @@ deviations from RFC 3261 and 3264 are closed. `COMPLETED.md` has the detail.
 The next thing to build toward is one call: a browser calls an AthenaPhone and the
 media goes through rtpengine. Milestone 3 is written around it, in order.
 
-Since 0.7.0, on `develop` and not yet tagged: a fixture for pointing a real SIP client
-at, and the sipp harness run against a real rtpengine. Both are recorded at the end of
-`COMPLETED.md`.
+Since 0.7.0, on `develop` and not yet tagged: a leg is profiled from what it has said
+rather than from the transport it signals over; the interop fixture has rtpengine on
+its media path and reaches outside Docker; this node serves the web client that drives
+its own harness; and a browser calls a browser through it with audio proven at both
+ends by the engine's counters and the browsers' own. `COMPLETED.md` has the detail.
+
+What remains of Milestone 3 before the goal is met is one manual call, and the tooling
+and runbook for it are in the tree.
 
 Milestones are in priority order and so are the items inside each one: work top to
 bottom. Move items to `COMPLETED.md` as they land, with a note on what shipped.
 
 ## How to prove it
 
-Four things, cheapest first. All of them should pass before anything is tagged.
+`docs/testing.md` is the whole of it: the five layers, what each answers that the one
+before it cannot, and the exact commands. The short version, cheapest first:
 
 ```
-cmake --preset tests && cmake --build build-tests -j8
-ATHENA_TEST_REDIS_URL=redis://127.0.0.1:6399 \
-ATHENA_TEST_MQTT_URL=mqtt://127.0.0.1:1883 ./build-tests/athenasip_tests
+./build-tests/athenasip_tests    the unit suite, with Redis and MQTT set or they skip
+./build-asan/athenasip_tests     both sanitizers, before anything touching the
+./build-tsan/athenasip_tests     transaction, channel or media paths
+test/e2e/run.sh [--rtpengine]    the sipp scenarios, the second with a real engine
+test/interop/up.sh --rtpengine   a node to point a real client at
+test/interop/browser.sh          two browsers calling through rtpengine
+test/interop/UAT.md              the call a person has to make
 ```
 
-The unit suite. Redis and MQTT skip without those, so set both or the two canonical
-drivers go untested. Run it directly rather than through ctest: ctest launches a
-process per test and takes eleven minutes to do what this does in eleven seconds.
-
-```
-cmake --preset asan && cmake --build build-asan -j8 && ...
-cmake --preset tsan && cmake --build build-tsan -j8 && ...
-```
-
-Both sanitizers, before anything touching the transaction, channel or media paths.
-
-```
-test/e2e/run.sh                 the eight sipp scenarios, in-process relay
-test/e2e/run.sh --rtpengine     the same, with a real rtpengine on the media path
-```
-
-Compliance proven rather than asserted, which is principle 2. The rtpengine run also
-asserts the engine relayed the media rather than declining it, which the builtin run
-cannot.
-
-```
-test/interop/up.sh              a node for a real client to be pointed at
-test/interop/smoke.py           registers on UDP, TCP, TLS and WS
-```
-
-For interop. Run the smoke test before blaming a client: if it passes and the client
-does not, the difference is in the client.
+All of them pass before anything is tagged.
 
 ## Principles
 
@@ -151,6 +135,13 @@ Dated, and not reopened without asking.
   `AthenaSIP-Alternate-Server` header. The M4 items carry the detail.
 - (2026-09-21) `Subscriber` is `Account`, because it would have collided with SUBSCRIBE
   (RFC 6665) the moment presence arrived.
+- (2026-09-23) The browser end of the Milestone 3 harness is the admin client's own
+  softphone, served by this node's static middleware, rather than a minimal page kept
+  here. One page, maintained where the client lives, and tested where it is written;
+  the cost is that the harness mounts a build from `../athenasip-admin` rather than
+  serving something checked in, which is preferred to a copied bundle going stale. The
+  Playwright spec lives beside the page in that repository and this side brings the
+  node, rtpengine and the accounts up for it.
 
 ## Architecture
 
@@ -191,11 +182,6 @@ mistaken for compliance:
 - RFC 5626 is routing only: a binding records its flow and the fork uses it. There is no
   `+sip.instance`, `reg-id`, `Flow-Timer` or keep-alive; M4.
 - Forking is serial. 16.7 allows it, and parallel forking is Parked.
-- A leg's media profile is read from the transport of its flow, or from the realm's
-  setting where it has one, and never from what that leg has already said it wants.
-  An answer going back to the end that offered is profiled the same way, although the
-  offer says exactly what it asked for. Not an architectural limit - rtpengine relays
-  and bridges whatever it is told to - but the first Milestone 3 item.
 - A media-anchoring node rewrites the body it forwards, which 16.6 forbids a proxy. It
   is the relay, and where it cannot anchor the message travels on untouched.
 - Outbound TLS and outbound UDP to a host this node has never heard from are refused
@@ -223,59 +209,29 @@ the Record-Route are what make it reachable, and AthenaPhone is an ordinary SIP
 endpoint on an ordinary transport. All of that is in. What is not yet in is listed
 here, in the order it is needed.
 
-The one thing the tree gets wrong for this exact call: a leg's profile is read from
-the transport of its flow, so AthenaPhone on UDP reads as plain RTP and is offered
-RTP/AVP it cannot answer. A realm whose endpoints are all WebRTC can say
-`media_profiles: webrtc` today and be right, and for this goal that is enough. It is
-not a general answer, and the first item below is the general one.
+What made this exact call fail is fixed: a leg is profiled from what it has said
+rather than from the transport it signals over, so AthenaPhone on UDP is offered the
+WebRTC its own description asked for. A realm only decides for a leg this node has
+never heard describe itself.
 
 ### To the first call, in order
 
-- [ ] **Produce for a leg what that leg has already said it wants.** Two things are
-      wrong in `Proxy::_anchor_media`. The realm's policy is applied to every
-      description, including answers, and an answer is going back to the end that sent
-      the offer - whose offer already says exactly whether it asked for ICE, DTLS or
-      SRTP. So with `media_profiles: webrtc` an answer to a plain-RTP caller is told
-      WebRTC, which is worse than the transport guess it replaced. And nothing remembers
-      what a leg said: a re-INVITE from a leg this node has heard describe itself twice
-      is still profiled from its transport. The fix is one mechanism: record each
-      participant's own profile on the `Call` the first time a description arrives from
-      it, read it back when producing for that leg, and fall back to the transport and
-      then the realm only for the first offer towards a leg this node has never heard
-      from. The delayed offer, where the 2xx carries the offer and the ACK the answer,
-      falls out of the same memory and would not out of reading the request body.
-      Removes the deviation below.
-- [ ] **rtpengine reachable from outside Docker.** The harness has it on a bridge where
-      the node and sipp share the network; a browser on the host and a phone on the LAN
-      do not. rtpengine's `--interface` takes `internal!advertised` for exactly this,
-      and the port range has to be published. The interop fixture gains an rtpengine
-      of its own and a `public_address` that is the host's LAN address rather than
-      loopback, because a phone reaching the fixture from a device is not on loopback.
-      This is Milestone 4's "the address a node advertises depends on who is asking"
-      arriving early, for the media plane.
-- [ ] **A browser page in the harness, and a browser-to-browser call through
-      rtpengine driven by a headless browser.** A minimal JsSIP page served by the
-      node's own static middleware - the query-string fix was for exactly this - and a
-      Playwright run with Chrome's fake media devices that registers two browsers and
-      calls one from the other. Two browsers through rtpengine exercise everything on
-      this node's side of the goal: WSS, the flow token, the WebRTC profile, ICE and
-      DTLS through the engine, and the counters that say media moved. AthenaPhone's
-      media is the same WebRTC, so what the real call adds is only its signalling
-      transport, which AthenaPhone's own harness proves. Two automated halves that
-      together cover the manual whole, and the first of them runs with no device, no
-      Metro and no AthenaPhone at all.
 - [ ] **The call.** A browser to an AthenaPhone on a device, through the interop
       fixture with rtpengine. Register both, call each way, hear audio, hang up from
-      each end, and read rtpengine's counters afterwards. Manual, and written down when
-      it works: which transport AthenaPhone was on, which browser, what the SDP each
-      end saw looked like, and what the node logged. That record is the first row of
-      the interop matrix.
+      each end, and read rtpengine's counters afterwards. The browser half is automated
+      and passing, and AthenaPhone's media is the same WebRTC over any transport, so
+      what this adds is AthenaPhone's signalling transport and a person hearing it.
+
+      `test/interop/UAT.md` is the runbook and carries the record to fill in, and
+      `test/interop/media-stats.py` is the counters. What is left is somebody with a
+      device doing it. Written down either way: a failure recorded is the next item, a
+      success recorded is the first row of the interop matrix.
 
 ### After the first call
 
-- [ ] A realm holding both WebRTC endpoints and plain-RTP ones. Once a leg's own
-      profile is remembered, the only undecidable case is the first offer towards an
-      endpoint this node has never heard describe itself, and only when its transport
+- [ ] A realm holding both WebRTC endpoints and plain-RTP ones. Now that a leg's own
+      profile is remembered, the only undecidable case left is the first offer towards
+      an endpoint this node has never heard describe itself, and only when its transport
       misleads - a WebRTC endpoint on UDP, TCP or TLS. The options are a per-account
       hint, or offering by transport and re-offering the other way on a 488, or
       letting the first call fail and remembering. Not decided.
@@ -295,6 +251,11 @@ not a general answer, and the first item below is the general one.
 - [ ] Harness scenarios for what nothing exercises: a delayed offer, hold and resume,
       and a trunk. The WSS and browser-to-phone scenarios are the browser harness
       above.
+- [ ] Somewhere to see the session description this node produced. It logs the first
+      line of every message and not the bodies, so during the UAT above the SDP has to
+      be read off the two endpoints instead - which is the one thing a node is better
+      placed to show than either end of the call. A debug log level that includes
+      bodies, or the live-calls page in M5, whichever arrives first.
 - [ ] A media assertion for the builtin relay to match the one rtpengine's counters
       give. The rtpengine run fails when nothing was relayed; the builtin run cannot
       tell, because the relay keeps no counters a harness can read and a declined

@@ -51,3 +51,7 @@ admin/*
 # Scenario logs from the end-to-end harness
 test/e2e/results/
 test/interop/generated/
+
+# Python bytecode, from the dependency-free tools under test/
+__pycache__/
+*.pyc
