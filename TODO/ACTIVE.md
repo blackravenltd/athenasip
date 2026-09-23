@@ -21,6 +21,9 @@ calls ask of the engine, the node record-routes both interfaces and carries a fl
 token in each so an in-dialog request can reach a browser, and three recorded
 deviations from RFC 3261 and 3264 are closed. `COMPLETED.md` has the detail.
 
+The next thing to build toward is one call: a browser calls an AthenaPhone and the
+media goes through rtpengine. Milestone 3 is written around it, in order.
+
 Since 0.7.0, on `develop` and not yet tagged: a fixture for pointing a real SIP client
 at, and the sipp harness run against a real rtpengine. Both are recorded at the end of
 `COMPLETED.md`.
@@ -188,9 +191,11 @@ mistaken for compliance:
 - RFC 5626 is routing only: a binding records its flow and the fork uses it. There is no
   `+sip.instance`, `reg-id`, `Flow-Timer` or keep-alive; M4.
 - Forking is serial. 16.7 allows it, and parallel forking is Parked.
-- A leg's media profile comes from the transport of its flow or from the realm, and
-  there is no per-endpoint say. A realm with both browsers and SIP-over-WebSocket
-  phones in it cannot have both.
+- A leg's media profile is read from the transport of its flow, or from the realm's
+  setting where it has one, and never from what that leg has already said it wants.
+  An answer going back to the end that offered is profiled the same way, although the
+  offer says exactly what it asked for. Not an architectural limit - rtpengine relays
+  and bridges whatever it is told to - but the first Milestone 3 item.
 - A media-anchoring node rewrites the body it forwards, which 16.6 forbids a proxy. It
   is the relay, and where it cannot anchor the message travels on untouched.
 - Outbound TLS and outbound UDP to a host this node has never heard from are refused
@@ -202,53 +207,108 @@ mistaken for compliance:
 
 ---
 
-## Milestone 3 - WebRTC and rtpengine
+## Milestone 3 - A browser calls AthenaPhone through rtpengine
 
-Goal: AthenaPhone and JsSIP make audio and video calls to each other and to plain-RTP
-endpoints, media anchored in rtpengine.
+Goal, narrowed from where it started: a browser on a WebSocket calls an AthenaPhone
+registered over UDP, TCP or TLS, and the media goes through rtpengine. Plain-RTP
+endpoints, and mixing them into the same realm as these, come after this and not
+before it.
 
-What a browser call needs from the signalling is now in: WSS, each binding reached on
-the flow it registered over, an rtpengine driver, a media profile that says which leg
-is the browser and a realm that can override it, and a route set that carries a flow
-token so the ACK and the BYE reach an endpoint whose Contact resolves to nothing. What
-is left is a real browser at the other end of it, which is the verification item at the
-bottom, and the endpoint-side NAT work.
+The thing to see clearly about this call is that it is not the bridging case. Both ends
+are WebRTC: the browser cannot be anything else, and AthenaPhone's media is WebRTC on
+every transport it signals over. rtpengine relays like to like. What differs between
+the two ends is the signalling transport, and that is entirely this node's business:
+the browser's Contact resolves to nothing, so the flow routing and the flow token in
+the Record-Route are what make it reachable, and AthenaPhone is an ordinary SIP
+endpoint on an ordinary transport. All of that is in. What is not yet in is listed
+here, in the order it is needed.
 
-- [ ] Record which rtpengine instance owns a call in the datastore so any node can
-      release it; support a pool of engines with health checks. The driver itself is
-      proven against rtpengine 9.4.0 now - `test/e2e/run.sh --rtpengine` runs every
-      scenario against one - so what is left here is the cluster's question rather than
-      the protocol's.
-- [ ] NAT handling for the client side: `rport` and `received` are already stamped on the
-      way in (RFC 3581); what is missing is routing the response and the in-dialog
-      request to where the request actually came from rather than where its Via and
-      Contact claim, and a Contact rewrite policy for a client that cannot be told. The
-      node's own address behind NAT is the M4 item, not this one.
-- [ ] Outbound UDP to a host this node has never heard from. The datagram has to leave
-      by the listener's own socket so the source port is the one the far end answers to,
-      and that socket belongs to `UDPServer` rather than to the channel registry. Needed
-      for a UDP trunk, which the interop matrix below has.
-- [ ] Client provisioning endpoint: `GET /api/v1/client/config` returning WSS URL, ICE
-      servers, and time-limited TURN credentials (coturn shared-secret scheme).
-- [ ] Harness scenarios for what M2 did not exercise: a WSS call, a call between a
-      browser and a UDP phone, a delayed offer (INVITE with no body, offer in the 2xx,
-      answer in the ACK, handled in the shape and untested), hold and resume, and a
-      trunk.
+The one thing the tree gets wrong for this exact call: a leg's profile is read from
+the transport of its flow, so AthenaPhone on UDP reads as plain RTP and is offered
+RTP/AVP it cannot answer. A realm whose endpoints are all WebRTC can say
+`media_profiles: webrtc` today and be right, and for this goal that is enough. It is
+not a general answer, and the first item below is the general one.
+
+### To the first call, in order
+
+- [ ] **Produce for a leg what that leg has already said it wants.** Two things are
+      wrong in `Proxy::_anchor_media`. The realm's policy is applied to every
+      description, including answers, and an answer is going back to the end that sent
+      the offer - whose offer already says exactly whether it asked for ICE, DTLS or
+      SRTP. So with `media_profiles: webrtc` an answer to a plain-RTP caller is told
+      WebRTC, which is worse than the transport guess it replaced. And nothing remembers
+      what a leg said: a re-INVITE from a leg this node has heard describe itself twice
+      is still profiled from its transport. The fix is one mechanism: record each
+      participant's own profile on the `Call` the first time a description arrives from
+      it, read it back when producing for that leg, and fall back to the transport and
+      then the realm only for the first offer towards a leg this node has never heard
+      from. The delayed offer, where the 2xx carries the offer and the ACK the answer,
+      falls out of the same memory and would not out of reading the request body.
+      Removes the deviation below.
+- [ ] **rtpengine reachable from outside Docker.** The harness has it on a bridge where
+      the node and sipp share the network; a browser on the host and a phone on the LAN
+      do not. rtpengine's `--interface` takes `internal!advertised` for exactly this,
+      and the port range has to be published. The interop fixture gains an rtpengine
+      of its own and a `public_address` that is the host's LAN address rather than
+      loopback, because a phone reaching the fixture from a device is not on loopback.
+      This is Milestone 4's "the address a node advertises depends on who is asking"
+      arriving early, for the media plane.
+- [ ] **A browser page in the harness, and a browser-to-browser call through
+      rtpengine driven by a headless browser.** A minimal JsSIP page served by the
+      node's own static middleware - the query-string fix was for exactly this - and a
+      Playwright run with Chrome's fake media devices that registers two browsers and
+      calls one from the other. Two browsers through rtpengine exercise everything on
+      this node's side of the goal: WSS, the flow token, the WebRTC profile, ICE and
+      DTLS through the engine, and the counters that say media moved. AthenaPhone's
+      media is the same WebRTC, so what the real call adds is only its signalling
+      transport, which AthenaPhone's own harness proves. Two automated halves that
+      together cover the manual whole, and the first of them runs with no device, no
+      Metro and no AthenaPhone at all.
+- [ ] **The call.** A browser to an AthenaPhone on a device, through the interop
+      fixture with rtpengine. Register both, call each way, hear audio, hang up from
+      each end, and read rtpengine's counters afterwards. Manual, and written down when
+      it works: which transport AthenaPhone was on, which browser, what the SDP each
+      end saw looked like, and what the node logged. That record is the first row of
+      the interop matrix.
+
+### After the first call
+
+- [ ] A realm holding both WebRTC endpoints and plain-RTP ones. Once a leg's own
+      profile is remembered, the only undecidable case is the first offer towards an
+      endpoint this node has never heard describe itself, and only when its transport
+      misleads - a WebRTC endpoint on UDP, TCP or TLS. The options are a per-account
+      hint, or offering by transport and re-offering the other way on a 488, or
+      letting the first call fail and remembering. Not decided.
+- [ ] Client provisioning endpoint: `GET /api/v1/client/config` returning the WSS
+      URL, ICE servers, and time-limited TURN credentials (coturn shared-secret
+      scheme). The browser page above hardcodes these until it exists.
+- [ ] NAT handling for the client side, for a phone that is not on the LAN: `rport`
+      and `received` are stamped on the way in (RFC 3581), and what is missing is
+      routing a response and an in-dialog request to where the request actually came
+      from rather than where its Via and Contact claim, plus a Contact rewrite policy
+      for a client that cannot be told. The flow token covers the in-dialog half for
+      anything that registered here. The node's own address behind NAT is M4.
+- [ ] Outbound UDP to a host this node has never heard from. The datagram has to
+      leave by the listener's own socket so the source port is the one the far end
+      answers to, and that socket belongs to `UDPServer` rather than to the channel
+      registry. Needed for a UDP trunk.
+- [ ] Harness scenarios for what nothing exercises: a delayed offer, hold and resume,
+      and a trunk. The WSS and browser-to-phone scenarios are the browser harness
+      above.
 - [ ] A media assertion for the builtin relay to match the one rtpengine's counters
-      give. `test/e2e/run.sh --rtpengine` now fails when nothing was relayed; the
-      builtin run cannot tell, because the relay keeps no counters a harness can read
-      and a declined description looks exactly like a relayed one from outside. The
-      engine's `query` already reports idle time, so the admin API's live-calls page in
-      M5 is where this gets its answer.
-- [ ] Verify against AthenaPhone on UDP, TCP, TLS, WSS: register, audio call, video
-      call, hold/resume, DTMF (RFC 4733 passthrough), blind transfer (REFER proxying).
-      `test/interop/` is the node to point it at, and `test/interop/smoke.py` says
-      whether the fixture is serving before anything else is blamed. Note that
-      AthenaPhone's media is WebRTC on every transport and this fixture offers plain
-      RTP, so signalling will be clean and media will not agree; that is the honest
-      result and the decision is AthenaPhone's.
-- [ ] Interop matrix documented: AthenaPhone, JsSIP in Chrome/Firefox/Safari, Linphone,
-      a hardware desk phone, Asterisk as a trunk.
+      give. The rtpengine run fails when nothing was relayed; the builtin run cannot
+      tell, because the relay keeps no counters a harness can read and a declined
+      description looks exactly like a relayed one from outside. The engine's `query`
+      already reports idle time, so the admin API's live-calls page in M5 is where this
+      gets its answer.
+- [ ] Record which rtpengine instance owns a call in the datastore so any node can
+      release it; support a pool of engines with health checks. The driver is proven
+      against rtpengine 9.4.0, so this is the cluster's question and not the
+      protocol's; it belongs with M4 as much as here.
+- [ ] Verify the rest against AthenaPhone: video, hold and resume, DTMF (RFC 4733
+      passthrough), blind transfer (REFER proxying).
+- [ ] Interop matrix documented: AthenaPhone, JsSIP in Chrome, Firefox and Safari,
+      Linphone, a hardware desk phone, Asterisk as a trunk.
 
 ---
 
