@@ -65,18 +65,28 @@ datastore:
 events:
   url: "local://"
 
-# Plain RTP through the in-process relay, which is what an ordinary SIP softphone on
-# UDP, TCP or TLS expects. A client whose media is WebRTC will register and signal
-# cleanly here and fail to agree on media, which is the honest result rather than one
-# arranged by configuration.
+# Which engine is on the media path. Both drivers are configured whichever it is: a
+# plugin reads its own YAML root, so the one that was not selected reads nothing.
+#
+# builtin:// is the in-process relay and plain RTP, which is what an ordinary SIP
+# softphone on UDP, TCP or TLS expects. A client whose media is WebRTC will register
+# and signal cleanly against it and fail to agree on media, which is the honest result
+# rather than one arranged by configuration - and rtpengine, which up.sh --rtpengine
+# selects, is the answer to it.
 media:
-  url: "builtin://"
+  url: "@MEDIA_URL@"
 
   builtin:
     bind_address: 0.0.0.0
     public_address: @PUBLIC_ADDRESS@
     port_min: @RTP_MIN@
     port_max: @RTP_MAX@
+
+  rtpengine:
+    # The engine is a container away on a bridge and answers in microseconds, so this
+    # is a bound on silence rather than on work.
+    timeout_ms: 500
+    attempts: 3
 
 http:
   address: 0.0.0.0
@@ -90,5 +100,9 @@ http:
       - token: "interop-client"
         scopes: [client]
 
+  # The admin client, which is also the harness's browser page: a softphone this node
+  # serves itself, so a browser test needs no second web server and no CORS. The
+  # directory is mounted by up.sh and is empty of this node's concern otherwise.
   files:
-    enable: false
+    enable: @FILES_ENABLE@
+    path: "/admin"

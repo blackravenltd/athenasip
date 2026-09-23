@@ -293,7 +293,10 @@ def main():
     parser.add_argument("--ws-path", default="/ws")
     parser.add_argument("--user", default="1001")
     parser.add_argument("--password", default="athenaphone")
-    parser.add_argument("--realm", default="127.0.0.1")
+    # The realm is named for the address a client dialled, so it follows the host unless
+    # it is given. A fixture off loopback - rtpengine's, which advertises this machine's
+    # own address - would otherwise be registered against the wrong realm.
+    parser.add_argument("--realm", default=None)
     parser.add_argument("--timeout", type=float, default=5.0)
     parser.add_argument(
         "--ca",
@@ -303,6 +306,9 @@ def main():
     parser.add_argument("--transports", default="udp,tcp,tls,ws")
 
     args = parser.parse_args()
+
+    if args.realm is None:
+        args.realm = args.host
 
     failures = 0
 
