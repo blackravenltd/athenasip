@@ -64,6 +64,23 @@ This setting can be `true` even if the TCP server is enabled - in which case the
 be unencrypted, but the server will still reject attempts to initate unencrypted calls.
 
 
+#### `log_messages`
+
+If `true`, every message in and out is logged in full rather than by its first line.
+Defaults to `false`.
+
+The first line is the readable trace and is always logged. This adds the headers and
+the body, and the body is the reason to want it: a session description is the one thing
+a node is better placed to show than either end of a call, and reading it off both
+endpoints instead is what the interop runbook otherwise has to tell you to do. It is
+also most of the bytes, which is why it is asked for rather than assumed.
+
+`Authorization`, `Proxy-Authorization`, `WWW-Authenticate` and `Proxy-Authenticate` are
+logged as `<redacted>`. A Digest response is a hash rather than the password, but it is
+replayable for as long as its nonce lives, and a challenge carries the nonce the next
+response is computed over. The line itself is kept, because knowing that a request
+carried credentials is part of reading the exchange.
+
 #### `media_timeout`
 
 How long a call may carry no media at all before this node stops holding it open, in

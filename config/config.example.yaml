@@ -29,6 +29,13 @@ sip:
   # a cluster talks, so this is the switch that allows plain UDP, TCP and WS.
   allow_unencrypted: true
 
+  # Log the whole of every message in and out rather than only its first line. Off by
+  # default: it is most of the bytes, and a node under load writes a great many of them.
+  # Turn it on to see the session descriptions - which is the one thing a node is better
+  # placed to show than either end of a call - while working out why two clients cannot
+  # agree on media. Credentials are redacted whichever way they were going.
+  # log_messages: false
+
   # How long this node will spend opening a connection to a next hop it has no flow to
   # (RFC 3261 16.6 step 7), in milliseconds. Not an RFC timer, but it has to be bounded:
   # the operating system's own limit is well over a minute, and timer B gives the whole

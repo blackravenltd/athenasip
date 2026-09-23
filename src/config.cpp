@@ -44,6 +44,7 @@ bool Config::load_from_yaml(const std::string& filename) {
   // Previously present in the YAML and the docs but never read, so setting it had no
   // effect at all.
   if (sip["allow_unencrypted"]) sip_allow_unencrypted = sip["allow_unencrypted"].as<bool>();
+  if (sip["log_messages"]) sip_log_messages = sip["log_messages"].as<bool>();
   if (sip["public_address"]) sip_public_address = sip["public_address"].as<std::string>();
   if (sip["media_timeout"]) sip_media_timeout = sip["media_timeout"].as<uint32_t>();
   if (sip["max_call_duration"]) sip_max_call_duration = sip["max_call_duration"].as<uint32_t>();
