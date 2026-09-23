@@ -1118,10 +1118,17 @@ provisioned through the admin API, verified by sipp. 472 tests at the tag, clean
 asan and tsan, the Redis suite verified against a real server. The items each step left
 for later are in `ACTIVE.md` under the milestone that picks them up.
 
-## Milestone 3 - WebRTC and rtpengine, in progress
+## Milestone 3 - A browser calls AthenaPhone through rtpengine, in progress
 
 Everything down to "The mixed-transport call" shipped in 0.6.0 and 0.7.0. What follows
 it is on `develop` and not yet tagged.
+
+What the sections below add up to, against that goal: the browser's side of the
+signalling is done - WSS, a binding reached on the flow it registered over, and a flow
+token in the Record-Route so the ACK and the BYE reach a Contact that resolves to
+nothing; the engine is done and proven against rtpengine 9.4.0; and a realm can say
+its endpoints are all WebRTC, which for this goal is true. What is not done is in
+`ACTIVE.md` under Milestone 3, first item first.
 
 ### Each branch goes down its own binding's flow (2026-09-21)
 
