@@ -689,8 +689,14 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
 
   // A response carries the answering end's description, which is the end the request did
   // not come from.
-  const auto participant = call->participant_index(is_response ? !request_from_caller : request_from_caller);
+  const bool from_caller = is_response ? !request_from_caller : request_from_caller;
+
+  const auto participant = call->participant_index(from_caller);
   if (!participant) return then();
+
+  // And the leg this description is being produced for is the other one, which is the
+  // leg whose profile says what the engine has to make.
+  const auto recipient = call->participant_index(!from_caller);
 
   // RFC 3264 section 5: the INVITE carries the offer and the response to it carries the
   // answer. An INVITE with no description at all inverts that - the response becomes the
@@ -700,11 +706,23 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
   auto flags = media::Flags::from_sdp(message->body);
   flags.participant = *participant;
 
-  // What the far leg needs, which the description in hand cannot say. The engine knows
-  // neither where this message is going nor over what, and the transport of that flow
-  // is the only thing that distinguishes a browser from a desk phone before the
-  // browser has described itself.
-  flags.target = _profile_under(policy, outgoing && outgoing->_connection ? outgoing->_connection->transport_name() : std::string());
+  // What this leg is, from its own mouth, and it is read before the engine rewrites the
+  // body: an offer or an answer says exactly whether the end that wrote it asked for
+  // ICE, DTLS or SRTP. It outlives the message, because the next description this node
+  // has to produce for that leg is then produced from what it said rather than guessed
+  // at a second time.
+  if (const auto stated = flags.stated()) call->participants[*participant].profile = *stated;
+
+  // What the far leg needs, which the description in hand cannot say. What that leg has
+  // already told this node comes first: a delayed offer, an answer going back to the end
+  // that offered and every re-INVITE after are all a leg this node has heard describe
+  // itself. The realm's setting, and where it has none the transport of the outgoing
+  // flow, decide only for the first description produced towards a leg that has not.
+  if (recipient && call->participants[*recipient].profile) {
+    flags.target = *call->participants[*recipient].profile;
+  } else {
+    flags.target = _profile_under(policy, outgoing && outgoing->_connection ? outgoing->_connection->transport_name() : std::string());
+  }
 
   auto self = shared_from_this();
 

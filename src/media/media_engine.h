@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -19,6 +20,7 @@
 #include "../plugins/plugin.h"
 #include "../plugins/plugin_registry.h"
 #include "../types/url.h"
+#include "media_profile.h"
 
 namespace athenasip::media {
 
@@ -45,24 +47,28 @@ struct Flags {
   bool srtp = false;
   bool rtcp_mux = false;
 
+  // Whether the description this was read from parsed at all. A description nothing can
+  // read says nothing, which is not the same thing as a plain RTP one asking for
+  // nothing, and only one of the two is worth remembering about the leg that sent it.
+  bool readable = false;
+
   // The participant this offer or answer belongs to, as an index into
   // Call::participants. A multi-party call has more than two.
   std::size_t participant = 0;
+
+  using Profile = media::Profile;
 
   // What the description this node is about to produce has to be, as opposed to what
   // the one it was handed is. The two are the same question only when both ends of the
   // call are alike; a browser calling a desk phone is exactly the case an engine
   // exists for, and nothing in the offer says what is on the other side.
-  //
-  // Mirror leaves it to the engine, which is right for a call whose ends match and
-  // wrong for one that does not. The others say plainly which.
-  // SrtpSdes is the desk phone that wants its media encrypted and has never heard of
-  // DTLS: RTP/SAVP with the keys in the description (RFC 4568), rather than a browser's
-  // UDP/TLS/RTP/SAVPF. Nothing about a flow says which of the two an endpoint is, so
-  // unlike the others this one is only ever chosen by a realm's policy.
-  enum class Profile { Mirror, PlainRtp, WebRtc, SrtpSdes };
-
   Profile target = Profile::Mirror;
+
+  // What the end that wrote this description is, which is the better answer to the same
+  // question the transport is guessed from: a leg's own offer or answer says exactly
+  // whether it asked for ICE, DTLS or SRTP. Nothing where the description could not be
+  // read, because a leg that has not been understood has not spoken.
+  std::optional<Profile> stated() const;
 
   // From the transport of the flow the message is going out on, which before the far
   // leg has described itself is the only thing that says what it is. A browser cannot

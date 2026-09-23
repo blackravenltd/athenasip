@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "headers/header.h"
+#include "media/media_profile.h"
 #include "media_stream.h"
 #include "types/dialog.h"
 #include "types/realm.h"
@@ -74,6 +75,14 @@ class Call {
 
     // Media for this leg, keyed by the SDP media identifier.
     std::unordered_map<int64_t, std::shared_ptr<MediaStream>> streams;
+
+    // What this leg has said its media is, from the last description that arrived from
+    // it. A leg's own offer or answer says exactly whether it asked for ICE, DTLS or
+    // SRTP, and that is a better answer than the transport it signals over: AthenaPhone
+    // is WebRTC on UDP, and RFC 7118 allows a plain phone on a WebSocket. Empty until
+    // this node has heard the leg describe itself, which is the only case where the
+    // realm and the transport have to decide.
+    std::optional<media::Profile> profile;
 
     // The party that started the call.
     bool originator = false;
