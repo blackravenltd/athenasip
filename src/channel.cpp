@@ -21,6 +21,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "call.h"
 #include "delayed_task.h"
@@ -48,6 +49,53 @@ using namespace athenasip::loggers;
 using namespace athenasip::servers;
 
 namespace athenasip {
+
+namespace {
+
+// The whole message as it went on the wire, with credentials taken out of it.
+//
+// A Digest response is a hash rather than the password, but it is replayable for as
+// long as its nonce lives, and a challenge carries the nonce the next response is
+// computed over. A log is a file somebody else can read, so neither goes in one. The
+// line is kept rather than dropped, because knowing that a request carried credentials
+// is part of reading the exchange.
+std::string for_logging(const std::shared_ptr<SIPMessage>& message) {
+  static const std::vector<std::string> secret = {"authorization:", "proxy-authorization:", "www-authenticate:", "proxy-authenticate:"};
+
+  const auto wire = message->to_string();
+
+  std::string out;
+  out.reserve(wire.size());
+
+  std::size_t at = 0;
+  while (at < wire.size()) {
+    auto end = wire.find("\r\n", at);
+    if (end == std::string::npos) end = wire.size();
+
+    const auto line = wire.substr(at, end - at);
+    const auto lowered = Util::to_lower(line);
+
+    bool redacted = false;
+    for (const auto& name : secret) {
+      if (lowered.rfind(name, 0) == 0) {
+        out += line.substr(0, name.size() - 1) + ": <redacted>";
+        redacted = true;
+        break;
+      }
+    }
+
+    if (!redacted) out += line;
+
+    if (end == wire.size()) break;
+
+    out += "\r\n";
+    at = end + 2;
+  }
+
+  return out;
+}
+
+}  // namespace
 
 Channel::Channel(std::shared_ptr<Logger> logger, std::shared_ptr<Core> core, std::shared_ptr<Connection> connection) : _connection(connection), _core(core) {
   _flow_id = Core::channel_key(_connection->transport_name(), _connection->remote_endpoint_name());
@@ -147,6 +195,7 @@ void Channel::_send_on_strand(std::shared_ptr<SIPMessage> message) {
   message->header->add("Content-Length", std::make_shared<UIntHeader>(message->body.size()));
 
   _logger->info("< " + message->header->summary());
+  if (_core->config->sip_log_messages) _logger->debug("< " + for_logging(message));
 
   _schedule_async_write(message->to_string());
 }
@@ -154,6 +203,7 @@ void Channel::_send_on_strand(std::shared_ptr<SIPMessage> message) {
 // Called from the read handler, which already runs on the Core strand.
 void Channel::receive(std::shared_ptr<SIPMessage> message) {
   _logger->info("> " + message->header->summary());
+  if (_core->config->sip_log_messages) _logger->debug("> " + for_logging(message));
 
   message->channel = shared_from_this();
 

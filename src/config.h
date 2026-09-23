@@ -33,6 +33,12 @@ class Config {
   // what a cluster talks, so this is the switch that permits plain UDP, TCP and WS.
   bool sip_allow_unencrypted = true;
 
+  // Whether to log the whole of every message rather than only its first line. A
+  // session description is the one thing a node is better placed to show than either
+  // end of a call, and it is also most of the bytes, so it is asked for rather than
+  // assumed. Credentials are redacted whichever way they were going.
+  bool sip_log_messages = false;
+
   // The address this node tells the outside world to reach it on. A node bound to
   // 0.0.0.0 knows every address it answers on and none that a client should use, so
   // anything that has to name this node to somebody else - the node list, and the
