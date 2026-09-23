@@ -6,6 +6,7 @@
 //
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -92,24 +93,101 @@ const std::string kOffer =
     "t=0 0\r\n"
     "m=audio 49170 RTP/AVP 0\r\n";
 
+// What a browser writes, and what AthenaPhone writes over any transport it signals on:
+// ICE credentials, a DTLS fingerprint and the SAVPF profile (RFC 8839, 8122, 5764).
+const std::string kWebRtcOffer =
+    "v=0\r\n"
+    "o=- 1 1 IN IP4 0.0.0.0\r\n"
+    "s=-\r\n"
+    "t=0 0\r\n"
+    "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n"
+    "c=IN IP4 0.0.0.0\r\n"
+    "a=rtpmap:111 opus/48000/2\r\n"
+    "a=ice-ufrag:4ZcD\r\n"
+    "a=ice-pwd:2/rEckDvYgxFs9WU3wMcYY\r\n"
+    "a=fingerprint:sha-256 AA:BB:CC\r\n"
+    "a=rtcp-mux\r\n";
+
+// The desk phone that wants its media encrypted and has never heard of DTLS: RTP/SAVP
+// with the keys in the description (RFC 4568).
+const std::string kSdesOffer =
+    "v=0\r\n"
+    "o=- 1 1 IN IP4 192.0.2.30\r\n"
+    "s=-\r\n"
+    "c=IN IP4 192.0.2.30\r\n"
+    "t=0 0\r\n"
+    "m=audio 49170 RTP/SAVP 0\r\n"
+    "a=crypto:1 AES_CM_128_HMAC_SHA1_80 inline:PS1uQCVeeCFCanVmcjkpPywjNWhcYD0mXXtxaVBR\r\n";
+
 struct ProfileFixture : ProxyFixture {
   std::shared_ptr<RecordingMediaEngine> engine = std::make_shared<RecordingMediaEngine>();
 
-  explicit ProfileFixture(const std::string& callee_transport) {
+  // Each end's transport, which is what a node has to go on until that end has
+  // described itself, and nothing after that.
+  explicit ProfileFixture(const std::string& callee_transport, const std::string& caller_transport = "udp") {
     engine->connect(core->strand(), [](plugins::Status) {});
     core->media_register(engine);
     settle();
 
-    // Bob answers over the transport under test, which is what says whether he is a
-    // browser or a phone.
+    caller = make_channel("192.0.2.10", &caller_connection, caller_transport);
+
     callee = make_channel("192.0.2.20", &callee_connection, callee_transport);
     register_binding(bob, std::make_shared<types::SIPUri>("sip:bob@192.0.2.20:5060"), callee, 3600);
   }
 
-  std::string invite_with_body() {
-    auto raw = invite();
-    raw.insert(raw.size() - 2, "Content-Type: application/sdp\r\nContent-Length: " + std::to_string(kOffer.size()) + "\r\n");
-    return raw + kOffer;
+  static std::string with_body(std::string raw, const std::string& sdp) {
+    if (raw.empty()) return raw;
+    raw.insert(raw.size() - 2, "Content-Type: application/sdp\r\nContent-Length: " + std::to_string(sdp.size()) + "\r\n");
+    return raw + sdp;
+  }
+
+  std::string invite_with_body(const std::string& sdp = kOffer) { return with_body(invite(), sdp); }
+
+  std::string ok_with(const std::string& sdp) { return with_body(response_from_callee(200, "OK"), sdp); }
+
+  // The route set this node wrote into the INVITE, as the leg that learned it sends it
+  // back. A UAS takes Record-Route in the order it arrived (RFC 3261 12.1.1) and a UAC
+  // takes it reversed (12.1.2).
+  std::string routes(bool reversed) {
+    auto forwarded = request_with(callee_connection, "INVITE");
+    if (!forwarded) return "";
+
+    std::vector<std::string> values;
+    for (const auto& value : forwarded->header->headers_map["Record-Route"]) values.push_back(value->to_string());
+    if (reversed) std::reverse(values.begin(), values.end());
+
+    std::string out;
+    for (const auto& value : values) out += "Route: " + value + "\r\n";
+    return out;
+  }
+
+  // Hold, resume, or any other mid-call re-offer, sent by the end that answered.
+  std::string reinvite_from_callee(const std::string& sdp) {
+    std::string raw = "INVITE sip:alice@192.0.2.10:5060 SIP/2.0\r\n";
+    raw += "Via: SIP/2.0/UDP 192.0.2.20:5060;branch=z9hG4bK-reinvite\r\n";
+    raw += routes(false);
+    raw += "From: <sip:bob@example.com>;tag=bob\r\n";
+    raw += "To: <sip:alice@example.com>;tag=alice\r\n";
+    raw += "Call-ID: call-proxy\r\n";
+    raw += "CSeq: 2 INVITE\r\n";
+    raw += "Contact: <sip:bob@192.0.2.20:5060>\r\n";
+    raw += "Max-Forwards: 70\r\n";
+    raw += "\r\n";
+    return with_body(raw, sdp);
+  }
+
+  // The caller's ACK, which carries the answer when the INVITE carried no offer.
+  std::string ack_with(const std::string& sdp) {
+    std::string raw = "ACK sip:bob@192.0.2.20:5060 SIP/2.0\r\n";
+    raw += "Via: SIP/2.0/UDP 192.0.2.10:5060;branch=z9hG4bK-ack\r\n";
+    raw += routes(true);
+    raw += "From: <sip:alice@example.com>;tag=alice\r\n";
+    raw += "To: <sip:bob@example.com>;tag=bob\r\n";
+    raw += "Call-ID: call-proxy\r\n";
+    raw += "CSeq: 1 ACK\r\n";
+    raw += "Max-Forwards: 70\r\n";
+    raw += "\r\n";
+    return with_body(raw, sdp);
   }
 };
 
@@ -129,6 +207,19 @@ TEST(MediaProfileTest, TheProfileOfALegComesFromItsTransport) {
 
   // Nothing known is not the same as plain RTP, and the engine is left to decide.
   EXPECT_EQ(Flags::profile_for_transport(""), Flags::Profile::Mirror);
+}
+
+// And a description says what the end that wrote it is, which is better than the
+// transport because it is not a guess. DTLS is the WebRTC handshake and nothing else
+// uses it; keys in the description are SDES; neither is plain RTP.
+TEST(MediaProfileTest, ADescriptionSaysWhatTheEndThatWroteItIs) {
+  EXPECT_EQ(Flags::from_sdp(kWebRtcOffer).stated(), Flags::Profile::WebRtc);
+  EXPECT_EQ(Flags::from_sdp(kSdesOffer).stated(), Flags::Profile::SrtpSdes);
+  EXPECT_EQ(Flags::from_sdp(kOffer).stated(), Flags::Profile::PlainRtp);
+
+  // Nothing readable says nothing, which is not the same as saying plain RTP. Recording
+  // a guess would have the leg quoted on something it never said.
+  EXPECT_FALSE(Flags::from_sdp("not a session description").stated().has_value());
 }
 
 // The offer goes to Bob, so what the engine has to produce is what Bob's leg needs.
@@ -163,31 +254,10 @@ TEST(MediaProfileTest, AnOfferForwardedToAPhoneAsksForPlainRtp) {
 // came in on. Reading the wrong end here is how a browser ends up being handed an
 // answer with no ICE.
 TEST(MediaProfileTest, AnAnswerTakesTheProfileOfTheEndItGoesBackTo) {
-  ProfileFixture f("udp");
+  ProfileFixture f("udp", "wss");
 
-  // Alice is the browser this time, so the answer going back to her needs WebRTC even
-  // though the callee is a phone.
-  f.caller = f.make_channel("192.0.2.10", &f.caller_connection, "wss");
-
-  f.receive(f.caller, f.invite_with_body());
-
-  auto forwarded = ProxyFixture::request_with(f.callee_connection, "INVITE");
-  ASSERT_NE(forwarded, nullptr);
-
-  std::string ok = "SIP/2.0 200 OK\r\n";
-  for (const auto& via : forwarded->header->headers_map["Via"]) ok += "Via: " + via->to_string() + "\r\n";
-  ok += "From: <sip:alice@example.com>;tag=alice\r\n";
-  ok += "To: <sip:bob@example.com>;tag=bob\r\n";
-  ok += "Call-ID: call-proxy\r\n";
-  ok += "CSeq: 1 INVITE\r\n";
-  ok += "Contact: <sip:bob@192.0.2.20:5060>\r\n";
-  ok += "Content-Type: application/sdp\r\n";
-  ok += "Content-Length: " + std::to_string(kOffer.size()) + "\r\n";
-  ok += "\r\n";
-  ok += kOffer;
-
-  f.receive(f.callee, ok);
-  f.settle();
+  f.receive(f.caller, f.invite_with_body(kWebRtcOffer));
+  f.receive(f.callee, f.ok_with(kOffer));
 
   const auto calls = f.engine->calls();
   ASSERT_GE(calls.size(), 2u);
@@ -195,4 +265,74 @@ TEST(MediaProfileTest, AnAnswerTakesTheProfileOfTheEndItGoesBackTo) {
   const auto& answer = calls.back();
   EXPECT_FALSE(answer.was_offer);
   EXPECT_EQ(answer.flags.target, Flags::Profile::WebRtc);
+}
+
+// RFC 3264: an answer goes back to the end that made the offer, and that offer already
+// says exactly what that end asked for. Reading its transport instead is how an
+// AthenaPhone on UDP - WebRTC media over ordinary SIP signalling - is handed an answer
+// it cannot use.
+TEST(MediaProfileTest, AnAnswerIsProfiledFromTheOfferItAnswers) {
+  ProfileFixture f("udp", "udp");
+
+  f.receive(f.caller, f.invite_with_body(kWebRtcOffer));
+  f.receive(f.callee, f.ok_with(kOffer));
+
+  const auto calls = f.engine->calls();
+  ASSERT_GE(calls.size(), 2u);
+
+  const auto& answer = calls.back();
+  EXPECT_FALSE(answer.was_offer);
+  EXPECT_EQ(answer.flags.target, Flags::Profile::WebRtc);
+}
+
+// And what a leg said is remembered for the rest of the call. Hold and resume are
+// re-INVITEs, and profiling one from the transport would have this node contradict
+// mid-call what it produced for the same leg a moment earlier.
+TEST(MediaProfileTest, ALegThatHasDescribedItselfIsNotReadFromItsTransportAgain) {
+  ProfileFixture f("wss", "udp");
+
+  f.receive(f.caller, f.invite_with_body(kWebRtcOffer));
+  f.receive(f.callee, f.ok_with(kWebRtcOffer));
+
+  const auto before = f.engine->calls().size();
+  ASSERT_GE(before, 2u);
+
+  f.receive(f.callee, f.reinvite_from_callee(kWebRtcOffer));
+
+  const auto calls = f.engine->calls();
+  ASSERT_GT(calls.size(), before);
+
+  // Alice signals over UDP and her media is WebRTC, which only her own offer says.
+  EXPECT_TRUE(calls.back().was_offer);
+  EXPECT_EQ(calls.back().flags.target, Flags::Profile::WebRtc);
+}
+
+// A leg this node has never heard from is the one case the transport and the realm are
+// for, and the answer going back to the end that offered is not it.
+TEST(MediaProfileTest, TheFirstOfferTowardsALegIsStillReadFromItsTransport) {
+  ProfileFixture f("wss", "udp");
+
+  f.receive(f.caller, f.invite_with_body());
+
+  const auto calls = f.engine->calls();
+  ASSERT_FALSE(calls.empty());
+  EXPECT_EQ(calls[0].flags.target, Flags::Profile::WebRtc);
+}
+
+// RFC 3264 section 5 inverts the exchange when the INVITE carries no description: the
+// 200 becomes the offer and the ACK the answer. The end that offered is the callee, so
+// the answer in the ACK has to be produced for what the callee said - which the memory
+// of it gives and reading the request body cannot.
+TEST(MediaProfileTest, ADelayedOfferIsAnsweredForTheEndThatOffered) {
+  ProfileFixture f("udp", "udp");
+
+  f.receive(f.caller, f.invite());
+  f.receive(f.callee, f.ok_with(kWebRtcOffer));
+  f.receive(f.caller, f.ack_with(kOffer));
+
+  const auto calls = f.engine->calls();
+  ASSERT_GE(calls.size(), 2u);
+
+  EXPECT_FALSE(calls.back().was_offer);
+  EXPECT_EQ(calls.back().flags.target, Flags::Profile::WebRtc);
 }

@@ -6,6 +6,7 @@
 //
 #include "media_engine.h"
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -28,6 +29,8 @@ Flags Flags::from_sdp(const std::string& sdp_text) {
   // Nothing readable says nothing, and the engine that is handed the description is
   // what refuses it. Guessing here would be worse than saying so.
   if (!sdp.parse(sdp_text)) return flags;
+
+  flags.readable = true;
 
   auto read = [&flags](const std::vector<std::string>& attributes) {
     for (const auto& attribute : attributes) {
@@ -57,6 +60,17 @@ Flags Flags::from_sdp(const std::string& sdp_text) {
   }
 
   return flags;
+}
+
+// DTLS is the WebRTC handshake (RFC 8122, RFC 5764) and nothing else announces one;
+// keys in the description are the desk phone's SRTP (RFC 4568); anything else is plain
+// RTP. ICE on its own is not WebRTC - RFC 8839 predates it and stands alone.
+std::optional<Flags::Profile> Flags::stated() const {
+  if (!readable) return std::nullopt;
+  if (dtls) return Profile::WebRtc;
+  if (srtp) return Profile::SrtpSdes;
+
+  return Profile::PlainRtp;
 }
 
 Flags::Profile Flags::profile_for_transport(const std::string& transport) {
