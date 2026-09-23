@@ -251,11 +251,6 @@ never heard describe itself.
 - [ ] Harness scenarios for what nothing exercises: a delayed offer, hold and resume,
       and a trunk. The WSS and browser-to-phone scenarios are the browser harness
       above.
-- [ ] Somewhere to see the session description this node produced. It logs the first
-      line of every message and not the bodies, so during the UAT above the SDP has to
-      be read off the two endpoints instead - which is the one thing a node is better
-      placed to show than either end of the call. A debug log level that includes
-      bodies, or the live-calls page in M5, whichever arrives first.
 - [ ] A media assertion for the builtin relay to match the one rtpengine's counters
       give. The rtpengine run fails when nothing was relayed; the builtin run cannot
       tell, because the relay keeps no counters a harness can read and a declined
