@@ -125,17 +125,26 @@ and nothing arrived, and the tool says so in as many words.
 
 ## 7. Where the session descriptions are
 
-The node logs the first line of every message and not the bodies, so the SDP has to
-come from the two ends:
+The fixture logs every message in full, bodies included, so the node's own view is the
+first place to look:
+
+```bash
+docker logs athenasip-interop-alt | grep -A 30 "INVITE sip:"
+```
+
+What each end offered and what this node produced for the other are all in there, in
+order. Credentials are redacted; nothing else is.
+
+The two ends are the corroboration:
 
 - the browser: `window.__athenaSoftphone.state()` gives `localSdp` and `remoteSdp` in
   the console, and `stats()` gives the selected candidate pair, the codec and the DTLS
   state;
 - AthenaPhone: its own log.
 
-Capture both before hanging up. What each end was offered is the thing to keep, because
-a leg is profiled from what it has said and this is the first time a real client has
-been the one saying it.
+Capture all three before hanging up. What each end was offered is the thing to keep,
+because a leg is profiled from what it has said and this is the first time a real
+client has been the one saying it.
 
 ## The record
 
@@ -165,6 +174,8 @@ rtpengine counters (media-stats.py, during each call):
 SDP the browser offered / was answered:
 
 SDP AthenaPhone offered / was answered:
+
+SDP this node produced for each (from the node's log):
 
 Anything the node logged that looked wrong:
 ```

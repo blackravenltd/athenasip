@@ -89,6 +89,7 @@ fi
 export ATHENA_INTEROP_BIND
 export ATHENA_INTEROP_RTPENGINE_ADDRESS="${ATHENA_INTEROP_RTPENGINE_ADDRESS:-172.32.0.30}"
 export ATHENA_INTEROP_NG_PORT="${ATHENA_INTEROP_NG_PORT:-22222}"
+export ATHENA_INTEROP_LOG_MESSAGES="${ATHENA_INTEROP_LOG_MESSAGES:-true}"
 
 # The engine is named by URL and nothing else changes, which is the plugin contract
 # doing its job: the node is the same node either way.
@@ -213,6 +214,7 @@ sed -e "s|@PUBLIC_ADDRESS@|${PUBLIC_ADDRESS}|g" \
     -e "s|@RTP_MAX@|${ATHENA_INTEROP_RTP_MAX}|g" \
     -e "s|@MEDIA_URL@|${MEDIA_URL}|g" \
     -e "s|@FILES_ENABLE@|${FILES_ENABLE}|g" \
+    -e "s|@LOG_MESSAGES@|${ATHENA_INTEROP_LOG_MESSAGES}|g" \
     "$HERE/config.yaml.template" > "$HERE/generated/config.yaml"
 
 echo "Building and starting..."
@@ -270,6 +272,6 @@ ${ADMIN_NOTE}
 Accounts are 1001, 1002 and 1003 in realm ${REALM}, password athenaphone.
 
   test/interop/smoke.py --host ${PUBLIC_ADDRESS}   prove it before blaming a client
-  docker logs -f ${ATHENA_INTEROP_NAME}     what the node is doing
+  docker logs -f ${ATHENA_INTEROP_NAME}     every message in and out, bodies included
   ATHENA_INTEROP_NAME=${ATHENA_INTEROP_NAME} test/interop/up.sh down
 MSG

@@ -29,6 +29,11 @@ sip:
   # wants it verifies against tls/ca/snakeca.crt.
   allow_unencrypted: true
 
+  # The whole of every message, bodies included, because this fixture exists to find out
+  # why a client and this node disagree and the session description is usually the
+  # answer. Credentials are redacted. ATHENA_INTEROP_LOG_MESSAGES=false turns it off.
+  log_messages: @LOG_MESSAGES@
+
   # Long enough that a registration does not lapse mid-test, short enough that a stale
   # one does not outlive the container.
   connect_timeout_ms: 4000
