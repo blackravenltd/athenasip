@@ -49,6 +49,7 @@ claim the shipped configuration does not support.
 * [Design](docs/design.md) - the transport layering
 * [Writing a plugin](docs/plugins.md)
 * [Events](docs/events.md) - the topic scheme
+* [Testing](docs/testing.md) - the five layers, and how compliance is proven
 * [Admin API](docs/api/openapi.yaml)
 * [Interop fixture](test/interop/README.md) - a node to point a real SIP client at
 
