@@ -10,7 +10,8 @@
 #
 # brings it up and provisions it. Unlike the end-to-end harness this one publishes its
 # ports to the host, because the client under test runs there rather than in a
-# container of its own.
+# container of its own - and on the host's own network rather than on loopback where
+# the client is a phone on a device (see ATHENA_INTEROP_BIND in up.sh).
 #
 # The container binds the same port number the host publishes, never a translation: a
 # node writes its own local port into Via and Record-Route, so a mapping that moved the
@@ -25,17 +26,22 @@ services:
     container_name: ${ATHENA_INTEROP_NAME:-athenasip-interop}
     volumes:
       - ./generated:/root/.athenasip:ro
-      - ../../tls:/tls:ro
+      - ${ATHENA_INTEROP_TLS_DIR:-../../tls}:/tls:ro
+
+      # The admin client's build output, when there is one. up.sh points this at a
+      # directory it has checked, and at the fixture's own generated/ when there is
+      # nothing to serve, so the mount is always satisfiable.
+      - ${ATHENA_INTEROP_ADMIN_DIR:-./generated}:/admin:ro
     ports:
-      - "127.0.0.1:${ATHENA_INTEROP_SIP_PORT:-5060}:${ATHENA_INTEROP_SIP_PORT:-5060}/udp"
-      - "127.0.0.1:${ATHENA_INTEROP_SIP_PORT:-5060}:${ATHENA_INTEROP_SIP_PORT:-5060}/tcp"
-      - "127.0.0.1:${ATHENA_INTEROP_TLS_PORT:-5061}:${ATHENA_INTEROP_TLS_PORT:-5061}/tcp"
-      - "127.0.0.1:${ATHENA_INTEROP_WS_PORT:-8088}:${ATHENA_INTEROP_WS_PORT:-8088}/tcp"
-      - "127.0.0.1:${ATHENA_INTEROP_API_PORT:-8080}:${ATHENA_INTEROP_API_PORT:-8080}/tcp"
+      - "${ATHENA_INTEROP_BIND:-127.0.0.1}:${ATHENA_INTEROP_SIP_PORT:-5060}:${ATHENA_INTEROP_SIP_PORT:-5060}/udp"
+      - "${ATHENA_INTEROP_BIND:-127.0.0.1}:${ATHENA_INTEROP_SIP_PORT:-5060}:${ATHENA_INTEROP_SIP_PORT:-5060}/tcp"
+      - "${ATHENA_INTEROP_BIND:-127.0.0.1}:${ATHENA_INTEROP_TLS_PORT:-5061}:${ATHENA_INTEROP_TLS_PORT:-5061}/tcp"
+      - "${ATHENA_INTEROP_BIND:-127.0.0.1}:${ATHENA_INTEROP_WS_PORT:-8088}:${ATHENA_INTEROP_WS_PORT:-8088}/tcp"
+      - "${ATHENA_INTEROP_BIND:-127.0.0.1}:${ATHENA_INTEROP_API_PORT:-8080}:${ATHENA_INTEROP_API_PORT:-8080}/tcp"
 
       # The relay's range, kept small: Docker Desktop publishes a wide UDP range slowly,
       # and a signalling fixture needs very few.
-      - "127.0.0.1:${ATHENA_INTEROP_RTP_MIN:-22000}-${ATHENA_INTEROP_RTP_MAX:-22100}:${ATHENA_INTEROP_RTP_MIN:-22000}-${ATHENA_INTEROP_RTP_MAX:-22100}/udp"
+      - "${ATHENA_INTEROP_BIND:-127.0.0.1}:${ATHENA_INTEROP_RTP_MIN:-22000}-${ATHENA_INTEROP_RTP_MAX:-22100}:${ATHENA_INTEROP_RTP_MIN:-22000}-${ATHENA_INTEROP_RTP_MAX:-22100}/udp"
     healthcheck:
       # The API's own answer, which is 503 until the datastore is connected, so nothing
       # points a client at a node that is not serving yet.
