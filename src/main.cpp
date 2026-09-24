@@ -7,6 +7,8 @@
 #include <boost/asio.hpp>
 #include <boost/asio/signal_set.hpp>
 #include <boost/asio/ssl.hpp>
+#include <cstdlib>
+#include <filesystem>
 #include <future>
 #include <iostream>
 #include <optional>
@@ -17,6 +19,7 @@
 #include "api/router.h"
 #include "api/static_middleware.h"
 #include "build_version.h"
+#include "cli.h"
 #include "config.h"
 #include "core.h"
 #include "datastores/datastore.h"
@@ -77,6 +80,25 @@ void wait_for_signal(boost::asio::signal_set& signals, std::function<void(int)> 
 int main(int argc, char* argv[]) {
   auto version = std::make_shared<Version>(ATHENA_VERSION_MAJOR, ATHENA_VERSION_MINOR, ATHENA_VERSION_PATCH);
 
+  const auto options = cli::parse(argc, argv);
+
+  // Answered before anything is started, and on stdout rather than through the logger:
+  // a person or a script asked a question, and the answer is the whole output.
+  if (!options.ok) {
+    std::cerr << "athenasip: " << options.error << "\n\n" << cli::usage();
+    return 2;
+  }
+
+  if (options.version) {
+    std::cout << version->to_string() << "\n";
+    return 0;
+  }
+
+  if (options.help) {
+    std::cout << cli::usage();
+    return 0;
+  }
+
   // Create Logger
   auto logger = std::make_shared<loggers::LoggerStdIO>(LogLevel::DEBUG);
 
@@ -94,7 +116,25 @@ int main(int argc, char* argv[]) {
 
   // Create Config
   auto config = std::make_shared<Config>(logger);
-  const auto config_path = Util::expand_path("~/.athenasip/config.yaml");
+
+  // Where a node looks for its configuration, in the order a deployment wants: what it
+  // was told, then what the environment says, then the system path a package installs
+  // to, and last a home directory, which is a person's checkout and not a service.
+  const auto config_path = [&]() -> std::filesystem::path {
+    if (!options.config.empty()) return Util::expand_path(options.config);
+
+    if (const auto* from_environment = std::getenv("ATHENASIP_CONFIG"); from_environment != nullptr && *from_environment != '\0') {
+      return Util::expand_path(from_environment);
+    }
+
+    std::error_code ec;
+    const std::filesystem::path system_path = "/etc/athenasip/config.yaml";
+    if (std::filesystem::exists(system_path, ec)) return system_path;
+
+    return Util::expand_path("~/.athenasip/config.yaml");
+  }();
+
+  logger->info("Configuration: " + config_path.string());
 
   if (!config->load_from_yaml(config_path)) {
     logger->error("Cannot load configuration from " + config_path.string());
