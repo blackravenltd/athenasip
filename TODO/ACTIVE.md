@@ -400,14 +400,20 @@ in ten minutes.
       configuration search path are done. What is left is `--print-config` for the
       effective values after the file, the environment and the defaults have been
       resolved.
-- [ ] **Authentication for the admin plane**, designed in `docs/authentication.md` and
-      not started. Admin auth today is static bearer tokens in a config file: no
-      identity, no revocation, no expiry, not shared across a cluster, and nothing for
-      the console to log in to. The design is admin users in the datastore with
-      PBKDF2-HMAC-SHA256 passwords, opaque revocable session tokens stored hashed, and
-      the config tokens kept as the break-glass way in. Its four open questions want
-      answering before any of it is built, and TLS on the admin listener is arguably a
-      prerequisite rather than a companion.
+- [ ] **Authentication for the admin plane**, specified in `docs/authentication.md`.
+      Admin users with a username and password, stored in the datastore so a cluster
+      shares them, PBKDF2-HMAC-SHA256 from OpenSSL rather than a new dependency, and
+      opaque revocable session tokens stored hashed.
+
+      There is no superuser role. The roles are `view-cluster-status`,
+      `manage-admin-users`, `manage-realms`, `manage-realm-accounts` and
+      `manage-cluster`; a user holds any combination including none, and nothing
+      implies anything else. An admin user is not a realm account and neither creates
+      the other.
+
+      The API stands alone and stays RESTful: the console is a client of it like any
+      other, the session is an ordinary resource, and no endpoint exists because a UI
+      wanted it. The config tokens remain as machine credentials and the way back in.
 - [ ] Admin API, part 2, the live registries: `/api/v1/calls` (live and history,
       hangup), `/api/v1/media` (engines, health), `/api/v1/events` (SSE stream bridging
       `nodes/#`, `account/#`, `calls/#`). These read Core's own state and need
