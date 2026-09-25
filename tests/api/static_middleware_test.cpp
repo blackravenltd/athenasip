@@ -174,6 +174,23 @@ TEST(StaticMiddlewareTest, TheFallbackNeverShadowsAFileThatExists) {
   EXPECT_EQ(get("/app/", tree).body, "<html>app</html>");
 }
 
+// SPA mode is a choice, not a fact about every document root. A plain file server that
+// invented index.html for a missing page would hide a broken link behind a 200, so the
+// node has to be told that the thing it is serving is a single-page application.
+TEST(StaticMiddlewareTest, TheRoutingFallbackCanBeTurnedOff) {
+  DocumentRoot tree;
+
+  StaticOptions plain;
+  plain.fallback.clear();
+
+  EXPECT_TRUE(get("/diagnostics/softphone", tree, plain).passed_on);
+  EXPECT_TRUE(get("/sip/realms", tree, plain).passed_on);
+
+  // What is really there is still served, which is the whole of what it does now.
+  EXPECT_EQ(get("/app/bundle.js", tree, plain).content_type, "application/javascript");
+  EXPECT_EQ(get("/", tree, plain).body, "<html>root</html>");
+}
+
 TEST(StaticMiddlewareTest, PassesOnWhatItDoesNotHave) {
   DocumentRoot tree;
 
