@@ -178,6 +178,13 @@ int main(int argc, char* argv[]) {
     logger->error("Datastore Connection Failed: " + config->db_url + " - " + datastore_connected.error);
     return -3;
   }
+  // The will, set while the bus is still closed because that is the only time a broker
+  // will take one. A node that is killed, loses power or loses its network never gets
+  // to publish again, and without this the last retained thing it said would go on
+  // claiming it was healthy.
+  events->will_set(events::topics::node_status(config->sip_node_id),
+                   Core::node_status_json("down", config->sip_node_id, version->to_string(), datastore->describe(), 0));
+
   // Attempt Events connection
   const auto events_connected =
       connect_and_wait([&events](plugins::Executor on, plugins::StatusHandler handler) { events->connect(std::move(on), std::move(handler)); });

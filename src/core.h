@@ -229,8 +229,7 @@ class Core : public std::enable_shared_from_this<Core> {
   // the binary's fact rather than the composition's.
   void version_set(std::string version) { _version = std::move(version); }
 
-  // Start saying, on an interval, that this node is alive and what it is - and tell the
-  // bus what to say on this node's behalf if it stops saying anything at all.
+  // Start saying, on an interval, that this node is alive and what it is.
   //
   // Called once, after the datastore and the bus are up, because the first thing it
   // publishes is a health report and a report written before the datastore connected
@@ -240,6 +239,15 @@ class Core : public std::enable_shared_from_this<Core> {
   // The same report the HTTP health endpoint gives, as JSON. A monitor reading one and
   // a monitor reading the other should not disagree about the node.
   std::string node_status_json(const std::string& status) const;
+
+  // The same report, built from parts rather than from this node's state.
+  //
+  // Static because the will has to be built before a Core exists: a broker takes a will
+  // when the session opens, and the bus is connected before the composition root that
+  // would otherwise own this is built. Setting it afterwards is silently too late,
+  // which is exactly the bug this shape exists to make impossible.
+  static std::string node_status_json(const std::string& status, const std::string& node_id, const std::string& version, const std::string& datastore,
+                                      std::int64_t uptime);
 
   // The last thing a node says on the way out, so the retained message does not claim
   // for ever that a node which stopped cleanly is still up.

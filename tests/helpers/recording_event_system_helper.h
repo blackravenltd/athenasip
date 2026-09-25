@@ -45,8 +45,12 @@ class RecordingEventSystem : public athenasip::events::EventSystem {
     _record(_published, std::move(event_name), std::move(message));
   }
 
+  // Refused once connected, exactly as a broker refuses it: a will is taken when the
+  // session opens and never afterwards. A double that accepted one at any time would
+  // let a caller set it too late and still pass.
   void will_set(std::string event_name, std::string message) override {
     std::lock_guard<std::mutex> lock(_mutex);
+    if (_connected) return;
     _will = Entry{std::move(event_name), std::move(message)};
   }
 

@@ -30,6 +30,12 @@ struct HeartbeatFixture : CoreFixture {
     core->events = bus_record;
     core->version_set("9.9.9");
 
+    // The order a node starts in, and the order main starts it in: the will goes in
+    // while the bus is still closed, because that is the only time a broker takes one,
+    // and the heartbeat starts once the bus is up.
+    bus_record->will_set(events::topics::node_status("test-node"), Core::node_status_json("down", "test-node", "9.9.9", "memory 0.0.1", 0));
+    bus_record->connect(core->strand(), [](plugins::Status) {});
+
     on_strand([this]() { core->node_status_start(); });
     settle();
   }
@@ -117,8 +123,7 @@ TEST(NodeHeartbeatTest, ZeroTurnsItOff) {
 }
 
 // A node that dies does not get to publish anything, so the broker has to say it for
-// us. The will is set before the connection is made, which is the only time a broker
-// will take one.
+// us.
 TEST(NodeHeartbeatTest, TheBrokerIsToldWhatToSayIfTheNodeVanishes) {
   HeartbeatFixture f(30);
 
@@ -130,4 +135,18 @@ TEST(NodeHeartbeatTest, TheBrokerIsToldWhatToSayIfTheNodeVanishes) {
   const auto body = boost::json::parse(will->second).as_object();
   EXPECT_EQ(body.at("status").as_string(), "down");
   EXPECT_EQ(body.at("node").as_string(), "test-node");
+}
+
+// And it is only a will if the broker was told before the session opened. Setting one
+// afterwards is silently too late - the node runs, the heartbeat works, and the thing
+// that was supposed to report its death never fires. That is exactly what happened the
+// first time this was deployed.
+TEST(NodeHeartbeatTest, AWillSetAfterConnectingIsRefusedRatherThanSilentlyLost) {
+  HeartbeatFixture f(30);
+
+  const auto before = f.bus_record->will();
+
+  f.bus_record->will_set("nodes/somewhere/else", "{}");
+
+  EXPECT_EQ(f.bus_record->will()->first, before->first) << "a bus that is already connected cannot take a new will";
 }
