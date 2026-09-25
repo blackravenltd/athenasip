@@ -419,32 +419,43 @@ in ten minutes.
       the user per request rather than copied), and the `user_*` and `session_*`
       operations on the `Datastore` contract, defaulted to an honest "not supported".
 
-      `MemoryDatastore` implements all nine, with the create/update split that lets the
-      API answer 409 rather than overwrite, one case-folded namespace for usernames, and
-      sessions held by token hash. Three decisions the Redis driver has to match, because
-      a login that behaves differently on `memory://` and `redis://` is worse than one
-      that only works on one of them: writing a held hash again replaces it, which is how
-      `last_seen_at` moves and why the contract needs no `session_update`; the store keeps
-      absolute expiry, which is written on the record, while idle expiry stays the
-      caller's because the timeout is configuration; and a read hands back a copy, so
-      changing a user that was read without writing it back changes nothing. Deleting a
-      user revokes its sessions, as deleting an account drops its bindings.
+      `MemoryDatastore` and `RedisDatastore` both implement all nine, and are held to the
+      same statements, because a login that behaves differently on `memory://` and
+      `redis://` is worse than one that only works on one of them. The create/update split
+      lets the API answer 409 rather than overwrite; usernames are one case-folded
+      namespace, so `Tom` and `tom` cannot both exist and either spelling logs in, with the
+      given spelling kept for display; writing a held token hash again replaces it, which
+      is how `last_seen_at` moves and why the contract needs no `session_update`; absolute
+      expiry is the store's, because it is written on the record, while idle expiry stays
+      the caller's because the timeout is configuration; a read hands back a copy, so
+      changing a user that was read without writing it back changes nothing; an
+      already-expired session is refused, as an expired nonce is, because Redis has no
+      non-positive `SETEX` to store one with; a role this build does not know is carried
+      rather than dropped, because it grants nothing and an older node rewriting a user
+      must not strip what a newer one gave them; and deleting a user revokes its sessions,
+      as deleting an account drops its bindings.
+
+      In Redis a session is a key with a TTL of its own absolute expiry, plus a per-user
+      index set so revoking by username never needs `KEYS`. A session that reaches its
+      expiry without being logged out leaves its hash in that index: harmless, bounded by
+      how often that user logs in, and cleared by the next revoke, which drops the index
+      whole. Worth pruning when there is a reason to walk it.
 
       **Next, in this order:**
-      1. `RedisDatastore` the same, because the deployed node runs on `redis://` and
-         a login that only works in tests is no login. Absolute expiry is a key TTL.
-      2. Session issue and lookup: 32 CSPRNG bytes, hashed on the way in, absolute and
+      1. Session issue and lookup: 32 CSPRNG bytes, hashed on the way in, absolute and
          idle expiry from config (`http.api.session_lifetime`,
          `http.api.session_idle`).
-      3. `POST /api/v1/auth/login`, `POST /api/v1/auth/logout`, `GET /api/v1/session`.
-      4. Roles on the routes. `Router::add` takes a set of roles, any of which admits;
+      2. `POST /api/v1/auth/login`, `POST /api/v1/auth/logout`, `GET /api/v1/session`.
+      3. Roles on the routes. `Router::add` takes a set of roles, any of which admits;
          `BearerAuth` resolves a session token to a user and a config token to roles
          (`admin` scope to all five, `client` to `view-cluster-status`, which is
          exactly what it reaches today).
-      5. `GET/POST/PUT/DELETE /api/v1/users`, `POST /users/{u}/password`,
-         `DELETE /users/{u}/sessions`.
-      6. `athenasip --add-user`, so recovery does not need the API to be reachable.
-      7. The OpenAPI document, which `athenasip-admin` runs a contract test against.
+      4. `GET/POST/PUT/DELETE /api/v1/users`, `POST /users/{u}/password`,
+         `DELETE /users/{u}/sessions`. A delete answers 204, and 404 for no such user;
+         revoking for a user who holds no sessions is a 204, which is why the store
+         treats "nothing to revoke" as success.
+      5. `athenasip --add-user`, so recovery does not need the API to be reachable.
+      6. The OpenAPI document, which `athenasip-admin` runs a contract test against.
 
       **Agreed with the console** (it is building against this now): `expires_at` in
       Unix seconds; `GET /realms` admits `manage-realms` or

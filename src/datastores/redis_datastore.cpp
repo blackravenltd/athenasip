@@ -305,6 +305,223 @@ void RedisDatastore::realm_list(plugins::Executor on, plugins::Handler<std::vect
   });
 }
 
+void RedisDatastore::user_get(plugins::Executor on, std::string username, plugins::Handler<std::shared_ptr<types::User>> handler) {
+  using Answer = plugins::Result<std::shared_ptr<types::User>>;
+
+  _async_get(_user_key(username), [this, on, handler](RedisError error, std::optional<std::string> value) mutable {
+    if (error) return _complete(on, handler, Answer::failure(error.message()));
+
+    // Not found is a success carrying nothing, as everywhere else: the API answers 404
+    // to that and 500 to a failure, and they cannot be the same answer.
+    if (!value) return _complete(on, handler, Answer::success(nullptr));
+
+    try {
+      _complete(on, handler, Answer::success(_parse_user(*value)));
+    } catch (const std::exception& ex) {
+      _logger->error("user_get: " + std::string(ex.what()));
+      _complete(on, handler, Answer::failure(ex.what()));
+    }
+  });
+}
+
+void RedisDatastore::user_create(plugins::Executor on, std::shared_ptr<types::User> user, plugins::StatusHandler handler) {
+  if (!user || user->username.empty()) return _complete(on, handler, plugins::Status::failure("user_create: no user"));
+
+  const auto key = _user_key(user->username);
+  const auto index = _user_index_key();
+  const auto name = user->key();
+  const auto body = _serialise_user(user);
+
+  // create is not update: an existing username is a conflict, and the key is case-folded
+  // so "Tom" and "tom" are the same conflict rather than two logins nobody can tell
+  // apart.
+  _async_exists(key, [this, on, handler, key, index, name, body](RedisError error, bool exists) mutable {
+    if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
+    if (exists) return _complete(on, handler, plugins::Status::failure("user_create: " + name + " already exists"));
+
+    _async_set(key, body, [this, on, handler, index, name](RedisError error, bool ok) mutable {
+      if (error || !ok) return _complete(on, handler, plugins::Status::failure(error ? error.message() : "user_create: SET failed"));
+
+      _async_sadd(index, name, [this, on, handler](RedisError error, bool) mutable {
+        _complete(on, handler, error ? plugins::Status::failure(error.message()) : plugins::Status::success());
+      });
+    });
+  });
+}
+
+void RedisDatastore::user_update(plugins::Executor on, std::shared_ptr<types::User> user, plugins::StatusHandler handler) {
+  if (!user || user->username.empty()) return _complete(on, handler, plugins::Status::failure("user_update: no user"));
+
+  const auto key = _user_key(user->username);
+  const auto name = user->key();
+  const auto body = _serialise_user(user);
+
+  _async_exists(key, [this, on, handler, key, name, body](RedisError error, bool exists) mutable {
+    if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
+    if (!exists) return _complete(on, handler, plugins::Status::failure("user_update: " + name + " does not exist"));
+
+    _async_set(key, body, [this, on, handler](RedisError error, bool ok) mutable {
+      _complete(on, handler, !error && ok ? plugins::Status::success() : plugins::Status::failure(error ? error.message() : "user_update: SET failed"));
+    });
+  });
+}
+
+void RedisDatastore::user_delete(plugins::Executor on, std::string username, plugins::StatusHandler handler) {
+  const auto name = types::User::normalise(username);
+  const auto index = _user_index_key();
+
+  _async_del(_user_key(username), [this, on, handler, index, name](RedisError error, std::int64_t removed) mutable {
+    if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
+
+    _async_srem(index, name, [this, on, handler, name, removed](RedisError error, bool) mutable {
+      if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
+
+      // A live token against a user that no longer exists is a session nobody can
+      // revoke, so the sessions go with the user. Whether there was a user to delete is
+      // already settled by the DEL above and is not changed by how many sessions it held.
+      _session_delete_all_for(name, [this, on, handler, removed](RedisError error) mutable {
+        if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
+        _complete(on, handler, _status(removed > 0, "user_delete"));
+      });
+    });
+  });
+}
+
+void RedisDatastore::user_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::User>>> handler) {
+  using Answer = plugins::Result<std::vector<std::shared_ptr<types::User>>>;
+
+  const auto index = _user_index_key();
+
+  _async_smembers(index, [this, on, handler, index](RedisError error, std::vector<std::string> names) mutable {
+    if (error) return _complete(on, handler, Answer::failure(error.message()));
+
+    auto users = std::make_shared<std::vector<std::shared_ptr<types::User>>>();
+
+    run_sequence(
+        std::move(names),
+        [this, users, index](std::string name, std::function<void()> next) {
+          _async_get(_user_key(name), [this, users, index, name, next](RedisError error, std::optional<std::string> value) mutable {
+            if (error) return next();
+
+            // An index member whose record is gone is stale rather than fatal, and is
+            // removed on the way past, as call_list does.
+            if (!value) return _async_srem(index, name, [next](RedisError, bool) mutable { next(); });
+
+            try {
+              users->push_back(_parse_user(*value));
+            } catch (const std::exception& ex) {
+              _logger->error("user_list: skipping " + name + ": " + std::string(ex.what()));
+            }
+
+            next();
+          });
+        },
+        [this, on, handler, users]() { _complete(on, handler, Answer::success(std::move(*users))); });
+  });
+}
+
+// Writing a hash that is already held replaces it, which is how last_seen_at moves:
+// there is no session_update on the contract because a token hash is 32 bytes from a
+// CSPRNG and does not collide by accident.
+//
+// The record expires on its own absolute expiry, which is what makes that expiry the
+// store's to keep. Idle expiry is not here: how long a session survives unused is
+// configuration this driver is not given, and the caller asks Session::has_expired.
+void RedisDatastore::session_create(plugins::Executor on, types::Session session, plugins::StatusHandler handler) {
+  if (session.token_hash.empty()) return _complete(on, handler, plugins::Status::failure("session_create: no token hash"));
+  if (session.username.empty()) return _complete(on, handler, plugins::Status::failure("session_create: no user"));
+
+  const auto now = std::time(nullptr);
+  if (session.expires_at <= now) {
+    _logger->warn("session_create: refusing to create already-expired session");
+    return _complete(on, handler, plugins::Status::failure("session_create: already expired"));
+  }
+
+  // Filed under the same key the user is, so revoking by username finds these whatever
+  // case the login was typed in.
+  session.username = types::User::normalise(session.username);
+
+  const auto key = _session_key(session.token_hash);
+  const auto index = _session_index_key(session.username);
+  const auto hash = session.token_hash;
+  const auto ttl = std::chrono::seconds(session.expires_at - now);
+  const auto body = _serialise_session(session);
+
+  _async_set_ex(key, body, ttl, [this, on, handler, index, hash](RedisError error, bool ok) mutable {
+    if (error || !ok) return _complete(on, handler, plugins::Status::failure(error ? error.message() : "session_create: SETEX failed"));
+
+    _async_sadd(index, hash, [this, on, handler](RedisError error, bool) mutable {
+      _complete(on, handler, error ? plugins::Status::failure(error.message()) : plugins::Status::success());
+    });
+  });
+}
+
+void RedisDatastore::session_get(plugins::Executor on, std::string token_hash, plugins::Handler<std::shared_ptr<types::Session>> handler) {
+  using Answer = plugins::Result<std::shared_ptr<types::Session>>;
+
+  if (token_hash.empty()) return _complete(on, handler, Answer::success(nullptr));
+
+  _async_get(_session_key(token_hash), [this, on, handler](RedisError error, std::optional<std::string> value) mutable {
+    if (error) return _complete(on, handler, Answer::failure(error.message()));
+    if (!value) return _complete(on, handler, Answer::success(nullptr));
+
+    try {
+      _complete(on, handler, Answer::success(_parse_session(*value)));
+    } catch (const std::exception& ex) {
+      _logger->error("session_get: " + std::string(ex.what()));
+      _complete(on, handler, Answer::failure(ex.what()));
+    }
+  });
+}
+
+void RedisDatastore::session_delete(plugins::Executor on, std::string token_hash, plugins::StatusHandler handler) {
+  // The record says whose it is, and that is the only way to reach the index entry
+  // without KEYS. A session already gone leaves its hash in the index, which the revoke
+  // and listing paths remove on the way past.
+  session_get(on, token_hash, [this, on, handler, token_hash](plugins::Result<std::shared_ptr<types::Session>> found) mutable {
+    if (!found.ok) return _complete(on, handler, plugins::Status::failure(found.error));
+
+    const auto username = found.value ? found.value->username : std::string();
+
+    _async_del(_session_key(token_hash), [this, on, handler, token_hash, username](RedisError error, std::int64_t removed) mutable {
+      if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
+
+      if (username.empty()) return _complete(on, handler, _status(removed > 0, "session_delete"));
+
+      _async_srem(_session_index_key(username), token_hash, [this, on, handler, removed](RedisError error, bool) mutable {
+        if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
+        _complete(on, handler, _status(removed > 0, "session_delete"));
+      });
+    });
+  });
+}
+
+// Nothing to revoke is not a failure: the caller asked for this user to hold no sessions,
+// and it holds none. That is what makes DELETE /users/{u}/sessions a 204 for a user who
+// has never logged in, with the 404 for an unknown user left to the handler.
+void RedisDatastore::session_delete_for_user(plugins::Executor on, std::string username, plugins::StatusHandler handler) {
+  _session_delete_all_for(types::User::normalise(username), [this, on, handler](RedisError error) mutable {
+    _complete(on, handler, error ? plugins::Status::failure(error.message()) : plugins::Status::success());
+  });
+}
+
+void RedisDatastore::_session_delete_all_for(std::string key, std::function<void(RedisError)> done) {
+  const auto index = _session_index_key(key);
+
+  _async_smembers(index, [this, index, done](RedisError error, std::vector<std::string> hashes) mutable {
+    if (error) return done(error);
+
+    run_sequence(
+        std::move(hashes),
+        [this](std::string hash, std::function<void()> next) { _async_del(_session_key(hash), [next](RedisError, std::int64_t) mutable { next(); }); },
+        [this, index, done]() {
+          // The index goes too, rather than being emptied member by member: it holds
+          // nothing that outlives the sessions it pointed at.
+          _async_del(index, [done](RedisError error, std::int64_t) mutable { done(error); });
+        });
+  });
+}
+
 void RedisDatastore::account_get(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity,
                                  plugins::Handler<std::shared_ptr<types::Account>> handler) {
   using Answer = plugins::Result<std::shared_ptr<types::Account>>;
@@ -687,6 +904,76 @@ std::shared_ptr<types::Realm> RedisDatastore::_parse_realm(const std::string& va
   realm->media.profiles = types::MediaPolicy::profiles_from_string(json_string(obj, "media_profiles"), realm->media.profiles);
 
   return realm;
+}
+
+std::string RedisDatastore::_serialise_user(const std::shared_ptr<types::User>& user) {
+  boost::json::object obj;
+
+  // The username as given, not the key it is filed under: the key is case-folded and
+  // this is what the console displays and what an audit line names.
+  obj["username"] = user->username;
+  obj["display_name"] = user->display_name;
+  obj["password_hash"] = user->password_hash;
+  obj["disabled"] = user->disabled;
+  obj["created_at"] = static_cast<std::uint64_t>(user->created_at);
+  obj["last_login_at"] = static_cast<std::uint64_t>(user->last_login_at);
+
+  boost::json::array roles;
+  for (const auto& role : user->roles) roles.push_back(boost::json::string(role));
+  obj["roles"] = std::move(roles);
+
+  return boost::json::serialize(obj);
+}
+
+std::shared_ptr<types::User> RedisDatastore::_parse_user(const std::string& value) const {
+  const auto parsed = boost::json::parse(value);
+  const auto& obj = parsed.as_object();
+
+  auto user = std::make_shared<types::User>();
+  user->username = json_string(obj, "username");
+  user->display_name = json_string(obj, "display_name");
+  user->password_hash = json_string(obj, "password_hash");
+  user->created_at = static_cast<std::time_t>(json_uint64(obj, "created_at"));
+  user->last_login_at = static_cast<std::time_t>(json_uint64(obj, "last_login_at"));
+
+  if (const auto* disabled = obj.if_contains("disabled"); disabled != nullptr && disabled->is_bool()) user->disabled = disabled->as_bool();
+
+  // A role this build does not know is carried rather than dropped. It grants nothing -
+  // every authorisation check asks whether a specific known role is held, so a string
+  // nothing recognises can never match one - and dropping it would mean an older node
+  // rewriting a user silently strips a role a newer node gave them. Validating what may
+  // be granted is the API's job, on the way in.
+  if (const auto* roles = obj.if_contains("roles"); roles != nullptr && roles->is_array()) {
+    for (const auto& role : roles->as_array()) {
+      if (role.is_string()) user->roles.push_back(std::string(role.as_string().c_str()));
+    }
+  }
+
+  return user;
+}
+
+std::string RedisDatastore::_serialise_session(const types::Session& session) {
+  boost::json::object obj;
+  obj["token_hash"] = session.token_hash;
+  obj["username"] = session.username;
+  obj["created_at"] = static_cast<std::uint64_t>(session.created_at);
+  obj["expires_at"] = static_cast<std::uint64_t>(session.expires_at);
+  obj["last_seen_at"] = static_cast<std::uint64_t>(session.last_seen_at);
+  return boost::json::serialize(obj);
+}
+
+std::shared_ptr<types::Session> RedisDatastore::_parse_session(const std::string& value) const {
+  const auto parsed = boost::json::parse(value);
+  const auto& obj = parsed.as_object();
+
+  auto session = std::make_shared<types::Session>();
+  session->token_hash = json_string(obj, "token_hash");
+  session->username = json_string(obj, "username");
+  session->created_at = static_cast<std::time_t>(json_uint64(obj, "created_at"));
+  session->expires_at = static_cast<std::time_t>(json_uint64(obj, "expires_at"));
+  session->last_seen_at = static_cast<std::time_t>(json_uint64(obj, "last_seen_at"));
+
+  return session;
 }
 
 std::string RedisDatastore::_serialise_account(const std::shared_ptr<types::Account>& account) {
@@ -1089,6 +1376,14 @@ std::string RedisDatastore::_location_key(std::uint64_t account_id, const std::s
 }
 
 std::string RedisDatastore::_nonce_key(const std::string& nonce) { return "athena:nonce:" + nonce; }
+
+std::string RedisDatastore::_user_key(const std::string& username) { return "athena:user:" + types::User::normalise(username); }
+
+std::string RedisDatastore::_session_key(const std::string& token_hash) { return "athena:session:" + token_hash; }
+
+std::string RedisDatastore::_user_index_key() { return "athena:index:users"; }
+
+std::string RedisDatastore::_session_index_key(const std::string& username) { return "athena:index:sessions:" + types::User::normalise(username); }
 
 std::string RedisDatastore::_duration_ms(std::chrono::high_resolution_clock::time_point start) const {
   std::ostringstream oss;

@@ -9,12 +9,17 @@
 #include <gtest/gtest.h>
 
 #include <cstdlib>
+#include <ctime>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "../helpers/sync_datastore_helper.h"
 #include "../mocks/logger_mock.h"
+#include "types/password.h"
+#include "types/session.h"
 #include "types/url.h"
+#include "types/user.h"
 
 using namespace athenasip;
 using athenasip::datastores::RedisDatastore;
@@ -65,6 +70,27 @@ std::shared_ptr<types::Account> make_account(uint64_t id, const std::string& uri
 
 // Unique per run so repeated runs against the same Redis do not collide.
 std::string unique_suffix() { return std::to_string(std::time(nullptr)) + "-" + std::to_string(std::rand() % 100000); }
+
+std::shared_ptr<types::User> make_user(const std::string& username, std::vector<std::string> roles) {
+  auto user = std::make_shared<types::User>();
+  user->username = username;
+  user->roles = std::move(roles);
+  user->password_hash = types::Password::hash("correct horse", 1000);
+  user->created_at = std::time(nullptr);
+  return user;
+}
+
+types::Session make_session(const std::string& token_hash, const std::string& username) {
+  const auto now = std::time(nullptr);
+
+  types::Session session;
+  session.token_hash = token_hash;
+  session.username = username;
+  session.created_at = now;
+  session.expires_at = now + 3600;
+  session.last_seen_at = now;
+  return session;
+}
 
 }  // namespace
 
@@ -303,4 +329,281 @@ TEST(RedisDatastoreTest, UpdateOfSomethingAbsentFails) {
   auto call = std::make_shared<Call>();
   call->id = "absent-call-" + suffix;
   EXPECT_FALSE(datastore->call_update(call));
+}
+
+// Users and the sessions they hold, in the store the deployed node actually runs. These
+// are the same statements the memory datastore is held to, deliberately: a login that
+// behaves differently on memory:// and redis:// is worse than one that only works on
+// one of them, and the user record is what authorises every request.
+
+TEST(RedisDatastoreTest, UserRoundTripsThroughRedisWithEveryField) {
+  REQUIRE_REDIS(datastore);
+  const auto username = "user-" + unique_suffix();
+
+  auto user = make_user(username, {types::roles::manage_realms, types::roles::view_cluster_status});
+  user->display_name = "Tom Cully";
+  user->disabled = true;
+  user->last_login_at = 1700000000;
+  ASSERT_TRUE(datastore->user_create(user));
+
+  auto found = datastore->user_get(username);
+  ASSERT_NE(found, nullptr);
+  EXPECT_EQ(found->username, username);
+  EXPECT_EQ(found->display_name, "Tom Cully");
+  EXPECT_TRUE(found->disabled);
+  EXPECT_EQ(found->created_at, user->created_at);
+  EXPECT_EQ(found->last_login_at, 1700000000);
+
+  // Every field, not a chosen few. A password hash a driver quietly dropped is a user
+  // nobody can log in as, and roles it dropped are an authorisation failure.
+  EXPECT_EQ(found->password_hash, user->password_hash);
+  EXPECT_TRUE(types::Password::verify("correct horse", found->password_hash));
+  EXPECT_TRUE(found->has_role(types::roles::manage_realms));
+  EXPECT_TRUE(found->has_role(types::roles::view_cluster_status));
+  EXPECT_FALSE(found->has_role(types::roles::manage_admin_users));
+  EXPECT_EQ(found->roles.size(), 2u);
+
+  EXPECT_TRUE(datastore->user_delete(username));
+}
+
+TEST(RedisDatastoreTest, UserWithNoRolesRoundTrips) {
+  REQUIRE_REDIS(datastore);
+  const auto username = "noroles-" + unique_suffix();
+
+  ASSERT_TRUE(datastore->user_create(make_user(username, {})));
+
+  auto found = datastore->user_get(username);
+  ASSERT_NE(found, nullptr);
+  EXPECT_TRUE(found->roles.empty());
+  EXPECT_FALSE(found->disabled);
+
+  EXPECT_TRUE(datastore->user_delete(username));
+}
+
+TEST(RedisDatastoreTest, UsernamesAreOneNamespaceWhateverTheirCase) {
+  REQUIRE_REDIS(datastore);
+  const auto suffix = unique_suffix();
+  const auto mixed = "Tom-" + suffix;
+
+  ASSERT_TRUE(datastore->user_create(make_user(mixed, {})));
+
+  EXPECT_NE(datastore->user_get("tom-" + suffix), nullptr);
+  EXPECT_NE(datastore->user_get("TOM-" + suffix), nullptr);
+  EXPECT_EQ(datastore->user_get("tom-" + suffix)->username, mixed);
+
+  EXPECT_FALSE(datastore->user_create(make_user("TOM-" + suffix, {})));
+
+  EXPECT_TRUE(datastore->user_delete("TOM-" + suffix));
+  EXPECT_EQ(datastore->user_get(mixed), nullptr);
+}
+
+TEST(RedisDatastoreTest, UserCreateRefusesAnExistingNameAndChangesNothing) {
+  REQUIRE_REDIS(datastore);
+  const auto username = "taken-" + unique_suffix();
+
+  ASSERT_TRUE(datastore->user_create(make_user(username, {types::roles::view_cluster_status})));
+  EXPECT_FALSE(datastore->user_create(make_user(username, {types::roles::manage_admin_users})));
+
+  auto found = datastore->user_get(username);
+  ASSERT_NE(found, nullptr);
+  EXPECT_TRUE(found->has_role(types::roles::view_cluster_status));
+  EXPECT_FALSE(found->has_role(types::roles::manage_admin_users));
+
+  EXPECT_TRUE(datastore->user_delete(username));
+}
+
+TEST(RedisDatastoreTest, UserUpdateRequiresAnExistingUser) {
+  REQUIRE_REDIS(datastore);
+  const auto username = "absent-user-" + unique_suffix();
+
+  EXPECT_FALSE(datastore->user_update(make_user(username, {})));
+  EXPECT_EQ(datastore->user_get(username), nullptr);
+
+  ASSERT_TRUE(datastore->user_create(make_user(username, {})));
+
+  auto changed = make_user(username, {types::roles::manage_cluster});
+  changed->disabled = true;
+  EXPECT_TRUE(datastore->user_update(changed));
+
+  auto found = datastore->user_get(username);
+  ASSERT_NE(found, nullptr);
+  EXPECT_TRUE(found->has_role(types::roles::manage_cluster));
+  EXPECT_TRUE(found->disabled);
+
+  EXPECT_TRUE(datastore->user_delete(username));
+}
+
+TEST(RedisDatastoreTest, UserListFindsAUserItHasJustCreated) {
+  REQUIRE_REDIS(datastore);
+  const auto username = "listed-" + unique_suffix();
+
+  ASSERT_TRUE(datastore->user_create(make_user(username, {})));
+
+  auto users = datastore->user_list();
+  bool seen = false;
+  for (const auto& user : users) {
+    if (user && user->username == username) seen = true;
+  }
+  EXPECT_TRUE(seen);
+
+  ASSERT_TRUE(datastore->user_delete(username));
+
+  users = datastore->user_list();
+  for (const auto& user : users) {
+    if (user) EXPECT_NE(user->username, username);
+  }
+}
+
+TEST(RedisDatastoreTest, UserDeleteSaysWhetherThereWasOne) {
+  REQUIRE_REDIS(datastore);
+  const auto username = "twice-" + unique_suffix();
+
+  ASSERT_TRUE(datastore->user_create(make_user(username, {})));
+  EXPECT_TRUE(datastore->user_delete(username));
+  EXPECT_FALSE(datastore->user_delete(username));
+}
+
+TEST(RedisDatastoreTest, SessionRoundTripsByItsTokenHash) {
+  REQUIRE_REDIS(datastore);
+  const auto suffix = unique_suffix();
+  const auto hash = "hash-" + suffix;
+
+  auto session = make_session(hash, "frank-" + suffix);
+  ASSERT_TRUE(datastore->session_create(session));
+
+  auto found = datastore->session_get(hash);
+  ASSERT_NE(found, nullptr);
+  EXPECT_EQ(found->token_hash, hash);
+  EXPECT_EQ(found->username, "frank-" + suffix);
+  EXPECT_EQ(found->created_at, session.created_at);
+  EXPECT_EQ(found->expires_at, session.expires_at);
+  EXPECT_EQ(found->last_seen_at, session.last_seen_at);
+
+  EXPECT_EQ(datastore->session_get("hash-nothing-" + suffix), nullptr);
+
+  EXPECT_TRUE(datastore->session_delete(hash));
+}
+
+// There is no session_update on the contract, because a token hash is 32 bytes from a
+// CSPRNG and does not collide by accident. Writing the same hash again is how a session
+// carries last_seen_at forward, which is what idle expiry is counted from.
+TEST(RedisDatastoreTest, WritingASessionAgainMovesItsLastSeen) {
+  REQUIRE_REDIS(datastore);
+  const auto suffix = unique_suffix();
+  const auto hash = "hash-touch-" + suffix;
+
+  auto session = make_session(hash, "grace-" + suffix);
+  ASSERT_TRUE(datastore->session_create(session));
+
+  session.last_seen_at += 300;
+  ASSERT_TRUE(datastore->session_create(session));
+
+  auto found = datastore->session_get(hash);
+  ASSERT_NE(found, nullptr);
+  EXPECT_EQ(found->last_seen_at, session.last_seen_at);
+  EXPECT_EQ(found->username, "grace-" + suffix);
+
+  EXPECT_TRUE(datastore->session_delete(hash));
+}
+
+// Issuing a session that is already dead is a caller bug, and both drivers refuse it for
+// the same reason nonce_create does. Redis could not store it anyway: SETEX has no
+// non-positive expiry to give it.
+TEST(RedisDatastoreTest, AnAlreadyExpiredSessionIsRefused) {
+  REQUIRE_REDIS(datastore);
+  const auto suffix = unique_suffix();
+  const auto hash = "hash-dead-" + suffix;
+
+  auto session = make_session(hash, "heidi-" + suffix);
+  session.expires_at = std::time(nullptr) - 1;
+
+  EXPECT_FALSE(datastore->session_create(session));
+  EXPECT_EQ(datastore->session_get(hash), nullptr);
+}
+
+TEST(RedisDatastoreTest, SessionDeleteEndsThatOneSession) {
+  REQUIRE_REDIS(datastore);
+  const auto suffix = unique_suffix();
+  const auto username = "ivan-" + suffix;
+
+  ASSERT_TRUE(datastore->session_create(make_session("hash-a-" + suffix, username)));
+  ASSERT_TRUE(datastore->session_create(make_session("hash-b-" + suffix, username)));
+
+  EXPECT_TRUE(datastore->session_delete("hash-a-" + suffix));
+  EXPECT_EQ(datastore->session_get("hash-a-" + suffix), nullptr);
+  EXPECT_NE(datastore->session_get("hash-b-" + suffix), nullptr);
+
+  EXPECT_FALSE(datastore->session_delete("hash-a-" + suffix));
+  EXPECT_TRUE(datastore->session_delete("hash-b-" + suffix));
+}
+
+// What makes disabling a user immediate rather than eventual. The per-user index is what
+// finds them, so this never needs KEYS.
+TEST(RedisDatastoreTest, SessionDeleteForUserEndsAllOfTheirsAndNobodyElses) {
+  REQUIRE_REDIS(datastore);
+  const auto suffix = unique_suffix();
+
+  ASSERT_TRUE(datastore->session_create(make_session("hash-judy-1-" + suffix, "Judy-" + suffix)));
+  ASSERT_TRUE(datastore->session_create(make_session("hash-judy-2-" + suffix, "judy-" + suffix)));
+  ASSERT_TRUE(datastore->session_create(make_session("hash-ken-" + suffix, "ken-" + suffix)));
+
+  EXPECT_TRUE(datastore->session_delete_for_user("JUDY-" + suffix));
+  EXPECT_EQ(datastore->session_get("hash-judy-1-" + suffix), nullptr);
+  EXPECT_EQ(datastore->session_get("hash-judy-2-" + suffix), nullptr);
+  EXPECT_NE(datastore->session_get("hash-ken-" + suffix), nullptr);
+
+  // Nothing to revoke is not a failure: holding none is the state the caller asked for,
+  // which is what makes DELETE /users/{u}/sessions a 204 for a user who never logged in.
+  EXPECT_TRUE(datastore->session_delete_for_user("judy-" + suffix));
+
+  EXPECT_TRUE(datastore->session_delete("hash-ken-" + suffix));
+}
+
+// A live token against a user that no longer exists is a session nobody can revoke.
+TEST(RedisDatastoreTest, UserDeleteRevokesTheirSessions) {
+  REQUIRE_REDIS(datastore);
+  const auto suffix = unique_suffix();
+  const auto username = "erin-" + suffix;
+  const auto hash = "hash-erin-" + suffix;
+
+  ASSERT_TRUE(datastore->user_create(make_user(username, {})));
+  ASSERT_TRUE(datastore->session_create(make_session(hash, username)));
+  ASSERT_NE(datastore->session_get(hash), nullptr);
+
+  EXPECT_TRUE(datastore->user_delete(username));
+  EXPECT_EQ(datastore->session_get(hash), nullptr);
+}
+
+TEST(RedisDatastoreTest, UserAndSessionRefuseWhatCannotBeStored) {
+  REQUIRE_REDIS(datastore);
+  const auto suffix = unique_suffix();
+
+  EXPECT_FALSE(datastore->user_create(nullptr));
+  EXPECT_FALSE(datastore->user_create(make_user("", {})));
+  EXPECT_FALSE(datastore->session_create(make_session("", "nobody-" + suffix)));
+  EXPECT_FALSE(datastore->session_create(make_session("hash-nouser-" + suffix, "")));
+  EXPECT_EQ(datastore->session_get(""), nullptr);
+}
+
+// A role this build does not know survives the round trip. It grants nothing, because
+// every authorisation check asks whether a specific known role is held, and dropping it
+// would mean an older node rewriting a user silently strips a role a newer node gave
+// them - which is the one thing a cluster mid-upgrade must not do.
+TEST(RedisDatastoreTest, ARoleThisBuildDoesNotKnowIsCarriedNotDropped) {
+  REQUIRE_REDIS(datastore);
+  const auto username = "future-" + unique_suffix();
+
+  ASSERT_TRUE(datastore->user_create(make_user(username, {types::roles::manage_realms, "manage-something-later"})));
+
+  auto found = datastore->user_get(username);
+  ASSERT_NE(found, nullptr);
+  EXPECT_EQ(found->roles.size(), 2u);
+  EXPECT_TRUE(found->has_role("manage-something-later"));
+  EXPECT_TRUE(found->has_role(types::roles::manage_realms));
+
+  // And it grants nothing, because nothing asks for it.
+  EXPECT_FALSE(types::roles::is_known("manage-something-later"));
+  EXPECT_FALSE(found->has_role(types::roles::manage_cluster));
+
+  EXPECT_TRUE(datastore->user_delete(username));
 }
