@@ -64,6 +64,23 @@ This setting can be `true` even if the TCP server is enabled - in which case the
 be unencrypted, but the server will still reject attempts to initate unencrypted calls.
 
 
+#### `files.spa`
+
+Single-page application mode. Defaults to `true`.
+
+A path with nothing behind it - `/sip/realms`, `/diagnostics/softphone` - is answered
+with `index.html` from the document root, so a client-side route survives a reload or a
+pasted link. Three things are never answered this way:
+
+- anything under `/api/`, so an unknown API path still 404s rather than returning a web
+  page and telling a script that its request succeeded;
+- any path whose last segment names a file extension, so a missing asset stays missing
+  instead of hiding behind a 200 with HTML in it;
+- anything but `GET` and `HEAD`, because a write to a path that does not exist is not a
+  page view.
+
+Set `false` for an ordinary document root.
+
 #### `log_messages`
 
 If `true`, every message in and out is logged in full rather than by its first line.

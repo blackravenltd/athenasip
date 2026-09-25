@@ -262,6 +262,16 @@ http:
       - token: "change-me-client"
         scopes: [client]
 
+  # Static files, served from the same listener as the API. The API is routed first, so
+  # /api/v1 always wins and this never shadows it.
   files:
     enable: true
     path: "../admin/"
+
+    # Single-page application mode. A path with nothing behind it - /sip/realms, say -
+    # is answered with index.html from the root, so a client-side route survives a
+    # reload or a link somebody pasted. /api/ is never answered this way, so an unknown
+    # API path still 404s rather than returning a web page, and neither is a path that
+    # names a file extension, so a missing asset stays missing instead of hiding behind
+    # a 200. Set false for an ordinary document root.
+    spa: true
