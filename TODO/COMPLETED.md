@@ -1592,3 +1592,55 @@ Everything the last Milestone 3 item needs except the device and the person.
 - [x] Proven by running the browser call three more times through the wrapper, passing
       each time, with the counters read live: 209 packets and climbing across two legs,
       `UDP/TLS/RTP/SAVPF`, `AEAD_AES_256_GCM`, 0 errors.
+
+### A node on a real host, and a health signal something else can read (2026-09-25)
+
+The first AthenaSIP deployment that is not a test fixture, and the work that had to
+exist before it could be one.
+
+- [x] **A CMake install and a systemd unit**, neither of which existed. `cmake --install`
+      puts the binary, the unit, the annotated example and the live configuration -
+      the last only where there is not one already, because an install that replaced it
+      would take the node down at the worst possible moment. `DESTDIR` is honoured by
+      hand in the `install(CODE)` that does it, or a packager staging a build would have
+      the real `/etc` written. The unit is generated from
+      `packaging/athenasip.service.in` so `ExecStart` cannot drift from the prefix, and
+      assumes a SIP server is a thing strangers can send bytes to: its own unprivileged
+      user, no capabilities at all, two writable directories, `AF_INET` and `AF_INET6`
+      only, and memory, task and file limits. `systemd-analyze security` scores it 1.1.
+- [x] **A command line.** `main.cpp` ignored its arguments entirely, so
+      `athenasip --version` - which the directives treat as the version source of truth
+      - silently started a server. `--config PATH`, `--version`, `--help`, and a search
+      path of `$ATHENASIP_CONFIG`, `/etc/athenasip/config.yaml`, `~/.athenasip/config.yaml`
+      that lets a package and a checkout both work untold. An unknown option stops the
+      node rather than being ignored.
+- [x] **Deployed to corvus-fi-1** (10.35.1.20, Debian 13, aarch64): Boost 1.89 built
+      statically into a private prefix so nothing landed in the shared `/usr/local/lib`,
+      every listener bound to the LAN address rather than `0.0.0.0`, Redis on loopback
+      with a password and its own database, and the admin console served from the node
+      itself. Redis replaced `memory://` because a restart was wiping every realm and
+      account - found by the restart in my own verification.
+- [x] **A heartbeat that answers "is it alive".** `nodes/<id>/status` was published once
+      at startup, fire and forget, which answers "did it start" and is a different
+      question. It is now published on an interval (`events.status_interval`, default
+      30s), as retained state so a monitor arriving late still learns the answer, and
+      with a will so a node that is killed, loses power or loses its network is reported
+      down by the broker rather than remembered as healthy.
+- [x] **The will was set too late, and deploying it is what found that.** A broker takes
+      a will when the session opens and never afterwards; it was being set from `Core`,
+      which is built after the bus has already connected, so it was refused every time
+      and the node ran with none. `SIGKILL` on the real node left the broker reporting it
+      healthy. The status report is now a static function taking its parts, so `main` can
+      arm the will before connecting, and the recording bus in the tests refuses a late
+      will exactly as a broker does - a double that accepted one at any time is what let
+      this pass.
+- [x] **SPA mode as a choice.** `http.files.spa`, default true. The routing fallback
+      already existed; a file server that invents `index.html` for a missing page hides a
+      broken link behind a 200, so it is now something a deployment says rather than
+      something it gets.
+- [x] `docs/installation.md` and `docs/testing.md`, neither of which existed - the second
+      replacing three places that disagreed about how to run the tests.
+- [x] T.O.M.S, the site monitoring dashboard, consumes the heartbeat at
+      `athenasip/nodes/+/status` on the site broker and has dropped its TCP probe. The
+      broker had to change: the node was publishing to the mosquitto on its own host,
+      which bridges only `cerbo/#` inbound and was invisible to the monitoring.
