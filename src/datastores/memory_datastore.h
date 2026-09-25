@@ -17,7 +17,9 @@
 #include "../call.h"
 #include "../loggers/logger.h"
 #include "../loggers/logger_scoped.h"
+#include "../types/session.h"
 #include "../types/url.h"
+#include "../types/user.h"
 #include "datastore.h"
 
 namespace athenasip::datastores {
@@ -41,6 +43,17 @@ class MemoryDatastore : public Datastore {
   void realm_update(plugins::Executor on, std::shared_ptr<types::Realm> realm, plugins::StatusHandler handler) override;
   void realm_delete(plugins::Executor on, std::string realm_name, plugins::StatusHandler handler) override;
   void realm_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::Realm>>> handler) override;
+
+  void user_get(plugins::Executor on, std::string username, plugins::Handler<std::shared_ptr<types::User>> handler) override;
+  void user_create(plugins::Executor on, std::shared_ptr<types::User> user, plugins::StatusHandler handler) override;
+  void user_update(plugins::Executor on, std::shared_ptr<types::User> user, plugins::StatusHandler handler) override;
+  void user_delete(plugins::Executor on, std::string username, plugins::StatusHandler handler) override;
+  void user_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::User>>> handler) override;
+
+  void session_create(plugins::Executor on, types::Session session, plugins::StatusHandler handler) override;
+  void session_get(plugins::Executor on, std::string token_hash, plugins::Handler<std::shared_ptr<types::Session>> handler) override;
+  void session_delete(plugins::Executor on, std::string token_hash, plugins::StatusHandler handler) override;
+  void session_delete_for_user(plugins::Executor on, std::string username, plugins::StatusHandler handler) override;
 
   void account_get(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity, plugins::Handler<std::shared_ptr<types::Account>> handler) override;
   void account_create(plugins::Executor on, std::shared_ptr<types::Account> account, plugins::StatusHandler handler) override;
@@ -71,6 +84,20 @@ class MemoryDatastore : public Datastore {
   bool _realm_update(std::shared_ptr<types::Realm> realm);
   bool _realm_delete(const std::string& realm_name);
   std::vector<std::shared_ptr<types::Realm>> _realm_list();
+
+  std::shared_ptr<types::User> _user_get(const std::string& username);
+  bool _user_create(std::shared_ptr<types::User> user);
+  bool _user_update(std::shared_ptr<types::User> user);
+  bool _user_delete(const std::string& username);
+  std::vector<std::shared_ptr<types::User>> _user_list();
+
+  bool _session_create(types::Session session);
+  std::shared_ptr<types::Session> _session_get(const std::string& token_hash);
+  bool _session_delete(const std::string& token_hash);
+  bool _session_delete_for_user(const std::string& username);
+
+  // Called with _mutex held: every session that names this user, by User::key().
+  std::size_t _session_erase_for_user(const std::string& key);
 
   std::shared_ptr<types::Account> _account_get(std::shared_ptr<types::SIPIdentity> identity);
   bool _account_create(std::shared_ptr<types::Account> account);
@@ -103,6 +130,8 @@ class MemoryDatastore : public Datastore {
   bool _connected = false;
 
   std::unordered_map<std::string, std::shared_ptr<types::Realm>> _realms;
+  std::unordered_map<std::string, std::shared_ptr<types::User>> _users;
+  std::unordered_map<std::string, types::Session> _sessions;
   std::unordered_map<std::string, std::shared_ptr<types::Account>> _accounts;
   std::unordered_map<std::string, types::Location> _locations;
   std::unordered_map<std::string, std::time_t> _nonces;

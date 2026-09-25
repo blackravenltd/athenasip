@@ -66,6 +66,45 @@ class SyncDatastore {
         [this](auto on, auto handler) { _store->realm_list(std::move(on), std::move(handler)); });
   }
 
+  std::shared_ptr<athenasip::types::User> user_get(const std::string& username) {
+    return _value<std::shared_ptr<athenasip::types::User>>(
+        [this, username](auto on, auto handler) { _store->user_get(std::move(on), username, std::move(handler)); });
+  }
+
+  bool user_create(std::shared_ptr<athenasip::types::User> user) {
+    return _status([this, user](auto on, auto handler) { _store->user_create(std::move(on), user, std::move(handler)); });
+  }
+
+  bool user_update(std::shared_ptr<athenasip::types::User> user) {
+    return _status([this, user](auto on, auto handler) { _store->user_update(std::move(on), user, std::move(handler)); });
+  }
+
+  bool user_delete(const std::string& username) {
+    return _status([this, username](auto on, auto handler) { _store->user_delete(std::move(on), username, std::move(handler)); });
+  }
+
+  std::vector<std::shared_ptr<athenasip::types::User>> user_list() {
+    return _value<std::vector<std::shared_ptr<athenasip::types::User>>>(
+        [this](auto on, auto handler) { _store->user_list(std::move(on), std::move(handler)); });
+  }
+
+  bool session_create(athenasip::types::Session session) {
+    return _status([this, session](auto on, auto handler) { _store->session_create(std::move(on), session, std::move(handler)); });
+  }
+
+  std::shared_ptr<athenasip::types::Session> session_get(const std::string& token_hash) {
+    return _value<std::shared_ptr<athenasip::types::Session>>(
+        [this, token_hash](auto on, auto handler) { _store->session_get(std::move(on), token_hash, std::move(handler)); });
+  }
+
+  bool session_delete(const std::string& token_hash) {
+    return _status([this, token_hash](auto on, auto handler) { _store->session_delete(std::move(on), token_hash, std::move(handler)); });
+  }
+
+  bool session_delete_for_user(const std::string& username) {
+    return _status([this, username](auto on, auto handler) { _store->session_delete_for_user(std::move(on), username, std::move(handler)); });
+  }
+
   std::shared_ptr<athenasip::types::Account> account_get(std::shared_ptr<athenasip::types::SIPIdentity> identity) {
     return _value<std::shared_ptr<athenasip::types::Account>>(
         [this, identity](auto on, auto handler) { _store->account_get(std::move(on), identity, std::move(handler)); });

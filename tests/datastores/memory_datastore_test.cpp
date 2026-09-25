@@ -8,11 +8,17 @@
 
 #include <gtest/gtest.h>
 
+#include <ctime>
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "../helpers/sync_datastore_helper.h"
 #include "../mocks/logger_mock.h"
+#include "types/password.h"
+#include "types/session.h"
 #include "types/url.h"
+#include "types/user.h"
 
 using namespace athenasip;
 using athenasip::datastores::MemoryDatastore;
@@ -43,6 +49,27 @@ std::shared_ptr<types::Account> make_account(uint64_t id, const std::string& uri
   account->identity = std::make_shared<types::SIPIdentity>(uri);
   account->ha1 = "deadbeef";
   return account;
+}
+
+std::shared_ptr<types::User> make_user(const std::string& username, std::vector<std::string> roles) {
+  auto user = std::make_shared<types::User>();
+  user->username = username;
+  user->roles = std::move(roles);
+  user->password_hash = types::Password::hash("correct horse", 1000);
+  user->created_at = std::time(nullptr);
+  return user;
+}
+
+types::Session make_session(const std::string& token_hash, const std::string& username) {
+  const auto now = std::time(nullptr);
+
+  types::Session session;
+  session.token_hash = token_hash;
+  session.username = username;
+  session.created_at = now;
+  session.expires_at = now + 3600;
+  session.last_seen_at = now;
+  return session;
 }
 
 }  // namespace
@@ -366,4 +393,255 @@ TEST(MemoryDatastoreTest, CallUpdateRequiresAnExistingCallAndListReturnsThem) {
   EXPECT_EQ(datastore->call_get("call-update-1")->state, Call::State::Connected);
 
   EXPECT_EQ(datastore->call_list().size(), 1u);
+}
+
+// Users and the sessions they hold. These are statements out of docs/authentication.md:
+// a user is a record beside realms and accounts, usernames are one namespace matched
+// without regard to case, and a session is held by the hash of its token and never by
+// the token.
+
+TEST(MemoryDatastoreTest, UserRoundTrips) {
+  auto datastore = make_datastore();
+
+  auto user = make_user("tom", {types::roles::manage_realms});
+  user->display_name = "Tom Cully";
+  ASSERT_TRUE(datastore->user_create(user));
+
+  auto found = datastore->user_get("tom");
+  ASSERT_NE(found, nullptr);
+  EXPECT_EQ(found->username, "tom");
+  EXPECT_EQ(found->display_name, "Tom Cully");
+  EXPECT_TRUE(found->has_role(types::roles::manage_realms));
+  EXPECT_FALSE(found->has_role(types::roles::manage_admin_users));
+
+  // The whole record, not a chosen few fields: a password hash a store quietly dropped
+  // is a user nobody can log in as, which is how ha1_sha256 went missing once already.
+  EXPECT_EQ(found->password_hash, user->password_hash);
+  EXPECT_TRUE(types::Password::verify("correct horse", found->password_hash));
+  EXPECT_EQ(found->created_at, user->created_at);
+
+  EXPECT_EQ(datastore->user_get("nobody"), nullptr);
+}
+
+// "Tom" and "tom" cannot both exist, and either spelling finds the one that does.
+TEST(MemoryDatastoreTest, UsernamesAreOneNamespaceWhateverTheirCase) {
+  auto datastore = make_datastore();
+
+  ASSERT_TRUE(datastore->user_create(make_user("Tom", {})));
+
+  EXPECT_NE(datastore->user_get("tom"), nullptr);
+  EXPECT_NE(datastore->user_get("TOM"), nullptr);
+
+  // The spelling it was given is what it is called, not the key it is filed under.
+  EXPECT_EQ(datastore->user_get("tom")->username, "Tom");
+
+  EXPECT_FALSE(datastore->user_create(make_user("TOM", {})));
+  EXPECT_FALSE(datastore->user_create(make_user("tom", {})));
+}
+
+// create is not update, so the API can answer 409 rather than overwrite somebody.
+TEST(MemoryDatastoreTest, UserCreateRefusesAnExistingUsername) {
+  auto datastore = make_datastore();
+
+  auto first = make_user("alice", {types::roles::view_cluster_status});
+  ASSERT_TRUE(datastore->user_create(first));
+
+  auto second = make_user("alice", {types::roles::manage_admin_users});
+  EXPECT_FALSE(datastore->user_create(second));
+
+  // And the refusal changed nothing.
+  auto found = datastore->user_get("alice");
+  ASSERT_NE(found, nullptr);
+  EXPECT_TRUE(found->has_role(types::roles::view_cluster_status));
+  EXPECT_FALSE(found->has_role(types::roles::manage_admin_users));
+}
+
+// update is not create, so a PUT to a username that does not exist is a 404 rather than
+// a way to make one without going through the rules that creating one applies.
+TEST(MemoryDatastoreTest, UserUpdateRequiresAnExistingUser) {
+  auto datastore = make_datastore();
+
+  auto user = make_user("bob", {});
+  EXPECT_FALSE(datastore->user_update(user));
+  EXPECT_EQ(datastore->user_get("bob"), nullptr);
+
+  ASSERT_TRUE(datastore->user_create(user));
+
+  auto changed = make_user("bob", {types::roles::manage_cluster});
+  changed->disabled = true;
+  EXPECT_TRUE(datastore->user_update(changed));
+
+  auto found = datastore->user_get("bob");
+  ASSERT_NE(found, nullptr);
+  EXPECT_TRUE(found->has_role(types::roles::manage_cluster));
+  EXPECT_TRUE(found->disabled);
+}
+
+// A user with no roles is the default for a newly created one, and a legitimate state
+// for one being set up or wound down. It is not an invalid record.
+TEST(MemoryDatastoreTest, AUserWithNoRolesIsStored) {
+  auto datastore = make_datastore();
+
+  ASSERT_TRUE(datastore->user_create(make_user("carol", {})));
+
+  auto found = datastore->user_get("carol");
+  ASSERT_NE(found, nullptr);
+  EXPECT_TRUE(found->roles.empty());
+}
+
+TEST(MemoryDatastoreTest, UserWithoutAUsernameIsRefused) {
+  auto datastore = make_datastore();
+
+  EXPECT_FALSE(datastore->user_create(make_user("", {})));
+  EXPECT_FALSE(datastore->user_create(nullptr));
+  EXPECT_TRUE(datastore->user_list().empty());
+}
+
+TEST(MemoryDatastoreTest, UserListReturnsEveryUser) {
+  auto datastore = make_datastore();
+
+  ASSERT_TRUE(datastore->user_create(make_user("alice", {types::roles::manage_realms})));
+  ASSERT_TRUE(datastore->user_create(make_user("bob", {})));
+
+  EXPECT_EQ(datastore->user_list().size(), 2u);
+}
+
+TEST(MemoryDatastoreTest, UserDeleteRemovesThemOnceAndSaysSoTheSecondTime) {
+  auto datastore = make_datastore();
+
+  ASSERT_TRUE(datastore->user_create(make_user("dave", {})));
+
+  EXPECT_TRUE(datastore->user_delete("DAVE"));
+  EXPECT_EQ(datastore->user_get("dave"), nullptr);
+  EXPECT_FALSE(datastore->user_delete("dave"));
+}
+
+// A live token against a user that no longer exists is a session nobody can revoke, so
+// deleting a user takes their sessions with it, the way deleting an account takes its
+// registrations.
+TEST(MemoryDatastoreTest, UserDeleteRevokesTheirSessions) {
+  auto datastore = make_datastore();
+
+  ASSERT_TRUE(datastore->user_create(make_user("erin", {})));
+  ASSERT_TRUE(datastore->session_create(make_session("hash-erin", "erin")));
+  ASSERT_NE(datastore->session_get("hash-erin"), nullptr);
+
+  EXPECT_TRUE(datastore->user_delete("erin"));
+  EXPECT_EQ(datastore->session_get("hash-erin"), nullptr);
+}
+
+TEST(MemoryDatastoreTest, SessionRoundTripsByItsTokenHash) {
+  auto datastore = make_datastore();
+
+  auto session = make_session("hash-one", "frank");
+  ASSERT_TRUE(datastore->session_create(session));
+
+  auto found = datastore->session_get("hash-one");
+  ASSERT_NE(found, nullptr);
+  EXPECT_EQ(found->username, "frank");
+  EXPECT_EQ(found->token_hash, "hash-one");
+  EXPECT_EQ(found->expires_at, session.expires_at);
+  EXPECT_EQ(found->last_seen_at, session.last_seen_at);
+
+  EXPECT_EQ(datastore->session_get("hash-nothing"), nullptr);
+  EXPECT_EQ(datastore->session_get(""), nullptr);
+}
+
+TEST(MemoryDatastoreTest, SessionWithoutAHashOrAUserIsRefused) {
+  auto datastore = make_datastore();
+
+  EXPECT_FALSE(datastore->session_create(make_session("", "frank")));
+  EXPECT_FALSE(datastore->session_create(make_session("hash-two", "")));
+}
+
+// There is no session_update on the contract, because a token hash is 32 random bytes
+// and cannot collide by accident. Writing the same hash again is how a session's
+// last_seen_at is carried forward, which is what idle expiry is counted from.
+TEST(MemoryDatastoreTest, WritingASessionAgainMovesItsLastSeen) {
+  auto datastore = make_datastore();
+
+  auto session = make_session("hash-touch", "grace");
+  ASSERT_TRUE(datastore->session_create(session));
+
+  session.last_seen_at += 300;
+  ASSERT_TRUE(datastore->session_create(session));
+
+  auto found = datastore->session_get("hash-touch");
+  ASSERT_NE(found, nullptr);
+  EXPECT_EQ(found->last_seen_at, session.last_seen_at);
+  EXPECT_EQ(found->username, "grace");
+}
+
+// Absolute expiry is the store's to keep, because it is written on the record and needs
+// no configuration to read. Idle expiry is not: how long a session survives unused is
+// config the caller holds, so the caller asks Session::has_expired.
+TEST(MemoryDatastoreTest, AnAbsolutelyExpiredSessionIsGone) {
+  auto datastore = make_datastore();
+
+  auto session = make_session("hash-old", "heidi");
+  session.expires_at = std::time(nullptr) - 1;
+  ASSERT_TRUE(datastore->session_create(session));
+
+  EXPECT_EQ(datastore->session_get("hash-old"), nullptr);
+}
+
+TEST(MemoryDatastoreTest, SessionDeleteEndsThatOneSession) {
+  auto datastore = make_datastore();
+
+  ASSERT_TRUE(datastore->session_create(make_session("hash-a", "ivan")));
+  ASSERT_TRUE(datastore->session_create(make_session("hash-b", "ivan")));
+
+  EXPECT_TRUE(datastore->session_delete("hash-a"));
+  EXPECT_EQ(datastore->session_get("hash-a"), nullptr);
+  EXPECT_NE(datastore->session_get("hash-b"), nullptr);
+
+  EXPECT_FALSE(datastore->session_delete("hash-a"));
+}
+
+// What makes disabling a user immediate rather than eventual, and what a console's
+// "sign out everywhere" is.
+TEST(MemoryDatastoreTest, SessionDeleteForUserEndsAllOfTheirsAndNobodyElses) {
+  auto datastore = make_datastore();
+
+  ASSERT_TRUE(datastore->session_create(make_session("hash-judy-1", "Judy")));
+  ASSERT_TRUE(datastore->session_create(make_session("hash-judy-2", "judy")));
+  ASSERT_TRUE(datastore->session_create(make_session("hash-ken", "ken")));
+
+  EXPECT_TRUE(datastore->session_delete_for_user("JUDY"));
+  EXPECT_EQ(datastore->session_get("hash-judy-1"), nullptr);
+  EXPECT_EQ(datastore->session_get("hash-judy-2"), nullptr);
+  EXPECT_NE(datastore->session_get("hash-ken"), nullptr);
+
+  // Nothing to revoke is not a failure: the caller asked for them to be gone and they
+  // are, which is what disabling a user that has never logged in does.
+  EXPECT_TRUE(datastore->session_delete_for_user("judy"));
+}
+
+// A read hands back a copy, not the record. A driver that goes to the network cannot do
+// otherwise, so a driver that is a hash map must not either, or the API changes roles
+// on this node by forgetting to write and is then surprised by Redis. The user record is
+// what authorises every request, which is the worst place for the two to differ.
+TEST(MemoryDatastoreTest, ChangingWhatAReadHandedBackDoesNotChangeTheStore) {
+  auto datastore = make_datastore();
+  ASSERT_TRUE(datastore->user_create(make_user("mallory", {})));
+
+  auto found = datastore->user_get("mallory");
+  ASSERT_NE(found, nullptr);
+  found->roles.push_back(types::roles::manage_admin_users);
+  found->disabled = true;
+
+  auto again = datastore->user_get("mallory");
+  ASSERT_NE(again, nullptr);
+  EXPECT_TRUE(again->roles.empty());
+  EXPECT_FALSE(again->disabled);
+
+  auto listed = datastore->user_list();
+  ASSERT_EQ(listed.size(), 1u);
+  listed[0]->disabled = true;
+  EXPECT_FALSE(datastore->user_get("mallory")->disabled);
+
+  auto session = make_session("hash-mallory", "mallory");
+  ASSERT_TRUE(datastore->session_create(session));
+  datastore->session_get("hash-mallory")->username = "somebody-else";
+  EXPECT_EQ(datastore->session_get("hash-mallory")->username, "mallory");
 }
