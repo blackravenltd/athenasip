@@ -20,9 +20,11 @@
 #include "../types/account.h"
 #include "../types/location.h"
 #include "../types/realm.h"
+#include "../types/session.h"
 #include "../types/sip_identity.h"
 #include "../types/sip_uri.h"
 #include "../types/url.h"
+#include "../types/user.h"
 
 namespace athenasip::datastores {
 
@@ -50,6 +52,20 @@ class Datastore : public plugins::Plugin {
   virtual void close() = 0;
   virtual bool is_connected() const = 0;
 
+ protected:
+  // What a driver that does not implement an operation answers: a failure naming the
+  // operation, on the caller's executor like every other answer, rather than a silent
+  // nothing or a crash.
+  void _unsupported(plugins::Executor on, plugins::StatusHandler handler, const std::string& operation) {
+    _complete(std::move(on), std::move(handler), plugins::Status::failure(name() + " does not support " + operation));
+  }
+
+  template <typename T>
+  void _unsupported(plugins::Executor on, plugins::Handler<T> handler, const std::string& operation) {
+    _complete(std::move(on), std::move(handler), plugins::Result<T>::failure(name() + " does not support " + operation));
+  }
+
+ public:
   // Realms. create and update are separate so provisioning can tell "already exists"
   // from "changed", which the admin API needs to answer 409 rather than overwrite.
   virtual void realm_get_by_name(plugins::Executor on, std::string realm_name, plugins::Handler<std::shared_ptr<types::Realm>> handler) = 0;
@@ -57,6 +73,61 @@ class Datastore : public plugins::Plugin {
   virtual void realm_update(plugins::Executor on, std::shared_ptr<types::Realm> realm, plugins::StatusHandler handler) = 0;
   virtual void realm_delete(plugins::Executor on, std::string realm_name, plugins::StatusHandler handler) = 0;
   virtual void realm_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::Realm>>> handler) = 0;
+
+  // Users, and the sessions they log in to hold. A thing that can use the API, which is
+  // a different population from the subscribers registered on a realm - see
+  // docs/authentication.md.
+  //
+  // Defaulted rather than pure: a datastore written against an earlier version of this
+  // contract keeps compiling and says plainly that it cannot hold users, which is a
+  // better answer than failing to build. A deployment that wants admin logins needs a
+  // driver that implements them.
+  virtual void user_get(plugins::Executor on, std::string username, plugins::Handler<std::shared_ptr<types::User>> handler) {
+    _unsupported<std::shared_ptr<types::User>>(std::move(on), std::move(handler), "user_get");
+  }
+
+  virtual void user_create(plugins::Executor on, std::shared_ptr<types::User> user, plugins::StatusHandler handler) {
+    (void)user;
+    _unsupported(std::move(on), std::move(handler), "user_create");
+  }
+
+  virtual void user_update(plugins::Executor on, std::shared_ptr<types::User> user, plugins::StatusHandler handler) {
+    (void)user;
+    _unsupported(std::move(on), std::move(handler), "user_update");
+  }
+
+  virtual void user_delete(plugins::Executor on, std::string username, plugins::StatusHandler handler) {
+    (void)username;
+    _unsupported(std::move(on), std::move(handler), "user_delete");
+  }
+
+  virtual void user_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::User>>> handler) {
+    _unsupported<std::vector<std::shared_ptr<types::User>>>(std::move(on), std::move(handler), "user_list");
+  }
+
+  // A session is held by its hash, never by the token itself: a dump of this store must
+  // not hand over live sessions. The caller hashes before it asks.
+  virtual void session_create(plugins::Executor on, types::Session session, plugins::StatusHandler handler) {
+    (void)session;
+    _unsupported(std::move(on), std::move(handler), "session_create");
+  }
+
+  virtual void session_get(plugins::Executor on, std::string token_hash, plugins::Handler<std::shared_ptr<types::Session>> handler) {
+    (void)token_hash;
+    _unsupported<std::shared_ptr<types::Session>>(std::move(on), std::move(handler), "session_get");
+  }
+
+  virtual void session_delete(plugins::Executor on, std::string token_hash, plugins::StatusHandler handler) {
+    (void)token_hash;
+    _unsupported(std::move(on), std::move(handler), "session_delete");
+  }
+
+  // Every session a user holds, which is what makes disabling or deleting one immediate
+  // rather than eventual.
+  virtual void session_delete_for_user(plugins::Executor on, std::string username, plugins::StatusHandler handler) {
+    (void)username;
+    _unsupported(std::move(on), std::move(handler), "session_delete_for_user");
+  }
 
   // Accounts.
   virtual void account_get(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity, plugins::Handler<std::shared_ptr<types::Account>> handler) = 0;

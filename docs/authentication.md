@@ -7,26 +7,39 @@ code.
 AthenaSIP has two entirely separate authentication problems, and conflating them would
 be the first mistake:
 
+## Two populations, and the words for them
+
+- A **user** is a thing that can use the API. Because the admin interface is only a
+  client of the API, that is also what can use the admin interface.
+- A **subscriber** is a thing registered on a realm to make and receive calls.
+
+These words are used in that sense throughout, and nowhere else in this document does
+"user" mean a handset or "subscriber" mean a person at a console.
+
 | | Who is authenticated | How | Where the secret lives |
 |---|---|---|---|
-| **SIP** | A phone or a browser registering or calling | Digest, RFC 3261 s22 | `Account.ha1` / `ha1_sha256` in the datastore |
-| **Admin** | A person or a system administering the node | Username and password, then a session | Nothing yet - see below |
+| **Subscriber** | A phone or a browser registering or calling | Digest, RFC 3261 s22 | `ha1` / `ha1_sha256` in the datastore |
+| **User** | A person or a system using the API | Username and password, then a session | Nothing yet - see below |
 
-They are different trust domains and different populations. A SIP account is a handset
-credential belonging to a realm; an admin user administers the server those handsets
-register to. **Neither is ever created from the other, and neither can be used as the
-other.** Creating a realm account does not create an admin user; creating an admin user
-does not create a SIP account. There is no automatic creation in either direction.
+They are different trust domains and different populations. A subscriber credential
+belongs to a realm and is handed to a handset; a user administers the server those
+handsets register to. **Neither is ever created from the other, and neither can be used
+as the other.** Creating a subscriber does not create a user; creating a user does not
+create a subscriber. There is no automatic creation in either direction.
 
-## SIP authentication, which is built
+## Subscriber authentication, which is built
 
-An account holds HA1 - the hash of user, realm and password (RFC 2617) - once per
+A subscriber holds HA1 - the hash of user, realm and password (RFC 2617) - once per
 algorithm it can authenticate with, because the MD5 and SHA-256 hashes are both derived
 from the password and neither can be derived from the other. The password itself is
 never stored and never recoverable. The registrar challenges, the endpoint answers, and
 `Registrar` checks the response against the stored HA1.
 
 This is standard, it works, and it is not what the rest of this document is about.
+
+The type is still called `Account` in the code and the resource is still
+`/realms/{realm}/accounts`. That disagrees with the vocabulary above and is noted at
+the end as a thing to settle.
 
 ## Admin authentication, which is a config file
 
@@ -64,7 +77,7 @@ token table would replace".
 
 ## The model
 
-### Admin users
+### Users
 
 A record in the datastore, beside realms and accounts, so a cluster shares one set:
 
@@ -77,7 +90,7 @@ A record in the datastore, beside realms and accounts, so a cluster shares one s
 | `disabled` | kept for the audit trail, cannot log in |
 | `created_at`, `last_login_at` | |
 
-Not a realm, not a scope list, not an `Account`. An admin user belongs to the node.
+Not a realm, not a scope list, not a subscriber. A user belongs to the node.
 
 ### Roles
 
@@ -91,22 +104,17 @@ default for a newly created one.
 | `view-cluster-status` | Read node, registration, call and media status. Read-only, everywhere. |
 | `manage-admin-users` | Create, change and remove admin users and their roles. |
 | `manage-realms` | Create, change and remove realms. |
-| `manage-realm-accounts` | Create, change and remove the accounts within a realm. |
+| `manage-realm-subscribers` | Create, change and remove the subscribers within a realm. |
 | `manage-cluster` | Change what the cluster is: node membership, node configuration. |
 
 A role is a permission, not a rank. `manage-realms` does not let you read cluster
 status; `view-cluster-status` does not let you change anything. Somebody who needs both
 is given both.
 
-`manage-admin-users` is the one to be careful with: a user holding it can grant
-themselves every other role. That is inherent in being able to manage users, and it is
-why it is a role of its own rather than something bundled into another.
-
-**A naming note for agreement.** The role is written here as `manage-realm-accounts`
-rather than "manage realm subscribers", because `Subscriber` was renamed `Account` on
-2026-09-21 - it would have collided with SUBSCRIBE (RFC 6665) the moment presence
-arrived - and the API resource is `/realms/{realm}/accounts`. If the console should say
-"subscribers" to a person, that is a label; the role name should match the resource.
+`manage-admin-users` is written for the population it manages, which is users. It is
+the one role to be careful with: whoever holds it can grant themselves every other
+role. That is inherent in being able to manage users, and it is why it is a role of its
+own rather than bundled into another.
 
 ### Roles against the routes that exist
 
@@ -116,8 +124,8 @@ arrived - and the API resource is `/realms/{realm}/accounts`. If the console sho
 | `GET /session` | any authenticated user |
 | `GET /nodes`, `GET /registrations` | `view-cluster-status` |
 | `GET/POST/PUT/DELETE /realms[/{realm}]` | `manage-realms` |
-| `GET /realms/{realm}` | `manage-realms` or `manage-realm-accounts` (to place an account in one) |
-| `GET/POST/PUT/DELETE /realms/{r}/accounts[/{u}]` | `manage-realm-accounts` |
+| `GET /realms/{realm}` | `manage-realms` or `manage-realm-subscribers` (to place an account in one) |
+| `GET/POST/PUT/DELETE /realms/{r}/accounts[/{u}]` | `manage-realm-subscribers` |
 | `GET/POST/PUT/DELETE /users[/{u}]` | `manage-admin-users` |
 | `/calls`, `/media`, `/events` (M5) | `view-cluster-status`; ending a call needs `manage-cluster` |
 | node membership and configuration (M4) | `manage-cluster` |
@@ -222,3 +230,10 @@ getting back in does not require the API to be reachable.
    console can say "you have no permissions, ask an administrator"? The latter is
    kinder and tells an attacker slightly more.
 4. Does TLS on the admin listener block this work, or land beside it?
+5. **`Account` versus `subscriber`.** The vocabulary above says subscriber; the type is
+   `Account` and the resource is `/realms/{realm}/accounts`. `Subscriber` was renamed
+   `Account` on 2026-09-21 because it collided with SUBSCRIBE (RFC 6665) once presence
+   arrived - that collision is about the C++ type name, not about the word in an API or
+   in a sentence. Renaming the resource back is a breaking API change that the console
+   and the OpenAPI document follow, so it wants doing deliberately and in one go, or
+   not at all.
