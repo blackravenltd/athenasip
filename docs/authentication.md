@@ -187,6 +187,13 @@ an admin plane, and this node already has a datastore to ask.
 | `POST /api/v1/users/{u}/password` | own password with the old one; anyone's with the role |
 | `DELETE /api/v1/users/{u}/sessions` | revoke every session a user holds |
 
+A delete answers 204 with no body, as every other delete in this API does, and 404 when
+there is no such user. The datastore deliberately does not make that distinction -
+`session_delete_for_user` succeeds whether or not anything was revoked, because "this
+user holds no sessions" is the state the caller asked for - so revoking for a user who
+has never logged in is a 204. The existence check belongs to the handler, exactly as
+`_with_realm` does it for realms.
+
 ### What happens to the config tokens
 
 They stay, and they change meaning. A config token becomes a **machine credential and
