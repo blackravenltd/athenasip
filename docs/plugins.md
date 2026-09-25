@@ -174,6 +174,21 @@ comes next: plugins loaded from shared libraries, where a mismatch is a crash ra
 than a warning. The version is bumped whenever `Plugin`, or any interface derived from
 it, changes shape.
 
+Not every operation is pure virtual. An operation added to an interface after the fact is
+defaulted to a failure that says which one is missing:
+
+```
+memory does not support user_get
+```
+
+A driver written against an earlier contract therefore keeps compiling, and says plainly
+what it cannot hold rather than failing to build or, worse, quietly succeeding. The
+`user_*` and `session_*` operations on `Datastore` are the first of these: a datastore
+only has to implement them if the deployment wants admin logins out of it, and
+`docs/authentication.md` says what they mean. A driver that leaves one defaulted is not
+broken; a driver that implements one and gets the create/update split wrong is, because
+the admin API tells "already exists" from "changed" by which of the two failed.
+
 ## Testing a plugin
 
 Tests are GoogleTest under `tests/`, mirroring `src/`. `tests/plugins/plugin_registry_test.cpp`
