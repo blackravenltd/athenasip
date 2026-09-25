@@ -1644,3 +1644,81 @@ exist before it could be one.
       `athenasip/nodes/+/status` on the site broker and has dropped its TCP probe. The
       broker had to change: the node was publishing to the mosquitto on its own host,
       which bridges only `cerbo/#` inbound and was invisible to the monitoring.
+- [x] **Admin authentication, the datastore half** (`dbbf203`, `4790bc0`, `c2cf031`).
+      `types::Password`, `types::User` and `types::Session` landed with the contract in
+      `f2b1552`; this is both drivers implementing the nine user and session operations
+      behind it, written from `docs/authentication.md` rather than from the shape the
+      contract happened to have. Thirty-one tests - sixteen against the memory driver and
+      fifteen against Redis - all of which failed first. The suite is 645 green with Redis
+      and MQTT up, and clean under both sanitizers.
+
+      The two drivers are held to the same statements deliberately, because a login that
+      behaves differently on `memory://` and `redis://` is worse than one that only works
+      on one of them, and the deployed node runs on `redis://`:
+
+      - create refuses an existing username and update refuses a missing one, which is
+        what lets the API answer 409 rather than overwrite somebody, and 404 rather than
+        create a user without applying the rules that creating one applies.
+      - Usernames are one case-folded namespace. `Tom` and `tom` cannot both exist,
+        either spelling logs in, and the spelling it was given is kept for display.
+      - Writing a token hash that is already held replaces it. A hash is 32 bytes from a
+        CSPRNG and does not collide by accident, so this is how `last_seen_at` moves, and
+        why the contract needs no `session_update`.
+      - Absolute expiry is the store's, because it is written on the record. Idle expiry
+        is not: how long a session survives unused is configuration the store is not
+        given, so the caller asks `Session::has_expired`.
+      - A read hands back a copy. The memory driver returned the stored record itself,
+        which meant changing a user that had been read without writing it back changed
+        the roles on a `memory://` node and not on a `redis://` one - and the user record
+        is what authorises every request, which is the worst place for two drivers to
+        diverge. Realms still return the record itself; a smaller problem, left alone.
+      - An already-expired session is refused rather than stored and then withheld, for
+        the same reason `nonce_create` refuses an expired nonce. Redis could not store
+        one at all, because `SETEX` has no non-positive expiry to give it, so tolerating
+        it in memory was a divergence waiting to happen. `expires_at` of zero goes with
+        it: zero is what a record written before expiry existed carries, and reading it
+        as "never ends" would be the one session nothing can time out.
+      - A role this build does not know is carried rather than dropped. Dropping it was
+        the first thing the Redis driver did, and it is wrong in a cluster mid-upgrade:
+        an older node rewriting a user would silently strip a role a newer node gave
+        them. It grants nothing either way, because every authorisation check asks
+        whether a specific known role is held, so a string nothing recognises can never
+        match one. Validating what may be granted is the API's job, on the way in.
+      - Deleting a user revokes its sessions, as deleting an account drops its bindings:
+        a live token against a user that no longer exists is a session nobody can
+        revoke. Revoking for a user that holds none succeeds, because holding none is
+        the state the caller asked for.
+
+      In Redis a session is a key with a TTL of its own absolute expiry, plus a per-user
+      index set so revoking every session a user holds never needs `KEYS` - `KEYS` blocks
+      the server, and revoking is on the path of disabling somebody. A session that
+      reaches its expiry without being logged out leaves its hash in that index:
+      harmless, bounded by how often that user logs in, and cleared by the next revoke,
+      which drops the index whole rather than a member at a time. The tests leave Redis
+      exactly as they found it, no stray keys and no stray index members, which is itself
+      a statement about the delete paths.
+- [x] **Two decisions written down where they are looked for** (`8f4704a`, `e50fd3e`).
+      `docs/plugins.md` says under Versioning that a contract operation may be defaulted
+      rather than pure, which is why a datastore written against an earlier contract keeps
+      compiling and says which operation it cannot hold - and which way round the risk
+      runs: leaving one defaulted is fine, implementing one with the create/update split
+      wrong is not. `docs/authentication.md` settles what a session revoke answers: 204
+      with no body as every other delete in this API does, 404 for no such user, and 204
+      for a user who has never logged in, with the existence check belonging to the
+      handler exactly as `_with_realm` does it. Agreed with `athenasip-admin`, which had
+      already built it that way.
+- [x] **The browser call re-run and the media proved, 2026-09-25.** Two headless Chromium
+      contexts registered, called each way and hung up from each end through the interop
+      fixture with rtpengine, on a node built fresh in the container: 2 passed. What is
+      new is that it now proves media rather than only signalling. The softphone readout
+      gained `totalAudioEnergy`, the far end's accumulated `inbound-rtp` energy, which
+      only grows and so cannot land in the gap between the fake device's beeps the way an
+      instantaneous `audioLevel` can; the spec asserts it above zero at each end. Energy
+      was 0.41 and 0.55 one way, 0.47 and 0.57 the other, no packets lost, and every
+      remote candidate was the fixture's LAN address. The records are in
+      `../athenasip-admin/e2e/results`, written by the spec itself.
+
+      It needed alternate ports: AthenaPhone's Asterisk fixture was up holding 5060,
+      5061, 8088 and 8089, so `up.sh`'s own port check stopped the run before a container
+      started. `ATHENA_INTEROP_NAME=athenasip-interop-alt` with the port variables
+      `up.sh` prints is the whole of the remedy, and `docs/testing.md` already says so.

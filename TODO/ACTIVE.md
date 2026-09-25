@@ -236,6 +236,13 @@ never heard describe itself.
       device doing it. Written down either way: a failure recorded is the next item, a
       success recorded is the first row of the interop matrix.
 
+      The browser half was re-run on 2026-09-25 and now proves media rather than only
+      signalling: the softphone readout carries `totalAudioEnergy` and the spec asserts
+      it above zero at each end, so "registered, called and hung up" can no longer pass
+      on silence. On a machine where AthenaPhone's Asterisk fixture is up, the run needs
+      `ATHENA_INTEROP_NAME=athenasip-interop-alt` and the ports `up.sh` prints, because
+      both fixtures use 5060, 5061, 8088 and 8089 on purpose.
+
 ### After the first call
 
 - [ ] A realm holding both WebRTC endpoints and plain-RTP ones. Now that a leg's own
@@ -412,40 +419,43 @@ in ten minutes.
 - [ ] **Authentication for the API**, specified in full in `docs/authentication.md`
       and started. Read that document first; this is only the state of the work.
 
-      **Landed** (`f2b1552`): `types::Password` (PBKDF2-HMAC-SHA256 from OpenSSL,
-      self-describing format, refuses anything it did not write), `types::User` (the
-      five roles, no superuser, any combination including none, case-insensitive
-      usernames), `types::Session` (held by the SHA-256 of its token, roles read from
-      the user per request rather than copied), and the `user_*` and `session_*`
-      operations on the `Datastore` contract, defaulted to an honest "not supported".
+      **Landed, and recorded in full in `COMPLETED.md`:** the three types and the
+      contract (`f2b1552`), then both drivers implementing the nine user and session
+      operations (`dbbf203`, `4790bc0`, `c2cf031`). `memory://` and `redis://` answer
+      identically, which is the point: the deployed node runs on `redis://`.
 
-      `MemoryDatastore` and `RedisDatastore` both implement all nine, and are held to the
-      same statements, because a login that behaves differently on `memory://` and
-      `redis://` is worse than one that only works on one of them. The create/update split
-      lets the API answer 409 rather than overwrite; usernames are one case-folded
-      namespace, so `Tom` and `tom` cannot both exist and either spelling logs in, with the
-      given spelling kept for display; writing a held token hash again replaces it, which
-      is how `last_seen_at` moves and why the contract needs no `session_update`; absolute
-      expiry is the store's, because it is written on the record, while idle expiry stays
-      the caller's because the timeout is configuration; a read hands back a copy, so
-      changing a user that was read without writing it back changes nothing; an
-      already-expired session is refused, as an expired nonce is, because Redis has no
-      non-positive `SETEX` to store one with; a role this build does not know is carried
-      rather than dropped, because it grants nothing and an older node rewriting a user
-      must not strip what a newer one gave them; and deleting a user revokes its sessions,
-      as deleting an account drops its bindings.
+      Four of those decisions constrain what is left, so they are here rather than only
+      in the record:
 
-      In Redis a session is a key with a TTL of its own absolute expiry, plus a per-user
-      index set so revoking by username never needs `KEYS`. A session that reaches its
-      expiry without being logged out leaves its hash in that index: harmless, bounded by
-      how often that user logs in, and cleared by the next revoke, which drops the index
-      whole. Worth pruning when there is a reason to walk it.
+      - **Idle expiry is the caller's, absolute expiry is the store's.** The store prunes
+        on `expires_at` because it is written on the record; nothing in either driver
+        knows the idle timeout. Step 1 is what has to ask `Session::has_expired`, and is
+        what moves `last_seen_at` by writing the session again - there is no
+        `session_update`, and does not need to be.
+      - **"Nothing to revoke" is success**, which is what makes the revoke route a 204
+        for a user who has never logged in. The 404 for an unknown user is step 4's, and
+        belongs to the handler.
+      - **A read hands back a copy.** Change a user and write it back, or the change is
+        lost. This is deliberate and tested on both drivers.
+      - **An unknown role is carried, not dropped.** Validating what may be granted is
+        step 4's job, on the way in, because that is the only place it can be done.
 
       **Next, in this order:**
-      1. Session issue and lookup: 32 CSPRNG bytes, hashed on the way in, absolute and
-         idle expiry from config (`http.api.session_lifetime`,
-         `http.api.session_idle`).
+      1. Session issue and lookup: 32 bytes from a CSPRNG, SHA-256 on the way in,
+         the token given to the client once and never retrievable. Absolute and idle
+         expiry from config - `http.api.session_lifetime` and `http.api.session_idle`,
+         neither of which exists in the schema yet, so this step adds them.
+
+         This is also where a hand-in time source starts to earn its place. Idle expiry
+         is the first rule here that is awkward to test against a real clock, and
+         `Session::has_expired` already takes `now` as an argument, so half the seam is
+         cut. The drivers call `std::time(nullptr)` directly; whether that becomes
+         injectable is this step's call to make, not a decision already taken.
       2. `POST /api/v1/auth/login`, `POST /api/v1/auth/logout`, `GET /api/v1/session`.
+         This is the step that stops `/auth/login` answering 404 on `corvus-fi-1`, which
+         `athenasip-admin` is waiting on before it can deploy and click through the
+         screens. It expects the first user's credentials and which config token still
+         works when this lands.
       3. Roles on the routes. `Router::add` takes a set of roles, any of which admits;
          `BearerAuth` resolves a session token to a user and a config token to roles
          (`admin` scope to all five, `client` to `view-cluster-status`, which is
