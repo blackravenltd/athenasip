@@ -60,6 +60,8 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
 
   void publish(std::string event_name, std::string message) override;
   void publish(plugins::Executor on, std::string event_name, std::string message, plugins::StatusHandler handler) override;
+  void publish_state(std::string event_name, std::string message) override;
+  void will_set(std::string event_name, std::string message) override;
 
   void subscribe(plugins::Executor on, std::string event_name, Subscription::EventCallbackFn event_callback,
                  plugins::Handler<std::shared_ptr<Subscription>> handler) override;
@@ -77,7 +79,7 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
   Completion bind_completion(plugins::Executor on, plugins::StatusHandler handler);
   static void finish(const Completion& completion, plugins::Status status);
 
-  void publish_event(std::string event_name, std::string message, Completion completion);
+  void publish_event(std::string event_name, std::string message, Completion completion, bool retain = false);
 
   using MQTTClient = mqtt::mqtt_client<asio::ip::tcp::socket>;
   using MQTTStrand = asio::strand<asio::io_context::executor_type>;
@@ -99,6 +101,10 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
   std::string _password;
   std::uint16_t _keep_alive_seconds;
   std::string _prefix;
+
+  // Taken by the broker when the session opens and never afterwards.
+  std::string _will_topic;
+  std::string _will_message;
 
   // How long connect() waits for the broker to answer before reporting that it is not
   // there. boost.mqtt5 is an always-online client: it queues and reconnects for ever,

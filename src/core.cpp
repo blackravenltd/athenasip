@@ -29,6 +29,7 @@
 #include "transactions/non_invite_client_transaction.h"
 #include "transactions/non_invite_server_transaction.h"
 #include "types/sip_uri.h"
+#include "util.h"
 
 using namespace athenasip::servers;
 using namespace athenasip::datastores;
@@ -718,6 +719,69 @@ void Core::media_register(std::shared_ptr<media::MediaEngine> engine) {
   // Nothing to ask an engine until there is one, and the media half of the sweep is the
   // half that needs it.
   _call_sweep_schedule();
+}
+
+// A node saying it is alive, on an interval, retained, with the broker primed to say
+// otherwise if it vanishes. Those three together are what makes this answerable by a
+// monitor: the interval proves it is still running, retention means a monitor that
+// arrives late still learns the answer, and the will covers the case where the node
+// never gets to speak again.
+void Core::node_status_start() {
+  _started_at = std::time(nullptr);
+
+  // Before anything is published, because a broker takes a will when the session opens
+  // and never afterwards.
+  events->will_set(events::topics::node_status(config->sip_node_id), node_status_json("down"));
+
+  _node_status_publish();
+}
+
+void Core::node_status_stop() {
+  if (_node_status_timer) {
+    _node_status_timer->cancel();
+    _node_status_timer.reset();
+  }
+
+  events->publish_state(events::topics::node_status(config->sip_node_id), node_status_json("stopped"));
+}
+
+std::string Core::node_status_json(const std::string& status) const {
+  boost::json::object report;
+
+  report["status"] = status;
+  report["node"] = config->sip_node_id;
+  report["version"] = _version;
+  report["datastore"] = datastore ? datastore->describe() : "none";
+  report["at"] = Util::get_zulu_time();
+  report["uptime"] = _started_at == 0 ? 0 : static_cast<std::int64_t>(std::time(nullptr) - _started_at);
+
+  return boost::json::serialize(report);
+}
+
+void Core::_node_status_publish() {
+  // Degraded rather than ok where the datastore is not there: a node that cannot read a
+  // registration is running but is not serving, and a health report that called that ok
+  // would be the most misleading thing this node says.
+  const auto status = (datastore && datastore->is_connected()) ? "ok" : "degraded";
+
+  events->publish_state(events::topics::node_status(config->sip_node_id), node_status_json(status));
+
+  _node_status_schedule();
+}
+
+void Core::_node_status_schedule() {
+  if (_node_status_timer) {
+    _node_status_timer->cancel();
+    _node_status_timer.reset();
+  }
+
+  if (config->events_status_interval == 0) return;
+
+  std::weak_ptr<Core> weak_self = weak_from_this();
+
+  _node_status_timer = _timer_source->schedule(std::chrono::seconds(config->events_status_interval), [weak_self]() {
+    if (auto self = weak_self.lock()) self->_node_status_publish();
+  });
 }
 
 void Core::_call_sweep_schedule() {

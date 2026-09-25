@@ -223,6 +223,27 @@ class Core : public std::enable_shared_from_this<Core> {
   std::shared_ptr<Config> config;
   std::shared_ptr<datastores::Datastore> datastore;
   std::shared_ptr<events::EventSystem> events;
+
+  // What this node reports itself as. Set by main from the build version, because Core
+  // is the composition root and the thing that announces the node, but the version is
+  // the binary's fact rather than the composition's.
+  void version_set(std::string version) { _version = std::move(version); }
+
+  // Start saying, on an interval, that this node is alive and what it is - and tell the
+  // bus what to say on this node's behalf if it stops saying anything at all.
+  //
+  // Called once, after the datastore and the bus are up, because the first thing it
+  // publishes is a health report and a report written before the datastore connected
+  // would say degraded about a node that is fine.
+  void node_status_start();
+
+  // The same report the HTTP health endpoint gives, as JSON. A monitor reading one and
+  // a monitor reading the other should not disagree about the node.
+  std::string node_status_json(const std::string& status) const;
+
+  // The last thing a node says on the way out, so the retained message does not claim
+  // for ever that a node which stopped cleanly is still up.
+  void node_status_stop();
   std::shared_ptr<media::MediaEngine> media;
 
  private:
@@ -276,6 +297,13 @@ class Core : public std::enable_shared_from_this<Core> {
   // end; how long the call has been up reaches every call and cannot tell a live one from
   // a dead one.
   std::shared_ptr<Timer> _call_sweep_timer;
+
+  std::shared_ptr<Timer> _node_status_timer;
+  std::string _version;
+  std::time_t _started_at = 0;
+
+  void _node_status_schedule();
+  void _node_status_publish();
 
   void _call_sweep_schedule();
   void _call_sweep();
