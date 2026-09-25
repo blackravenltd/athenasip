@@ -728,11 +728,6 @@ void Core::media_register(std::shared_ptr<media::MediaEngine> engine) {
 // never gets to speak again.
 void Core::node_status_start() {
   _started_at = std::time(nullptr);
-
-  // Before anything is published, because a broker takes a will when the session opens
-  // and never afterwards.
-  events->will_set(events::topics::node_status(config->sip_node_id), node_status_json("down"));
-
   _node_status_publish();
 }
 
@@ -745,17 +740,24 @@ void Core::node_status_stop() {
   events->publish_state(events::topics::node_status(config->sip_node_id), node_status_json("stopped"));
 }
 
-std::string Core::node_status_json(const std::string& status) const {
+std::string Core::node_status_json(const std::string& status, const std::string& node_id, const std::string& version, const std::string& datastore,
+                                   std::int64_t uptime) {
   boost::json::object report;
 
   report["status"] = status;
-  report["node"] = config->sip_node_id;
-  report["version"] = _version;
-  report["datastore"] = datastore ? datastore->describe() : "none";
+  report["node"] = node_id;
+  report["version"] = version;
+  report["datastore"] = datastore;
   report["at"] = Util::get_zulu_time();
-  report["uptime"] = _started_at == 0 ? 0 : static_cast<std::int64_t>(std::time(nullptr) - _started_at);
+  report["uptime"] = uptime;
 
   return boost::json::serialize(report);
+}
+
+std::string Core::node_status_json(const std::string& status) const {
+  const auto uptime = _started_at == 0 ? 0 : static_cast<std::int64_t>(std::time(nullptr) - _started_at);
+
+  return node_status_json(status, config->sip_node_id, _version, datastore ? datastore->describe() : "none", uptime);
 }
 
 void Core::_node_status_publish() {
