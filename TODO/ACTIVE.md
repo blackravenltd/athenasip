@@ -396,11 +396,18 @@ in ten minutes.
 
 - [ ] `docker-compose.yml`: athenasip, redis, mosquitto, rtpengine, coturn, seeded
       realm and two accounts, admin UI on 8080, WSS on 9443, TLS on 5061.
-- [ ] Command line. `main.cpp` reads no arguments at all today: `athenasip --version`,
-      which `CONTRIBUTING.md` and `CLAUDE.md` both describe, does not exist, and the
-      config comes only from the search path. `--version`, `--config <path>` and
-      `--print-config` for the effective values, and the ten-line config that
-      `docs/configuration.md` already shows as the whole of what is needed.
+- [ ] Command line, the rest of it. `--version`, `--config <path>`, `--help` and the
+      configuration search path are done. What is left is `--print-config` for the
+      effective values after the file, the environment and the defaults have been
+      resolved.
+- [ ] **Authentication for the admin plane**, designed in `docs/authentication.md` and
+      not started. Admin auth today is static bearer tokens in a config file: no
+      identity, no revocation, no expiry, not shared across a cluster, and nothing for
+      the console to log in to. The design is admin users in the datastore with
+      PBKDF2-HMAC-SHA256 passwords, opaque revocable session tokens stored hashed, and
+      the config tokens kept as the break-glass way in. Its four open questions want
+      answering before any of it is built, and TLS on the admin listener is arguably a
+      prerequisite rather than a companion.
 - [ ] Admin API, part 2, the live registries: `/api/v1/calls` (live and history,
       hangup), `/api/v1/media` (engines, health), `/api/v1/events` (SSE stream bridging
       `nodes/#`, `account/#`, `calls/#`). These read Core's own state and need

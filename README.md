@@ -50,6 +50,7 @@ claim the shipped configuration does not support.
 * [Writing a plugin](docs/plugins.md)
 * [Events](docs/events.md) - the topic scheme
 * [Testing](docs/testing.md) - the five layers, and how compliance is proven
+* [Authentication](docs/authentication.md) - SIP Digest, and the admin plane design
 * [Admin API](docs/api/openapi.yaml)
 * [Interop fixture](test/interop/README.md) - a node to point a real SIP client at
 
