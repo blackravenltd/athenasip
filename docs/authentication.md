@@ -1,7 +1,8 @@
 # AthenaSIP - Authentication
 
 **Status: design. None of the admin half described here is built.** What exists today is
-at the top; everything from "The gap" onward is a proposal to be agreed before code.
+described first; everything from "The model" onward is a proposal to be agreed before
+code.
 
 AthenaSIP has two entirely separate authentication problems, and conflating them would
 be the first mistake:
@@ -9,11 +10,13 @@ be the first mistake:
 | | Who is authenticated | How | Where the secret lives |
 |---|---|---|---|
 | **SIP** | A phone or a browser registering or calling | Digest, RFC 3261 s22 | `Account.ha1` / `ha1_sha256` in the datastore |
-| **Admin API** | A person or a script provisioning the node | Bearer token | `http.api.tokens` in the config file |
+| **Admin** | A person or a system administering the node | Username and password, then a session | Nothing yet - see below |
 
-They are different trust domains. A SIP account is a handset credential handed to an
-endpoint; an admin credential provisions the server that handset registers to. One must
-never be usable as the other, and no design below changes that.
+They are different trust domains and different populations. A SIP account is a handset
+credential belonging to a realm; an admin user administers the server those handsets
+register to. **Neither is ever created from the other, and neither can be used as the
+other.** Creating a realm account does not create an admin user; creating an admin user
+does not create a SIP account. There is no automatic creation in either direction.
 
 ## SIP authentication, which is built
 
@@ -23,7 +26,7 @@ from the password and neither can be derived from the other. The password itself
 never stored and never recoverable. The registrar challenges, the endpoint answers, and
 `Registrar` checks the response against the stored HA1.
 
-This is standard, it works, and it is not what this document is about.
+This is standard, it works, and it is not what the rest of this document is about.
 
 ## Admin authentication, which is a config file
 
@@ -41,80 +44,126 @@ http:
 
 `BearerAuth` compares the presented bearer against that list in constant time and
 answers 401 for an unknown token, 403 for a known one without the scope the route
-declared. `admin` provisions; `client` reads what a client may see. `bearer_auth.h`
-says in its own comment that this "is what a datastore-backed token table would
-replace".
+declared. `bearer_auth.h` says in its own comment that this "is what a datastore-backed
+token table would replace".
 
 ### What is wrong with it
 
-- **No identity.** A token is not a person. Six operators share one string, and the
-  audit log - when there is one - can only say "someone with the admin token".
+- **No identity.** A token is not a person. Six operators share one string, and an audit
+  line can only say "someone with the admin token".
 - **No revocation.** Removing a token means editing a file on every node and restarting
   each one.
 - **No expiry.** A token leaked into a shell history, a CI log or a screen share is
   valid until somebody notices and edits that file.
-- **Not shared.** A cluster's nodes each carry their own copy, so the tokens are only
-  the same because somebody copied them carefully.
-- **No login.** The admin console cannot ask a person who they are, which is why it has
-  no login screen: there is nothing to log in to.
+- **Not shared.** A cluster's nodes each carry their own copy, identical only because
+  somebody copied them carefully.
+- **No login.** The admin console cannot ask a person who they are, because there is
+  nothing to log in to.
+- **Two coarse scopes.** `admin` can do everything provisioning can do. There is no way
+  to let somebody read cluster status without also letting them delete a realm.
 
-## The gap
-
-The admin console needs a person to sign in, and a cluster needs credentials that are
-provisioned once rather than copied to every node. That is an authentication database:
-users, hashed passwords, and sessions.
-
-## Proposed model
+## The model
 
 ### Admin users
 
-A record in the datastore, beside realms and accounts, so a cluster shares it:
+A record in the datastore, beside realms and accounts, so a cluster shares one set:
 
 | Field | |
 |---|---|
-| `username` | unique, the login |
-| `display_name` | for an audit line and the console |
-| `password_hash` | PBKDF2-HMAC-SHA256, see below |
-| `scopes` | `admin`, `client`; the same scopes routes already declare |
-| `disabled` | a user kept for the audit trail but unable to log in |
+| `username` | unique across the node, the login |
+| `display_name` | for the console and for an audit line |
+| `password_hash` | see **Passwords** below |
+| `roles` | any combination of the roles below, **including none** |
+| `disabled` | kept for the audit trail, cannot log in |
 | `created_at`, `last_login_at` | |
 
-Not reusing `Account`. A SIP account belongs to a realm and authenticates a handset; an
-admin user belongs to the node and authenticates a person. Sharing the type would make
-"can this handset provision the server" a question anybody has to ask.
+Not a realm, not a scope list, not an `Account`. An admin user belongs to the node.
 
-### Password hashing
+### Roles
 
-PBKDF2-HMAC-SHA256, from OpenSSL, which is already a dependency. Per-user random salt,
-iteration count stored with the hash so it can be raised later without invalidating
-existing passwords, and a constant-time comparison.
+**There is no superuser role.** Nothing implies anything else. A user holds the roles
+they were given and no others, and a user with no roles can log in and do nothing -
+which is a useful state for an account that is being set up or wound down, and is the
+default for a newly created one.
 
-Argon2id would be the better choice on its merits and is what a greenfield design
-should use. It is not in OpenSSL, and the rule in this tree is to prefer writing
-something by hand over adding a library - and hand-rolling a memory-hard KDF is
-precisely the kind of thing not to hand-roll. PBKDF2 with a high iteration count is the
-honest compromise: weaker against a GPU attacker, standard, and already present. If a
-dependency is ever taken for this, it should be libsodium or libargon2, and the stored
-format below is designed so both can coexist.
+| Role | What it permits |
+|---|---|
+| `view-cluster-status` | Read node, registration, call and media status. Read-only, everywhere. |
+| `manage-admin-users` | Create, change and remove admin users and their roles. |
+| `manage-realms` | Create, change and remove realms. |
+| `manage-realm-accounts` | Create, change and remove the accounts within a realm. |
+| `manage-cluster` | Change what the cluster is: node membership, node configuration. |
 
-Stored as one self-describing string, so the algorithm can change per user:
+A role is a permission, not a rank. `manage-realms` does not let you read cluster
+status; `view-cluster-status` does not let you change anything. Somebody who needs both
+is given both.
+
+`manage-admin-users` is the one to be careful with: a user holding it can grant
+themselves every other role. That is inherent in being able to manage users, and it is
+why it is a role of its own rather than something bundled into another.
+
+**A naming note for agreement.** The role is written here as `manage-realm-accounts`
+rather than "manage realm subscribers", because `Subscriber` was renamed `Account` on
+2026-09-21 - it would have collided with SUBSCRIBE (RFC 6665) the moment presence
+arrived - and the API resource is `/realms/{realm}/accounts`. If the console should say
+"subscribers" to a person, that is a label; the role name should match the resource.
+
+### Roles against the routes that exist
+
+| Route | Role |
+|---|---|
+| `GET /health` | public, as now |
+| `GET /session` | any authenticated user |
+| `GET /nodes`, `GET /registrations` | `view-cluster-status` |
+| `GET/POST/PUT/DELETE /realms[/{realm}]` | `manage-realms` |
+| `GET /realms/{realm}` | `manage-realms` or `manage-realm-accounts` (to place an account in one) |
+| `GET/POST/PUT/DELETE /realms/{r}/accounts[/{u}]` | `manage-realm-accounts` |
+| `GET/POST/PUT/DELETE /users[/{u}]` | `manage-admin-users` |
+| `/calls`, `/media`, `/events` (M5) | `view-cluster-status`; ending a call needs `manage-cluster` |
+| node membership and configuration (M4) | `manage-cluster` |
+
+`Router::add` therefore takes a set of roles, any of which admits, rather than one
+scope string. A route with an empty set is public.
+
+### Passwords
+
+Stored as one self-describing string, so the algorithm can be changed per user without
+invalidating everybody:
 
 ```
 pbkdf2-sha256$600000$<base64 salt>$<base64 hash>
 ```
 
+PBKDF2-HMAC-SHA256 from OpenSSL, which is already a dependency: a per-user random salt
+from a CSPRNG, the iteration count stored with the hash so it can be raised later, and
+a constant-time comparison.
+
+Argon2id would be the better choice on its merits and is what a greenfield design should
+use. It is not in OpenSSL, the rule in this tree is to prefer writing something by hand
+over adding a library, and a memory-hard KDF is precisely the thing not to hand-roll.
+PBKDF2 at a high iteration count is the honest compromise: weaker against a GPU
+attacker, standard, and already present. The stored format above is designed so that
+`argon2id$...` can coexist later if libsodium or libargon2 is ever taken as a
+dependency.
+
+The password is never stored, never logged and never returned by any endpoint.
+Minimum length and any complexity rule belong in configuration, not in code.
+
 ### Sessions
 
-A login exchanges a username and password for an opaque random session token:
+A login exchanges a username and password for an opaque session token:
 
-- 32 bytes from a CSPRNG, given to the client once.
-- Stored **hashed** (SHA-256, no salt needed for a high-entropy random value), so a
+- 32 bytes from a CSPRNG, given to the client once and never retrievable again.
+- Stored **hashed** (SHA-256; no salt is needed for a high-entropy random value), so a
   datastore dump does not hand over live sessions.
 - An absolute expiry and an idle expiry, both configurable.
-- Revocable individually, and all of a user's at once.
+- Revocable individually, and all of a user's at once - which is what makes disabling a
+  user immediate rather than eventual.
+- Carries the roles resolved at login, re-checked against the user on each request, so
+  a role removed takes effect on the next request rather than at the next login.
 
-The session token is presented as `Authorization: Bearer <token>`, exactly as a config
-token is, so `BearerAuth` gains a second place to look and every route is unchanged.
+Presented as `Authorization: Bearer <token>`, exactly as a config token is, so the
+existing `BearerAuth` gains a second place to look and no route changes shape.
 
 Not JWT. A signed token that cannot be revoked before it expires is the wrong trade for
 an admin plane, and this node already has a datastore to ask.
@@ -123,43 +172,53 @@ an admin plane, and this node already has a datastore to ask.
 
 | | |
 |---|---|
-| `POST /api/v1/auth/login` | `{username, password}` to `{token, expires_at, scopes}` |
+| `POST /api/v1/auth/login` | `{username, password}` to `{token, expires_at, roles}` |
 | `POST /api/v1/auth/logout` | ends the presented session |
-| `GET /api/v1/auth/me` | who this token is, and what it may do |
-| `GET/POST/PUT/DELETE /api/v1/users` | admin scope; manage users |
-| `POST /api/v1/users/{u}/password` | change one, with the old password unless admin |
+| `GET /api/v1/session` | who this token is and what roles it holds |
+| `GET/POST/PUT/DELETE /api/v1/users` | `manage-admin-users` |
+| `POST /api/v1/users/{u}/password` | own password with the old one; anyone's with the role |
+| `DELETE /api/v1/users/{u}/sessions` | revoke every session a user holds |
 
-### Bootstrapping, and the way back in
+### What happens to the config tokens
 
-The config tokens do not go away. They become the break-glass credential: the way the
-first user is created, and the way back in when the datastore is empty or every admin
-password has been lost. A node with no users and no config tokens is a node nobody can
-administer, which is a worse failure than a token in a file.
+They stay, and they change meaning. A config token becomes a **machine credential and
+the way back in**:
 
-`athenasip --add-user` for a node that is not running is the other half of that, so
-recovery does not require the API to be reachable.
+- It is how the first admin user is created on a fresh node, and how somebody gets back
+  in when every admin password has been lost. A node with no users and no config token
+  is a node nobody can administer, which is worse than a token in a root-owned file.
+- The `client` scope stays as it is, for SIP client applications fetching what a client
+  may see. That is a machine reading its own configuration, not a person administering
+  anything, and it has no business in the role model.
+- The `admin` scope in a config token becomes equivalent to holding every role. This is
+  the one place a "can do everything" credential exists, it lives in a root-owned file
+  on disk, and the intent is that a deployment stops using it once real users exist.
+
+`athenasip --add-user` for a node that is not running is the other half of recovery, so
+getting back in does not require the API to be reachable.
 
 ## What this does not solve
 
-- **The API is plain HTTP today.** A bearer token on an unencrypted LAN listener is
-  readable by anything on that LAN, and a login would put a password there too. TLS for
-  the admin listener is a prerequisite for this design being worth building, and it is
-  not in the config schema yet. On the deployed node at `corvus-fi-1` the listener is
-  bound to the LAN address, which limits but does not remove this.
+- **The admin listener is plain HTTP today.** A bearer token on an unencrypted LAN
+  listener is readable by anything on that LAN, and a login would put a password there
+  too. TLS on the admin listener is arguably a prerequisite for building this rather
+  than a companion to it, and it is not in the config schema yet. On the deployed node
+  at `corvus-fi-1` the listener is bound to the LAN address, which limits but does not
+  remove this.
 - **Rate limiting.** A login endpoint without one is a password oracle. Per-username and
   per-source backoff has to land with it, not after it.
 - **Audit.** Identity is only worth having if what each identity did is written down.
-  The event bus already carries provisioning events; they need to carry who.
+  The event bus already carries provisioning events; they need to carry who did it.
 - **Inter-node authentication** is mutual TLS from the cluster CA (decision of
-  2026-09-17) and is unrelated to any of this.
+  2026-09-17) and is unrelated to all of this.
 
 ## Open questions
 
-1. Does an admin user need to belong to a realm, or is the admin plane node-wide? The
-   proposal above is node-wide, which is simpler and matches what the console shows.
-2. Session lifetime: what absolute and idle expiries are right for a console somebody
-   leaves open on a NOC screen?
-3. Is `client` scope ever issued to a person, or only to a machine? If only to a
-   machine, users have one scope and the model simplifies.
-4. Should TLS on the admin listener be a prerequisite that blocks this, or land beside
-   it?
+1. `manage-cluster` has no routes yet - node membership and configuration are M4 and M5.
+   Is it worth defining now, or added when there is something for it to permit?
+2. Session lifetime: what absolute and idle expiries suit a console left open on a NOC
+   screen?
+3. Should a login be rejected outright for a user with no roles, or allowed so the
+   console can say "you have no permissions, ask an administrator"? The latter is
+   kinder and tells an attacker slightly more.
+4. Does TLS on the admin listener block this work, or land beside it?
