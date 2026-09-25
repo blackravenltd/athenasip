@@ -27,7 +27,9 @@
 #include "../call.h"
 #include "../loggers/logger.h"
 #include "../loggers/logger_scoped.h"
+#include "../types/session.h"
 #include "../types/url.h"
+#include "../types/user.h"
 #include "../util.h"
 #include "datastore.h"
 
@@ -71,6 +73,17 @@ class RedisDatastore : public Datastore {
   void realm_update(plugins::Executor on, std::shared_ptr<types::Realm> realm, plugins::StatusHandler handler) override;
   void realm_delete(plugins::Executor on, std::string realm_name, plugins::StatusHandler handler) override;
   void realm_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::Realm>>> handler) override;
+
+  void user_get(plugins::Executor on, std::string username, plugins::Handler<std::shared_ptr<types::User>> handler) override;
+  void user_create(plugins::Executor on, std::shared_ptr<types::User> user, plugins::StatusHandler handler) override;
+  void user_update(plugins::Executor on, std::shared_ptr<types::User> user, plugins::StatusHandler handler) override;
+  void user_delete(plugins::Executor on, std::string username, plugins::StatusHandler handler) override;
+  void user_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::User>>> handler) override;
+
+  void session_create(plugins::Executor on, types::Session session, plugins::StatusHandler handler) override;
+  void session_get(plugins::Executor on, std::string token_hash, plugins::Handler<std::shared_ptr<types::Session>> handler) override;
+  void session_delete(plugins::Executor on, std::string token_hash, plugins::StatusHandler handler) override;
+  void session_delete_for_user(plugins::Executor on, std::string username, plugins::StatusHandler handler) override;
 
   void account_get(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity, plugins::Handler<std::shared_ptr<types::Account>> handler) override;
   void account_create(plugins::Executor on, std::shared_ptr<types::Account> account, plugins::StatusHandler handler) override;
@@ -123,18 +136,33 @@ class RedisDatastore : public Datastore {
   static std::string _account_key(const std::string& realm_name, const std::string& user);
   static std::string _location_key(std::uint64_t account_id, const std::string& user, const std::string& host, std::uint16_t port);
   static std::string _nonce_key(const std::string& nonce);
+  static std::string _user_key(const std::string& username);
+  static std::string _session_key(const std::string& token_hash);
   static std::string _call_key(const std::string& call_id);
 
   static std::string _realm_index_key();
   static std::string _account_index_key(const std::string& realm_name);
   static std::string _location_index_key(std::uint64_t account_id);
   static std::string _call_index_key();
+  static std::string _user_index_key();
+
+  // Every session a user holds, so revoking by username never needs KEYS. A session that
+  // reaches its own expiry leaves its hash behind here; the listing side removes it.
+  static std::string _session_index_key(const std::string& username);
 
   static std::string _serialise_realm(const std::shared_ptr<types::Realm>& realm);
+  static std::string _serialise_user(const std::shared_ptr<types::User>& user);
+  static std::string _serialise_session(const types::Session& session);
   static std::string _serialise_account(const std::shared_ptr<types::Account>& account);
   static std::string _serialise_call(const std::shared_ptr<Call>& call);
 
   std::shared_ptr<types::Realm> _parse_realm(const std::string& value) const;
+  std::shared_ptr<types::User> _parse_user(const std::string& value) const;
+  std::shared_ptr<types::Session> _parse_session(const std::string& value) const;
+
+  // Both deletes need this, and it must not go through the public operation: user_delete
+  // has already answered whether there was a user to delete.
+  void _session_delete_all_for(std::string key, std::function<void(RedisError)> done);
   std::shared_ptr<Call> _parse_call(const std::string& value) const;
 
   std::string _duration_ms(std::chrono::high_resolution_clock::time_point start) const;
