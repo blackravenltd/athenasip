@@ -575,14 +575,24 @@ TEST(MemoryDatastoreTest, WritingASessionAgainMovesItsLastSeen) {
 // Absolute expiry is the store's to keep, because it is written on the record and needs
 // no configuration to read. Idle expiry is not: how long a session survives unused is
 // config the caller holds, so the caller asks Session::has_expired.
-TEST(MemoryDatastoreTest, AnAbsolutelyExpiredSessionIsGone) {
+//
+// Issuing a session that is already dead is a caller bug, and both drivers refuse it for
+// the same reason nonce_create does. Redis could not store it anyway: SETEX has no
+// non-positive expiry to give it, so accepting it here would be a divergence.
+TEST(MemoryDatastoreTest, AnAlreadyExpiredSessionIsRefused) {
   auto datastore = make_datastore();
 
   auto session = make_session("hash-old", "heidi");
   session.expires_at = std::time(nullptr) - 1;
-  ASSERT_TRUE(datastore->session_create(session));
 
+  EXPECT_FALSE(datastore->session_create(session));
   EXPECT_EQ(datastore->session_get("hash-old"), nullptr);
+
+  // A session with no absolute expiry at all is not "expired long ago": 0 is what a
+  // record written before expiry existed would carry, and it is refused rather than
+  // stored as one that never ends.
+  session.expires_at = 0;
+  EXPECT_FALSE(datastore->session_create(session));
 }
 
 TEST(MemoryDatastoreTest, SessionDeleteEndsThatOneSession) {

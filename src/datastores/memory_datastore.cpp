@@ -165,6 +165,14 @@ std::vector<std::shared_ptr<types::User>> MemoryDatastore::_user_list() {
 bool MemoryDatastore::_session_create(types::Session session) {
   if (session.token_hash.empty() || session.username.empty()) return false;
 
+  // Issuing a session that is already dead is a caller bug, refused here for the same
+  // reason nonce_create refuses an expired nonce - and Redis could not store it at all,
+  // because SETEX has no non-positive expiry to give it.
+  if (session.expires_at <= std::time(nullptr)) {
+    _logger->warn("session_create: refusing to create already-expired session");
+    return false;
+  }
+
   // Filed under the same key the user is, so revoking by username finds them whatever
   // case the login was typed in.
   session.username = types::User::normalise(session.username);
