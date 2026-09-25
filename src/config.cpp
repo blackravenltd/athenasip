@@ -286,6 +286,8 @@ bool Config::load_from_yaml(const std::string& filename) {
       _logger->error("Missing 'events.url'");
       return false;
     }
+
+    if (events["status_interval"]) events_status_interval = events["status_interval"].as<std::uint32_t>();
   }
 
   // --- Parse the 'media' section ---
@@ -356,6 +358,7 @@ bool Config::load_from_yaml(const std::string& filename) {
         http_files_enable = true;
 
       if (http_files["path"]) http_files_path = http_files["path"].as<std::string>();
+      if (http_files["spa"]) http_files_spa = http_files["spa"].as<bool>();
     }
   }
 

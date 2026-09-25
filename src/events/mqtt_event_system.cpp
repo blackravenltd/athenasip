@@ -291,7 +291,7 @@ void MQTTEventSystem::publish(plugins::Executor on, std::string event_name, std:
   publish_event(std::move(event_name), std::move(message), bind_completion(std::move(on), std::move(handler)));
 }
 
-void MQTTEventSystem::publish_event(std::string event_name, std::string message, Completion completion) {
+void MQTTEventSystem::publish_event(std::string event_name, std::string message, Completion completion, bool retain) {
   auto self = shared_from_this();
   const auto topic = prefixed_topic(_prefix, event_name);
 
@@ -309,7 +309,7 @@ void MQTTEventSystem::publish_event(std::string event_name, std::string message,
 
   _logger->debug("Publishing event: " + topic + " with message: " + message);
 
-  boost::asio::dispatch(_mqtt_strand, [this, self, topic, message = std::move(message), completion = std::move(completion)]() mutable {
+  boost::asio::dispatch(_mqtt_strand, [this, self, topic, retain, message = std::move(message), completion = std::move(completion)]() mutable {
     if (!_connected.load()) {
       finish(completion, plugins::Status::failure("Publish rejected while closed: " + topic));
       return;
@@ -325,8 +325,28 @@ void MQTTEventSystem::publish_event(std::string event_name, std::string message,
       finish(completion, plugins::Status::success());
     });
 
-    _client.async_publish<mqtt::qos_e::at_most_once>(topic, std::move(message), mqtt::retain_e::no, mqtt::publish_props{}, std::move(pub_callback));
+    _client.async_publish<mqtt::qos_e::at_most_once>(topic, std::move(message), retain ? mqtt::retain_e::yes : mqtt::retain_e::no, mqtt::publish_props{},
+                                                     std::move(pub_callback));
   });
+}
+
+// Retained: the broker keeps the last one and hands it to whoever subscribes next, so
+// a monitor that connects an hour after the node did still learns what the node is.
+void MQTTEventSystem::publish_state(std::string event_name, std::string message) {
+  publish_event(std::move(event_name), std::move(message), Completion{}, true);
+}
+
+// The will, which only means anything before the session opens. A node that is killed,
+// loses power or loses its network never publishes again, and without this the last
+// retained thing it said would claim it was healthy for as long as the broker keeps it.
+void MQTTEventSystem::will_set(std::string event_name, std::string message) {
+  if (_connected.load()) {
+    _logger->warn("A will can only be set before connecting; ignoring one for " + event_name);
+    return;
+  }
+
+  _will_topic = prefixed_topic(_prefix, event_name);
+  _will_message = std::move(message);
 }
 
 void MQTTEventSystem::subscribe(plugins::Executor on, std::string event_name, Subscription::EventCallbackFn event_callback,
@@ -559,6 +579,12 @@ void MQTTEventSystem::configure_client() {
 
   if (!_username.empty()) {
     _client.credentials(_client_id, _username, _password);
+  }
+
+  // Retained, like the heartbeat it stands in for: whoever subscribes next has to see
+  // that this node is gone, not an old message saying it was fine.
+  if (!_will_topic.empty()) {
+    _client.will(mqtt::will{_will_topic, _will_message, mqtt::qos_e::at_most_once, mqtt::retain_e::yes});
   }
 }
 

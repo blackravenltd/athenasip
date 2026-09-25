@@ -154,6 +154,27 @@ class EventSystem : public plugins::Plugin {
   // test - and is willing to hear that the broker refused it.
   virtual void publish(plugins::Executor on, std::string event_name, std::string message, plugins::StatusHandler handler) = 0;
 
+  // State rather than an event: the last one is kept and given to whoever subscribes
+  // next. An event says something happened and is gone; state says what is true now,
+  // and a monitor that connects after it was said still has to be able to learn it.
+  //
+  // Defaulted rather than pure, because a bus that cannot retain is not a broken bus -
+  // it is one where this degrades to an ordinary publish, and an existing driver keeps
+  // compiling and keeps working.
+  virtual void publish_state(std::string event_name, std::string message) { publish(std::move(event_name), std::move(message)); }
+
+  // What the bus should say on this node's behalf if it stops saying anything at all.
+  // A node that dies does not get to publish its own obituary, so the broker is asked
+  // in advance to publish one for it (MQTT calls this the will).
+  //
+  // Set before connect() or not at all: a broker takes this when the session opens and
+  // never afterwards. Defaulted to nothing, because a bus with no such mechanism has
+  // nothing useful to do with it.
+  virtual void will_set(std::string event_name, std::string message) {
+    (void)event_name;
+    (void)message;
+  }
+
   // The subscription handle comes back through the handler rather than by return,
   // because a broker has to be asked before the subscription exists. Unsubscribing
   // needs the handle, so a caller that intends to unsubscribe keeps it.

@@ -239,6 +239,14 @@ int main(int argc, char* argv[]) {
 
     if (config->http_files_enable) {
       StaticOptions so;
+
+      // An ordinary document root rather than a single-page application: a path with
+      // nothing behind it is a 404 again, which is what it should be for anything that
+      // is not routed in a browser.
+      if (!config->http_files_spa) so.fallback.clear();
+
+      logger->info("Serving files from " + config->http_files_path + (config->http_files_spa ? " (SPA mode)" : ""));
+
       adminAPI->middlewares.push_back(api::StaticMiddleware::add(config->http_files_path, so));
     }
 
@@ -289,8 +297,11 @@ int main(int argc, char* argv[]) {
   // Start all configured servers
   core->server_start_all();
 
-  // Publish Start Event
-  core->events->publish(events::topics::node_status(config->sip_node_id), "{\"started\":\"" + Util::get_zulu_time() + "\"}");
+  // Say what this node is, and keep saying it. Retained and on an interval, with the
+  // broker told what to say if this node stops saying anything at all: a monitor asks
+  // "is it alive", and a message published once at startup answers a different question.
+  core->version_set(version->to_string());
+  core->node_status_start();
 
   // Wait for Signals
   boost::asio::io_context signal_wait_context;
@@ -314,7 +325,9 @@ int main(int argc, char* argv[]) {
         core->server_stop_all();
         core->admin_stop();
 
-        events->publish(events::topics::node_status(config->sip_node_id), "{\"stopped\":\"" + Util::get_zulu_time() + "\"}");
+        // Replaces the retained heartbeat, so nothing is left claiming for ever that a
+        // node which stopped cleanly is still up.
+        core->node_status_stop();
 
         media_engine->close();
         datastore->close();

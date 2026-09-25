@@ -178,6 +178,12 @@ class Config {
   // default and a cluster names its broker.
   std::string events_url = "local://";  // or "mqtt://user:pass@127.0.0.1:1883/athenasip?client_id=sip-01&keep_alive=30"
 
+  // How often a node says on the bus that it is alive, in seconds. Zero turns it off.
+  //
+  // A message published once at startup says a node started, which is a different
+  // question from whether it is running now and one nobody is asking an hour later.
+  std::uint32_t events_status_interval = 30;
+
   // Media configuration
   std::string media_url = "builtin://";  // or "rtpengine://host:port"
 
@@ -187,6 +193,15 @@ class Config {
   bool http_api_enable = false;
   bool http_files_enable = false;
   std::string http_files_path;
+
+  // Single-page application mode: a path with nothing behind it is answered with
+  // index.html from the document root, so a client-side route survives a reload or a
+  // link. /api/ is never answered this way, so an unknown API path still 404s, and
+  // neither is a path that names a file extension, so a missing asset stays missing.
+  //
+  // On by default, because the thing this node serves is the admin client and that is
+  // what it needs. False makes it an ordinary file server.
+  bool http_files_spa = true;
 
   // What a bearer token is allowed to do. admin provisions; client reads what a client
   // may see. A token with no scope can do nothing, which is what an empty list means.
