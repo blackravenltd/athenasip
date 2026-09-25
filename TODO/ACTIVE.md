@@ -133,8 +133,17 @@ Dated, and not reopened without asking.
   Service-Route and `GET /api/v1/nodes` (both done), the node list fed from discovery,
   RFC 5626 outbound with two flows to two nodes, RFC 3263, and last the
   `AthenaSIP-Alternate-Server` header. The M4 items carry the detail.
-- (2026-09-21) `Subscriber` is `Account`, because it would have collided with SUBSCRIBE
-  (RFC 6665) the moment presence arrived.
+- (2026-09-21) `Subscriber` is `Account` **in the code**, because it would have collided
+  with SUBSCRIBE (RFC 6665) the moment presence arrived. See the 2026-09-25 vocabulary
+  decision, which this now sits under rather than over.
+- (2026-09-25) The vocabulary, which every document, endpoint and role name follows: a
+  **user** is a thing that can use the API, and the admin interface is only a client of
+  the API; a **subscriber** is a thing registered on a realm to make and receive calls.
+  Neither is created from the other in either direction and neither credential works as
+  the other. The type is still `Account` and the resource is still
+  `/realms/{realm}/accounts`; whether to rename them to match is question 5 in
+  `docs/authentication.md` and is a breaking change to make deliberately or not at all.
+- (2026-09-25) There is no superuser role, and no role implies another.
 - (2026-09-23) The browser end of the Milestone 3 harness is the admin client's own
   softphone, served by this node's static middleware, rather than a minimal page kept
   here. One page, maintained where the client lives, and tested where it is written;
@@ -400,20 +409,47 @@ in ten minutes.
       configuration search path are done. What is left is `--print-config` for the
       effective values after the file, the environment and the defaults have been
       resolved.
-- [ ] **Authentication for the admin plane**, specified in `docs/authentication.md`.
-      Admin users with a username and password, stored in the datastore so a cluster
-      shares them, PBKDF2-HMAC-SHA256 from OpenSSL rather than a new dependency, and
-      opaque revocable session tokens stored hashed.
+- [ ] **Authentication for the API**, specified in full in `docs/authentication.md`
+      and started. Read that document first; this is only the state of the work.
 
-      There is no superuser role. The roles are `view-cluster-status`,
-      `manage-admin-users`, `manage-realms`, `manage-realm-accounts` and
-      `manage-cluster`; a user holds any combination including none, and nothing
-      implies anything else. An admin user is not a realm account and neither creates
-      the other.
+      **Landed** (`f2b1552`): `types::Password` (PBKDF2-HMAC-SHA256 from OpenSSL,
+      self-describing format, refuses anything it did not write), `types::User` (the
+      five roles, no superuser, any combination including none, case-insensitive
+      usernames), `types::Session` (held by the SHA-256 of its token, roles read from
+      the user per request rather than copied), and the `user_*` and `session_*`
+      operations on the `Datastore` contract, defaulted to an honest "not supported".
 
-      The API stands alone and stays RESTful: the console is a client of it like any
-      other, the session is an ordinary resource, and no endpoint exists because a UI
-      wanted it. The config tokens remain as machine credentials and the way back in.
+      **Next, in this order:**
+      1. `MemoryDatastore` implements the six user and four session operations, with
+         the create/update split that lets the API answer 409 rather than overwrite.
+      2. `RedisDatastore` the same, because the deployed node runs on `redis://` and
+         a login that only works in tests is no login.
+      3. Session issue and lookup: 32 CSPRNG bytes, hashed on the way in, absolute and
+         idle expiry from config (`http.api.session_lifetime`,
+         `http.api.session_idle`).
+      4. `POST /api/v1/auth/login`, `POST /api/v1/auth/logout`, `GET /api/v1/session`.
+      5. Roles on the routes. `Router::add` takes a set of roles, any of which admits;
+         `BearerAuth` resolves a session token to a user and a config token to roles
+         (`admin` scope to all five, `client` to `view-cluster-status`, which is
+         exactly what it reaches today).
+      6. `GET/POST/PUT/DELETE /api/v1/users`, `POST /users/{u}/password`,
+         `DELETE /users/{u}/sessions`.
+      7. `athenasip --add-user`, so recovery does not need the API to be reachable.
+      8. The OpenAPI document, which `athenasip-admin` runs a contract test against.
+
+      **Agreed with the console** (it is building against this now): `expires_at` in
+      Unix seconds; `GET /realms` admits `manage-realms` or
+      `manage-realm-subscribers`, because anyone placing a subscriber has to discover
+      which realms exist; `GET /session` answers 200 for a config token with
+      `{"kind":"token"}` and for a user with `{"kind":"user"}`; a user with no roles
+      may log in and is told it has none; disabled and wrong-password are both 401
+      with the same body; 429 with `Retry-After` when rate limited; 409 on a taken
+      username. A user cannot disable itself or remove its own `manage-admin-users`.
+
+      **Not solved by any of the above**, and recorded at the end of the document: the
+      admin listener is plain HTTP, so a login puts a password on the wire; a login
+      endpoint without rate limiting is a password oracle; and identity is only worth
+      having if what each identity did is written down.
 - [ ] Admin API, part 2, the live registries: `/api/v1/calls` (live and history,
       hangup), `/api/v1/media` (engines, health), `/api/v1/events` (SSE stream bridging
       `nodes/#`, `account/#`, `calls/#`). These read Core's own state and need
