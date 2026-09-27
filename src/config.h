@@ -217,6 +217,18 @@ class Config {
 
   std::vector<ApiToken> http_api_tokens;
 
+  // How long an admin login is good for, and how long it survives unused, in seconds.
+  //
+  // Absolute lifetime is written on the session record and is what the datastore prunes
+  // on, so it cannot be zero: a session no store can expire is not one it can hold. Idle
+  // timeout is the caller's rule - no driver is told it - and zero turns it off.
+  //
+  // The defaults suit a console somebody keeps open on a screen: a working day before it
+  // asks for the password again, an hour of being ignored before it stops trusting the
+  // tab.
+  std::uint32_t http_api_session_lifetime = 12 * 60 * 60;
+  std::uint32_t http_api_session_idle = 60 * 60;
+
   // Loads configuration from a YAML file.
   bool load_from_yaml(const std::string& filename);
 

@@ -262,6 +262,14 @@ http:
       - token: "change-me-client"
         scopes: [client]
 
+    # How long a login lasts, in seconds, and how long it survives unused. The first is
+    # written on the session and is what the datastore expires it on, so it cannot be
+    # zero; the second is checked on each request, and zero turns it off. Neither applies
+    # to the tokens above, which do not expire and are why they are kept in a file only
+    # root can read.
+    session_lifetime: 43200
+    session_idle: 3600
+
   # Static files, served from the same listener as the API. The API is routed first, so
   # /api/v1 always wins and this never shadows it.
   files:

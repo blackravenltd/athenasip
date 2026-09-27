@@ -237,6 +237,50 @@ TEST(ConfigTest, ASessionMinimumAboveTheRfcFloorIsTaken) {
   EXPECT_EQ(config->sip_session_min_se, 600u);
 }
 
+TEST(ConfigTest, SessionLifetimesAreTakenFromTheApiSection) {
+  ConfigFile file(
+      "sip:\n  node_id: test-node\n"
+      "http:\n  port: 8080\n  api:\n    enable: true\n    session_lifetime: 7200\n    session_idle: 900\n"
+      "    tokens:\n      - token: t\n        scopes: [admin]\n");
+
+  bool ok = false;
+  auto config = file.load(ok);
+
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(config->http_api_session_lifetime, 7200u);
+  EXPECT_EQ(config->http_api_session_idle, 900u);
+}
+
+// The absolute expiry is written on the session record and is what the datastore prunes
+// on, so there is no such thing as a session without one: Redis has no non-positive
+// SETEX to give it, and a record nothing expires is one that outlives the node.
+TEST(ConfigTest, ASessionLifetimeOfZeroIsRefused) {
+  ConfigFile file(
+      "sip:\n  node_id: test-node\n"
+      "http:\n  port: 8080\n  api:\n    enable: true\n    session_lifetime: 0\n"
+      "    tokens:\n      - token: t\n        scopes: [admin]\n");
+
+  bool ok = true;
+  file.load(ok);
+
+  EXPECT_FALSE(ok);
+}
+
+// Zero is how an operator turns the idle rule off, which is a different thing from
+// leaving it out.
+TEST(ConfigTest, ASessionIdleOfZeroTurnsIdleExpiryOff) {
+  ConfigFile file(
+      "sip:\n  node_id: test-node\n"
+      "http:\n  port: 8080\n  api:\n    enable: true\n    session_idle: 0\n"
+      "    tokens:\n      - token: t\n        scopes: [admin]\n");
+
+  bool ok = false;
+  auto config = file.load(ok);
+
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(config->http_api_session_idle, 0u);
+}
+
 // The configuration this project ships as its example has to be one the node accepts.
 // It is the first thing anybody copies, and every setting in it is written as its own
 // default, so a key that has been renamed or removed shows up here rather than in
@@ -259,4 +303,6 @@ TEST(ConfigTest, TheShippedExampleConfigurationLoads) {
   EXPECT_FALSE(config->sip_require_session_timer);
   EXPECT_EQ(config->sip_timer_c_invite_proxy_ms, 240000u);
   EXPECT_EQ(config->sip_connect_timeout_ms, 4000u);
+  EXPECT_EQ(config->http_api_session_lifetime, 12u * 60u * 60u);
+  EXPECT_EQ(config->http_api_session_idle, 60u * 60u);
 }
