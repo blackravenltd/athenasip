@@ -79,7 +79,12 @@ struct AuthFixture {
     auto bearer = std::make_shared<api::BearerAuth>(config->http_api_tokens);
     router = std::make_shared<api::Router>(bearer);
     sessions = std::make_shared<api::Sessions>(logger, datastore, admin->executor(), api::Sessions::Lifetimes{3600, 600});
-    auth = std::make_shared<api::AuthAPI>(logger, sessions, bearer);
+
+    // What makes a session token work on a route that names roles, rather than only on the
+    // routes that ask Sessions themselves.
+    bearer->sessions_register(sessions);
+
+    auth = std::make_shared<api::AuthAPI>(logger, sessions);
     auth->register_routes(*router);
 
     admin->middlewares.push_back(router->middleware("/api/"));

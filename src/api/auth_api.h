@@ -24,14 +24,15 @@ namespace athenasip::api {
 // status codes are decided and where the wording of a refusal is settled.
 //
 // Two of these routes are declared open, which is deliberate rather than an oversight.
-// `/auth/login` is how a credential is obtained and so cannot require one. `/auth/logout`
-// and `/session` do require one, but not one the router can check: the router resolves
-// configuration tokens and knows nothing yet about a session token, so these two ask
-// `Sessions` themselves and answer 401 when nothing they were given resolves. Roles on
-// the routes, and a router that resolves both kinds of credential, are the next step.
+// `/auth/login` is how a credential is obtained and so cannot require one, and
+// `/auth/logout` answers the same whether or not the token it was handed resolved, so a
+// token that resolves to nothing has to reach the handler rather than be turned away with
+// a 401 that tells the caller it was not real. `/session` requires a credential and names
+// no roles, so any authenticated caller reaches it and the router has resolved who they
+// are before it runs.
 class AuthAPI : public std::enable_shared_from_this<AuthAPI> {
  public:
-  AuthAPI(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<Sessions> sessions, std::shared_ptr<BearerAuth> auth);
+  AuthAPI(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<Sessions> sessions);
 
   void register_routes(Router& router);
 
@@ -53,7 +54,6 @@ class AuthAPI : public std::enable_shared_from_this<AuthAPI> {
 
   std::shared_ptr<loggers::Logger> _logger;
   std::shared_ptr<Sessions> _sessions;
-  std::shared_ptr<BearerAuth> _auth;
 };
 
 }  // namespace athenasip::api

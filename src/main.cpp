@@ -252,7 +252,11 @@ int main(int argc, char* argv[]) {
           logger, datastore, adminAPI->executor(),
           api::Sessions::Lifetimes{static_cast<std::time_t>(config->http_api_session_lifetime), static_cast<std::time_t>(config->http_api_session_idle)});
 
-      auto auth = std::make_shared<api::AuthAPI>(logger, sessions, bearer);
+      // The router resolves a session token through this, so every route can name roles
+      // rather than scopes and a user's credential works everywhere a token's does.
+      bearer->sessions_register(sessions);
+
+      auto auth = std::make_shared<api::AuthAPI>(logger, sessions);
       auth->register_routes(*api_router);
 
       adminAPI->middlewares.push_back(api_router->middleware("/api/"));

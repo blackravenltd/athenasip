@@ -118,20 +118,45 @@ own rather than bundled into another.
 
 ### Roles against the routes that exist
 
-| Route | Role |
-|---|---|
-| `GET /health` | public, as now |
-| `GET /session` | any authenticated user |
-| `GET /nodes`, `GET /registrations` | `view-cluster-status` |
-| `GET/POST/PUT/DELETE /realms[/{realm}]` | `manage-realms` |
-| `GET /realms/{realm}` | `manage-realms` or `manage-realm-subscribers` (to place an account in one) |
-| `GET/POST/PUT/DELETE /realms/{r}/accounts[/{u}]` | `manage-realm-subscribers` |
-| `GET/POST/PUT/DELETE /users[/{u}]` | `manage-admin-users` |
-| `/calls`, `/media`, `/events` (M5) | `view-cluster-status`; ending a call needs `manage-cluster` |
-| node membership and configuration (M4) | `manage-cluster` |
+| Route | Role | |
+|---|---|---|
+| `GET /health` | open | done |
+| `POST /auth/login`, `POST /auth/logout` | open | done |
+| `GET /session` | any authenticated caller | done |
+| `GET /nodes`, `GET /registrations` | `view-cluster-status` | done |
+| `GET /realms`, `GET /realms/{realm}` | `manage-realms` or `manage-realm-subscribers` | done |
+| `POST/PUT/DELETE /realms[/{realm}]` | `manage-realms` | done |
+| `GET/POST/PUT/DELETE /realms/{r}/accounts[/{u}]` | `manage-realm-subscribers` | done |
+| `GET/POST/PUT/DELETE /users[/{u}]` | `manage-admin-users` | step 4 |
+| `/calls`, `/media`, `/events` (M5) | `view-cluster-status`; ending a call needs `manage-cluster` | |
+| node membership and configuration (M4) | `manage-cluster` | |
 
-`Router::add` therefore takes a set of roles, any of which admits, rather than one
-scope string. A route with an empty set is public.
+Reading realms admits either role because anyone placing a subscriber has to discover
+which realms exist; changing one is `manage-realms` alone. That was agreed with the
+console, which needs exactly this to show a realm picker to somebody who only manages
+accounts.
+
+`Router::add` takes a set of roles, any of which admits, rather than one scope string, and
+**an empty set means any authenticated caller rather than a public route**. That is the
+safe thing for it to mean: a route declared without naming roles then demands a credential
+and grants nothing, so forgetting to name them cannot open a route to the world. A route
+genuinely open to anyone has to say so by name, with `Router::add_open`.
+
+Both kinds of credential arrive as a set of roles, which is the only vocabulary a route
+speaks. `BearerAuth::resolve` is what turns one into the other, and it is asynchronous
+because resolving a session token means asking the datastore. Two consequences worth
+knowing:
+
+- **A configuration token is resolved before the store is consulted**, so it keeps working
+  when the store is the broken thing - which is the point of it being the way back in. A
+  session token cannot collide with one, being 32 random bytes, so the order costs nothing.
+- **A store that cannot be asked is a 503, not a 401.** Telling an administrator their
+  credential is bad when the real problem is Redis sends them looking in the wrong place.
+
+The three refusals are therefore distinct: 401 for a credential that is absent or no longer
+good (an unknown token, an expired session, a disabled user), 403 for a real credential that
+does not hold the role, and 503 for not being able to tell. A known configuration token
+holding no scopes is a 403, because it is a real credential authorised for nothing.
 
 ### Passwords
 
