@@ -29,16 +29,70 @@ should assemble a topic from string literals at the call site.
 
 ## Topics
 
-| Topic | Published when | Payload |
-| --- | --- | --- |
-| `nodes/<node_id>/status` | The node starts and stops | `{"started":"<zulu>"}` or `{"stopped":"<zulu>"}` |
-| `nodes/<node_id>/channels/<transport>/<endpoint>` | A channel is registered or closed | `{"status":"registered","at":"<zulu>"}` or `{"status":"closed","at":"<zulu>"}` |
-| `nodes/<node_id>/transactions/<transaction_id>` | A transaction is registered or unregistered | `registered` or `unregistered` |
-| `account/<uri>/status` | An account registers | `{"contact":"<uri>","node":"<node_id>","registered":"<zulu>"}` |
-| `calls/<call_id>/register` | A call is created | The call id |
-| `calls/<call_id>/unregister` | A call ends | The call id |
+| Topic | Published when | Retained | Payload |
+| --- | --- | --- | --- |
+| `nodes/<node_id>/status` | Every `events.status_interval` seconds, on stop, and by the broker if the node dies | yes | see below |
+| `nodes/<node_id>/channels/<transport>/<endpoint>` | A channel opens or closes | no | `{"status":"registered","at":"<zulu>"}` or `{"status":"closed","at":"<zulu>"}` |
+| `nodes/<node_id>/transactions/<transaction_id>` | A transaction is registered or unregistered | no | `registered` or `unregistered` |
+| `account/<uri>/status` | An account registers | no | `{"contact":"<uri>","node":"<node_id>","registered":"<zulu>"}` |
+| `calls/<call_id>/register` | A call is created | no | The call id |
+| `calls/<call_id>/unregister` | A call ends | no | The call id |
+| `calls/<call_id>/state` | A dialog changes state | no | The state |
 
 `<transport>` is one of `udp`, `tcp`, `tls`, `ws`, `wss`. `<endpoint>` is `host:port`.
+
+Only the node status is retained, which is what makes it the one topic a monitor can ask
+rather than wait for. Everything else is an event: it says something happened, and a
+consumer that was not subscribed at the time has missed it.
+
+### The node status payload
+
+```json
+{"status":"ok","node":"corvus-fi-1","version":"0.7.0","datastore":"redis 0.0.1","at":"2026-09-27T09:58:59Z","uptime":188790}
+```
+
+| | |
+|---|---|
+| `status` | `ok`, `degraded`, `stopped` or `down` |
+| `node` | `sip.node_id`, which is required configuration and is not derived from the hostname |
+| `version` | the server version |
+| `datastore` | the driver and its version, or `none` |
+| `at` | when the node composed the message, not when it arrived |
+| `uptime` | seconds since this process started serving, `0` in a will |
+
+`degraded` is a node that is running with a datastore it cannot reach: it cannot read a
+registration, so calling that `ok` would be the most misleading thing this node says.
+`stopped` is published on the way down by a node that got to say goodbye. `down` is the
+will, published by the broker on this node's behalf when it did not - so `at` in a `down`
+is the time the *will was composed*, at startup, and a consumer must date it by receipt.
+
+A consumer should ignore fields it does not know: discovery (Milestone 4) adds each
+node's SIP and inter-node addresses and its capabilities to this payload, and the live
+registries (Milestone 5) may add counts. Nothing already here is planned to change
+meaning or go away.
+
+### A channel is not a registration
+
+The `channels` topics say "registered", and it does not mean what REGISTER means. A
+channel is a transport flow this node is holding - a TCP, TLS, WS or WSS connection, or,
+for UDP, the peer address a datagram arrived from - and "registered" means it has been
+entered in the node's channel registry. Nothing about it says anybody authenticated.
+
+So counting them is not counting endpoints, in either direction:
+
+- A flow appears as soon as something connects or sends a packet, whether or not it ever
+  sends a REGISTER, gets past a Digest challenge, or belongs to an account this node has
+  heard of. A port scanner makes them.
+- One flow can carry several registrations, and a registration outlives its flow: a
+  binding lives in the datastore with its own expiry, so a UDP phone has a registration
+  and usually no live flow at all, and a TCP client that reconnects has two flows and one
+  registration.
+- A UDP flow is created on the first datagram from an address and is never closed, so a
+  `closed` never follows and the count only grows for the life of the process. That is a
+  bug rather than a contract, and it is on the plan.
+
+What answers "who is registered here" is `GET /api/v1/registrations`, which reads the
+bindings, or the `account/+/status` events as they happen.
 
 ## Subscribing
 

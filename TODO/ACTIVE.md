@@ -266,6 +266,17 @@ never heard describe itself.
       from rather than where its Via and Contact claim, plus a Contact rewrite policy
       for a client that cannot be told. The flow token covers the in-dialog half for
       anything that registered here. The node's own address behind NAT is M4.
+- [ ] A UDP flow is never reaped. `UDPServer` creates a `UDPConnection` and a `Channel`
+      for each address a datagram arrives from and files it in `_connections`;
+      `remove_connection` exists and nothing calls it, so the map and the channel
+      registry grow for the life of the process and no `closed` is ever published for a
+      UDP flow. Two consequences: anything counting channels counts wrongly and forever,
+      and an unbounded map keyed by a remote address that a datagram can spoof is a
+      memory growth vector on a node with a public UDP listener. The fix wants a last-seen
+      time on the flow and a sweep, which is what the connection-oriented transports get
+      from their sockets closing. Found on 2026-09-27 answering T.O.M.S about the
+      monitoring topics, and written up in `docs/events.md` under "A channel is not a
+      registration".
 - [ ] Outbound UDP to a host this node has never heard from. The datagram has to
       leave by the listener's own socket so the source port is the one the far end
       answers to, and that socket belongs to `UDPServer` rather than to the channel

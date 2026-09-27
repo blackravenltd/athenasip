@@ -305,4 +305,8 @@ TEST(ConfigTest, TheShippedExampleConfigurationLoads) {
   EXPECT_EQ(config->sip_connect_timeout_ms, 4000u);
   EXPECT_EQ(config->http_api_session_lifetime, 12u * 60u * 60u);
   EXPECT_EQ(config->http_api_session_idle, 60u * 60u);
+
+  // What a monitor's staleness threshold is a multiple of, so it is worth the example
+  // saying it rather than leaving it to be discovered from the source.
+  EXPECT_EQ(config->events_status_interval, 30u);
 }
