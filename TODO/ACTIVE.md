@@ -442,8 +442,16 @@ everything left here except the authentication item, which the console is blocke
       step 1 below: a login to a token and a token back to the user that holds it, with
       `http.api.session_lifetime` and `http.api.session_idle` in the schema. It is the
       whole of what the datastore contract deliberately does not know - the token, its
-      hash, the idle rule, and the clock that makes the idle rule testable. Nothing
-      routes to it yet; step 2 is what does.
+      hash, the idle rule, and the clock that makes the idle rule testable.
+
+      Then the three auth routes, `api::AuthAPI` (`src/api/auth_api.h`), which is step 2:
+      `/auth/login`, `/auth/logout` and `/session`, wired in `main.cpp` so a deployed node
+      answers them. `docs/authentication.md` carries the status codes and why three of
+      them are what they are. One contract behaviour changed to make the logout honest:
+      `Datastore::session_delete` now succeeds for a hash it was not holding, on both
+      drivers, because a 404 on a route anybody can reach is a way to ask whether a token
+      is real. It is written at the declaration and in `docs/plugins.md`, and
+      `API_VERSION` is not bumped, because the shape did not change.
 
       Four of those decisions constrain what is left, so they are here rather than only
       in the record:
@@ -470,11 +478,15 @@ everything left here except the authentication item, which the console is blocke
          not a write. What it does not do is equalise the time a refused login takes - an
          unknown user costs nothing where a wrong password costs a PBKDF2 - which is the
          small end of the rate-limiting problem already recorded as unsolved.
-      2. `POST /api/v1/auth/login`, `POST /api/v1/auth/logout`, `GET /api/v1/session`.
-         This is the step that stops `/auth/login` answering 404 on `corvus-fi-1`, which
-         `athenasip-admin` is waiting on before it can deploy and click through the
-         screens. It expects the first user's credentials and which config token still
-         works when this lands.
+      2. ~~`POST /api/v1/auth/login`, `POST /api/v1/auth/logout`,
+         `GET /api/v1/session`.~~ Done, above. `/auth/login` no longer answers 404, which
+         is what `athenasip-admin` was waiting on - but the node on `corvus-fi-1` has no
+         users yet and nothing can create one until step 4 or step 5, so what the console
+         gets today is an honest 401. The config token it is using keeps working and
+         `GET /session` now tells it so, with `{"kind":"token"}` and every role. Telling
+         the console it can deploy against this wants the first user, so it waits on
+         step 5 - or on step 4, whichever lands first, since a config token may create a
+         user through the API.
       3. Roles on the routes. `Router::add` takes a set of roles, any of which admits;
          `BearerAuth` resolves a session token to a user and a config token to roles
          (`admin` scope to all five, `client` to `view-cluster-status`, which is

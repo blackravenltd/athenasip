@@ -15,8 +15,10 @@
 #include <string>
 
 #include "api/admin_api.h"
+#include "api/auth_api.h"
 #include "api/provisioning_api.h"
 #include "api/router.h"
+#include "api/sessions.h"
 #include "api/static_middleware.h"
 #include "build_version.h"
 #include "cli.h"
@@ -237,9 +239,21 @@ int main(int argc, char* argv[]) {
       // The API talks to the datastore on its own executor. It is not on the Core
       // strand and must not be: an admin listing accounts cannot be allowed to hold up
       // a call, which is what the async plugin contract is for.
-      api_router = std::make_shared<api::Router>(std::make_shared<api::BearerAuth>(config->http_api_tokens));
+      auto bearer = std::make_shared<api::BearerAuth>(config->http_api_tokens);
+
+      api_router = std::make_shared<api::Router>(bearer);
       provisioning = std::make_shared<api::ProvisioningAPI>(logger, datastore, adminAPI->executor(), config, version->to_string());
       provisioning->register_routes(*api_router);
+
+      // Admin logins. The datastore is what holds the users, so a driver that does not
+      // implement the user operations answers that it cannot and a login fails as
+      // unavailable rather than as a wrong password.
+      auto sessions = std::make_shared<api::Sessions>(
+          logger, datastore, adminAPI->executor(),
+          api::Sessions::Lifetimes{static_cast<std::time_t>(config->http_api_session_lifetime), static_cast<std::time_t>(config->http_api_session_idle)});
+
+      auto auth = std::make_shared<api::AuthAPI>(logger, sessions, bearer);
+      auth->register_routes(*api_router);
 
       adminAPI->middlewares.push_back(api_router->middleware("/api/"));
     }
