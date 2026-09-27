@@ -196,6 +196,12 @@ events:
   # they are also how nodes find each other.
   url: "local://"
 
+  # How often this node publishes its retained status, in seconds. Zero says it once at
+  # startup and never again, which is a different question from whether it is running now.
+  # A monitor decides a node has gone quiet by how long ago the last one arrived, so this
+  # is the number its staleness threshold has to be a small multiple of.
+  status_interval: 30
+
   mqtt:
     # Unique on the broker, because MQTT makes a repeated client identifier mean "the
     # other one is stale, disconnect it" and two nodes sharing one would trade the
