@@ -533,7 +533,10 @@ TEST(RedisDatastoreTest, SessionDeleteEndsThatOneSession) {
   EXPECT_EQ(datastore->session_get("hash-a-" + suffix), nullptr);
   EXPECT_NE(datastore->session_get("hash-b-" + suffix), nullptr);
 
-  EXPECT_FALSE(datastore->session_delete("hash-a-" + suffix));
+  // Twice is success twice, and so is a hash that was never held: the two drivers answer
+  // the same because a logout must not tell a real token from an invented one.
+  EXPECT_TRUE(datastore->session_delete("hash-a-" + suffix));
+  EXPECT_TRUE(datastore->session_delete("never-existed-" + suffix));
   EXPECT_TRUE(datastore->session_delete("hash-b-" + suffix));
 }
 

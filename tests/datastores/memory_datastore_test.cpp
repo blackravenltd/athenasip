@@ -605,7 +605,12 @@ TEST(MemoryDatastoreTest, SessionDeleteEndsThatOneSession) {
   EXPECT_EQ(datastore->session_get("hash-a"), nullptr);
   EXPECT_NE(datastore->session_get("hash-b"), nullptr);
 
-  EXPECT_FALSE(datastore->session_delete("hash-a"));
+  // Twice is success twice. A session is named by a secret the caller holds, so an answer
+  // that tells a live token from one that was never real is an oracle a logout hands to
+  // anybody; the realm and account deletes still say when there was nothing there,
+  // because a realm name is not a secret.
+  EXPECT_TRUE(datastore->session_delete("hash-a"));
+  EXPECT_TRUE(datastore->session_delete("never-existed"));
 }
 
 // What makes disabling a user immediate rather than eventual, and what a console's

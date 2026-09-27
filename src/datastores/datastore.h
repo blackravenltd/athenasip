@@ -117,6 +117,15 @@ class Datastore : public plugins::Plugin {
     _unsupported<std::shared_ptr<types::Session>>(std::move(on), std::move(handler), "session_get");
   }
 
+  // Succeeds whether or not that hash was held, which is not the rule the realm and
+  // account deletes follow and is deliberate. A session is named by a secret the caller
+  // is holding, so an answer that distinguishes "that was a session and now it is not"
+  // from "that was never a session" is a way to ask this node whether a token is real,
+  // one guess at a time - and a logout is reachable by anybody. A realm name is not a
+  // secret, so a delete of one still says when there was nothing to delete.
+  //
+  // Failure therefore means the store could not do it, and a caller may treat it as
+  // "the session may still be live" rather than as "there was nothing there".
   virtual void session_delete(plugins::Executor on, std::string token_hash, plugins::StatusHandler handler) {
     (void)token_hash;
     _unsupported(std::move(on), std::move(handler), "session_delete");

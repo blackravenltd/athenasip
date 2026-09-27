@@ -194,9 +194,13 @@ std::shared_ptr<types::Session> MemoryDatastore::_session_get(const std::string&
   return it == _sessions.end() ? nullptr : std::make_shared<types::Session>(it->second);
 }
 
+// Gone either way, as the contract says: a hash that was not held is not a failure,
+// because reporting the difference tells whoever asked whether the token they presented
+// was a real one.
 bool MemoryDatastore::_session_delete(const std::string& token_hash) {
   std::lock_guard<std::mutex> lock(_mutex);
-  return _sessions.erase(token_hash) > 0;
+  _sessions.erase(token_hash);
+  return true;
 }
 
 // Nothing to revoke is not a failure: the caller asked for this user to hold no
