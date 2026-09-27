@@ -20,6 +20,7 @@
 #include "api/router.h"
 #include "api/sessions.h"
 #include "api/static_middleware.h"
+#include "api/users_api.h"
 #include "build_version.h"
 #include "cli.h"
 #include "config.h"
@@ -258,6 +259,9 @@ int main(int argc, char* argv[]) {
 
       auto auth = std::make_shared<api::AuthAPI>(logger, sessions);
       auth->register_routes(*api_router);
+
+      auto users = std::make_shared<api::UsersAPI>(logger, datastore, adminAPI->executor(), sessions);
+      users->register_routes(*api_router);
 
       adminAPI->middlewares.push_back(api_router->middleware("/api/"));
     }

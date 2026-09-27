@@ -95,9 +95,8 @@ void AuthAPI::_login(RouteContext context) {
     boost::json::object out;
     out["token"] = answer.value.token;
 
-    // Unix seconds, agreed with the console. Every other time in this API is ISO 8601,
-    // and this one is not, because a client computing how long it has left should not have
-    // to parse a date to do it.
+    // Unix seconds, agreed with the console, and the same as every other time this API
+    // hands back: a registration's registered_at and expires_at are seconds too.
     out["expires_at"] = answer.value.expires_at;
     out["roles"] = roles_json(answer.value.roles);
 

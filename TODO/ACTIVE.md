@@ -519,10 +519,16 @@ everything left here except the authentication item, which the console is blocke
 
          No deployment loses access: `admin` maps to every role and `client` to
          `view-cluster-status`, which is exactly the two routes it reached before.
-      4. `GET/POST/PUT/DELETE /api/v1/users`, `POST /users/{u}/password`,
-         `DELETE /users/{u}/sessions`. A delete answers 204, and 404 for no such user;
-         revoking for a user who holds no sessions is a 204, which is why the store
-         treats "nothing to revoke" as success.
+      4. ~~`GET/POST/PUT/DELETE /api/v1/users`, `POST /users/{u}/password`,
+         `DELETE /users/{u}/sessions`.~~ Done, in `api::UsersAPI`
+         (`src/api/users_api.h`), and with it the bootstrap the console was blocked on:
+         a fresh node has no users, the configuration token creates the first, and that
+         user creates the rest. `docs/authentication.md` has the rules; the three that
+         were decisions rather than transcription are that a user cannot delete itself
+         (not only disable itself, or the rule would be decorative), that changing a
+         password revokes every session that user held including the caller's own, and
+         that the PBKDF2 iteration count is a constructor parameter rather than
+         configuration.
       5. `athenasip --add-user`, so recovery does not need the API to be reachable.
       6. The OpenAPI document, which `athenasip-admin` runs a contract test against.
 

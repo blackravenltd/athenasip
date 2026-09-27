@@ -127,7 +127,8 @@ own rather than bundled into another.
 | `GET /realms`, `GET /realms/{realm}` | `manage-realms` or `manage-realm-subscribers` | done |
 | `POST/PUT/DELETE /realms[/{realm}]` | `manage-realms` | done |
 | `GET/POST/PUT/DELETE /realms/{r}/accounts[/{u}]` | `manage-realm-subscribers` | done |
-| `GET/POST/PUT/DELETE /users[/{u}]` | `manage-admin-users` | step 4 |
+| `GET/POST/PUT/DELETE /users[/{u}]`, `DELETE /users/{u}/sessions` | `manage-admin-users` | done |
+| `POST /users/{u}/password` | any authenticated caller; the handler decides | done |
 | `/calls`, `/media`, `/events` (M5) | `view-cluster-status`; ending a call needs `manage-cluster` | |
 | node membership and configuration (M4) | `manage-cluster` | |
 
@@ -275,10 +276,50 @@ Three things about those answers are load-bearing rather than incidental:
   store's own. A dependency being unreachable is a retry rather than a defect, and the
   detail belongs in the node's log rather than in a body an unauthenticated caller reads.
 
-`/auth/login` is declared open because it is how a credential is obtained. `/auth/logout`
-and `/session` are declared open too and then check for themselves, because the router
-resolves configuration tokens and does not yet know a session token from anything else;
-the step that teaches it is roles on the routes.
+### The users routes
+
+`api::UsersAPI` (`src/api/users_api.h`). All of it needs `manage-admin-users` except
+changing a password, which is declared for any authenticated caller and decides for
+itself: your own needs the old one, anyone's needs the role. "It is mine" is not something
+a role can express, which is why that one route carries its own rule.
+
+What is bootstrapped, and by what: a fresh node has no users, so the configuration token
+is what creates the first one, and that user can then create the rest. This is the chain
+that makes the console usable on a node nobody has logged into yet.
+
+Four rules here are worth knowing before reading the code:
+
+- **Nobody locks themselves out of the door they are standing in.** A user cannot disable
+  itself, cannot take `manage-admin-users` away from itself, and cannot delete itself; all
+  three are 409 `would_lock_out`. Deleting is in the list because a user that deleted
+  itself is locked out exactly as thoroughly, and leaving that open would make the other
+  two decorative. The rules are about *self*, not about the role: somebody else holding
+  `manage-admin-users` may still be disabled, demoted and deleted, and a node with no
+  administrators left is recovered with the configuration token. A configuration token is
+  nobody, so the rules never apply to it.
+- **Changing a password ends every session that user held**, including the one that asked.
+  A password is changed because the old one is no longer trusted, and a session issued
+  against it is exactly as untrusted; an administrator resetting a compromised account
+  would otherwise leave whoever compromised it logged in. The cost is that changing your
+  own password logs you out, which is the right way round.
+- **An unknown role is refused on the way in**, 400 `unknown_role`. The datastore carries
+  a role it does not recognise rather than dropping it, so that an older node rewriting a
+  user cannot silently strip a role a newer one granted - which leaves the API as the only
+  place a typo can be caught.
+- **Somebody else's password without the role is 403 before the store is asked**, so the
+  route cannot be walked to find out who exists. With the role it is a 404, because by then
+  the caller is allowed to know.
+
+The PBKDF2 iteration count is a constructor parameter rather than configuration. The count
+is stored with each hash so it can be raised later without invalidating anybody, nothing
+has asked to tune it, and a setting whose wrong value is invisible until somebody steals
+the database is not one to offer before there is a reason. Tests turn it down; production
+takes the default.
+
+`/auth/login` is declared open because it is how a credential is obtained, and
+`/auth/logout` because it answers the same whether or not the token it was handed
+resolved - a token that resolves to nothing has to reach the handler rather than be turned
+away with a 401 that tells the caller it was not real.
 
 ### What happens to the config tokens
 
