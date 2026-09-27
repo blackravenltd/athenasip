@@ -12,7 +12,7 @@ machines sit behind a matcher with `Registrar` and `Proxy` as the transaction us
 `memory://` and `redis://`, `local://` and `mqtt://`, and `builtin://` and
 `rtpengine://` in tree; a node decides for itself when a call it is holding is over;
 provisioning is over a JSON API; and the sipp harness proves a call end to end on UDP.
-587 tests, clean under asan and tsan.
+645 tests, clean under asan and tsan.
 
 0.6.0 landed RFC 5626 flow routing, the rtpengine driver and the media profile that
 tells it which leg is the browser, and the behaviour tests that found eleven bugs in
@@ -21,20 +21,26 @@ calls ask of the engine, the node record-routes both interfaces and carries a fl
 token in each so an in-dialog request can reach a browser, and three recorded
 deviations from RFC 3261 and 3264 are closed. `COMPLETED.md` has the detail.
 
-The next thing to build toward is one call: a browser calls an AthenaPhone and the
-media goes through rtpengine. Milestone 3 is written around it, in order.
+Since 0.7.0, on `develop` and not yet tagged, in two parts. Milestone 3: a leg is
+profiled from what it has said rather than from the transport it signals over; the
+interop fixture has rtpengine on its media path and reaches outside Docker; this node
+serves the web client that drives its own harness; and a browser calls a browser through
+it with audio proven at both ends by the engine's counters and the browsers' own.
+Milestone 5, out of order on purpose: the node installs, runs as a systemd service, takes
+a command line, says on the bus that it is alive and is deployed on a real host, and both
+datastores hold the users and sessions an admin login needs. `COMPLETED.md` has the
+detail, and says why Milestone 5 came early.
 
-Since 0.7.0, on `develop` and not yet tagged: a leg is profiled from what it has said
-rather than from the transport it signals over; the interop fixture has rtpengine on
-its media path and reaches outside Docker; this node serves the web client that drives
-its own harness; and a browser calls a browser through it with audio proven at both
-ends by the engine's counters and the browsers' own. `COMPLETED.md` has the detail.
-
-What remains of Milestone 3 before the goal is met is one manual call, and the tooling
-and runbook for it are in the tree.
+The next thing to build toward is still one call: a browser calls an AthenaPhone and the
+media goes through rtpengine. Milestone 3 is written around it, in order, and what remains
+of it is that one manual call - the tooling and the runbook for it are in the tree.
 
 Milestones are in priority order and so are the items inside each one: work top to
-bottom. Move items to `COMPLETED.md` as they land, with a note on what shipped.
+bottom, and say why when something is taken out of turn. Milestone 5 has been, twice -
+the deployment, because a node nobody can install is not one anybody will adopt, and
+admin authentication, because the console is built against it and cannot go further
+without it. Both are recorded that way. Move items to `COMPLETED.md` as they land, with
+a note on what shipped.
 
 ## How to prove it
 
@@ -409,6 +415,14 @@ milestone is the second node.
 
 Goal: a newcomer runs one command and has a working, secure, administrable SIP server
 in ten minutes.
+
+Started out of order, because a node nobody can install, run as a service or log in to
+administer is not one anybody will adopt, and because deploying it is what found several
+bugs that no test had. What has landed is in `COMPLETED.md` under Milestone 5: the CMake
+install and the systemd unit, the command line and the configuration search path, the
+heartbeat and its will, SPA mode as a choice, the node on `corvus-fi-1`, and both
+datastores holding users and sessions. Milestone 4, the second node, is still ahead of
+everything left here except the authentication item, which the console is blocked on.
 
 - [ ] `docker-compose.yml`: athenasip, redis, mosquitto, rtpengine, coturn, seeded
       realm and two accounts, admin UI on 8080, WSS on 9443, TLS on 5061.
