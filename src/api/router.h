@@ -31,11 +31,16 @@ struct RouteContext {
   std::unordered_map<std::string, std::string> query;
   std::string body;
 
-  // The bearer token this request presented, empty when it presented none. The router
-  // has already decided whether it admits the request; this is for the handful of routes
-  // that need the token itself - a logout ends the session it was given, and
-  // `GET /session` has to say which kind of credential it is looking at.
+  // The bearer token this request presented, empty when it presented none. The router has
+  // already decided whether it admits the request; this is for the routes that need the
+  // token itself rather than a verdict on it, which is the logout ending the session it
+  // was given.
   std::string bearer;
+
+  // Who is calling, resolved by the router before the handler ran. Meaningful on a route
+  // that required a credential; a `Kind::none` caller on an open route means only that
+  // nobody asked.
+  BearerAuth::Caller caller;
 
   std::shared_ptr<http::response<http::string_body>> response;
 
@@ -52,22 +57,26 @@ struct RouteContext {
   }
 };
 
-// Method, path and the scope it needs, in one table. A route that forgets to name a
-// scope does not compile, which is the point: authorisation is part of declaring a
+// Method, path and the roles that admit it, in one table. A route that forgets to say who
+// may call it does not compile, which is the point: authorisation is part of declaring a
 // route rather than something a handler remembers to do.
 class Router {
  public:
   using Handler = std::function<void(RouteContext)>;
 
-  // The scope a route open to anyone asks for. Only for what a load balancer or a
-  // container healthcheck has to reach before it has credentials.
-  static constexpr char public_scope[] = "";
-
   explicit Router(std::shared_ptr<BearerAuth> auth) : _auth(std::move(auth)) {}
 
-  void add(http::verb method, std::string pattern, std::string scope, Handler handler) {
-    _routes.push_back(Route{method, _split(pattern), std::move(scope), std::move(handler)});
+  // Any of `roles` admits. An empty set means any authenticated caller, which is the safe
+  // thing for it to mean: a route declared without naming roles demands a credential and
+  // grants nothing, so forgetting to name them cannot open a route to the world.
+  void add(http::verb method, std::string pattern, std::vector<std::string> roles, Handler handler) {
+    _routes.push_back(Route{method, _split(pattern), std::move(roles), false, std::move(handler)});
   }
+
+  // No credential at all, and it has to be asked for by name. Only for what a load
+  // balancer or a container healthcheck reaches before it has one, and for the route that
+  // hands credentials out.
+  void add_open(http::verb method, std::string pattern, Handler handler) { _routes.push_back(Route{method, _split(pattern), {}, true, std::move(handler)}); }
 
   // The middleware for the chain. It answers anything under its own prefix and passes
   // everything else along, so static files and the API can share a port.
@@ -80,7 +89,8 @@ class Router {
   struct Route {
     http::verb method;
     std::vector<std::string> pattern;
-    std::string scope;
+    std::vector<std::string> roles;
+    bool open = false;
     Handler handler;
   };
 
@@ -104,26 +114,9 @@ class Router {
       path_matched = true;
       if (route.method != request.method()) continue;
 
-      if (!route.scope.empty()) {
-        if (!_auth) {
-          write_error(response, http::status::unauthorized, "unauthorized", "no tokens are configured, so nothing may be called");
-          return next(false);
-        }
-
-        switch (_auth->check(request, route.scope)) {
-          case BearerAuth::Result::ok:
-            break;
-          case BearerAuth::Result::forbidden:
-            write_error(response, http::status::forbidden, "forbidden", "this token does not have the " + route.scope + " scope");
-            return next(false);
-          case BearerAuth::Result::missing:
-          case BearerAuth::Result::unknown:
-            response->set(http::field::www_authenticate, "Bearer realm=\"athenasip\"");
-            write_error(response, http::status::unauthorized, "unauthorized", "a bearer token with the " + route.scope + " scope is required");
-            return next(false);
-        }
-      }
-
+      // Everything out of the request and into the context first. Resolving a session
+      // token is a datastore round trip, so by the time the credential is known the
+      // request object may be several frames down the stack.
       RouteContext context;
       context.parameters = std::move(parameters);
       context.query = _parse_query(question == std::string::npos ? std::string() : target.substr(question + 1));
@@ -132,7 +125,39 @@ class Router {
       context.response = response;
       context.done = [next]() { next(false); };
 
-      route.handler(std::move(context));
+      if (route.open) return route.handler(std::move(context));
+
+      if (!_auth) {
+        write_error(response, http::status::unauthorized, "unauthorized", "no credentials are configured, so nothing may be called");
+        return next(false);
+      }
+
+      const auto presented = context.bearer;
+
+      _auth->resolve(presented, [context, roles = route.roles, handler = route.handler](BearerAuth::Caller caller) mutable {
+        if (caller.unavailable) {
+          write_error(context.response, http::status::service_unavailable, "unavailable", "the server cannot check credentials at the moment");
+          return context.done();
+        }
+
+        if (!caller.authenticated()) {
+          context.response->set(http::field::www_authenticate, "Bearer realm=\"athenasip\"");
+          write_error(context.response, http::status::unauthorized, "unauthorized", "a bearer token is required");
+          return context.done();
+        }
+
+        // An empty set is any authenticated caller; otherwise one of the named roles has
+        // to be held. A real credential that holds none is a 403, not a 401: it is who it
+        // says it is and may not do this.
+        if (!roles.empty() && !caller.has_any(roles)) {
+          write_error(context.response, http::status::forbidden, "forbidden", "this credential does not hold " + _describe(roles));
+          return context.done();
+        }
+
+        context.caller = std::move(caller);
+        handler(std::move(context));
+      });
+
       return;
     }
 
@@ -143,6 +168,18 @@ class Router {
 
     write_error(response, http::status::not_found, "not_found", "no such endpoint");
     next(false);
+  }
+
+  // What a 403 says it was missing. The role names are the API's own vocabulary and are
+  // safe to name: knowing that a route wants manage-realms tells a caller nothing it could
+  // not read in the documentation.
+  static std::string _describe(const std::vector<std::string>& roles) {
+    if (roles.size() == 1) return roles.front();
+
+    std::string out = "any of ";
+    for (std::size_t i = 0; i < roles.size(); ++i) out += (i ? ", " : "") + roles[i];
+
+    return out;
   }
 
   static std::vector<std::string> _split(const std::string& path) {

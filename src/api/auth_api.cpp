@@ -24,15 +24,24 @@ boost::json::array roles_json(const std::vector<std::string>& roles) {
 
 }  // namespace
 
-AuthAPI::AuthAPI(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<Sessions> sessions, std::shared_ptr<BearerAuth> auth)
-    : _logger(std::make_shared<loggers::LoggerScoped>("auth", std::move(logger))), _sessions(std::move(sessions)), _auth(std::move(auth)) {}
+AuthAPI::AuthAPI(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<Sessions> sessions)
+    : _logger(std::make_shared<loggers::LoggerScoped>("auth", std::move(logger))), _sessions(std::move(sessions)) {}
 
 void AuthAPI::register_routes(Router& router) {
   auto self = shared_from_this();
 
-  router.add(http::verb::post, "/api/v1/auth/login", Router::public_scope, [self](RouteContext c) { self->_login(std::move(c)); });
-  router.add(http::verb::post, "/api/v1/auth/logout", Router::public_scope, [self](RouteContext c) { self->_logout(std::move(c)); });
-  router.add(http::verb::get, "/api/v1/session", Router::public_scope, [self](RouteContext c) { self->_session(std::move(c)); });
+  // Open, because it is how a credential is obtained.
+  router.add_open(http::verb::post, "/api/v1/auth/login", [self](RouteContext c) { self->_login(std::move(c)); });
+
+  // Open too, and not because it is unauthenticated: it ends whatever session it was
+  // handed and answers the same either way, so a token that resolves to nothing must reach
+  // the handler rather than be turned away with a 401 that says it was not real.
+  router.add_open(http::verb::post, "/api/v1/auth/logout", [self](RouteContext c) { self->_logout(std::move(c)); });
+
+  // Any authenticated caller, of either kind, holding any roles or none. The router has
+  // resolved them by the time this runs, so the handler only has to describe what it was
+  // given.
+  router.add(http::verb::get, "/api/v1/session", {}, [self](RouteContext c) { self->_session(std::move(c)); });
 }
 
 void AuthAPI::_refuse(RouteContext& context) {
@@ -123,63 +132,31 @@ void AuthAPI::_logout(RouteContext context) {
 }
 
 void AuthAPI::_session(RouteContext context) {
-  if (context.bearer.empty()) {
-    context.response->set(http::field::www_authenticate, "Bearer realm=\"athenasip\"");
-    write_error(context.response, http::status::unauthorized, "unauthorized", "a bearer token is required");
-    return context.done();
-  }
+  boost::json::object out;
 
-  // A configuration token first, and without asking the datastore: it is the credential
-  // that has to keep working when the store is down, because it is how somebody gets back
-  // in. A session token cannot collide with one - it is 32 random bytes - so the order
-  // costs nothing.
-  const auto scopes = _auth ? _auth->scopes_for(context.bearer) : std::vector<std::string>{};
-  if (!scopes.empty()) {
-    boost::json::object out;
-    out["kind"] = "token";
-    out["scopes"] = roles_json(scopes);
-    out["roles"] = roles_json(BearerAuth::roles_for(scopes));
+  // The roles are the caller's as the router resolved them a moment ago, which for a user
+  // means read off the user on this request rather than off the session: a role taken away
+  // is gone here too. An empty list is an answer - a user with no roles may log in and is
+  // told it holds none.
+  out["roles"] = roles_json(context.caller.roles);
 
-    // No expiry, deliberately: a configuration token lasts as long as it is in the file,
-    // which is why it lives in one only root can read.
-    write_json(context.response, http::status::ok, out);
-    return context.done();
-  }
+  if (context.caller.kind == BearerAuth::Caller::Kind::user) {
+    const auto& user = *context.caller.user;
 
-  auto self = shared_from_this();
-
-  _sessions->resolve(context.bearer, [self, context](Sessions::Lookup answer) mutable {
-    switch (answer.outcome) {
-      case Sessions::Outcome::refused:
-        // The same 401 a login gets. An expired session and a token that was never real
-        // are one answer for the same reason.
-        _refuse(context);
-        return context.done();
-
-      case Sessions::Outcome::unavailable:
-        self->_unavailable(context, answer.reason);
-        return context.done();
-
-      case Sessions::Outcome::ok:
-        break;
-    }
-
-    const auto& user = *answer.value.user;
-
-    boost::json::object out;
     out["kind"] = "user";
     out["username"] = user.username;
     out["display_name"] = user.display_name;
+    out["expires_at"] = context.caller.expires_at;
+  } else {
+    out["kind"] = "token";
+    out["scopes"] = roles_json(context.caller.scopes);
 
-    // Read off the user on this request rather than off the session, so a role taken away
-    // is gone here too. An empty list is an answer: a user with no roles may log in and is
-    // told it holds none.
-    out["roles"] = roles_json(user.roles);
-    out["expires_at"] = answer.value.expires_at;
+    // No expiry, deliberately: a configuration token lasts as long as it is in the file,
+    // which is why it lives in one only root can read.
+  }
 
-    write_json(context.response, http::status::ok, out);
-    context.done();
-  });
+  write_json(context.response, http::status::ok, out);
+  context.done();
 }
 
 }  // namespace athenasip::api

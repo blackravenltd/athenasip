@@ -498,10 +498,27 @@ everything left here except the authentication item, which the console is blocke
          the console it can deploy against this wants the first user, so it waits on
          step 5 - or on step 4, whichever lands first, since a config token may create a
          user through the API.
-      3. Roles on the routes. `Router::add` takes a set of roles, any of which admits;
-         `BearerAuth` resolves a session token to a user and a config token to roles
-         (`admin` scope to all five, `client` to `view-cluster-status`, which is
-         exactly what it reaches today).
+      3. ~~Roles on the routes.~~ Done. `Router::add` takes a set of roles, any of which
+         admits, and `BearerAuth::resolve` turns either kind of credential into a set of
+         them. Four things it settled that the steps after it inherit:
+
+         - The router's authorisation step is **asynchronous**, because resolving a
+           session token is a datastore round trip. Everything a handler needs is copied
+           out of the request into the `RouteContext` before that happens, since the
+           request object does not outlive the lookup.
+         - `RouteContext::caller` carries who is calling, resolved once. Step 4 needs it
+           for the rules about what a user may do to itself, and `GET /session` now
+           describes it rather than resolving a second time.
+         - An **empty role set means any authenticated caller, not a public route**. A
+           route open to anyone says so with `add_open`. The old `public_scope` was an
+           empty string, so a route that forgot to name its scope was open to the world;
+           now forgetting gives you "must be logged in and may do nothing".
+         - A configuration token resolves without the datastore and is tried first, so it
+           is still the way back in when the store is down; a store that cannot be asked
+           is a 503 rather than a 401.
+
+         No deployment loses access: `admin` maps to every role and `client` to
+         `view-cluster-status`, which is exactly the two routes it reached before.
       4. `GET/POST/PUT/DELETE /api/v1/users`, `POST /users/{u}/password`,
          `DELETE /users/{u}/sessions`. A delete answers 204, and 404 for no such user;
          revoking for a user who holds no sessions is a 204, which is why the store

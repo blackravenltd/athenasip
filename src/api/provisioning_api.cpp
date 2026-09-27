@@ -66,30 +66,40 @@ ProvisioningAPI::ProvisioningAPI(std::shared_ptr<loggers::Logger> logger, std::s
 void ProvisioningAPI::register_routes(Router& router) {
   auto self = shared_from_this();
 
+  using namespace types::roles;
+
+  // Anyone placing a subscriber has to be able to discover which realms exist, so reading
+  // them admits either role. Changing one is manage-realms alone. Agreed with the console,
+  // which needs exactly this to show a realm picker to somebody who only manages accounts.
+  const std::vector<std::string> read_realms = {manage_realms, manage_realm_subscribers};
+
   // Open, because a container healthcheck and a load balancer reach it before they have
   // any credentials to present. It says the node is up and what it is; nothing about
   // who is on it.
-  router.add(http::verb::get, "/api/v1/health", Router::public_scope, [self](RouteContext c) { self->_health(std::move(c)); });
+  router.add_open(http::verb::get, "/api/v1/health", [self](RouteContext c) { self->_health(std::move(c)); });
 
-  // client, not admin: this is what a client reads to know where the realm is served
-  // from, and it says nothing about who is on it.
-  router.add(http::verb::get, "/api/v1/nodes", "client", [self](RouteContext c) { self->_node_list(std::move(c)); });
+  // What a client reads to know where the realm is served from. It says nothing about who
+  // is on it, which is why it is the cluster-status role rather than a provisioning one.
+  router.add(http::verb::get, "/api/v1/nodes", {view_cluster_status}, [self](RouteContext c) { self->_node_list(std::move(c)); });
 
-  router.add(http::verb::get, "/api/v1/realms", "admin", [self](RouteContext c) { self->_realm_list(std::move(c)); });
-  router.add(http::verb::post, "/api/v1/realms", "admin", [self](RouteContext c) { self->_realm_create(std::move(c)); });
-  router.add(http::verb::get, "/api/v1/realms/{realm}", "admin", [self](RouteContext c) { self->_realm_get(std::move(c)); });
-  router.add(http::verb::put, "/api/v1/realms/{realm}", "admin", [self](RouteContext c) { self->_realm_update(std::move(c)); });
-  router.add(http::verb::delete_, "/api/v1/realms/{realm}", "admin", [self](RouteContext c) { self->_realm_delete(std::move(c)); });
+  router.add(http::verb::get, "/api/v1/realms", read_realms, [self](RouteContext c) { self->_realm_list(std::move(c)); });
+  router.add(http::verb::post, "/api/v1/realms", {manage_realms}, [self](RouteContext c) { self->_realm_create(std::move(c)); });
+  router.add(http::verb::get, "/api/v1/realms/{realm}", read_realms, [self](RouteContext c) { self->_realm_get(std::move(c)); });
+  router.add(http::verb::put, "/api/v1/realms/{realm}", {manage_realms}, [self](RouteContext c) { self->_realm_update(std::move(c)); });
+  router.add(http::verb::delete_, "/api/v1/realms/{realm}", {manage_realms}, [self](RouteContext c) { self->_realm_delete(std::move(c)); });
 
-  router.add(http::verb::get, "/api/v1/realms/{realm}/accounts", "admin", [self](RouteContext c) { self->_account_list(std::move(c)); });
-  router.add(http::verb::post, "/api/v1/realms/{realm}/accounts", "admin", [self](RouteContext c) { self->_account_create(std::move(c)); });
-  router.add(http::verb::get, "/api/v1/realms/{realm}/accounts/{user}", "admin", [self](RouteContext c) { self->_account_get(std::move(c)); });
-  router.add(http::verb::put, "/api/v1/realms/{realm}/accounts/{user}", "admin", [self](RouteContext c) { self->_account_update(std::move(c)); });
-  router.add(http::verb::delete_, "/api/v1/realms/{realm}/accounts/{user}", "admin", [self](RouteContext c) { self->_account_delete(std::move(c)); });
+  router.add(http::verb::get, "/api/v1/realms/{realm}/accounts", {manage_realm_subscribers}, [self](RouteContext c) { self->_account_list(std::move(c)); });
+  router.add(http::verb::post, "/api/v1/realms/{realm}/accounts", {manage_realm_subscribers}, [self](RouteContext c) { self->_account_create(std::move(c)); });
+  router.add(http::verb::get, "/api/v1/realms/{realm}/accounts/{user}", {manage_realm_subscribers},
+             [self](RouteContext c) { self->_account_get(std::move(c)); });
+  router.add(http::verb::put, "/api/v1/realms/{realm}/accounts/{user}", {manage_realm_subscribers},
+             [self](RouteContext c) { self->_account_update(std::move(c)); });
+  router.add(http::verb::delete_, "/api/v1/realms/{realm}/accounts/{user}", {manage_realm_subscribers},
+             [self](RouteContext c) { self->_account_delete(std::move(c)); });
 
-  // client rather than admin: where a subscriber is registered is what a client needs
-  // to show a presence list, and it provisions nothing.
-  router.add(http::verb::get, "/api/v1/registrations", "client", [self](RouteContext c) { self->_registration_list(std::move(c)); });
+  // Where a subscriber is registered is what a client needs to show a presence list, and
+  // it provisions nothing, so it reads rather than manages.
+  router.add(http::verb::get, "/api/v1/registrations", {view_cluster_status}, [self](RouteContext c) { self->_registration_list(std::move(c)); });
 }
 
 // Realms
