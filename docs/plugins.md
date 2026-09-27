@@ -189,6 +189,15 @@ only has to implement them if the deployment wants admin logins out of it, and
 broken; a driver that implements one and gets the create/update split wrong is, because
 the admin API tells "already exists" from "changed" by which of the two failed.
 
+The version tracks shape, and shape is not the whole contract: what an operation is
+allowed to report can matter as much as what it is called. `session_delete` is the example
+in the tree - it succeeds whether or not that hash was held, because a session is named by
+a secret the caller presented and an answer that distinguishes the two is a way to ask
+whether a token is real. A driver that reported the difference would compile, load and
+pass the version check, and would turn a logout into a guessing game. Read the comment on
+the operation, not only its signature; where behaviour like that is load-bearing it is
+written at the declaration.
+
 ## Testing a plugin
 
 Tests are GoogleTest under `tests/`, mirroring `src/`. `tests/plugins/plugin_registry_test.cpp`

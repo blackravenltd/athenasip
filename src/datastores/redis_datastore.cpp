@@ -483,14 +483,16 @@ void RedisDatastore::session_delete(plugins::Executor on, std::string token_hash
 
     const auto username = found.value ? found.value->username : std::string();
 
-    _async_del(_session_key(token_hash), [this, on, handler, token_hash, username](RedisError error, std::int64_t removed) mutable {
+    // Gone either way, as the contract says: whether the key was there is not something
+    // the answer may reveal, because the caller identified it with a secret it presented.
+    // Only Redis refusing counts as a failure.
+    _async_del(_session_key(token_hash), [this, on, handler, token_hash, username](RedisError error, std::int64_t) mutable {
       if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
 
-      if (username.empty()) return _complete(on, handler, _status(removed > 0, "session_delete"));
+      if (username.empty()) return _complete(on, handler, plugins::Status::success());
 
-      _async_srem(_session_index_key(username), token_hash, [this, on, handler, removed](RedisError error, bool) mutable {
-        if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
-        _complete(on, handler, _status(removed > 0, "session_delete"));
+      _async_srem(_session_index_key(username), token_hash, [this, on, handler](RedisError error, bool) mutable {
+        _complete(on, handler, error ? plugins::Status::failure(error.message()) : plugins::Status::success());
       });
     });
   });
