@@ -31,6 +31,12 @@ struct RouteContext {
   std::unordered_map<std::string, std::string> query;
   std::string body;
 
+  // The bearer token this request presented, empty when it presented none. The router
+  // has already decided whether it admits the request; this is for the handful of routes
+  // that need the token itself - a logout ends the session it was given, and
+  // `GET /session` has to say which kind of credential it is looking at.
+  std::string bearer;
+
   std::shared_ptr<http::response<http::string_body>> response;
 
   // Sends what the handler has put in the response. Exactly once, on whatever thread
@@ -122,6 +128,7 @@ class Router {
       context.parameters = std::move(parameters);
       context.query = _parse_query(question == std::string::npos ? std::string() : target.substr(question + 1));
       context.body = request.body();
+      context.bearer = BearerAuth::presented_token(request);
       context.response = response;
       context.done = [next]() { next(false); };
 

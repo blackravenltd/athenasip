@@ -224,6 +224,37 @@ user holds no sessions" is the state the caller asked for - so revoking for a us
 has never logged in is a 204. The existence check belongs to the handler, exactly as
 `_with_realm` does it for realms.
 
+The three auth routes are built, in `api::AuthAPI` (`src/api/auth_api.h`), and answer:
+
+| | |
+|---|---|
+| `POST /auth/login` | 200 `{token, expires_at, roles}`; 400 for a body that is not an object or is missing a field; 401 for anything else; 503 when the store cannot be asked |
+| `POST /auth/logout` | 204 with no body; 401 with no token presented; 503 when the store cannot be asked |
+| `GET /session` | 200 `{"kind":"user", username, display_name, roles, expires_at}` or `{"kind":"token", scopes, roles}`; 401; 503 |
+
+Three things about those answers are load-bearing rather than incidental:
+
+- **A refused login is one body, byte for byte**, for an unknown user, a wrong password
+  and a disabled user alike. The three alternatives are between them a list of who holds
+  an account on this node. An empty password is a 401 rather than a 400 for the same
+  reason - probing with one should learn nothing a wrong password would not - while a
+  *missing* field is a 400, because that is the caller's own mistake and says nothing
+  about anybody.
+- **A logout is 204 whether or not the token named a session.** A 404 there would be a way
+  to ask whether a token is real, one guess at a time, on a route anybody can reach. This
+  is why `Datastore::session_delete` succeeds for a hash it was not holding, which is the
+  one place the session deletes and the realm deletes follow different rules: a realm name
+  is not a secret. A 503 still means the store refused, so a client is never told its token
+  is gone when it may not be.
+- **503, not 500, when the store is down**, and with a fixed message rather than the
+  store's own. A dependency being unreachable is a retry rather than a defect, and the
+  detail belongs in the node's log rather than in a body an unauthenticated caller reads.
+
+`/auth/login` is declared open because it is how a credential is obtained. `/auth/logout`
+and `/session` are declared open too and then check for themselves, because the router
+resolves configuration tokens and does not yet know a session token from anything else;
+the step that teaches it is roles on the routes.
+
 ### What happens to the config tokens
 
 They stay, and they change meaning. A config token becomes a **machine credential and

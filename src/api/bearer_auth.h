@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "../config.h"
+#include "../types/user.h"
 
 namespace athenasip::api {
 
@@ -35,7 +36,7 @@ class BearerAuth {
   explicit BearerAuth(std::vector<Config::ApiToken> tokens) : _tokens(std::move(tokens)) {}
 
   Result check(const http::request<http::string_body>& request, const std::string& scope) const {
-    const auto presented = _presented_token(request);
+    const auto presented = presented_token(request);
     if (presented.empty()) return Result::missing;
 
     for (const auto& token : _tokens) {
@@ -49,8 +50,37 @@ class BearerAuth {
     return Result::unknown;
   }
 
- private:
-  static std::string _presented_token(const http::request<http::string_body>& request) {
+  // The scopes a presented token holds, empty for a token this node does not know. It is
+  // how a route that has to tell one kind of credential from the other - `GET /session`
+  // is the one - asks about a configuration token without the answer being yes or no.
+  std::vector<std::string> scopes_for(const std::string& presented) const {
+    for (const auto& token : _tokens) {
+      if (_equal(token.token, presented)) return token.scopes;
+    }
+
+    return {};
+  }
+
+  // What a configuration token may do, in the role vocabulary the routes use.
+  //
+  // admin is every role there is. It is the one credential on this node that can do
+  // everything, it lives in a file only root can read, and the intent is that a
+  // deployment stops using it once real users exist. client is exactly what a SIP client
+  // application reaches today and has no business in the rest of the model.
+  static std::vector<std::string> roles_for(const std::vector<std::string>& scopes) {
+    std::vector<std::string> roles;
+
+    for (const auto& scope : scopes) {
+      if (scope == "admin") return types::roles::all();
+      if (scope == "client") roles.push_back(types::roles::view_cluster_status);
+    }
+
+    return roles;
+  }
+
+  // How a bearer token is read off a request: one answer for the router, for this class,
+  // and for a handler that needs the token itself rather than a verdict on it.
+  static std::string presented_token(const http::request<http::string_body>& request) {
     const auto header = request[http::field::authorization];
     if (header.empty()) return {};
 
@@ -69,6 +99,7 @@ class BearerAuth {
     return value.substr(start);
   }
 
+ private:
   static bool _equal(const std::string& expected, const std::string& presented) {
     if (expected.size() != presented.size()) return false;
 
