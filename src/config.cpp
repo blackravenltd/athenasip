@@ -345,6 +345,25 @@ bool Config::load_from_yaml(const std::string& filename) {
         }
       }
 
+      try {
+        if (http_api["session_lifetime"]) http_api_session_lifetime = http_api["session_lifetime"].as<std::uint32_t>();
+        if (http_api["session_idle"]) http_api_session_idle = http_api["session_idle"].as<std::uint32_t>();
+      } catch (const std::exception& e) {
+        _logger->error("Invalid value for 'http.api.session_lifetime' or 'http.api.session_idle': " + std::string(e.what()));
+        return false;
+      }
+
+      if (http_api_session_lifetime == 0) {
+        _logger->error("'http.api.session_lifetime' cannot be zero: a session the datastore cannot expire is not one it can hold");
+        return false;
+      }
+
+      // Not an error, because the session still ends: the absolute expiry comes first
+      // and the idle rule never gets a chance to fire.
+      if (http_api_session_idle > http_api_session_lifetime) {
+        _logger->warn("'http.api.session_idle' is longer than 'http.api.session_lifetime', so nothing will ever expire on idle");
+      }
+
       if (http_api_enable && http_api_tokens.empty()) {
         _logger->warn("http.api.enable is set with no tokens: every request will be refused");
       }

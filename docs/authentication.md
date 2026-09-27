@@ -176,6 +176,36 @@ existing `BearerAuth` gains a second place to look and no route changes shape.
 Not JWT. A signed token that cannot be revoked before it expires is the wrong trade for
 an admin plane, and this node already has a datastore to ask.
 
+Both expiries are configuration, under `http.api`:
+
+```
+http:
+  api:
+    session_lifetime: 43200   # seconds a login is good for at all
+    session_idle: 3600        # seconds it survives unused; 0 turns this off
+```
+
+They are not symmetric, and the asymmetry is the contract's. The absolute expiry is
+written on the session record, so the datastore is what prunes on it and a lifetime of
+zero is refused: `SETEX` has no non-positive expiry to give a key, and a record nothing
+expires outlives the node. The idle timeout is never given to a driver at all - it is
+`api::Sessions` that asks `Session::has_expired`, deletes a session that has gone idle
+rather than leaving it to sit out the rest of its lifetime, and moves `last_seen_at`
+along by writing the record again. Since a write per authenticated request is a real
+cost, it moves it once per tenth of the idle window rather than on every lookup, which
+is enough to keep a session in use alive and turns the other nine reads back into reads.
+
+`api::Sessions` (`src/api/sessions.h`) is where all of that lives, and where a token is
+made and hashed: the driver never sees one. It is also where the clock is a seam, for the
+same reason `TimerSource` is one in the transaction layer - an idle timeout measured
+against the real clock is an hour of waiting per test case. The drivers go on calling
+`std::time` themselves, because the only thing they do with the time is refuse or prune a
+record whose absolute expiry has passed, and a test controls that by choosing the expiry.
+
+A token is hex rather than base64: twice the length, and nothing in it has to be escaped
+in a header, a URL, a shell or a log line, which for a value an operator will paste around
+is worth more than the characters it costs.
+
 ### Endpoints
 
 | | |
@@ -231,11 +261,18 @@ getting back in does not require the API to be reachable.
 
 1. `manage-cluster` has no routes yet - node membership and configuration are M4 and M5.
    Is it worth defining now, or added when there is something for it to permit?
-2. Session lifetime: what absolute and idle expiries suit a console left open on a NOC
-   screen?
-3. Should a login be rejected outright for a user with no roles, or allowed so the
+2. ~~Session lifetime: what absolute and idle expiries suit a console left open on a NOC
+   screen?~~ Answered by making it configuration, with defaults that suit that console:
+   twelve hours absolute, so a working day does not ask for the password twice, and an
+   hour idle, so a tab somebody walked away from stops being trusted. An operator who
+   wants a session that never idles out sets `session_idle: 0`; one that never expires at
+   all is not offered, for the reason in Sessions above.
+3. ~~Should a login be rejected outright for a user with no roles, or allowed so the
    console can say "you have no permissions, ask an administrator"? The latter is
-   kinder and tells an attacker slightly more.
+   kinder and tells an attacker slightly more.~~ Allowed, which is what was agreed with
+   the console and is what `api::Sessions` does: a login answers with the roles the user
+   holds, and none is an answer. It tells an attacker who already has a valid password
+   that the account is real, which they could learn from any other route anyway.
 4. Does TLS on the admin listener block this work, or land beside it?
 5. **`Account` versus `subscriber`.** The vocabulary above says subscriber; the type is
    `Account` and the resource is `/realms/{realm}/accounts`. `Subscriber` was renamed

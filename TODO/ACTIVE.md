@@ -438,6 +438,13 @@ everything left here except the authentication item, which the console is blocke
       operations (`dbbf203`, `4790bc0`, `c2cf031`). `memory://` and `redis://` answer
       identically, which is the point: the deployed node runs on `redis://`.
 
+      Then session issue and lookup, `api::Sessions` (`src/api/sessions.h`), which is
+      step 1 below: a login to a token and a token back to the user that holds it, with
+      `http.api.session_lifetime` and `http.api.session_idle` in the schema. It is the
+      whole of what the datastore contract deliberately does not know - the token, its
+      hash, the idle rule, and the clock that makes the idle rule testable. Nothing
+      routes to it yet; step 2 is what does.
+
       Four of those decisions constrain what is left, so they are here rather than only
       in the record:
 
@@ -455,16 +462,14 @@ everything left here except the authentication item, which the console is blocke
         step 4's job, on the way in, because that is the only place it can be done.
 
       **Next, in this order:**
-      1. Session issue and lookup: 32 bytes from a CSPRNG, SHA-256 on the way in,
-         the token given to the client once and never retrievable. Absolute and idle
-         expiry from config - `http.api.session_lifetime` and `http.api.session_idle`,
-         neither of which exists in the schema yet, so this step adds them.
-
-         This is also where a hand-in time source starts to earn its place. Idle expiry
-         is the first rule here that is awkward to test against a real clock, and
-         `Session::has_expired` already takes `now` as an argument, so half the seam is
-         cut. The drivers call `std::time(nullptr)` directly; whether that becomes
-         injectable is this step's call to make, not a decision already taken.
+      1. ~~Session issue and lookup.~~ Done, above. Two calls it made that the steps
+         after it inherit: the clock is injectable in `api::Sessions` and stays the real
+         one in the drivers, because the only thing a driver does with the time is prune
+         on an expiry the test chose; and the idle window is rewritten once per tenth of
+         itself rather than on every lookup, so an authenticated request is a read and
+         not a write. What it does not do is equalise the time a refused login takes - an
+         unknown user costs nothing where a wrong password costs a PBKDF2 - which is the
+         small end of the rate-limiting problem already recorded as unsolved.
       2. `POST /api/v1/auth/login`, `POST /api/v1/auth/logout`, `GET /api/v1/session`.
          This is the step that stops `/auth/login` answering 404 on `corvus-fi-1`, which
          `athenasip-admin` is waiting on before it can deploy and click through the
