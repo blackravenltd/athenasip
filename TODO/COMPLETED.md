@@ -33,7 +33,8 @@ Newest first. The detail is below, oldest first.
 - **0.2.0** (2026-09-18): Milestone 1 complete. The strand, the sanitizers, the media
   engine interface and the datastore write operations.
 
-Work since the last tag is at the end, under Milestone 3.
+Work since 0.7.0 is at the end, under Milestone 3 and Milestone 5. Milestone 5 is out of
+order on purpose: a node nobody can install or administer is not one anybody will adopt.
 
 ## Foundations
 
@@ -1120,8 +1121,8 @@ for later are in `ACTIVE.md` under the milestone that picks them up.
 
 ## Milestone 3 - A browser calls AthenaPhone through rtpengine, in progress
 
-Everything down to "The mixed-transport call" shipped in 0.6.0 and 0.7.0. What follows
-it is on `develop` and not yet tagged.
+Everything down to "The mixed-transport call" shipped in 0.6.0 and 0.7.0. What follows it
+is on `develop` and not yet tagged, as is all of Milestone 5 below.
 
 What the sections below add up to, against that goal: the browser's side of the
 signalling is done - WSS, a binding reached on the flow it registered over, and a flow
@@ -1593,6 +1594,32 @@ Everything the last Milestone 3 item needs except the device and the person.
       each time, with the counters read live: 209 packets and climbing across two legs,
       `UDP/TLS/RTP/SAVPF`, `AEAD_AES_256_GCM`, 0 errors.
 
+### The media proved, not only the signalling (2026-09-25)
+
+- [x] The browser call re-run on a node built fresh in the container, and passing: two
+      headless Chromium contexts registered, called each way and hung up from each end.
+      What is new is that it can no longer pass on silence. The softphone readout gained
+      `totalAudioEnergy`, the far end's accumulated `inbound-rtp` energy, which only
+      grows and so cannot land in the gap between the fake device's beeps the way an
+      instantaneous `audioLevel` can; the spec asserts it above zero at each end. Energy
+      was 0.41 and 0.55 one way, 0.47 and 0.57 the other, no packets lost, and every
+      remote candidate was the fixture's LAN address. The records are written by the spec
+      itself, in `../athenasip-admin/e2e/results`.
+- [x] The run needs alternate ports on a machine where AthenaPhone's Asterisk fixture is
+      up: both use 5060, 5061, 8088 and 8089 on purpose so one client can be pointed at
+      either, so `up.sh`'s own port check stops the run before a container starts.
+      `ATHENA_INTEROP_NAME=athenasip-interop-alt` with the port variables it prints is
+      the whole of the remedy, and `docs/testing.md` already says so.
+
+---
+
+## Milestone 5 - Batteries included, in progress
+
+Out of order deliberately: a node nobody can install, run as a service or log in to
+administer is not a node anybody will adopt, which is principle 3, and the deployment
+came first because it is what found several of the bugs below. Milestone 4, the second
+node, is still ahead of the rest of this.
+
 ### A node on a real host, and a health signal something else can read (2026-09-25)
 
 The first AthenaSIP deployment that is not a test fixture, and the work that had to
@@ -1644,6 +1671,13 @@ exist before it could be one.
       `athenasip/nodes/+/status` on the site broker and has dropped its TCP probe. The
       broker had to change: the node was publishing to the mosquitto on its own host,
       which bridges only `cerbo/#` inbound and was invisible to the monitoring.
+
+### Admin authentication, the datastore half (2026-09-25)
+
+Specified in full in `docs/authentication.md`, which the two decisions below amend. What
+is left of it - session issue, the auth routes, roles on the routes, the users routes,
+`--add-user` and the OpenAPI document - is in `ACTIVE.md`, in the order it has to happen.
+
 - [x] **Admin authentication, the datastore half** (`dbbf203`, `4790bc0`, `c2cf031`).
       `types::Password`, `types::User` and `types::Session` landed with the contract in
       `f2b1552`; this is both drivers implementing the nine user and session operations
@@ -1707,18 +1741,3 @@ exist before it could be one.
       for a user who has never logged in, with the existence check belonging to the
       handler exactly as `_with_realm` does it. Agreed with `athenasip-admin`, which had
       already built it that way.
-- [x] **The browser call re-run and the media proved, 2026-09-25.** Two headless Chromium
-      contexts registered, called each way and hung up from each end through the interop
-      fixture with rtpengine, on a node built fresh in the container: 2 passed. What is
-      new is that it now proves media rather than only signalling. The softphone readout
-      gained `totalAudioEnergy`, the far end's accumulated `inbound-rtp` energy, which
-      only grows and so cannot land in the gap between the fake device's beeps the way an
-      instantaneous `audioLevel` can; the spec asserts it above zero at each end. Energy
-      was 0.41 and 0.55 one way, 0.47 and 0.57 the other, no packets lost, and every
-      remote candidate was the fixture's LAN address. The records are in
-      `../athenasip-admin/e2e/results`, written by the spec itself.
-
-      It needed alternate ports: AthenaPhone's Asterisk fixture was up holding 5060,
-      5061, 8088 and 8089, so `up.sh`'s own port check stopped the run before a container
-      started. `ATHENA_INTEROP_NAME=athenasip-interop-alt` with the port variables
-      `up.sh` prints is the whole of the remedy, and `docs/testing.md` already says so.
