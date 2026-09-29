@@ -1741,3 +1741,111 @@ is left of it - session issue, the auth routes, roles on the routes, the users r
       for a user who has never logged in, with the existence check belonging to the
       handler exactly as `_with_realm` does it. Agreed with `athenasip-admin`, which had
       already built it that way.
+
+### Admin authentication, the API half (2026-09-30)
+
+The rest of `docs/authentication.md`, in the six steps `ACTIVE.md` had them in, and with
+it the thing the console was blocked on: a fresh node has no users, the configuration
+token creates the first, and that user creates the rest. Nine commits, 744 tests.
+
+- [x] **Session issue and lookup** (`555a4ba`). `api::Sessions` is the half of admin
+      authentication the datastore contract deliberately does not know about: a login to a
+      token, a token back to the user holding it, and a logout. 32 bytes from the CSPRNG,
+      hex, and the driver never sees one - only its SHA-256.
+      `http.api.session_lifetime` and `http.api.session_idle` joined the schema.
+
+      Three calls it made that everything after inherited. The clock is injectable here
+      and stays real in the drivers, because the only thing a driver does with the time is
+      prune on an expiry a test chose, while an idle timeout against a real clock is an
+      hour of waiting per case. The idle window is rewritten once per tenth of itself
+      rather than on every lookup, so an authenticated request stays a read. And a session
+      that has gone idle is deleted on the spot rather than left to a store that prunes on
+      absolute expiry alone and would otherwise hold it for the rest of a twelve-hour
+      lifetime.
+
+- [x] **A session delete stops saying whether the token was real** (`e6a9d83`). A contract
+      behaviour change, and the one worth arguing about. `session_delete` reported failure
+      for a hash it was not holding, on both drivers, deliberately, with a test each way.
+      That is right for a realm, where the caller names a thing by a name that is not a
+      secret and 404 is useful. It is wrong for a session, where the caller identifies it
+      by a token it presented, so distinguishing "that was live" from "that was never
+      live" is a way to ask this node whether a token is real, one guess at a time, on a
+      route anybody can reach. `API_VERSION` did not move, because the shape did not
+      change - and `docs/plugins.md` now says that the version tracks shape and that shape
+      is not the whole contract, because a driver reporting the old answer would compile,
+      load, pass the version check and reintroduce the oracle.
+
+- [x] **The three auth routes** (`b89c642`, `8062000`). `/auth/login`, `/auth/logout` and
+      `/session`, in `api::AuthAPI`, wired in `main.cpp`. A refused login is one body byte
+      for byte for an unknown user, a wrong password and a disabled user, because between
+      them the alternatives are a list of who holds an account here; an empty password is
+      that same 401 while a missing field is a 400. A logout is 204 whether or not the
+      token named a session. A store that cannot be asked is 503 with a fixed message, not
+      a 500 carrying the store's own words to an unauthenticated caller.
+
+      `8062000` then fixed what the console caught reading the handler: a wrong
+      `old_password` answered 401, which to any client means the credential is dead and
+      ends the session, when the bearer was fine and a body field was wrong. 403
+      `wrong_password` now.
+
+- [x] **Roles on the routes** (`cdbcaca`). Routes named a scope, a scope belonged to a
+      configuration token, so a user who logged in could reach nothing. Now a route names
+      roles and both credentials resolve to a set of them. That made the router's
+      authorisation step asynchronous, since resolving a session token is a datastore round
+      trip: everything a handler needs is copied out of the request first, because the
+      request does not outlive the lookup, and `RouteContext::caller` carries who is
+      calling.
+
+      An empty role set means any authenticated caller, not a public route; `add_open` is
+      how a route says it is open. The old `public_scope` was an empty string, so a route
+      that forgot to name its scope was open to the world - now forgetting gives you "must
+      be logged in and may do nothing", and two tests catch the difference. No deployment
+      lost access: `admin` maps to every role and `client` to `view-cluster-status`, which
+      is exactly the two routes it reached before.
+
+- [x] **The users routes** (`7bf137c`). `api::UsersAPI`. Everything needs
+      `manage-admin-users` except changing a password, which is declared for any
+      authenticated caller and decides for itself, because "it is mine" is not something a
+      role can express.
+
+      Nobody locks themselves out of the door they are standing in: a user cannot disable
+      itself, demote itself out of `manage-admin-users`, or delete itself. The third was
+      not in what was agreed with the console, and is there because a user that deleted
+      itself is locked out exactly as thoroughly and a rule that blocks one route to the
+      same place is decorative. All three are about self and not about the role, because a
+      node with no administrators left is recovered with the configuration token.
+
+      Changing a password ends every session that user held including the caller's own: a
+      password is changed because the old one is no longer trusted, and resetting a
+      compromised account would otherwise leave whoever compromised it logged in. The
+      PBKDF2 iteration count became a constructor parameter rather than configuration,
+      because 600000 iterations per created user put eight seconds on the suite and a
+      setting whose wrong value is invisible until the database is stolen is not one to
+      offer before there is a reason.
+
+- [x] **`athenasip --add-user`** (`d0d105b`). The other half of recovery: a node whose
+      passwords are all lost, or whose HTTP listener is unreachable, still has a datastore
+      and somebody with shell access. It writes the user and exits, touching no listener,
+      no bus and no Core. The password is read from the terminal with the echo off or from
+      stdin when piped, and there is deliberately no option that takes one, because a
+      command line is readable by every other process on the host.
+
+      "Already there" is found by asking the store rather than by reading the failure
+      message: the contract says create refuses an existing username but not what a driver
+      calls that, and Redis says "already exists" where the memory driver says
+      "user_create failed", so matching on words told an operator the wrong thing on one of
+      the two drivers.
+
+- [x] **The OpenAPI document** (`03ebd0f`). `docs/api/openapi.yaml` carries the eight new
+      routes and says roles rather than scopes throughout, with an `operationId` on every
+      operation because the console generates its client from it. Checked three ways
+      rather than read over: it lints clean, every property of `User`, `LoginResponse` and
+      `Session` was compared field by field against what a live node emits, and every
+      documented status code was walked against that node - which caught a wrong sentence
+      of mine about `old_password`, which is required only from a caller that does not
+      hold `manage-admin-users`.
+
+Still not solved, and still recorded at the end of `docs/authentication.md`: the admin
+listener is plain HTTP, so a login puts a password on the wire; a login endpoint without
+rate limiting is a password oracle, and now it is a reachable one; and identity is only
+worth having if what each identity did is written down.
