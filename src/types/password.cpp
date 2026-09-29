@@ -138,13 +138,25 @@ bool Password::verify(const std::string& password, const std::string& stored) {
   std::vector<unsigned char> salt;
   std::vector<unsigned char> expected;
   if (!base64_decode(parts[2], salt) || !base64_decode(parts[3], expected)) return false;
-  if (salt.empty() || expected.empty()) return false;
+  if (salt.empty()) return false;
+
+  // Exactly the length this code writes, and derive to that length rather than to the
+  // stored one. PBKDF2 to a shorter length is a *prefix* of the output for a longer one -
+  // that is the construction, not a quirk of OpenSSL - so deriving to the stored hash's own
+  // length compares only as many bytes as the record happens to carry. A hash truncated to
+  // one byte was then matched by about one password in 256.
+  //
+  // A row gets truncated by a partial write, a corrupted value, a migration, or by somebody
+  // with write access to the datastore who cannot read the hash but can shorten it. The
+  // last is the one that matters: it turns write access into a login, quietly, leaving a
+  // record that still parses.
+  if (expected.size() != kHashBytes) return false;
 
   std::vector<unsigned char> derived;
-  if (!derive(password, salt, iterations, expected.size(), derived)) return false;
+  if (!derive(password, salt, iterations, kHashBytes, derived)) return false;
 
   // Constant time, so the comparison says nothing about how much of the hash matched.
-  return CRYPTO_memcmp(derived.data(), expected.data(), expected.size()) == 0;
+  return CRYPTO_memcmp(derived.data(), expected.data(), kHashBytes) == 0;
 }
 
 }  // namespace athenasip::types
