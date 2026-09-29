@@ -12,6 +12,7 @@
 
 #include "../loggers/logger_scoped.h"
 #include "../types/sip_identity.h"
+#include "../types/turn_credential.h"
 #include "../util.h"
 #include "api_json.h"
 
@@ -100,6 +101,10 @@ void ProvisioningAPI::register_routes(Router& router) {
   // Where a subscriber is registered is what a client needs to show a presence list, and
   // it provisions nothing, so it reads rather than manages.
   router.add(http::verb::get, "/api/v1/registrations", {view_cluster_status}, [self](RouteContext c) { self->_registration_list(std::move(c)); });
+
+  // The same role as /nodes, and for the same reason: it is what a client reads to learn
+  // how to reach the realm, and it says nothing about who is on it.
+  router.add(http::verb::get, "/api/v1/client/config", {view_cluster_status}, [self](RouteContext c) { self->_client_config(std::move(c)); });
 }
 
 // Realms
@@ -494,6 +499,56 @@ void ProvisioningAPI::_health(RouteContext context) {
   health["datastore"] = _datastore->describe();
 
   write_json(context.response, _datastore->is_connected() ? http::status::ok : http::status::service_unavailable, health);
+  context.done();
+}
+
+void ProvisioningAPI::_client_config(RouteContext context) {
+  boost::json::object out;
+
+  // Every transport this node serves, the same list /nodes gives. A browser takes the wss
+  // entry and ignores the rest; something else on the page may want the others.
+  out["transports"] = _local_transports();
+
+  // The one a browser can actually use, pulled out so a client does not have to know that
+  // "wss" is the answer. Absent rather than empty when there is no secure WebSocket
+  // listener, because a browser being handed ws:// from an https page cannot use it and
+  // should be told there is nothing rather than given something that will not work.
+  for (const auto& transport : _local_transports()) {
+    if (transport.at("transport").as_string() == "wss") {
+      out["websocket_uri"] =
+          "wss://" + std::string(transport.at("address").as_string()) + ":" + std::to_string(transport.at("port").to_number<std::uint64_t>());
+      break;
+    }
+  }
+
+  // Shaped as RTCIceServer, so a browser can hand this to RTCPeerConnection unchanged.
+  // Credentials are minted per request and expire on their own; a stun: URL gets none,
+  // because STUN has nothing to authenticate to.
+  boost::json::array ice;
+  const auto now = std::time(nullptr);
+
+  for (const auto& server : _config->ice_servers) {
+    boost::json::object entry;
+    entry["urls"] = server.url;
+
+    const bool needs_credential = server.url.rfind("turn:", 0) == 0 || server.url.rfind("turns:", 0) == 0;
+
+    if (needs_credential) {
+      const auto credential = types::TurnCredential::issue(_config->turn_shared_secret, context.caller.describe(), now, _config->turn_credential_ttl);
+
+      if (!credential.username.empty()) {
+        entry["username"] = credential.username;
+        entry["credential"] = credential.password;
+        entry["expires_at"] = static_cast<std::int64_t>(credential.expires_at);
+      }
+    }
+
+    ice.push_back(std::move(entry));
+  }
+
+  out["ice_servers"] = std::move(ice);
+
+  write_json(context.response, http::status::ok, out);
   context.done();
 }
 

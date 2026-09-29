@@ -82,10 +82,10 @@ export ATHENA_API_PORT="${ATHENA_API_PORT:-8080}"
 # rtpengine's address on the compose network, fixed so the node can be configured with it
 # rather than with a name that would not resolve if the engine ever moved off this bridge.
 export ATHENA_RTPENGINE_ADDRESS="${ATHENA_RTPENGINE_ADDRESS:-172.33.0.30}"
-export ATHENA_RTP_MIN="${ATHENA_RTP_MIN:-23000}"
-export ATHENA_RTP_MAX="${ATHENA_RTP_MAX:-23050}"
-export ATHENA_TURN_MIN="${ATHENA_TURN_MIN:-24000}"
-export ATHENA_TURN_MAX="${ATHENA_TURN_MAX:-24050}"
+export ATHENA_RTP_MIN="${ATHENA_RTP_MIN:-25000}"
+export ATHENA_RTP_MAX="${ATHENA_RTP_MAX:-25050}"
+export ATHENA_TURN_MIN="${ATHENA_TURN_MIN:-25100}"
+export ATHENA_TURN_MAX="${ATHENA_TURN_MAX:-25150}"
 
 ADMIN_TOKEN="change-me-admin"
 API="http://127.0.0.1:${ATHENA_API_PORT}/api/v1"

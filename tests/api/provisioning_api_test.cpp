@@ -427,3 +427,94 @@ TEST(ProvisioningApiTest, ABodyThatIsNotJsonIsRefused) {
   EXPECT_EQ(response.status, 400u);
   EXPECT_EQ(response.json().at("error").at("code").as_string(), "invalid_json");
 }
+
+// --- GET /client/config ---
+
+// A browser cannot be configured by hand and reads no YAML file, so everything it needs
+// to place a call has to be fetchable over the API it is already speaking.
+TEST(ProvisioningApiTest, ClientConfigSaysWhereToSignalAndWhatToUseForIce) {
+  ApiFixture f;
+  f.config->websocket_enable = true;
+  f.config->websocket_address = "0.0.0.0";
+  f.config->websocket_port = 9443;
+  f.config->websocket_tls = true;
+  f.config->ice_servers = {{"stun:stun.example.com:3478"}, {"turn:turn.example.com:3478"}};
+  f.config->turn_shared_secret = "a shared secret";
+  f.config->turn_credential_ttl = 600;
+
+  auto response = f.get("/api/v1/client/config", "client-token");
+  ASSERT_EQ(response.status, 200u);
+
+  const auto body = response.json();
+
+  // Pulled out so a client does not have to know that "wss" is the answer.
+  EXPECT_EQ(body.at("websocket_uri").as_string(), "wss://203.0.113.5:9443");
+
+  const auto ice = body.at("ice_servers").as_array();
+  ASSERT_EQ(ice.size(), 2u);
+
+  // STUN has nothing to authenticate to, so it is given nothing.
+  EXPECT_EQ(ice.at(0).at("urls").as_string(), "stun:stun.example.com:3478");
+  EXPECT_EQ(ice.at(0).as_object().find("username"), ice.at(0).as_object().end());
+
+  // TURN gets a credential that expires on its own.
+  EXPECT_EQ(ice.at(1).at("urls").as_string(), "turn:turn.example.com:3478");
+  EXPECT_FALSE(ice.at(1).at("username").as_string().empty());
+  EXPECT_FALSE(ice.at(1).at("credential").as_string().empty());
+  EXPECT_GT(ice.at(1).at("expires_at").as_int64(), std::time(nullptr));
+}
+
+TEST(ProvisioningApiTest, ClientConfigMintsAFreshCredentialEachTime) {
+  ApiFixture f;
+  f.config->ice_servers = {{"turn:turn.example.com:3478"}};
+  f.config->turn_shared_secret = "a shared secret";
+  f.config->turn_credential_ttl = 600;
+
+  const auto first = f.get("/api/v1/client/config", "client-token").json();
+
+  // The expiry is what the username is, so two requests a second apart give two
+  // credentials. What matters is that each one is good from when it was asked for rather
+  // than from when the node started.
+  const auto username = std::string(first.at("ice_servers").at(0).at("username").as_string());
+  EXPECT_EQ(username, std::to_string(first.at("ice_servers").at(0).at("expires_at").as_int64()) + ":a configuration token");
+}
+
+TEST(ProvisioningApiTest, ClientConfigWithNoTurnSecretHandsOutNoCredential) {
+  ApiFixture f;
+  f.config->ice_servers = {{"turn:turn.example.com:3478"}};
+
+  auto response = f.get("/api/v1/client/config", "client-token");
+  ASSERT_EQ(response.status, 200u);
+
+  // The URL is still reported, because it is what the operator configured and hiding it
+  // would be lying about the deployment. A credential that could not work is not.
+  const auto server = response.json().at("ice_servers").at(0).as_object();
+  EXPECT_EQ(server.at("urls").as_string(), "turn:turn.example.com:3478");
+  EXPECT_EQ(server.find("username"), server.end());
+}
+
+TEST(ProvisioningApiTest, ClientConfigOffersNoWebsocketUriWhenThereIsNoSecureListener) {
+  ApiFixture f;
+  f.config->websocket_enable = true;
+  f.config->websocket_address = "0.0.0.0";
+  f.config->websocket_port = 9500;
+  f.config->websocket_tls = false;
+
+  auto response = f.get("/api/v1/client/config", "client-token");
+  ASSERT_EQ(response.status, 200u);
+
+  // A page served over https cannot open ws://, so a browser handed one would fail later
+  // and further away than being told there is nothing.
+  const auto body = response.json().as_object();
+  EXPECT_EQ(body.find("websocket_uri"), body.end());
+
+  // The listener is still in the transport list, because something that is not a browser
+  // may want it.
+  EXPECT_EQ(body.at("transports").as_array().at(0).at("transport").as_string(), "udp");
+}
+
+TEST(ProvisioningApiTest, ClientConfigNeedsACredentialLikeEverythingElse) {
+  ApiFixture f;
+
+  EXPECT_EQ(f.get("/api/v1/client/config", "").status, 401u);
+}

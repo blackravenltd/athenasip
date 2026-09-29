@@ -98,6 +98,23 @@ http:
     session_lifetime: 43200
     session_idle: 3600
 
+    # What a web client is told to use for ICE, served by GET /api/v1/client/config. A
+    # browser reads no configuration file, so this is how it learns about the coturn in
+    # this stack.
+    #
+    # The address is the host's, rendered by up.sh, because a container address is no use
+    # to a browser.
+    ice_servers:
+      - url: "stun:@PUBLIC_ADDRESS@:3478"
+      - url: "turn:@PUBLIC_ADDRESS@:3478"
+
+    # The same secret coturn is given in docker/turnserver.conf. The two never talk: the
+    # node mints a credential under it and coturn recomputes the same HMAC to check one.
+    # Change both together, and change them before this is reachable from anywhere you do
+    # not control.
+    turn_shared_secret: "change-me-turn-secret"
+    turn_credential_ttl: 3600
+
   # The admin console, which lives in its own repository and is mounted here when it has
   # been built. Nothing is served when it has not, and the API is unaffected either way.
   files:

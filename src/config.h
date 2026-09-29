@@ -229,6 +229,33 @@ class Config {
   std::uint32_t http_api_session_lifetime = 12 * 60 * 60;
   std::uint32_t http_api_session_idle = 60 * 60;
 
+  // What a web client is told to use for ICE, served by `GET /api/v1/client/config`.
+  //
+  // A browser cannot be configured by hand and cannot read a YAML file, so everything it
+  // needs to place a call has to be fetched. Nothing here changes what this node does with
+  // media: it is what the client is told, and the client is what acts on it.
+  struct IceServer {
+    // stun:host:port or turn:host:port, as RFC 7064 and 7065 write them. A turn: URL gets
+    // credentials; a stun: one needs none and is given none.
+    std::string url;
+  };
+
+  std::vector<IceServer> ice_servers;
+
+  // The coturn shared-secret scheme (its `use-auth-secret` / `static-auth-secret`): the
+  // username is an expiry, the password is an HMAC of it under a secret this node and the
+  // TURN server both hold. It means a client can be handed a credential that stops working
+  // on its own, without the TURN server knowing anything about users.
+  //
+  // Empty turns TURN credentials off, and then a turn: URL is served without them - which
+  // is useless to a browser and is said out loud at startup rather than quietly.
+  std::string turn_shared_secret;
+
+  // How long a credential this node mints is good for. Long enough to place a call and
+  // for that call to run; short enough that one copied out of a page is not a permanent
+  // relay for whoever took it.
+  std::uint32_t turn_credential_ttl = 3600;
+
   // Loads configuration from a YAML file.
   bool load_from_yaml(const std::string& filename);
 

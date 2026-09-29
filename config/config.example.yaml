@@ -276,6 +276,30 @@ http:
     session_lifetime: 43200
     session_idle: 3600
 
+    # What a web client is told to use for ICE, served by GET /api/v1/client/config. A
+    # browser cannot be configured by hand and reads no file, so this is how it learns
+    # where the STUN and TURN servers are. Nothing here changes what this node does with
+    # media: it is what the client is handed, and the client is what acts on it.
+    #
+    # Empty by default, because a deployment with no TURN server should not tell clients
+    # there is one.
+    # ice_servers:
+    #   - url: "stun:stun.example.com:3478"
+    #   - url: "turn:turn.example.com:3478"
+
+    # The coturn shared-secret scheme (its use-auth-secret / static-auth-secret). The node
+    # and the TURN server never talk: the node mints a credential under this secret and
+    # the TURN server recomputes the same HMAC to check one, so it needs no user database.
+    # Empty means TURN credentials are not issued, and a turn: URL above would then be
+    # served without one - which a browser cannot use, and which is warned about at
+    # startup rather than left to fail during a call.
+    # turn_shared_secret: ""
+
+    # How long a credential this node mints is good for, in seconds. Long enough to place
+    # a call and for that call to run; short enough that one copied out of a page is not a
+    # permanent relay for whoever took it.
+    turn_credential_ttl: 3600
+
   # Static files, served from the same listener as the API. The API is routed first, so
   # /api/v1 always wins and this never shadows it.
   files:

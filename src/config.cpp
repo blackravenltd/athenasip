@@ -365,6 +365,50 @@ bool Config::load_from_yaml(const std::string& filename) {
         _logger->warn("'http.api.session_idle' is longer than 'http.api.session_lifetime', so nothing will ever expire on idle");
       }
 
+      // What a web client is told to use for ICE. Nothing here changes what this node
+      // does with media; it is what the client is handed and the client is what acts on it.
+      YAML::Node ice = http_api["ice_servers"];
+      if (ice && ice.IsSequence()) {
+        for (const auto& entry : ice) {
+          IceServer server;
+
+          if (entry.IsScalar())
+            server.url = entry.as<std::string>();
+          else if (entry["url"])
+            server.url = entry["url"].as<std::string>();
+
+          if (server.url.empty()) {
+            _logger->error("Ignoring an 'http.api.ice_servers' entry with no url");
+            continue;
+          }
+
+          ice_servers.push_back(std::move(server));
+        }
+      }
+
+      if (http_api["turn_shared_secret"]) turn_shared_secret = http_api["turn_shared_secret"].as<std::string>();
+
+      try {
+        if (http_api["turn_credential_ttl"]) turn_credential_ttl = http_api["turn_credential_ttl"].as<std::uint32_t>();
+      } catch (const std::exception& e) {
+        _logger->error("Invalid value for 'http.api.turn_credential_ttl': " + std::string(e.what()));
+        return false;
+      }
+
+      if (turn_credential_ttl == 0) {
+        _logger->error("'http.api.turn_credential_ttl' cannot be zero: a credential that has already expired is not one a client can use");
+        return false;
+      }
+
+      // Said out loud, because the failure is silent otherwise: a browser handed a turn:
+      // URL with no credential cannot use it, and the call fails later and further away.
+      const auto wants_turn = std::any_of(ice_servers.begin(), ice_servers.end(),
+                                          [](const IceServer& server) { return server.url.rfind("turn:", 0) == 0 || server.url.rfind("turns:", 0) == 0; });
+
+      if (wants_turn && turn_shared_secret.empty()) {
+        _logger->warn("'http.api.ice_servers' names a TURN server with no 'http.api.turn_shared_secret', so clients get a URL they cannot authenticate to");
+      }
+
       if (http_api_enable && http_api_tokens.empty()) {
         _logger->warn("http.api.enable is set with no tokens: every request will be refused");
       }
