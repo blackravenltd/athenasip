@@ -432,8 +432,10 @@ administer is not one anybody will adopt, and because deploying it is what found
 bugs that no test had. What has landed is in `COMPLETED.md` under Milestone 5: the CMake
 install and the systemd unit, the command line and the configuration search path, the
 heartbeat and its will, SPA mode as a choice, the node on `corvus-fi-1`, and both
-datastores holding users and sessions. Milestone 4, the second node, is still ahead of
-everything left here except the authentication item, which the console is blocked on.
+datastores holding users and sessions, and now the whole of admin authentication - the
+six steps from session issue to the OpenAPI document, recorded under "Admin
+authentication, the API half". Milestone 4, the second node, is ahead of everything left
+here.
 
 - [ ] `docker-compose.yml`: athenasip, redis, mosquitto, rtpengine, coturn, seeded
       realm and two accounts, admin UI on 8080, WSS on 9443, TLS on 5061.
@@ -441,111 +443,6 @@ everything left here except the authentication item, which the console is blocke
       configuration search path are done. What is left is `--print-config` for the
       effective values after the file, the environment and the defaults have been
       resolved.
-- [ ] **Authentication for the API**, specified in full in `docs/authentication.md`
-      and started. Read that document first; this is only the state of the work.
-
-      **Landed, and recorded in full in `COMPLETED.md`:** the three types and the
-      contract (`f2b1552`), then both drivers implementing the nine user and session
-      operations (`dbbf203`, `4790bc0`, `c2cf031`). `memory://` and `redis://` answer
-      identically, which is the point: the deployed node runs on `redis://`.
-
-      Then session issue and lookup, `api::Sessions` (`src/api/sessions.h`), which is
-      step 1 below: a login to a token and a token back to the user that holds it, with
-      `http.api.session_lifetime` and `http.api.session_idle` in the schema. It is the
-      whole of what the datastore contract deliberately does not know - the token, its
-      hash, the idle rule, and the clock that makes the idle rule testable.
-
-      Then the three auth routes, `api::AuthAPI` (`src/api/auth_api.h`), which is step 2:
-      `/auth/login`, `/auth/logout` and `/session`, wired in `main.cpp` so a deployed node
-      answers them. `docs/authentication.md` carries the status codes and why three of
-      them are what they are. One contract behaviour changed to make the logout honest:
-      `Datastore::session_delete` now succeeds for a hash it was not holding, on both
-      drivers, because a 404 on a route anybody can reach is a way to ask whether a token
-      is real. It is written at the declaration and in `docs/plugins.md`, and
-      `API_VERSION` is not bumped, because the shape did not change.
-
-      Four of those decisions constrain what is left, so they are here rather than only
-      in the record:
-
-      - **Idle expiry is the caller's, absolute expiry is the store's.** The store prunes
-        on `expires_at` because it is written on the record; nothing in either driver
-        knows the idle timeout. Step 1 is what has to ask `Session::has_expired`, and is
-        what moves `last_seen_at` by writing the session again - there is no
-        `session_update`, and does not need to be.
-      - **"Nothing to revoke" is success**, which is what makes the revoke route a 204
-        for a user who has never logged in. The 404 for an unknown user is step 4's, and
-        belongs to the handler.
-      - **A read hands back a copy.** Change a user and write it back, or the change is
-        lost. This is deliberate and tested on both drivers.
-      - **An unknown role is carried, not dropped.** Validating what may be granted is
-        step 4's job, on the way in, because that is the only place it can be done.
-
-      **Next, in this order:**
-      1. ~~Session issue and lookup.~~ Done, above. Two calls it made that the steps
-         after it inherit: the clock is injectable in `api::Sessions` and stays the real
-         one in the drivers, because the only thing a driver does with the time is prune
-         on an expiry the test chose; and the idle window is rewritten once per tenth of
-         itself rather than on every lookup, so an authenticated request is a read and
-         not a write. What it does not do is equalise the time a refused login takes - an
-         unknown user costs nothing where a wrong password costs a PBKDF2 - which is the
-         small end of the rate-limiting problem already recorded as unsolved.
-      2. ~~`POST /api/v1/auth/login`, `POST /api/v1/auth/logout`,
-         `GET /api/v1/session`.~~ Done, above. `/auth/login` no longer answers 404, which
-         is what `athenasip-admin` was waiting on - but the node on `corvus-fi-1` has no
-         users yet and nothing can create one until step 4 or step 5, so what the console
-         gets today is an honest 401. The config token it is using keeps working and
-         `GET /session` now tells it so, with `{"kind":"token"}` and every role. Telling
-         the console it can deploy against this wants the first user, so it waits on
-         step 5 - or on step 4, whichever lands first, since a config token may create a
-         user through the API.
-      3. ~~Roles on the routes.~~ Done. `Router::add` takes a set of roles, any of which
-         admits, and `BearerAuth::resolve` turns either kind of credential into a set of
-         them. Four things it settled that the steps after it inherit:
-
-         - The router's authorisation step is **asynchronous**, because resolving a
-           session token is a datastore round trip. Everything a handler needs is copied
-           out of the request into the `RouteContext` before that happens, since the
-           request object does not outlive the lookup.
-         - `RouteContext::caller` carries who is calling, resolved once. Step 4 needs it
-           for the rules about what a user may do to itself, and `GET /session` now
-           describes it rather than resolving a second time.
-         - An **empty role set means any authenticated caller, not a public route**. A
-           route open to anyone says so with `add_open`. The old `public_scope` was an
-           empty string, so a route that forgot to name its scope was open to the world;
-           now forgetting gives you "must be logged in and may do nothing".
-         - A configuration token resolves without the datastore and is tried first, so it
-           is still the way back in when the store is down; a store that cannot be asked
-           is a 503 rather than a 401.
-
-         No deployment loses access: `admin` maps to every role and `client` to
-         `view-cluster-status`, which is exactly the two routes it reached before.
-      4. ~~`GET/POST/PUT/DELETE /api/v1/users`, `POST /users/{u}/password`,
-         `DELETE /users/{u}/sessions`.~~ Done, in `api::UsersAPI`
-         (`src/api/users_api.h`), and with it the bootstrap the console was blocked on:
-         a fresh node has no users, the configuration token creates the first, and that
-         user creates the rest. `docs/authentication.md` has the rules; the three that
-         were decisions rather than transcription are that a user cannot delete itself
-         (not only disable itself, or the rule would be decorative), that changing a
-         password revokes every session that user held including the caller's own, and
-         that the PBKDF2 iteration count is a constructor parameter rather than
-         configuration.
-      5. ~~`athenasip --add-user`, so recovery does not need the API to be reachable.~~
-         Done, in `cli::add_user` (`src/cli_add_user.h`), reachable as
-         `athenasip --add-user NAME [--role R]... [--display-name N]`. It connects the
-         datastore, writes the user and exits, touching no listener, no bus and no Core,
-         so it is safe to run against a node that is already serving. With no `--role` it
-         grants `manage-admin-users`, because a recovery account that cannot administer
-         anybody is not a way back in. The password is read from the terminal with the
-         echo off, or from standard input when that is not a terminal; there is
-         deliberately no option that takes one, because every process on the host can read
-         a command line.
-
-         Two things it settled. "Already there" is found by asking the store rather than
-         by reading the failure message: the contract says create refuses an existing
-         username but not what a driver calls that, and Redis says "already exists" where
-         the memory driver says "user_create failed". And an administrative command runs
-         the logger at WARN with no banner, because it is a person asking a question at a
-         prompt, usually mid-incident, and the answer is the whole output.
 - [ ] Boost.Redis logs to the console itself rather than through this node's logger, so
       its connection chatter appears in the log without a level, a scope or the node's
       format, and shows up in the output of `athenasip --add-user` where the whole point
@@ -553,29 +450,6 @@ everything left here except the authentication item, which the console is blocke
       and it wants doing once for the node rather than specially for the command. Small,
       and it is the only place in the tree where something below the API writes to the
       console without going through `LoggerScoped`.
-      6. ~~The OpenAPI document, which `athenasip-admin` runs a contract test against.~~
-         Done. `docs/api/openapi.yaml` now carries `/auth/login`, `/auth/logout`,
-         `/session` and the five `/users` routes, and says roles rather than scopes
-         throughout. Every operation gained an `operationId`, because the console
-         generates its client from this and without one the method names come out of the
-         paths. Checked three ways: it lints clean, every documented field matches what a
-         live node emits, and every documented status code was walked against one - which
-         is how a wrong sentence about `old_password` was caught before the console built
-         on it.
-
-      **Agreed with the console** (it is building against this now): `expires_at` in
-      Unix seconds; `GET /realms` admits `manage-realms` or
-      `manage-realm-subscribers`, because anyone placing a subscriber has to discover
-      which realms exist; `GET /session` answers 200 for a config token with
-      `{"kind":"token"}` and for a user with `{"kind":"user"}`; a user with no roles
-      may log in and is told it has none; disabled and wrong-password are both 401
-      with the same body; 429 with `Retry-After` when rate limited; 409 on a taken
-      username. A user cannot disable itself or remove its own `manage-admin-users`.
-
-      **Not solved by any of the above**, and recorded at the end of the document: the
-      admin listener is plain HTTP, so a login puts a password on the wire; a login
-      endpoint without rate limiting is a password oracle; and identity is only worth
-      having if what each identity did is written down.
 - [ ] Admin API, part 2, the live registries: `/api/v1/calls` (live and history,
       hangup), `/api/v1/media` (engines, health), `/api/v1/events` (SSE stream bridging
       `nodes/#`, `account/#`, `calls/#`). These read Core's own state and need
