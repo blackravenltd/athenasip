@@ -1,9 +1,31 @@
 # AthenaSIP - Configuration
 
-AthenaSIP uses a YAML configuration file. The server will search, in order:
+AthenaSIP uses a YAML configuration file. With no `--config`, the first of these that
+exists is read:
 
-1. ~/.athenasip/config.yaml
-2. /usr/etc/athenasip/config.yaml
+1. `$ATHENASIP_CONFIG`
+2. `/etc/athenasip/config.yaml`
+3. `~/.athenasip/config.yaml`
+
+In that order on purpose: what the command line was told beats the environment, the
+environment beats the system path a package installs to, and a home directory is last
+because it is a person's checkout rather than a service.
+
+## What this node is actually running on
+
+Most of what decides a node's behaviour is a default nobody wrote down, so reading the
+file answers a different question from reading the node:
+
+```
+athenasip --print-config
+```
+
+That prints the effective values - the file, the search path and the defaults all
+resolved - as YAML, says which file it came from, and exits without starting a listener or
+constructing a driver. API tokens are redacted, because the output ends up in issues and
+in terminal scrollback; their scopes are not, because "is the token I configured the one
+it read, and what may it do" is the question being asked. A plugin's own section is copied
+through rather than interpreted, since only the plugin knows what it means.
 
 ## Configuration
 

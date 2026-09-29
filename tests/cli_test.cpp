@@ -105,3 +105,15 @@ TEST(CliTest, TheUsageSaysHowThePasswordIsRead) {
   EXPECT_NE(usage.find("manage-admin-users"), std::string::npos);
   EXPECT_NE(usage.find("standard input"), std::string::npos);
 }
+
+TEST(CliTest, TheEffectiveConfigurationCanBeAskedFor) {
+  EXPECT_TRUE(parse_of({"--print-config"}).print_config);
+  EXPECT_FALSE(parse_of({"--print-config"}).version);
+
+  // It needs a configuration to resolve, so it goes with --config rather than instead
+  // of it.
+  const auto options = parse_of({"--config", "/etc/athenasip/config.yaml", "--print-config"});
+  ASSERT_TRUE(options.ok);
+  EXPECT_TRUE(options.print_config);
+  EXPECT_EQ(options.config, "/etc/athenasip/config.yaml");
+}

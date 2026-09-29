@@ -160,7 +160,7 @@ int main(int argc, char* argv[]) {
   // An administrative command is a person asking a question at a prompt, often in the
   // middle of an incident, and the answer is the whole output. A node starting up is a
   // service whose log is the record of what it did, so it stays at DEBUG.
-  const auto administering = !options.add_user.empty();
+  const auto administering = !options.add_user.empty() || options.print_config;
 
   auto logger = std::make_shared<loggers::LoggerStdIO>(administering ? LogLevel::WARN : LogLevel::DEBUG);
 
@@ -204,6 +204,19 @@ int main(int argc, char* argv[]) {
   if (!config->load_from_yaml(config_path)) {
     logger->error("Cannot load configuration from " + config_path.string());
     return -1;
+  }
+
+  // Answered here rather than earlier, because the whole question is what the file, the
+  // search path and the defaults came to between them - which is not known until the file
+  // has been read. Nothing is started and no driver is constructed: a node that cannot
+  // reach its datastore must still be able to tell you why it is trying to reach that one.
+  if (options.print_config) {
+    std::cout << "# AthenaSIP " << version->to_string() << " effective configuration\n";
+    std::cout << "# from " << config_path.string() << ", with defaults resolved\n";
+    std::cout << "#\n";
+    std::cout << "# API tokens are redacted. Everything else is what this node would run on.\n";
+    std::cout << config->effective_yaml() << "\n";
+    return 0;
   }
 
   // Create Datastore

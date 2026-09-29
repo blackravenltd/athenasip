@@ -453,10 +453,19 @@ here.
       configuration and no `GET /api/v1/client/config` to serve one from - that is the
       Milestone 3 item - so a browser is configured with the shared secret by hand today.
       The secret is in the file the endpoint will read when it exists.
-- [ ] Command line, the rest of it. `--version`, `--config <path>`, `--help` and the
-      configuration search path are done. What is left is `--print-config` for the
-      effective values after the file, the environment and the defaults have been
-      resolved.
+- [x] Command line, the rest of it. `--print-config` prints the effective values as
+      YAML - the file, the search path and the defaults resolved - says which file it came
+      from, and exits without starting a listener or constructing a driver, so a node that
+      cannot reach its datastore can still say which one it was trying to reach. Tokens are
+      redacted and their scopes are not. A plugin's own section is copied through rather
+      than interpreted, which is what caught the one bug in it: `events.status_interval` is
+      a field the server parses, so emitting it from the field and again from the document
+      put the key in twice, and there is a test that counts it now.
+
+      `docs/configuration.md` had the search path wrong - it listed
+      `~/.athenasip/config.yaml` first and `/usr/etc/athenasip/config.yaml`, neither of
+      which is what the code does - and now says the four places in the order they are
+      tried and why.
 - [ ] Boost.Redis logs to the console itself rather than through this node's logger, so
       its connection chatter appears in the log without a level, a scope or the node's
       format, and shows up in the output of `athenasip --add-user` where the whole point
