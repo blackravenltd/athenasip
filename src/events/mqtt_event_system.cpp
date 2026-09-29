@@ -158,8 +158,19 @@ void MQTTEventSystem::connect(plugins::Executor on, plugins::StatusHandler handl
     return _complete(std::move(on), std::move(handler), plugins::Status::failure("Failed to start MQTT thread: unknown exception"));
   }
 
-  boost::asio::dispatch(_mqtt_strand, [this, self]() {
-    _client.async_run([this, self](mqtt::error_code ec) {
+  // This run's identity, taken after the previous thread has been joined and before
+  // anything is registered against it.
+  const auto generation = _run_generation.fetch_add(1) + 1;
+
+  boost::asio::dispatch(_mqtt_strand, [this, self, generation]() {
+    _client.async_run([this, self, generation](mqtt::error_code ec) {
+      // A completion from a run that is over, arriving while a new one is starting. Without
+      // this it would pass the _connected check - connect() sets that true before it joins
+      // the old thread - and then tear down the new run's work guard and subscriptions.
+      if (generation != _run_generation.load()) {
+        return;
+      }
+
       if (!_connected.load()) {
         return;
       }
