@@ -4,6 +4,9 @@
 // Copyright (C) 2026 Tom Cully <mail@tomcully.com>
 // Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 //
+#include <termios.h>
+#include <unistd.h>
+
 #include <boost/asio.hpp>
 #include <boost/asio/signal_set.hpp>
 #include <boost/asio/ssl.hpp>
@@ -23,6 +26,7 @@
 #include "api/users_api.h"
 #include "build_version.h"
 #include "cli.h"
+#include "cli_add_user.h"
 #include "config.h"
 #include "core.h"
 #include "datastores/datastore.h"
@@ -71,6 +75,55 @@ bool configure_plugin(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<p
   return false;
 }
 
+// A password from the terminal, with the echo off so it does not end up in somebody's
+// scrollback, or from standard input when that is not a terminal so a script and the
+// compose file can pipe one in. Never from the command line: every other process on the
+// host can read that.
+std::string read_password(const std::string& prompt, bool confirm) {
+  const auto read_line = [](std::string& out) -> bool { return static_cast<bool>(std::getline(std::cin, out)); };
+
+  if (!::isatty(STDIN_FILENO)) {
+    std::string password;
+    if (!read_line(password)) return {};
+
+    return password;
+  }
+
+  const auto read_quietly = [&](const std::string& shown, std::string& out) -> bool {
+    std::cout << shown << std::flush;
+
+    termios original{};
+    if (::tcgetattr(STDIN_FILENO, &original) != 0) return false;
+
+    termios quiet = original;
+    quiet.c_lflag &= ~static_cast<tcflag_t>(ECHO);
+
+    if (::tcsetattr(STDIN_FILENO, TCSAFLUSH, &quiet) != 0) return false;
+
+    const auto read = read_line(out);
+
+    ::tcsetattr(STDIN_FILENO, TCSAFLUSH, &original);
+    std::cout << "\n";
+
+    return read;
+  };
+
+  std::string password;
+  if (!read_quietly(prompt, password)) return {};
+
+  if (confirm) {
+    std::string again;
+    if (!read_quietly("Again: ", again)) return {};
+
+    if (again != password) {
+      std::cerr << "athenasip: the two passwords are not the same\n";
+      return {};
+    }
+  }
+
+  return password;
+}
+
 void wait_for_signal(boost::asio::signal_set& signals, std::function<void(int)> onsignal) {
   signals.async_wait([&signals, onsignal = std::move(onsignal)](const boost::system::error_code& error, int signal_number) mutable {
     if (!error) {
@@ -103,14 +156,23 @@ int main(int argc, char* argv[]) {
   }
 
   // Create Logger
-  auto logger = std::make_shared<loggers::LoggerStdIO>(LogLevel::DEBUG);
+  //
+  // An administrative command is a person asking a question at a prompt, often in the
+  // middle of an incident, and the answer is the whole output. A node starting up is a
+  // service whose log is the record of what it did, so it stays at DEBUG.
+  const auto administering = !options.add_user.empty();
 
-  // Log Splash
-  auto title = " AthenaSIP v" + version->to_string() + " ";
-  auto lines = std::string(title.size(), '-');
-  logger->raw(lines);
-  logger->raw(title);
-  logger->raw(lines);
+  auto logger = std::make_shared<loggers::LoggerStdIO>(administering ? LogLevel::WARN : LogLevel::DEBUG);
+
+  // Log Splash. Not for an administrative command: raw goes out whatever the level is,
+  // and a banner is not an answer to the question that was asked.
+  if (!administering) {
+    auto title = " AthenaSIP v" + version->to_string() + " ";
+    auto lines = std::string(title.size(), '-');
+    logger->raw(lines);
+    logger->raw(title);
+    logger->raw(lines);
+  }
 
   // Register Datastore Handlers, Event System Handlers
   register_builtin_datastores(logger);
@@ -181,6 +243,38 @@ int main(int argc, char* argv[]) {
     logger->error("Datastore Connection Failed: " + config->db_url + " - " + datastore_connected.error);
     return -3;
   }
+
+  // Administration, and then out. Here rather than earlier because it needs the datastore,
+  // and here rather than later because it must not connect the bus, start a listener or
+  // build a Core: it is meant to be safe to run against a node that is already serving.
+  if (!options.add_user.empty()) {
+    const auto password = read_password("Password for " + options.add_user + ": ", ::isatty(STDIN_FILENO));
+
+    if (password.empty()) {
+      std::cerr << "athenasip: no password given, so no user was created\n";
+      datastore->close();
+      return 2;
+    }
+
+    const auto result =
+        cli::add_user(datastore, athenasip::detail::get_global_io_context().get_executor(), options.add_user, options.display_name, options.roles, password);
+
+    datastore->close();
+
+    if (!result.ok()) {
+      std::cerr << "athenasip: " << result.message << "\n";
+      return result.outcome == cli::AddUserResult::Outcome::taken ? 3 : 1;
+    }
+
+    const auto roles = options.roles.empty() ? cli::default_roles() : options.roles;
+
+    std::cout << "Created " << result.message << " holding";
+    for (const auto& role : roles) std::cout << " " << role;
+    std::cout << "\n";
+
+    return 0;
+  }
+
   // The will, set while the bus is still closed because that is the only time a broker
   // will take one. A node that is killed, loses power or loses its network never gets
   // to publish again, and without this the last retained thing it said would go on

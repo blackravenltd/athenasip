@@ -63,3 +63,45 @@ TEST(CliTest, WhatIsNotUnderstoodIsRefused) {
   EXPECT_FALSE(empty.ok);
   EXPECT_NE(empty.error.find("--config"), std::string::npos);
 }
+
+// --- Creating an administrator without the API ---
+
+TEST(CliTest, AUserToAddCanBeNamedEitherWay) {
+  EXPECT_EQ(parse_of({"--add-user", "tom"}).add_user, "tom");
+  EXPECT_EQ(parse_of({"--add-user=tom"}).add_user, "tom");
+}
+
+TEST(CliTest, RolesAccumulateAndADisplayNameIsOptional) {
+  const auto options = parse_of({"--add-user", "tom", "--role", "manage-realms", "--role=manage-admin-users", "--display-name", "Tom Cully"});
+
+  ASSERT_TRUE(options.ok);
+  EXPECT_EQ(options.display_name, "Tom Cully");
+  ASSERT_EQ(options.roles.size(), 2u);
+  EXPECT_EQ(options.roles[0], "manage-realms");
+  EXPECT_EQ(options.roles[1], "manage-admin-users");
+}
+
+// A password on the command line is readable by every other process on the host, so
+// there is deliberately no option that takes one.
+TEST(CliTest, ThereIsNoWayToPassAPasswordOnTheCommandLine) {
+  EXPECT_FALSE(parse_of({"--add-user", "tom", "--password", "hunter2"}).ok);
+  EXPECT_EQ(parse_of({"--add-user", "tom", "--password", "hunter2"}).error, "unknown option: --password");
+}
+
+TEST(CliTest, AnOptionMissingItsValueIsRefusedRatherThanIgnored) {
+  EXPECT_FALSE(parse_of({"--add-user"}).ok);
+  EXPECT_FALSE(parse_of({"--role"}).ok);
+  EXPECT_FALSE(parse_of({"--add-user="}).ok);
+
+  // A daemon that silently dropped the argument telling it what to do would do something
+  // else instead, which is worse than refusing.
+  EXPECT_NE(parse_of({"--add-user"}).error.find("a username"), std::string::npos);
+}
+
+TEST(CliTest, TheUsageSaysHowThePasswordIsRead) {
+  const auto usage = athenasip::cli::usage();
+
+  EXPECT_NE(usage.find("--add-user"), std::string::npos);
+  EXPECT_NE(usage.find("manage-admin-users"), std::string::npos);
+  EXPECT_NE(usage.find("standard input"), std::string::npos);
+}

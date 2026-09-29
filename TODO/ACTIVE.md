@@ -529,7 +529,30 @@ everything left here except the authentication item, which the console is blocke
          password revokes every session that user held including the caller's own, and
          that the PBKDF2 iteration count is a constructor parameter rather than
          configuration.
-      5. `athenasip --add-user`, so recovery does not need the API to be reachable.
+      5. ~~`athenasip --add-user`, so recovery does not need the API to be reachable.~~
+         Done, in `cli::add_user` (`src/cli_add_user.h`), reachable as
+         `athenasip --add-user NAME [--role R]... [--display-name N]`. It connects the
+         datastore, writes the user and exits, touching no listener, no bus and no Core,
+         so it is safe to run against a node that is already serving. With no `--role` it
+         grants `manage-admin-users`, because a recovery account that cannot administer
+         anybody is not a way back in. The password is read from the terminal with the
+         echo off, or from standard input when that is not a terminal; there is
+         deliberately no option that takes one, because every process on the host can read
+         a command line.
+
+         Two things it settled. "Already there" is found by asking the store rather than
+         by reading the failure message: the contract says create refuses an existing
+         username but not what a driver calls that, and Redis says "already exists" where
+         the memory driver says "user_create failed". And an administrative command runs
+         the logger at WARN with no banner, because it is a person asking a question at a
+         prompt, usually mid-incident, and the answer is the whole output.
+- [ ] Boost.Redis logs to the console itself rather than through this node's logger, so
+      its connection chatter appears in the log without a level, a scope or the node's
+      format, and shows up in the output of `athenasip --add-user` where the whole point
+      is a clean answer. The connection takes a logger; passing ours through is the fix,
+      and it wants doing once for the node rather than specially for the command. Small,
+      and it is the only place in the tree where something below the API writes to the
+      console without going through `LoggerScoped`.
       6. The OpenAPI document, which `athenasip-admin` runs a contract test against.
 
       **Agreed with the console** (it is building against this now): `expires_at` in

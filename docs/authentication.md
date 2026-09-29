@@ -310,6 +310,26 @@ Four rules here are worth knowing before reading the code:
   route cannot be walked to find out who exists. With the role it is a 404, because by then
   the caller is allowed to know.
 
+### Getting back in
+
+Two mechanisms, and between them losing every administrator password is an inconvenience
+rather than a rebuild:
+
+- **The configuration token**, which is how the first user is created on a fresh node and
+  how the API is reached when no user credential works. It lives in a file only root can
+  read and maps to every role.
+- **`athenasip --add-user NAME`**, for when the API itself cannot be reached. It connects
+  the datastore, writes the user and exits, starting no listener and building no Core, so
+  it is safe to run against a node that is already serving. `--role` may be given more
+  than once; without it the new user holds `manage-admin-users`, because a recovery
+  account that cannot administer anybody is not a way back in.
+
+  The password is read from the terminal with the echo off, or from standard input when
+  that is not a terminal so a script can pipe one in. There is deliberately no option that
+  takes a password, because a command line is readable by every other process on the host.
+
+Neither is a way past authentication: both write a normal user that logs in normally.
+
 The PBKDF2 iteration count is a constructor parameter rather than configuration. The count
 is stored with each hash so it can be raised later without invalidating anybody, nothing
 has asked to tune it, and a setting whose wrong value is invisible until somebody steals
