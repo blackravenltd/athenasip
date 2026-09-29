@@ -117,6 +117,13 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
   std::optional<MQTTWorkGuard> _mqtt_work_guard;
   MQTTClient _client;
 
+  // Which run a completion handler belongs to. One mqtt_client is reused across
+  // connect/close cycles, so a handler from a finished run can still be in flight while the
+  // next one is starting - and it cannot tell from _connected alone, because connect() sets
+  // that true before it joins the previous thread. Each run captures this value and a
+  // completion that does not match it is a late arrival from a run that is over.
+  std::atomic<std::uint64_t> _run_generation{0};
+
   std::atomic_bool _connected{false};
   std::thread _mqtt_thread;
 

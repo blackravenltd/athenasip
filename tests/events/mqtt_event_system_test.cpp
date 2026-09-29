@@ -361,3 +361,34 @@ TEST(MqttEventSystemTest, TheNodeTopicSchemeSurvivesTheRoundTrip) {
 
   bus->close();
 }
+
+// One mqtt_client is reused across connect/close cycles, so a completion handler from a
+// finished run can still be in flight while the next run is starting - and connect() sets
+// _connected true before it joins the previous thread, so the handler's own guard does not
+// catch it. It would then reset the new run's work guard and clear its subscriptions.
+//
+// Each run now carries a generation and a late completion identifies itself. This exercises
+// the cycle it happens in; it does not force the interleaving, which would need a hook into
+// the client thread that does not exist. Reported by the Corvus LoRa Bridge session.
+TEST(MqttEventSystemTest, AClosedRunDoesNotTakeTheNextOneDownWithIt) {
+  const auto url = broker_url();
+  if (url.empty()) GTEST_SKIP() << "ATHENA_TEST_MQTT_URL is not set";
+
+  auto logger = std::make_shared<MockLogger>();
+  auto events = std::make_shared<MQTTEventSystem>(logger, std::make_shared<types::URL>(url));
+  auto bus = std::make_shared<SyncEventSystem>(events);
+
+  const auto topic = unique_topic("generation");
+
+  for (int cycle = 0; cycle < 3; ++cycle) {
+    ASSERT_TRUE(bus->connect()) << "cycle " << cycle;
+    EXPECT_TRUE(bus->is_connected()) << "cycle " << cycle;
+
+    // Something that needs this run to still be working: a publish goes through the client
+    // whose work guard a stale completion would have released.
+    EXPECT_TRUE(bus->publish(topic, "still here")) << "cycle " << cycle;
+
+    bus->close();
+    EXPECT_FALSE(bus->is_connected()) << "cycle " << cycle;
+  }
+}
