@@ -20,6 +20,11 @@ struct Options {
   bool version = false;
   bool help = false;
 
+  // Print the values this node would actually run on, and exit. Not the file: the file
+  // is what `cat` is for, and most of what decides a node's behaviour is a default
+  // nobody wrote down.
+  bool print_config = false;
+
   // Create an administrator and exit, without starting a single listener. This is the
   // way back in when the API cannot be reached or every admin password has been lost,
   // so it goes to the datastore and nothing else.
@@ -76,6 +81,8 @@ inline Options parse(int argc, char* argv[]) {
       options.version = true;
     } else if (argument == "--help" || argument == "-h") {
       options.help = true;
+    } else if (argument == "--print-config") {
+      options.print_config = true;
     } else if (takes("--config", "a path", options.config) || takes("-c", "a path", options.config)) {
       // Handled, and any error is already recorded.
     } else if (takes("--add-user", "a username", options.add_user)) {
@@ -97,6 +104,8 @@ inline std::string usage() {
          "  -c, --config PATH     the configuration to read\n"
          "  -v, --version         print the version and exit\n"
          "  -h, --help            print this and exit\n"
+         "  --print-config        print the effective configuration and exit, with the\n"
+         "                        file, the search path and the defaults all resolved\n"
          "\n"
          "Administration, which starts no listeners and exits when it is done:\n"
          "\n"

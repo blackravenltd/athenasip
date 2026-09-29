@@ -8,6 +8,7 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -395,6 +396,132 @@ YAML::Node Config::plugin_root(const std::string& kind, const std::string& name)
   }
 
   return section;
+}
+
+namespace {
+
+// Whatever a plugin put under its kind that is not the URL. Copied through rather than
+// interpreted, because only the driver knows what its own section means - and a
+// --print-config that quietly dropped the half it did not understand would be worse than
+// one that refused to print at all.
+void emit_plugin_sections(YAML::Emitter& out, const YAML::Node& root, const std::string& kind, const std::vector<std::string>& mine) {
+  if (!root || !root[kind] || !root[kind].IsMap()) return;
+
+  for (const auto& entry : root[kind]) {
+    const auto name = entry.first.as<std::string>();
+
+    // Anything the server parses for itself has already been emitted from the field it
+    // was parsed into, which is the effective value; emitting it again from the document
+    // would put the key in twice and give a reader two answers.
+    if (std::find(mine.begin(), mine.end(), name) != mine.end()) continue;
+
+    out << YAML::Key << name << YAML::Value << entry.second;
+  }
+}
+
+}  // namespace
+
+std::string Config::effective_yaml() const {
+  YAML::Emitter out;
+
+  out << YAML::BeginMap;
+
+  out << YAML::Key << "sip" << YAML::Value << YAML::BeginMap;
+  out << YAML::Key << "node_id" << YAML::Value << sip_node_id;
+  out << YAML::Key << "public_address" << YAML::Value << sip_public_address;
+  out << YAML::Key << "allow_unencrypted" << YAML::Value << sip_allow_unencrypted;
+  out << YAML::Key << "log_messages" << YAML::Value << sip_log_messages;
+  out << YAML::Key << "session_expires" << YAML::Value << sip_session_expires;
+  out << YAML::Key << "session_min_se" << YAML::Value << sip_session_min_se;
+  out << YAML::Key << "require_session_timer" << YAML::Value << sip_require_session_timer;
+  out << YAML::Key << "max_call_duration" << YAML::Value << sip_max_call_duration;
+  out << YAML::Key << "media_timeout" << YAML::Value << sip_media_timeout;
+  out << YAML::Key << "connect_timeout_ms" << YAML::Value << sip_connect_timeout_ms;
+
+  // The section 17 timers, which are the ones somebody reading this is most likely to be
+  // checking against the RFC.
+  out << YAML::Key << "timer_t1_rtt_ms" << YAML::Value << sip_timer_t1_rtt_ms;
+  out << YAML::Key << "timer_t2_max_retransmit_interval_ms" << YAML::Value << sip_timer_t2_max_retransmit_interval_ms;
+  out << YAML::Key << "timer_t4_network_propagation_ms" << YAML::Value << sip_timer_t4_network_propagation_ms;
+  out << YAML::Key << "timer_b_invite_timeout" << YAML::Value << sip_timer_b_invite_timeout;
+  out << YAML::Key << "timer_c_invite_proxy_ms" << YAML::Value << sip_timer_c_invite_proxy_ms;
+  out << YAML::Key << "timer_f_non_invite_timeout" << YAML::Value << sip_timer_f_non_invite_timeout;
+  out << YAML::Key << "timer_reliable_transport_retransmits" << YAML::Value << sip_timer_reliable_transport_retransmits;
+  out << YAML::EndMap;
+
+  const auto listener = [&out](const std::string& name, bool enable, const std::string& address, std::uint16_t port) {
+    out << YAML::Key << name << YAML::Value << YAML::BeginMap;
+    out << YAML::Key << "enable" << YAML::Value << enable;
+    out << YAML::Key << "address" << YAML::Value << address;
+    out << YAML::Key << "port" << YAML::Value << port;
+  };
+
+  listener("udp", udp_enable, udp_address, udp_port);
+  out << YAML::EndMap;
+
+  listener("tcp", tcp_enable, tcp_address, tcp_port);
+  out << YAML::EndMap;
+
+  listener("tls", tls_enable, tls_address, tls_port);
+  out << YAML::Key << "cert_pem_filename" << YAML::Value << tls_cert_pem_filename;
+  out << YAML::Key << "key_pem_filename" << YAML::Value << tls_key_pem_filename;
+  out << YAML::EndMap;
+
+  listener("websocket", websocket_enable, websocket_address, websocket_port);
+  out << YAML::Key << "tls" << YAML::Value << websocket_tls;
+  out << YAML::Key << "cert_pem_filename" << YAML::Value << websocket_cert_pem_filename;
+  out << YAML::Key << "key_pem_filename" << YAML::Value << websocket_key_pem_filename;
+  out << YAML::EndMap;
+
+  out << YAML::Key << "datastore" << YAML::Value << YAML::BeginMap;
+  out << YAML::Key << "url" << YAML::Value << db_url;
+  emit_plugin_sections(out, _root, "datastore", {"url"});
+  out << YAML::EndMap;
+
+  out << YAML::Key << "events" << YAML::Value << YAML::BeginMap;
+  out << YAML::Key << "url" << YAML::Value << events_url;
+  out << YAML::Key << "status_interval" << YAML::Value << events_status_interval;
+  emit_plugin_sections(out, _root, "events", {"url", "status_interval"});
+  out << YAML::EndMap;
+
+  out << YAML::Key << "media" << YAML::Value << YAML::BeginMap;
+  out << YAML::Key << "url" << YAML::Value << media_url;
+  emit_plugin_sections(out, _root, "media", {"url"});
+  out << YAML::EndMap;
+
+  out << YAML::Key << "http" << YAML::Value << YAML::BeginMap;
+  out << YAML::Key << "address" << YAML::Value << http_address;
+  out << YAML::Key << "port" << YAML::Value << http_port;
+
+  out << YAML::Key << "api" << YAML::Value << YAML::BeginMap;
+  out << YAML::Key << "enable" << YAML::Value << http_api_enable;
+  out << YAML::Key << "session_lifetime" << YAML::Value << http_api_session_lifetime;
+  out << YAML::Key << "session_idle" << YAML::Value << http_api_session_idle;
+
+  // The scopes, never the token. What an operator needs from this is whether the tokens
+  // they think they configured are the ones the node read, and how many - which the
+  // scopes answer. The value itself is the credential that administers the node, and
+  // this output ends up in issues and in terminal scrollback.
+  out << YAML::Key << "tokens" << YAML::Value << YAML::BeginSeq;
+  for (const auto& token : http_api_tokens) {
+    out << YAML::BeginMap;
+    out << YAML::Key << "token" << YAML::Value << "<redacted>";
+    out << YAML::Key << "scopes" << YAML::Value << YAML::Flow << token.scopes;
+    out << YAML::EndMap;
+  }
+  out << YAML::EndSeq;
+  out << YAML::EndMap;
+
+  out << YAML::Key << "files" << YAML::Value << YAML::BeginMap;
+  out << YAML::Key << "enable" << YAML::Value << http_files_enable;
+  out << YAML::Key << "path" << YAML::Value << http_files_path;
+  out << YAML::Key << "spa" << YAML::Value << http_files_spa;
+  out << YAML::EndMap;
+
+  out << YAML::EndMap;
+  out << YAML::EndMap;
+
+  return std::string(out.c_str());
 }
 
 }  // namespace athenasip

@@ -245,6 +245,18 @@ class Config {
   // three Redis schemes share one section instead of needing three.
   YAML::Node plugin_root(const std::string& kind, const std::string& name) const;
 
+  // Every value this node is actually running on, as YAML, after the file, the search
+  // path and the defaults have all had their say. What `athenasip --print-config` prints.
+  //
+  // It is the fields rather than the document, deliberately: the interesting question is
+  // never "what did I write" - that is what `cat` is for - but "what did it decide", and
+  // most of the answer is defaults nobody wrote down. Plugin sections are carried through
+  // from the document, because only the plugin knows what they mean.
+  //
+  // Secrets are redacted. An operator pasting this into an issue should not be handing
+  // over the credential that administers their node.
+  std::string effective_yaml() const;
+
  private:
   std::shared_ptr<Logger> _logger;
 

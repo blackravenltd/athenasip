@@ -281,6 +281,92 @@ TEST(ConfigTest, ASessionIdleOfZeroTurnsIdleExpiryOff) {
   EXPECT_EQ(config->http_api_session_idle, 0u);
 }
 
+// --- The effective configuration ---
+
+TEST(ConfigTest, TheEffectiveConfigurationCarriesDefaultsNobodyWroteDown) {
+  ConfigFile file(
+      "sip:\n  node_id: test-node\n"
+      "datastore:\n  url: \"redis://127.0.0.1:6379\"\n");
+
+  bool ok = false;
+  auto config = file.load(ok);
+  ASSERT_TRUE(ok);
+
+  const auto effective = config->effective_yaml();
+
+  // What was written.
+  EXPECT_NE(effective.find("node_id: test-node"), std::string::npos);
+  EXPECT_NE(effective.find("redis://127.0.0.1:6379"), std::string::npos);
+
+  // And what was decided, which is the point: the interesting half of what a node runs
+  // on is never in the file.
+  EXPECT_NE(effective.find("session_min_se: 90"), std::string::npos);
+  EXPECT_NE(effective.find("timer_t1_rtt_ms: 500"), std::string::npos);
+  EXPECT_NE(effective.find("url: local://"), std::string::npos);
+}
+
+TEST(ConfigTest, TheEffectiveConfigurationNeverPrintsAToken) {
+  ConfigFile file(
+      "sip:\n  node_id: test-node\n"
+      "http:\n  port: 8080\n  api:\n    enable: true\n"
+      "    tokens:\n      - token: hunter2-do-not-print\n        scopes: [admin]\n");
+
+  bool ok = false;
+  auto config = file.load(ok);
+  ASSERT_TRUE(ok);
+
+  const auto effective = config->effective_yaml();
+
+  // This output goes into issues and into terminal scrollback, and the value is the
+  // credential that administers the node.
+  EXPECT_EQ(effective.find("hunter2-do-not-print"), std::string::npos);
+  EXPECT_NE(effective.find("<redacted>"), std::string::npos);
+
+  // What an operator actually needs from it is still there: that the token was read, and
+  // what it may do.
+  EXPECT_NE(effective.find("admin"), std::string::npos);
+}
+
+// A plugin's own section means nothing to the server, so it is copied through rather than
+// interpreted - and a --print-config that dropped the half it did not understand would be
+// worse than one that refused to print.
+TEST(ConfigTest, TheEffectiveConfigurationCarriesPluginSectionsThrough) {
+  ConfigFile file(
+      "sip:\n  node_id: test-node\n"
+      "media:\n  url: \"rtpengine://127.0.0.1:22222\"\n  rtpengine:\n    timeout_ms: 750\n");
+
+  bool ok = false;
+  auto config = file.load(ok);
+  ASSERT_TRUE(ok);
+
+  const auto effective = config->effective_yaml();
+
+  EXPECT_NE(effective.find("rtpengine:"), std::string::npos);
+  EXPECT_NE(effective.find("timeout_ms: 750"), std::string::npos);
+}
+
+// Carrying a plugin section through means copying what the server did not parse, and
+// events.status_interval is parsed. Emitting it from the field and again from the
+// document put the key in twice and gave a reader two answers.
+TEST(ConfigTest, TheEffectiveConfigurationSaysEachThingOnce) {
+  ConfigFile file(
+      "sip:\n  node_id: test-node\n"
+      "events:\n  url: \"mqtt://127.0.0.1:1883\"\n  status_interval: 45\n  mqtt:\n    keep_alive: 30\n");
+
+  bool ok = false;
+  auto config = file.load(ok);
+  ASSERT_TRUE(ok);
+
+  const auto effective = config->effective_yaml();
+
+  std::size_t found = 0;
+  for (std::size_t at = effective.find("status_interval"); at != std::string::npos; at = effective.find("status_interval", at + 1)) ++found;
+
+  EXPECT_EQ(found, 1u);
+  EXPECT_NE(effective.find("status_interval: 45"), std::string::npos);
+  EXPECT_NE(effective.find("keep_alive: 30"), std::string::npos);
+}
+
 // The configuration this project ships as its example has to be one the node accepts.
 // It is the first thing anybody copies, and every setting in it is written as its own
 // default, so a key that has been renamed or removed shows up here rather than in
