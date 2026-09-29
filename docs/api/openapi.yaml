@@ -223,6 +223,43 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /client/config:
+    get:
+      tags: [status]
+      operationId: getClientConfig
+      summary: Everything a web client needs that it cannot be told by hand
+      description: |
+        A browser reads no configuration file and cannot be given one, so what it needs to
+        place a call is fetched over the API it is already speaking: where to signal, and
+        what to use for ICE.
+
+        `websocket_uri` is the secure WebSocket listener, pulled out of `transports` so a
+        client does not have to know that `wss` is the answer. It is **absent** when this
+        node has no secure WebSocket listener, because a page served over https cannot open
+        `ws://` and a browser handed one would fail later and further away.
+
+        `ice_servers` is shaped as `RTCIceServer`, so it can be handed to
+        `RTCPeerConnection` unchanged. A `turn:` entry carries a credential minted for this
+        request under the coturn shared-secret scheme, which expires on its own; a `stun:`
+        entry carries none, because STUN has nothing to authenticate to. A `turn:` entry
+        appears without a credential when the node has no shared secret configured - the
+        URL is still reported, because it is what the operator configured, but a credential
+        that could not work is not invented.
+
+        The same role as `/nodes`, and for the same reason: it is what a client reads to
+        learn how to reach the realm, and it says nothing about who is on it.
+      responses:
+        "200":
+          description: What to use
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientConfig"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /realms:
     get:
       operationId: listRealms
@@ -794,6 +831,45 @@ components:
             $ref: "#/components/schemas/Error"
 
   schemas:
+    ClientConfig:
+      type: object
+      required: [transports, ice_servers]
+      properties:
+        websocket_uri:
+          type: string
+          description: |
+            The secure WebSocket to signal over. Absent when this node has no `wss`
+            listener, which a browser must treat as "there is nothing here for me".
+          example: wss://203.0.113.5:9443
+        transports:
+          type: array
+          description: Every SIP transport this node serves, the same list `/nodes` gives.
+          items:
+            $ref: "#/components/schemas/NodeTransport"
+        ice_servers:
+          type: array
+          description: Shaped as `RTCIceServer`, to be handed to `RTCPeerConnection` unchanged.
+          items:
+            type: object
+            required: [urls]
+            properties:
+              urls:
+                type: string
+                example: turn:turn.example.com:3478
+              username:
+                type: string
+                description: |
+                  Present for a `turn:` entry when a shared secret is configured. It is the
+                  credential's own expiry in Unix seconds, optionally followed by a name -
+                  that is the scheme, not a coincidence.
+              credential:
+                type: string
+                description: Present with `username`. base64 of HMAC-SHA1 over it.
+              expires_at:
+                type: integer
+                format: int64
+                description: Unix seconds. The credential stops working by itself.
+
     LoginRequest:
       type: object
       required: [username, password]

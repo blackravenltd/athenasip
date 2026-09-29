@@ -57,6 +57,10 @@ class ProvisioningAPI : public std::enable_shared_from_this<ProvisioningAPI> {
 
   void _health(RouteContext context);
 
+  // Everything a web client needs to place a call that it cannot be told by hand: where
+  // to signal, and what to use for ICE. A browser reads no configuration file.
+  void _client_config(RouteContext context);
+
   // The cluster as this node knows it. One node today, because nothing discovers the
   // others yet; the shape is what the M4 discovery bus fills in, and it is what a client
   // reads to know where else it could go when this node stops answering.

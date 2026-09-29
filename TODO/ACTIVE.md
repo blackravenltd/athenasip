@@ -257,9 +257,25 @@ never heard describe itself.
       misleads - a WebRTC endpoint on UDP, TCP or TLS. The options are a per-account
       hint, or offering by transport and re-offering the other way on a 488, or
       letting the first call fail and remembering. Not decided.
-- [ ] Client provisioning endpoint: `GET /api/v1/client/config` returning the WSS
-      URL, ICE servers, and time-limited TURN credentials (coturn shared-secret
-      scheme). The browser page above hardcodes these until it exists.
+- [x] Client provisioning endpoint: `GET /api/v1/client/config` returning the WSS URL,
+      ICE servers and time-limited TURN credentials (coturn shared-secret scheme).
+      `http.api.ice_servers`, `turn_shared_secret` and `turn_credential_ttl` are the
+      configuration; `types::TurnCredential` is the scheme, and its expected HMAC was
+      computed with `openssl dgst` rather than by this code, because a test that derives
+      the answer the same way the code does agrees with the code about being wrong - and
+      the thing that has to agree is a TURN server that is not in this repository.
+
+      Taken out of turn, above the manual call it sits under, for two reasons: that call
+      needs a person with a device and cannot be done from here, and the compose stack now
+      runs a coturn that nothing could hand credentials for. It is wired into that stack,
+      so the quickstart serves working ICE rather than a relay nobody can reach.
+
+      A `turn:` URL configured with no shared secret is still reported - it is what the
+      operator configured, and hiding it would lie about the deployment - but no credential
+      is invented for it, and the node warns at startup rather than letting a call fail
+      later. `websocket_uri` is absent rather than empty when there is no `wss` listener,
+      because a browser handed `ws://` from an https page fails further away than one told
+      there is nothing.
 - [ ] NAT handling for the client side, for a phone that is not on the LAN: `rport`
       and `received` are stamped on the way in (RFC 3581), and what is missing is
       routing a response and an in-dialog request to where the request actually came

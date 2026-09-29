@@ -75,8 +75,8 @@ services:
       - rtpengine
       - --interface=${ATHENA_RTPENGINE_ADDRESS:-172.33.0.30}!${ATHENA_PUBLIC_ADDRESS:-127.0.0.1}
       - --listen-ng=0.0.0.0:22222
-      - --port-min=${ATHENA_RTP_MIN:-23000}
-      - --port-max=${ATHENA_RTP_MAX:-23050}
+      - --port-min=${ATHENA_RTP_MIN:-25000}
+      - --port-max=${ATHENA_RTP_MAX:-25050}
       - --foreground
       - --log-stderr
       - --log-level=5
@@ -85,9 +85,12 @@ services:
       athenasip:
         ipv4_address: ${ATHENA_RTPENGINE_ADDRESS:-172.33.0.30}
     ports:
-      # The media itself, which a client sends straight to. Kept narrow on purpose:
-      # Docker Desktop publishes a wide UDP range slowly, and a quickstart needs few.
-      - "${ATHENA_RTP_MIN:-23000}-${ATHENA_RTP_MAX:-23050}:${ATHENA_RTP_MIN:-23000}-${ATHENA_RTP_MAX:-23050}/udp"
+      # The media itself, which a client sends straight to. Kept narrow on purpose -
+      # Docker Desktop publishes a wide UDP range slowly and a quickstart needs few - and
+      # kept clear of 23100-24710, which the unit suite binds for the builtin relay's own
+      # tests. A stack sitting on those makes the suite fail for a reason that has nothing
+      # to do with the code under test.
+      - "${ATHENA_RTP_MIN:-25000}-${ATHENA_RTP_MAX:-25050}:${ATHENA_RTP_MIN:-25000}-${ATHENA_RTP_MAX:-25050}/udp"
     healthcheck:
       test: ["CMD-SHELL", "ss -lun | grep -q 22222 || netstat -lun | grep -q 22222"]
       interval: 1s
@@ -105,7 +108,7 @@ services:
     ports:
       - "3478:3478/udp"
       - "3478:3478/tcp"
-      - "${ATHENA_TURN_MIN:-24000}-${ATHENA_TURN_MAX:-24050}:${ATHENA_TURN_MIN:-24000}-${ATHENA_TURN_MAX:-24050}/udp"
+      - "${ATHENA_TURN_MIN:-25100}-${ATHENA_TURN_MAX:-25150}:${ATHENA_TURN_MIN:-25100}-${ATHENA_TURN_MAX:-25150}/udp"
     command: ["-c", "/etc/coturn/turnserver.conf"]
 
   athenasip:
