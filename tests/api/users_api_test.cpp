@@ -415,13 +415,22 @@ TEST(UsersApiTest, AUserChangesItsOwnPasswordWithTheOldOne) {
   EXPECT_EQ(f.request(http::verb::post, "/api/v1/auth/login", "", boost::json::serialize(body)).status, 401u);
 }
 
-TEST(UsersApiTest, TheWrongOldPasswordIsRefused) {
+TEST(UsersApiTest, TheWrongOldPasswordIsRefusedWithoutEndingTheSession) {
   UsersFixture f;
   f.add_user("tom", {});
 
-  auto response = f.post("/api/v1/users/tom/password", R"({"old_password":"not it","password":"a brand new password"})", f.login("tom"));
+  const auto token = f.login("tom");
+  auto response = f.post("/api/v1/users/tom/password", R"({"old_password":"not it","password":"a brand new password"})", token);
 
-  EXPECT_EQ(response.status, 401u);
+  // 403 rather than 401, and with a code of its own. A 401 on an authenticated request
+  // means the credential is no longer good, and a client that believes it signs the user
+  // out; the bearer here is fine and it is a field in the body that is wrong.
+  EXPECT_EQ(response.status, 403u);
+  EXPECT_EQ(response.json().at("error").at("code").as_string(), "wrong_password");
+
+  // Which is the thing a client must be able to rely on: the session it presented still
+  // works, so a typo does not look like being logged out.
+  EXPECT_EQ(f.get("/api/v1/session", token).status, 200u);
   EXPECT_EQ(f.login("tom").size(), 64u);
 }
 
@@ -429,7 +438,10 @@ TEST(UsersApiTest, OmittingTheOldPasswordIsRefusedForYourOwn) {
   UsersFixture f;
   f.add_user("tom", {});
 
-  EXPECT_EQ(f.post("/api/v1/users/tom/password", R"({"password":"a brand new password"})", f.login("tom")).status, 401u);
+  auto response = f.post("/api/v1/users/tom/password", R"({"password":"a brand new password"})", f.login("tom"));
+
+  EXPECT_EQ(response.status, 403u);
+  EXPECT_EQ(response.json().at("error").at("code").as_string(), "wrong_password");
 }
 
 TEST(UsersApiTest, TheRoleSetsAnyonesPasswordWithoutTheOldOne) {

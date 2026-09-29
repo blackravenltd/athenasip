@@ -359,8 +359,12 @@ void UsersAPI::_set_password(RouteContext context) {
     // exists for is somebody who has lost theirs.
     if (self_edit && !manages) {
       if (!old_password || !types::Password::verify(*old_password, user->password_hash)) {
-        context.response->set(http::field::www_authenticate, "Bearer realm=\"athenasip\"");
-        write_error(context.response, http::status::unauthorized, "unauthorized", "the old password is not right");
+        // 403 and not 401, which this answered until the console pointed out what it was
+        // being told. A 401 on an authenticated request means "your credential is no
+        // longer good", and a client that believes it signs the user out; here the bearer
+        // is perfectly good and it is a field in the body that is wrong. Its own code, so
+        // a client can tell it from the 403 for a missing role without a second request.
+        write_error(context.response, http::status::forbidden, "wrong_password", "the old password is not right");
         return context.done();
       }
     }
