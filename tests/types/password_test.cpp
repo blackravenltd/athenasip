@@ -105,3 +105,51 @@ TEST(PasswordTest, AnEmptyPasswordCannotBeStored) {
   EXPECT_TRUE(Password::hash("", kCheap).empty());
   EXPECT_FALSE(Password::verify("", Password::hash("", kCheap)));
 }
+
+// A stored hash that is not the length this code writes is not a record this code wrote,
+// and must be refused rather than verified against.
+//
+// PBKDF2 to a shorter length is a *prefix* of the output for a longer one - that is how
+// the construction works, not a quirk. So a verifier that derives to the stored hash's own
+// length compares only that many bytes, and a stored hash truncated to one byte is matched
+// by roughly one password in 256. Confirmed before this was written: of 512 wrong
+// passwords, six matched a one-byte stored hash.
+//
+// A row gets truncated by a partial write, a corrupted value, a migration, or somebody
+// with write access to the datastore who cannot read the hash but can shorten it. The last
+// is the one that matters: it turns write access into a login, quietly, leaving a record
+// that still parses.
+//
+// Reported by the Corvus LoRa Bridge session, which found it adapting this code.
+TEST(PasswordTest, ATruncatedStoredHashVerifiesNothing) {
+  const auto stored = Password::hash("correct horse", 1000);
+  ASSERT_FALSE(stored.empty());
+
+  const auto last_dollar = stored.rfind('$');
+  ASSERT_NE(last_dollar, std::string::npos);
+
+  const auto prefix = stored.substr(0, last_dollar + 1);
+  const auto encoded = stored.substr(last_dollar + 1);
+
+  // "cA==" is one base64 quantum: a single decoded byte. Truncating the encoding at any
+  // quantum boundary gives a shorter decoded hash.
+  for (const std::size_t quanta : {1u, 2u, 4u}) {
+    const auto truncated = prefix + encoded.substr(0, quanta * 4);
+
+    // Not even with the right password. The record is malformed, and a malformed record is
+    // not a credential.
+    EXPECT_FALSE(Password::verify("correct horse", truncated)) << "truncated to " << quanta << " quanta";
+    EXPECT_FALSE(Password::verify("anything else", truncated)) << "truncated to " << quanta << " quanta";
+  }
+}
+
+TEST(PasswordTest, AStoredHashLongerThanThisCodeWritesVerifiesNothing) {
+  const auto stored = Password::hash("correct horse", 1000);
+
+  // The other direction, for the same reason: 32 bytes is what SHA-256 gives and what this
+  // code writes, so anything else did not come from here.
+  const auto last_dollar = stored.rfind('$');
+  const auto padded = stored.substr(0, last_dollar + 1) + "AAAA" + stored.substr(last_dollar + 1);
+
+  EXPECT_FALSE(Password::verify("correct horse", padded));
+}
