@@ -16,11 +16,25 @@ info:
     not on the Core strand and must not be: an operator listing accounts cannot be
     allowed to hold up a call.
 
-    Authentication is a bearer token from the `http.api.tokens` section of the node
-    configuration, with one of two scopes. `admin` provisions realms and accounts;
-    `client` reads what a client may see - the node list and who is registered. A
-    request with no matching token is refused, so an API enabled with no tokens is one
-    nobody can call.
+    Every route names the roles that admit it, and any of them does. Two kinds of
+    credential resolve to a set of roles:
+
+    A **session token**, held by a user who logged in through `POST /auth/login`. Its
+    roles are the user's, read on every request, so a role taken away takes effect on the
+    next one rather than at the next login.
+
+    A **configuration token**, from `http.api.tokens` in the node configuration. The
+    `admin` scope maps to every role and is the credential that creates the first user on
+    a fresh node and the way back in when every password has been lost; `client` maps to
+    `view-cluster-status`, which is what a SIP client application reads. It is resolved
+    without touching the datastore, so it keeps working when the datastore is the broken
+    thing.
+
+    The three refusals are distinct and a client should treat them differently. `401` is
+    a credential that is absent or no longer good - an unknown token, an expired session,
+    a disabled user - and is the one that means sign in again. `403` is a real credential
+    that does not hold the role. `503` is the node being unable to tell, because its
+    datastore did not answer; it is a retry, not a bad password.
   license:
     name: GPL-3.0-or-later
     url: https://www.gnu.org/licenses/gpl-3.0.html
@@ -38,6 +52,10 @@ security:
   - bearerAuth: []
 
 tags:
+  - name: auth
+    description: Logging in, logging out, and asking who you are
+  - name: users
+    description: The users that administer this node, which are not subscribers
   - name: status
     description: What this node is and whether it is serving
   - name: realms
@@ -50,6 +68,7 @@ tags:
 paths:
   /health:
     get:
+      operationId: getHealth
       tags: [status]
       summary: Whether this node is serving
       description: |
@@ -74,8 +93,108 @@ paths:
               schema:
                 $ref: "#/components/schemas/Health"
 
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Exchange a username and password for a session token
+      description: |
+        Open, with no credential: this is how a credential is obtained.
+
+        The token is given out once here and is never retrievable again. The node stores
+        only its SHA-256, so a dump of the datastore does not hand over live sessions.
+
+        A user that does not exist, a password that does not verify and a user that has
+        been disabled are all one answer, byte for byte, because between them the
+        alternatives are a list of who holds an account on this node. An empty password is
+        that same `401` rather than a `400`, so probing with one learns nothing a wrong
+        password would not; a *missing* field is a `400`, because that is the caller's own
+        mistake and says nothing about anybody.
+
+        A user holding no roles may log in and is told it holds none, so a console can say
+        "ask an administrator" rather than failing to load.
+
+        There is no rate limiting yet. See `docs/authentication.md`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Logged in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: The username or password is not right, or the user is disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: End the presented session
+      description: |
+        `204` whether or not the token named a live session: the state the caller asked
+        for is that it is gone, and it is. A `404` here would be a way to ask this node
+        whether a token is real, one guess at a time, on a route anybody can reach.
+
+        Only the session presented ends. Every other session that user holds keeps
+        working; `DELETE /users/{user}/sessions` is what ends all of them.
+      security: []
+      responses:
+        "204":
+          description: Gone
+        "401":
+          description: No bearer token was presented, so there was nothing to end
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /session:
+    get:
+      operationId: getSession
+      tags: [auth]
+      summary: Who this credential is and what roles it holds
+      description: |
+        Any authenticated caller, of either kind, holding any roles or none.
+
+        `kind` says which kind of credential it is looking at. A user carries `username`,
+        `display_name` and the `expires_at` of the session presented; a configuration
+        token carries the `scopes` it was configured with and no expiry, because it lasts
+        as long as it is in the file.
+
+        The roles are resolved on this request rather than at login, so this is also how a
+        client notices that its permissions have changed.
+      responses:
+        "200":
+          description: Who you are
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
   /nodes:
     get:
+      operationId: listNodes
       tags: [status]
       summary: The cluster as this node knows it
       description: |
@@ -106,6 +225,7 @@ paths:
 
   /realms:
     get:
+      operationId: listRealms
       tags: [realms]
       summary: Every realm this node serves
       responses:
@@ -122,6 +242,7 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
     post:
+      operationId: createRealm
       tags: [realms]
       summary: Create a realm
       description: |
@@ -157,6 +278,7 @@ paths:
     parameters:
       - $ref: "#/components/parameters/Realm"
     get:
+      operationId: getRealm
       tags: [realms]
       summary: One realm
       responses:
@@ -169,6 +291,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
     put:
+      operationId: updateRealm
       tags: [realms]
       summary: Update a realm
       description: |
@@ -193,6 +316,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
     delete:
+      operationId: deleteRealm
       tags: [realms]
       summary: Delete a realm
       responses:
@@ -205,6 +329,7 @@ paths:
     parameters:
       - $ref: "#/components/parameters/Realm"
     get:
+      operationId: listAccounts
       tags: [accounts]
       summary: Every account in a realm
       responses:
@@ -219,6 +344,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
     post:
+      operationId: createAccount
       tags: [accounts]
       summary: Create an account
       description: |
@@ -257,6 +383,7 @@ paths:
       - $ref: "#/components/parameters/Realm"
       - $ref: "#/components/parameters/User"
     get:
+      operationId: getAccount
       tags: [accounts]
       summary: One account
       responses:
@@ -269,6 +396,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
     put:
+      operationId: updateAccount
       tags: [accounts]
       summary: Change an account's credential
       requestBody:
@@ -289,6 +417,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
     delete:
+      operationId: deleteAccount
       tags: [accounts]
       summary: Delete an account
       description: Its registrations go with it.
@@ -300,6 +429,7 @@ paths:
 
   /registrations:
     get:
+      operationId: listRegistrations
       tags: [registrations]
       summary: Where accounts are currently reachable
       description: |
@@ -329,12 +459,267 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /users:
+    get:
+      operationId: listUsers
+      tags: [users]
+      summary: Every user that can administer this node
+      description: Needs `manage-admin-users`. A password never appears in any of these answers.
+      responses:
+        "200":
+          description: The users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    post:
+      operationId: createUser
+      tags: [users]
+      summary: Create a user
+      description: |
+        Needs `manage-admin-users`. On a fresh node there are no users, so the
+        configuration token is what creates the first one, and that user can create the
+        rest.
+
+        `409` when the username is taken rather than overwriting somebody. Usernames are
+        one case-folded namespace: `Tom` and `tom` cannot both exist, either spelling logs
+        in, and the spelling given is kept for display.
+
+        `400 unknown_role` for a role this build does not have. The datastore carries a
+        role it does not recognise rather than dropping it - so that an older node
+        rewriting a user cannot silently strip a role a newer one granted - which leaves
+        this as the only place a typo can be caught.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserCreate"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /users/{user}:
+    parameters:
+      - $ref: "#/components/parameters/Username"
+    get:
+      operationId: getUser
+      tags: [users]
+      summary: One user
+      description: Needs `manage-admin-users`.
+      responses:
+        "200":
+          description: The user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    put:
+      operationId: updateUser
+      tags: [users]
+      summary: Change a user
+      description: |
+        Needs `manage-admin-users`. The username cannot be changed, because it is the key
+        the user is filed under; the password has its own endpoint.
+
+        A field not given is left alone. `roles` given as `[]` takes them all away, which
+        is why "not given" and "given as empty" are different answers.
+
+        `409 would_lock_out` when a user tries to disable itself or take
+        `manage-admin-users` away from itself. The rule is about *self*, not about the
+        role: somebody else holding it may still be disabled and demoted, and a node with
+        no administrators left is recovered with the configuration token or
+        `athenasip --add-user`. A configuration token is nobody, so the rule never applies
+        to it.
+
+        Disabling a user revokes every session it held, so it stops working immediately
+        rather than when each token happens to expire.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserUpdate"
+      responses:
+        "200":
+          description: Changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The change would lock the caller out of its own account
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    delete:
+      operationId: deleteUser
+      tags: [users]
+      summary: Delete a user
+      description: |
+        Needs `manage-admin-users`. `204` with no body, `404` when there is no such user.
+
+        Deleting a user revokes its sessions: a live token against a user that no longer
+        exists is a session nobody can revoke.
+
+        `409 would_lock_out` when a user tries to delete itself, for the same reason it
+        cannot disable itself - it is locked out exactly as thoroughly either way.
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: A user cannot delete itself
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /users/{user}/password:
+    parameters:
+      - $ref: "#/components/parameters/Username"
+    post:
+      operationId: setPassword
+      tags: [users]
+      summary: Set a password
+      description: |
+        Any authenticated caller, because "this is my own account" is not something a role
+        can express.
+
+        `old_password` is required when, and only when, the caller does **not** hold
+        `manage-admin-users`. Holding that role sets anyone's password without the old
+        one - including the holder's own - because the case it exists for is somebody who
+        has lost theirs. So a user with no roles changing their own password must present
+        it, and an administrator changing theirs need not.
+
+        That is deliberate rather than an oversight: requiring it of a holder of
+        `manage-admin-users` would not protect them, since anyone holding that role can
+        already set any other administrator's password or create a new one.
+
+        **This ends every session that user held, including the one that asked.** A
+        password is changed because the old one is no longer trusted, and a session issued
+        against it is exactly as untrusted; an administrator resetting a compromised
+        account would otherwise leave whoever compromised it logged in. A client changing
+        its own password should expect to sign in again.
+
+        A wrong or missing `old_password` is `403 wrong_password`, not `401`. The bearer
+        presented is still perfectly good - it is a field in the body that is wrong - so a
+        client must not treat it as the session ending.
+
+        Somebody else's password without the role is `403` before the datastore is asked,
+        so this cannot be walked to find out who exists. With the role it is `404`,
+        because by then the caller is allowed to know.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordChange"
+      responses:
+        "204":
+          description: Changed, and every session that user held is gone
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: |
+            Either the caller does not hold `manage-admin-users` and the `old_password`
+            for its own account was wrong or missing (`wrong_password`), or this is
+            somebody else's password and the caller does not hold the role (`forbidden`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /users/{user}/sessions:
+    parameters:
+      - $ref: "#/components/parameters/Username"
+    delete:
+      operationId: revokeSessions
+      tags: [users]
+      summary: Sign a user out everywhere
+      description: |
+        Needs `manage-admin-users`. Revokes every session that user holds, leaving the
+        account alone so they can log in again.
+
+        `204` for a user that holds none, because holding none is the state the caller
+        asked for; `404` only when there is no such user.
+      responses:
+        "204":
+          description: Every session that user held is gone
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
-      description: A token from `http.api.tokens`, with the `admin` or `client` scope.
+      description: |
+        Either a session token from `POST /auth/login`, or a configuration token from
+        `http.api.tokens`. Both are presented the same way and resolve to a set of roles.
+
+        A session token is 32 bytes from a CSPRNG, rendered as 64 hex characters. It is
+        given out once and is never retrievable again: the node stores only its SHA-256.
 
   parameters:
     Realm:
@@ -345,6 +730,16 @@ components:
         type: string
       description: The realm name, which is the SIP domain.
       example: example.com
+    Username:
+      name: user
+      in: path
+      required: true
+      schema:
+        type: string
+      description: |
+        An administrator's username, matched case-insensitively. Not a subscriber: see the
+        `users` tag.
+      example: tom
     User:
       name: user
       in: path
@@ -370,7 +765,9 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     Forbidden:
-      description: A known token, without the scope this endpoint needs
+      description: |
+        A real credential that does not hold a role this endpoint admits. Not a reason to
+        sign the user out: the credential is good, it is the permission that is missing.
       content:
         application/json:
           schema:
@@ -387,8 +784,191 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    Unavailable:
+      description: |
+        The datastore could not be asked, so the node cannot tell whether the credential
+        is good. A retry rather than a bad password, and never a reason to sign a user out.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
 
   schemas:
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          description: Matched case-insensitively
+        password:
+          type: string
+          format: password
+      example:
+        username: tom
+        password: a long enough password
+
+    LoginResponse:
+      type: object
+      required: [token, expires_at, roles]
+      properties:
+        token:
+          type: string
+          description: |
+            64 hex characters, being 32 bytes from a CSPRNG. Given out here once and never
+            retrievable again; the node stores only its SHA-256.
+        expires_at:
+          type: integer
+          format: int64
+          description: |
+            Unix seconds, from `http.api.session_lifetime`. The session also ends after
+            `http.api.session_idle` seconds without being used, which is not reported here
+            because using the session moves it.
+        roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Role"
+          description: Empty for a user that holds none, which is an answer rather than an error
+      example:
+        token: 3f9a1c7e2b8d4056a1c3e5f70981b2d4c6e8fa0b1d3f5a7e9920c4e6a8b0d2f41
+        expires_at: 1790506751
+        roles: [manage-realms]
+
+    Session:
+      type: object
+      required: [kind, roles]
+      description: |
+        Who a credential is. `kind` says which of the two it is; a client that only
+        handles users should still expect `token`, because a configuration token is how a
+        fresh node is administered.
+      properties:
+        kind:
+          type: string
+          enum: [user, token]
+        roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Role"
+        username:
+          type: string
+          description: Present for `user` only, in the spelling the account was created with
+        display_name:
+          type: string
+          description: Present for `user` only, and may be empty
+        expires_at:
+          type: integer
+          format: int64
+          description: Present for `user` only. Unix seconds
+        scopes:
+          type: array
+          items:
+            type: string
+            enum: [admin, client]
+          description: |
+            Present for `token` only: what the operator wrote in `http.api.tokens`. There
+            is no expiry, because a configuration token lasts as long as it is in the file.
+      example:
+        kind: user
+        username: Tom
+        display_name: Tom Cully
+        roles: [manage-realms, view-cluster-status]
+        expires_at: 1790506751
+
+    Role:
+      type: string
+      description: |
+        A permission rather than a rank. Nothing here implies anything else: somebody who
+        needs to read cluster status and manage realms is given both, and there is
+        deliberately no role that covers everything.
+      enum:
+        - view-cluster-status
+        - manage-admin-users
+        - manage-realms
+        - manage-realm-subscribers
+        - manage-cluster
+
+    User:
+      type: object
+      description: |
+        A user administers this node. It is not a subscriber: a subscriber is registered
+        on a realm to make and receive calls and authenticates with Digest, and neither
+        credential works as the other.
+      properties:
+        username:
+          type: string
+          description: As it was given, not the case-folded key it is filed under
+        display_name:
+          type: string
+        roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Role"
+        disabled:
+          type: boolean
+          description: A disabled user cannot log in and holds no sessions
+        created_at:
+          type: integer
+          format: int64
+          description: Unix seconds
+        last_login_at:
+          type: integer
+          format: int64
+          description: Unix seconds, `0` for a user that has never logged in
+      example:
+        username: Tom
+        display_name: Tom Cully
+        roles: [manage-admin-users]
+        disabled: false
+        created_at: 1790522442
+        last_login_at: 0
+
+    UserCreate:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+        display_name:
+          type: string
+        roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Role"
+          description: Absent means none, which is a user that may log in and do nothing
+
+    UserUpdate:
+      type: object
+      description: |
+        Every field is optional and one that is not given is left alone. `roles` given as
+        `[]` takes them all away.
+      properties:
+        display_name:
+          type: string
+        roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Role"
+        disabled:
+          type: boolean
+
+    PasswordChange:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+          format: password
+        old_password:
+          type: string
+          format: password
+          description: |
+            Required when changing your own password *and* you do not hold
+            `manage-admin-users`. Ignored when you do, because that role can set any
+            password already, so asking would protect nothing.
+
     Error:
       type: object
       required: [error]
@@ -411,6 +991,10 @@ components:
                 - method_not_allowed
                 - conflict
                 - datastore_error
+                - unavailable
+                - unknown_role
+                - would_lock_out
+                - wrong_password
             message:
               type: string
       example:

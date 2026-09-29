@@ -553,7 +553,15 @@ everything left here except the authentication item, which the console is blocke
       and it wants doing once for the node rather than specially for the command. Small,
       and it is the only place in the tree where something below the API writes to the
       console without going through `LoggerScoped`.
-      6. The OpenAPI document, which `athenasip-admin` runs a contract test against.
+      6. ~~The OpenAPI document, which `athenasip-admin` runs a contract test against.~~
+         Done. `docs/api/openapi.yaml` now carries `/auth/login`, `/auth/logout`,
+         `/session` and the five `/users` routes, and says roles rather than scopes
+         throughout. Every operation gained an `operationId`, because the console
+         generates its client from this and without one the method names come out of the
+         paths. Checked three ways: it lints clean, every documented field matches what a
+         live node emits, and every documented status code was walked against one - which
+         is how a wrong sentence about `old_password` was caught before the console built
+         on it.
 
       **Agreed with the console** (it is building against this now): `expires_at` in
       Unix seconds; `GET /realms` admits `manage-realms` or
