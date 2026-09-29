@@ -1,8 +1,54 @@
 # AthenaSIP - Quick Start
 
 Two accounts calling each other on one node, from nothing, without a telecoms
-background. Nothing here needs a database, a message broker or a media server: the
-defaults are in-process.
+background.
+
+There are two ways in. The first is one command and gives you what a real deployment
+looks like; the second is by hand and needs no external service at all. Read the second
+if you want to understand what the first did.
+
+## The whole thing in one command
+
+```
+docker/up.sh
+```
+
+That brings up AthenaSIP with the canonical backends - Redis for the datastore, Mosquitto
+for the event bus, rtpengine on the media path, coturn for a browser that needs a relay -
+then provisions a realm, two accounts and an administrator, and prints what to do next.
+
+| | |
+|---|---|
+| SIP | `5060` UDP and TCP, `5061` TLS |
+| WSS | `9443` |
+| Admin API | `8080` |
+| TURN | `3478` |
+
+It prints the administrator's password once and cannot print it again, because the API
+never hands a password back. If you lose it, `docker compose exec athenasip athenasip
+--add-user someone-else` is the way back in, and so is the configuration token.
+
+Ports move if something else already has them:
+
+```
+ATHENA_SIP_PORT=15060 ATHENA_TLS_PORT=15061 \
+ATHENA_WSS_PORT=19443 ATHENA_API_PORT=18080 docker/up.sh
+```
+
+`docker/up.sh down` stops it and keeps the data; `docker/up.sh --reset` forgets it too.
+
+**Before this reaches a network you do not control**, change the API tokens in
+`docker/config.yaml.template` and `static-auth-secret` in `docker/turnserver.conf`. They
+are the same in every clone of this repository. The admin listener is also plain HTTP,
+so a login puts a password on the wire - see the end of
+[authentication.md](authentication.md) for what is and is not solved.
+
+The admin console lives in its own repository. `docker/up.sh --console` serves a build of
+it from port 8080 when there is one.
+
+---
+
+The rest of this page is the same thing by hand, on one process with nothing external.
 
 ## 1. Get a node running
 
@@ -25,7 +71,7 @@ Check it is serving:
 curl http://127.0.0.1:8080/api/v1/health
 ```
 
-## 2. Change the API tokens
+## 2. Change the API tokens, and make an administrator
 
 The example config ships with two tokens named `change-me-admin` and `change-me-client`.
 Change them before anything is listening on a network you do not control, in the
@@ -35,6 +81,27 @@ Change them before anything is listening on a network you do not control, in the
 export ATHENA_ADMIN_TOKEN=change-me-admin
 export ATHENA_API=http://127.0.0.1:8080/api/v1
 ```
+
+A configuration token is a machine credential and the way back in. People get their own
+accounts, which is what the console logs into, and the token is what creates the first
+one on a node that has none:
+
+```
+curl -X POST "$ATHENA_API/users" \
+  -H "Authorization: Bearer $ATHENA_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"username":"you","password":"a long enough password","roles":["manage-admin-users","manage-realms","manage-realm-subscribers","view-cluster-status"]}'
+
+curl -X POST "$ATHENA_API/auth/login" \
+  -H "Content-Type: application/json" \
+  -d '{"username":"you","password":"a long enough password"}'
+```
+
+The login answers a token, what it expires at, and the roles that user holds. Present it
+the same way the configuration token is presented. A user who has lost their password is
+reset by somebody holding `manage-admin-users`, or by `athenasip --add-user` on the host
+if the API cannot be reached at all. [authentication.md](authentication.md) is the whole
+of it.
 
 ## 3. Create a realm and two accounts
 

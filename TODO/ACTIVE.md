@@ -437,8 +437,22 @@ six steps from session issue to the OpenAPI document, recorded under "Admin
 authentication, the API half". Milestone 4, the second node, is ahead of everything left
 here.
 
-- [ ] `docker-compose.yml`: athenasip, redis, mosquitto, rtpengine, coturn, seeded
-      realm and two accounts, admin UI on 8080, WSS on 9443, TLS on 5061.
+- [x] `docker-compose.yml`: athenasip, redis, mosquitto, rtpengine, coturn, a seeded
+      realm and two accounts, WSS on 9443, TLS on 5061, the API on 8080. `docker/up.sh`
+      is the one command: it renders the config, brings the stack up, waits for health
+      and provisions the realm, the accounts and the first administrator over the API,
+      which is the same path an operator uses and a second check that the API works.
+      Running it is also what proved it, twice over - a real Digest REGISTER from sipp
+      lands a binding in Redis, and the heartbeat is on the broker in the stack.
+
+      The admin console is the one part that is not here: it is built in its own
+      repository, so `--console` mounts a build when there is one and nothing is served
+      when there is not. A bundle checked into this tree would be a copy that goes stale.
+
+      coturn runs but nothing hands its credentials out. The node has no TURN
+      configuration and no `GET /api/v1/client/config` to serve one from - that is the
+      Milestone 3 item - so a browser is configured with the shared secret by hand today.
+      The secret is in the file the endpoint will read when it exists.
 - [ ] Command line, the rest of it. `--version`, `--config <path>`, `--help` and the
       configuration search path are done. What is left is `--print-config` for the
       effective values after the file, the environment and the defaults have been

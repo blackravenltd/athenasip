@@ -1,0 +1,164 @@
+#
+# AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
+#
+# Copyright (C) 2026 Tom Cully <mail@tomcully.com>
+# Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
+#
+# The whole thing, with the canonical backends rather than the built-in ones: Redis for
+# the datastore, Mosquitto for the event bus, rtpengine on the media path, and coturn for
+# a browser that needs a relay.
+#
+#   docker/up.sh          bring it up, seed it, and print what to do next
+#   docker/up.sh down     take it down
+#   docker/up.sh --reset  take it down and forget the data too
+#
+# up.sh is what to run. It renders docker/config.yaml from the template - the node has to
+# be told an address a client can come back to, and a container's own address is not one -
+# then waits for health and provisions a realm, two accounts and the first administrator.
+# `docker compose up` on its own works once that config exists, and serves nothing the
+# first time because it does not.
+#
+# Ports are published to the host as the node binds them, never translated: a node writes
+# its own local port into Via and Record-Route, so a mapping that moved the port would
+# tell a client to come back to one nothing is listening on.
+
+name: athenasip
+
+services:
+  redis:
+    networks:
+      - athenasip
+    image: redis:7-alpine
+    container_name: athenasip-redis
+
+    # Registrations, realms, accounts and admin users. appendonly keeps them across a
+    # restart of this container, which is the difference between this and memory://.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+
+  mosquitto:
+    networks:
+      - athenasip
+    image: eclipse-mosquitto:2
+    container_name: athenasip-mosquitto
+    volumes:
+      - ./docker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+    healthcheck:
+      # The broker has no health endpoint, so this asks whether the listener is bound.
+      test: ["CMD-SHELL", "mosquitto_sub -h 127.0.0.1 -t '$$SYS/#' -C 1 -W 2 >/dev/null 2>&1 || exit 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 2s
+
+  rtpengine:
+    image: drachtio/rtpengine:latest
+    container_name: athenasip-rtpengine
+
+    # The engine binds an address on this network and advertises another, which is
+    # rtpengine's own answer to being behind a NAT: `internal!external`. It receives media
+    # on the compose network, where the node reaches its ng port, and writes the host's
+    # address into the session description, because that is the one a client on the host
+    # or the LAN can actually send to.
+    #
+    # Not network_mode: host. That would make the name `rtpengine` unresolvable from the
+    # node's container, and on Docker Desktop it is the virtual machine's network rather
+    # than this machine's anyway.
+    command:
+      - rtpengine
+      - --interface=${ATHENA_RTPENGINE_ADDRESS:-172.33.0.30}!${ATHENA_PUBLIC_ADDRESS:-127.0.0.1}
+      - --listen-ng=0.0.0.0:22222
+      - --port-min=${ATHENA_RTP_MIN:-23000}
+      - --port-max=${ATHENA_RTP_MAX:-23050}
+      - --foreground
+      - --log-stderr
+      - --log-level=5
+      - --delete-delay=0
+    networks:
+      athenasip:
+        ipv4_address: ${ATHENA_RTPENGINE_ADDRESS:-172.33.0.30}
+    ports:
+      # The media itself, which a client sends straight to. Kept narrow on purpose:
+      # Docker Desktop publishes a wide UDP range slowly, and a quickstart needs few.
+      - "${ATHENA_RTP_MIN:-23000}-${ATHENA_RTP_MAX:-23050}:${ATHENA_RTP_MIN:-23000}-${ATHENA_RTP_MAX:-23050}/udp"
+    healthcheck:
+      test: ["CMD-SHELL", "ss -lun | grep -q 22222 || netstat -lun | grep -q 22222"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+      start_period: 2s
+
+  coturn:
+    image: coturn/coturn:latest
+    container_name: athenasip-coturn
+    volumes:
+      - ./docker/generated/coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    networks:
+      - athenasip
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "${ATHENA_TURN_MIN:-24000}-${ATHENA_TURN_MAX:-24050}:${ATHENA_TURN_MIN:-24000}-${ATHENA_TURN_MAX:-24050}/udp"
+    command: ["-c", "/etc/coturn/turnserver.conf"]
+
+  athenasip:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: athenasip:quickstart
+    container_name: athenasip
+    networks:
+      - athenasip
+    depends_on:
+      redis:
+        condition: service_healthy
+      mosquitto:
+        condition: service_healthy
+      rtpengine:
+        condition: service_healthy
+    volumes:
+      - ./docker/generated:/root/.athenasip:ro
+
+      # up.sh signs a second certificate when the node advertises an address the
+      # checked-in one does not name, and points this at it. A certificate that does not
+      # name what the client dialled fails verification however good the chain is.
+      - ${ATHENA_TLS_DIR:-./tls}:/tls:ro
+
+      # The admin console is built in its own repository and mounted here rather than
+      # checked in, because a built bundle in this tree is a copy that goes stale. up.sh
+      # points this at a build when there is one and at a directory it knows exists when
+      # there is not, so the mount always resolves and files stay switched off.
+      - ${ATHENA_CONSOLE_DIR:-./docker/generated}:/console:ro
+    ports:
+      - "${ATHENA_SIP_PORT:-5060}:${ATHENA_SIP_PORT:-5060}/udp"
+      - "${ATHENA_SIP_PORT:-5060}:${ATHENA_SIP_PORT:-5060}/tcp"
+      - "${ATHENA_TLS_PORT:-5061}:${ATHENA_TLS_PORT:-5061}/tcp"
+      - "${ATHENA_WSS_PORT:-9443}:${ATHENA_WSS_PORT:-9443}/tcp"
+      - "${ATHENA_API_PORT:-8080}:${ATHENA_API_PORT:-8080}/tcp"
+    healthcheck:
+      # The API's own answer, which is 503 until the datastore is connected. Nothing
+      # points a client at a node that is not serving yet, and seeding waits on this.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:${ATHENA_API_PORT:-8080}/api/v1/health"]
+      interval: 1s
+      timeout: 2s
+      retries: 60
+      start_period: 2s
+
+networks:
+  # Its own subnet, so rtpengine has an address the node can be configured with rather
+  # than one Docker picked this morning.
+  athenasip:
+    ipam:
+      config:
+        - subnet: 172.33.0.0/24
+
+volumes:
+  redis-data:
+  mosquitto-data:

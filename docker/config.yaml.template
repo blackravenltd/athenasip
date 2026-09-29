@@ -1,0 +1,106 @@
+#
+# AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
+#
+# Copyright (C) 2026 Tom Cully <mail@tomcully.com>
+# Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
+#
+# The node that docker-compose.yml runs: the canonical backends rather than the built-in
+# ones, because the point of this stack is to show what a real deployment looks like.
+# Redis holds registrations and admin users, Mosquitto carries the event bus, rtpengine
+# is on the media path, and the whole thing comes up with one command.
+#
+# Addresses here are container names on the compose network. The one exception is
+# sip.public_address, which has to be an address a client can come back to and therefore
+# comes from the host. docker/up.sh renders this file and works that address out.
+
+sip:
+  node_id: athenasip-quickstart
+
+  # What this node writes into Via, Record-Route and Contact. A container's own address
+  # is reachable from the compose network and from nothing else, so a client told to come
+  # back to it never arrives.
+  public_address: @PUBLIC_ADDRESS@
+
+  # UDP and TCP are open here because the point is that a newcomer can point any softphone
+  # at this in ten minutes. A deployment facing anything hostile turns this off and serves
+  # TLS and WSS only.
+  allow_unencrypted: true
+
+udp:
+  enable: true
+  address: 0.0.0.0
+  port: @SIP_PORT@
+
+tcp:
+  enable: true
+  address: 0.0.0.0
+  port: @SIP_PORT@
+
+tls:
+  enable: true
+  address: 0.0.0.0
+  port: @TLS_PORT@
+  cert_pem_filename: "/tls/snakeoil.cer"
+  key_pem_filename: "/tls/snakeoil.key"
+
+# WSS, which is what a browser needs: it will not open an insecure WebSocket from a page
+# served over https, and getUserMedia wants a secure origin. The certificate is the
+# snakeoil one, so a browser will refuse it until you trust tls/ca/snakeca.crt or click
+# through - see docs/quick_start.md.
+websocket:
+  enable: true
+  address: 0.0.0.0
+  port: @WSS_PORT@
+  tls: true
+  cert_pem_filename: "/tls/snakeoil.cer"
+  key_pem_filename: "/tls/snakeoil.key"
+
+datastore:
+  # Registrations, realms, accounts, admin users and sessions. Survives a restart of the
+  # node, which memory:// does not.
+  url: "redis://redis:6379"
+
+events:
+  # Observability, presence and discovery. Never on the call setup path, so a node whose
+  # broker is down still places calls.
+  url: "mqtt://mosquitto:1883/?prefix=athenasip/"
+  status_interval: 30
+
+media:
+  # rtpengine rather than the in-process relay, because a browser's media is WebRTC and
+  # the built-in relay speaks plain RTP. The plugin contract is what makes this one line:
+  # nothing else in this file changes with the engine.
+  url: "rtpengine://@RTPENGINE_ADDRESS@:22222"
+
+  rtpengine:
+    timeout_ms: 500
+    attempts: 3
+
+http:
+  address: 0.0.0.0
+  port: @API_PORT@
+
+  api:
+    enable: true
+
+    # This is a quickstart, so the token is in the file and is the same for everybody who
+    # clones this repository. Change it before anything but your own laptop can reach port
+    # 8080: with the admin scope it holds every role there is.
+    #
+    # It is also the credential that created the first admin user, which is what
+    # docker/seed.sh does, and the way back in if that password is lost.
+    tokens:
+      - token: "change-me-admin"
+        scopes: [admin]
+      - token: "change-me-client"
+        scopes: [client]
+
+    session_lifetime: 43200
+    session_idle: 3600
+
+  # The admin console, which lives in its own repository and is mounted here when it has
+  # been built. Nothing is served when it has not, and the API is unaffected either way.
+  files:
+    enable: @SERVE_CONSOLE@
+    path: "/console"
+    spa: true
