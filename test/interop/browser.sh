@@ -7,8 +7,10 @@
 #
 # A browser calls a browser through this node and rtpengine.
 #
-#   test/interop/browser.sh          bring the fixture up, run the spec, take it down
-#   test/interop/browser.sh --keep   leave the fixture up afterwards
+#   test/interop/browser.sh          both phases, then take the fixture down
+#   test/interop/browser.sh --keep   leave the fixture up after the last phase
+#   test/interop/browser.sh --direct only the direct phase
+#   test/interop/browser.sh --relay  only the relay phase
 #
 # The first Milestone 3 "to the first call" item. Two headless Chromium contexts open
 # the admin client's softphone, register, call each other and read their own media
@@ -26,12 +28,38 @@
 # effective values, including the LAN address up.sh detects, are read back from the
 # fixture's own generated/fixture.env rather than worked out a second time.
 #
+# Two phases, and the fixture is rebuilt between them because no single advertised address
+# serves both: from the host the engine is reachable on its published ports at loopback,
+# from coturn only at its address on the fixture network, and nothing is both without
+# putting the fixture on the LAN.
+#
+#   direct  the engine advertises the public address, and the browsers reach it themselves.
+#           No ICE servers - this is the path an ordinary client takes.
+#   relay   the engine advertises its own address on the fixture network, which the browsers
+#           cannot reach, so the only way through is the TURN server. It proves the whole
+#           TURN path: the credential this node mints, coturn accepting it, and the relay
+#           reaching the engine.
+#
+# The spec chooses which it is running from the environment, by whether
+# ATHENA_INTEROP_RTPENGINE_ADVERTISE differs from ATHENA_INTEROP_PUBLIC_ADDRESS. Phasing
+# lives here rather than in the spec, because bringing the fixture up is this side's.
+#
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 KEEP="no"
-[[ "${1:-}" == "--keep" ]] && KEEP="yes"
+RUN_DIRECT="yes"
+RUN_RELAY="yes"
+
+for argument in "$@"; do
+  case "$argument" in
+    --keep)   KEEP="yes" ;;
+    --direct) RUN_RELAY="no" ;;
+    --relay)  RUN_DIRECT="no" ;;
+    *) echo "Unknown argument: $argument" >&2; exit 1 ;;
+  esac
+done
 
 ADMIN_REPO="${ATHENA_INTEROP_ADMIN_REPO:-$HERE/../../../athenasip-admin}"
 
@@ -61,11 +89,6 @@ if (( ${#missing[@]} > 0 )); then
   exit 1
 fi
 
-# One code path for bringing the node up: this is the same fixture a person points a
-# real client at, with the client served and rtpengine on the media path.
-echo "Bringing the fixture up..."
-"$HERE/up.sh" --rtpengine --admin
-
 cleanup() {
   if [[ "$KEEP" == "yes" ]]; then
     echo
@@ -80,15 +103,43 @@ cleanup() {
 
 trap cleanup EXIT
 
-# What the fixture turned out to be, rather than what was asked for. The LAN address in
-# particular is detected by up.sh, and the spec asserts the browsers' media went to it.
-set -a
-# shellcheck disable=SC1091
-source "$HERE/generated/fixture.env"
-set +a
+# One code path for bringing the node up, whichever phase it is: the same fixture a person
+# points a real client at, with the client served and rtpengine on the media path. Only what
+# the engine advertises differs, and the spec reads that back to know which phase it is in.
+run_phase() {
+  local phase="$1" advertise="$2"
 
-echo
-echo "Calling ${ATHENA_INTEROP_ACCOUNTS:-1001,1002} on ${ATHENA_INTEROP_REALM}, media through ${ATHENA_INTEROP_MEDIA_ENGINE}..."
-echo
+  echo
+  echo "=== ${phase} ==="
+  echo "Bringing the fixture up..."
 
-(cd "$ADMIN_REPO" && npm run test:e2e)
+  ATHENA_INTEROP_RTPENGINE_ADVERTISE="$advertise" "$HERE/up.sh" --rtpengine --admin
+
+  # What the fixture turned out to be, rather than what was asked for. The LAN address in
+  # particular is detected by up.sh, and the spec asserts the browsers' media went to it.
+  # Re-read every phase, because the phase is what changed it.
+  set -a
+  # shellcheck disable=SC1091
+  source "$HERE/generated/fixture.env"
+  set +a
+
+  echo
+  echo "Calling ${ATHENA_INTEROP_ACCOUNTS:-1001,1002} on ${ATHENA_INTEROP_REALM}, media through ${ATHENA_INTEROP_MEDIA_ENGINE} to ${ATHENA_INTEROP_RTPENGINE_ADVERTISE}..."
+  echo
+
+  (cd "$ADMIN_REPO" && npm run test:e2e)
+}
+
+# The engine's address on the fixture network, which is what the relay phase advertises.
+# Taken from the environment so that moving the subnet moves both together.
+RELAY_ADVERTISE="${ATHENA_INTEROP_RTPENGINE_ADDRESS:-172.32.0.30}"
+
+if [[ "$RUN_DIRECT" == "yes" ]]; then
+  # Empty means up.sh falls back to the public address, which is the direct case and is
+  # also what the fixture does when nobody has asked for anything.
+  run_phase "Direct media" ""
+fi
+
+if [[ "$RUN_RELAY" == "yes" ]]; then
+  run_phase "Relayed media, through coturn" "$RELAY_ADVERTISE"
+fi

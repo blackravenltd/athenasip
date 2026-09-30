@@ -188,10 +188,19 @@ checks run, so the label is the browser's opinion and the port is a fact about o
 configuration. The query-string contract by which the spec hands the page its ICE servers is
 documented with the page, in `../athenasip-admin`, per the decision of 2026-09-23.
 
-Proven by hand before it was automated, on 2026-09-30 against the quickstart stack: two
-Chromium contexts with relay forced carried 399 and 402 packets each way with no loss and
-`totalAudioEnergy` above 2 at both ends. That run found a real bug, a TURN username carrying
-our own log prose, which is the argument for having it in the automated layer.
+`browser.sh` runs both phases and takes the fixture down after; `--direct` and `--relay` run
+one of them when iterating.
+
+Both passing, 2026-09-30. What the relay phase's record holds, which is what makes it a
+relayed call rather than a call that happened to work: local ports 22326 and 22312, both
+inside coturn's configured range, against a remote address of `172.32.0.30` - the engine on
+the fixture network, which the browsers have no route to. Pair succeeded, DTLS connected,
+109 and 112 packets each way, `totalAudioEnergy` 0.35 and 0.43. `candidateType` reads
+`prflx`, which is why the assertion is on the port.
+
+It was proven by hand first, against the quickstart stack, and that run found a real bug - a
+TURN username carrying our own log prose - which is the argument for having it in the
+automated layer rather than in somebody's memory of an evening.
 
 ## The live call
 
