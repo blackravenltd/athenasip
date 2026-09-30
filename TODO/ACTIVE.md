@@ -285,6 +285,13 @@ never heard describe itself.
       then 400, which at the client is indistinguishable from a bad secret. Filtered at the
       source now, and a credential the live node mints allocates a relay, binds a channel
       and refreshes on both coturn 4.6.2 and 4.18.0.
+
+      Then proven to carry audio, which is the part only a browser can show: two Chromium
+      contexts, relay forced, 399 and 402 packets each way with nothing lost and
+      `totalAudioEnergy` above 2 at both ends, relayed to rtpengine on the compose network.
+      The same browsers with relay *not* forced also carried audio, because having the TURN
+      server from `/client/config` let ICE fall back to it when the direct path failed -
+      which is the behaviour to want and is better than what was predicted.
 - [x] Relay-only media cannot work on a loopback quickstart, which is a limitation to
       document rather than a bug to fix. rtpengine advertises `sip.public_address`, and when
       that is `127.0.0.1` the address coturn is asked to relay to is coturn's own loopback
@@ -318,6 +325,13 @@ never heard describe itself.
       leave by the listener's own socket so the source port is the one the far end
       answers to, and that socket belongs to `UDPServer` rather than to the channel
       registry. Needed for a UDP trunk.
+- [ ] The relay is not in the automated browser layer. `test/interop/browser.sh` drives the
+      interop fixture, which has no coturn in it, so the TURN path was proven by hand
+      against the quickstart stack instead (recorded in `docs/testing.md`). Automating it
+      means coturn in that fixture and an engine address the relay can reach - which is
+      what `ATHENA_RTPENGINE_ADVERTISE` does for the quickstart - so the two fixtures are
+      converging and the honest question is whether the interop one should just become the
+      quickstart with a spec pointed at it.
 - [ ] Harness scenarios for what nothing exercises: a delayed offer, hold and resume,
       and a trunk. The WSS and browser-to-phone scenarios are the browser harness
       above.
