@@ -395,4 +395,5 @@ TEST(ConfigTest, TheShippedExampleConfigurationLoads) {
   // What a monitor's staleness threshold is a multiple of, so it is worth the example
   // saying it rather than leaving it to be discovered from the source.
   EXPECT_EQ(config->events_status_interval, 30u);
+  EXPECT_EQ(config->sip_flow_idle_timeout, 300u);
 }

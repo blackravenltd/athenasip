@@ -87,9 +87,10 @@ So counting them is not counting endpoints, in either direction:
   binding lives in the datastore with its own expiry, so a UDP phone has a registration
   and usually no live flow at all, and a TCP client that reconnects has two flows and one
   registration.
-- A UDP flow is created on the first datagram from an address and is never closed, so a
-  `closed` never follows and the count only grows for the life of the process. That is a
-  bug rather than a contract, and it is on the plan.
+- A UDP flow is created on the first datagram from an address. It is forgotten after
+  `sip.flow_idle_timeout` seconds without traffic (five minutes by default), and publishes
+  `closed` when it goes, so the two topics do balance. Forgetting one costs a peer nothing:
+  its next datagram makes a new flow.
 
 What answers "who is registered here" is `GET /api/v1/registrations`, which reads the
 bindings, or the `account/+/status` events as they happen.

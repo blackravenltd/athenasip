@@ -310,17 +310,26 @@ never heard describe itself.
       from rather than where its Via and Contact claim, plus a Contact rewrite policy
       for a client that cannot be told. The flow token covers the in-dialog half for
       anything that registered here. The node's own address behind NAT is M4.
-- [ ] A UDP flow is never reaped. `UDPServer` creates a `UDPConnection` and a `Channel`
-      for each address a datagram arrives from and files it in `_connections`;
-      `remove_connection` exists and nothing calls it, so the map and the channel
-      registry grow for the life of the process and no `closed` is ever published for a
-      UDP flow. Two consequences: anything counting channels counts wrongly and forever,
-      and an unbounded map keyed by a remote address that a datagram can spoof is a
-      memory growth vector on a node with a public UDP listener. The fix wants a last-seen
-      time on the flow and a sweep, which is what the connection-oriented transports get
-      from their sockets closing. Found on 2026-09-27 answering T.O.M.S about the
-      monitoring topics, and written up in `docs/events.md` under "A channel is not a
-      registration".
+- [x] A UDP flow is reaped when it goes quiet. `sip.flow_idle_timeout`, five minutes by
+      default and zero to keep the old behaviour, swept by `Core::_flow_sweep` against the
+      injectable clock. Only unreliable flows: a TCP, TLS or WebSocket flow ends when its
+      socket does, and sweeping one that is merely quiet would close a registration's path
+      home.
+
+      Two bugs behind the one that was written down. `AsyncQueue` had no way to release a
+      pending reader, and on the UDP path that reader holds a `shared_ptr` to its channel -
+      nothing ever completes a UDP read, so the channel outlived its own close whatever else
+      let go of it. And `UDPServer` was the one server that never called `start()` on the
+      connections it made, so an inbound UDP flow answered `is_open()` false for its whole
+      life and `Channel::close()`, which only tears a connection down if it says it is open,
+      skipped it silently. That second one is why the first attempt looked right in the unit
+      tests and did nothing on a live node: the flow left the registry and stayed in the
+      server's map, and the next datagram from that address was handed to the closed
+      connection instead of making a live one.
+
+      `docs/events.md` no longer says a UDP flow is never closed, because it is not: the
+      `closed` event fires, and the channels topics balance.
+
 - [ ] Outbound UDP to a host this node has never heard from. The datagram has to
       leave by the listener's own socket so the source port is the one the far end
       answers to, and that socket belongs to `UDPServer` rather than to the channel

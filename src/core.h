@@ -197,6 +197,11 @@ class Core : public std::enable_shared_from_this<Core> {
   // Tests drive the section 17 timers from a ManualTimerSource rather than a real clock.
   void timer_source_set(std::shared_ptr<TimerSource> source) { _timer_source = std::move(source); }
 
+  // The node's sense of time, which is the timer source's. Anything comparing two moments
+  // has to read it here rather than from steady_clock, or the two are the same in
+  // production and drift apart the moment a test advances one of them.
+  std::chrono::steady_clock::time_point now() const { return _timer_source->now(); }
+
   // For the transaction users that keep timers of their own: timer C is the proxy's
   // (RFC 3261 16.6 step 11), not the transaction layer's. Read at schedule time rather
   // than held, so a source a test swaps in afterwards is the one that gets used.
@@ -234,6 +239,11 @@ class Core : public std::enable_shared_from_this<Core> {
   // Called once, after the datastore and the bus are up, because the first thing it
   // publishes is a health report and a report written before the datastore connected
   // would say degraded about a node that is fine.
+  // Starts forgetting connectionless flows that have gone quiet. Separate from the
+  // constructor because it schedules against weak_from_this, which a constructor has not
+  // got yet.
+  void flow_sweep_start();
+
   void node_status_start();
 
   // The same report the HTTP health endpoint gives, as JSON. A monitor reading one and
@@ -305,6 +315,7 @@ class Core : public std::enable_shared_from_this<Core> {
   // end; how long the call has been up reaches every call and cannot tell a live one from
   // a dead one.
   std::shared_ptr<Timer> _call_sweep_timer;
+  std::shared_ptr<Timer> _flow_sweep_timer;
 
   std::shared_ptr<Timer> _node_status_timer;
   std::string _version;
@@ -315,6 +326,10 @@ class Core : public std::enable_shared_from_this<Core> {
 
   void _call_sweep_schedule();
   void _call_sweep();
+
+  // Forgetting a connectionless flow that has gone quiet. See sip.flow_idle_timeout.
+  void _flow_sweep_schedule();
+  void _flow_sweep();
 
   // RFC 4028 section 8.3, which is the only thing a proxy may do about a call it has
   // decided is over: "the proxy MAY remove associated call state, and MAY free any

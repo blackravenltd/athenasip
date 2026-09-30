@@ -10,6 +10,7 @@
 #include <boost/asio/dispatch.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/system/error_code.hpp>
+#include <chrono>
 #include <cstddef>
 #include <deque>
 #include <memory>
@@ -97,6 +98,22 @@ class Channel : public std::enable_shared_from_this<Channel> {
 
   void _schedule_async_read();
   void _schedule_async_write(std::string message);
+
+ public:
+  // When this flow last carried anything, either way.
+  //
+  // It exists for UDP. A TCP, TLS or WebSocket flow ends when its socket does, and the
+  // read completing with an error is what tears the channel down. UDP has no socket per
+  // peer and no close to wait for, so a flow made by one datagram would otherwise live
+  // as long as the process - see Core::_flow_sweep.
+  std::chrono::steady_clock::time_point last_activity() const { return _last_activity; }
+
+  // Defined where Core is a complete type. It reads Core's clock rather than steady_clock
+  // so that the stamp and the sweep that reads it are the same clock.
+  void touch();
+
+ private:
+  std::chrono::steady_clock::time_point _last_activity = std::chrono::steady_clock::now();
 
   // Strand-confined: start the next write, or stop when there is nothing left.
   void _write_next();

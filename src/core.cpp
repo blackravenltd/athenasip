@@ -786,6 +786,74 @@ void Core::_node_status_schedule() {
   });
 }
 
+// A UDP flow is made by the first datagram from an address and has nothing to end it: no
+// socket, no close, no error on the read. Without this the channel registry and the
+// server's own map grow for the life of the process, no `closed` is ever published for a
+// UDP flow, and anything counting channels counts wrongly and forever - and the map is
+// keyed by a remote address a datagram can claim to be from, so on a public listener it is
+// a way to grow a node's memory from off the network.
+//
+// Only unreliable flows are swept. A TCP, TLS or WebSocket flow ends when its socket does,
+// and sweeping one that is merely quiet would close a registration's path home.
+void Core::flow_sweep_start() { _flow_sweep_schedule(); }
+
+void Core::_flow_sweep_schedule() {
+  if (_flow_sweep_timer) {
+    _flow_sweep_timer->cancel();
+    _flow_sweep_timer.reset();
+  }
+
+  const auto timeout = config->sip_flow_idle_timeout;
+  if (timeout == 0) return;
+
+  // A quarter of the timeout, never more often than every fifteen seconds: a pass is a walk
+  // over every live channel, and being a quarter late to forget one costs nothing.
+  const auto interval = std::max<std::uint32_t>(timeout / 4, 15);
+
+  std::weak_ptr<Core> weak_self = weak_from_this();
+
+  _flow_sweep_timer = _timer_source->schedule(std::chrono::seconds(interval), [weak_self]() {
+    if (auto self = weak_self.lock()) self->_flow_sweep();
+  });
+}
+
+void Core::_flow_sweep() {
+  _flow_sweep_timer.reset();
+
+  const auto timeout = config->sip_flow_idle_timeout;
+
+  if (timeout > 0) {
+    // The injectable clock, as the call sweep uses: an idle timeout measured against the
+    // real one is five minutes of waiting per test case. In production it is
+    // steady_clock::now(), which is exactly what Channel::touch stamps.
+    const auto now = _timer_source->now();
+
+    // Collected before anything is closed: closing a channel unregisters it, which erases
+    // from the map being walked.
+    std::vector<std::shared_ptr<Channel>> idle;
+
+    for (const auto& [endpoint, channel] : _channels) {
+      if (!channel || !channel->_connection) continue;
+
+      // A reliable transport has a socket to tell us, and its silence means nothing.
+      if (channel->_connection->is_reliable()) continue;
+
+      const auto quiet_for = std::chrono::duration_cast<std::chrono::seconds>(now - channel->last_activity()).count();
+      if (quiet_for < static_cast<std::int64_t>(timeout)) continue;
+
+      // One channel can be filed under several names. Closing it once is enough.
+      if (std::find(idle.begin(), idle.end(), channel) == idle.end()) idle.push_back(channel);
+    }
+
+    for (const auto& channel : idle) {
+      _logger->debug("Forgetting idle flow " + channel->flow_id());
+      channel->close();
+    }
+  }
+
+  _flow_sweep_schedule();
+}
+
 void Core::_call_sweep_schedule() {
   if (_call_sweep_timer) {
     _call_sweep_timer->cancel();

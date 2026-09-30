@@ -45,6 +45,15 @@ bool Config::load_from_yaml(const std::string& filename) {
   // Previously present in the YAML and the docs but never read, so setting it had no
   // effect at all.
   if (sip["allow_unencrypted"]) sip_allow_unencrypted = sip["allow_unencrypted"].as<bool>();
+
+  if (sip["flow_idle_timeout"]) {
+    try {
+      sip_flow_idle_timeout = sip["flow_idle_timeout"].as<std::uint32_t>();
+    } catch (const std::exception& e) {
+      _logger->error("Invalid value for 'sip.flow_idle_timeout': " + std::string(e.what()));
+      return false;
+    }
+  }
   if (sip["log_messages"]) sip_log_messages = sip["log_messages"].as<bool>();
   if (sip["public_address"]) sip_public_address = sip["public_address"].as<std::string>();
   if (sip["media_timeout"]) sip_media_timeout = sip["media_timeout"].as<uint32_t>();
@@ -481,6 +490,7 @@ std::string Config::effective_yaml() const {
   out << YAML::Key << "max_call_duration" << YAML::Value << sip_max_call_duration;
   out << YAML::Key << "media_timeout" << YAML::Value << sip_media_timeout;
   out << YAML::Key << "connect_timeout_ms" << YAML::Value << sip_connect_timeout_ms;
+  out << YAML::Key << "flow_idle_timeout" << YAML::Value << sip_flow_idle_timeout;
 
   // The section 17 timers, which are the ones somebody reading this is most likely to be
   // checking against the RFC.

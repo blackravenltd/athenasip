@@ -243,6 +243,10 @@ void Channel::_stamp_via(const std::shared_ptr<SIPMessage>& message) {
 void Channel::_schedule_async_write(std::string message) {
   if (!_connection) return;
 
+  // Sending counts as much as receiving. A node answering a retransmission, or forwarding
+  // into a flow, is using it even if the far end has gone quiet.
+  touch();
+
   // The buffer has to outlive the write, so the queue owns it.
   _write_queue.push_back(std::make_shared<std::string>(std::move(message)));
 
@@ -317,8 +321,14 @@ void Channel::_schedule_async_read() {
   });
 }
 
+void Channel::touch() { _last_activity = _core->now(); }
+
 void Channel::_on_read(boost::system::error_code ec, std::size_t length) {
   auto self(shared_from_this());
+
+  // Before anything is decided about the bytes: a flow that carried something is a flow
+  // in use, whatever the something turns out to be.
+  if (!ec && length > 0) touch();
 
   {
     if (ec) {

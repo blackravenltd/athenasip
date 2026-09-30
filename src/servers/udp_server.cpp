@@ -90,6 +90,13 @@ void UDPServer::handle_receive_from(const boost::system::error_code& error, std:
       connection = it->second;
     } else {
       connection = std::make_shared<UDPConnection>(self, _socket.local_endpoint(), *sender_endpoint);
+
+      // As every other server does for its own connections. Without it a UDP flow answers
+      // is_open() false for its whole life, and Channel::close() - which only tears a
+      // connection down if it says it is open - would quietly skip it, leaving the flow in
+      // this map for the process to carry.
+      connection->start();
+
       _connections[sender_endpoint_str] = connection;
       _logger->info("New UDP Endpoint Accepted: " + sender_endpoint_str);
 
