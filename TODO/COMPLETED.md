@@ -33,8 +33,12 @@ Newest first. The detail is below, oldest first.
 - **0.2.0** (2026-09-18): Milestone 1 complete. The strand, the sanitizers, the media
   engine interface and the datastore write operations.
 
-Work since 0.7.0 is at the end, under Milestone 3 and Milestone 5. Milestone 5 is out of
-order on purpose: a node nobody can install or administer is not one anybody will adopt.
+Work since 0.7.0 is at the end, untagged, in eight dated sections from "The fixture a
+browser can actually use" to "The quickstart, the client's own configuration, and two flows
+that leaked". It is Milestone 3 and Milestone 5 interleaved: Milestone 5 came out of order
+on purpose, because a node nobody can install or administer is not one anybody will adopt,
+and admin authentication because the console could not go further without it. Both are
+recorded that way where they appear.
 
 ## Foundations
 
