@@ -345,9 +345,12 @@ never heard describe itself.
       console session, that a test asserts facts about our configuration and never the
       browser's labels.
 
-      What is left is the spec, in `../athenasip-admin`: a relay phase that reads
-      `/client/config` on its Node side and hands the page its ICE servers, which is theirs
-      to write and is now unblocked.
+      **Both phases pass.** `browser.sh` runs direct then relay, rebuilding the fixture
+      between them, and the console session's spec asserts the relayed pair by its local port
+      being inside the configured range. The record holds ports 22326 and 22312 inside
+      coturn's range against a remote address of `172.32.0.30`, which the browsers have no
+      route to, with DTLS connected and audio energy at both ends. The relay is in the
+      automated layer.
 
 - [ ] Harness scenarios for what nothing exercises: a delayed offer, hold and resume,
       and a trunk. The WSS and browser-to-phone scenarios are the browser harness

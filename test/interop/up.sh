@@ -97,8 +97,8 @@ export ATHENA_INTEROP_RTPENGINE_ADDRESS="${ATHENA_INTEROP_RTPENGINE_ADDRESS:-172
 export ATHENA_INTEROP_RTPENGINE_ADVERTISE="${ATHENA_INTEROP_RTPENGINE_ADVERTISE:-$PUBLIC_ADDRESS}"
 
 export ATHENA_INTEROP_TURN_PORT="${ATHENA_INTEROP_TURN_PORT:-3478}"
-export ATHENA_INTEROP_TURN_MIN="${ATHENA_INTEROP_TURN_MIN:-22200}"
-export ATHENA_INTEROP_TURN_MAX="${ATHENA_INTEROP_TURN_MAX:-22250}"
+export ATHENA_INTEROP_TURN_MIN="${ATHENA_INTEROP_TURN_MIN:-22300}"
+export ATHENA_INTEROP_TURN_MAX="${ATHENA_INTEROP_TURN_MAX:-22350}"
 
 # Per run rather than fixed. Nothing outside this fixture needs it, and a credential that
 # outlives the fixture is one somebody could still relay with.
@@ -134,6 +134,11 @@ compose() { docker compose -p "${ATHENA_INTEROP_NAME}" "${COMPOSE_FILES[@]}" "$@
 
 if [[ "$ACTION" == "down" ]]; then
   compose down --remove-orphans
+
+  # The rendered state goes with the containers. A fixture.env describing a fixture that is
+  # not running is worse than none: it reads as current, and the ports and the TURN secret in
+  # it are whatever the last run happened to use.
+  rm -f "$HERE/generated/fixture.env" "$HERE/generated/config.yaml" "$HERE/generated/coturn/turnserver.conf"
   exit 0
 fi
 
@@ -288,6 +293,11 @@ ATHENA_INTEROP_MEDIA_ENGINE=${ENGINE}
 ATHENA_INTEROP_NG_PORT=${ATHENA_INTEROP_NG_PORT}
 ATHENA_INTEROP_ADMIN_DIR=${ATHENA_INTEROP_ADMIN_DIR}
 ATHENA_INTEROP_PASSWORD=${ATHENA_INTEROP_PASSWORD:-athenaphone}
+
+# The client-scope token, which is what reaches /api/v1/client/config and nothing else.
+# Exported so the spec reads it rather than knowing it: a token it has memorised is one
+# that goes stale silently the day this fixture changes it.
+ATHENA_INTEROP_API_TOKEN=interop-client
 ATHENA_INTEROP_RTPENGINE_ADVERTISE=${ATHENA_INTEROP_RTPENGINE_ADVERTISE}
 ATHENA_INTEROP_TURN_PORT=${ATHENA_INTEROP_TURN_PORT}
 ATHENA_INTEROP_TURN_MIN=${ATHENA_INTEROP_TURN_MIN}
