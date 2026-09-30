@@ -99,7 +99,10 @@ services:
       start_period: 2s
 
   coturn:
-    image: coturn/coturn:latest
+    # Pinned for reproducibility rather than to avoid anything: a quickstart whose images
+    # move under it breaks for a newcomer with no way to tell why. 4.6.2 and 4.18.0 were
+    # both checked and both relay fine.
+    image: coturn/coturn:${ATHENA_COTURN_TAG:-4.18.0}
     container_name: athenasip-coturn
     volumes:
       - ./docker/generated/coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro

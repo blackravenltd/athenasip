@@ -40,6 +40,28 @@ std::string base64_encode(const std::vector<unsigned char>& input) {
   return out;
 }
 
+// A name that is safe in a TURN username. coturn parses the username as
+// <expiry>[:<name>] and refuses the whole credential when the name is not one it accepts:
+// a space in it is answered 401 "wrong username" and then 400, which looks from the client
+// side exactly like a bad secret and is not.
+//
+// So the name is filtered here rather than trusted, because the alternative is a caller
+// passing something human-readable - which is what happened - and a relay that fails with
+// a misleading error. Anything left out is only decoration: coturn does not look at the
+// name, and it is here so a relay session can be tied back to whoever asked in a log.
+std::string safe_name(const std::string& name) {
+  std::string out;
+
+  for (const char c : name) {
+    if (out.size() >= 32) break;
+
+    const bool safe = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_';
+    if (safe) out.push_back(c);
+  }
+
+  return out;
+}
+
 }  // namespace
 
 TurnCredential TurnCredential::issue(const std::string& secret, const std::string& name, std::time_t now, std::uint32_t ttl) {
@@ -53,9 +75,10 @@ TurnCredential TurnCredential::issue(const std::string& secret, const std::strin
   credential.expires_at = now + static_cast<std::time_t>(ttl);
   credential.username = std::to_string(credential.expires_at);
 
-  // The name is decoration: coturn does not look at it, and it is here so that a relay
-  // session can be tied back to whoever asked for it in a log.
-  if (!name.empty()) credential.username += ":" + name;
+  // Filtered rather than trusted - see safe_name. Nothing left after filtering means no
+  // name at all, which is a valid credential, rather than a colon with nothing after it.
+  const auto suffix = safe_name(name);
+  if (!suffix.empty()) credential.username += ":" + suffix;
 
   unsigned char digest[EVP_MAX_MD_SIZE];
   unsigned int length = 0;

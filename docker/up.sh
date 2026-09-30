@@ -158,6 +158,9 @@ MSG
   exit 1
 fi
 
+# Rendered fresh each run. Anything left from an older layout - a config at a path that is
+# no longer mounted, say - is worse than absent: it reads as the live one.
+rm -f "$HERE/generated/config.yaml" "$HERE/generated/turnserver.conf" "$HERE/generated/coturn/turnserver.conf"
 mkdir -p "$HERE/generated"
 
 sed -e "s|@RTPENGINE_ADDRESS@|${ATHENA_RTPENGINE_ADDRESS}|g" \

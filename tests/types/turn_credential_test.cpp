@@ -8,6 +8,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <string>
 
 using athenasip::types::TurnCredential;
@@ -87,4 +88,43 @@ TEST(TurnCredentialTest, ThePasswordIsStandardBase64) {
   EXPECT_EQ(credential.password.size(), 28u);
   EXPECT_EQ(credential.password.back(), '=');
   EXPECT_EQ(credential.password.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="), std::string::npos);
+}
+
+// coturn parses the username as <expiry>[:<name>] and refuses the whole credential when
+// the name is not one it accepts. A space in it is answered 401 "wrong username" and then
+// 400 Bad Request, which from the client side is indistinguishable from a bad secret.
+//
+// That is not hypothetical: the first version of this passed BearerAuth::Caller::describe()
+// in, which is prose for our own log lines - "a configuration token" - and no browser could
+// allocate a relay. Found by the AthenaSIP Admin session running two real Chromium contexts
+// against the stack, then read out of coturn's own verbose log.
+TEST(TurnCredentialTest, ANameThatWouldBreakTheUsernameIsFiltered) {
+  const auto credential = TurnCredential::issue("a shared secret", "a configuration token", kNow, 3600);
+
+  // No spaces, and still exactly one colon: coturn splits on the first one.
+  EXPECT_EQ(credential.username, "1790003600:aconfigurationtoken");
+  EXPECT_EQ(credential.username.find(' '), std::string::npos);
+  EXPECT_EQ(std::count(credential.username.begin(), credential.username.end(), ':'), 1);
+}
+
+TEST(TurnCredentialTest, ANameWithNothingUsableInItIsOmittedEntirely) {
+  const auto credential = TurnCredential::issue("a shared secret", "   ", kNow, 3600);
+
+  // A colon with nothing after it is not a name, it is a malformed username. Better to have
+  // no name: coturn does not look at it, and the credential still works.
+  EXPECT_EQ(credential.username, "1790003600");
+}
+
+TEST(TurnCredentialTest, ANameIsBoundedSoTheUsernameStaysReasonable) {
+  const auto credential = TurnCredential::issue("a shared secret", std::string(200, 'x'), kNow, 3600);
+
+  EXPECT_EQ(credential.username, "1790003600:" + std::string(32, 'x'));
+}
+
+TEST(TurnCredentialTest, AColonInTheNameCannotSplitTheUsernameAgain) {
+  const auto credential = TurnCredential::issue("a shared secret", "tom:admin", kNow, 3600);
+
+  // A name carrying its own colon would otherwise make the expiry ambiguous to anything
+  // parsing from the right, and is a way to smuggle a second field into the username.
+  EXPECT_EQ(credential.username, "1790003600:tomadmin");
 }
