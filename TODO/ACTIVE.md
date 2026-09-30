@@ -12,7 +12,7 @@ machines sit behind a matcher with `Registrar` and `Proxy` as the transaction us
 `memory://` and `redis://`, `local://` and `mqtt://`, and `builtin://` and
 `rtpengine://` in tree; a node decides for itself when a call it is holding is over;
 provisioning is over a JSON API; and the sipp harness proves a call end to end on UDP.
-645 tests, clean under asan and tsan.
+776 tests.
 
 0.6.0 landed RFC 5626 flow routing, the rtpengine driver and the media profile that
 tells it which leg is the browser, and the behaviour tests that found eleven bugs in
@@ -21,19 +21,33 @@ calls ask of the engine, the node record-routes both interfaces and carries a fl
 token in each so an in-dialog request can reach a browser, and three recorded
 deviations from RFC 3261 and 3264 are closed. `COMPLETED.md` has the detail.
 
-Since 0.7.0, on `develop` and not yet tagged, in two parts. Milestone 3: a leg is
-profiled from what it has said rather than from the transport it signals over; the
-interop fixture has rtpengine on its media path and reaches outside Docker; this node
-serves the web client that drives its own harness; and a browser calls a browser through
-it with audio proven at both ends by the engine's counters and the browsers' own.
-Milestone 5, out of order on purpose: the node installs, runs as a systemd service, takes
-a command line, says on the bus that it is alive and is deployed on a real host, and both
-datastores hold the users and sessions an admin login needs. `COMPLETED.md` has the
-detail, and says why Milestone 5 came early.
+Since 0.7.0, on `develop` and not yet tagged, in three parts, all recorded in
+`COMPLETED.md`.
+
+**Milestone 3.** A leg is profiled from what it has said rather than from the transport it
+signals over; the interop fixture has rtpengine on its media path and reaches outside
+Docker; this node serves the web client that drives its own harness; a browser calls a
+browser through it with audio proven at both ends; `GET /api/v1/client/config` tells a
+browser where to signal and what to use for ICE, with TURN credentials that expire on their
+own; and the relay path is automated, `browser.sh` running a direct phase and a relayed one.
+
+**Milestone 5, out of order on purpose.** The node installs, runs as a systemd service,
+takes a command line including `--print-config` and `--add-user`, says on the bus that it
+is alive and is deployed on a real host. Admin authentication is complete end to end -
+sessions, the three auth routes, roles on every route, the users routes, and an OpenAPI
+document the console runs a contract test against. `docker/up.sh` brings the whole stack up
+with one command: Redis, Mosquitto, rtpengine, coturn, a seeded realm, two accounts and the
+first administrator.
+
+**Bugs, several of them found by other people.** Two from the Corvus LoRa Bridge session, a
+truncated password hash that verified against almost anything and an MQTT run that could
+tear down its successor. Two from the admin console session, a 401 that should have been a
+403 and a TURN username carrying our own log prose. And a UDP flow that was never reaped,
+found while answering T.O.M.S about the monitoring topics.
 
 The next thing to build toward is still one call: a browser calls an AthenaPhone and the
-media goes through rtpengine. Milestone 3 is written around it, in order, and what remains
-of it is that one manual call - the tooling and the runbook for it are in the tree.
+media goes through rtpengine. What remains of it is that one manual call - the tooling and
+the runbook for it are in the tree, and it needs a person with a device.
 
 Milestones are in priority order and so are the items inside each one: work top to
 bottom, and say why when something is taken out of turn. Milestone 5 has been, twice -
@@ -42,6 +56,53 @@ admin authentication, because the console is built against it and cannot go furt
 without it. Both are recorded that way. Move items to `COMPLETED.md` as they land, with
 a note on what shipped.
 
+## Waiting on Tom
+
+Nothing below can move until these are settled, and each one has somebody or something
+stopped against it. They are here rather than scattered through the milestones because a
+session that has lost its context needs to see them first.
+
+1. **`status_interval` in the heartbeat payload.** T.O.M.S has its Comms card live on
+   FI-1 and hardcodes a 90-second staleness threshold, which is three intervals by
+   coincidence rather than by contract. Adding the interval to the retained
+   `nodes/<id>/status` message lets the card derive its own. The field would be
+   `status_interval`, in seconds, matching the config key it comes from. T.O.M.S is
+   holding for a yes or no and will use three times it, falling back to its configured
+   value for nodes that do not carry it. See `docs/events.md`.
+
+2. **The `corvus-fi-1` deploy, and who the first user is.** The node there predates the
+   auth routes and still answers 404 to `POST /api/v1/auth/login`, so the console cannot
+   log in. Deploying is a live host and a release decision, so it is not something to do
+   on a peer's say-so. The first user's name and password want choosing by a person
+   rather than generated: either `POST /api/v1/users` with the configuration token already
+   in that node's config, or `athenasip --add-user` on the host.
+
+3. **A realm holding both WebRTC endpoints and plain-RTP ones.** The next item in
+   Milestone 3's order, and the reason the milestone is stalled. Now that a leg's own
+   profile is remembered, the only undecidable case left is the first offer towards an
+   endpoint this node has never heard describe itself, and only when its transport
+   misleads. Three options, none chosen: a per-account hint, offering by transport and
+   re-offering the other way on a 488, or letting the first call fail and remembering.
+
+4. **`/accounts` versus `/subscribers`.** The 2026-09-25 vocabulary decision says
+   subscriber; the type is `Account` and the resource is `/realms/{realm}/accounts`.
+   Renaming is a breaking API change the console and the OpenAPI document follow, so it
+   wants doing deliberately and in one go, or not at all. The console is building against
+   `/accounts` until told otherwise. Question 5 in `docs/authentication.md`.
+
+5. **Whether deleting a realm cascades to its subscribers.** The console asked; it builds
+   against no cascade until told.
+
+6. **Rate limiting on `POST /api/v1/auth/login`.** Recorded as unsolved in
+   `docs/authentication.md` since before the endpoint existed, and now there is a reachable
+   endpoint behind it. It is the reason the quickstart stack has not been put on a LAN, and
+   it should be settled before `corvus-fi-1` sees traffic it did not invite. Not scheduled
+   into any milestone, which is the thing to fix.
+
+One more, smaller, and for the two sessions rather than for a milestone: the admin console
+session's half of the browser relay phase is built and on disk in `../athenasip-admin` but
+uncommitted, waiting on a word from Tom. Nothing here depends on it.
+
 ## How to prove it
 
 `docs/testing.md` is the whole of it: the five layers, what each answers that the one
@@ -49,15 +110,25 @@ before it cannot, and the exact commands. The short version, cheapest first:
 
 ```
 ./build-tests/athenasip_tests    the unit suite, with Redis and MQTT set or they skip
-./build-asan/athenasip_tests     both sanitizers, before anything touching the
-./build-tsan/athenasip_tests     transaction, channel or media paths
 test/e2e/run.sh [--rtpengine]    the sipp scenarios, the second with a real engine
 test/interop/up.sh --rtpengine   a node to point a real client at
-test/interop/browser.sh          two browsers calling through rtpengine
+test/interop/browser.sh          two browsers calling, direct then relayed through coturn
 test/interop/UAT.md              the call a person has to make
 ```
 
 All of them pass before anything is tagged.
+
+**The sanitizers are not on that list.** Tom's instruction of 2026-09-30: they are for
+tracing a fault that cannot be pinned down otherwise, not for routine verification.
+`CLAUDE.md` still carries the older, narrower rule - run them before touching the
+transaction, channel or media paths - and the two do not agree; this is the live one until
+`CLAUDE.md` is changed to match.
+
+What replaces them is the thing they were standing in for: reason about lifetimes and
+threading directly, and exercise the change against a running node. Nearly every bug found
+in the work since 0.7.0 came from running something rather than from a checker - a
+connection the node addressed by a name that would never resolve, a UDP flow whose close
+was silently skipped, a TURN username no browser could use.
 
 ## Principles
 
@@ -150,6 +221,23 @@ Dated, and not reopened without asking.
   `/realms/{realm}/accounts`; whether to rename them to match is question 5 in
   `docs/authentication.md` and is a breaking change to make deliberately or not at all.
 - (2026-09-25) There is no superuser role, and no role implies another.
+- (2026-09-29) `Datastore::session_delete` succeeds whether or not that hash was held, and
+  the realm and account deletes still report when there was nothing there. A session is
+  named by a secret the caller presented, so an answer distinguishing "that was live" from
+  "that was never live" is a way to ask this node whether a token is real, one guess at a
+  time, on a route anybody can reach. A realm name is not a secret. `API_VERSION` did not
+  move, because the shape did not change - which is exactly why `docs/plugins.md` now says
+  the version tracks shape and shape is not the whole contract.
+- (2026-09-29) A route declared with an empty role set means **any authenticated caller**,
+  not a public route; a route open to anyone says so with `Router::add_open`. The old
+  `public_scope` was an empty string, so a route that forgot to name its scope was open to
+  the world. Forgetting now gives "must be logged in and may do nothing", which is the
+  direction a mistake should fail in.
+- (2026-09-30) A test asserts facts about this node's own configuration, never a client's
+  labels for them. The case that settled it: Chrome reports a relayed local candidate as
+  `candidateType: "prflx"` once connectivity checks run, so the browser relay test asserts
+  the local port is inside coturn's configured range instead. Agreed with the console
+  session and written into `docs/testing.md`.
 - (2026-09-23) The browser end of the Milestone 3 harness is the admin client's own
   softphone, served by this node's static middleware, rather than a minimal page kept
   here. One page, maintained where the client lives, and tested where it is written;
@@ -251,116 +339,29 @@ never heard describe itself.
 
 ### After the first call
 
+The first item here needs a decision (number 3 under "Waiting on Tom") and is what the
+milestone is stalled on. **The next one that can be started without anybody is NAT handling
+for the client side**, though half of it - a Contact rewrite policy for a client that cannot
+be told - is itself a judgement call, so read it before starting. After that, outbound UDP
+and the harness scenarios are both self-contained.
+
+
 - [ ] A realm holding both WebRTC endpoints and plain-RTP ones. Now that a leg's own
       profile is remembered, the only undecidable case left is the first offer towards
       an endpoint this node has never heard describe itself, and only when its transport
       misleads - a WebRTC endpoint on UDP, TCP or TLS. The options are a per-account
       hint, or offering by transport and re-offering the other way on a 488, or
       letting the first call fail and remembering. Not decided.
-- [x] Client provisioning endpoint: `GET /api/v1/client/config` returning the WSS URL,
-      ICE servers and time-limited TURN credentials (coturn shared-secret scheme).
-      `http.api.ice_servers`, `turn_shared_secret` and `turn_credential_ttl` are the
-      configuration; `types::TurnCredential` is the scheme, and its expected HMAC was
-      computed with `openssl dgst` rather than by this code, because a test that derives
-      the answer the same way the code does agrees with the code about being wrong - and
-      the thing that has to agree is a TURN server that is not in this repository.
-
-      Taken out of turn, above the manual call it sits under, for two reasons: that call
-      needs a person with a device and cannot be done from here, and the compose stack now
-      runs a coturn that nothing could hand credentials for. It is wired into that stack,
-      so the quickstart serves working ICE rather than a relay nobody can reach.
-
-      A `turn:` URL configured with no shared secret is still reported - it is what the
-      operator configured, and hiding it would lie about the deployment - but no credential
-      is invented for it, and the node warns at startup rather than letting a call fail
-      later. `websocket_uri` is absent rather than empty when there is no `wss` listener,
-      because a browser handed `ws://` from an https page fails further away than one told
-      there is nothing.
-
-      Proven end to end after a real browser found it broken: two Chromium contexts against
-      the quickstart stack registered over WSS, called, and got `400 TURN allocate error`
-      with `iceTransportPolicy: "relay"`. The cause was the name this code put after the
-      colon in the TURN username - `Caller::describe()`, which is prose for our own logs -
-      and coturn refuses a username with a space in it, reporting 401 "wrong username" and
-      then 400, which at the client is indistinguishable from a bad secret. Filtered at the
-      source now, and a credential the live node mints allocates a relay, binds a channel
-      and refreshes on both coturn 4.6.2 and 4.18.0.
-
-      Then proven to carry audio, which is the part only a browser can show: two Chromium
-      contexts, relay forced, 399 and 402 packets each way with nothing lost and
-      `totalAudioEnergy` above 2 at both ends, relayed to rtpengine on the compose network.
-      The same browsers with relay *not* forced also carried audio, because having the TURN
-      server from `/client/config` let ICE fall back to it when the direct path failed -
-      which is the behaviour to want and is better than what was predicted.
-- [x] Relay-only media cannot work on a loopback quickstart, which is a limitation to
-      document rather than a bug to fix. rtpengine advertises `sip.public_address`, and when
-      that is `127.0.0.1` the address coturn is asked to relay to is coturn's own loopback
-      rather than rtpengine - and coturn refuses loopback peers anyway without
-      `allow-loopback-peers`. A stack whose `ATHENA_PUBLIC_ADDRESS` is this host's LAN
-      address has no such problem, which is what `docker/up.sh` picks when it is not told
-      otherwise. Found by the admin console session; the fix is a paragraph in
-      `docs/quick_start.md` saying which address to run with when the point is to exercise
-      TURN. Done: `docs/quick_start.md` has it, `up.sh` prints a note when the
-      combination cannot relay, and `ATHENA_RTPENGINE_ADVERTISE` is the way to exercise a
-      relay without putting anything on the LAN - TURN needs only the TURN server to reach
-      the peer, so the engine advertising its bridge address is enough.
 - [ ] NAT handling for the client side, for a phone that is not on the LAN: `rport`
       and `received` are stamped on the way in (RFC 3581), and what is missing is
       routing a response and an in-dialog request to where the request actually came
       from rather than where its Via and Contact claim, plus a Contact rewrite policy
       for a client that cannot be told. The flow token covers the in-dialog half for
       anything that registered here. The node's own address behind NAT is M4.
-- [x] A UDP flow is reaped when it goes quiet. `sip.flow_idle_timeout`, five minutes by
-      default and zero to keep the old behaviour, swept by `Core::_flow_sweep` against the
-      injectable clock. Only unreliable flows: a TCP, TLS or WebSocket flow ends when its
-      socket does, and sweeping one that is merely quiet would close a registration's path
-      home.
-
-      Two bugs behind the one that was written down. `AsyncQueue` had no way to release a
-      pending reader, and on the UDP path that reader holds a `shared_ptr` to its channel -
-      nothing ever completes a UDP read, so the channel outlived its own close whatever else
-      let go of it. And `UDPServer` was the one server that never called `start()` on the
-      connections it made, so an inbound UDP flow answered `is_open()` false for its whole
-      life and `Channel::close()`, which only tears a connection down if it says it is open,
-      skipped it silently. That second one is why the first attempt looked right in the unit
-      tests and did nothing on a live node: the flow left the registry and stayed in the
-      server's map, and the next datagram from that address was handed to the closed
-      connection instead of making a live one.
-
-      `docs/events.md` no longer says a UDP flow is never closed, because it is not: the
-      `closed` event fires, and the channels topics balance.
-
 - [ ] Outbound UDP to a host this node has never heard from. The datagram has to
       leave by the listener's own socket so the source port is the one the far end
       answers to, and that socket belongs to `UDPServer` rather than to the channel
       registry. Needed for a UDP trunk.
-- [x] **The relay is in the automated browser layer's reach.** `test/interop/up.sh
-      --rtpengine` brings up coturn alongside rtpengine, serves STUN and TURN through
-      `GET /api/v1/client/config` with a secret generated per run, and exports what the spec
-      needs in `generated/fixture.env`. `docs/testing.md` has the whole contract.
-
-      Option B of the two written up here, and both sessions preferred it: the interop
-      fixture keeps `memory://` and `local://`, which its own template asks for - "a fixture
-      that needs them is a fixture that fails for reasons that have nothing to do with SIP" -
-      rather than being folded into the quickstart and made to depend on Redis and Mosquitto
-      for a media test. It needed no decision from Tom in the end, because it changes nothing
-      in the 2026-09-23 decision: the fixture was already this side's to bring up, and coturn
-      is one more service in it.
-
-      Two runs, which is forced: no single advertised address serves the direct and relay
-      cases without putting the fixture on the LAN. The relay case asserts the pair by the
-      local port being inside the configured range rather than by `candidateType`, because
-      Chrome reports `prflx` for a relayed local candidate - a general rule agreed with the
-      console session, that a test asserts facts about our configuration and never the
-      browser's labels.
-
-      **Both phases pass.** `browser.sh` runs direct then relay, rebuilding the fixture
-      between them, and the console session's spec asserts the relayed pair by its local port
-      being inside the configured range. The record holds ports 22326 and 22312 inside
-      coturn's range against a remote address of `172.32.0.30`, which the browsers have no
-      route to, with DTLS connected and audio energy at both ends. The relay is in the
-      automated layer.
-
 - [ ] Harness scenarios for what nothing exercises: a delayed offer, hold and resume,
       and a trunk. The WSS and browser-to-phone scenarios are the browser harness
       above.
@@ -509,43 +510,14 @@ in ten minutes.
 
 Started out of order, because a node nobody can install, run as a service or log in to
 administer is not one anybody will adopt, and because deploying it is what found several
-bugs that no test had. What has landed is in `COMPLETED.md` under Milestone 5: the CMake
-install and the systemd unit, the command line and the configuration search path, the
-heartbeat and its will, SPA mode as a choice, the node on `corvus-fi-1`, and both
-datastores holding users and sessions, and now the whole of admin authentication - the
-six steps from session issue to the OpenAPI document, recorded under "Admin
-authentication, the API half". Milestone 4, the second node, is ahead of everything left
-here.
+bugs that no test had. Everything that made it jump the queue has now landed, so what is
+left here sits behind Milestone 4 again.
 
-- [x] `docker-compose.yml`: athenasip, redis, mosquitto, rtpengine, coturn, a seeded
-      realm and two accounts, WSS on 9443, TLS on 5061, the API on 8080. `docker/up.sh`
-      is the one command: it renders the config, brings the stack up, waits for health
-      and provisions the realm, the accounts and the first administrator over the API,
-      which is the same path an operator uses and a second check that the API works.
-      Running it is also what proved it, twice over - a real Digest REGISTER from sipp
-      lands a binding in Redis, and the heartbeat is on the broker in the stack.
+`COMPLETED.md` has it: the CMake install and the systemd unit, the command line and the
+configuration search path, the heartbeat and its will, SPA mode as a choice, the node on
+`corvus-fi-1`, both datastores holding users and sessions, the whole of admin
+authentication from session issue to the OpenAPI document, and the one-command stack.
 
-      The admin console is the one part that is not here: it is built in its own
-      repository, so `--console` mounts a build when there is one and nothing is served
-      when there is not. A bundle checked into this tree would be a copy that goes stale.
-
-      coturn runs but nothing hands its credentials out. The node has no TURN
-      configuration and no `GET /api/v1/client/config` to serve one from - that is the
-      Milestone 3 item - so a browser is configured with the shared secret by hand today.
-      The secret is in the file the endpoint will read when it exists.
-- [x] Command line, the rest of it. `--print-config` prints the effective values as
-      YAML - the file, the search path and the defaults resolved - says which file it came
-      from, and exits without starting a listener or constructing a driver, so a node that
-      cannot reach its datastore can still say which one it was trying to reach. Tokens are
-      redacted and their scopes are not. A plugin's own section is copied through rather
-      than interpreted, which is what caught the one bug in it: `events.status_interval` is
-      a field the server parses, so emitting it from the field and again from the document
-      put the key in twice, and there is a test that counts it now.
-
-      `docs/configuration.md` had the search path wrong - it listed
-      `~/.athenasip/config.yaml` first and `/usr/etc/athenasip/config.yaml`, neither of
-      which is what the code does - and now says the four places in the order they are
-      tried and why.
 - [ ] Boost.Redis logs to the console itself rather than through this node's logger, so
       its connection chatter appears in the log without a level, a scope or the node's
       format, and shows up in the output of `athenasip --add-user` where the whole point
@@ -561,6 +533,10 @@ here.
 - [ ] athenasip-admin: replace the empty `src/lib/API.js` with a client generated from
       the OpenAPI document; pages for realms, accounts, registrations, live calls,
       nodes, media engines, and the JsSIP test phone pointed at the server's own WSS.
+      Mostly that session's work rather than this one's, and well under way: the client is
+      hand-written and speaks the whole documented API, with a contract test against
+      `docs/api/openapi.yaml` passing. Generation is what is left, and every operation in
+      the document now carries an `operationId` for it.
 - [ ] Docs for the reader without a telecoms background. The M2 audit made every page
       true; this is the pages that do not exist: a configuration reference generated
       from the config schema, "how a call works", a clustering guide, a TLS and
@@ -627,6 +603,6 @@ Kept in the tree or history, not on any milestone:
   creates one dialog per answering branch (12.1) and the model holds them, but with one
   branch outstanding at a time the second is untested; parallel forking is what would
   exercise it.
-- `Util::is_ipv4` (`src/util.cpp:162`) still uses a regex and does see network data, but
+- `Util::is_ipv4` (`src/util.cpp:161`) still uses a regex and does see network data, but
   the pattern is anchored with no nested quantifiers, so it is linear and not the hazard
   the message-path regexes were. Left deliberately.

@@ -1849,3 +1849,159 @@ Still not solved, and still recorded at the end of `docs/authentication.md`: the
 listener is plain HTTP, so a login puts a password on the wire; a login endpoint without
 rate limiting is a password oracle, and now it is a reachable one; and identity is only
 worth having if what each identity did is written down.
+
+### The quickstart, the client's own configuration, and two flows that leaked (2026-09-30)
+
+What landed after the authentication work, in the order the plan had it, plus three bugs
+that came in from sibling sessions and one found by watching a live node.
+
+- [x] Client provisioning endpoint: `GET /api/v1/client/config` returning the WSS URL,
+      ICE servers and time-limited TURN credentials (coturn shared-secret scheme).
+      `http.api.ice_servers`, `turn_shared_secret` and `turn_credential_ttl` are the
+      configuration; `types::TurnCredential` is the scheme, and its expected HMAC was
+      computed with `openssl dgst` rather than by this code, because a test that derives
+      the answer the same way the code does agrees with the code about being wrong - and
+      the thing that has to agree is a TURN server that is not in this repository.
+
+      Taken out of turn, above the manual call it sits under, for two reasons: that call
+      needs a person with a device and cannot be done from here, and the compose stack now
+      runs a coturn that nothing could hand credentials for. It is wired into that stack,
+      so the quickstart serves working ICE rather than a relay nobody can reach.
+
+      A `turn:` URL configured with no shared secret is still reported - it is what the
+      operator configured, and hiding it would lie about the deployment - but no credential
+      is invented for it, and the node warns at startup rather than letting a call fail
+      later. `websocket_uri` is absent rather than empty when there is no `wss` listener,
+      because a browser handed `ws://` from an https page fails further away than one told
+      there is nothing.
+
+      Proven end to end after a real browser found it broken: two Chromium contexts against
+      the quickstart stack registered over WSS, called, and got `400 TURN allocate error`
+      with `iceTransportPolicy: "relay"`. The cause was the name this code put after the
+      colon in the TURN username - `Caller::describe()`, which is prose for our own logs -
+      and coturn refuses a username with a space in it, reporting 401 "wrong username" and
+      then 400, which at the client is indistinguishable from a bad secret. Filtered at the
+      source now, and a credential the live node mints allocates a relay, binds a channel
+      and refreshes on both coturn 4.6.2 and 4.18.0.
+
+      Then proven to carry audio, which is the part only a browser can show: two Chromium
+      contexts, relay forced, 399 and 402 packets each way with nothing lost and
+      `totalAudioEnergy` above 2 at both ends, relayed to rtpengine on the compose network.
+      The same browsers with relay *not* forced also carried audio, because having the TURN
+      server from `/client/config` let ICE fall back to it when the direct path failed -
+      which is the behaviour to want and is better than what was predicted.
+
+- [x] Relay-only media cannot work on a loopback quickstart, which is a limitation to
+      document rather than a bug to fix. rtpengine advertises `sip.public_address`, and when
+      that is `127.0.0.1` the address coturn is asked to relay to is coturn's own loopback
+      rather than rtpengine - and coturn refuses loopback peers anyway without
+      `allow-loopback-peers`. A stack whose `ATHENA_PUBLIC_ADDRESS` is this host's LAN
+      address has no such problem, which is what `docker/up.sh` picks when it is not told
+      otherwise. Found by the admin console session; the fix is a paragraph in
+      `docs/quick_start.md` saying which address to run with when the point is to exercise
+      TURN. Done: `docs/quick_start.md` has it, `up.sh` prints a note when the
+      combination cannot relay, and `ATHENA_RTPENGINE_ADVERTISE` is the way to exercise a
+      relay without putting anything on the LAN - TURN needs only the TURN server to reach
+      the peer, so the engine advertising its bridge address is enough.
+
+- [x] A UDP flow is reaped when it goes quiet. `sip.flow_idle_timeout`, five minutes by
+      default and zero to keep the old behaviour, swept by `Core::_flow_sweep` against the
+      injectable clock. Only unreliable flows: a TCP, TLS or WebSocket flow ends when its
+      socket does, and sweeping one that is merely quiet would close a registration's path
+      home.
+
+      Two bugs behind the one that was written down. `AsyncQueue` had no way to release a
+      pending reader, and on the UDP path that reader holds a `shared_ptr` to its channel -
+      nothing ever completes a UDP read, so the channel outlived its own close whatever else
+      let go of it. And `UDPServer` was the one server that never called `start()` on the
+      connections it made, so an inbound UDP flow answered `is_open()` false for its whole
+      life and `Channel::close()`, which only tears a connection down if it says it is open,
+      skipped it silently. That second one is why the first attempt looked right in the unit
+      tests and did nothing on a live node: the flow left the registry and stayed in the
+      server's map, and the next datagram from that address was handed to the closed
+      connection instead of making a live one.
+
+      `docs/events.md` no longer says a UDP flow is never closed, because it is not: the
+      `closed` event fires, and the channels topics balance.
+
+- [x] **The relay is in the automated browser layer's reach.** `test/interop/up.sh
+      --rtpengine` brings up coturn alongside rtpengine, serves STUN and TURN through
+      `GET /api/v1/client/config` with a secret generated per run, and exports what the spec
+      needs in `generated/fixture.env`. `docs/testing.md` has the whole contract.
+
+      Option B of the two written up here, and both sessions preferred it: the interop
+      fixture keeps `memory://` and `local://`, which its own template asks for - "a fixture
+      that needs them is a fixture that fails for reasons that have nothing to do with SIP" -
+      rather than being folded into the quickstart and made to depend on Redis and Mosquitto
+      for a media test. It needed no decision from Tom in the end, because it changes nothing
+      in the 2026-09-23 decision: the fixture was already this side's to bring up, and coturn
+      is one more service in it.
+
+      Two runs, which is forced: no single advertised address serves the direct and relay
+      cases without putting the fixture on the LAN. The relay case asserts the pair by the
+      local port being inside the configured range rather than by `candidateType`, because
+      Chrome reports `prflx` for a relayed local candidate - a general rule agreed with the
+      console session, that a test asserts facts about our configuration and never the
+      browser's labels.
+
+      **Both phases pass.** `browser.sh` runs direct then relay, rebuilding the fixture
+      between them, and the console session's spec asserts the relayed pair by its local port
+      being inside the configured range. The record holds ports 22326 and 22312 inside
+      coturn's range against a remote address of `172.32.0.30`, which the browsers have no
+      route to, with DTLS connected and audio energy at both ends. The relay is in the
+      automated layer.
+
+- [x] `docker-compose.yml`: athenasip, redis, mosquitto, rtpengine, coturn, a seeded
+      realm and two accounts, WSS on 9443, TLS on 5061, the API on 8080. `docker/up.sh`
+      is the one command: it renders the config, brings the stack up, waits for health
+      and provisions the realm, the accounts and the first administrator over the API,
+      which is the same path an operator uses and a second check that the API works.
+      Running it is also what proved it, twice over - a real Digest REGISTER from sipp
+      lands a binding in Redis, and the heartbeat is on the broker in the stack.
+
+      The admin console is the one part that is not here: it is built in its own
+      repository, so `--console` mounts a build when there is one and nothing is served
+      when there is not. A bundle checked into this tree would be a copy that goes stale.
+
+      coturn runs but nothing hands its credentials out. The node has no TURN
+      configuration and no `GET /api/v1/client/config` to serve one from - that is the
+      Milestone 3 item - so a browser is configured with the shared secret by hand today.
+      The secret is in the file the endpoint will read when it exists.
+
+- [x] Command line, the rest of it. `--print-config` prints the effective values as
+      YAML - the file, the search path and the defaults resolved - says which file it came
+      from, and exits without starting a listener or constructing a driver, so a node that
+      cannot reach its datastore can still say which one it was trying to reach. Tokens are
+      redacted and their scopes are not. A plugin's own section is copied through rather
+      than interpreted, which is what caught the one bug in it: `events.status_interval` is
+      a field the server parses, so emitting it from the field and again from the document
+      put the key in twice, and there is a test that counts it now.
+
+      `docs/configuration.md` had the search path wrong - it listed
+      `~/.athenasip/config.yaml` first and `/usr/etc/athenasip/config.yaml`, neither of
+      which is what the code does - and now says the four places in the order they are
+      tried and why.
+- [x] **Three bugs reported by sibling sessions, each verified here before it was
+      believed** (`3dd4c9b`, `cab52da`, `8062000`). The Corvus LoRa Bridge session found
+      that `Password::verify` derived to the *stored* hash's length, and PBKDF2 to a
+      shorter length is a prefix of the longer output - so a hash truncated to one byte was
+      matched by about one password in 256, measured at six of 512 wrong passwords before
+      the fix. It also reported that a finished MQTT run could tear down the next; the
+      reported cause was the reused client, and the actual mechanism is that `connect()`
+      sets `_connected` true *before* joining the previous thread, so a stale completion
+      passes its own guard. Each run carries a generation now, which holds whatever order
+      the flag is set in.
+
+      The console session found that a wrong `old_password` answered 401, which every
+      client reads as "your session is dead". 403 `wrong_password` now, with a code of its
+      own so it is distinguishable from the missing-role 403 on the same route.
+
+- [x] **A TURN username carrying our own log prose** (`68bfc90`). The name after the colon
+      was `BearerAuth::Caller::describe()` - "a configuration token", spaces and all - and
+      coturn refuses a username containing a space, reporting 401 "wrong username" and then
+      400 Bad Request, which at the client is indistinguishable from a bad shared secret.
+      No browser could allocate a relay and neither session could see why. Found by the
+      console session running two real Chromium contexts and then reading coturn's verbose
+      log. The name is filtered where the credential is minted rather than trusted from the
+      caller. The other hypothesis, that `coturn:latest` was at fault, was ruled out: 4.6.2
+      gives the same 400 with the old username and both versions allocate with the new one.

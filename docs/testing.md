@@ -6,7 +6,7 @@ five layers, and each one answers a question the one before it cannot:
 | | What it answers | Cost |
 |---|---|---|
 | [Unit tests](#unit-tests) | does the code do what the RFC says | seconds |
-| [Sanitizers](#sanitizers) | is it memory- and thread-safe under the same tests | minutes |
+| [Sanitizers](#sanitizers) | is it memory- and thread-safe under the same tests | minutes, and not routine - see below |
 | [The sipp harness](#the-sipp-harness) | does a real client on a real socket agree | ~2 minutes |
 | [The interop fixture](#the-interop-fixture) | does a real *client* agree, over every transport | seconds, once built |
 | [The browser call](#the-browser-call) | does a browser agree, with media through rtpengine | ~30 seconds |
@@ -73,8 +73,19 @@ cmake --preset asan && cmake --build build-asan -j8 && ./build-asan/athenasip_te
 cmake --preset tsan && cmake --build build-tsan -j8 && ./build-tsan/athenasip_tests
 ```
 
-Required before anything touching the transaction, channel or media paths. ASan is
-ASan plus UBSan. Both take the same environment variables as the plain run.
+**Not a routine step.** Tom's instruction of 2026-09-30: they are for tracing a fault that
+cannot be pinned down otherwise. Reaching for one in place of understanding the code is the
+habit being avoided, not the tool. `CLAUDE.md` still carries the older rule - run them
+before touching the transaction, channel or media paths - and the two do not agree; this is
+the live one until that is changed to match.
+
+What does the work instead is reasoning about lifetimes and threading directly, and
+exercising a change against a running node. Nearly every bug in the work since 0.7.0 was
+found by running something rather than by a checker.
+
+ASan is ASan plus UBSan. Both take the same environment variables as the plain run, and a
+build interrupted partway leaves a stale object behind - check the test counts agree across
+build directories before believing a green run.
 
 ## The sipp harness
 
