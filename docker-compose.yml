@@ -119,6 +119,15 @@ services:
       - "3478:3478/tcp"
       - "${ATHENA_TURN_MIN:-25100}-${ATHENA_TURN_MAX:-25150}:${ATHENA_TURN_MIN:-25100}-${ATHENA_TURN_MAX:-25150}/udp"
     command: ["-c", "/etc/coturn/turnserver.conf"]
+    healthcheck:
+      # The coturn image carries neither ss nor netstat, so this reads /proc directly. 3478
+      # is 0x0D96, and the port inside the container is always 3478 whatever the host
+      # publishes it on.
+      test: ["CMD-SHELL", "grep -qi ':0D96' /proc/net/udp"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+      start_period: 2s
 
   athenasip:
     build:

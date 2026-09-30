@@ -105,6 +105,13 @@ http:
       - token: "interop-client"
         scopes: [client]
 
+    # What a browser is told to use for ICE, served by GET /api/v1/client/config. Rendered
+    # by up.sh: empty unless coturn is in the fixture, because a client told about a TURN
+    # server that is not there is worse off than one told about none.
+@ICE_SERVERS@
+    turn_shared_secret: "@TURN_SECRET@"
+    turn_credential_ttl: 600
+
   # The admin client, which is also the harness's browser page: a softphone this node
   # serves itself, so a browser test needs no second web server and no CORS. The
   # directory is mounted by up.sh and is empty of this node's concern otherwise.
