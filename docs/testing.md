@@ -156,19 +156,42 @@ before starting a container:
 It passes the whole fixture environment through from `test/interop/generated/fixture.env`,
 which `up.sh` writes every run, so an address or a port is never guessed twice.
 
-This layer proves direct media. **The relay is not in it**, and was checked by hand against
-the quickstart stack instead, on 2026-09-30: two Chromium contexts with
-`iceTransportPolicy: "relay"` and ICE servers from `GET /api/v1/client/config` carried 399
-and 402 packets each way with no loss and `totalAudioEnergy` above 2 at both ends, relayed
-through coturn to rtpengine. What that adds over the direct run is the whole TURN path -
-the credential this node mints, coturn accepting it, and the relay reaching the engine - and
-it found a real bug on the way, a TURN username carrying our own log prose.
+### The relay
 
-It is not automated yet, and the reason is that `browser.sh` drives the interop fixture,
-which has no TURN server in it. Doing it properly means coturn in that fixture and a relay
-address the engine can be reached at, which is `docker/up.sh --console` plus
-`ATHENA_RTPENGINE_ADVERTISE` today. Until then the relay is a manual check and this says so
-rather than leaving a gap that reads as covered.
+`--rtpengine` now brings up coturn as well, so the fixture can exercise the TURN path and not
+only direct media. What that adds is the whole of it: the credential this node mints, coturn
+accepting it, and the relay reaching the engine.
+
+It needs two runs, and that is forced rather than chosen. No single advertised address serves
+both cases: from the host the engine is reachable on its published ports at loopback, from
+coturn only at its address on the fixture network, and nothing is both without putting the
+fixture on the LAN. So the direct case runs with the engine advertising the public address,
+and the relay case with `ATHENA_INTEROP_RTPENGINE_ADVERTISE` set to
+`ATHENA_INTEROP_RTPENGINE_ADDRESS`, restarting between them.
+
+What the fixture provides for the relay case, all of it in `generated/fixture.env`:
+
+| | |
+|---|---|
+| `ATHENA_INTEROP_TURN_PORT` | where coturn listens on the host |
+| `ATHENA_INTEROP_TURN_MIN`, `_MAX` | the relay range, which is what a relayed pair's local port is inside |
+| `ATHENA_INTEROP_TURN_SECRET` | generated per run, so no credential outlives the fixture |
+| `ATHENA_INTEROP_RTPENGINE_ADVERTISE` | what the engine wrote into the session description |
+
+`GET /api/v1/client/config` serves the STUN and TURN servers with a credential, and serves an
+empty `ice_servers` without `--rtpengine`, because telling a client about a TURN server that
+is not running leaves it worse off than telling it about none.
+
+The spec asserts the relayed pair by the local port being inside that range rather than by
+`candidateType`: Chrome reports `prflx` for a relayed local candidate once connectivity
+checks run, so the label is the browser's opinion and the port is a fact about our
+configuration. The query-string contract by which the spec hands the page its ICE servers is
+documented with the page, in `../athenasip-admin`, per the decision of 2026-09-23.
+
+Proven by hand before it was automated, on 2026-09-30 against the quickstart stack: two
+Chromium contexts with relay forced carried 399 and 402 packets each way with no loss and
+`totalAudioEnergy` above 2 at both ends. That run found a real bug, a TURN username carrying
+our own log prose, which is the argument for having it in the automated layer.
 
 ## The live call
 

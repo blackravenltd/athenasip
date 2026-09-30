@@ -325,50 +325,30 @@ never heard describe itself.
       leave by the listener's own socket so the source port is the one the far end
       answers to, and that socket belongs to `UDPServer` rather than to the channel
       registry. Needed for a UDP trunk.
-- [ ] **Put the relay in the automated browser layer.** `test/interop/browser.sh` drives
-      the interop fixture, which has no coturn, so the TURN path is a manual check against
-      the quickstart (recorded in `docs/testing.md`). Two ways, and this one needs deciding
-      rather than doing - it touches the 2026-09-23 decision on both sides.
+- [x] **The relay is in the automated browser layer's reach.** `test/interop/up.sh
+      --rtpengine` brings up coturn alongside rtpengine, serves STUN and TURN through
+      `GET /api/v1/client/config` with a secret generated per run, and exports what the spec
+      needs in `generated/fixture.env`. `docs/testing.md` has the whole contract.
 
-      **Option A, folding the interop fixture into the quickstart**, proposed by the admin
-      console session, which would automate the relay for free since the quickstart already
-      has coturn, rtpengine and a reachable relay address. Their four conditions are all
-      right and would be the shape of it either way:
+      Option B of the two written up here, and both sessions preferred it: the interop
+      fixture keeps `memory://` and `local://`, which its own template asks for - "a fixture
+      that needs them is a fixture that fails for reasons that have nothing to do with SIP" -
+      rather than being folded into the quickstart and made to depend on Redis and Mosquitto
+      for a media test. It needed no decision from Tom in the end, because it changes nothing
+      in the 2026-09-23 decision: the fixture was already this side's to bring up, and coturn
+      is one more service in it.
 
-      1. Two phases, because no single advertised address serves both cases without putting
-         the stack on the LAN: engine on loopback for the direct case, on its bridge address
-         for the relay case, with a fixture restart between. That lifecycle is this side's.
-      2. The spec keeps reading `generated/fixture.env` under the names `docs/softphone.md`
-         lists, ports included, so the existing direct case does not change at all.
-      3. The harness page never gets a token. The spec fetches `/client/config` on its Node
-         side, where the config token already is, and passes the page `ice` (the usable
-         servers as JSON) and `relay=1`; the page strips `ice` from the address bar as it
-         already strips `password`, because it carries a TURN credential. A query-string
-         contract change, so it goes in both repositories' `docs/softphone.md`.
-      4. The relay case asserts a nominated pair, DTLS connected, packets both ways and
-         `totalAudioEnergy` above zero at both ends - and asserts the pair by the local port
-         being inside the configured relay range rather than by `candidateType`, because
-         Chrome reports `prflx` for a relayed local candidate.
+      Two runs, which is forced: no single advertised address serves the direct and relay
+      cases without putting the fixture on the LAN. The relay case asserts the pair by the
+      local port being inside the configured range rather than by `candidateType`, because
+      Chrome reports `prflx` for a relayed local candidate - a general rule agreed with the
+      console session, that a test asserts facts about our configuration and never the
+      browser's labels.
 
-      **The objection to A, which neither of us raised until afterwards:** the interop
-      fixture is `memory://` and `local://` on purpose, and its own template says why -
-      "nothing here is testing Redis or a broker, and a fixture that needs them is a fixture
-      that fails for reasons that have nothing to do with SIP". The quickstart is the
-      canonical backends by definition. Folding them makes a browser media test depend on
-      Redis and Mosquitto being healthy, which is the failure that comment exists to
-      prevent, and a quickstart with a harness mode that swaps its backends out contradicts
-      what the quickstart is for.
+      What is left is the spec, in `../athenasip-admin`: a relay phase that reads
+      `/client/config` on its Node side and hands the page its ICE servers, which is theirs
+      to write and is now unblocked.
 
-      **Option B, and the recommendation: add coturn to the interop fixture instead**, with
-      an `ATHENA_INTEROP_RTPENGINE_ADVERTISE` matching the quickstart's. Smaller, keeps the
-      isolation the fixture was given deliberately, and gets the relay into the automated
-      layer without making a SIP test depend on two more services. The two fixtures then
-      stay separate because they answer different questions - one demonstrates a
-      production-shaped deployment, the other isolates SIP from its backends - which is a
-      better reason to keep them than convergence is to merge them.
-
-      Conditions 1 to 4 apply to B unchanged, except that B needs no `fixture.env`
-      compatibility work because the fixture keeps its own.
 - [ ] Harness scenarios for what nothing exercises: a delayed offer, hold and resume,
       and a trunk. The WSS and browser-to-phone scenarios are the browser harness
       above.

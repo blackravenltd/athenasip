@@ -88,6 +88,21 @@ fi
 
 export ATHENA_INTEROP_BIND
 export ATHENA_INTEROP_RTPENGINE_ADDRESS="${ATHENA_INTEROP_RTPENGINE_ADDRESS:-172.32.0.30}"
+
+# What the engine writes into the session description. The public address unless told
+# otherwise; the engine's own address on the fixture network is what makes a relay-only call
+# work, because TURN needs only the TURN server to reach the peer and coturn is on that
+# network. A direct client cannot reach it that way, which is why browser.sh runs the two
+# cases separately rather than trying to serve both at once.
+export ATHENA_INTEROP_RTPENGINE_ADVERTISE="${ATHENA_INTEROP_RTPENGINE_ADVERTISE:-$PUBLIC_ADDRESS}"
+
+export ATHENA_INTEROP_TURN_PORT="${ATHENA_INTEROP_TURN_PORT:-3478}"
+export ATHENA_INTEROP_TURN_MIN="${ATHENA_INTEROP_TURN_MIN:-22200}"
+export ATHENA_INTEROP_TURN_MAX="${ATHENA_INTEROP_TURN_MAX:-22250}"
+
+# Per run rather than fixed. Nothing outside this fixture needs it, and a credential that
+# outlives the fixture is one somebody could still relay with.
+TURN_SECRET="${ATHENA_INTEROP_TURN_SECRET:-$(openssl rand -hex 16)}"
 export ATHENA_INTEROP_NG_PORT="${ATHENA_INTEROP_NG_PORT:-22222}"
 export ATHENA_INTEROP_LOG_MESSAGES="${ATHENA_INTEROP_LOG_MESSAGES:-true}"
 
@@ -203,6 +218,23 @@ else
   ADMIN_NOTE="No admin client served. Add --admin for the softphone the browser harness drives."
 fi
 
+# ICE, and only with rtpengine: coturn is in that overlay, and telling a client about a TURN
+# server that is not running leaves it worse off than telling it about none.
+if [[ "$ENGINE" == "rtpengine" ]]; then
+  ICE_SERVERS=$(printf '    ice_servers:\n      - url: "stun:%s:%s"\n      - url: "turn:%s:%s"' \
+    "$PUBLIC_ADDRESS" "$ATHENA_INTEROP_TURN_PORT" "$PUBLIC_ADDRESS" "$ATHENA_INTEROP_TURN_PORT")
+
+  mkdir -p "$HERE/generated/coturn"
+  sed -e "s|@PUBLIC_ADDRESS@|${PUBLIC_ADDRESS}|g" \
+      -e "s|@TURN_SECRET@|${TURN_SECRET}|g" \
+      -e "s|@TURN_MIN@|${ATHENA_INTEROP_TURN_MIN}|g" \
+      -e "s|@TURN_MAX@|${ATHENA_INTEROP_TURN_MAX}|g" \
+      "$HERE/turnserver.conf" > "$HERE/generated/coturn/turnserver.conf"
+else
+  ICE_SERVERS="    ice_servers: []"
+  TURN_SECRET=""
+fi
+
 # The node binds what the host publishes, so the config is rendered rather than fixed.
 mkdir -p "$HERE/generated"
 sed -e "s|@PUBLIC_ADDRESS@|${PUBLIC_ADDRESS}|g" \
@@ -215,6 +247,8 @@ sed -e "s|@PUBLIC_ADDRESS@|${PUBLIC_ADDRESS}|g" \
     -e "s|@MEDIA_URL@|${MEDIA_URL}|g" \
     -e "s|@FILES_ENABLE@|${FILES_ENABLE}|g" \
     -e "s|@LOG_MESSAGES@|${ATHENA_INTEROP_LOG_MESSAGES}|g" \
+    -e "s|@TURN_SECRET@|${TURN_SECRET}|g" \
+    -e "s|@ICE_SERVERS@|${ICE_SERVERS//$'\n'/\\n}|g" \
     "$HERE/config.yaml.template" > "$HERE/generated/config.yaml"
 
 echo "Building and starting..."
@@ -254,6 +288,11 @@ ATHENA_INTEROP_MEDIA_ENGINE=${ENGINE}
 ATHENA_INTEROP_NG_PORT=${ATHENA_INTEROP_NG_PORT}
 ATHENA_INTEROP_ADMIN_DIR=${ATHENA_INTEROP_ADMIN_DIR}
 ATHENA_INTEROP_PASSWORD=${ATHENA_INTEROP_PASSWORD:-athenaphone}
+ATHENA_INTEROP_RTPENGINE_ADVERTISE=${ATHENA_INTEROP_RTPENGINE_ADVERTISE}
+ATHENA_INTEROP_TURN_PORT=${ATHENA_INTEROP_TURN_PORT}
+ATHENA_INTEROP_TURN_MIN=${ATHENA_INTEROP_TURN_MIN}
+ATHENA_INTEROP_TURN_MAX=${ATHENA_INTEROP_TURN_MAX}
+ATHENA_INTEROP_TURN_SECRET=${TURN_SECRET}
 ENV
 
 cat <<MSG

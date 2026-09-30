@@ -21,14 +21,53 @@
 #
 # The range is deliberately small. Docker Desktop publishes wide UDP ranges slowly, and
 # a fixture needs a handful of calls rather than a switch's worth.
+#
+# Both ranges here, and the TURN one at 22200-22250, are clear of 23100-24710, which the unit
+# suite binds for the builtin relay's own tests. A fixture sitting on those makes the suite
+# fail for a reason that has nothing to do with the code under test - which it did, once,
+# while this was being written.
+#
+# coturn is here too, because a relay needs rtpengine anyway and there is nothing for it
+# to relay to without one. It is what puts the TURN path in the automated browser layer
+# instead of leaving it a manual check: the credential this node mints, coturn accepting
+# it, and the relay reaching the engine.
+#
+# ATHENA_INTEROP_RTPENGINE_ADVERTISE is what makes the relay case work. No single
+# advertised address serves both cases: from the host the engine is reachable on its
+# published ports at loopback, from coturn only at its address on this network, and
+# nothing is both without putting the fixture on the LAN. So browser.sh runs the direct
+# case with the engine advertising the public address and the relay case with it
+# advertising ATHENA_INTEROP_RTPENGINE_ADDRESS, restarting between them.
 
 services:
+  coturn:
+    image: coturn/coturn:${ATHENA_INTEROP_COTURN_TAG:-4.18.0}
+    container_name: ${ATHENA_INTEROP_NAME:-athenasip-interop}-coturn
+    volumes:
+      - ./generated/coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    command: ["-c", "/etc/coturn/turnserver.conf"]
+    ports:
+      - "${ATHENA_INTEROP_BIND:-127.0.0.1}:${ATHENA_INTEROP_TURN_PORT:-3478}:3478/udp"
+      - "${ATHENA_INTEROP_BIND:-127.0.0.1}:${ATHENA_INTEROP_TURN_PORT:-3478}:3478/tcp"
+      - "${ATHENA_INTEROP_BIND:-127.0.0.1}:${ATHENA_INTEROP_TURN_MIN:-22200}-${ATHENA_INTEROP_TURN_MAX:-22250}:${ATHENA_INTEROP_TURN_MIN:-22200}-${ATHENA_INTEROP_TURN_MAX:-22250}/udp"
+    networks:
+      - interop
+    healthcheck:
+      # The coturn image carries neither ss nor netstat, so this reads /proc directly. 3478
+      # is 0x0D96, and the port inside the container is always 3478 whatever the host
+      # publishes it on.
+      test: ["CMD-SHELL", "grep -qi ':0D96' /proc/net/udp"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+      start_period: 2s
+
   rtpengine:
     image: drachtio/rtpengine:latest
     container_name: ${ATHENA_INTEROP_NAME:-athenasip-interop}-rtpengine
     command:
       - rtpengine
-      - --interface=${ATHENA_INTEROP_RTPENGINE_ADDRESS:-172.32.0.30}!${ATHENA_INTEROP_PUBLIC_ADDRESS:-127.0.0.1}
+      - --interface=${ATHENA_INTEROP_RTPENGINE_ADDRESS:-172.32.0.30}!${ATHENA_INTEROP_RTPENGINE_ADVERTISE:-${ATHENA_INTEROP_PUBLIC_ADDRESS:-127.0.0.1}}
       - --listen-ng=${ATHENA_INTEROP_RTPENGINE_ADDRESS:-172.32.0.30}:22222
       - --port-min=${ATHENA_INTEROP_RTP_MIN:-22000}
       - --port-max=${ATHENA_INTEROP_RTP_MAX:-22100}
@@ -69,6 +108,8 @@ services:
       - "${ATHENA_INTEROP_BIND:-127.0.0.1}:${ATHENA_INTEROP_API_PORT:-8080}:${ATHENA_INTEROP_API_PORT:-8080}/tcp"
     depends_on:
       rtpengine:
+        condition: service_healthy
+      coturn:
         condition: service_healthy
 
 networks:
