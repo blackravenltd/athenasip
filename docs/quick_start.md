@@ -37,6 +37,33 @@ ATHENA_WSS_PORT=19443 ATHENA_API_PORT=18080 docker/up.sh
 
 `docker/up.sh down` stops it and keeps the data; `docker/up.sh --reset` forgets it too.
 
+### If you want to exercise TURN
+
+A relay only works if the TURN server can reach the media engine, and on a stack running
+entirely on loopback it cannot: rtpengine advertises `127.0.0.1`, and inside coturn's
+container that address is coturn. A browser will gather a relay candidate, ICE will get as
+far as checking, and no audio will flow. Direct media is unaffected, which is why this is
+the default and only a note.
+
+Two ways to a relay that works. Either run with this host's own address, which is what
+`docker/up.sh` picks when it is not told otherwise:
+
+```
+ATHENA_PUBLIC_ADDRESS=<this host's address> docker/up.sh
+```
+
+Or keep everything on loopback and point the engine at its own address on the compose
+network, which exposes nothing outside this machine:
+
+```
+ATHENA_RTPENGINE_ADVERTISE=172.33.0.30 docker/up.sh
+```
+
+The second works because TURN requires only the *TURN server* to reach the peer, never the
+client: the browser talks to coturn on loopback, and coturn relays onto the compose network.
+The cost is that a direct, non-relay call then cannot work, because a client on the host
+cannot reach that address itself.
+
 **Before this reaches a network you do not control**, change the API tokens in
 `docker/config.yaml.template` and `static-auth-secret` in `docker/turnserver.conf`. They
 are the same in every clone of this repository. The admin listener is also plain HTTP,

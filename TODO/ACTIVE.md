@@ -285,7 +285,7 @@ never heard describe itself.
       then 400, which at the client is indistinguishable from a bad secret. Filtered at the
       source now, and a credential the live node mints allocates a relay, binds a channel
       and refreshes on both coturn 4.6.2 and 4.18.0.
-- [ ] Relay-only media cannot work on a loopback quickstart, which is a limitation to
+- [x] Relay-only media cannot work on a loopback quickstart, which is a limitation to
       document rather than a bug to fix. rtpengine advertises `sip.public_address`, and when
       that is `127.0.0.1` the address coturn is asked to relay to is coturn's own loopback
       rather than rtpengine - and coturn refuses loopback peers anyway without
@@ -293,7 +293,10 @@ never heard describe itself.
       address has no such problem, which is what `docker/up.sh` picks when it is not told
       otherwise. Found by the admin console session; the fix is a paragraph in
       `docs/quick_start.md` saying which address to run with when the point is to exercise
-      TURN.
+      TURN. Done: `docs/quick_start.md` has it, `up.sh` prints a note when the
+      combination cannot relay, and `ATHENA_RTPENGINE_ADVERTISE` is the way to exercise a
+      relay without putting anything on the LAN - TURN needs only the TURN server to reach
+      the peer, so the engine advertising its bridge address is enough.
 - [ ] NAT handling for the client side, for a phone that is not on the LAN: `rport`
       and `received` are stamped on the way in (RFC 3581), and what is missing is
       routing a response and an in-dialog request to where the request actually came

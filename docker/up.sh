@@ -82,6 +82,12 @@ export ATHENA_API_PORT="${ATHENA_API_PORT:-8080}"
 # rtpengine's address on the compose network, fixed so the node can be configured with it
 # rather than with a name that would not resolve if the engine ever moved off this bridge.
 export ATHENA_RTPENGINE_ADDRESS="${ATHENA_RTPENGINE_ADDRESS:-172.33.0.30}"
+
+# What rtpengine writes into the session description, which is the address a client sends
+# media to. The public address unless told otherwise; the engine's own bridge address is how
+# a relay-only call is exercised on a loopback stack, because TURN only needs the TURN server
+# to reach the peer.
+export ATHENA_RTPENGINE_ADVERTISE="${ATHENA_RTPENGINE_ADVERTISE:-$PUBLIC_ADDRESS}"
 export ATHENA_RTP_MIN="${ATHENA_RTP_MIN:-25000}"
 export ATHENA_RTP_MAX="${ATHENA_RTP_MAX:-25050}"
 export ATHENA_TURN_MIN="${ATHENA_TURN_MIN:-25100}"
@@ -189,6 +195,29 @@ case "$PUBLIC_ADDRESS" in
     echo "Certificate for ${PUBLIC_ADDRESS}..."
     "$ROOT/tls/generate.sh" --server-only --out "$HERE/generated/tls" "$PUBLIC_ADDRESS" > /dev/null
     ATHENA_TLS_DIR="./docker/generated/tls"
+    ;;
+esac
+
+# A loopback stack cannot relay, and the failure is silent and a long way from the cause:
+# coturn is asked to send to 127.0.0.1, which inside its own container is coturn.
+case "$PUBLIC_ADDRESS" in
+  127.*|localhost)
+    if grep -q '^use-auth-secret' "$HERE/turnserver.conf" 2>/dev/null && [[ "$ATHENA_RTPENGINE_ADVERTISE" == "$PUBLIC_ADDRESS" ]]; then
+      cat >&2 <<MSG
+Note: this stack advertises ${PUBLIC_ADDRESS}, so TURN cannot relay to the media engine.
+A browser will gather a relay candidate and the call will not carry audio through it,
+because coturn would be relaying to its own loopback. Direct media is unaffected.
+
+For a relay path that works, either run with this host's own address:
+
+  ATHENA_PUBLIC_ADDRESS=<this host's LAN address> docker/up.sh
+
+or keep loopback and point the engine at its bridge address, which exposes nothing:
+
+  ATHENA_RTPENGINE_ADVERTISE=${ATHENA_RTPENGINE_ADDRESS} docker/up.sh
+
+MSG
+    fi
     ;;
 esac
 

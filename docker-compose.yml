@@ -71,9 +71,15 @@ services:
     # Not network_mode: host. That would make the name `rtpengine` unresolvable from the
     # node's container, and on Docker Desktop it is the virtual machine's network rather
     # than this machine's anyway.
+    #
+    # ATHENA_RTPENGINE_ADVERTISE overrides what it writes into the session description,
+    # which is the public address otherwise. Setting it to the engine's own bridge address
+    # is what makes a relay-only call work on a loopback stack: TURN only requires the TURN
+    # server to reach the peer, not the client, and coturn is on this network. A direct
+    # client cannot reach it that way, so it is for exercising the relay and not a default.
     command:
       - rtpengine
-      - --interface=${ATHENA_RTPENGINE_ADDRESS:-172.33.0.30}!${ATHENA_PUBLIC_ADDRESS:-127.0.0.1}
+      - --interface=${ATHENA_RTPENGINE_ADDRESS:-172.33.0.30}!${ATHENA_RTPENGINE_ADVERTISE:-${ATHENA_PUBLIC_ADDRESS:-127.0.0.1}}
       - --listen-ng=0.0.0.0:22222
       - --port-min=${ATHENA_RTP_MIN:-25000}
       - --port-max=${ATHENA_RTP_MAX:-25050}
