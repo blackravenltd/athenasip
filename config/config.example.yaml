@@ -42,6 +42,20 @@ sip:
   # transaction thirty-two seconds, which a fork with several bindings has to share.
   connect_timeout_ms: 4000
 
+  # How long a connectionless flow may sit idle before this node forgets it, in seconds.
+  # Zero never forgets one.
+  #
+  # Only UDP needs it. A TCP, TLS or WebSocket flow ends when its socket does; UDP has no
+  # socket per peer and no close to wait for, so a flow made by a single datagram would live
+  # as long as the process - and the map it lives in is keyed by a remote address a datagram
+  # can claim to be from, which on a public listener is a way to grow this node's memory
+  # from off the network.
+  #
+  # Five minutes is well past every RFC 3261 section 17 timer, the longest being 64*T1 at 32
+  # seconds, so nothing with a transaction outstanding is ever swept. Forgetting a flow costs
+  # a UDP peer nothing it notices: its next datagram makes a new one.
+  flow_idle_timeout: 300
+
   # --------------------------------------------------------------------------------
   # Deciding a call is over
   #

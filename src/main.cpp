@@ -439,6 +439,9 @@ int main(int argc, char* argv[]) {
   core->version_set(version->to_string());
   core->node_status_start();
 
+  // UDP flows have no socket to end them, so something has to forget the quiet ones.
+  core->flow_sweep_start();
+
   // Wait for Signals
   boost::asio::io_context signal_wait_context;
   boost::asio::signal_set signals(signal_wait_context, SIGINT, SIGHUP);

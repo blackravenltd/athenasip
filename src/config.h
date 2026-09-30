@@ -136,6 +136,22 @@ class Config {
   // to have room to try more than the first.
   uint32_t sip_connect_timeout_ms = 4000;
 
+  // How long a connectionless flow may sit idle before this node forgets it, in seconds.
+  // Zero never forgets one, which is what it did before this existed.
+  //
+  // Only UDP needs it. A TCP, TLS or WebSocket flow ends when its socket does; UDP has no
+  // socket per peer and no close to wait for, so a flow made by a single datagram lived as
+  // long as the process - and the map it lived in is keyed by a remote address that a
+  // datagram can claim to be from, which on a public listener is a way to grow a node's
+  // memory from off the network.
+  //
+  // Five minutes is comfortably past every RFC 3261 section 17 timer - the longest is
+  // 64*T1, 32 seconds - so nothing with transaction state outstanding is ever swept.
+  // Forgetting a flow costs a UDP peer nothing it notices: the next datagram makes a new
+  // one, and a UDP contact is routable, which is what an in-dialog request falls back to
+  // when the flow token no longer resolves.
+  std::uint32_t sip_flow_idle_timeout = 300;
+
   // TLS Configuration
   bool tls_enable = false;
   std::string tls_address;
