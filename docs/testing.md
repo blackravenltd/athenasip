@@ -156,6 +156,20 @@ before starting a container:
 It passes the whole fixture environment through from `test/interop/generated/fixture.env`,
 which `up.sh` writes every run, so an address or a port is never guessed twice.
 
+This layer proves direct media. **The relay is not in it**, and was checked by hand against
+the quickstart stack instead, on 2026-09-30: two Chromium contexts with
+`iceTransportPolicy: "relay"` and ICE servers from `GET /api/v1/client/config` carried 399
+and 402 packets each way with no loss and `totalAudioEnergy` above 2 at both ends, relayed
+through coturn to rtpengine. What that adds over the direct run is the whole TURN path -
+the credential this node mints, coturn accepting it, and the relay reaching the engine - and
+it found a real bug on the way, a TURN username carrying our own log prose.
+
+It is not automated yet, and the reason is that `browser.sh` drives the interop fixture,
+which has no TURN server in it. Doing it properly means coturn in that fixture and a relay
+address the engine can be reached at, which is `docker/up.sh --console` plus
+`ATHENA_RTPENGINE_ADVERTISE` today. Until then the relay is a manual check and this says so
+rather than leaving a gap that reads as covered.
+
 ## The live call
 
 The one thing nothing can automate: a browser calls an AthenaPhone on a real device and

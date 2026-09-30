@@ -61,8 +61,22 @@ ATHENA_RTPENGINE_ADVERTISE=172.33.0.30 docker/up.sh
 
 The second works because TURN requires only the *TURN server* to reach the peer, never the
 client: the browser talks to coturn on loopback, and coturn relays onto the compose network.
-The cost is that a direct, non-relay call then cannot work, because a client on the host
-cannot reach that address itself.
+The cost is narrower than it looks. A client on the host cannot reach that address, so the
+direct path fails - but a client that read `ice_servers` from `/api/v1/client/config` has a
+TURN server, and ICE falls back to the relay on its own when the direct path fails. Measured
+on this stack: a browser with relay forced carried 399 packets each way with no loss, and the
+same browser with relay *not* forced also carried audio, because it fell back. Only a client
+with no TURN server at all - the `softphone.html` harness page, which is given none
+deliberately - fails outright.
+
+So this mode costs a direct media path and not a working call, for anything that provisions
+itself from the API.
+
+One thing not to chase: Chrome's `RTCStatsReport` labels the local end of a relayed pair
+`candidateType: "prflx"` with `relayProtocol: "udp"` and a blanked address, rather than
+`"relay"`. Under relay policy nothing but a relay candidate is gathered, and the local ports
+are inside coturn's configured range, so it is the TURN allocation - Chrome is relabelling
+the relayed path peer-reflexive once connectivity checks run.
 
 **Before this reaches a network you do not control**, change the API tokens in
 `docker/config.yaml.template` and `static-auth-secret` in `docker/turnserver.conf`. They
