@@ -472,11 +472,17 @@ TEST(ProvisioningApiTest, ClientConfigMintsAFreshCredentialEachTime) {
 
   const auto first = f.get("/api/v1/client/config", "client-token").json();
 
-  // The expiry is what the username is, so two requests a second apart give two
-  // credentials. What matters is that each one is good from when it was asked for rather
-  // than from when the node started.
+  // The expiry is what the username is, so each request gives a credential good from when
+  // it was asked for rather than from when the node started.
+  //
+  // The name after the colon is "token" for a configuration token, and is protocol-safe by
+  // construction: coturn refuses a username containing a space, which it reports as 401
+  // "wrong username" and then 400 Bad Request - indistinguishable from a bad secret at the
+  // client. An earlier version of this put our own log prose in there and no browser could
+  // allocate a relay.
   const auto username = std::string(first.at("ice_servers").at(0).at("username").as_string());
-  EXPECT_EQ(username, std::to_string(first.at("ice_servers").at(0).at("expires_at").as_int64()) + ":a configuration token");
+  EXPECT_EQ(username, std::to_string(first.at("ice_servers").at(0).at("expires_at").as_int64()) + ":token");
+  EXPECT_EQ(username.find(' '), std::string::npos);
 }
 
 TEST(ProvisioningApiTest, ClientConfigWithNoTurnSecretHandsOutNoCredential) {
