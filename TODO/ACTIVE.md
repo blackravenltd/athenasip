@@ -271,14 +271,15 @@ Everything below the transaction users is a plugin: datastores, event systems an
 engines today, routing policy and others later. They hang off the TU layer and register
 through one contract, so adding a kind or an implementation touches nothing above it.
 
-The tree matches the diagram as of 0.7.0, with one box not yet built: the local UA,
+The tree matches the diagram, checked on 2026-09-30, with one box not yet built: the local UA,
 which is what would let a node send a BYE to both ends of a call it decided was over.
 `docs/architecture.md` describes the shape for a reader; this section is the target.
 
-### Known deviations from the standards, as of 0.7.0
+### Known deviations from the standards
 
 Each is deliberate, each is an item below, and this list is so that none of them is
-mistaken for compliance:
+mistaken for compliance. **Re-checked against the tree on 2026-09-30** - all six still
+hold, and nothing since 0.7.0 added or closed one:
 
 - A next hop is resolved from its URI's transport, host and port with A/AAAA only. RFC
   3263's NAPTR and SRV are not done; M4.
