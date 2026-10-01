@@ -2324,3 +2324,12 @@ LAN is answered 403.
       because RFC 3264 section 5 has the callee offer in its 200 and that offer is
       produced for a caller that has said nothing yet. Only that INVITE pays for the read.
       With it, all five steps of the 2026-10-01 behaviour-profile decision are in.
+
+### The node list fed from the discovery bus (2026-10-02)
+
+- [x] **Each node's status says where it listens** (`transports`, from
+      `Config::advertised_transports`, which the node list now shares), and every node
+      subscribes to `nodes/+/status` into a `NodeDirectory`. `GET /api/v1/nodes` lists
+      this node from its own configuration and every other as it last described itself,
+      with its status, and `stale` once its report is three status intervals old. The
+      first item of Milestone 4's client failover.
