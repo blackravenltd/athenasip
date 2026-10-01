@@ -355,10 +355,9 @@ Two things it found are this milestone's next work, in this order.
          caller's account, which matters only for a delayed offer (the 200's offer is
          produced for a caller that has not described itself). It costs a datastore read
          per INVITE with no body, which is the only INVITE that needs it.
-      4. One re-offer of the other profile on a 488 (Kamailio's failure-route pattern),
-         and the value no other server adds: the admin API and console say which accounts
-         needed it ("rejected plain RTP, took WebRTC - set its profile?"). The node
-         suggests and the operator decides; nothing is learned silently.
+      4. is in: one re-offer of the other profile on a 488, and
+         `GET /api/v1/media/reoffers` for the operator. The console's side is with the
+         admin session.
       5. OPTIONS to registered clients (Asterisk `qualify`, Kamailio nathelper), reading the
          SDP an OPTIONS 200 may carry (RFC 3261 11.2) as what the client says it supports.
          The same ping keeps NAT mappings open.

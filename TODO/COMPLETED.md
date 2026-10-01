@@ -2268,3 +2268,30 @@ LAN is answered 403.
       empty. The admin API takes and returns it in the account's own `behaviour` section,
       refusing any other setting or value with a 400 that changes nothing. The Redis
       driver stores it only when chosen. Plugin contract version 9.
+
+### Every branch of a serial fork is anchored (2026-10-02)
+
+- [x] **A failed branch no longer ends the call.** The dialog tracker treated any final
+      failure as the end of the attempt, which is right for a UA and wrong for a forking
+      proxy: RFC 3261 16.7 ends the attempt with the final response this node sends
+      upstream. So the first binding refusing closed the call record and released its
+      media, and every later branch - a second binding, an RFC 3263 failover - went out
+      with its description unanchored and came back the same. `Dialogs::observe_branch_failure`
+      now ends only the failed branch's early dialog, putting the attempt back when it was
+      the only one, and `_send_best` ends the attempt when the answer goes upstream. Once
+      the caller has had its answer (a CANCEL's 487, an earlier 2xx) a branch's failure
+      is observed as before. Found while building the re-offer below, and positively
+      controlled: a 486, with or without a To tag, closed the call the same way.
+
+### One re-offer on 488, and the operator told (2026-10-02)
+
+- [x] **Step 4 of the 2026-10-01 decision.** A 488 to an offer the engine produced for a
+      leg that had not described itself is answered by offering the same target the
+      other profile, once (`Proxy::_reoffer`), as a Kamailio failure route would. Under
+      `mirror` the other profile is the other of what the caller offered, which is the
+      browser calling a desk phone. A description passed through untouched - no engine,
+      anchoring off, or the engine declining - is the caller's, and its 488 goes to the
+      caller. A 488 to the re-offer is the answer.
+- [x] **`GET /api/v1/media/reoffers`** (`media::Reoffers`, per node, bounded) lists each
+      account that needed it, what it refused, what it took, and the
+      `suggested_media_profile` that would save it the round trip. Nothing sets it.
