@@ -74,6 +74,9 @@ class ProvisioningAPI : public std::enable_shared_from_this<ProvisioningAPI> {
   // others yet; the shape is what the M4 discovery bus fills in, and it is what a client
   // reads to know where else it could go when this node stops answering.
   void _node_list(RouteContext context);
+  // This node, then the others as they last described themselves; only those that are up
+  // and current when usable_only.
+  boost::json::array _nodes_json(bool usable_only) const;
 
   // The realm a request names, or a 404 that says so. Every account route starts here,
   // because an account in a realm that does not exist is a typo rather than a 500.

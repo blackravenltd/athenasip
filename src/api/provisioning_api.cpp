@@ -601,6 +601,30 @@ void ProvisioningAPI::_client_config(RouteContext context) {
     }
   }
 
+  // Where else it can go: this node first, then the others that are up and current, and
+  // their secure WebSocket URIs in the same order for a browser to fail over along.
+  auto nodes = _nodes_json(true);
+  boost::json::array websocket_uris;
+  for (const auto& node : nodes) {
+    // Another node's entries came off the bus, so they are read as carefully as anything
+    // else that did: one that is not shaped right is skipped, not trusted.
+    const auto* transports = node.as_object().if_contains("transports");
+    if (transports == nullptr || !transports->is_array()) continue;
+
+    for (const auto& transport : transports->as_array()) {
+      if (!transport.is_object()) continue;
+      const auto* kind = transport.as_object().if_contains("transport");
+      const auto* address = transport.as_object().if_contains("address");
+      const auto* port = transport.as_object().if_contains("port");
+      if (kind == nullptr || address == nullptr || port == nullptr || !kind->is_string() || !address->is_string() || !port->is_number()) continue;
+      if (kind->as_string() != "wss") continue;
+
+      websocket_uris.push_back(boost::json::string("wss://" + std::string(address->as_string()) + ":" + std::to_string(port->to_number<std::uint64_t>())));
+    }
+  }
+  out["nodes"] = std::move(nodes);
+  out["websocket_uris"] = std::move(websocket_uris);
+
   // Shaped as RTCIceServer, so a browser can hand this to RTCPeerConnection unchanged.
   // Credentials are minted per request and expire on their own; a stun: URL gets none,
   // because STUN has nothing to authenticate to.
@@ -638,7 +662,7 @@ void ProvisioningAPI::_client_config(RouteContext context) {
   context.done();
 }
 
-void ProvisioningAPI::_node_list(RouteContext context) {
+boost::json::array ProvisioningAPI::_nodes_json(bool usable_only) const {
   boost::json::object node;
   node["id"] = _config->sip_node_id;
 
@@ -658,6 +682,7 @@ void ProvisioningAPI::_node_list(RouteContext context) {
   if (_nodes) {
     for (const auto& other : _nodes->list(_node_heartbeat * 3)) {
       if (other.id == _config->sip_node_id) continue;
+      if (usable_only && (other.stale || other.status != "ok")) continue;
 
       boost::json::object entry;
       entry["id"] = other.id;
@@ -671,7 +696,11 @@ void ProvisioningAPI::_node_list(RouteContext context) {
     }
   }
 
-  write_json(context.response, http::status::ok, nodes);
+  return nodes;
+}
+
+void ProvisioningAPI::_node_list(RouteContext context) {
+  write_json(context.response, http::status::ok, _nodes_json(false));
   context.done();
 }
 
