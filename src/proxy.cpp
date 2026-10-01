@@ -824,7 +824,20 @@ void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::sha
 
   // Section 12 is tracked, not routed on: the dialog record is what tells this node a
   // call is up and when it ends, and it is built from what goes past.
-  if (auto core = _core.lock()) core->dialogs()->observe_response(context->request, response);
+  //
+  // A branch failing while the fork goes on is that branch's end and not the call's (16.7):
+  // the attempt is over when this node sends the caller its final response, and _send_best
+  // tells the tracker so then. Once the caller has had its answer - a CANCEL's 487, an
+  // earlier branch's 2xx - what a branch says is only the end of that branch.
+  const bool fork_goes_on = is_final(code) && !is_2xx(code) && code < 600 && !context->answered;
+
+  if (auto core = _core.lock()) {
+    if (fork_goes_on) {
+      core->dialogs()->observe_branch_failure(context->request, response);
+    } else {
+      core->dialogs()->observe_response(context->request, response);
+    }
+  }
 
   if (!is_final(code)) {
     context->provisional = true;
