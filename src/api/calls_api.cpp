@@ -38,6 +38,23 @@ boost::json::value profile_json(const std::optional<media::Profile>& profile) {
   return nullptr;
 }
 
+// A profile in the words the behaviour settings use, so what is reported can be set as is.
+boost::json::value setting_json(const std::optional<media::Profile>& profile) {
+  if (!profile) return nullptr;
+
+  switch (*profile) {
+    case media::Profile::WebRtc:
+      return "webrtc";
+    case media::Profile::PlainRtp:
+      return "rtp";
+    case media::Profile::SrtpSdes:
+      return "srtp";
+    case media::Profile::Mirror:
+      return "mirror";
+  }
+  return nullptr;
+}
+
 boost::json::value time_json(std::time_t when) {
   if (when == 0) return nullptr;
   return boost::json::string(Util::to_iso8601(when));
@@ -63,6 +80,7 @@ void CallsAPI::register_routes(Router& router) {
   router.add(http::verb::get, "/api/v1/calls", {view_cluster_status}, [self](RouteContext c) { self->_list(std::move(c)); });
   router.add(http::verb::get, "/api/v1/calls/{call}", {view_cluster_status}, [self](RouteContext c) { self->_get(std::move(c)); });
   router.add(http::verb::get, "/api/v1/media", {view_cluster_status}, [self](RouteContext c) { self->_media(std::move(c)); });
+  router.add(http::verb::get, "/api/v1/media/reoffers", {view_cluster_status}, [self](RouteContext c) { self->_reoffers(std::move(c)); });
 
   // On the admin port and outside /api/v1, where Prometheus expects it. Behind the same
   // credential as everything else: what a node is carrying is not for anybody who asks.
@@ -240,6 +258,38 @@ void CallsAPI::_media(RouteContext context) {
       if (can.transcode) capabilities.push_back("transcode");
     }
     out["capabilities"] = std::move(capabilities);
+
+    boost::asio::post(self->_executor, [context, out = std::move(out)]() mutable {
+      write_json(context.response, http::status::ok, out);
+      context.done();
+    });
+  });
+}
+
+// The accounts this node offered the other profile after a 488, and what came of it. The node
+// suggests and the operator decides: the suggestion is the value the account's behaviour
+// would take, and nothing sets it.
+void CallsAPI::_reoffers(RouteContext context) {
+  auto core = _core.lock();
+  if (!core) {
+    write_error(context.response, http::status::service_unavailable, "unavailable", "the node is shutting down");
+    return context.done();
+  }
+
+  auto self = shared_from_this();
+  core->post([self, core, context]() mutable {
+    boost::json::array out;
+
+    for (const auto& reoffer : core->reoffers().list()) {
+      boost::json::object entry;
+      entry["account"] = reoffer.account;
+      entry["rejected"] = setting_json(reoffer.rejected);
+      entry["took"] = setting_json(reoffer.took);
+      entry["count"] = reoffer.count;
+      entry["last_at"] = time_json(reoffer.last_at);
+      entry["suggested_media_profile"] = setting_json(reoffer.took);
+      out.push_back(std::move(entry));
+    }
 
     boost::asio::post(self->_executor, [context, out = std::move(out)]() mutable {
       write_json(context.response, http::status::ok, out);

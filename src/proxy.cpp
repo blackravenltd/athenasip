@@ -621,6 +621,8 @@ void Proxy::_forward_next(const std::shared_ptr<Context>& context) {
   const Target target = context->targets[context->next++];
   context->hops_left.clear();
   context->hop_target.reset();
+  context->current = target;
+  context->offered.reset();
 
   if (auto channel = target.flow.lock(); channel && channel->_connection) return _forward_to(context, target, channel);
 
@@ -866,6 +868,7 @@ void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::sha
   // A 2xx ends the search: there is an answer and forking stops (16.7 step 5). A 6xx is
   // a definitive refusal from the user and stops it too.
   if (is_2xx(code) || code >= 600) {
+    if (is_2xx(code)) _report_reoffer(context, true);
     context->best = response;
     context->answered = true;
     _contexts.erase(context->server->id());
@@ -881,7 +884,50 @@ void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::sha
   // not be. Anything else is an answer, which another server would give as well.
   if (code == 503 && _try_next_hop(context)) return;
 
+  if (code == 488) {
+    if (_reoffer(context)) return;
+    _report_reoffer(context, false);
+  }
+
   _forward_next(context);
+}
+
+// Kamailio's failure-route pattern, and step 4 of the 2026-10-01 decision. A 488 (RFC 3261
+// 21.4.26) to an offer this node's engine produced for a leg that had not described itself
+// is a refusal of this node's guess rather than of the caller, so the same target is offered
+// the other profile, once. RFC 3264 is untouched: the callee sees two offers on two
+// transactions and refused one of them.
+bool Proxy::_reoffer(const std::shared_ptr<Context>& context) {
+  if (context->current.profile || !context->offered) return false;
+
+  std::optional<media::Profile> other;
+  if (*context->offered == media::Profile::PlainRtp) other = media::Profile::WebRtc;
+  if (*context->offered == media::Profile::WebRtc) other = media::Profile::PlainRtp;
+  if (!other) return false;
+
+  Target again = context->current;
+  again.profile = other;
+  again.rejected = context->offered;
+  context->targets.insert(context->targets.begin() + static_cast<std::ptrdiff_t>(context->next), again);
+
+  _logger->info(context->request->header->request_uri->to_string() + " refused the offer it was made - offering the other profile");
+  _forward_next(context);
+  return true;
+}
+
+// What the re-offer came to, for the operator. Nothing is learned from it: the node says
+// which account needed the other profile and the operator decides whether to set it.
+void Proxy::_report_reoffer(const std::shared_ptr<Context>& context, bool took) {
+  const auto& current = context->current;
+  if (!current.profile || !current.rejected) return;
+
+  auto core = _core.lock();
+  if (!core) return;
+
+  const auto account = context->request->header->request_uri->to_string();
+  core->reoffers().record(account, *current.rejected, took ? current.profile : std::nullopt);
+
+  if (took) _logger->warn(account + " took the other media profile after refusing the first - see /api/v1/media/reoffers");
 }
 
 void Proxy::_send_best(const std::shared_ptr<Context>& context) {
@@ -981,7 +1027,12 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
   // itself. Then the leg's account, where the operator has said what the endpoint is.
   // The realm's setting, and where it has none the transport of the outgoing flow,
   // decide only for the first description produced towards a leg nobody has spoken for.
-  if (recipient && call->participants[*recipient].profile) {
+  const bool unheard = !(recipient && call->participants[*recipient].profile);
+
+  if (!is_response && context && context->current.profile) {
+    // The re-offer a 488 earned, which is the one thing that outranks the rest.
+    flags.target = *context->current.profile;
+  } else if (!unheard) {
     flags.target = *call->participants[*recipient].profile;
   } else if (recipient && call->participants[*recipient].account_profile) {
     types::MediaPolicy account;
@@ -991,10 +1042,20 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
     flags.target = _profile_under(policy, outgoing && outgoing->_connection ? outgoing->_connection->transport_name() : std::string());
   }
 
+  // What the offer towards an unheard callee is being made as, so that a refusal of it can
+  // be answered with the other. Mirror is whatever the caller said.
+  std::optional<media::Profile> offered;
+  if (!is_response && is_offer && unheard && context && message->header->request_method == "INVITE") {
+    offered = flags.target == media::Profile::Mirror ? flags.stated() : std::optional<media::Profile>(flags.target);
+  }
+
   auto self = shared_from_this();
 
-  auto handler = [this, self, message, then = std::move(then)](media::Result result) {
+  auto handler = [this, self, message, context, offered, then = std::move(then)](media::Result result) {
     if (result.ok) {
+      // Only an offer the engine made counts as this node's; one passed through untouched
+      // is the caller's, and a refusal of it is the caller's to hear.
+      if (context && offered) context->offered = offered;
       message->body = std::move(result.sdp);
       message->body_length = static_cast<unsigned int>(message->body.size());
     } else {

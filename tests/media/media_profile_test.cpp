@@ -195,6 +195,10 @@ struct ProfileFixture : ProxyFixture {
     return sdp.empty() ? raw : with_body(raw, sdp);
   }
 
+  std::vector<media::Reoffer> reoffers() {
+    return on_strand([this]() { return core->reoffers().list(); });
+  }
+
   // Hold, resume, or any other mid-call re-offer, sent by the end that answered.
   std::string reinvite_from_callee(const std::string& sdp) {
     std::string raw = "INVITE sip:alice@192.0.2.10:5060 SIP/2.0\r\n";
@@ -417,6 +421,107 @@ TEST(MediaProfileTest, AnAccountCanTakeItsLegOutOfTheTransportRule) {
   const auto calls = f.engine->calls();
   ASSERT_FALSE(calls.empty());
   EXPECT_EQ(calls[0].flags.target, Flags::Profile::Mirror);
+}
+
+// Step 4 of the 2026-10-01 decision, Kamailio's failure-route pattern: a callee that
+// answers an offer this node produced by guessing with 488 Not Acceptable Here (RFC 3261
+// 21.4.26) is offered the other profile, once. AthenaPhone on TCP under the transport rule
+// is the call this exists for: offered plain RTP, it can only refuse.
+TEST(MediaProfileTest, A488ToAGuessIsReofferedWithTheOtherProfile) {
+  ProfileFixture f("tcp", "udp");
+
+  f.receive(f.caller, f.invite_with_body());
+  f.receive(f.callee, f.response_to_latest(488, "Not Acceptable Here"));
+
+  const auto invites = ProfileFixture::requests_with(f.callee_connection, "INVITE");
+  ASSERT_EQ(invites.size(), 2u) << "one re-offer to the same binding";
+
+  const auto calls = f.engine->calls();
+  ASSERT_GE(calls.size(), 2u);
+  EXPECT_EQ(calls[0].flags.target, Flags::Profile::PlainRtp);
+  EXPECT_TRUE(calls.back().was_offer);
+  EXPECT_EQ(calls.back().flags.target, Flags::Profile::WebRtc);
+
+  // The caller never hears about the refusal, and does hear the answer.
+  EXPECT_EQ(f.response_with(f.caller_connection, 488), nullptr);
+  f.receive(f.callee, f.response_to_latest(200, "OK", kWebRtcOffer));
+  EXPECT_NE(f.response_with(f.caller_connection, 200), nullptr);
+}
+
+// Nothing is learned silently: the node says which account needed it and what it took,
+// for the operator to set as that account's profile or not.
+TEST(MediaProfileTest, AReofferThatWorksIsReportedForTheAccount) {
+  ProfileFixture f("tcp", "udp");
+
+  f.receive(f.caller, f.invite_with_body());
+  f.receive(f.callee, f.response_to_latest(488, "Not Acceptable Here"));
+  f.receive(f.callee, f.response_to_latest(200, "OK", kWebRtcOffer));
+
+  const auto reported = f.reoffers();
+  ASSERT_EQ(reported.size(), 1u);
+  EXPECT_EQ(reported[0].account, "sip:bob@example.com");
+  EXPECT_EQ(reported[0].rejected, Flags::Profile::PlainRtp);
+  ASSERT_TRUE(reported[0].took.has_value());
+  EXPECT_EQ(*reported[0].took, Flags::Profile::WebRtc);
+  EXPECT_EQ(reported[0].count, 1u);
+}
+
+// Under the shipped default nothing is guessed, and the callee is offered what the caller
+// offered: a browser calling a desk phone hands it WebRTC. The other profile is then the
+// other of what the caller said.
+TEST(MediaProfileTest, AMirroredOfferRefusedIsReofferedAsTheOtherOfWhatTheCallerSaid) {
+  ProfileFixture f("udp", "wss");
+  f.config->behaviour.profiles = types::MediaPolicy::Profiles::Mirror;
+
+  f.receive(f.caller, f.invite_with_body(kWebRtcOffer));
+  f.receive(f.callee, f.response_to_latest(488, "Not Acceptable Here"));
+
+  const auto calls = f.engine->calls();
+  ASSERT_GE(calls.size(), 2u);
+  EXPECT_EQ(calls[0].flags.target, Flags::Profile::Mirror);
+  EXPECT_EQ(calls.back().flags.target, Flags::Profile::PlainRtp);
+}
+
+// Once. A callee that refuses both has refused, and the caller is told so with the
+// refusal it gave; the operator is told both were refused.
+TEST(MediaProfileTest, A488ToTheReofferIsTheAnswer) {
+  ProfileFixture f("tcp", "udp");
+
+  f.receive(f.caller, f.invite_with_body());
+  f.receive(f.callee, f.response_to_latest(488, "Not Acceptable Here"));
+  f.receive(f.callee, f.response_to_latest(488, "Not Acceptable Here"));
+
+  EXPECT_EQ(ProfileFixture::requests_with(f.callee_connection, "INVITE").size(), 2u);
+  EXPECT_NE(f.response_with(f.caller_connection, 488), nullptr);
+
+  const auto reported = f.reoffers();
+  ASSERT_EQ(reported.size(), 1u);
+  EXPECT_FALSE(reported[0].took.has_value());
+}
+
+// 488 is the one refusal that is about the media. Busy is busy whatever was offered.
+TEST(MediaProfileTest, OnlyA488IsReoffered) {
+  ProfileFixture f("tcp", "udp");
+
+  f.receive(f.caller, f.invite_with_body());
+  f.receive(f.callee, f.response_to_latest(486, "Busy Here"));
+
+  EXPECT_EQ(ProfileFixture::requests_with(f.callee_connection, "INVITE").size(), 1u);
+  EXPECT_NE(f.response_with(f.caller_connection, 486), nullptr);
+  EXPECT_TRUE(f.reoffers().empty());
+}
+
+// A node that is not anchoring produced nothing, so there is nothing of its own to take
+// back: the 488 is the callee's answer to the caller's offer, and goes to the caller.
+TEST(MediaProfileTest, NothingIsReofferedWhenTheMediaIsNotAnchored) {
+  ProfileFixture f("tcp", "udp");
+  f.config->behaviour.anchor = false;
+
+  f.receive(f.caller, f.invite_with_body());
+  f.receive(f.callee, f.response_to_latest(488, "Not Acceptable Here"));
+
+  EXPECT_EQ(ProfileFixture::requests_with(f.callee_connection, "INVITE").size(), 1u);
+  EXPECT_NE(f.response_with(f.caller_connection, 488), nullptr);
 }
 
 // RFC 3261 16.7: a branch that fails ends that branch, and the attempt goes on to the next

@@ -489,6 +489,14 @@ its media is WebRTC, which neither the realm nor the transport can tell. Precede
 the first description produced towards a leg, is what that leg has itself said in an
 offer or answer, then its account, then its realm, then this section.
 
+When a callee answers an offer the engine produced for it with 488 Not Acceptable Here,
+the node offers it the other profile once, WebRTC for plain RTP or the reverse, as a
+Kamailio failure route would. Under `mirror` the other profile is the other of what the
+caller offered, which is what lets a browser call a desk phone. Nothing is learned from
+it: `GET /api/v1/media/reoffers` lists the accounts that needed it and the
+`media_profile` that would save them the round trip, and setting it is the operator's
+call.
+
 An unknown setting or value is an error at startup and a 400 from the API, never a
 guess.
 

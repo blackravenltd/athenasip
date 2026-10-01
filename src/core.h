@@ -33,6 +33,7 @@
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
 #include "media/media_engine.h"
+#include "media/reoffers.h"
 #include "plugins/plugin.h"
 #include "rtp/rtp_relay_set.h"
 #include "servers/server.h"
@@ -142,6 +143,9 @@ class Core : public std::enable_shared_from_this<Core> {
   // What every channel's token is sealed with, and what opens one whose channel this node
   // no longer holds. See FlowTokens.
   const FlowTokens& flow_tokens() const { return _flow_tokens; }
+
+  // The accounts this node has had to offer the other media profile, for the operator.
+  media::Reoffers& reoffers() { return _reoffers; }
 
   // RFC 3263: where a request for a SIP URI naming a host goes. Made on first use from the
   // system's nameservers (/etc/resolv.conf); a test, or a composition root that knows
@@ -309,6 +313,7 @@ class Core : public std::enable_shared_from_this<Core> {
   std::set<std::string> _local_addresses;
 
   FlowTokens _flow_tokens;
+  media::Reoffers _reoffers;
 
   std::vector<std::shared_ptr<Server>> _servers;
 
