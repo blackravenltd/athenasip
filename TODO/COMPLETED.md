@@ -2333,3 +2333,9 @@ LAN is answered 403.
       this node from its own configuration and every other as it last described itself,
       with its status, and `stale` once its report is three status intervals old. The
       first item of Milestone 4's client failover.
+- [x] **`GET /api/v1/client/config` carries the usable nodes** - this one, then every other
+      that is up and current - and their `wss` URIs in that order as `websocket_uris`.
+- [x] **A `UDP/TLS/RTP/SAVPF` m-line is WebRTC without a fingerprint** (RFC 5764 section 8).
+      It had been read as SDES-SRTP, which a capability description in an OPTIONS 200,
+      with no DTLS session to fingerprint, would have hit. Found answering AthenaPhone's
+      question about what such a description has to carry.
