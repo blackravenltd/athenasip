@@ -90,7 +90,9 @@ So counting them is not counting endpoints, in either direction:
 - A UDP flow is created on the first datagram from an address. It is forgotten after
   `sip.flow_idle_timeout` seconds without traffic (five minutes by default), and publishes
   `closed` when it goes, so the two topics do balance. Forgetting one costs a peer nothing:
-  its next datagram makes a new flow.
+  its next datagram makes a new flow, and a request for it - a call to its binding, or a
+  BYE in a dialog it is on - opens a new flow to the address it was last heard from, which
+  publishes "registered" again.
 
 What answers "who is registered here" is `GET /api/v1/registrations`, which reads the
 bindings, or the `account/+/status` events as they happen.

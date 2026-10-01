@@ -330,6 +330,22 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
     return _forward_next(context);
   }
 
+  // A token whose channel has gone. For UDP the flow has not: it is the pair of addresses,
+  // and the far end's NAT still maps it whether or not this node kept a record. The token
+  // says which pair it was, so the request goes there and not to a Contact that names the
+  // inside of somebody's LAN.
+  if (!request->flow_token.empty()) {
+    if (auto hop = _datagram_hop(core->flow_tokens().open(request->flow_token))) {
+      Target target;
+      target.uri = request->header->request_uri;
+      target.next_hop = hop;
+      target.flow = _flow_to(*hop);
+
+      context->targets.push_back(target);
+      return _forward_next(context);
+    }
+  }
+
   const auto host = Util::to_lower(request->header->request_uri->host);
   auto self = shared_from_this();
 
@@ -405,12 +421,7 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
         // phone and a browser has two bindings and two flows, and sending both attempts
         // down one of them reaches one of the two devices twice and the other never.
         for (const auto& binding : bindings.value) {
-          Target target;
-          target.uri = binding.contact;
-          target.next_hop = binding.contact;
-          target.flow = _flow_for(binding);
-
-          context->targets.push_back(target);
+          if (binding.contact) context->targets.push_back(_target_for(binding));
         }
 
         _forward_next(context);
@@ -1266,16 +1277,31 @@ void Proxy::on_stray_response(std::shared_ptr<SIPMessage> response) {
   if (received != next_via->parameters.end() && !received->second.empty()) host = received->second;
 
   const auto rport = next_via->parameters.find("rport");
-  if (rport != next_via->parameters.end() && !rport->second.empty()) port = static_cast<std::uint16_t>(std::stoul(rport->second));
-
-  auto channel = core->channel_find(transport, host, port);
-
-  if (!channel) {
-    _logger->info("No flow back to " + host + ":" + std::to_string(port) + " for a stray response - dropping");
-    return;
+  if (rport != next_via->parameters.end() && !rport->second.empty()) {
+    try {
+      const auto parsed = std::stoul(rport->second);
+      if (parsed == 0 || parsed > 65535) throw std::out_of_range("rport");
+      port = static_cast<std::uint16_t>(parsed);
+    } catch (const std::exception&) {
+      _logger->debug("Response " + std::to_string(response->header->response_code) + " with an rport that is not a port - dropping");
+      return;
+    }
   }
 
-  channel->send(response);
+  // An address and a port, not a record this node has to be keeping: a UDP flow forgotten
+  // by the idle sweep is reopened from the listener's socket, and for a connection that has
+  // gone 18.2.2 says to open one. Whatever cannot be reached is dropped, as a stateless
+  // proxy would.
+  const auto name = host + ":" + std::to_string(port);
+
+  core->channel_connect(transport, host, port, [this, self = shared_from_this(), response, name](plugins::Result<std::shared_ptr<Channel>> opened) {
+    if (!opened.ok || !opened.value) {
+      _logger->info("No flow back to " + name + " for a stray response - dropping - " + opened.error);
+      return;
+    }
+
+    opened.value->send(response);
+  });
 }
 
 bool Proxy::_names_this_node(const SIPUri& uri) const {
@@ -1306,22 +1332,75 @@ media::Flags::Profile Proxy::_profile_under(const types::MediaPolicy& policy, co
   return media::Flags::profile_for_transport(transport);
 }
 
-std::shared_ptr<Channel> Proxy::_flow_for(const types::Location& binding) const {
+Proxy::Target Proxy::_target_for(const types::Location& binding) const {
+  // RFC 5626 section 5.3: the Request-URI is the Contact the binding registered, whichever
+  // way the request is then sent.
+  Target target;
+  target.uri = binding.contact;
+  target.next_hop = binding.contact;
+
   auto core = _core.lock();
-  if (!core || !binding.contact) return nullptr;
+  if (!core) return target;
 
   // The flow the registration was made over, when it is still open. This is the whole of
   // RFC 5626's routing: a browser's Contact URI has nothing listening behind it and a
   // NAT'd client's names the wrong side of the NAT, so the connection they registered on
   // is the only way back to either.
-  if (auto flow = core->channel_find(binding.flow_id)) return flow;
+  if (auto flow = core->channel_find(binding.flow_id)) {
+    target.flow = flow;
+    return target;
+  }
 
-  // No flow recorded, or one that has since closed. The Contact is all there is, which is
-  // right for a desk phone with a routable address and hopeless for a browser - and a
-  // binding whose flow has gone is a binding whose client has gone, so the attempt fails
-  // and the fork moves on to the next one. Answering 430 Flow Failed instead is RFC 5626
-  // section 11 and wants the registrar to act on it.
-  return _flow_to(*binding.contact);
+  // A UDP flow this node has forgotten is one it can still send down (section 3.1: the flow
+  // is the pair of addresses). Only from the node that held it, though: from anywhere else
+  // the datagram comes from an address the far end's NAT has never seen.
+  const bool held_here = binding.node_id.empty() || binding.node_id == core->config->sip_node_id;
+
+  if (auto hop = held_here ? _datagram_hop(binding.flow_id) : nullptr) {
+    target.next_hop = hop;
+    target.flow = _flow_to(*hop);
+    return target;
+  }
+
+  // No flow recorded, or a reliable one that has since closed. The Contact is all there is,
+  // which is right for a desk phone with a routable address and hopeless for a browser - and
+  // a binding whose connection has gone is a binding whose client has gone, so the attempt
+  // fails and the fork moves on to the next one. Answering 430 Flow Failed instead is RFC
+  // 5626 section 11 and wants the registrar to act on it.
+  target.flow = _flow_to(*binding.contact);
+  return target;
+}
+
+// The next hop a UDP flow id names, for sending down a flow this node no longer holds a
+// channel for. Null for anything that is not a UDP flow: a TCP, TLS or WebSocket flow that
+// has closed is gone, and only its client can open another.
+std::shared_ptr<SIPUri> Proxy::_datagram_hop(const std::string& flow_id) {
+  static const std::string kScheme = Core::channel_key("udp", "");
+
+  if (flow_id.rfind(kScheme, 0) != 0) return nullptr;
+
+  // host:port, where the host may be an IPv6 address and so the port is after the last
+  // colon rather than the first.
+  const auto endpoint = flow_id.substr(kScheme.size());
+  const auto colon = endpoint.rfind(':');
+  if (colon == std::string::npos || colon == 0) return nullptr;
+
+  std::uint16_t port = 0;
+  try {
+    const auto parsed = std::stoul(endpoint.substr(colon + 1));
+    if (parsed == 0 || parsed > 65535) return nullptr;
+    port = static_cast<std::uint16_t>(parsed);
+  } catch (const std::exception&) {
+    return nullptr;
+  }
+
+  auto hop = std::make_shared<SIPUri>();
+  hop->scheme = "sip";
+  hop->host = endpoint.substr(0, colon);
+  hop->port = port;
+  hop->set_parameter("transport", "udp");
+
+  return hop;
 }
 
 std::shared_ptr<Channel> Proxy::_flow_to(const SIPUri& uri) const {

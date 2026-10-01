@@ -148,8 +148,9 @@ class Config {
   // Five minutes is comfortably past every RFC 3261 section 17 timer - the longest is
   // 64*T1, 32 seconds - so nothing with transaction state outstanding is ever swept.
   // Forgetting a flow costs a UDP peer nothing it notices: the next datagram makes a new
-  // one, and a UDP contact is routable, which is what an in-dialog request falls back to
-  // when the flow token no longer resolves.
+  // one, and a request for it is sent to the address the flow named, which a binding and a
+  // flow token both still carry. That address, and not the Contact, is what a peer behind
+  // a NAT is reachable at.
   std::uint32_t sip_flow_idle_timeout = 300;
 
   // TLS Configuration
