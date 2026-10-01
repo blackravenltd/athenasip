@@ -12,7 +12,7 @@ machines sit behind a matcher with `Registrar` and `Proxy` as the transaction us
 `memory://` and `redis://`, `local://` and `mqtt://`, and `builtin://` and
 `rtpengine://` in tree; a node decides for itself when a call it is holding is over;
 provisioning is over a JSON API; and the sipp harness proves a call end to end on UDP.
-776 tests.
+870 tests.
 
 0.6.0 landed RFC 5626 flow routing, the rtpengine driver and the media profile that
 tells it which leg is the browser, and the behaviour tests that found eleven bugs in
@@ -30,6 +30,10 @@ Docker; this node serves the web client that drives its own harness; a browser c
 browser through it with audio proven at both ends; `GET /api/v1/client/config` tells a
 browser where to signal and what to use for ICE, with TURN credentials that expire on their
 own; and the relay path is automated, `browser.sh` running a direct phase and a relayed one.
+On 2026-09-30 a browser called an AthenaPhone on a real device through this node and
+rtpengine, and a person heard it both ways in both directions - once a DTLS-role bug in
+the rtpengine driver, which every call that actually rang had been hitting, was found and
+fixed. `test/interop/UAT.md` is the record.
 
 **Milestone 5, out of order on purpose.** The node installs, runs as a systemd service,
 takes a command line including `--print-config` and `--add-user`, says on the bus that it
@@ -45,9 +49,11 @@ tear down its successor. Two from the admin console session, a 401 that should h
 403 and a TURN username carrying our own log prose. And a UDP flow that was never reaped,
 found while answering T.O.M.S about the monitoring topics.
 
-The next thing to build toward is still one call: a browser calls an AthenaPhone and the
-media goes through rtpengine. What remains of it is that one manual call - the tooling and
-the runbook for it are in the tree, and it needs a person with a device.
+The call Milestone 3 was named for has been made and heard. What the run left behind is
+the milestone's next work: a callee is still profiled by its transport when it has said
+nothing yet, which is decision 3 below and still open - the `+sip.ice` in its registration
+looked like the answer and is not one; and the automated browser call never rings, which
+is why it missed the bug the live one found. Both are in Milestone 3 below, in order.
 
 Milestones are in priority order and so are the items inside each one: work top to
 bottom, and say why when something is taken out of turn. Milestone 5 has been, twice -
@@ -83,6 +89,15 @@ session that has lost its context needs to see them first.
    endpoint this node has never heard describe itself, and only when its transport
    misleads. Three options, none chosen: a per-account hint, offering by transport and
    re-offering the other way on a 488, or letting the first call fail and remembering.
+   The live call of 2026-09-30 hit exactly this, a 488 from an AthenaPhone on TCP, and it
+   was written here that the `+sip.ice` it registered with had already answered the
+   question. Checked on 2026-10-01, it has not. RFC 5768 defines that one tag and it
+   "indicates support for ICE": nothing about DTLS, SRTP or the profile. PJSUA adds the
+   same tag by default whenever ICE is on (`PJSUA_ADD_ICE_TAGS`), and a PJSIP softphone is
+   mostly plain RTP/AVP, so reading the tag as WebRTC trades AthenaPhone's 488 for theirs.
+   No standard feature tag says DTLS-SRTP. What the tag can honestly do is order the
+   second option - which profile to try first - or stand as a default a realm can turn
+   off. The decision is as open as it was, with one more piece of evidence.
 
 4. **`/accounts` versus `/subscribers`.** The 2026-09-25 vocabulary decision says
    subscriber; the type is `Account` and the resource is `/realms/{realm}/accounts`.
@@ -228,6 +243,14 @@ Dated, and not reopened without asking.
   time, on a route anybody can reach. A realm name is not a secret. `API_VERSION` did not
   move, because the shape did not change - which is exactly why `docs/plugins.md` now says
   the version tracks shape and shape is not the whole contract.
+- (2026-10-01) The proxy is not an open relay. A request out of dialog whose From is in a
+  domain this node serves is authenticated as that subscriber, whoever it is calling: RFC
+  3261 22.3, a 407 with Proxy-Authenticate, answered with Proxy-Authorization for that
+  same account, or a reliable connection that carried an authenticated REGISTER for it. A
+  From elsewhere may call into this node's domains and nowhere else (403). Requests in a
+  dialog this node is on, ACK and CANCEL are not challenged. Found because the proxy had
+  no 407 at all and forwarded a stranger's INVITE anywhere. What a client needs to do
+  about it is its own session's work.
 - (2026-09-29) A route declared with an empty role set means **any authenticated caller**,
   not a public route; a route open to anyone says so with `Router::add_open`. The old
   `public_scope` was an empty string, so a route that forgot to name its scope was open to
@@ -281,15 +304,15 @@ Each is deliberate, each is an item below, and this list is so that none of them
 mistaken for compliance. **Re-checked against the tree on 2026-09-30** - all six still
 hold, and nothing since 0.7.0 added or closed one:
 
-- A next hop is resolved from its URI's transport, host and port with A/AAAA only. RFC
-  3263's NAPTR and SRV are not done; M4.
+- RFC 3263 is in (2026-10-01): NAPTR, SRV and A/AAAA, and the next hop for a target that
+  refused a connection, answered 503 or timed out. There is no blacklisting of a server
+  that failed (4.3 permits it), so the next call tries it again first.
 - RFC 5626 is routing only: a binding records its flow and the fork uses it. There is no
   `+sip.instance`, `reg-id`, `Flow-Timer` or keep-alive; M4.
 - Forking is serial. 16.7 allows it, and parallel forking is Parked.
 - A media-anchoring node rewrites the body it forwards, which 16.6 forbids a proxy. It
   is the relay, and where it cannot anchor the message travels on untouched.
-- Outbound TLS and outbound UDP to a host this node has never heard from are refused
-  rather than faked; M4 and M3.
+- Outbound TLS to a host this node has never heard from is refused rather than faked; M4.
 - Record-Route is written twice on every dialog-forming request rather than only where
   the interfaces differ. RFC 5658 requires the pair in that case and permits it in
   every case; the flow token in each value is what makes a call to a browser routable
@@ -313,38 +336,36 @@ the Record-Route are what make it reachable, and AthenaPhone is an ordinary SIP
 endpoint on an ordinary transport. All of that is in. What is not yet in is listed
 here, in the order it is needed.
 
-What made this exact call fail is fixed: a leg is profiled from what it has said
-rather than from the transport it signals over, so AthenaPhone on UDP is offered the
-WebRTC its own description asked for. A realm only decides for a leg this node has
-never heard describe itself.
+The call was made on 2026-09-30 and heard both ways in both directions;
+`test/interop/UAT.md` holds the record and `COMPLETED.md` the account of what it found.
+Two things it found are this milestone's next work, in this order.
 
-### To the first call, in order
+- [ ] **Offer a callee that has said nothing a profile it can take.** A leg is profiled
+      from what it has said, but a callee has said nothing when this node offers to it, so
+      the realm decides, and on the default `FromTransport` an AthenaPhone on TCP is read
+      as a desk phone and offered plain RTP/AVP - it answered 488, correctly. This is
+      decision 3 under "Waiting on Tom", met on a real call, and it waits there. The
+      registration carried `+sip.ice` (RFC 5768), which was first written up as the answer
+      and is only a hint: it says ICE, a PJSIP softphone says it too, and nothing in a
+      registration says DTLS. Two things are true whichever option is chosen. The binding
+      does not keep a Contact's feature parameters today - `types::Location` holds the URI
+      and nothing else of the header - so any option that reads the tag needs them stored
+      first, which is a field on a type the Datastore contract hands to plugins. And until
+      it is decided, a realm whose clients are all WebRTC needs `media_profiles: webrtc`
+      set by hand, which is how the live call got past it.
+- [ ] **Ring the automated browser call.** `browser.sh` answers within milliseconds and
+      so never rang long enough to hit the DTLS-role bug the live call found; a deliberate
+      delay of a few seconds before the callee answers would have caught it, and would
+      catch the next thing of its shape. One knob on the spec in `../athenasip-admin`.
 
-- [ ] **The call.** A browser to an AthenaPhone on a device, through the interop
-      fixture with rtpengine. Register both, call each way, hear audio, hang up from
-      each end, and read rtpengine's counters afterwards. The browser half is automated
-      and passing, and AthenaPhone's media is the same WebRTC over any transport, so
-      what this adds is AthenaPhone's signalling transport and a person hearing it.
+### After that
 
-      `test/interop/UAT.md` is the runbook and carries the record to fill in, and
-      `test/interop/media-stats.py` is the counters. What is left is somebody with a
-      device doing it. Written down either way: a failure recorded is the next item, a
-      success recorded is the first row of the interop matrix.
-
-      The browser half was re-run on 2026-09-25 and now proves media rather than only
-      signalling: the softphone readout carries `totalAudioEnergy` and the spec asserts
-      it above zero at each end, so "registered, called and hung up" can no longer pass
-      on silence. On a machine where AthenaPhone's Asterisk fixture is up, the run needs
-      `ATHENA_INTEROP_NAME=athenasip-interop-alt` and the ports `up.sh` prints, because
-      both fixtures use 5060, 5061, 8088 and 8089 on purpose.
-
-### After the first call
-
-The first item here needs a decision (number 3 under "Waiting on Tom") and is what the
-milestone is stalled on. **The next one that can be started without anybody is NAT handling
-for the client side**, though half of it - a Contact rewrite policy for a client that cannot
-be told - is itself a judgement call, so read it before starting. After that, outbound UDP
-and the harness scenarios are both self-contained.
+The first item here is the general form of the one above and needs the same decision
+(number 3 under "Waiting on Tom"). The routing half of NAT handling and outbound UDP landed
+on 2026-10-01; what is left of NAT is a judgement call, so read it before starting. The
+harness gained a delayed offer, hold and resume, and a refused relay the same day.
+**The next one that can be started without anybody is the builtin relay's
+media assertion.**
 
 
 - [ ] A realm holding both WebRTC endpoints and plain-RTP ones. Now that a leg's own
@@ -353,19 +374,18 @@ and the harness scenarios are both self-contained.
       misleads - a WebRTC endpoint on UDP, TCP or TLS. The options are a per-account
       hint, or offering by transport and re-offering the other way on a 488, or
       letting the first call fail and remembering. Not decided.
-- [ ] NAT handling for the client side, for a phone that is not on the LAN: `rport`
-      and `received` are stamped on the way in (RFC 3581), and what is missing is
-      routing a response and an in-dialog request to where the request actually came
-      from rather than where its Via and Contact claim, plus a Contact rewrite policy
-      for a client that cannot be told. The flow token covers the in-dialog half for
-      anything that registered here. The node's own address behind NAT is M4.
-- [ ] Outbound UDP to a host this node has never heard from. The datagram has to
-      leave by the listener's own socket so the source port is the one the far end
-      answers to, and that socket belongs to `UDPServer` rather than to the channel
-      registry. Needed for a UDP trunk.
-- [ ] Harness scenarios for what nothing exercises: a delayed offer, hold and resume,
-      and a trunk. The WSS and browser-to-phone scenarios are the browser harness
-      above.
+- [ ] NAT handling for the client side, what is left of it. Routing is in: `rport` and
+      `received` are stamped on the way in (RFC 3581), a binding is reached down the flow
+      it registered on, and a UDP flow the idle sweep has forgotten is still sent down -
+      for a call to its binding and, through the sealed flow token, for a request in a
+      dialog it is on, and a stateless response goes to `received` and `rport` whether
+      or not the flow is still held. Left: a Contact rewrite policy for a client that is
+      neither registered here nor in a dialog through here, which is a judgement call
+      because a proxy that rewrites a Contact is changing what an endpoint said about
+      itself. The node's own address behind NAT is M4.
+- [ ] A harness scenario for a trunk, once a trunk is something the node can be
+      configured with: an authenticated subscriber calling a number that leaves by it, and
+      a call arriving from it. Today an off-node call goes wherever its Request-URI says.
 - [ ] A media assertion for the builtin relay to match the one rtpengine's counters
       give. The rtpengine run fails when nothing was relayed; the builtin run cannot
       tell, because the relay keeps no counters a harness can read and a declined
@@ -406,12 +426,6 @@ milestone is the second node.
       has gone (section 11), which wants the registrar to act on it. It changes what
       identifies a binding, instance and reg-id rather than contact alone, so it is a
       Datastore contract change and an `API_VERSION` bump.
-- [ ] RFC 3263, properly: NAPTR then SRV then A/AAAA when resolving a next hop.
-      `Core::channel_connect` does the last of those and says so. It is the standard way
-      a client finds a realm and the standard way this node finds a trunk, and it is
-      what makes a node list unnecessary for clients that can do it. The resolver is
-      hand-rolled per the dependency rule, which is why it is a step of its own rather
-      than a line in another one.
 - [ ] `AthenaSIP-Alternate-Server`, the optional extension, and last because it is what
       the standards above do not cover: a client that cannot do outbound and has no DNS
       still has to learn where else to go. Four conditions, and it is not worth shipping
@@ -519,13 +533,6 @@ configuration search path, the heartbeat and its will, SPA mode as a choice, the
 `corvus-fi-1`, both datastores holding users and sessions, the whole of admin
 authentication from session issue to the OpenAPI document, and the one-command stack.
 
-- [ ] Boost.Redis logs to the console itself rather than through this node's logger, so
-      its connection chatter appears in the log without a level, a scope or the node's
-      format, and shows up in the output of `athenasip --add-user` where the whole point
-      is a clean answer. The connection takes a logger; passing ours through is the fix,
-      and it wants doing once for the node rather than specially for the command. Small,
-      and it is the only place in the tree where something below the API writes to the
-      console without going through `LoggerScoped`.
 - [ ] Admin API, part 2, the live registries: `/api/v1/calls` (live and history,
       hangup), `/api/v1/media` (engines, health), `/api/v1/events` (SSE stream bridging
       `nodes/#`, `account/#`, `calls/#`). These read Core's own state and need
@@ -552,11 +559,6 @@ authentication from session issue to the OpenAPI document, and the one-command s
 - [ ] Packaging: Docker image, Debian package, Homebrew formula. In-tree plugins ship
       compiled in; the packages also carry the SDK headers.
 - [ ] Observability: structured log option, Prometheus `/metrics` on the admin port.
-- [ ] IPv6 literals in a config URL. `redis://[::1]:6379` parses to nonsense because the
-      authority is split on the first colon. RFC 3986 3.2.2 puts the literal in brackets
-      for exactly this reason, so the fix is to read a bracketed host whole in
-      `types::URL`, and to put the brackets back in `to_string` when the host holds a
-      colon. Small, but it changes what `host` hands the datastore and media drivers.
 - [ ] Pipelining in `RedisDatastore`: the listing operations walk their index one key at
       a time because each step starts the next from its own completion. Correct, and
       slower than one MGET would be. Worth doing when a node has enough bindings for it

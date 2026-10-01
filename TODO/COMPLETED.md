@@ -2009,3 +2009,199 @@ that came in from sibling sessions and one found by watching a live node.
       log. The name is filtered where the credential is minted rather than trusted from the
       caller. The other hypothesis, that `coturn:latest` was at fault, was ruled out: 4.6.2
       gives the same 400 with the old username and both versions allocate with the new one.
+
+### The first live call, heard - after a DTLS-role bug (2026-09-30)
+
+The call Milestone 3 was named for: a browser on this Mac called an AthenaPhone on a
+Blackview A85, through the interop fixture with rtpengine on the media path, and Tom heard
+it both ways; the phone then called the browser and he heard that both ways too, with a
+BYE from each end. `test/interop/UAT.md` carries the record - fixture, versions, counters
+from the silent attempts and the working ones, both ends' SDP, and the defects found on
+both sides.
+
+- [x] **The call.** Register both ends, call each way, hear audio, hang up from each
+      end, read rtpengine's counters. AthenaPhone signalled on TCP, moved off UDP before
+      the first attempt on its session's warning that UDP does not survive Docker Desktop's
+      NAT ageing on macOS; the fixture ran on 15060/15061/18088/18080 because the phone's
+      own Asterisk held the defaults. Registration, inbound INVITE over the flow with the
+      `.invalid` Contact never consulted, CallKeep ringing and answering on hardware, the
+      phone's DTLS-SRTP and opus all worked on the first build. Nothing was heard.
+
+      The browser half had been re-run on 2026-09-25 to prove media rather than only
+      signalling - `totalAudioEnergy` asserted above zero at each end - and was passing.
+      It never rang.
+
+- [x] **The DTLS-role bug** (`src/media/rtpengine_media_engine.cpp`, `apply_profile`).
+      The WebRTC profile put `DTLS=passive` on every ng command, the answer included.
+      rtpengine, as the answerer towards an offerer that said `actpass`, chooses active and
+      starts the handshake the moment ICE comes up - seconds before any 200 OK exists when
+      a person has to pick up. The answer's `passive` reset that handshake, the SDP told
+      the offerer the engine was passive, and neither end started again: ICE `connected`,
+      `connectionState` `connecting`, the offerer's leg at 4 packets and 336 bytes in every
+      attempt, whichever end was the offerer. The automated browser run answers within
+      milliseconds and wins the race, which is why it had passed for a week. Fixed by
+      saying `DTLS=passive` only in the offer; the RFC 5763 section 5 test in
+      `tests/media/rtpengine_media_engine_test.cpp` was watched failing first.
+
+      Two wrong explanations were written into the record before the right one and are
+      kept there: Docker Desktop's NAT, real and irrelevant, recorded on four reproductions
+      and no positive control until `browser.sh --direct` passed the moment it was run;
+      and unlike legs, ruled out by reproducing the stall browser-to-browser with a
+      9-second ring. The AthenaPhone session's observation that the stall followed the
+      offerer, and the engine's own per-leg DTLS timeline at log-level 7 read against the
+      commands this node sent, are what settled it.
+
+- [x] **The realm profile offered a WebRTC client plain RTP/AVP.** The first attempt was
+      refused 488: the callee had said nothing yet, the realm was on `FromTransport`, and
+      TCP reads as a desk phone. Worked around for the run with
+      `PUT /api/v1/realms/{realm} {"media_profiles":"webrtc"}`, and not fixed: found, and
+      carried in `ACTIVE.md` as decision 3. The `+sip.ice` the phone registered with was
+      written up that evening as the fix and is not one - RFC 5768 has it mean ICE and
+      nothing more, and PJSUA sends it by default from clients that are plain RTP.
+
+      Found on AthenaPhone's side and recorded in the runbook: a verbose-SIP toggle wired
+      to nothing, a Contact naming a `.invalid` host on non-WebSocket transports, a
+      self-managed ConnectionService that never rings on Android, no `rport`, and a
+      default Google STUN server that puts a public address in every offer and holds the
+      INVITE for forty seconds of gathering. Its session built a transport-level SIP trace
+      during the run, which is where the phone's half of the record came from.
+
+### A forgotten UDP flow is still a way home, and outbound UDP (2026-10-01)
+
+The idle sweep of 2026-09-30 forgets a UDP flow after five quiet minutes, and its commit
+said that cost a peer nothing because "a UDP contact is routable, which is what an
+in-dialog request falls back to". Neither half held. Outbound UDP was refused outright, so
+nothing could be sent to any Contact over UDP; and a phone behind a NAT has a Contact on
+its own LAN, so even with outbound UDP the fallback goes nowhere. Five minutes after a UDP
+phone last spoke a call to it failed 480, and a call through this node lasting longer than
+five minutes could not be hung up from the far end.
+
+- [x] **Outbound UDP** (`Core::channel_connect`, `UDPServer::open_datagram_flow`). A
+      datagram to a host this node has never heard from leaves by a listener's own socket,
+      so the far end answers to the port it listens on and a NAT in front of it recognises
+      the source (RFC 3261 18.1.1, RFC 3581). The listener makes the connection and files
+      it, so the first datagram back arrives on the same flow rather than making a second
+      reader; Core makes the channel, as it does for TCP. A literal address skips the
+      resolver, a name is bounded by `connect_timeout_ms`. Outbound TLS is still refused.
+- [x] **A binding whose UDP flow was forgotten is reached at the flow's address**
+      (`Proxy::_target_for`). RFC 5626 section 3.1: a UDP flow is the pair of addresses, and
+      it does not end because this node stopped keeping a record of it. The Request-URI
+      stays the Contact (section 5.3); only the hop is the flow's. Only from the node that
+      held the flow - from another node the datagram comes from an address the NAT has
+      never seen.
+- [x] **The flow token is sealed rather than random** (`src/flow_tokens.h`). It carries the
+      flow id under AES-256-GCM with a key made at startup, so a token whose channel has
+      gone still says which UDP flow it was, and a BYE in a long call goes back to where the
+      caller's INVITE came from. Sealed because the flow id is the far end's address and
+      the Record-Route goes to both ends; authenticated because the Route it returns in is
+      anybody's to write. Hex, so it is safe in a URI user part and cannot spell an address.
+      A token from before a restart or from another node opens to nothing, which leaves the
+      Contact, as before.
+- [x] **A stateless response goes to `received` and `rport`** (`Proxy::on_stray_response`,
+      RFC 3261 16.7 step 1 and 18.2.2, RFC 3581 section 4) through `channel_connect`, so a
+      forgotten UDP flow is reopened and a closed connection is opened again as 18.2.2 says.
+      Its `rport` was cast straight to 16 bits, so `rport=70000` sent the response to port
+      4464; a value that is not a port now drops the response.
+- [x] Two things underneath: `UDPServer` handed a datagram to a connection that had closed
+      but not yet left its map, and a closing connection's removal erased whatever held its
+      key by then, which after a reopen was the new flow. Both fixed.
+
+18 new tests, from RFC 5626 sections 3.1, 5.2 and 5.3 and RFC 3261 18.1.1 and 18.2.2, each
+seen failing without the change it tests - the rport one by taking the range check back out. Mutating the holding-node guard to check its test made a different test fail, and
+tracing that turned up a race in the first version of the datagram connect - the
+resolver's thread against the fixture's fixed settle - so literal addresses no longer go
+through the resolver at all. Verified on a
+running node with a 20-second idle timeout: a client registered from a private Contact, its
+flow forgotten, called, answered, the caller's flow forgotten in turn, and the callee's BYE
+delivered to the caller's NAT address. 795 tests.
+
+### Two harness scenarios from RFC 3264, and an open relay found (2026-10-01)
+
+- [x] **`delayed-offer`** (`test/e2e/scenarios/invite_delayed_offer.xml`,
+      `uas_delayed_offer.xml`). An INVITE with no body; the callee offers in its 200 and the
+      caller answers in the ACK (RFC 3261 13.2.1, RFC 3264 section 5). Asserts the INVITE
+      reaches the callee still empty, the offer reaches the caller pointing at the relay,
+      and the answer reaches the callee pointing at the relay.
+- [x] **`hold-resume`** (`invite_hold.xml`, `uas_hold.xml`). Two re-INVITEs by the route
+      set: `sendonly` answered `recvonly`, then `sendrecv` (RFC 3264 8.4, RFC 6337 5.3).
+      Asserts the direction arrives at each end and every description names the relay.
+      In-dialog requests in these two go to the remote target with the route set (RFC 3261
+      12.2.1.1), which the older scenarios do not.
+
+Both passed on their first run, against the builtin relay (10 of 10) and rtpengine (11 of
+11), on an image built from the tree that carries the outbound UDP and sealed flow token
+work. The node's log shows each re-INVITE, ACK and BYE crossing it.
+
+Writing the trunk scenario is what found the relay: the proxy authenticated nobody, and
+forwarded a stranger's request to any domain it did not serve. Tom decided the policy the
+same day; it is the next entry.
+
+### The proxy is not an open relay (2026-10-01)
+
+There was no 407 anywhere in the tree. A stranger's INVITE to `sip:+15551234567@198.51.100.99`
+was forwarded over UDP with no challenge - over TCP it always had been, and outbound UDP
+landing the same day removed the accident that had stopped it on the default transport.
+The policy is the 2026-10-01 decision in `ACTIVE.md` and the table in
+`docs/authentication.md`.
+
+- [x] **`Proxy::_authorize` and `_authenticate`** (RFC 3261 22.3). A From in a realm this
+      node serves is proved, whoever it calls: 407 with Proxy-Authenticate (both
+      algorithms, RFC 8760), answered as that same subscriber - credentials for somebody
+      else are 403 - or a reliable connection the registrar authenticated a REGISTER for
+      it over (`Channel::authenticated_as`). A From elsewhere may call into this node's
+      realms and nowhere else. The credentials for this realm are removed before forwarding.
+- [x] **The Digest arithmetic is shared** (`src/digest.h`): the registrar's check and
+      challenge moved there unchanged and the proxy uses the same code.
+- [x] **A BYE would have been challenged.** The dialog table ends a dialog when it sees the
+      BYE, which Core does before the proxy runs, so "is this in a dialog we are on" was
+      already false by the time it was asked. Core now records it on the request first
+      (`SIPMessage::in_known_dialog`). Found by the in-dialog test.
+- [x] 17 tests in `tests/proxy_authentication_test.cpp`; the identity match and the
+      UDP-is-not-a-connection rule each checked by taking them out and watching their test,
+      and only theirs, fail. Existing tests that model a subscriber calling now give that
+      subscriber an authenticated connection, or credentials on UDP, as a real one has.
+- [x] **The sipp harness answers the 407** in every caller scenario, and `relay-refused`
+      is new: 11 of 11 with the builtin relay, 12 of 12 with rtpengine. Because the 407 is
+      not optional in those scenarios, every passing run is a real client answering it.
+
+What a client needs to do about this is its own session's work. A browser or AthenaPhone
+on TCP that registers over the connection it calls on sees no change; one calling on UDP
+answers a 407 on every call. The deployed node on `corvus-fi-1` predates all of this.
+811 tests.
+
+### RFC 3263, IPv6 config URLs, and Boost.Redis through the node's logger (2026-10-01)
+
+- [x] **RFC 3263 locating** (`src/dns/`). A hand-written DNS client per the dependency
+      rule: the RFC 1035 codec with SRV (RFC 2782) and NAPTR (RFC 3403), tested against real
+      responses captured from 1.1.1.1 and read by hand; a UDP resolver on the system's
+      nameservers with a fresh port and a random id per query (RFC 5452), a retry round and
+      a five-second try as resolv.conf(5) has them, TCP when truncated (RFC 7766), and a TTL
+      cache (RFC 1035 7.4, RFC 2308); and `SipLocator`, sections 4.1 and 4.2 - transport
+      parameter, numeric host and explicit port each skipping what they make unnecessary,
+      NAPTR by order and preference with only `SIPS+D2T` for a sips URI, SRV for each
+      transport when there is no NAPTR, A and AAAA last, RFC 2782's weighted choice, "." as
+      no service, and nothing under `.invalid` ever asked (RFC 6761). The proxy locates a
+      target naming a host and tries each hop in turn, so one that refuses a connection is
+      passed over (4.3).
+- [x] Three things found by running it rather than by the tests: a resolver that asked each
+      nameserver once lost a whole transport to one dropped datagram on a machine with one
+      server; a two-second try gave up on SRV answers that 8.8.8.8 takes two and a half to
+      fetch cold; and a self-clearing recursive lambda in the first locator was a
+      use-after-free that crashed the suite. Each is fixed and the first two have tests. The
+      DNS and proxy tests ran clean under ASan and UBSan afterwards; GoogleTest from Homebrew
+      needs `detect_container_overflow=0` for that, now in `docs/testing.md`.
+- [x] `ATHENA_TEST_DNS=1` runs the locator against the real DNS on sip2sip.info, which
+      publishes the full NAPTR, SRV and A set.
+- [x] **IPv6 literals in a config URL** (`types::URL`, RFC 3986 3.2.2): a bracketed host is
+      read whole and kept without its brackets, which go back on in `to_string`; an
+      unbracketed one is refused rather than guessed at.
+- [x] **Boost.Redis logs through the node's logger.** Its connection chatter reached stderr
+      with its own prefix and no level - into the output of `athenasip --add-user`. It goes
+      to the datastore's scoped logger now: lifecycle at debug, warnings and errors as such.
+
+- [x] **4.3's failover, the rest of it.** A 503 or a transaction timeout from a hop sends
+      the same target to the next hop DNS listed, as a fresh branch; a 486, a 404 or any
+      other answer still ends that target, because another server for the domain would
+      give it too. When every hop fails the caller gets a 500, not the 503 (RFC 3261 16.7).
+
+870 tests.
