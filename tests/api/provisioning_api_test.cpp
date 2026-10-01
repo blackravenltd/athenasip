@@ -551,6 +551,40 @@ TEST(ProvisioningApiTest, TheNodeListIncludesWhatTheOtherNodesSaid) {
   EXPECT_EQ(other.at("transports").as_array()[0].at("uri").as_string(), "sips:198.51.100.7:5061;transport=tls");
 }
 
+// The bootstrap a browser fetches carries where else it can go: this node first, then the
+// others that are up, and their secure WebSocket URIs in that order. A node that is down,
+// or has gone quiet, is not somewhere to send a client (the 2026-09-21 decision).
+TEST(ProvisioningApiTest, ClientConfigListsTheNodesAClientCanUse) {
+  ApiFixture f;
+  f.config->websocket_enable = true;
+  f.config->websocket_tls = true;
+  f.config->websocket_address = "0.0.0.0";
+  f.config->websocket_port = 8089;
+
+  auto directory = std::make_shared<NodeDirectory>();
+  f.provisioning->nodes_register(directory, std::chrono::seconds(30));
+
+  const auto wss = [](const std::string& address) {
+    return R"([{"transport":"wss","address":")" + address + R"(","port":8089,"uri":"sips:)" + address + R"(:8089;transport=wss"}])";
+  };
+  directory->observe("nodes/node-b/status", R"({"status":"ok","node":"node-b","transports":)" + wss("198.51.100.7") + "}");
+  directory->observe("nodes/node-c/status", R"({"status":"down","node":"node-c","transports":)" + wss("198.51.100.8") + "}");
+
+  auto response = f.get("/api/v1/client/config", "client-token");
+  ASSERT_EQ(response.status, 200u) << response.body;
+  const auto body = response.json();
+
+  const auto& nodes = body.at("nodes").as_array();
+  ASSERT_EQ(nodes.size(), 2u);
+  EXPECT_EQ(nodes[0].at("id").as_string(), "test-node");
+  EXPECT_EQ(nodes[1].at("id").as_string(), "node-b");
+
+  const auto& uris = body.at("websocket_uris").as_array();
+  ASSERT_EQ(uris.size(), 2u);
+  EXPECT_EQ(uris[0].as_string(), "wss://203.0.113.5:8089");
+  EXPECT_EQ(uris[1].as_string(), "wss://198.51.100.7:8089");
+}
+
 TEST(ProvisioningApiTest, AnUnknownEndpointIs404AndAWrongMethodIs405) {
   ApiFixture f;
 
