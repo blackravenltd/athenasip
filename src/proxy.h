@@ -139,6 +139,9 @@ class Proxy : public TransactionUser {
     // The callee's account's media profile, read where the account was in hand.
     std::optional<types::MediaPolicy::Profiles> callee_profile;
 
+    // The caller's, read only for an INVITE with no description (RFC 3264 section 5).
+    std::optional<types::MediaPolicy::Profiles> caller_profile;
+
     // The branch in flight's target, and the profile the engine made its offer for when
     // nothing the callee had said decided it. A 488 to that offer is the one refusal this
     // node can do something about.
@@ -236,6 +239,7 @@ class Proxy : public TransactionUser {
 
   // RFC 3261 16.7 step 6: what goes back when every branch has been tried.
   void _send_best(const std::shared_ptr<Context>& context);
+  void _read_caller_profile(const std::shared_ptr<Context>& context, std::function<void()> then);
   bool _reoffer(const std::shared_ptr<Context>& context);
   void _report_reoffer(const std::shared_ptr<Context>& context, bool took);
 

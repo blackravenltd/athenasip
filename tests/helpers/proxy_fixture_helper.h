@@ -24,6 +24,7 @@ struct ProxyFixture : CoreFixture {
   std::shared_ptr<MockConnection> callee_connection;
   std::shared_ptr<athenasip::Channel> callee;
 
+  std::shared_ptr<athenasip::types::Account> alice;
   std::shared_ptr<athenasip::types::Account> bob;
 
   // The public address is taken before any channel opens, because that is the order a
@@ -33,7 +34,7 @@ struct ProxyFixture : CoreFixture {
     if (!public_address.empty()) config->sip_public_address = public_address;
 
     seed_realm("example.com");
-    seed_account(1, "sip:alice@example.com", "alice-ha1");
+    alice = seed_account(1, "sip:alice@example.com", "alice-ha1");
     bob = seed_account(2, "sip:bob@example.com", "bob-ha1");
 
     caller = make_channel("192.0.2.10", &caller_connection);
