@@ -256,6 +256,13 @@ TEST(MediaProfileTest, ADescriptionSaysWhatTheEndThatWroteItIs) {
   EXPECT_EQ(Flags::from_sdp(kSdesOffer).stated(), Flags::Profile::SrtpSdes);
   EXPECT_EQ(Flags::from_sdp(kOffer).stated(), Flags::Profile::PlainRtp);
 
+    // RFC 5764 section 8: UDP/TLS/RTP/SAVP and SAVPF are DTLS-SRTP by name. The profile on
+  // the m-line is the statement, so a capability description - an OPTIONS 200 that has no
+  // DTLS session to fingerprint yet - says WebRTC without one.
+  const std::string profile_only =
+      "v=0\r\no=- 1 1 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\nc=IN IP4 0.0.0.0\r\na=rtpmap:111 opus/48000/2\r\n";
+  EXPECT_EQ(Flags::from_sdp(profile_only).stated(), Flags::Profile::WebRtc);
+
   // Nothing readable says nothing, which is not the same as saying plain RTP. Recording
   // a guess would have the leg quoted on something it never said.
   EXPECT_FALSE(Flags::from_sdp("not a session description").stated().has_value());
