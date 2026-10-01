@@ -536,9 +536,9 @@ void ProvisioningAPI::_client_config(RouteContext context) {
     if (needs_credential) {
       // The caller's own name where there is one, so a relay session can be tied back to
       // it in the TURN server's log. Not Caller::describe(), which is prose for a log line
-      // of ours and says so - putting "a configuration token" in a protocol field is what
-      // made coturn answer 400 rather than relay anything.
-      const auto asked_by = context.caller.user ? context.caller.user->key() : std::string("token");
+      // of ours and says so - putting prose in a protocol field is what once made coturn
+      // answer 400 rather than relay anything.
+      const auto asked_by = context.caller.user ? context.caller.user->key() : std::string("anonymous");
 
       const auto credential = types::TurnCredential::issue(_config->turn_shared_secret, asked_by, now, _config->turn_credential_ttl);
 

@@ -17,6 +17,7 @@
 #include <string>
 
 #include "../helpers/core_fixture_helper.h"
+#include "../helpers/signed_in_users_helper.h"
 #include "api/admin_api.h"
 #include "api/router.h"
 #include "call.h"
@@ -81,21 +82,25 @@ struct Response {
 struct CallsFixture : CoreFixture {
   std::shared_ptr<api::AdminAPI> admin;
   std::shared_ptr<api::Router> router;
+  SignedInUsers signed_in;
+  std::shared_ptr<api::Sessions> sessions;
   std::shared_ptr<api::CallsAPI> calls;
 
   explicit CallsFixture(bool with_engine = true) {
-    config->http_api_tokens = {Config::ApiToken{"admin-token", {"admin"}}, Config::ApiToken{"client-token", {"client"}}};
-
     if (with_engine) core->media_register(std::make_shared<StubEngine>());
 
     admin = std::make_shared<api::AdminAPI>(logger, "127.0.0.1", 0);
-    router = std::make_shared<api::Router>(std::make_shared<api::BearerAuth>(config->http_api_tokens));
+    auto bearer = std::make_shared<api::BearerAuth>();
+    sessions = std::make_shared<api::Sessions>(logger, datastore, admin->executor(), api::Sessions::Lifetimes{3600, 600});
+    bearer->sessions_register(sessions);
+    router = std::make_shared<api::Router>(bearer);
     calls = std::make_shared<api::CallsAPI>(logger, core, admin->executor());
     calls->register_routes(*router);
 
     admin->middlewares.push_back(router->middleware("/api/"));
     admin->middlewares.push_back(router->middleware("/metrics"));
     admin->start();
+    signed_in = SignedInUsers(sessions, *store);
   }
 
   ~CallsFixture() { admin->stop(); }
@@ -122,7 +127,7 @@ struct CallsFixture : CoreFixture {
 
     http::request<http::string_body> request{http::verb::get, target, 11};
     request.set(http::field::host, "127.0.0.1");
-    if (!token.empty()) request.set(http::field::authorization, "Bearer " + token);
+    if (!token.empty()) request.set(http::field::authorization, "Bearer " + signed_in.presented(token));
     request.prepare_payload();
     http::write(socket, request);
 

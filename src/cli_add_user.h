@@ -20,8 +20,8 @@ namespace athenasip::cli {
 //
 // The way back in: a node whose admin passwords have all been lost, or whose HTTP
 // listener is not reachable, still has a datastore and a person with shell access. It is
-// the other half of the recovery the configuration token provides, and it is why losing
-// every password is an inconvenience rather than a rebuild.
+// also how the first administrator is made, there being no configured token to do it, and
+// it is why losing every password is an inconvenience rather than a rebuild.
 //
 // It goes to the datastore and touches nothing else - no listeners, no event bus, no
 // Core - so it is safe to run against a node that is already serving.

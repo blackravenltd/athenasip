@@ -34,7 +34,11 @@ fi
 
 NODE="172.31.0.10"
 API="http://${NODE}:8080/api/v1"
-ADMIN_TOKEN="e2e-admin"
+# The administrator the node creates as it starts (docker-compose.test.yml). Signed in
+# once below; the session token is what every API call presents.
+ADMIN_USER="e2e-admin"
+ADMIN_PASSWORD="e2e-admin-password"
+ADMIN_TOKEN=""
 FILTER="${1:-}"
 
 RESULTS="test/e2e/results"
@@ -97,6 +101,16 @@ until ${COMPOSE} run --rm --no-deps --entrypoint curl sipp-uac -fsS "${API}/heal
   fi
   sleep 1
 done
+
+echo "Signing in..."
+ADMIN_TOKEN=$(${COMPOSE} run --rm --no-deps --entrypoint curl sipp-uac -fsS -H "Content-Type: application/json" \
+  -d "{\"username\":\"${ADMIN_USER}\",\"password\":\"${ADMIN_PASSWORD}\"}" "${API}/auth/login" |
+  sed -n 's/.*"token":"\([0-9a-f]*\)".*/\1/p')
+
+if [ -z "${ADMIN_TOKEN}" ]; then
+  echo "Could not sign in as ${ADMIN_USER}."
+  exit 1
+fi
 
 echo "Provisioning..."
 api -X POST "${API}/realms" -d '{"name":"example.com"}' >/dev/null

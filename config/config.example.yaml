@@ -275,20 +275,13 @@ http:
   api:
     enable: true
 
-    # Bearer tokens, with what each one may do. admin provisions realms and accounts;
-    # client reads the node list and who is registered. A request with no matching token
-    # is refused, so an API switched on with no tokens is one nobody can call.
-    tokens:
-      - token: "change-me-admin"
-        scopes: [admin]
-      - token: "change-me-client"
-        scopes: [client]
+    # Who can use this API: users, signed in with POST /api/v1/auth/login. There are no
+    # tokens to configure here. The first administrator is made on this host with
+    # `athenasip --add-user NAME`, which is also the way back in if every password is lost.
 
     # How long a login lasts, in seconds, and how long it survives unused. The first is
     # written on the session and is what the datastore expires it on, so it cannot be
-    # zero; the second is checked on each request, and zero turns it off. Neither applies
-    # to the tokens above, which do not expire and are why they are kept in a file only
-    # root can read.
+    # zero; the second is checked on each request, and zero turns it off.
     session_lifetime: 43200
     session_idle: 3600
 

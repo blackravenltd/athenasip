@@ -81,11 +81,5 @@ http:
 
   api:
     enable: true
-    tokens:
-      - token: "e2e-admin"
-        scopes: [admin]
-      - token: "e2e-client"
-        scopes: [client]
-
   files:
     enable: false

@@ -58,8 +58,7 @@ class UsersAPI : public std::enable_shared_from_this<UsersAPI> {
   // for a delete.
   void _with_user(const std::string& username, RouteContext context, std::function<void(std::shared_ptr<types::User>, RouteContext)> then);
 
-  // Whether this request is that user acting on itself. A configuration token is never
-  // anybody, so it is never self.
+  // Whether this request is that user acting on itself.
   static bool _is_self(const RouteContext& context, const std::string& username);
 
   // What may be granted, checked on the way in. The datastore carries a role it does not

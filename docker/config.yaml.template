@@ -83,17 +83,9 @@ http:
   api:
     enable: true
 
-    # This is a quickstart, so the token is in the file and is the same for everybody who
-    # clones this repository. Change it before anything but your own laptop can reach port
-    # 8080: with the admin scope it holds every role there is.
-    #
-    # It is also the credential that created the first admin user, which is what
-    # docker/seed.sh does, and the way back in if that password is lost.
-    tokens:
-      - token: "change-me-admin"
-        scopes: [admin]
-      - token: "change-me-client"
-        scopes: [client]
+    # No tokens: everything that uses this API signs in as a user. docker/up.sh creates
+    # the first administrator with `athenasip --add-user` inside the container, which is
+    # also the way back in if that password is lost.
 
     session_lifetime: 43200
     session_idle: 3600

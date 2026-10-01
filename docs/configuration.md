@@ -22,10 +22,10 @@ athenasip --print-config
 
 That prints the effective values - the file, the search path and the defaults all
 resolved - as YAML, says which file it came from, and exits without starting a listener or
-constructing a driver. API tokens are redacted, because the output ends up in issues and
-in terminal scrollback; their scopes are not, because "is the token I configured the one
-it read, and what may it do" is the question being asked. A plugin's own section is copied
-through rather than interpreted, since only the plugin knows what it means.
+constructing a driver. A plugin's own section is copied through rather than interpreted,
+since only the plugin knows what it means. There are no API tokens to show: a file that
+still sets `http.api.tokens` is refused, and administrators are users made with
+`athenasip --add-user`.
 
 ## Configuration
 

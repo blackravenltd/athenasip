@@ -26,7 +26,7 @@ then provisions a realm, two accounts and an administrator, and prints what to d
 
 It prints the administrator's password once and cannot print it again, because the API
 never hands a password back. If you lose it, `docker compose exec athenasip athenasip
---add-user someone-else` is the way back in, and so is the configuration token.
+--add-user someone-else` is the way back in.
 
 Ports move if something else already has them:
 
@@ -112,34 +112,33 @@ Check it is serving:
 curl http://127.0.0.1:8080/api/v1/health
 ```
 
-## 2. Change the API tokens, and make an administrator
+## 2. Make an administrator
 
-The example config ships with two tokens named `change-me-admin` and `change-me-client`.
-Change them before anything is listening on a network you do not control, in the
-`http.api.tokens` section. A request without a matching token is refused.
+The admin API has no tokens to configure. The first administrator is made on the node's
+host with `athenasip --add-user`, which asks for the password without echoing it:
 
 ```
-export ATHENA_ADMIN_TOKEN=change-me-admin
+athenasip --add-user you --role manage-admin-users --role manage-realms \
+  --role manage-realm-subscribers --role view-cluster-status
+```
+
+With the example config's `memory://` datastore, which keeps nothing once a process
+exits, that command creates the user and then carries on as the node - so it is how you
+start the node the first time. With `redis://` it writes the user and exits, and you start
+the node as usual. Then sign in:
+
+```
 export ATHENA_API=http://127.0.0.1:8080/api/v1
-```
-
-A configuration token is a machine credential and the way back in. People get their own
-accounts, which is what the console logs into, and the token is what creates the first
-one on a node that has none:
-
-```
-curl -X POST "$ATHENA_API/users" \
-  -H "Authorization: Bearer $ATHENA_ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"username":"you","password":"a long enough password","roles":["manage-admin-users","manage-realms","manage-realm-subscribers","view-cluster-status"]}'
 
 curl -X POST "$ATHENA_API/auth/login" \
   -H "Content-Type: application/json" \
-  -d '{"username":"you","password":"a long enough password"}'
+  -d '{"username":"you","password":"your password"}'
+
+export ATHENA_ADMIN_TOKEN=<the token it answered>
 ```
 
 The login answers a token, what it expires at, and the roles that user holds. Present it
-the same way the configuration token is presented. A user who has lost their password is
+as `Authorization: Bearer $ATHENA_ADMIN_TOKEN`. A user who has lost their password is
 reset by somebody holding `manage-admin-users`, or by `athenasip --add-user` on the host
 if the API cannot be reached at all. [authentication.md](authentication.md) is the whole
 of it.
