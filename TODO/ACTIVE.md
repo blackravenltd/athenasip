@@ -351,9 +351,10 @@ Two things it found are this milestone's next work, in this order.
          the realm, with `media_anchor` and `media_profile`. The shipped default is anchor
          on, profile `mirror`; Kamailio's transport rule is the `transport` value. The
          console's side is with the admin session.
-      3. An explicit media profile per account, overriding it, as Asterisk's `webrtc=yes`
-         does. A field on accounts in the API and the Datastore contract, which the
-         console and both drivers follow. AthenaPhone on TCP is the case it exists for.
+      3. is in for the callee: an account's `behaviour.media_profile`. Still to do: the
+         caller's account, which matters only for a delayed offer (the 200's offer is
+         produced for a caller that has not described itself). It costs a datastore read
+         per INVITE with no body, which is the only INVITE that needs it.
       4. One re-offer of the other profile on a 488 (Kamailio's failure-route pattern),
          and the value no other server adds: the admin API and console say which accounts
          needed it ("rejected plain RTP, took WebRTC - set its profile?"). The node
