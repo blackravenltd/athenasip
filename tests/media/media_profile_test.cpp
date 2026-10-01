@@ -612,3 +612,20 @@ TEST(MediaProfileTest, WhatAQualifiedClientSaidDecidesTheFirstOfferTowardsIt) {
   ASSERT_FALSE(calls.empty());
   EXPECT_EQ(calls[0].flags.target, Flags::Profile::WebRtc);
 }
+
+// RFC 3264 section 5: an INVITE with no description has the callee make the offer, in its
+// 200, and that offer is produced for the caller - a leg that has said nothing yet. Its
+// account is then the operator's word on it, as the callee's is for an ordinary offer.
+TEST(MediaProfileTest, ADelayedOfferIsProducedForTheCallersAccount) {
+  ProfileFixture f("udp", "udp");
+  f.alice->media_profile = types::MediaPolicy::Profiles::WebRtc;
+  ASSERT_TRUE(f.store->account_update(f.alice));
+
+  f.receive(f.caller, f.invite());
+  f.receive(f.callee, f.ok_with(kOffer));
+
+  const auto calls = f.engine->calls();
+  ASSERT_FALSE(calls.empty());
+  EXPECT_TRUE(calls[0].was_offer);
+  EXPECT_EQ(calls[0].flags.target, Flags::Profile::WebRtc);
+}

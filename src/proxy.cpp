@@ -603,9 +603,28 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
           if (binding.contact) context->targets.push_back(_target_for(binding));
         }
 
-        _forward_next(context);
+        _read_caller_profile(context, [this, self, context]() { _forward_next(context); });
       });
     });
+  });
+}
+
+// RFC 3264 section 5: an INVITE with no description has the callee make the offer, in its
+// 200, and that offer is produced for the caller - a leg that has not said what it speaks.
+// That is the only case its account is needed, so it is the only INVITE that pays for
+// reading it. One that cannot be read is no different from one that says nothing.
+void Proxy::_read_caller_profile(const std::shared_ptr<Context>& context, std::function<void()> then) {
+  auto core = _core.lock();
+  const auto& request = context->request;
+  if (!core || request->header->request_method != "INVITE" || has_sdp(request) || !request->header->contains("From")) return then();
+
+  auto from = request->header->headers_map["From"][0]->as<SIPIdentityHeader>();
+  if (from == nullptr || from->value == nullptr || from->value->uri == nullptr) return then();
+
+  auto identity = std::make_shared<SIPIdentity>(from->value->uri->to_string());
+  core->account_get(identity, [context, then = std::move(then)](plugins::Result<std::shared_ptr<types::Account>> found) {
+    if (found.ok && found.value) context->caller_profile = found.value->media_profile;
+    then();
   });
 }
 
@@ -980,9 +999,12 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
   // the call, because a re-INVITE arrives in-dialog with no realm to ask.
   if (context && context->media_policy) call->media_policy = *context->media_policy;
 
-  // Likewise the callee's account, kept on its leg.
+  // Likewise each end's account, kept on its leg.
   if (context && context->callee_profile) {
     if (const auto callee = call->participant_index(false)) call->participants[*callee].account_profile = context->callee_profile;
+  }
+  if (context && context->caller_profile) {
+    if (const auto caller = call->participant_index(true)) call->participants[*caller].account_profile = context->caller_profile;
   }
 
   const auto& policy = call->media_policy;
