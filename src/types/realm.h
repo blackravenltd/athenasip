@@ -6,6 +6,7 @@
 //
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <regex>
 #include <sstream>
@@ -77,6 +78,21 @@ struct MediaPolicy {
 struct Behaviour {
   std::optional<bool> media_anchor;
   std::optional<MediaPolicy::Profiles> media_profile;
+
+  // How often, in seconds, a client registered in this realm is sent OPTIONS (Asterisk's
+  // qualify, Kamailio's nathelper ping), and zero for never. RFC 3261 does not ask for it,
+  // so the shipped default is zero. The reply says the client is there, and an SDP in it
+  // (11.2) says what media the client takes.
+  std::optional<std::uint32_t> qualify_interval;
+
+  static constexpr std::uint32_t kQualifyMinimum = 5;
+  static constexpr std::uint32_t kQualifyMaximum = 86400;
+
+  // Zero, or often enough to matter and not so often that thousands of registrations
+  // become a flood.
+  static bool valid_qualify_interval(std::int64_t seconds) { return seconds == 0 || (seconds >= kQualifyMinimum && seconds <= kQualifyMaximum); }
+
+  std::uint32_t qualify_over(std::uint32_t server) const { return qualify_interval.value_or(server); }
 
   // The effective policy: this realm's settings over the server's default.
   MediaPolicy over(const MediaPolicy& server) const {

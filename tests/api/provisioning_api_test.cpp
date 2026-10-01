@@ -272,6 +272,29 @@ TEST(ProvisioningApiTest, NullPutsASettingBackToTheServerDefault) {
 
 // A setting nobody recognises, or a value that is not one of its choices, is refused and
 // changes nothing: a realm behaving other than its operator thinks is the failure.
+TEST(ProvisioningApiTest, ARealmSetsHowOftenItsClientsAreQualified) {
+  ApiFixture f;
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+
+  auto json = f.get("/api/v1/realms/example.com").json();
+  EXPECT_TRUE(json.at("behaviour").at("qualify_interval").is_null());
+  EXPECT_EQ(json.at("behaviour_effective").at("qualify_interval").as_int64(), 0) << "off, as shipped";
+  EXPECT_EQ(json.at("behaviour_default").at("qualify_interval").as_int64(), 0);
+
+  auto updated = f.put("/api/v1/realms/example.com", R"({"behaviour":{"qualify_interval":60}})");
+  ASSERT_EQ(updated.status, 200u) << updated.body;
+  EXPECT_EQ(updated.json().at("behaviour").at("qualify_interval").as_int64(), 60);
+  EXPECT_EQ(updated.json().at("behaviour_effective").at("qualify_interval").as_int64(), 60);
+
+  EXPECT_EQ(f.put("/api/v1/realms/example.com", R"({"behaviour":{"qualify_interval":2}})").status, 400u);
+  EXPECT_EQ(f.put("/api/v1/realms/example.com", R"({"behaviour":{"qualify_interval":-60}})").status, 400u);
+  EXPECT_EQ(f.put("/api/v1/realms/example.com", R"({"behaviour":{"qualify_interval":"60"}})").status, 400u);
+  EXPECT_EQ(f.get("/api/v1/realms/example.com").json().at("behaviour").at("qualify_interval").as_int64(), 60);
+
+  ASSERT_EQ(f.put("/api/v1/realms/example.com", R"({"behaviour":{"qualify_interval":null}})").status, 200u);
+  EXPECT_TRUE(f.get("/api/v1/realms/example.com").json().at("behaviour").at("qualify_interval").is_null());
+}
+
 TEST(ProvisioningApiTest, AnUnreadableBehaviourIsRefusedAndChangesNothing) {
   ApiFixture f;
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com","behaviour":{"media_profile":"webrtc"}})").status, 201u);

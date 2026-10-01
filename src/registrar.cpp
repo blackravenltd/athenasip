@@ -17,6 +17,7 @@
 #include "headers/sip_identity_header.h"
 #include "headers/uint_header.h"
 #include "loggers/logger_scoped.h"
+#include "qualifier.h"
 #include "util.h"
 
 namespace athenasip {
@@ -207,6 +208,7 @@ void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared
   }
 
   auto bindings = std::make_shared<std::vector<Binding>>();
+  const auto qualify = realm ? realm->behaviour.qualify_over(core->config->behaviour_qualify_interval) : core->config->behaviour_qualify_interval;
 
   for (const auto& header : request->header->headers_map["Contact"]) {
     auto contact = header->as<SIPIdentityHeader>();
@@ -230,7 +232,7 @@ void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared
       return _send_interval_too_brief(transaction, request, realm);
     }
 
-    bindings->push_back(Binding{contact->value->uri, _granted_expiry(contact_requested, realm)});
+    bindings->push_back(Binding{contact->value->uri, _granted_expiry(contact_requested, realm), qualify});
   }
 
   _write_bindings(request, transaction, account, bindings, 0, expires);
@@ -257,14 +259,20 @@ void Registrar::_write_bindings(std::shared_ptr<SIPMessage> request, std::shared
   if (binding.expires == 0) {
     // A removal that fails is logged and the rest still go: the client asked for all of
     // them and a partial answer is better than none.
+    core->qualifier()->forget(account->identity->uri->to_string(), binding.contact);
     return core->account_unregister(account, binding.contact, channel, [next](plugins::Status) { next(); });
   }
 
   core->account_register(account, binding.contact, channel, binding.expires, _path_of(request),
-                         [this, self, request, transaction, account, next](plugins::Status status) {
+                         [this, self, request, transaction, account, binding, channel, next](plugins::Status status) {
                            if (!status.ok) {
                              _logger->error("REGISTER could not store the binding for " + account->identity->to_string() + " - " + status.error);
                              return _send_status(transaction, request, 500, "Server Internal Error");
+                           }
+
+                           if (auto core = _core.lock(); core && channel) {
+                             core->qualifier()->watch(account->identity->uri->to_string(), binding.contact, channel->flow_id(), binding.qualify,
+                                                      binding.expires);
                            }
 
                            next();

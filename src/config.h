@@ -214,6 +214,10 @@ class Config {
   // decision: standard, apart from anchoring media.
   types::MediaPolicy behaviour;
 
+  // behaviour.qualify_interval: seconds between OPTIONS to a registered client, zero for
+  // never. Decided at registration rather than per call, so it is not on the media policy.
+  std::uint32_t behaviour_qualify_interval = 0;
+
   bool http_files_enable = false;
   std::string http_files_path;
 

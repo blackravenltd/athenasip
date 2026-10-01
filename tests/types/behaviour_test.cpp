@@ -51,6 +51,27 @@ TEST(BehaviourTest, ARealmOverridesOnlyWhatItSets) {
   EXPECT_EQ(effective.profiles, MediaPolicy::Profiles::WebRtc) << "overridden";
 }
 
+// The probe interval is decided at registration, where the realm is in hand, so it is
+// resolved on its own rather than kept on a call.
+TEST(BehaviourTest, ARealmsQualifyIntervalOverridesTheServers) {
+  Behaviour silent;
+  EXPECT_EQ(silent.qualify_over(60), 60u);
+
+  Behaviour off;
+  off.qualify_interval = 0;
+  EXPECT_EQ(off.qualify_over(60), 0u);
+
+  Behaviour often;
+  often.qualify_interval = 25;
+  EXPECT_EQ(often.qualify_over(0), 25u);
+
+  EXPECT_TRUE(Behaviour::valid_qualify_interval(0));
+  EXPECT_TRUE(Behaviour::valid_qualify_interval(5));
+  EXPECT_TRUE(Behaviour::valid_qualify_interval(86400));
+  EXPECT_FALSE(Behaviour::valid_qualify_interval(4));
+  EXPECT_FALSE(Behaviour::valid_qualify_interval(86401));
+}
+
 // A name in a config file or an API body is either one of these or a mistake, and a
 // mistake is reported rather than read as something else.
 TEST(BehaviourTest, AProfileNameIsReadStrictly) {

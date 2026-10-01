@@ -21,6 +21,7 @@
 #include "events/topics.h"
 #include "expiry_set.h"
 #include "proxy.h"
+#include "qualifier.h"
 #include "registrar.h"
 #include "rtp/rtp_relay.h"
 #include "servers/tcp_connection.h"
@@ -536,6 +537,11 @@ void Core::_ensure_transaction_users() {
 std::shared_ptr<Dialogs> Core::dialogs() {
   _ensure_transaction_users();
   return _dialogs;
+}
+
+std::shared_ptr<Qualifier> Core::qualifier() {
+  if (!_qualifier) _qualifier = std::make_shared<Qualifier>(_logger->base_logger(), weak_from_this());
+  return _qualifier;
 }
 
 void Core::_deliver_to_tu(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction) {

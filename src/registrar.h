@@ -53,6 +53,9 @@ class Registrar : public TransactionUser {
   struct Binding {
     std::shared_ptr<types::SIPUri> contact;
     std::uint32_t expires = 0;
+
+    // Seconds between OPTIONS to it, from the realm's behaviour; zero for none.
+    std::uint32_t qualify = 0;
   };
 
   void _write_bindings(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::shared_ptr<types::Account> account,

@@ -15,6 +15,7 @@
 
 #include "../helpers/proxy_fixture_helper.h"
 #include "media/media_engine.h"
+#include "qualifier.h"
 
 using namespace athenasip;
 using athenasip::media::Flags;
@@ -578,4 +579,36 @@ TEST(MediaProfileTest, TheAttemptEndsWithTheLastBranch) {
   EXPECT_EQ(f.call(), nullptr);
   EXPECT_TRUE(f.dialogs().empty());
   EXPECT_EQ(f.engine->releases(), 1);
+}
+
+// Step 5: what a callee said in answer to an OPTIONS is its own word, and decides the
+// first offer towards it ahead of the account, the realm and the transport.
+// AthenaPhone answers OPTIONS with a WebRTC description whatever it signals over.
+TEST(MediaProfileTest, WhatAQualifiedClientSaidDecidesTheFirstOfferTowardsIt) {
+  ProfileFixture f("tcp", "udp");
+  f.bob->media_profile = types::MediaPolicy::Profiles::PlainRtp;
+  ASSERT_TRUE(f.store->account_update(f.bob));
+
+  f.on_strand(
+      [&f]() { f.core->qualifier()->watch("sip:bob@example.com", std::make_shared<types::SIPUri>("sip:bob@192.0.2.20:5060"), f.callee->flow_id(), 30, 3600); });
+  f.timers->advance(std::chrono::milliseconds(1));
+  f.settle();
+
+  const auto probe = f.request_with(f.callee_connection, "OPTIONS");
+  ASSERT_NE(probe, nullptr);
+
+  const auto& header = probe->header;
+  std::string answer = "SIP/2.0 200 OK\r\n";
+  answer += "Via: " + header->headers_map["Via"][0]->to_string() + "\r\n";
+  answer += "From: " + header->headers_map["From"][0]->to_string() + "\r\n";
+  answer += "To: " + header->headers_map["To"][0]->to_string() + ";tag=phone\r\n";
+  answer += "Call-ID: " + header->headers_map["Call-ID"][0]->to_string() + "\r\n";
+  answer += "CSeq: " + header->headers_map["CSeq"][0]->to_string() + "\r\n";
+  f.receive(f.callee, ProfileFixture::with_body(answer + "\r\n", kWebRtcOffer));
+
+  f.receive(f.caller, f.invite_with_body());
+
+  const auto calls = f.engine->calls();
+  ASSERT_FALSE(calls.empty());
+  EXPECT_EQ(calls[0].flags.target, Flags::Profile::WebRtc);
 }

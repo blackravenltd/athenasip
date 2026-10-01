@@ -329,6 +329,21 @@ bool Config::load_from_yaml(const std::string& filename) {
       }
       behaviour.profiles = *profiles;
     }
+
+    if (behaviour_section["qualify_interval"]) {
+      std::int64_t seconds = -1;
+      try {
+        seconds = behaviour_section["qualify_interval"].as<std::int64_t>();
+      } catch (const std::exception&) {
+      }
+
+      if (!types::Behaviour::valid_qualify_interval(seconds)) {
+        _logger->error("Invalid 'behaviour.qualify_interval': it is 0 for never, or seconds from " + std::to_string(types::Behaviour::kQualifyMinimum) +
+                       " to " + std::to_string(types::Behaviour::kQualifyMaximum));
+        return false;
+      }
+      behaviour_qualify_interval = static_cast<std::uint32_t>(seconds);
+    }
   }
 
   // --- Parse the 'http' section ---
@@ -556,6 +571,7 @@ std::string Config::effective_yaml() const {
   out << YAML::Key << "behaviour" << YAML::Value << YAML::BeginMap;
   out << YAML::Key << "media_anchor" << YAML::Value << behaviour.anchor;
   out << YAML::Key << "media_profile" << YAML::Value << types::MediaPolicy::to_string(behaviour.profiles);
+  out << YAML::Key << "qualify_interval" << YAML::Value << behaviour_qualify_interval;
   out << YAML::EndMap;
 
   out << YAML::Key << "http" << YAML::Value << YAML::BeginMap;

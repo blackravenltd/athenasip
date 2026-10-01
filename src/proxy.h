@@ -80,6 +80,9 @@ class Proxy : public TransactionUser {
     // target refused.
     std::optional<media::Profile> profile;
     std::optional<media::Profile> rejected;
+
+    // What the client on this target's flow said its media is when last qualified.
+    std::optional<media::Profile> said;
   };
 
   // The response context (16.7): the request as received, the server transaction it

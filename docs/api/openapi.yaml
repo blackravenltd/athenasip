@@ -595,6 +595,48 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /qualify:
+    get:
+      operationId: listQualifiedClients
+      tags: [media]
+      summary: Registered clients this node is probing with OPTIONS
+      description: |
+        Per node: only the node holding a client's flow can probe it. Each entry says how
+        often the client is probed, when it last answered, how many probes in a row went
+        unanswered, and what media it said it takes if its answer carried a session
+        description (RFC 3261 11.2), in the words `behaviour.media_profile` uses.
+      responses:
+        "200":
+          description: The probed clients
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [account, contact, interval, answered_at, unanswered, said_media_profile]
+                  properties:
+                    account:
+                      type: string
+                    contact:
+                      type: string
+                    interval:
+                      type: integer
+                    answered_at:
+                      type: string
+                      format: date-time
+                      nullable: true
+                    unanswered:
+                      type: integer
+                    said_media_profile:
+                      type: string
+                      nullable: true
+                      enum: [rtp, webrtc, srtp, null]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /metrics:
     servers:
       - url: http://{host}:{port}
@@ -1306,6 +1348,13 @@ components:
             caller offered. transport makes ws and wss WebRTC and everything else plain
             RTP. rtp, webrtc and srtp (RFC 4568 keys in the description) make every leg
             that.
+        qualify_interval:
+          type: integer
+          nullable: true
+          description: >-
+            Seconds between OPTIONS to each client registered in this realm, down the flow
+            it registered on; 0 for never, otherwise 5 to 86400. A client that answers with
+            a session description (RFC 3261 11.2) has said what media it takes.
 
     BehaviourEffective:
       type: object
@@ -1318,6 +1367,8 @@ components:
         media_profile:
           type: string
           enum: [mirror, transport, rtp, webrtc, srtp]
+        qualify_interval:
+          type: integer
 
     RealmCreate:
       type: object
