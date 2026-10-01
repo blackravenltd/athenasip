@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -61,6 +62,7 @@ class RecordingMediaEngine : public media::MediaEngine {
 
   void release(plugins::Executor on, std::shared_ptr<athenasip::Call> call, plugins::StatusHandler handler) override {
     (void)call;
+    _releases++;
     _complete(std::move(on), std::move(handler), plugins::Status::success());
   }
 
@@ -68,6 +70,8 @@ class RecordingMediaEngine : public media::MediaEngine {
     (void)call;
     _complete(std::move(on), std::move(handler), plugins::Result<std::string>::success("{}"));
   }
+
+  int releases() const { return _releases; }
 
   std::vector<Call> calls() const {
     std::lock_guard<std::mutex> lock(_mutex);
@@ -82,6 +86,7 @@ class RecordingMediaEngine : public media::MediaEngine {
 
   mutable std::mutex _mutex;
   std::vector<Call> _calls;
+  std::atomic<int> _releases{0};
   bool _connected = false;
 };
 
@@ -169,6 +174,25 @@ struct ProfileFixture : ProxyFixture {
     std::string out;
     for (const auto& value : values) out += "Route: " + value + "\r\n";
     return out;
+  }
+
+  // A final response to the INVITE most recently forwarded to the callee, which after a
+  // re-offer is not the first one.
+  std::string response_to_latest(int code, const std::string& reason, const std::string& sdp = "", std::shared_ptr<MockConnection> connection = nullptr,
+                                 const std::string& to_tag = "bob") {
+    const auto forwarded = requests_with(connection ? connection : callee_connection, "INVITE");
+    if (forwarded.empty()) return "";
+
+    std::string raw = "SIP/2.0 " + std::to_string(code) + " " + reason + "\r\n";
+    for (const auto& via : forwarded.back()->header->headers_map["Via"]) raw += "Via: " + via->to_string() + "\r\n";
+    for (const auto& route : forwarded.back()->header->headers_map["Record-Route"]) raw += "Record-Route: " + route->to_string() + "\r\n";
+    raw += "From: <sip:alice@example.com>;tag=alice\r\n";
+    raw += "To: <sip:bob@example.com>;tag=" + to_tag + "\r\n";
+    raw += "Call-ID: call-proxy\r\n";
+    raw += "CSeq: 1 INVITE\r\n";
+    if (code < 300) raw += "Contact: <sip:bob@192.0.2.20:5060>\r\n";
+    raw += "\r\n";
+    return sdp.empty() ? raw : with_body(raw, sdp);
   }
 
   // Hold, resume, or any other mid-call re-offer, sent by the end that answered.
@@ -393,4 +417,60 @@ TEST(MediaProfileTest, AnAccountCanTakeItsLegOutOfTheTransportRule) {
   const auto calls = f.engine->calls();
   ASSERT_FALSE(calls.empty());
   EXPECT_EQ(calls[0].flags.target, Flags::Profile::Mirror);
+}
+
+// RFC 3261 16.7: a branch that fails ends that branch, and the attempt goes on to the next
+// target. The caller's call is not over until this node sends it a final response, so the
+// call record - and the media anchored for it - outlives every branch but the last. A
+// failed branch had been closing the call, and every later branch of a serial fork went
+// out unanchored with its media released under it.
+TEST(MediaProfileTest, EveryBranchOfASerialForkIsAnchored) {
+  ProfileFixture f("udp", "udp");
+
+  std::shared_ptr<MockConnection> desk_connection;
+  auto desk = f.make_channel("192.0.2.21", &desk_connection, "udp");
+  f.register_binding(f.bob, std::make_shared<types::SIPUri>("sip:bob@192.0.2.21:5060"), desk, 3600);
+
+  f.receive(f.caller, f.invite_with_body());
+
+  // Whichever binding was tried first rings and then refuses.
+  const bool phone_first = !ProfileFixture::requests_with(f.callee_connection, "INVITE").empty();
+  auto first = phone_first ? f.callee : desk;
+  auto first_connection = phone_first ? f.callee_connection : desk_connection;
+  auto second = phone_first ? desk : f.callee;
+  auto second_connection = phone_first ? desk_connection : f.callee_connection;
+
+  f.receive(first, f.response_to_latest(180, "Ringing", "", first_connection, "first"));
+  f.receive(first, f.response_to_latest(486, "Busy Here", "", first_connection, "first"));
+
+  ASSERT_EQ(ProfileFixture::requests_with(second_connection, "INVITE").size(), 1u);
+  EXPECT_NE(f.call(), nullptr) << "the attempt is not over";
+  EXPECT_EQ(f.engine->releases(), 0);
+
+  const auto offers = f.engine->calls();
+  ASSERT_EQ(offers.size(), 2u) << "the second branch's offer went through the engine";
+  EXPECT_TRUE(offers[1].was_offer);
+
+  f.receive(second, f.response_to_latest(200, "OK", kOffer, second_connection, "second"));
+  ASSERT_NE(f.response_with(f.caller_connection, 200), nullptr);
+  EXPECT_EQ(f.response_with(f.caller_connection, 486), nullptr);
+
+  ASSERT_EQ(f.dialogs().size(), 1u);
+  EXPECT_EQ(f.dialogs()[0]->callee_tag, "second");
+  EXPECT_EQ(f.dialogs()[0]->state, types::Dialog::State::Confirmed);
+}
+
+// And when the last branch fails, the attempt is over: the caller is told, and the call
+// and its media go.
+TEST(MediaProfileTest, TheAttemptEndsWithTheLastBranch) {
+  ProfileFixture f("udp", "udp");
+
+  f.receive(f.caller, f.invite_with_body());
+  f.receive(f.callee, f.response_to_latest(180, "Ringing"));
+  f.receive(f.callee, f.response_to_latest(486, "Busy Here"));
+
+  EXPECT_NE(f.response_with(f.caller_connection, 486), nullptr);
+  EXPECT_EQ(f.call(), nullptr);
+  EXPECT_TRUE(f.dialogs().empty());
+  EXPECT_EQ(f.engine->releases(), 1);
 }
