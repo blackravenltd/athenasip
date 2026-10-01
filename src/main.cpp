@@ -366,6 +366,7 @@ int main(int argc, char* argv[]) {
       api_router = std::make_shared<api::Router>(bearer);
       provisioning = std::make_shared<api::ProvisioningAPI>(logger, datastore, adminAPI->executor(), config, version->to_string());
       provisioning->register_routes(*api_router);
+      provisioning->nodes_register(core->nodes(), std::chrono::seconds(config->events_status_interval));
 
       // Admin logins. The datastore is what holds the users, so a driver that does not
       // implement the user operations answers that it cannot and a login fails as

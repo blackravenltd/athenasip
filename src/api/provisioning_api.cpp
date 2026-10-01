@@ -645,10 +645,31 @@ void ProvisioningAPI::_node_list(RouteContext context) {
   // Every node answers "this is me" about itself. A client that reads the list from one
   // node and finds no entry marked self is talking to something that is not a node.
   node["self"] = true;
+  node["status"] = "ok";
+  node["version"] = _version;
   node["transports"] = _local_transports();
 
   boost::json::array nodes;
   nodes.push_back(std::move(node));
+
+  // The others, as each last described itself on the bus. Three missed heartbeats make a
+  // report stale: listed, so "gone quiet" can be told from "never heard of", and marked,
+  // so nobody routes to it on the strength of an old "ok".
+  if (_nodes) {
+    for (const auto& other : _nodes->list(_node_heartbeat * 3)) {
+      if (other.id == _config->sip_node_id) continue;
+
+      boost::json::object entry;
+      entry["id"] = other.id;
+      entry["self"] = false;
+      entry["status"] = other.status;
+      entry["stale"] = other.stale;
+      entry["version"] = other.version;
+      entry["at"] = other.at;
+      entry["transports"] = other.transports;
+      nodes.push_back(std::move(entry));
+    }
+  }
 
   write_json(context.response, http::status::ok, nodes);
   context.done();
@@ -657,30 +678,13 @@ void ProvisioningAPI::_node_list(RouteContext context) {
 boost::json::array ProvisioningAPI::_local_transports() const {
   boost::json::array transports;
 
-  // sip.public_address when it is set, because a node bound to 0.0.0.0 knows every
-  // address it answers on and none that a client should use. Falling back to the bind
-  // address is right on a single-homed host and honest everywhere else: what comes out
-  // is what the node was told, and an operator who sees 0.0.0.0 here knows why a client
-  // could not use it.
-  const auto advertised = [this](const std::string& bind_address) { return _config->sip_public_address.empty() ? bind_address : _config->sip_public_address; };
-
-  const auto add = [&transports, &advertised](const std::string& transport, const std::string& bind_address, std::uint16_t port, bool secure) {
+  for (const auto& advertised : _config->advertised_transports()) {
     boost::json::object entry;
-    entry["transport"] = transport;
-    entry["address"] = advertised(bind_address);
-    entry["port"] = port;
-    entry["uri"] = std::string(secure ? "sips:" : "sip:") + advertised(bind_address) + ":" + std::to_string(port) + ";transport=" + transport;
-
+    entry["transport"] = advertised.transport;
+    entry["address"] = advertised.address;
+    entry["port"] = advertised.port;
+    entry["uri"] = advertised.uri();
     transports.push_back(std::move(entry));
-  };
-
-  if (_config->udp_enable) add("udp", _config->udp_address, _config->udp_port, false);
-  if (_config->tcp_enable) add("tcp", _config->tcp_address, _config->tcp_port, false);
-  if (_config->tls_enable) add("tls", _config->tls_address, _config->tls_port, true);
-
-  if (_config->websocket_enable) {
-    const bool secure = _config->websocket_tls;
-    add(secure ? "wss" : "ws", _config->websocket_address, _config->websocket_port, secure);
   }
 
   return transports;

@@ -197,8 +197,13 @@ paths:
         this to learn where else the realm is served from, over the HTTP it is already
         speaking, which is what lets a browser fail over without DNS SRV it cannot use.
 
-        One entry today: nothing discovers the other nodes yet, and the entry for this
-        node is marked `self`.
+        This node first, marked `self` and described from its own configuration. Then
+        every other node as it last described itself on the event bus (its retained
+        `nodes/<id>/status` message), with the status it gave. A node whose report has
+        not been repeated within three status intervals is `stale`: listed, so a node
+        that went quiet can be told from one never heard of, and marked, so nothing
+        routes to it on the strength of an old `ok`. A node the broker reported `down`
+        is listed as down.
 
         The address is `sip.public_address` when it is set. A node bound to `0.0.0.0`
         answers on every address it has and can name none of them to a client, so a node
@@ -1267,6 +1272,17 @@ components:
         self:
           type: boolean
           description: Whether this is the node that answered
+        status:
+          type: string
+          enum: [ok, degraded, stopped, down]
+        stale:
+          type: boolean
+          description: Absent for this node; true when the node's report is more than three status intervals old
+        version:
+          type: string
+        at:
+          type: string
+          description: When the node composed its report; absent for this node
         transports:
           type: array
           items:

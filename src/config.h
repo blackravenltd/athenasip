@@ -13,6 +13,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
@@ -46,6 +47,19 @@ class Config {
   // failover work in M4 - needs to be told. Empty means fall back to the bind address,
   // which is right on a single-homed host and useless on a wildcard bind.
   std::string sip_public_address;
+
+  // Where this node can be reached, one entry per enabled transport, at sip.public_address
+  // when there is one and the bind address otherwise. The node list and the status the
+  // node publishes both say this, so they are one function.
+  struct AdvertisedTransport {
+    std::string transport;
+    std::string address;
+    std::uint16_t port = 0;
+    bool secure = false;
+
+    std::string uri() const;
+  };
+  std::vector<AdvertisedTransport> advertised_transports() const;
 
   // RFC 4028 section 8.1: the session interval this node puts on a call that asked for
   // none, in seconds. Zero leaves such a call without one.
