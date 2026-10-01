@@ -44,14 +44,44 @@ std::string ha1_sha256_of(const std::string& user, const std::string& realm_name
   return Util::to_lower(Util::sha256(user + ":" + realm_name + ":" + password));
 }
 
-// The realm's media policy, as two independent fields: whether to anchor, and how a
-// leg's profile is decided. Only what was given, like everything else here.
-void read_media_policy(const boost::json::object& body, types::MediaPolicy& policy) {
-  if (const auto anchor = body.if_contains("media_anchor"); anchor != nullptr && anchor->is_bool()) policy.anchor = anchor->as_bool();
-
-  if (const auto profiles = string_field(body, "media_profiles")) {
-    policy.profiles = types::MediaPolicy::profiles_from_string(*profiles, policy.profiles);
+// A realm's behaviour section: what it does differently from the server's default. Only what
+// was given, like everything else here, and a setting given as null goes back to inheriting.
+// Anything unreadable is refused with what was wrong, because a setting silently not taken is
+// a realm behaving other than its operator thinks. Empty on success, the reason otherwise.
+std::string read_behaviour(const boost::json::object& body, types::Behaviour& behaviour) {
+  // Where these lived before the section existed. Refused rather than ignored, so a client
+  // still sending them learns where they went instead of wondering why nothing changed.
+  for (const auto* moved : {"media_anchor", "media_profiles"}) {
+    if (body.contains(moved)) return std::string(moved) + " has moved into the behaviour section";
   }
+
+  const auto* section = body.if_contains("behaviour");
+  if (section == nullptr) return "";
+  if (!section->is_object()) return "behaviour is an object";
+
+  for (const auto& [key, value] : section->as_object()) {
+    if (key == "media_anchor") {
+      if (value.is_null()) {
+        behaviour.media_anchor.reset();
+      } else if (value.is_bool()) {
+        behaviour.media_anchor = value.as_bool();
+      } else {
+        return "behaviour.media_anchor is true, false or null";
+      }
+    } else if (key == "media_profile") {
+      if (value.is_null()) {
+        behaviour.media_profile.reset();
+      } else if (const auto profiles = value.is_string() ? types::MediaPolicy::parse_profiles(std::string(value.as_string())) : std::nullopt) {
+        behaviour.media_profile = *profiles;
+      } else {
+        return "behaviour.media_profile is mirror, transport, webrtc, rtp, srtp or null";
+      }
+    } else {
+      return "behaviour has no setting called " + std::string(key);
+    }
+  }
+
+  return "";
 }
 
 }  // namespace
@@ -110,7 +140,8 @@ void ProvisioningAPI::register_routes(Router& router) {
 // Realms
 
 void ProvisioningAPI::_realm_list(RouteContext context) {
-  _datastore->realm_list(_executor, [context](plugins::Result<std::vector<std::shared_ptr<types::Realm>>> result) mutable {
+  auto self = shared_from_this();
+  _datastore->realm_list(_executor, [self, context](plugins::Result<std::vector<std::shared_ptr<types::Realm>>> result) mutable {
     if (!result.ok) {
       write_error(context.response, http::status::internal_server_error, "datastore_error", result.error);
       return context.done();
@@ -118,7 +149,7 @@ void ProvisioningAPI::_realm_list(RouteContext context) {
 
     boost::json::array realms;
     for (const auto& realm : result.value) {
-      if (realm) realms.push_back(_realm_json(*realm));
+      if (realm) realms.push_back(self->_realm_json(*realm));
     }
 
     write_json(context.response, http::status::ok, realms);
@@ -150,7 +181,10 @@ void ProvisioningAPI::_realm_create(RouteContext context) {
   if (const auto timeout = uint_field(*body, "registration_timeout")) realm->registration_timeout = *timeout;
   if (const auto minimum = uint_field(*body, "registration_minimum")) realm->registration_minimum = *minimum;
 
-  read_media_policy(*body, realm->media);
+  if (const auto refused = read_behaviour(*body, realm->behaviour); !refused.empty()) {
+    write_error(context.response, http::status::bad_request, "invalid_request", refused);
+    return context.done();
+  }
 
   auto self = shared_from_this();
   _datastore->realm_create(_executor, realm, [self, context, realm](plugins::Status status) mutable {
@@ -158,7 +192,7 @@ void ProvisioningAPI::_realm_create(RouteContext context) {
       return self->_fail(std::move(context), status, "conflict", "realm " + realm->name + " already exists", http::status::conflict);
     }
 
-    write_json(context.response, http::status::created, _realm_json(*realm));
+    write_json(context.response, http::status::created, self->_realm_json(*realm));
     context.done();
   });
 }
@@ -166,8 +200,9 @@ void ProvisioningAPI::_realm_create(RouteContext context) {
 void ProvisioningAPI::_realm_get(RouteContext context) {
   const auto name = context.parameter("realm");
 
-  _with_realm(name, std::move(context), [](std::shared_ptr<types::Realm> realm, RouteContext context) {
-    write_json(context.response, http::status::ok, _realm_json(*realm));
+  auto self = shared_from_this();
+  _with_realm(name, std::move(context), [self](std::shared_ptr<types::Realm> realm, RouteContext context) {
+    write_json(context.response, http::status::ok, self->_realm_json(*realm));
     context.done();
   });
 }
@@ -190,15 +225,18 @@ void ProvisioningAPI::_realm_update(RouteContext context) {
     if (const auto timeout = uint_field(*body, "registration_timeout")) realm->registration_timeout = *timeout;
     if (const auto minimum = uint_field(*body, "registration_minimum")) realm->registration_minimum = *minimum;
 
-    read_media_policy(*body, realm->media);
+    if (const auto refused = read_behaviour(*body, realm->behaviour); !refused.empty()) {
+      write_error(context.response, http::status::bad_request, "invalid_request", refused);
+      return context.done();
+    }
 
-    self->_datastore->realm_update(self->_executor, realm, [context, realm](plugins::Status status) mutable {
+    self->_datastore->realm_update(self->_executor, realm, [self, context, realm](plugins::Status status) mutable {
       if (!status.ok) {
         write_error(context.response, http::status::internal_server_error, "datastore_error", status.error);
         return context.done();
       }
 
-      write_json(context.response, http::status::ok, _realm_json(*realm));
+      write_json(context.response, http::status::ok, self->_realm_json(*realm));
       context.done();
     });
   });
@@ -631,15 +669,31 @@ void ProvisioningAPI::_fail(RouteContext context, const plugins::Status& status,
   context.done();
 }
 
-boost::json::object ProvisioningAPI::_realm_json(const types::Realm& realm) {
+boost::json::object ProvisioningAPI::_realm_json(const types::Realm& realm) const {
   boost::json::object object;
   object["name"] = realm.name;
   object["id"] = realm.id;
   object["nonce_expiry"] = realm.nonce_expiry;
   object["registration_timeout"] = realm.registration_timeout;
   object["registration_minimum"] = realm.registration_minimum;
-  object["media_anchor"] = realm.media.anchor;
-  object["media_profiles"] = types::MediaPolicy::to_string(realm.media.profiles);
+  // What the realm chose, null for what it inherits; and what it comes to, with the server's
+  // default laid under it, so a reader sees both the choice and its effect.
+  boost::json::object chosen;
+  chosen["media_anchor"] = realm.behaviour.media_anchor ? boost::json::value(*realm.behaviour.media_anchor) : boost::json::value(nullptr);
+  chosen["media_profile"] =
+      realm.behaviour.media_profile ? boost::json::value(types::MediaPolicy::to_string(*realm.behaviour.media_profile)) : boost::json::value(nullptr);
+  object["behaviour"] = std::move(chosen);
+
+  const auto policy_json = [](const types::MediaPolicy& policy) {
+    boost::json::object json;
+    json["media_anchor"] = policy.anchor;
+    json["media_profile"] = types::MediaPolicy::to_string(policy.profiles);
+    return json;
+  };
+  object["behaviour_effective"] = policy_json(realm.behaviour.over(_config->behaviour));
+  // And the server's default on its own, so a reader can say what choosing "inherit" would
+  // come to for a setting the realm has chosen.
+  object["behaviour_default"] = policy_json(_config->behaviour);
 
   // nonce_secret is deliberately absent. It is the key this node mints nonces with, and
   // an API that hands it back is an API that leaks it into every log that records a

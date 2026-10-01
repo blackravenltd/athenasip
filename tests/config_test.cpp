@@ -237,6 +237,60 @@ TEST(ConfigTest, ASessionMinimumAboveTheRfcFloorIsTaken) {
   EXPECT_EQ(config->sip_session_min_se, 600u);
 }
 
+// --- behaviour: the server's default for what realms leave unset ---
+
+TEST(ConfigTest, WithNoBehaviourSectionTheShippedDefaultHolds) {
+  ConfigFile file("sip:\n  node_id: test-node\n");
+
+  bool ok = false;
+  auto config = file.load(ok);
+
+  ASSERT_TRUE(ok);
+  EXPECT_TRUE(config->behaviour.anchor);
+  EXPECT_EQ(config->behaviour.profiles, types::MediaPolicy::Profiles::Mirror);
+}
+
+TEST(ConfigTest, TheBehaviourSectionSetsTheServerDefault) {
+  ConfigFile file(
+      "sip:\n  node_id: test-node\n"
+      "behaviour:\n  media_anchor: false\n  media_profile: transport\n");
+
+  bool ok = false;
+  auto config = file.load(ok);
+
+  ASSERT_TRUE(ok);
+  EXPECT_FALSE(config->behaviour.anchor);
+  EXPECT_EQ(config->behaviour.profiles, types::MediaPolicy::Profiles::FromTransport);
+}
+
+// A misspelt profile is a node doing something other than what its operator wrote, so it
+// does not start.
+TEST(ConfigTest, AnUnknownMediaProfileIsRefused) {
+  ConfigFile file(
+      "sip:\n  node_id: test-node\n"
+      "behaviour:\n  media_profile: web-rtc\n");
+
+  bool ok = true;
+  file.load(ok);
+
+  EXPECT_FALSE(ok);
+}
+
+// It is what --print-config shows, because "what does this node do by default" is the
+// question that file answers.
+TEST(ConfigTest, TheEffectiveConfigurationShowsTheBehaviourDefault) {
+  ConfigFile file("sip:\n  node_id: test-node\n");
+
+  bool ok = false;
+  auto config = file.load(ok);
+  ASSERT_TRUE(ok);
+
+  const auto effective = config->effective_yaml();
+  EXPECT_NE(effective.find("behaviour:"), std::string::npos) << effective;
+  EXPECT_NE(effective.find("media_profile: mirror"), std::string::npos) << effective;
+  EXPECT_NE(effective.find("media_anchor: true"), std::string::npos) << effective;
+}
+
 TEST(ConfigTest, SessionLifetimesAreTakenFromTheApiSection) {
   ConfigFile file(
       "sip:\n  node_id: test-node\n"

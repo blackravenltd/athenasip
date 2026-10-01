@@ -1246,27 +1246,52 @@ components:
             The shortest registration this realm accepts, in seconds. Zero, the default,
             accepts any. A shorter one is refused with 423 Interval Too Brief carrying
             this value in Min-Expires (RFC 3261 10.3).
+        behaviour:
+          $ref: '#/components/schemas/Behaviour'
+        behaviour_effective:
+          $ref: '#/components/schemas/BehaviourEffective'
+        behaviour_default:
+          $ref: '#/components/schemas/BehaviourEffective'
+
+    Behaviour:
+      type: object
+      description: >-
+        What a realm does differently from the server's behaviour section. A setting
+        that is null, or absent, is inherited from the server; null in an update puts
+        a setting back to inheriting. An unknown setting or value is a 400 and changes
+        nothing.
+      additionalProperties: false
+      properties:
         media_anchor:
           type: boolean
-          default: true
+          nullable: true
           description: >-
             Whether this node puts itself in the media path when a media engine is
             configured. False leaves every session description untouched and the media
-            goes end to end, which is right for two endpoints that can reach each other
-            and wrong for anything behind a NAT.
-        media_profiles:
+            goes end to end (RFC 3261 16.6), which is right for two endpoints that can
+            reach each other and wrong for anything behind a NAT.
+        media_profile:
           type: string
-          enum: [transport, mirror, rtp, webrtc, srtp]
-          default: transport
+          nullable: true
+          enum: [mirror, transport, rtp, webrtc, srtp, null]
           description: >-
-            How each leg's media profile is decided. transport reads it from the flow -
-            ws and wss are WebRTC and everything else is plain RTP - which is right
-            wherever a WebSocket means a browser. rtp is for a realm whose WebSocket
-            clients are SIP phones, since RFC 7118 requires no WebRTC. webrtc makes
-            every leg WebRTC, and srtp makes every leg SRTP with the keys in the
-            description (RFC 4568), for a desk phone that wants encryption and has
-            never heard of DTLS. mirror says nothing and lets the engine keep what it
-            was handed.
+            What the engine is asked to produce for a leg that has not said what it
+            speaks; a leg that has is answered in kind. mirror offers a callee what the
+            caller offered. transport makes ws and wss WebRTC and everything else plain
+            RTP. rtp, webrtc and srtp (RFC 4568 keys in the description) make every leg
+            that.
+
+    BehaviourEffective:
+      type: object
+      description: >-
+        A complete behaviour: in behaviour_effective, what the realm's comes to on the node
+        that answered; in behaviour_default, that node's server default on its own.
+      properties:
+        media_anchor:
+          type: boolean
+        media_profile:
+          type: string
+          enum: [mirror, transport, rtp, webrtc, srtp]
 
     RealmCreate:
       type: object
@@ -1283,11 +1308,8 @@ components:
           type: integer
         registration_minimum:
           type: integer
-        media_anchor:
-          type: boolean
-        media_profiles:
-          type: string
-          enum: [transport, mirror, rtp, webrtc, srtp]
+        behaviour:
+          $ref: '#/components/schemas/Behaviour'
 
     RealmUpdate:
       type: object
@@ -1300,11 +1322,8 @@ components:
           type: integer
         registration_minimum:
           type: integer
-        media_anchor:
-          type: boolean
-        media_profiles:
-          type: string
-          enum: [transport, mirror, rtp, webrtc, srtp]
+        behaviour:
+          $ref: '#/components/schemas/Behaviour'
 
     Account:
       type: object

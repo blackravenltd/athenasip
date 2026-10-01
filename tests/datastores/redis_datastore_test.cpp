@@ -55,8 +55,8 @@ std::shared_ptr<types::Realm> make_realm(const std::string& name) {
   realm->nonce_secret = "secret";
   realm->registration_timeout = 3600;
   realm->registration_minimum = 60;
-  realm->media.anchor = false;
-  realm->media.profiles = types::MediaPolicy::Profiles::WebRtc;
+  realm->behaviour.media_anchor = false;
+  realm->behaviour.media_profile = types::MediaPolicy::Profiles::WebRtc;
   return realm;
 }
 
@@ -153,10 +153,12 @@ TEST(RedisDatastoreTest, RealmRoundTripsThroughRedis) {
   EXPECT_EQ(found->registration_timeout, 3600u);
   EXPECT_EQ(found->registration_minimum, 60u);
 
-  // The media policy is a realm's and has to survive being written down, or a cluster
-  // would anchor differently depending on which node read the realm.
-  EXPECT_FALSE(found->media.anchor);
-  EXPECT_EQ(found->media.profiles, types::MediaPolicy::Profiles::WebRtc);
+  // The behaviour a realm chose has to survive being written down, or a cluster would
+  // anchor differently depending on which node read the realm.
+  ASSERT_TRUE(found->behaviour.media_anchor.has_value());
+  EXPECT_FALSE(*found->behaviour.media_anchor);
+  ASSERT_TRUE(found->behaviour.media_profile.has_value());
+  EXPECT_EQ(*found->behaviour.media_profile, types::MediaPolicy::Profiles::WebRtc);
 
   auto changed = make_realm(name);
   changed->nonce_secret = "rotated";
@@ -165,6 +167,25 @@ TEST(RedisDatastoreTest, RealmRoundTripsThroughRedis) {
 
   EXPECT_TRUE(datastore->realm_delete(name));
   EXPECT_EQ(datastore->realm_get_by_name(name), nullptr);
+}
+
+// And what it did not choose stays unchosen, so it follows the server's default - which
+// may change after the realm is written - rather than freezing the default of the day.
+TEST(RedisDatastoreTest, ARealmThatChoseNoBehaviourInheritsAfterTheRoundTrip) {
+  REQUIRE_REDIS(datastore);
+
+  const auto name = "inherits-" + unique_suffix() + ".example.com";
+  auto realm = std::make_shared<types::Realm>(name);
+  realm->id = 2;
+  realm->nonce_secret = "secret";
+  ASSERT_TRUE(datastore->realm_create(realm));
+
+  auto found = datastore->realm_get_by_name(name);
+  ASSERT_NE(found, nullptr);
+  EXPECT_FALSE(found->behaviour.media_anchor.has_value());
+  EXPECT_FALSE(found->behaviour.media_profile.has_value());
+
+  datastore->realm_delete(name);
 }
 
 TEST(RedisDatastoreTest, RealmListComesFromTheIndex) {

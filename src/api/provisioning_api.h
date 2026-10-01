@@ -75,7 +75,7 @@ class ProvisioningAPI : public std::enable_shared_from_this<ProvisioningAPI> {
   // whether the thing is already there: that is the difference between 409 and 500.
   void _fail(RouteContext context, const plugins::Status& status, std::string code, std::string message, http::status http_status);
 
-  static boost::json::object _realm_json(const types::Realm& realm);
+  boost::json::object _realm_json(const types::Realm& realm) const;
   static boost::json::object _account_json(const types::Account& account);
   static boost::json::object _location_json(const types::Location& location, const std::string& uri);
 

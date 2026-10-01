@@ -129,6 +129,10 @@ struct ProfileFixture : ProxyFixture {
     core->media_register(engine);
     settle();
 
+    // What these tests are about is the rule that reads a leg that has said nothing from
+    // its transport, which since 2026-10-01 is a setting rather than the default.
+    config->behaviour.profiles = types::MediaPolicy::Profiles::FromTransport;
+
     caller = make_channel("192.0.2.10", &caller_connection, caller_transport);
 
     callee = make_channel("192.0.2.20", &callee_connection, callee_transport);

@@ -268,6 +268,22 @@ media:
     # out and rtpengine's own interface configuration decides, which is usually right.
     # media_address: 203.0.113.9
 
+# How this node behaves where the standards leave a choice. Leave the whole section out
+# and it behaves as the standards say, apart from anchoring media, which is the one
+# deliberate deviation and what most servers in front of rtpengine do. Each realm can
+# override any of these over the admin API; what it does not set it takes from here.
+behaviour:
+  # Put this node in the media path when a media engine is configured. false leaves
+  # every session description untouched and lets the media go end to end (RFC 3261
+  # 16.6), which is right for endpoints that can reach each other and wrong behind NAT.
+  media_anchor: true
+
+  # What the engine is asked to produce for a leg. mirror, the default, imposes nothing:
+  # a callee is offered what the caller offered. transport reads the leg's flow, so ws
+  # and wss are WebRTC and everything else plain RTP. rtp, webrtc and srtp make every
+  # leg that. A leg that has already said what it speaks is always answered in kind.
+  media_profile: mirror
+
 http:
   address: 0.0.0.0
   port: 8080
