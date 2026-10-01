@@ -2317,3 +2317,10 @@ LAN is answered 403.
       and "configure it like" a plain proxy, Kamailio/OpenSIPS with rtpengine, Asterisk
       and FreeSWITCH, with the defaults each starts from. Linked from the README and
       `docs/configuration.md`.
+
+### The caller's account for a delayed offer, and the behaviour profiles finished (2026-10-02)
+
+- [x] **An INVITE with no description reads the caller's account** (`_read_caller_profile`),
+      because RFC 3264 section 5 has the callee offer in its 200 and that offer is
+      produced for a caller that has said nothing yet. Only that INVITE pays for the read.
+      With it, all five steps of the 2026-10-01 behaviour-profile decision are in.

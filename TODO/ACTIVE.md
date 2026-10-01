@@ -339,27 +339,9 @@ endpoint on an ordinary transport. All of that is in. What is not yet in is list
 here, in the order it is needed.
 
 The call was made on 2026-09-30 and heard both ways in both directions;
-`test/interop/UAT.md` holds the record and `COMPLETED.md` the account of what it found.
-Two things it found are this milestone's next work, in this order.
+`test/interop/UAT.md` holds the record and `COMPLETED.md` the account of what it found,
+including the behaviour profiles it led to. What is left of it is below.
 
-- [ ] **Per-realm behaviour profiles, starting with what a callee is offered.** The
-      2026-10-01 decision, in order. Each step is a setting in one plainly named section.
-      There is a server-wide default in the config and a per-realm override in the API. The
-      shipped default is exactly what the standards say, so a migrating operator can set
-      any step to match Asterisk, Kamailio/OpenSIPS or FreeSWITCH.
-      1. and 2. are in (see `COMPLETED.md`): the `behaviour` section in the config and on
-         the realm, with `media_anchor` and `media_profile`. The shipped default is anchor
-         on, profile `mirror`; Kamailio's transport rule is the `transport` value. The
-         console's side is with the admin session.
-      3. is in for the callee: an account's `behaviour.media_profile`. Still to do: the
-         caller's account, which matters only for a delayed offer (the 200's offer is
-         produced for a caller that has not described itself). It costs a datastore read
-         per INVITE with no body, which is the only INVITE that needs it.
-      4. is in: one re-offer of the other profile on a 488, and
-         `GET /api/v1/media/reoffers` for the operator. The console's side is with the
-         admin session.
-      5. is in: `behaviour.qualify_interval`, off by default, and `GET /api/v1/qualify`.
-         What is left of this item is the caller's account for a delayed offer (step 3).
 - [ ] **Ring the automated browser call.** `browser.sh` answers within milliseconds and
       so never rang long enough to hit the DTLS-role bug the live call found; a deliberate
       delay of a few seconds before the callee answers would have caught it. A knob on the
