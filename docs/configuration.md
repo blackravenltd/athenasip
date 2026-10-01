@@ -320,6 +320,16 @@ RFC 3261 requires this to be larger than 3 minutes. A smaller value is refused, 
 error in the log, and the default kept - a shorter timer would hang up on calls that are
 only still ringing.
 
+#### Finding a host by name
+
+There is nothing to configure. When a request has to go to a URI that names a host - a
+trunk, `sip:+15551234567@sip.provider.example` - the node looks it up the way RFC 3263
+says: NAPTR for which transports the domain offers, SRV for the servers and ports, then
+their addresses, and it tries each in turn until one answers. It asks the nameservers in
+`/etc/resolv.conf`, five seconds a try and twice round, and keeps each answer for as long as
+its TTL says. A URI with an address, or with a port, skips the lookups it makes unnecessary.
+A provider that publishes only an A record still works: that is the last step.
+
 ### `tcp` Section
 
 This section configures TCP listener for the server. TCP is one possible transport

@@ -387,6 +387,16 @@ void Core::_open_datagram(std::vector<boost::asio::ip::udp::endpoint> candidates
   handler(ChannelResult::failure("no UDP listener can send to " + key));
 }
 
+std::shared_ptr<dns::SipLocator> Core::locator() {
+  if (!_locator) {
+    auto servers = dns::UdpResolver::servers_from("/etc/resolv.conf");
+    if (servers.empty()) _logger->warn("No nameservers in /etc/resolv.conf - SIP URIs naming a host will not resolve");
+
+    _locator = std::make_shared<dns::SipLocator>(std::make_shared<dns::UdpResolver>(_logger->base_logger(), std::move(servers)));
+  }
+  return _locator;
+}
+
 void Core::local_address_add(std::string host_port) { _local_addresses.insert(std::move(host_port)); }
 
 bool Core::is_local_address(const std::string& host, std::uint16_t port) const { return _local_addresses.count(host + ":" + std::to_string(port)) > 0; }

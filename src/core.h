@@ -25,6 +25,7 @@
 #include "config.h"
 #include "datastores/datastore.h"
 #include "dialogs.h"
+#include "dns/sip_locator.h"
 #include "events/event_system.h"
 #include "expiry_set.h"
 #include "flow_tokens.h"
@@ -141,6 +142,12 @@ class Core : public std::enable_shared_from_this<Core> {
   // What every channel's token is sealed with, and what opens one whose channel this node
   // no longer holds. See FlowTokens.
   const FlowTokens& flow_tokens() const { return _flow_tokens; }
+
+  // RFC 3263: where a request for a SIP URI naming a host goes. Made on first use from the
+  // system's nameservers (/etc/resolv.conf); a test, or a composition root that knows
+  // better, sets its own.
+  std::shared_ptr<dns::SipLocator> locator();
+  void locator_set(std::shared_ptr<dns::SipLocator> locator) { _locator = std::move(locator); }
 
   // The flow to a next hop, opening one when this node has none.
   //
@@ -307,6 +314,7 @@ class Core : public std::enable_shared_from_this<Core> {
 
   std::shared_ptr<Registrar> _registrar;
   std::shared_ptr<Proxy> _proxy;
+  std::shared_ptr<dns::SipLocator> _locator;
   std::shared_ptr<Dialogs> _dialogs;
 
   // Keeps the Call record in step with the dialog it is a leg of.
