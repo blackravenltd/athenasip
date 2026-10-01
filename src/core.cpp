@@ -534,6 +534,7 @@ void Core::_deliver_to_tu(const std::shared_ptr<SIPMessage>& request, const std:
   // Here rather than in process_message, because this is where a request has been
   // de-duplicated: a retransmission is absorbed by its transaction and never arrives
   // (17.2.1), so what the tracker sees is each request once.
+  request->in_known_dialog = !request->header->contains("To") ? false : _dialogs->find(request) != nullptr;
   _dialogs->observe_request(request);
 
   const auto& method = request->header->request_method;

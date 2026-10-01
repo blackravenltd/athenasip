@@ -278,6 +278,7 @@ echo "Running scenarios..."
 run_one register                register.xml              alice.csv alice alice-secret       20s
 run_one register-wrong-password register_unauthorised.xml alice.csv alice not-the-password  20s
 run_one register-retransmit     register_retransmit.xml   alice.csv alice alice-secret      20s
+run_one relay-refused           invite_relay_refused.xml  alice.csv alice alice-secret      20s
 
 run_pair invite-bye     uas.xml         bob.csv   bob   invite_bye.xml       alice.csv          alice 30s
 run_pair cancel-ringing uas_ringing.xml bob.csv   bob   cancel_after_180.xml alice.csv          alice 30s

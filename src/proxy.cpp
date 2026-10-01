@@ -12,6 +12,8 @@
 #include "call.h"
 #include "channel.h"
 #include "core.h"
+#include "digest.h"
+#include "headers/authorization_header.h"
 #include "headers/cseq_header.h"
 #include "headers/session_expires_header.h"
 #include "headers/sip_identity_header.h"
@@ -183,10 +185,185 @@ void Proxy::on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<tran
   // caller knows what a session timer is.
   if (!_apply_session_timer(request, transaction)) return;
 
-  // RFC 3261 16.4, then 16.5.
+  // RFC 3261 16.4, then who may send this where, then 16.5. Routes first, because a route
+  // set naming somewhere else is a request leaving this node whatever its Request-URI says.
   _preprocess_routes(request);
 
-  _determine_targets(request, transaction, token);
+  auto self = shared_from_this();
+  _authorize(request, transaction, [this, self, request, transaction, token]() { _determine_targets(request, transaction, token); });
+}
+
+// The 2026-10-01 decision in TODO/ACTIVE.md: this node is not an open relay. A caller
+// claiming to be one of this node's subscribers proves it, whoever it is calling; a caller
+// from anywhere else may call into this node's domains and nowhere else.
+void Proxy::_authorize(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
+                       std::function<void()> then) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  // RFC 3261 22.1: a CANCEL cannot be challenged, and nor can the ACK - neither has a
+  // response the caller could resubmit through.
+  const auto& method = request->header->request_method;
+  if (method == "ACK" || method == "CANCEL") return then();
+
+  // Part of a call that was let through when it was made. The dialog table says so, not
+  // the To tag: a tag is anybody's to write, and would otherwise be the way round all of
+  // this.
+  if (!tag_of(request, "To").empty() && request->in_known_dialog) return then();
+
+  auto from = request->header->contains("From") ? request->header->headers_map["From"][0]->as<SIPIdentityHeader>() : nullptr;
+  if (from == nullptr || from->value == nullptr || from->value->uri == nullptr) {
+    _logger->info("Request with no usable From - 400");
+    return _send_status(transaction, request, 400, "Bad Request");
+  }
+
+  auto caller = from->value->uri;
+  auto self = shared_from_this();
+
+  core->realm_get_by_name(Util::to_lower(caller->host), [this, self, request, transaction, caller, then](plugins::Result<std::shared_ptr<types::Realm>> found) {
+    auto core = _core.lock();
+    if (!core) return;
+
+    if (!found.ok) {
+      _logger->error("Could not read the realm of the caller " + caller->to_string() + " - " + found.error);
+      return _send_status(transaction, request, 500, "Server Internal Error");
+    }
+
+    if (found.value) return _authenticate(request, transaction, found.value, caller, then);
+
+    // A stranger. A route set still to follow leads off this node, so that is no.
+    if (request->header->contains("Route")) {
+      _logger->info("Request from " + caller->to_string() + " routed off this node - 403");
+      return _send_status(transaction, request, 403, "Forbidden");
+    }
+
+    core->realm_get_by_name(Util::to_lower(request->header->request_uri->host), [this, self, request, transaction, caller,
+                                                                                 then](plugins::Result<std::shared_ptr<types::Realm>> target) {
+      if (!target.ok) {
+        _logger->error("Could not read the realm for " + request->header->request_uri->to_string() + " - " + target.error);
+        return _send_status(transaction, request, 500, "Server Internal Error");
+      }
+
+      // Receiving a call, which anybody may make.
+      if (target.value) return then();
+
+      _logger->info("Request from " + caller->to_string() + " to " + request->header->request_uri->to_string() + ", neither of them here - 403");
+      _send_status(transaction, request, 403, "Forbidden");
+    });
+  });
+}
+
+// RFC 3261 22.3, for a caller whose From is in a realm this node serves.
+void Proxy::_authenticate(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
+                          const std::shared_ptr<types::Realm>& realm, const std::shared_ptr<SIPUri>& caller, std::function<void()> then) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  // A connection a REGISTER was authenticated over belongs to that subscriber. A UDP
+  // source address does not belong to anybody.
+  auto channel = request->channel.lock();
+  if (channel && channel->_connection && channel->_connection->is_reliable() && channel->is_authenticated_as(caller->to_string())) return then();
+
+  // The credentials for this realm. Others, for proxies further on, are not this node's to
+  // read or to remove (22.3).
+  std::shared_ptr<headers::Header> answered;
+  std::shared_ptr<types::Authorization> credentials;
+
+  if (request->header->contains("Proxy-Authorization")) {
+    for (const auto& value : request->header->headers_map["Proxy-Authorization"]) {
+      auto header = value->as<headers::AuthorizationHeader>();
+      if (header == nullptr || header->value == nullptr || !header->value->contains_field("realm")) continue;
+      if (header->value->fields["realm"] != realm->name) continue;
+
+      answered = value;
+      credentials = header->value;
+      break;
+    }
+  }
+
+  if (!digest::is_complete(credentials) || !credentials->contains_field("username")) {
+    _logger->info("Request from " + caller->to_string() + " with no credentials for " + realm->name + " - challenging");
+    return _send_proxy_challenge(transaction, request, realm);
+  }
+
+  auto self = shared_from_this();
+
+  core->nonce_check(
+      credentials->fields["nonce"], [this, self, request, transaction, realm, caller, credentials, answered, then](plugins::Result<bool> checked) {
+        auto core = _core.lock();
+        if (!core) return;
+
+        if (!checked.ok) {
+          _logger->error("Could not check a nonce - " + checked.error);
+          return _send_status(transaction, request, 500, "Server Internal Error");
+        }
+
+        if (!checked.value) {
+          _logger->info("Request from " + caller->to_string() + " with a nonce that is unknown or expired - challenging");
+          return _send_proxy_challenge(transaction, request, realm);
+        }
+
+        // The credentials prove whoever they name, and that is checked first; whether that is
+        // who the From says comes after, so the two failures get their own answers.
+        auto claimed = std::make_shared<SIPIdentity>("sip:" + credentials->fields["username"] + "@" + realm->name);
+
+        core->account_get(
+            claimed, [this, self, request, transaction, realm, caller, credentials, answered, then](plugins::Result<std::shared_ptr<types::Account>> found) {
+              if (!found.ok) {
+                _logger->error("Could not read an account - " + found.error);
+                return _send_status(transaction, request, 500, "Server Internal Error");
+              }
+
+              // An unknown user is challenged like a wrong password, so this cannot be used to
+              // find out which accounts exist.
+              if (!found.value) {
+                _logger->info("Request from " + caller->to_string() + " with credentials for no account - challenging");
+                return _send_proxy_challenge(transaction, request, realm);
+              }
+
+              if (const auto why = digest::verify(*found.value, *credentials, request->header->request_method); !why.empty()) {
+                _logger->info("Request from " + caller->to_string() + " with " + why + " - challenging");
+                return _send_proxy_challenge(transaction, request, realm);
+              }
+
+              if (credentials->fields["username"] != caller->user) {
+                _logger->info("Request from " + caller->to_string() + " authenticated as " + credentials->fields["username"] + " - 403");
+                return _send_status(transaction, request, 403, "Forbidden");
+              }
+
+              // Spent. A Digest response is replayable for as long as its nonce lives, and the
+              // callee has no use for it.
+              request->header->remove_value("Proxy-Authorization", [&answered](std::shared_ptr<headers::Header> value) { return value == answered; });
+              request->authenticated = true;
+
+              then();
+            });
+      });
+}
+
+void Proxy::_send_proxy_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
+                                  const std::shared_ptr<types::Realm>& realm) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  auto self = shared_from_this();
+
+  // Minting writes the nonce to the datastore, and one the store never took would fail its
+  // own check when it came back.
+  core->nonce_create(realm, [this, self, transaction, request, realm](plugins::Result<std::string> nonce) {
+    if (!nonce.ok) {
+      _logger->error("Cannot mint a nonce for " + realm->name + " - " + nonce.error);
+      return _send_status(transaction, request, 500, "Server Internal Error");
+    }
+
+    auto response = request->generate_response();
+    response->header->response_code = 407;
+    response->header->response_message = "Proxy Authentication Required";
+    digest::add_challenges(*response->header, "Proxy-Authenticate", realm->name, nonce.value);
+
+    if (auto core = _core.lock()) core->dialogs()->observe_response(request, response);
+    transaction->send(response);
+  });
 }
 
 // RFC 3261 16.6 step 8: "a cryptographic hash of the To tag, From tag, Call-ID header

@@ -43,7 +43,8 @@ call, which is the same path an operator uses and a second check that the API wo
 | `register` | A REGISTER is challenged, answered with Digest, and the binding comes back with its expiry and a Service-Route | RFC 3261 s10, 22.4; RFC 3608 |
 | `register-wrong-password` | A wrong password is challenged again and never accepted | RFC 3261 22.4 |
 | `register-retransmit` | The same request twice is answered from the transaction, not handed to the registrar again | RFC 3261 17.2.2 |
-| `invite-bye` | A whole call: INVITE, 180, 200, ACK, BYE, and a Record-Route that brings the BYE back through the node | RFC 3261 s13, 16.6 |
+| `relay-refused` | A stranger's INVITE to a number on another network is refused 403 and nothing leaves the node | RFC 3261 22.3; the 2026-10-01 decision |
+| `invite-bye` | A whole call: INVITE, a 407 answered with credentials, 180, 200, ACK, BYE, and a Record-Route that brings the BYE back through the node | RFC 3261 s13, 16.6 |
 | `cancel-ringing` | A CANCEL after 180 is answered 200 and the INVITE it cancelled ends 487 | RFC 3261 9.1, 9.2 |
 | `busy` | A 486 from the callee reaches the caller unchanged | RFC 3261 21.4.24 |
 | `media` | Both descriptions point at the node's relay rather than at each other, and RTP flows through it | RFC 8866 5.7 |

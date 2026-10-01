@@ -227,6 +227,14 @@ class Proxy : public TransactionUser {
   void _send_status(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request, std::uint16_t code,
                     const std::string& reason);
 
+  // Who may send this where (RFC 3261 22.3, and the 2026-10-01 decision). `then` runs only
+  // for a request that may go on; anything else has been answered.
+  void _authorize(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction, std::function<void()> then);
+  void _authenticate(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
+                     const std::shared_ptr<types::Realm>& realm, const std::shared_ptr<SIPUri>& caller, std::function<void()> then);
+  void _send_proxy_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
+                             const std::shared_ptr<types::Realm>& realm);
+
   bool _names_this_node(const SIPUri& uri) const;
   std::shared_ptr<Channel> _flow_to(const SIPUri& uri) const;
 

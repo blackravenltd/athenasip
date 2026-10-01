@@ -323,6 +323,22 @@ void Channel::_schedule_async_read() {
 
 void Channel::touch() { _last_activity = _core->now(); }
 
+namespace {
+
+// An address of record compared the way RFC 3261 19.1.4 compares URIs where it matters
+// here: the user part exactly and the host without regard to case. Parameters are not
+// part of who somebody is.
+std::string subscriber_key(const std::string& aor) {
+  const SIPUri uri(aor);
+  return uri.user + "@" + Util::to_lower(uri.host);
+}
+
+}  // namespace
+
+void Channel::authenticated_as(const std::string& aor) { _authenticated.insert(subscriber_key(aor)); }
+
+bool Channel::is_authenticated_as(const std::string& aor) const { return _authenticated.count(subscriber_key(aor)) > 0; }
+
 void Channel::_on_read(boost::system::error_code ec, std::size_t length) {
   auto self(shared_from_this());
 

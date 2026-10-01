@@ -104,6 +104,10 @@ struct DatagramFixture : CoreFixture {
     callee = make_channel("127.0.0.1", &callee_connection, "udp", callee_port);
 
     register_binding(bob, std::make_shared<athenasip::types::SIPUri>("sip:bob@127.0.0.1:" + std::to_string(callee_port)), callee, 3600);
+
+    // Alice registered over her connection, so her calls are not challenged; what is under
+    // test here is where the INVITE leaves by, not whether she may send it.
+    on_strand([this]() { caller->authenticated_as("sip:alice@example.com"); });
   }
 
   // An INVITE whose session description is long enough to push the forwarded request past

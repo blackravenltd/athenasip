@@ -46,6 +46,11 @@ class SIPMessage {
   std::shared_ptr<SIPUri> contact;
   bool authenticated = false;
 
+  // The request belonged to a dialog this node is on when it arrived (RFC 3261 12.2.2).
+  // Taken before the dialog table sees it, because a BYE ends its dialog there and the
+  // proxy asks afterwards.
+  bool in_known_dialog = false;
+
   // Methods
   std::string to_string() const;
   void print() const;

@@ -12,6 +12,7 @@
 
 #include "channel.h"
 #include "core.h"
+#include "digest.h"
 #include "headers/authorization_header.h"
 #include "headers/sip_identity_header.h"
 #include "headers/uint_header.h"
@@ -105,8 +106,7 @@ void Registrar::_on_realm(std::shared_ptr<SIPMessage> request, std::shared_ptr<t
   auto auth_header = request->header->headers_map["Authorization"][0]->as<AuthorizationHeader>();
   auto auth = auth_header != nullptr ? auth_header->value : nullptr;
 
-  if (!auth || auth->type != "Digest" || !auth->contains_field("realm") || !auth->contains_field("nonce") || !auth->contains_field("response") ||
-      !auth->contains_field("uri")) {
+  if (!digest::is_complete(auth)) {
     _logger->info("REGISTER with incomplete Digest credentials - challenging");
     return _send_challenge(transaction, request, realm);
   }
@@ -151,37 +151,17 @@ void Registrar::_on_account(std::shared_ptr<SIPMessage> request, std::shared_ptr
     return _send_challenge(transaction, request, realm);
   }
 
-  // RFC 8760: the client answered one of the challenges, and which one it answered says
-  // which hash to check with. Absent means MD5, which is what RFC 2617 3.2.1 says and
-  // what every client that has never heard of anything else sends.
-  const auto algorithm = Util::to_upper(auth->contains_field("algorithm") ? auth->fields["algorithm"] : "MD5");
-
-  if (algorithm != "MD5" && algorithm != "SHA-256") {
-    _logger->info("REGISTER with an unsupported Digest algorithm " + algorithm + " - challenging");
-    return _send_challenge(transaction, request, realm);
-  }
-
-  const auto& stored = algorithm == "SHA-256" ? account->ha1_sha256 : account->ha1;
-
-  // An account with no credential for the algorithm it answered with cannot be checked.
-  // Challenging again is the honest answer: the next challenge carries both algorithms
-  // and the client can come back with the other one.
-  if (stored.empty()) {
-    _logger->info("REGISTER answered with " + algorithm + " but " + aor->to_string() + " has no credential for it - challenging");
-    return _send_challenge(transaction, request, realm);
-  }
-
-  // RFC 2617: HA1 is stored, so the check is HA1:nonce:HA2 with HA2 over method and URI.
-  const auto hash = [&algorithm](const std::string& input) { return algorithm == "SHA-256" ? Util::sha256(input) : Util::md5(input); };
-
-  const auto expected = Util::to_lower(hash(stored + ":" + auth->fields["nonce"] + ":" + hash(request->header->request_method + ":" + auth->fields["uri"])));
-
-  if (expected != Util::to_lower(auth->fields["response"])) {
-    _logger->info("REGISTER Digest response mismatch for " + aor->to_string() + " - challenging");
+  if (const auto why = digest::verify(*account, *auth, request->header->request_method); !why.empty()) {
+    _logger->info("REGISTER for " + aor->to_string() + " with " + why + " - challenging");
     return _send_challenge(transaction, request, realm);
   }
 
   request->authenticated = true;
+
+  // The connection this arrived on now belongs to the subscriber who proved it. The proxy
+  // takes a request as that subscriber on it without a second challenge, if the
+  // connection is one a source address cannot be forged onto; see Channel::authenticated_as.
+  if (auto channel = request->channel.lock()) channel->authenticated_as(aor->uri->to_string());
 
   _apply_bindings(request, transaction, realm, account);
 }
@@ -473,23 +453,7 @@ void Registrar::_send_challenge(const std::shared_ptr<transactions::TransactionB
       return _send_status(transaction, request, 500, "Server Internal Error");
     }
 
-    // RFC 8760 section 2.1: one challenge per algorithm, most preferred first, and the
-    // client answers the first one it supports. SHA-256 leads because a client that can
-    // do better than MD5 should, and MD5 follows because nearly every SIP client can do
-    // nothing else (RFC 3261 22.4 knows only MD5).
-    //
-    // A challenge is sent before this node knows which account is answering, so both go
-    // out every time. An account with no SHA-256 credential - one imported as a bare MD5
-    // hash - is re-challenged for MD5 alone when it answers with SHA-256.
-    for (const auto& algorithm : {std::string("SHA-256"), std::string("MD5")}) {
-      types::Authorization challenge;
-      challenge.type = "Digest";
-      challenge.fields["realm"] = realm->name;
-      challenge.fields["nonce"] = nonce.value;
-      challenge.fields["algorithm"] = algorithm;
-
-      response->header->add("WWW-Authenticate", challenge.to_string());
-    }
+    digest::add_challenges(*response->header, "WWW-Authenticate", realm->name, nonce.value);
 
     transaction->send(response);
   });

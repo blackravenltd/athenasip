@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <deque>
 #include <memory>
+#include <set>
 #include <string>
 
 #include "core.h"
@@ -67,6 +68,14 @@ class Channel : public std::enable_shared_from_this<Channel> {
   // restart either.
   const std::string& flow_token() const { return _flow_token; }
 
+  // The subscribers that have proved who they are over this flow, by a REGISTER the
+  // registrar authenticated on it. Only meaningful on a connection - TCP, TLS or a
+  // WebSocket - which belongs to the one client at the other end of it; a UDP flow is a
+  // source address, which anybody can write on a datagram, and the proxy ignores this on
+  // one. It lasts as long as the flow does.
+  void authenticated_as(const std::string& aor);
+  bool is_authenticated_as(const std::string& aor) const;
+
   State state = State::Normal;
 
   std::shared_ptr<SIPMessage> _incoming_message;
@@ -81,6 +90,8 @@ class Channel : public std::enable_shared_from_this<Channel> {
 
   std::string _flow_id;
   std::string _flow_token;
+
+  std::set<std::string> _authenticated;
 
   std::array<char, 65535> _read_buffer;
   std::string _buffer;
