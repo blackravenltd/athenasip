@@ -483,6 +483,12 @@ said what it speaks. A leg that has is always answered in kind.
 | `webrtc` | WebRTC | A browser-only realm |
 | `srtp` | SRTP with keys in the description (RFC 4568) | Desk phones that want encryption and do not do DTLS |
 
+An account can say what its endpoint is with the same `media_profile` in its own
+`behaviour` section, which is Asterisk's `webrtc=yes`: AthenaPhone signals over TCP and
+its media is WebRTC, which neither the realm nor the transport can tell. Precedence, for
+the first description produced towards a leg, is what that leg has itself said in an
+offer or answer, then its account, then its realm, then this section.
+
 An unknown setting or value is an error at startup and a 400 from the API, never a
 guess.
 

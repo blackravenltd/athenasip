@@ -84,6 +84,11 @@ class Call {
     // realm and the transport have to decide.
     std::optional<media::Profile> profile;
 
+    // What the leg's account says it is, where it says anything. Only for a leg that has
+    // not described itself: the operator's word about an endpoint is a better guess than
+    // its transport and a worse one than the endpoint's own.
+    std::optional<MediaPolicy::Profiles> account_profile;
+
     // The party that started the call.
     bool originator = false;
   };

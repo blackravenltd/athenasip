@@ -576,6 +576,7 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
       }
 
       auto account = found.value;
+      context->callee_profile = account->media_profile;
 
       core->location_list(account->id, [this, self, context, account](plugins::Result<std::vector<types::Location>> bindings) {
         auto core = _core.lock();
@@ -919,6 +920,11 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
   // the call, because a re-INVITE arrives in-dialog with no realm to ask.
   if (context && context->media_policy) call->media_policy = *context->media_policy;
 
+  // Likewise the callee's account, kept on its leg.
+  if (context && context->callee_profile) {
+    if (const auto callee = call->participant_index(false)) call->participants[*callee].account_profile = context->callee_profile;
+  }
+
   const auto& policy = call->media_policy;
 
   // A realm that does not want its media anchored gets what a node with no engine
@@ -959,10 +965,15 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
   // What the far leg needs, which the description in hand cannot say. What that leg has
   // already told this node comes first: a delayed offer, an answer going back to the end
   // that offered and every re-INVITE after are all a leg this node has heard describe
-  // itself. The realm's setting, and where it has none the transport of the outgoing
-  // flow, decide only for the first description produced towards a leg that has not.
+  // itself. Then the leg's account, where the operator has said what the endpoint is.
+  // The realm's setting, and where it has none the transport of the outgoing flow,
+  // decide only for the first description produced towards a leg nobody has spoken for.
   if (recipient && call->participants[*recipient].profile) {
     flags.target = *call->participants[*recipient].profile;
+  } else if (recipient && call->participants[*recipient].account_profile) {
+    types::MediaPolicy account;
+    account.profiles = *call->participants[*recipient].account_profile;
+    flags.target = _profile_under(account, outgoing && outgoing->_connection ? outgoing->_connection->transport_name() : std::string());
   } else {
     flags.target = _profile_under(policy, outgoing && outgoing->_connection ? outgoing->_connection->transport_name() : std::string());
   }

@@ -1338,11 +1338,32 @@ components:
           type: string
         realm:
           type: string
+        behaviour:
+          $ref: '#/components/schemas/AccountBehaviour'
       example:
         id: 11400714819323198485
         uri: sip:alice@example.com
         user: alice
         realm: example.com
+        behaviour:
+          media_profile: null
+
+    AccountBehaviour:
+      type: object
+      description: >-
+        The one behaviour setting that is about an endpoint rather than a realm. Null, or
+        absent, takes the realm's; null in an update goes back to it. Any other setting, or
+        an unknown value, is a 400 and changes nothing.
+      additionalProperties: false
+      properties:
+        media_profile:
+          type: string
+          nullable: true
+          enum: [mirror, transport, rtp, webrtc, srtp, null]
+          description: >-
+            What this account's endpoint is, as Asterisk's webrtc=yes says. It decides the
+            first description produced towards the endpoint, above the realm's behaviour
+            and below what the endpoint has itself said in an offer or answer.
 
     AccountCreate:
       type: object
@@ -1357,15 +1378,19 @@ components:
         ha1:
           type: string
           description: For importing an account that already has one
+        behaviour:
+          $ref: '#/components/schemas/AccountBehaviour'
 
     AccountUpdate:
       type: object
-      description: One of `password` or `ha1`.
+      description: Any of `password` or `ha1`, and `behaviour`.
       properties:
         password:
           type: string
         ha1:
           type: string
+        behaviour:
+          $ref: '#/components/schemas/AccountBehaviour'
 
     Call:
       type: object

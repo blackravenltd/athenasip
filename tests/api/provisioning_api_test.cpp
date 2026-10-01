@@ -325,6 +325,47 @@ TEST(ProvisioningApiTest, AnAccountIsCreatedWithItsHa1ComputedHere) {
   EXPECT_EQ(account->ha1, Util::to_lower(Util::md5("alice:example.com:secret")));
 }
 
+// An account's behaviour section has the one setting that is about an endpoint rather
+// than a realm: what the endpoint is. It starts empty, which takes the realm's.
+TEST(ProvisioningApiTest, AnAccountSaysWhatItsEndpointIs) {
+  ApiFixture f;
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+
+  auto created = f.post("/api/v1/realms/example.com/accounts", R"({"user":"alice","password":"secret"})");
+  ASSERT_EQ(created.status, 201u);
+  EXPECT_TRUE(created.json().at("behaviour").at("media_profile").is_null());
+
+  auto updated = f.put("/api/v1/realms/example.com/accounts/alice", R"({"behaviour":{"media_profile":"webrtc"}})");
+  ASSERT_EQ(updated.status, 200u) << updated.body;
+  EXPECT_EQ(updated.json().at("behaviour").at("media_profile").as_string(), "webrtc");
+
+  auto stored = f.store->account_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
+  ASSERT_NE(stored, nullptr);
+  EXPECT_EQ(stored->media_profile, types::MediaPolicy::Profiles::WebRtc);
+
+  ASSERT_EQ(f.put("/api/v1/realms/example.com/accounts/alice", R"({"behaviour":{"media_profile":null}})").status, 200u);
+  stored = f.store->account_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
+  EXPECT_FALSE(stored->media_profile.has_value());
+}
+
+// Anchoring is a realm's question, and a profile nobody recognises is a mistake. Both are
+// refused and neither changes the account, password included.
+TEST(ProvisioningApiTest, AnUnreadableAccountBehaviourChangesNothing) {
+  ApiFixture f;
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+  ASSERT_EQ(f.post("/api/v1/realms/example.com/accounts", R"({"user":"alice","password":"secret","behaviour":{"media_profile":"rtp"}})").status, 201u);
+
+  EXPECT_EQ(f.put("/api/v1/realms/example.com/accounts/alice", R"({"password":"other","behaviour":{"media_anchor":false}})").status, 400u);
+  EXPECT_EQ(f.put("/api/v1/realms/example.com/accounts/alice", R"({"behaviour":{"media_profile":"web-rtc"}})").status, 400u);
+  EXPECT_EQ(f.post("/api/v1/realms/example.com/accounts", R"({"user":"bob","password":"secret","behaviour":{"media_profile":7}})").status, 400u);
+
+  auto stored = f.store->account_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
+  ASSERT_NE(stored, nullptr);
+  EXPECT_EQ(stored->media_profile, types::MediaPolicy::Profiles::PlainRtp);
+  EXPECT_EQ(stored->ha1, Util::to_lower(Util::md5("alice:example.com:secret")));
+  EXPECT_EQ(f.store->account_get(std::make_shared<types::SIPIdentity>("sip:bob@example.com")), nullptr);
+}
+
 // The realm in the path reaches the handler. This is not as obvious as it looks: the
 // handler reads the parameter and moves the context into the datastore call in the same
 // expression, and a parameter read by reference points into a map that has already been

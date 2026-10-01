@@ -84,6 +84,28 @@ std::string read_behaviour(const boost::json::object& body, types::Behaviour& be
   return "";
 }
 
+// An account's behaviour section is the same shape with one setting in it: what its endpoint
+// is. Anchoring is a question about a realm's media path and not about one endpoint.
+std::string read_behaviour(const boost::json::object& body, types::Account& account) {
+  const auto* section = body.if_contains("behaviour");
+  if (section == nullptr) return "";
+  if (!section->is_object()) return "behaviour is an object";
+
+  for (const auto& [key, value] : section->as_object()) {
+    if (key != "media_profile") return "an account's behaviour has no setting called " + std::string(key);
+
+    if (value.is_null()) {
+      account.media_profile.reset();
+    } else if (const auto profiles = value.is_string() ? types::MediaPolicy::parse_profiles(std::string(value.as_string())) : std::nullopt) {
+      account.media_profile = *profiles;
+    } else {
+      return "behaviour.media_profile is mirror, transport, webrtc, rtp, srtp or null";
+    }
+  }
+
+  return "";
+}
+
 }  // namespace
 
 ProvisioningAPI::ProvisioningAPI(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<datastores::Datastore> datastore, plugins::Executor executor,
@@ -326,6 +348,11 @@ void ProvisioningAPI::_account_create(RouteContext context) {
     if (ha1) account->ha1 = *ha1;
     if (const auto imported = string_field(*body, "ha1_sha256")) account->ha1_sha256 = *imported;
 
+    if (const auto why = read_behaviour(*body, *account); !why.empty()) {
+      write_error(context.response, http::status::bad_request, "invalid_request", why);
+      return context.done();
+    }
+
     self->_datastore->account_create(self->_executor, account, [self, context, account](plugins::Status status) mutable {
       if (!status.ok) {
         return self->_fail(std::move(context), status, "conflict", "that account already exists", http::status::conflict);
@@ -389,6 +416,12 @@ void ProvisioningAPI::_account_update(RouteContext context) {
 
                             if (const auto ha1 = string_field(*body, "ha1")) account->ha1 = *ha1;
                             if (const auto sha256 = string_field(*body, "ha1_sha256")) account->ha1_sha256 = *sha256;
+
+                            // Read before anything is written, so a refusal changes nothing.
+                            if (const auto why = read_behaviour(*body, *account); !why.empty()) {
+                              write_error(context.response, http::status::bad_request, "invalid_request", why);
+                              return context.done();
+                            }
 
                             self->_datastore->account_update(self->_executor, account, [context, account](plugins::Status status) mutable {
                               if (!status.ok) {
@@ -710,6 +743,11 @@ boost::json::object ProvisioningAPI::_account_json(const types::Account& account
     object["user"] = account.identity->uri->user;
     object["realm"] = account.identity->uri->host;
   }
+
+  // What the account chose, null for taking its realm's.
+  boost::json::object behaviour;
+  behaviour["media_profile"] = account.media_profile ? boost::json::value(types::MediaPolicy::to_string(*account.media_profile)) : boost::json::value(nullptr);
+  object["behaviour"] = std::move(behaviour);
 
   // ha1 is the password in the only form this server holds it. It does not come back
   // out.
