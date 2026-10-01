@@ -553,7 +553,7 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
     // The one place a realm is already in hand. Reading it again for every message
     // with a body would be a datastore round trip on the media path, and an in-dialog
     // re-INVITE never looks a realm up at all.
-    context->media_policy = found.value->media;
+    context->media_policy = found.value->behaviour.over(core->config->behaviour);
 
     // Ours. The Request-URI names an address of record and the bindings the registrar
     // holds for it are the target set.

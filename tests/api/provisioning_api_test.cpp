@@ -219,42 +219,80 @@ TEST(ProvisioningApiTest, TheRegistrationBoundsAreProvisionedAndReturned) {
   EXPECT_EQ(f.get("/api/v1/realms/example.com").json().at("registration_minimum").as_int64(), 120);
 }
 
-// The two media questions a realm answers. Both have defaults that match what a node
-// did before it could be asked, so a realm provisioned without them is unchanged.
-TEST(ProvisioningApiTest, TheMediaPolicyIsProvisionedAndReturned) {
+// A realm's behaviour section: what it does differently from the server's default. A realm
+// created without one chooses nothing, and what it comes to is the server's default.
+TEST(ProvisioningApiTest, ARealmChoosesNoBehaviourUntilItSays) {
   ApiFixture f;
 
   auto created = f.post("/api/v1/realms", R"({"name":"example.com"})");
   ASSERT_EQ(created.status, 201u);
 
-  EXPECT_TRUE(created.json().at("media_anchor").as_bool());
-  EXPECT_EQ(created.json().at("media_profiles").as_string(), "transport");
+  const auto json = created.json();
+  EXPECT_TRUE(json.at("behaviour").at("media_anchor").is_null());
+  EXPECT_TRUE(json.at("behaviour").at("media_profile").is_null());
 
-  auto updated = f.put("/api/v1/realms/example.com", R"({"media_anchor":false,"media_profiles":"rtp"})");
-  ASSERT_EQ(updated.status, 200u);
-
-  EXPECT_FALSE(updated.json().at("media_anchor").as_bool());
-  EXPECT_EQ(updated.json().at("media_profiles").as_string(), "rtp");
-
-  auto read_back = f.get("/api/v1/realms/example.com");
-  EXPECT_FALSE(read_back.json().at("media_anchor").as_bool());
-  EXPECT_EQ(read_back.json().at("media_profiles").as_string(), "rtp");
-
-  // A PUT naming only one of them leaves the other where it was.
-  auto one = f.put("/api/v1/realms/example.com", R"({"media_profiles":"webrtc"})");
-  EXPECT_FALSE(one.json().at("media_anchor").as_bool());
-  EXPECT_EQ(one.json().at("media_profiles").as_string(), "webrtc");
+  // The shipped default, because the fixture's server says nothing either.
+  EXPECT_TRUE(json.at("behaviour_effective").at("media_anchor").as_bool());
+  EXPECT_EQ(json.at("behaviour_effective").at("media_profile").as_string(), "mirror");
 }
 
-// A word nobody recognises must not quietly change what a node does to media.
-TEST(ProvisioningApiTest, AnUnreadableMediaProfileLeavesTheRealmAlone) {
+TEST(ProvisioningApiTest, ARealmOverridesOneSettingAndInheritsTheOther) {
   ApiFixture f;
+  f.config->behaviour.anchor = false;
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
 
-  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com","media_profiles":"webrtc"})").status, 201u);
+  auto updated = f.put("/api/v1/realms/example.com", R"({"behaviour":{"media_profile":"webrtc"}})");
+  ASSERT_EQ(updated.status, 200u) << updated.body;
 
-  auto updated = f.put("/api/v1/realms/example.com", R"({"media_profiles":"web-rtc"})");
+  const auto json = f.get("/api/v1/realms/example.com").json();
+  EXPECT_EQ(json.at("behaviour").at("media_profile").as_string(), "webrtc");
+  EXPECT_TRUE(json.at("behaviour").at("media_anchor").is_null());
+
+  EXPECT_EQ(json.at("behaviour_effective").at("media_profile").as_string(), "webrtc");
+  EXPECT_FALSE(json.at("behaviour_effective").at("media_anchor").as_bool()) << "the server's, inherited";
+
+  // What inheriting would come to, for the setting the realm did choose.
+  EXPECT_EQ(json.at("behaviour_default").at("media_profile").as_string(), "mirror");
+  EXPECT_FALSE(json.at("behaviour_default").at("media_anchor").as_bool());
+}
+
+// Null is how a realm goes back to inheriting, which is a different thing from setting the
+// value the server happens to have today.
+TEST(ProvisioningApiTest, NullPutsASettingBackToTheServerDefault) {
+  ApiFixture f;
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com","behaviour":{"media_profile":"rtp","media_anchor":false}})").status, 201u);
+
+  auto updated = f.put("/api/v1/realms/example.com", R"({"behaviour":{"media_profile":null}})");
   ASSERT_EQ(updated.status, 200u);
-  EXPECT_EQ(updated.json().at("media_profiles").as_string(), "webrtc");
+
+  const auto json = updated.json();
+  EXPECT_TRUE(json.at("behaviour").at("media_profile").is_null());
+  EXPECT_FALSE(json.at("behaviour").at("media_anchor").as_bool()) << "left alone because it was not named";
+}
+
+// A setting nobody recognises, or a value that is not one of its choices, is refused and
+// changes nothing: a realm behaving other than its operator thinks is the failure.
+TEST(ProvisioningApiTest, AnUnreadableBehaviourIsRefusedAndChangesNothing) {
+  ApiFixture f;
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com","behaviour":{"media_profile":"webrtc"}})").status, 201u);
+
+  EXPECT_EQ(f.put("/api/v1/realms/example.com", R"({"behaviour":{"media_profile":"web-rtc"}})").status, 400u);
+  EXPECT_EQ(f.put("/api/v1/realms/example.com", R"({"behaviour":{"media_anchor":"yes"}})").status, 400u);
+  EXPECT_EQ(f.put("/api/v1/realms/example.com", R"({"behaviour":{"anchor_media":true}})").status, 400u);
+  EXPECT_EQ(f.put("/api/v1/realms/example.com", R"({"behaviour":"webrtc"})").status, 400u);
+
+  EXPECT_EQ(f.get("/api/v1/realms/example.com").json().at("behaviour").at("media_profile").as_string(), "webrtc");
+}
+
+// The fields a realm had before the section existed are refused with where they went,
+// rather than ignored: a client still sending them would otherwise see nothing change.
+TEST(ProvisioningApiTest, TheOldMediaFieldsAreRefusedWithWhereTheyWent) {
+  ApiFixture f;
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+
+  auto refused = f.put("/api/v1/realms/example.com", R"({"media_profiles":"webrtc"})");
+  EXPECT_EQ(refused.status, 400u);
+  EXPECT_NE(refused.body.find("behaviour"), std::string::npos) << refused.body;
 }
 
 TEST(ProvisioningApiTest, AnUnknownRealmIs404) {

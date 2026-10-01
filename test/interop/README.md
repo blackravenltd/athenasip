@@ -118,10 +118,10 @@ TOKEN=$(curl -s -X POST http://127.0.0.1:8080/api/v1/auth/login -H 'Content-Type
   sed -n 's/.*"token":"\([0-9a-f]*\)".*/\1/p')
 curl -X PUT http://127.0.0.1:8080/api/v1/realms/<realm> \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"media_profiles":"webrtc"}'
+  -d '{"behaviour":{"media_profile":"webrtc"}}'
 ```
 
-`{"media_anchor":false}` is the other knob: it leaves every description untouched and
+`{"behaviour":{"media_anchor":false}}` is the other knob: it leaves every description untouched and
 lets the two endpoints talk directly, which is the cheapest way to prove signalling and
 ICE with no engine at all.
 

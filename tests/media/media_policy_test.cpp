@@ -99,8 +99,10 @@ struct PolicyFixture : ProxyFixture {
     core->media_register(engine);
     settle();
 
+    // Set on the realm, so it overrides whatever the server's default is.
     auto realm = store->realm_get_by_name("example.com");
-    realm->media = policy;
+    realm->behaviour.media_anchor = policy.anchor;
+    realm->behaviour.media_profile = policy.profiles;
     store->realm_update(realm);
 
     callee = make_channel("192.0.2.20", &callee_connection, callee_transport);
@@ -126,13 +128,43 @@ MediaPolicy with_profiles(MediaPolicy::Profiles profiles) {
 
 }  // namespace
 
-// The default is what a node did before a realm could say anything: anchor, and read
-// each leg from its transport.
-TEST(MediaPolicyTest, TheDefaultIsToAnchorAndReadTheLegFromItsTransport) {
-  const MediaPolicy fresh;
+// A realm that has said nothing about behaviour follows the server's default (Config
+// behaviour), and the shipped one passes the caller's profile through: a browser calling
+// over a WebSocket is offered on as WebRTC whatever the callee's transport, which is what
+// let a browser reach an AthenaPhone on TCP once the realm was told so by hand.
+struct DefaultFixture : ProxyFixture {
+  std::shared_ptr<RecordingMediaEngine> engine = std::make_shared<RecordingMediaEngine>();
 
-  EXPECT_TRUE(fresh.anchor);
-  EXPECT_EQ(fresh.profiles, MediaPolicy::Profiles::FromTransport);
+  explicit DefaultFixture(const std::string& callee_transport) {
+    engine->connect(core->strand(), [](plugins::Status) {});
+    core->media_register(engine);
+    settle();
+
+    callee = make_channel("192.0.2.20", &callee_connection, callee_transport);
+    register_binding(bob, std::make_shared<types::SIPUri>("sip:bob@192.0.2.20:5060"), callee, 3600);
+  }
+};
+
+TEST(MediaPolicyTest, ARealmThatSaysNothingPassesTheProfileThroughByDefault) {
+  DefaultFixture f("tcp");
+
+  f.receive(f.caller, PolicyFixture::with_body(f.invite()));
+
+  const auto seen = f.engine->seen();
+  ASSERT_FALSE(seen.empty());
+  EXPECT_EQ(seen[0].target, Flags::Profile::Mirror);
+}
+
+// And a server default of reading the leg from its transport applies to it instead.
+TEST(MediaPolicyTest, ARealmThatSaysNothingFollowsAConfiguredServerDefault) {
+  DefaultFixture f("wss");
+  f.config->behaviour.profiles = MediaPolicy::Profiles::FromTransport;
+
+  f.receive(f.caller, PolicyFixture::with_body(f.invite()));
+
+  const auto seen = f.engine->seen();
+  ASSERT_FALSE(seen.empty());
+  EXPECT_EQ(seen[0].target, Flags::Profile::WebRtc);
 }
 
 // A realm with a typo in its policy keeps doing what it was doing. Changing what a

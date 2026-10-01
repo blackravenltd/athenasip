@@ -901,8 +901,10 @@ std::string RedisDatastore::_serialise_realm(const std::shared_ptr<types::Realm>
   obj["nonce_expiry"] = realm->nonce_expiry;
   obj["registration_timeout"] = realm->registration_timeout;
   obj["registration_minimum"] = realm->registration_minimum;
-  obj["media_anchor"] = realm->media.anchor;
-  obj["media_profiles"] = types::MediaPolicy::to_string(realm->media.profiles);
+  // Only what the realm chose: an unset setting is the server's default, which may change.
+  // The key names are the ones realms were stored under before behaviour had a section.
+  if (realm->behaviour.media_anchor) obj["media_anchor"] = *realm->behaviour.media_anchor;
+  if (realm->behaviour.media_profile) obj["media_profiles"] = types::MediaPolicy::to_string(*realm->behaviour.media_profile);
   return boost::json::serialize(obj);
 }
 
@@ -917,10 +919,11 @@ std::shared_ptr<types::Realm> RedisDatastore::_parse_realm(const std::string& va
   realm->registration_timeout = json_uint32(obj, "registration_timeout");
   realm->registration_minimum = json_uint32(obj, "registration_minimum");
 
-  // A realm written before the policy existed has neither field, and the defaults are
-  // what that realm was already doing.
-  if (const auto* anchor = obj.if_contains("media_anchor"); anchor != nullptr && anchor->is_bool()) realm->media.anchor = anchor->as_bool();
-  realm->media.profiles = types::MediaPolicy::profiles_from_string(json_string(obj, "media_profiles"), realm->media.profiles);
+  // Absent is unset, and inherits the server's default. A realm stored before behaviour had
+  // a section always wrote both, so it reads back as having chosen them - which is what it
+  // was doing - and a stored name that no longer reads leaves the setting unset.
+  if (const auto* anchor = obj.if_contains("media_anchor"); anchor != nullptr && anchor->is_bool()) realm->behaviour.media_anchor = anchor->as_bool();
+  if (obj.contains("media_profiles")) realm->behaviour.media_profile = types::MediaPolicy::parse_profiles(json_string(obj, "media_profiles"));
 
   return realm;
 }

@@ -16,6 +16,7 @@
 
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
+#include "types/realm.h"
 #include "types/url.h"
 
 using namespace athenasip::loggers;
@@ -208,6 +209,11 @@ class Config {
   std::string http_address;
   uint16_t http_port = 0;  // e.g. 5060
   bool http_api_enable = false;
+  // The server's default for every behaviour that differs between SIP servers, which a
+  // realm overrides setting by setting (types::Behaviour). What ships is the 2026-10-01
+  // decision: standard, apart from anchoring media.
+  types::MediaPolicy behaviour;
+
   bool http_files_enable = false;
   std::string http_files_path;
 

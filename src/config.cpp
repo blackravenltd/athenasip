@@ -306,6 +306,31 @@ bool Config::load_from_yaml(const std::string& filename) {
     if (media["url"]) media_url = media["url"].as<std::string>();
   }
 
+  // --- Parse the 'behaviour' section ---
+  //
+  // The server's default for every behaviour that differs between SIP servers; a realm
+  // overrides any of it. A name that is not one of the choices stops the node: a node doing
+  // something other than what its operator wrote is the failure to avoid.
+  YAML::Node behaviour_section = config["behaviour"];
+  if (behaviour_section) {
+    try {
+      if (behaviour_section["media_anchor"]) behaviour.anchor = behaviour_section["media_anchor"].as<bool>();
+    } catch (const std::exception& e) {
+      _logger->error("Invalid value for 'behaviour.media_anchor': " + std::string(e.what()));
+      return false;
+    }
+
+    if (behaviour_section["media_profile"]) {
+      const auto named = behaviour_section["media_profile"].as<std::string>();
+      const auto profiles = types::MediaPolicy::parse_profiles(named);
+      if (!profiles) {
+        _logger->error("Unknown 'behaviour.media_profile' '" + named + "': it is one of mirror, transport, webrtc, rtp or srtp");
+        return false;
+      }
+      behaviour.profiles = *profiles;
+    }
+  }
+
   // --- Parse the 'http' section ---
   YAML::Node http = config["http"];
   if (http) {
@@ -526,6 +551,11 @@ std::string Config::effective_yaml() const {
   out << YAML::Key << "media" << YAML::Value << YAML::BeginMap;
   out << YAML::Key << "url" << YAML::Value << media_url;
   emit_plugin_sections(out, _root, "media", {"url"});
+  out << YAML::EndMap;
+
+  out << YAML::Key << "behaviour" << YAML::Value << YAML::BeginMap;
+  out << YAML::Key << "media_anchor" << YAML::Value << behaviour.anchor;
+  out << YAML::Key << "media_profile" << YAML::Value << types::MediaPolicy::to_string(behaviour.profiles);
   out << YAML::EndMap;
 
   out << YAML::Key << "http" << YAML::Value << YAML::BeginMap;

@@ -442,23 +442,47 @@ gives a transaction, which a fork with several bindings has to share.
 addresses to put in the SDP it hands back. Leave it unset and let rtpengine's own
 interface configuration decide.
 
-#### What is not configured here
+#### Whether media is anchored, and how
 
-Whether a node anchors a realm's media, and how it decides what each leg of a call
-needs, belong to the realm rather than to the node: a cluster shares its realms and a
-file on one node does not. Both are provisioned over the admin API as `media_anchor`
-and `media_profiles` on a realm, and
-[`docs/api/openapi.yaml`](api/openapi.yaml) has the values.
+That is behaviour rather than media configuration, and lives in the `behaviour` section
+below, where a realm can override it.
 
-The short version. `media_anchor` off leaves every session description untouched and
-lets the media go end to end, which is what a node with no engine does and is right
-for two endpoints that can reach each other. `media_profiles` decides what the engine
-is asked to produce for a leg: `transport`, the default, reads it from the flow, so
-`ws` and `wss` are WebRTC and everything else is plain RTP. That is right wherever a
-WebSocket means a browser. It is wrong for a realm whose WebSocket clients are SIP
-phones, because RFC 7118 is SIP over WebSocket and requires no WebRTC at all, and
-`rtp` is the answer there. `webrtc` makes every leg WebRTC. `srtp` makes every leg SRTP
-with the keys in the description (RFC 4568), which is a desk phone that wants
-encryption and has never heard of DTLS, and no transport tells that apart from plain
-RTP so it can only be asked for. `mirror` says nothing and leaves the engine keeping
-whatever it was handed.
+### behaviour
+
+```yaml
+behaviour:
+  media_anchor: true
+  media_profile: mirror
+```
+
+Where the standards leave a choice, this section makes it. Leave it out and the node
+behaves as the standards say, with one deliberate deviation: it anchors media when an
+engine is configured, which is what most servers in front of rtpengine do and what a
+call through NAT needs.
+
+Every realm has the same section, provisioned over the admin API as `behaviour` on the
+realm (see [`docs/api/openapi.yaml`](api/openapi.yaml)). A realm overrides only what it
+sets and takes the rest from here, so changing this file changes every realm that has
+not chosen otherwise. A realm that sets a value to `null` goes back to inheriting it.
+The API returns what a realm chose (`behaviour`), what that comes to on the node
+answering (`behaviour_effective`), and that node's default on its own
+(`behaviour_default`).
+
+`media_anchor` off leaves every session description untouched and lets the media go
+end to end, as RFC 3261 16.6 has a proxy do. That is right for two endpoints that can
+reach each other and wrong for anything behind a NAT.
+
+`media_profile` decides what the engine is asked to produce for a leg that has not yet
+said what it speaks. A leg that has is always answered in kind.
+
+| Value | What a callee is offered | Behaves like |
+|---|---|---|
+| `mirror` (default) | What the caller offered | A proxy that imposes nothing |
+| `transport` | WebRTC over `ws`/`wss`, plain RTP otherwise | Kamailio's usual WebSocket routing |
+| `rtp` | Plain RTP | A realm whose WebSocket clients are SIP phones (RFC 7118 requires no WebRTC) |
+| `webrtc` | WebRTC | A browser-only realm |
+| `srtp` | SRTP with keys in the description (RFC 4568) | Desk phones that want encryption and do not do DTLS |
+
+An unknown setting or value is an error at startup and a 400 from the API, never a
+guess.
+

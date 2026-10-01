@@ -53,7 +53,11 @@ namespace athenasip::plugins {
 // 7 (2026-09-22): media::Flags::Profile gains SrtpSdes, for an endpoint that wants its
 // media encrypted and has never heard of DTLS (RFC 4568). A driver that switches on
 // the profile has a case it was not built for, which is what the version check is for.
-inline constexpr std::uint32_t API_VERSION = 7;
+// 8 (2026-10-01): types::Realm carries a Behaviour - optional settings over the server's
+// default - in place of a MediaPolicy with every field set, so a datastore stores only
+// what a realm chose. MediaEngine gains packets_relayed(), optional with a default, and a
+// query document's `legs` are named in the contract.
+inline constexpr std::uint32_t API_VERSION = 8;
 
 // The kinds AthenaSIP registers today. A kind is a plain string rather than an enum so
 // that a plugin can introduce one the core was not built knowing about.
