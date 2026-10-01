@@ -12,7 +12,7 @@ machines sit behind a matcher with `Registrar` and `Proxy` as the transaction us
 `memory://` and `redis://`, `local://` and `mqtt://`, and `builtin://` and
 `rtpengine://` in tree; a node decides for itself when a call it is holding is over;
 provisioning is over a JSON API; and the sipp harness proves a call end to end on UDP.
-870 tests.
+885 tests.
 
 0.6.0 landed RFC 5626 flow routing, the rtpengine driver and the media profile that
 tells it which leg is the browser, and the behaviour tests that found eleven bugs in
@@ -49,11 +49,20 @@ tear down its successor. Two from the admin console session, a 401 that should h
 403 and a TURN username carrying our own log prose. And a UDP flow that was never reaped,
 found while answering T.O.M.S about the monitoring topics.
 
-The call Milestone 3 was named for has been made and heard. What the run left behind is
-the milestone's next work: a callee is still profiled by its transport when it has said
-nothing yet, which is decision 3 below and still open - the `+sip.ice` in its registration
-looked like the answer and is not one; and the automated browser call never rings, which
-is why it missed the bug the live one found. Both are in Milestone 3 below, in order.
+**2026-10-01, one long day, all in `COMPLETED.md`.** UDP flows stay reachable after the
+idle sweep forgets them, with outbound UDP and a sealed flow token. The proxy is no longer
+an open relay: callers are authenticated by Tom's policy. RFC 3263 locating is hand-written
+(NAPTR, SRV, A/AAAA, failover on 503 and timeout). The admin API serves live calls, the
+media engine and Prometheus `/metrics`. The builtin relay now sends to a leg that has not
+spoken yet, which the new metrics check found. Configured API tokens are gone: the first
+administrator is made with `athenasip --add-user`. Everything is deployed on
+`corvus-fi-1`, which Tom says is not production.
+
+The next work is Milestone 3's first item below: per-realm behaviour profiles, starting
+with the media profile a callee is offered. Tom decided it on 2026-10-01 and it is in
+**Decisions**. Read it before starting, with the two working rules that came with it: how
+established servers behave is the reference, and every behaviour that differs between
+them is a setting.
 
 Milestones are in priority order and so are the items inside each one: work top to
 bottom, and say why when something is taken out of turn. Milestone 5 has been, twice -
@@ -76,57 +85,26 @@ session that has lost its context needs to see them first.
    holding for a yes or no and will use three times it, falling back to its configured
    value for nodes that do not carry it. See `docs/events.md`.
 
-2. **Who the first user on `corvus-fi-1` is.** The node was deployed on 2026-10-01 with
-   everything to that date - Tom's word that day: "THERE IS NO PRODUCTION", so deploying
-   there needs no further say-so. It now serves the auth routes (`POST
-   /api/v1/auth/login` answers 401 for a user that does not exist, not 404), so the
-   console can log in once there is somebody to log in as. That name and password want
-   choosing by a person rather than generated: either `POST /api/v1/users` with the
-   configuration token already in that node's config, or `athenasip --add-user` on the
-   host.
-
-3. **A realm holding both WebRTC endpoints and plain-RTP ones.** The next item in
-   Milestone 3's order, and the reason the milestone is stalled. Now that a leg's own
-   profile is remembered, the only undecidable case left is the first offer towards an
-   endpoint this node has never heard describe itself, and only when its transport
-   misleads. Three options, none chosen: a per-account hint, offering by transport and
-   re-offering the other way on a 488, or letting the first call fail and remembering.
-   The live call of 2026-09-30 hit exactly this, a 488 from an AthenaPhone on TCP, and it
-   was written here that the `+sip.ice` it registered with had already answered the
-   question. Checked on 2026-10-01, it has not. RFC 5768 defines that one tag and it
-   "indicates support for ICE": nothing about DTLS, SRTP or the profile. PJSUA adds the
-   same tag by default whenever ICE is on (`PJSUA_ADD_ICE_TAGS`), and a PJSIP softphone is
-   mostly plain RTP/AVP, so reading the tag as WebRTC trades AthenaPhone's 488 for theirs.
-   No standard feature tag says DTLS-SRTP. What the tag can honestly do is order the
-   second option - which profile to try first - or stand as a default a realm can turn
-   off. The decision is as open as it was, with one more piece of evidence.
-
-4. **`/accounts` versus `/subscribers`.** The 2026-09-25 vocabulary decision says
+2. **`/accounts` versus `/subscribers`.** The 2026-09-25 vocabulary decision says
    subscriber; the type is `Account` and the resource is `/realms/{realm}/accounts`.
    Renaming is a breaking API change the console and the OpenAPI document follow, so it
    wants doing deliberately and in one go, or not at all. The console is building against
    `/accounts` until told otherwise. Question 5 in `docs/authentication.md`.
 
-5. **Whether deleting a realm cascades to its subscribers.** The console asked; it builds
+3. **Whether deleting a realm cascades to its subscribers.** The console asked; it builds
    against no cascade until told.
 
-6. **Rate limiting on `POST /api/v1/auth/login`.** Recorded as unsolved in
-   `docs/authentication.md` since before the endpoint existed, and now there is a reachable
-   endpoint behind it. It is the reason the quickstart stack has not been put on a LAN, and
-   it should be settled before `corvus-fi-1` sees traffic it did not invite. Not scheduled
-   into any milestone, which is the thing to fix.
+4. **Rate limiting on `POST /api/v1/auth/login`.** Recorded as unsolved in
+   `docs/authentication.md` since before the endpoint existed, and the endpoint is now
+   reachable on `corvus-fi-1`'s LAN. Not scheduled into any milestone, which is the thing
+   to fix.
 
-7. **What a `client` configuration token may read.** The `client` scope maps to
-   `view-cluster-status`, so a token meant for a SIP client fetching its own configuration
-   can also list every registration and, since 2026-10-01, every live call - who is calling
-   whom. Both use the role on purpose (status, not provisioning), and the console reads
-   them as a person with that role. The question is whether a client token should: a
-   narrower role for `/client/config` alone would close it, at the cost of a role and a
-   change to what existing tokens can do.
-
-One more, smaller, and for the two sessions rather than for a milestone: the admin console
-session's half of the browser relay phase is built and on disk in `../athenasip-admin` but
-uncommitted, waiting on a word from Tom. Nothing here depends on it.
+5. **How a browser that is only a SIP subscriber reaches `/client/config`.** It needs
+   `view-cluster-status`, which only an admin user holds now that configured tokens are
+   gone. The console's softphone signs in as an admin and is unaffected. A public web
+   client for subscribers would need another way in. The proposal is HTTP Digest (RFC 7616)
+   with the subscriber's own SIP credentials, which reuses the stored HA1 and adds no new
+   secret. It is a product question, and nothing is blocked on it today.
 
 ## How to prove it
 
@@ -253,6 +231,20 @@ Dated, and not reopened without asking.
   time, on a route anybody can reach. A realm name is not a secret. `API_VERSION` did not
   move, because the shape did not change - which is exactly why `docs/plugins.md` now says
   the version tracks shape and shape is not the whole contract.
+- (2026-10-01) No configured API tokens of any scope, and no setup or bootstrap token.
+  The first administrator, and recovery, is `athenasip --add-user` on the host and nothing
+  else; on `memory://` that command creates the user in the node's own datastore and
+  carries on serving. A file that sets `http.api.tokens` is refused at start. Automation
+  signs in as a role-limited user, as `corvus-fi-1`'s provisioning does.
+- (2026-10-01) Behaviour that differs between SIP servers is a setting, not a choice made
+  for the operator. Each lives in one plainly named per-realm section, with a server-wide
+  default in the config. The shipped default is exactly what the standards say, and every
+  setting can be set to reproduce Asterisk, Kamailio/OpenSIPS or FreeSWITCH. Established
+  servers are the reference for least astonishment, for migrating operators and for their
+  clients. AthenaSIP is built for every RFC-compliant client, never tuned to AthenaPhone
+  or JsSIP, and where it adds value it does so visibly and never by silent learning. The
+  first use is what a callee is offered (Milestone 3): transport default, a per-account
+  profile, one re-offer on 488 reported to the operator, then OPTIONS-advertised SDP.
 - (2026-10-01) The proxy is not an open relay. A request out of dialog whose From is in a
   domain this node serves is authenticated as that subscriber, whoever it is calling: RFC
   3261 22.3, a 407 with Proxy-Authenticate, answered with Proxy-Authorization for that
@@ -350,40 +342,39 @@ The call was made on 2026-09-30 and heard both ways in both directions;
 `test/interop/UAT.md` holds the record and `COMPLETED.md` the account of what it found.
 Two things it found are this milestone's next work, in this order.
 
-- [ ] **Offer a callee that has said nothing a profile it can take.** A leg is profiled
-      from what it has said, but a callee has said nothing when this node offers to it, so
-      the realm decides, and on the default `FromTransport` an AthenaPhone on TCP is read
-      as a desk phone and offered plain RTP/AVP - it answered 488, correctly. This is
-      decision 3 under "Waiting on Tom", met on a real call, and it waits there. The
-      registration carried `+sip.ice` (RFC 5768), which was first written up as the answer
-      and is only a hint: it says ICE, a PJSIP softphone says it too, and nothing in a
-      registration says DTLS. Two things are true whichever option is chosen. The binding
-      does not keep a Contact's feature parameters today - `types::Location` holds the URI
-      and nothing else of the header - so any option that reads the tag needs them stored
-      first, which is a field on a type the Datastore contract hands to plugins. And until
-      it is decided, a realm whose clients are all WebRTC needs `media_profiles: webrtc`
-      set by hand, which is how the live call got past it.
+- [ ] **Per-realm behaviour profiles, starting with what a callee is offered.** The
+      2026-10-01 decision, in order. Each step is a setting in one plainly named section.
+      There is a server-wide default in the config and a per-realm override in the API. The
+      shipped default is exactly what the standards say, so a migrating operator can set
+      any step to match Asterisk, Kamailio/OpenSIPS or FreeSWITCH.
+      1. The section itself: config default, realm override, API field, console-visible.
+         `media_profiles` (today's `FromTransport`/`webrtc`/... on the realm) moves into it.
+      2. Transport default: a WebSocket leg is WebRTC, anything else plain RTP. This is
+         today's `FromTransport`, and Kamailio's routing-script default.
+      3. An explicit media profile per account, overriding it, as Asterisk's `webrtc=yes`
+         does. A field on accounts in the API and the Datastore contract, which the
+         console and both drivers follow. AthenaPhone on TCP is the case it exists for.
+      4. One re-offer of the other profile on a 488 (Kamailio's failure-route pattern),
+         and the value no other server adds: the admin API and console say which accounts
+         needed it ("rejected plain RTP, took WebRTC - set its profile?"). The node
+         suggests and the operator decides; nothing is learned silently.
+      5. OPTIONS to registered clients (Asterisk `qualify`, Kamailio nathelper), reading the
+         SDP an OPTIONS 200 may carry (RFC 3261 11.2) as what the client says it supports.
+         The same ping keeps NAT mappings open.
+- [ ] **Document the behaviour profiles for an operator.** Tom asked for it explicitly: a
+      page of its own, with examples, and "how to configure like Asterisk / Kamailio /
+      OpenSIPS / FreeSWITCH" for each setting, showing what each server does by default
+      and the AthenaSIP values that reproduce it. It ships with the feature, not after it.
 - [ ] **Ring the automated browser call.** `browser.sh` answers within milliseconds and
       so never rang long enough to hit the DTLS-role bug the live call found; a deliberate
-      delay of a few seconds before the callee answers would have caught it, and would
-      catch the next thing of its shape. One knob on the spec in `../athenasip-admin`.
+      delay of a few seconds before the callee answers would have caught it. A knob on the
+      spec in `../athenasip-admin`. The admin session has it queued.
 
 ### After that
 
-The first item here is the general form of the one above and needs the same decision
-(number 3 under "Waiting on Tom"). The routing half of NAT handling and outbound UDP landed
-on 2026-10-01; what is left of NAT is a judgement call, so read it before starting. The
-harness gained a delayed offer, hold and resume, and a refused relay the same day.
-**The next one that can be started without anybody is the builtin relay's
-media assertion.**
+What is left of NAT is a judgement call, so read it before starting. The trunk scenario
+waits on trunks existing.
 
-
-- [ ] A realm holding both WebRTC endpoints and plain-RTP ones. Now that a leg's own
-      profile is remembered, the only undecidable case left is the first offer towards
-      an endpoint this node has never heard describe itself, and only when its transport
-      misleads - a WebRTC endpoint on UDP, TCP or TLS. The options are a per-account
-      hint, or offering by transport and re-offering the other way on a 488, or
-      letting the first call fail and remembering. Not decided.
 - [ ] NAT handling for the client side, what is left of it. Routing is in: `rport` and
       `received` are stamped on the way in (RFC 3581), a binding is reached down the flow
       it registered on, and a UDP flow the idle sweep has forgotten is still sent down -
