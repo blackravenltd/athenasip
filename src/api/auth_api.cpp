@@ -139,19 +139,15 @@ void AuthAPI::_session(RouteContext context) {
   // told it holds none.
   out["roles"] = roles_json(context.caller.roles);
 
-  if (context.caller.kind == BearerAuth::Caller::Kind::user) {
+  // Always a user since configured tokens went; "kind" stays in the body so a client that
+  // reads it keeps working.
+  if (context.caller.user) {
     const auto& user = *context.caller.user;
 
     out["kind"] = "user";
     out["username"] = user.username;
     out["display_name"] = user.display_name;
     out["expires_at"] = context.caller.expires_at;
-  } else {
-    out["kind"] = "token";
-    out["scopes"] = roles_json(context.caller.scopes);
-
-    // No expiry, deliberately: a configuration token lasts as long as it is in the file,
-    // which is why it lives in one only root can read.
   }
 
   write_json(context.response, http::status::ok, out);

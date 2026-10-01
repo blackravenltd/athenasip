@@ -115,7 +115,10 @@ else
 fi
 
 API="http://127.0.0.1:${ATHENA_INTEROP_API_PORT}/api/v1"
-ADMIN_TOKEN="interop-admin"
+# The fixture's user, created by the node as it starts. A password per run rather than one
+# checked in, because this fixture can be bound to the LAN.
+export ATHENA_INTEROP_API_USER="${ATHENA_INTEROP_API_USER:-interop}"
+export ATHENA_INTEROP_API_PASSWORD="${ATHENA_INTEROP_API_PASSWORD:-$(openssl rand -hex 10)}"
 
 # The realm is named for the domain a client puts in its From and To, which for a
 # fixture on loopback is the address it dialled. A realm named anything else is one the
@@ -259,6 +262,14 @@ sed -e "s|@PUBLIC_ADDRESS@|${PUBLIC_ADDRESS}|g" \
 echo "Building and starting..."
 compose up -d --build --wait
 
+ADMIN_TOKEN="$(curl -fsS -X POST "$API/auth/login" -H "Content-Type: application/json" \
+  -d "{\"username\":\"${ATHENA_INTEROP_API_USER}\",\"password\":\"${ATHENA_INTEROP_API_PASSWORD}\"}" | sed -n 's/.*"token":"\([0-9a-f]*\)".*/\1/p')"
+
+if [[ -z "$ADMIN_TOKEN" ]]; then
+  echo "Could not sign in as ${ATHENA_INTEROP_API_USER}" >&2
+  exit 1
+fi
+
 echo "Provisioning realm ${REALM}..."
 curl -fsS -X POST "$API/realms" \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
@@ -294,10 +305,11 @@ ATHENA_INTEROP_NG_PORT=${ATHENA_INTEROP_NG_PORT}
 ATHENA_INTEROP_ADMIN_DIR=${ATHENA_INTEROP_ADMIN_DIR}
 ATHENA_INTEROP_PASSWORD=${ATHENA_INTEROP_PASSWORD:-athenaphone}
 
-# The client-scope token, which is what reaches /api/v1/client/config and nothing else.
-# Exported so the spec reads it rather than knowing it: a token it has memorised is one
-# that goes stale silently the day this fixture changes it.
-ATHENA_INTEROP_API_TOKEN=interop-client
+# The fixture's user, which is what signs in to reach /api/v1/client/config. Exported so
+# the spec reads it rather than knowing it: a credential it has memorised is one that goes
+# stale silently the day this fixture changes it.
+ATHENA_INTEROP_API_USER=${ATHENA_INTEROP_API_USER}
+ATHENA_INTEROP_API_PASSWORD=${ATHENA_INTEROP_API_PASSWORD}
 ATHENA_INTEROP_RTPENGINE_ADVERTISE=${ATHENA_INTEROP_RTPENGINE_ADVERTISE}
 ATHENA_INTEROP_TURN_PORT=${ATHENA_INTEROP_TURN_PORT}
 ATHENA_INTEROP_TURN_MIN=${ATHENA_INTEROP_TURN_MIN}
@@ -313,7 +325,7 @@ Ready. The node is listening on ${PUBLIC_ADDRESS}:
   tcp   ${ATHENA_INTEROP_SIP_PORT}
   tls   ${ATHENA_INTEROP_TLS_PORT}    verify against tls/ca/snakeca.crt
   ws    ${ATHENA_INTEROP_WS_PORT}    any path; /ws is what most clients ask for
-  api   ${ATHENA_INTEROP_API_PORT}    bearer interop-admin / interop-client
+  api   ${ATHENA_INTEROP_API_PORT}    sign in as ${ATHENA_INTEROP_API_USER}, password in generated/fixture.env
 
 Media is ${ENGINE}, on ${PUBLIC_ADDRESS}:${ATHENA_INTEROP_RTP_MIN}-${ATHENA_INTEROP_RTP_MAX}.
 ${ADMIN_NOTE}

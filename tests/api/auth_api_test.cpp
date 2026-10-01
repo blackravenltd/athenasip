@@ -17,6 +17,7 @@
 #include <string>
 #include <vector>
 
+#include "../helpers/signed_in_users_helper.h"
 #include "../helpers/sync_datastore_helper.h"
 #include "../mocks/logger_mock.h"
 #include "api/admin_api.h"
@@ -58,6 +59,7 @@ struct AuthFixture {
   std::shared_ptr<SyncDatastore> store;
   std::shared_ptr<api::AdminAPI> admin;
   std::shared_ptr<api::Router> router;
+  SignedInUsers signed_in;
   std::shared_ptr<api::Sessions> sessions;
   std::shared_ptr<api::AuthAPI> auth;
 
@@ -69,14 +71,9 @@ struct AuthFixture {
     store = std::make_shared<SyncDatastore>(datastore);
     store->connect();
 
-    config->http_api_tokens = {
-        Config::ApiToken{"admin-token", {"admin"}},
-        Config::ApiToken{"client-token", {"client"}},
-    };
-
     admin = std::make_shared<api::AdminAPI>(logger, "127.0.0.1", 0);
 
-    auto bearer = std::make_shared<api::BearerAuth>(config->http_api_tokens);
+    auto bearer = std::make_shared<api::BearerAuth>();
     router = std::make_shared<api::Router>(bearer);
     sessions = std::make_shared<api::Sessions>(logger, datastore, admin->executor(), api::Sessions::Lifetimes{3600, 600});
 
@@ -89,6 +86,7 @@ struct AuthFixture {
 
     admin->middlewares.push_back(router->middleware("/api/"));
     admin->start();
+    signed_in = SignedInUsers(sessions, *store);
   }
 
   ~AuthFixture() { admin->stop(); }
@@ -113,7 +111,7 @@ struct AuthFixture {
 
     http::request<http::string_body> request{method, target, 11};
     request.set(http::field::host, "127.0.0.1");
-    if (!token.empty()) request.set(http::field::authorization, "Bearer " + token);
+    if (!token.empty()) request.set(http::field::authorization, "Bearer " + signed_in.presented(token));
     if (!body.empty()) {
       request.set(http::field::content_type, "application/json");
       request.body() = body;
@@ -267,25 +265,6 @@ TEST(AuthApiTest, ASessionTokenIsAUser) {
   EXPECT_EQ(body.at("display_name").as_string(), "Tom Cully");
   EXPECT_EQ(body.at("roles").at(0).as_string(), types::roles::view_cluster_status);
   ASSERT_TRUE(body.at("expires_at").is_int64());
-}
-
-TEST(AuthApiTest, AConfigurationTokenIsAToken) {
-  AuthFixture f;
-
-  auto response = f.session("admin-token");
-
-  ASSERT_EQ(response.status, 200u);
-
-  const auto body = response.json();
-  EXPECT_EQ(body.at("kind").as_string(), "token");
-  EXPECT_EQ(body.at("scopes").at(0).as_string(), "admin");
-
-  // The admin scope is every role there is: the one credential on this node that can do
-  // everything, which is why it lives in a file only root can read.
-  EXPECT_EQ(body.at("roles").as_array().size(), types::roles::all().size());
-
-  // No expiry. A configuration token lasts as long as it is in the file.
-  EXPECT_EQ(body.as_object().find("expires_at"), body.as_object().end());
 }
 
 TEST(AuthApiTest, TheClientScopeIsOnlyWhatAClientReaches) {

@@ -46,6 +46,7 @@
 #include "servers/tls_server.h"
 #include "servers/udp_server.h"
 #include "servers/websocket_server.h"
+#include "types/url.h"
 #include "util.h"
 #include "version.h"
 
@@ -215,7 +216,7 @@ int main(int argc, char* argv[]) {
     std::cout << "# AthenaSIP " << version->to_string() << " effective configuration\n";
     std::cout << "# from " << config_path.string() << ", with defaults resolved\n";
     std::cout << "#\n";
-    std::cout << "# API tokens are redacted. Everything else is what this node would run on.\n";
+    std::cout << "# What this node would run on.\n";
     std::cout << config->effective_yaml() << "\n";
     return 0;
   }
@@ -261,6 +262,13 @@ int main(int argc, char* argv[]) {
   // Administration, and then out. Here rather than earlier because it needs the datastore,
   // and here rather than later because it must not connect the bus, start a listener or
   // build a Core: it is meant to be safe to run against a node that is already serving.
+  //
+  // Except with memory://, whose users live only in this process. A user created and then
+  // dropped on exit is no user at all, and a separate process can never reach a running
+  // node's memory - so there the same command creates the user in the datastore this
+  // process is about to serve from, and carries on starting the node.
+  const bool keeps_nothing = Util::to_lower(types::URL(config->db_url).scheme) == "memory";
+
   if (!options.add_user.empty()) {
     const auto password = read_password("Password for " + options.add_user + ": ", ::isatty(STDIN_FILENO));
 
@@ -273,9 +281,8 @@ int main(int argc, char* argv[]) {
     const auto result =
         cli::add_user(datastore, athenasip::detail::get_global_io_context().get_executor(), options.add_user, options.display_name, options.roles, password);
 
-    datastore->close();
-
     if (!result.ok()) {
+      datastore->close();
       std::cerr << "athenasip: " << result.message << "\n";
       return result.outcome == cli::AddUserResult::Outcome::taken ? 3 : 1;
     }
@@ -286,7 +293,13 @@ int main(int argc, char* argv[]) {
     for (const auto& role : roles) std::cout << " " << role;
     std::cout << "\n";
 
-    return 0;
+    if (!keeps_nothing) {
+      datastore->close();
+      return 0;
+    }
+
+    std::cout << "memory:// keeps nothing once this process exits, so this node now starts with that user\n" << std::flush;
+    logger->set_level(LogLevel::DEBUG);
   }
 
   // The will, set while the bus is still closed because that is the only time a broker
@@ -348,7 +361,7 @@ int main(int argc, char* argv[]) {
       // The API talks to the datastore on its own executor. It is not on the Core
       // strand and must not be: an admin listing accounts cannot be allowed to hold up
       // a call, which is what the async plugin contract is for.
-      auto bearer = std::make_shared<api::BearerAuth>(config->http_api_tokens);
+      auto bearer = std::make_shared<api::BearerAuth>();
 
       api_router = std::make_shared<api::Router>(bearer);
       provisioning = std::make_shared<api::ProvisioningAPI>(logger, datastore, adminAPI->executor(), config, version->to_string());

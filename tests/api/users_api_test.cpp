@@ -17,6 +17,7 @@
 #include <string>
 #include <vector>
 
+#include "../helpers/signed_in_users_helper.h"
 #include "../helpers/sync_datastore_helper.h"
 #include "../mocks/logger_mock.h"
 #include "api/admin_api.h"
@@ -57,6 +58,7 @@ struct UsersFixture {
   std::shared_ptr<SyncDatastore> store;
   std::shared_ptr<api::AdminAPI> admin;
   std::shared_ptr<api::Router> router;
+  SignedInUsers signed_in;
   std::shared_ptr<api::AuthAPI> auth;
   std::shared_ptr<api::UsersAPI> users;
 
@@ -68,11 +70,9 @@ struct UsersFixture {
     store = std::make_shared<SyncDatastore>(datastore);
     store->connect();
 
-    config->http_api_tokens = {Config::ApiToken{"admin-token", {"admin"}}};
-
     admin = std::make_shared<api::AdminAPI>(logger, "127.0.0.1", 0);
 
-    auto bearer = std::make_shared<api::BearerAuth>(config->http_api_tokens);
+    auto bearer = std::make_shared<api::BearerAuth>();
     router = std::make_shared<api::Router>(bearer);
 
     auto sessions = std::make_shared<api::Sessions>(logger, datastore, admin->executor(), api::Sessions::Lifetimes{3600, 600});
@@ -89,6 +89,7 @@ struct UsersFixture {
 
     admin->middlewares.push_back(router->middleware("/api/"));
     admin->start();
+    signed_in = SignedInUsers(sessions, *store);
   }
 
   ~UsersFixture() { admin->stop(); }
@@ -112,7 +113,7 @@ struct UsersFixture {
 
     http::request<http::string_body> request{method, target, 11};
     request.set(http::field::host, "127.0.0.1");
-    if (!token.empty()) request.set(http::field::authorization, "Bearer " + token);
+    if (!token.empty()) request.set(http::field::authorization, "Bearer " + signed_in.presented(token));
     if (!body.empty()) {
       request.set(http::field::content_type, "application/json");
       request.body() = body;
@@ -234,9 +235,10 @@ TEST(UsersApiTest, ListingAndReadingAUser) {
   f.add_user("tom", {types::roles::manage_realms});
   f.add_user("sam", {});
 
+  // Five: these two, and the three users the fixture signs in as.
   auto list = f.get("/api/v1/users");
   ASSERT_EQ(list.status, 200u);
-  EXPECT_EQ(list.json().as_array().size(), 2u);
+  EXPECT_EQ(list.json().as_array().size(), 5u);
 
   auto one = f.get("/api/v1/users/TOM");
   ASSERT_EQ(one.status, 200u);
@@ -337,19 +339,11 @@ TEST(UsersApiTest, TheLockoutRulesAreAboutSelfAndNotAboutTheRole) {
   f.add_user("boss", {types::roles::manage_admin_users});
   f.add_user("other", {types::roles::manage_admin_users});
 
-  // Somebody else holding the same role may still be disabled, demoted and deleted. The
-  // configuration token is what recovers a node with no administrators left.
+  // Somebody else holding the same role may still be disabled, demoted and deleted.
+  // `athenasip --add-user` on the host is what recovers a node with no administrators left.
   const auto token = f.login("boss");
   EXPECT_EQ(f.put("/api/v1/users/other", R"({"disabled":true})", token).status, 200u);
   EXPECT_EQ(f.del("/api/v1/users/other", token).status, 204u);
-}
-
-TEST(UsersApiTest, AConfigurationTokenIsNobodyAndSoCanDisableAnyone) {
-  UsersFixture f;
-  f.add_user("boss", {types::roles::manage_admin_users});
-
-  // It is not a user, so it cannot be locked out and the self rules do not apply to it.
-  EXPECT_EQ(f.put("/api/v1/users/boss", R"({"disabled":true})").status, 200u);
 }
 
 // --- Deleting and revoking ---

@@ -24,8 +24,8 @@ contract.
   because a browser is a first-class client rather than a later port.
 * **API-driven.** Realms, accounts, registrations and the administrators themselves are
   provisioned over a JSON API described by [an OpenAPI document](docs/api/openapi.yaml).
-  Administrators log in for a session token and hold roles; a configuration token is the
-  machine credential and the way back in. The React admin client is
+  Administrators log in for a session token and hold roles. There are no configured tokens:
+  the first administrator, and the way back in, is `athenasip --add-user` on the host. The React admin client is
   [AthenaSIP Admin](https://github.com/blackravenltd/athenasip-admin).
 
 ## Try it

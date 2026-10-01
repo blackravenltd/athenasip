@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 
+#include "../helpers/signed_in_users_helper.h"
 #include "../helpers/sync_datastore_helper.h"
 #include "../mocks/logger_mock.h"
 #include "api/admin_api.h"
@@ -70,6 +71,7 @@ struct RolesFixture {
   std::shared_ptr<SyncDatastore> store;
   std::shared_ptr<api::AdminAPI> admin;
   std::shared_ptr<api::Router> router;
+  SignedInUsers signed_in;
   std::shared_ptr<api::ProvisioningAPI> provisioning;
   std::shared_ptr<api::AuthAPI> auth;
 
@@ -84,15 +86,9 @@ struct RolesFixture {
     store = std::make_shared<SyncDatastore>(datastore);
     store->connect();
 
-    config->http_api_tokens = {
-        Config::ApiToken{"admin-token", {"admin"}},
-        Config::ApiToken{"client-token", {"client"}},
-        Config::ApiToken{"scopeless-token", {}},
-    };
-
     admin = std::make_shared<api::AdminAPI>(logger, "127.0.0.1", 0);
 
-    auto bearer = std::make_shared<api::BearerAuth>(config->http_api_tokens);
+    auto bearer = std::make_shared<api::BearerAuth>();
     router = std::make_shared<api::Router>(bearer);
 
     auto sessions = std::make_shared<api::Sessions>(logger, datastore, admin->executor(), api::Sessions::Lifetimes{3600, 600});
@@ -106,6 +102,7 @@ struct RolesFixture {
 
     admin->middlewares.push_back(router->middleware("/api/"));
     admin->start();
+    signed_in = SignedInUsers(sessions, *store);
   }
 
   ~RolesFixture() { admin->stop(); }
@@ -129,7 +126,7 @@ struct RolesFixture {
 
     http::request<http::string_body> request{method, target, 11};
     request.set(http::field::host, "127.0.0.1");
-    if (!token.empty()) request.set(http::field::authorization, "Bearer " + token);
+    if (!token.empty()) request.set(http::field::authorization, "Bearer " + signed_in.presented(token));
     if (!body.empty()) {
       request.set(http::field::content_type, "application/json");
       request.body() = body;
@@ -341,14 +338,4 @@ TEST(RouteRolesTest, AStoreThatCannotResolveASessionIs503AndNotARefusal) {
   auto response = f.get("/api/v1/realms", std::string(64, 'a'));
   EXPECT_EQ(response.status, 503u);
   EXPECT_EQ(response.json().at("error").at("code").as_string(), "unavailable");
-}
-
-TEST(RouteRolesTest, AConfigurationTokenStillWorksWhenTheStoreCannotBeAsked) {
-  auto logger = std::make_shared<MockLogger>();
-  RolesFixture f(std::make_shared<NoSessionsDatastore>(logger, std::make_shared<types::URL>("memory://")));
-
-  // Which is the whole reason a configuration token is resolved before the store is
-  // consulted: it is how somebody gets back in when the store is the broken thing.
-  EXPECT_EQ(f.get("/api/v1/nodes", "admin-token").status, 200u);
-  EXPECT_EQ(f.get("/api/v1/session", "admin-token").status, 200u);
 }

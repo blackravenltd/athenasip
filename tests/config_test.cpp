@@ -240,8 +240,7 @@ TEST(ConfigTest, ASessionMinimumAboveTheRfcFloorIsTaken) {
 TEST(ConfigTest, SessionLifetimesAreTakenFromTheApiSection) {
   ConfigFile file(
       "sip:\n  node_id: test-node\n"
-      "http:\n  port: 8080\n  api:\n    enable: true\n    session_lifetime: 7200\n    session_idle: 900\n"
-      "    tokens:\n      - token: t\n        scopes: [admin]\n");
+      "http:\n  port: 8080\n  api:\n    enable: true\n    session_lifetime: 7200\n    session_idle: 900\n");
 
   bool ok = false;
   auto config = file.load(ok);
@@ -257,8 +256,7 @@ TEST(ConfigTest, SessionLifetimesAreTakenFromTheApiSection) {
 TEST(ConfigTest, ASessionLifetimeOfZeroIsRefused) {
   ConfigFile file(
       "sip:\n  node_id: test-node\n"
-      "http:\n  port: 8080\n  api:\n    enable: true\n    session_lifetime: 0\n"
-      "    tokens:\n      - token: t\n        scopes: [admin]\n");
+      "http:\n  port: 8080\n  api:\n    enable: true\n    session_lifetime: 0\n");
 
   bool ok = true;
   file.load(ok);
@@ -271,8 +269,7 @@ TEST(ConfigTest, ASessionLifetimeOfZeroIsRefused) {
 TEST(ConfigTest, ASessionIdleOfZeroTurnsIdleExpiryOff) {
   ConfigFile file(
       "sip:\n  node_id: test-node\n"
-      "http:\n  port: 8080\n  api:\n    enable: true\n    session_idle: 0\n"
-      "    tokens:\n      - token: t\n        scopes: [admin]\n");
+      "http:\n  port: 8080\n  api:\n    enable: true\n    session_idle: 0\n");
 
   bool ok = false;
   auto config = file.load(ok);
@@ -305,31 +302,21 @@ TEST(ConfigTest, TheEffectiveConfigurationCarriesDefaultsNobodyWroteDown) {
   EXPECT_NE(effective.find("url: local://"), std::string::npos);
 }
 
-TEST(ConfigTest, TheEffectiveConfigurationNeverPrintsAToken) {
+// Configured tokens were removed on 2026-10-01. A file that still sets them is refused,
+// and says what to do instead, rather than being read as if they were not there - which
+// would leave an operator unable to log in with no idea why.
+TEST(ConfigTest, AConfigurationThatSetsApiTokensIsRefused) {
   ConfigFile file(
       "sip:\n  node_id: test-node\n"
       "http:\n  port: 8080\n  api:\n    enable: true\n"
       "    tokens:\n      - token: hunter2-do-not-print\n        scopes: [admin]\n");
 
-  bool ok = false;
-  auto config = file.load(ok);
-  ASSERT_TRUE(ok);
+  bool ok = true;
+  file.load(ok);
 
-  const auto effective = config->effective_yaml();
-
-  // This output goes into issues and into terminal scrollback, and the value is the
-  // credential that administers the node.
-  EXPECT_EQ(effective.find("hunter2-do-not-print"), std::string::npos);
-  EXPECT_NE(effective.find("<redacted>"), std::string::npos);
-
-  // What an operator actually needs from it is still there: that the token was read, and
-  // what it may do.
-  EXPECT_NE(effective.find("admin"), std::string::npos);
+  EXPECT_FALSE(ok);
 }
 
-// A plugin's own section means nothing to the server, so it is copied through rather than
-// interpreted - and a --print-config that dropped the half it did not understand would be
-// worse than one that refused to print.
 TEST(ConfigTest, TheEffectiveConfigurationCarriesPluginSectionsThrough) {
   ConfigFile file(
       "sip:\n  node_id: test-node\n"

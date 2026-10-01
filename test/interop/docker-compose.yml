@@ -24,6 +24,19 @@ services:
       dockerfile: Dockerfile
     image: athenasip-interop
     container_name: ${ATHENA_INTEROP_NAME:-athenasip-interop}
+    # The fixture's user, made as the node starts: memory:// keeps nothing once a process
+    # exits, so --add-user on it creates the user in the node's own datastore and carries
+    # on serving. up.sh chooses the password; it goes in on stdin, never on a command line.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        printf '%s\n' "$$ATHENA_INTEROP_API_PASSWORD" > /tmp/api-password &&
+        exec /usr/local/bin/athenasip --add-user "$$ATHENA_INTEROP_API_USER"
+        --role manage-admin-users --role manage-realms --role manage-realm-subscribers --role view-cluster-status
+        < /tmp/api-password
+    environment:
+      ATHENA_INTEROP_API_USER: ${ATHENA_INTEROP_API_USER:-interop}
+      ATHENA_INTEROP_API_PASSWORD: ${ATHENA_INTEROP_API_PASSWORD:?up.sh sets this}
     volumes:
       - ./generated:/root/.athenasip:ro
       - ${ATHENA_INTEROP_TLS_DIR:-../../tls}:/tls:ro

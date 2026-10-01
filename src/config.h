@@ -220,20 +220,6 @@ class Config {
   // what it needs. False makes it an ordinary file server.
   bool http_files_spa = true;
 
-  // What a bearer token is allowed to do. admin provisions; client reads what a client
-  // may see. A token with no scope can do nothing, which is what an empty list means.
-  //
-  // Tokens live in the config for now. They belong in the datastore once there is
-  // anything to administer them with, and the shape here is what that would replace.
-  struct ApiToken {
-    std::string token;
-    std::vector<std::string> scopes;
-
-    bool has_scope(const std::string& scope) const { return std::find(scopes.begin(), scopes.end(), scope) != scopes.end(); }
-  };
-
-  std::vector<ApiToken> http_api_tokens;
-
   // How long an admin login is good for, and how long it survives unused, in seconds.
   //
   // Absolute lifetime is written on the session record and is what the datastore prunes

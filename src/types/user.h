@@ -29,8 +29,7 @@ inline constexpr const char* manage_realms = "manage-realms";
 inline constexpr const char* manage_realm_subscribers = "manage-realm-subscribers";
 inline constexpr const char* manage_cluster = "manage-cluster";
 
-// Every role there is, which is what validates a request and what a configuration token
-// with the admin scope is granted.
+// Every role there is, which is what validates a request.
 inline std::vector<std::string> all() { return {view_cluster_status, manage_admin_users, manage_realms, manage_realm_subscribers, manage_cluster}; }
 
 inline bool is_known(const std::string& role) {

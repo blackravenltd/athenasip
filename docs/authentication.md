@@ -55,9 +55,13 @@ The type is still called `Account` in the code and the resource is still
 `/realms/{realm}/accounts`. That disagrees with the vocabulary above and is noted at
 the end as a thing to settle.
 
-## Admin authentication, which is a config file
+## Admin authentication, which was a config file
 
-Today, and all of it:
+Removed on 2026-10-01, by Tom's decision: there are no configured API tokens of any
+scope, and no setup token either. A file that still sets `http.api.tokens` is refused at
+start with a message saying what to do instead. The first administrator is made on the
+host with `athenasip --add-user`, and everything after that is a user (see **Getting back
+in**). What it was, and why it went:
 
 ```yaml
 http:
@@ -157,21 +161,15 @@ safe thing for it to mean: a route declared without naming roles then demands a 
 and grants nothing, so forgetting to name them cannot open a route to the world. A route
 genuinely open to anyone has to say so by name, with `Router::add_open`.
 
-Both kinds of credential arrive as a set of roles, which is the only vocabulary a route
-speaks. `BearerAuth::resolve` is what turns one into the other, and it is asynchronous
-because resolving a session token means asking the datastore. Two consequences worth
-knowing:
-
-- **A configuration token is resolved before the store is consulted**, so it keeps working
-  when the store is the broken thing - which is the point of it being the way back in. A
-  session token cannot collide with one, being 32 random bytes, so the order costs nothing.
-- **A store that cannot be asked is a 503, not a 401.** Telling an administrator their
-  credential is bad when the real problem is Redis sends them looking in the wrong place.
+A session token arrives as the user's set of roles, which is the only vocabulary a route
+speaks. `BearerAuth::resolve` turns one into the other, and it is asynchronous because
+resolving a session token means asking the datastore. **A store that cannot be asked is a
+503, not a 401**: telling an administrator their credential is bad when the real problem is
+Redis sends them looking in the wrong place.
 
 The three refusals are therefore distinct: 401 for a credential that is absent or no longer
 good (an unknown token, an expired session, a disabled user), 403 for a real credential that
-does not hold the role, and 503 for not being able to tell. A known configuration token
-holding no scopes is a 403, because it is a real credential authorised for nothing.
+does not hold the role, and 503 for not being able to tell.
 
 ### Passwords
 
@@ -210,8 +208,7 @@ A login exchanges a username and password for an opaque session token:
 - Carries the roles resolved at login, re-checked against the user on each request, so
   a role removed takes effect on the next request rather than at the next login.
 
-Presented as `Authorization: Bearer <token>`, exactly as a config token is, so the
-existing `BearerAuth` gains a second place to look and no route changes shape.
+Presented as `Authorization: Bearer <token>`.
 
 Not JWT. A signed token that cannot be revoked before it expires is the wrong trade for
 an admin plane, and this node already has a datastore to ask.
@@ -270,7 +267,7 @@ The three auth routes are built, in `api::AuthAPI` (`src/api/auth_api.h`), and a
 |---|---|
 | `POST /auth/login` | 200 `{token, expires_at, roles}`; 400 for a body that is not an object or is missing a field; 401 for anything else; 503 when the store cannot be asked |
 | `POST /auth/logout` | 204 with no body; 401 with no token presented; 503 when the store cannot be asked |
-| `GET /session` | 200 `{"kind":"user", username, display_name, roles, expires_at}` or `{"kind":"token", scopes, roles}`; 401; 503 |
+| `GET /session` | 200 `{"kind":"user", username, display_name, roles, expires_at}`; 401; 503 |
 
 Three things about those answers are load-bearing rather than incidental:
 
@@ -297,9 +294,9 @@ changing a password, which is declared for any authenticated caller and decides 
 itself: your own needs the old one, anyone's needs the role. "It is mine" is not something
 a role can express, which is why that one route carries its own rule.
 
-What is bootstrapped, and by what: a fresh node has no users, so the configuration token
-is what creates the first one, and that user can then create the rest. This is the chain
-that makes the console usable on a node nobody has logged into yet.
+What is bootstrapped, and by what: a fresh node has no users, so the first one is made on
+the host with `athenasip --add-user`, and that user can then create the rest. This is the
+chain that makes the console usable on a node nobody has logged into yet.
 
 Four rules here are worth knowing before reading the code:
 
@@ -309,8 +306,7 @@ Four rules here are worth knowing before reading the code:
   itself is locked out exactly as thoroughly, and leaving that open would make the other
   two decorative. The rules are about *self*, not about the role: somebody else holding
   `manage-admin-users` may still be disabled, demoted and deleted, and a node with no
-  administrators left is recovered with the configuration token. A configuration token is
-  nobody, so the rules never apply to it.
+  administrators left is recovered with `athenasip --add-user` on the host.
 - **Changing a password ends every session that user held**, including the one that asked.
   A password is changed because the old one is no longer trusted, and a session issued
   against it is exactly as untrusted; an administrator resetting a compromised account
@@ -326,23 +322,27 @@ Four rules here are worth knowing before reading the code:
 
 ### Getting back in
 
-Two mechanisms, and between them losing every administrator password is an inconvenience
-rather than a rebuild:
+One mechanism, for the first administrator and for recovery alike: **`athenasip
+--add-user NAME`** on the node's host. Root on the box is the bar for making an
+administrator from nothing, and there is no token - configured, generated or one-time -
+that does the same over the network.
 
-- **The configuration token**, which is how the first user is created on a fresh node and
-  how the API is reached when no user credential works. It lives in a file only root can
-  read and maps to every role.
-- **`athenasip --add-user NAME`**, for when the API itself cannot be reached. It connects
-  the datastore, writes the user and exits, starting no listener and building no Core, so
-  it is safe to run against a node that is already serving. `--role` may be given more
-  than once; without it the new user holds `manage-admin-users`, because a recovery
-  account that cannot administer anybody is not a way back in.
+- Against a datastore that persists - `redis://` - it connects, writes the user and exits,
+  starting no listener and building no Core, so it is safe to run against a node that is
+  already serving.
+- Against `memory://`, whose users live only in the process that holds them, a user written
+  and then dropped on exit is no user at all, and a separate process can never reach a
+  running node's memory. So there the same command creates the user in the datastore it is
+  about to serve from, says so, and carries on as the node. A fixture that runs on
+  `memory://` starts its node this way.
 
-  The password is read from the terminal with the echo off, or from standard input when
-  that is not a terminal so a script can pipe one in. There is deliberately no option that
-  takes a password, because a command line is readable by every other process on the host.
+`--role` may be given more than once; without it the new user holds `manage-admin-users`,
+because a recovery account that cannot administer anybody is not a way back in. The
+password is read from the terminal with the echo off, or from standard input when that is
+not a terminal so a script can pipe one in. There is deliberately no option that takes a
+password, because a command line is readable by every other process on the host.
 
-Neither is a way past authentication: both write a normal user that logs in normally.
+It is not a way past authentication: it writes a normal user that logs in normally.
 
 The PBKDF2 iteration count is a constructor parameter rather than configuration. The count
 is stored with each hash so it can be raised later without invalidating anybody, nothing
@@ -354,24 +354,6 @@ takes the default.
 `/auth/logout` because it answers the same whether or not the token it was handed
 resolved - a token that resolves to nothing has to reach the handler rather than be turned
 away with a 401 that tells the caller it was not real.
-
-### What happens to the config tokens
-
-They stay, and they change meaning. A config token becomes a **machine credential and
-the way back in**:
-
-- It is how the first admin user is created on a fresh node, and how somebody gets back
-  in when every admin password has been lost. A node with no users and no config token
-  is a node nobody can administer, which is worse than a token in a root-owned file.
-- The `client` scope stays as it is, for SIP client applications fetching what a client
-  may see. That is a machine reading its own configuration, not a person administering
-  anything, and it has no business in the role model.
-- The `admin` scope in a config token becomes equivalent to holding every role. This is
-  the one place a "can do everything" credential exists, it lives in a root-owned file
-  on disk, and the intent is that a deployment stops using it once real users exist.
-
-`athenasip --add-user` for a node that is not running is the other half of recovery, so
-getting back in does not require the API to be reachable.
 
 ## What this does not solve
 

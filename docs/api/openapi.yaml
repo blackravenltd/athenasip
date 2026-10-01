@@ -16,19 +16,14 @@ info:
     not on the Core strand and must not be: an operator listing accounts cannot be
     allowed to hold up a call.
 
-    Every route names the roles that admit it, and any of them does. Two kinds of
-    credential resolve to a set of roles:
-
-    A **session token**, held by a user who logged in through `POST /auth/login`. Its
+    Every route names the roles that admit it, and any of them does. The one credential is
+    a **session token**, held by a user who logged in through `POST /auth/login`. Its
     roles are the user's, read on every request, so a role taken away takes effect on the
     next one rather than at the next login.
 
-    A **configuration token**, from `http.api.tokens` in the node configuration. The
-    `admin` scope maps to every role and is the credential that creates the first user on
-    a fresh node and the way back in when every password has been lost; `client` maps to
-    `view-cluster-status`, which is what a SIP client application reads. It is resolved
-    without touching the datastore, so it keeps working when the datastore is the broken
-    thing.
+    There are no configured tokens. The first administrator is made on the node's host
+    with `athenasip --add-user`, which is also the way back in when every password has
+    been lost; everything after that is a user.
 
     The three refusals are distinct and a client should treat them differently. `401` is
     a credential that is absent or no longer good - an unknown token, an expired session,
@@ -175,12 +170,8 @@ paths:
       tags: [auth]
       summary: Who this credential is and what roles it holds
       description: |
-        Any authenticated caller, of either kind, holding any roles or none.
-
-        `kind` says which kind of credential it is looking at. A user carries `username`,
-        `display_name` and the `expires_at` of the session presented; a configuration
-        token carries the `scopes` it was configured with and no expiry, because it lasts
-        as long as it is in the file.
+        Any signed-in user, holding any roles or none: its `username`, `display_name` and
+        the `expires_at` of the session presented. `kind` is always `user`.
 
         The roles are resolved on this request rather than at login, so this is also how a
         client notices that its permissions have changed.
@@ -637,9 +628,8 @@ paths:
       tags: [users]
       summary: Create a user
       description: |
-        Needs `manage-admin-users`. On a fresh node there are no users, so the
-        configuration token is what creates the first one, and that user can create the
-        rest.
+        Needs `manage-admin-users`. On a fresh node there are no users, so the first one
+        is made on the host with `athenasip --add-user`, and that user can create the rest.
 
         `409` when the username is taken rather than overwriting somebody. Usernames are
         one case-folded namespace: `Tom` and `tom` cannot both exist, either spelling logs
@@ -710,9 +700,7 @@ paths:
         `409 would_lock_out` when a user tries to disable itself or take
         `manage-admin-users` away from itself. The rule is about *self*, not about the
         role: somebody else holding it may still be disabled and demoted, and a node with
-        no administrators left is recovered with the configuration token or
-        `athenasip --add-user`. A configuration token is nobody, so the rule never applies
-        to it.
+        no administrators left is recovered with `athenasip --add-user` on the host.
 
         Disabling a user revokes every session it held, so it stops working immediately
         rather than when each token happens to expire.
@@ -867,8 +855,7 @@ components:
       type: http
       scheme: bearer
       description: |
-        Either a session token from `POST /auth/login`, or a configuration token from
-        `http.api.tokens`. Both are presented the same way and resolve to a set of roles.
+        A session token from `POST /auth/login`, which resolves to the signed-in user's roles.
 
         A session token is 32 bytes from a CSPRNG, rendered as 64 hex characters. It is
         given out once and is never retrievable again: the node stores only its SHA-256.
@@ -1029,35 +1016,26 @@ components:
       type: object
       required: [kind, roles]
       description: |
-        Who a credential is. `kind` says which of the two it is; a client that only
-        handles users should still expect `token`, because a configuration token is how a
-        fresh node is administered.
+        Who a credential is: always a user. `kind` is kept so a client that reads it keeps
+        working, and has the one value.
       properties:
         kind:
           type: string
-          enum: [user, token]
+          enum: [user]
         roles:
           type: array
           items:
             $ref: "#/components/schemas/Role"
         username:
           type: string
-          description: Present for `user` only, in the spelling the account was created with
+          description: In the spelling the account was created with
         display_name:
           type: string
-          description: Present for `user` only, and may be empty
+          description: May be empty
         expires_at:
           type: integer
           format: int64
-          description: Present for `user` only. Unix seconds
-        scopes:
-          type: array
-          items:
-            type: string
-            enum: [admin, client]
-          description: |
-            Present for `token` only: what the operator wrote in `http.api.tokens`. There
-            is no expiry, because a configuration token lasts as long as it is in the file.
+          description: Unix seconds
       example:
         kind: user
         username: Tom

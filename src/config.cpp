@@ -333,26 +333,15 @@ bool Config::load_from_yaml(const std::string& filename) {
       else
         http_api_enable = true;
 
-      // No tokens is not an open API: a request with no token matching gets 401, so an
-      // API enabled without any is an API nobody can call. That is the safe way round.
-      YAML::Node tokens = http_api["tokens"];
-      if (tokens && tokens.IsSequence()) {
-        for (const auto& entry : tokens) {
-          ApiToken token;
-
-          if (entry["token"]) token.token = entry["token"].as<std::string>();
-
-          if (entry["scopes"] && entry["scopes"].IsSequence()) {
-            for (const auto& scope : entry["scopes"]) token.scopes.push_back(scope.as<std::string>());
-          }
-
-          if (token.token.empty()) {
-            _logger->error("Ignoring an 'http.api.tokens' entry with no token");
-            continue;
-          }
-
-          http_api_tokens.push_back(std::move(token));
-        }
+      // Configured tokens were removed on 2026-10-01: a permanent credential that can do
+      // everything, sitting in a file, is what this node no longer has. A file that still
+      // sets them is refused rather than read as if they were not there, so nobody finds out
+      // by being unable to log in. The first administrator is made on the host instead.
+      if (http_api["tokens"]) {
+        _logger->error(
+            "'http.api.tokens' is no longer supported: configured API tokens were removed. Delete it, create an administrator with "
+            "`athenasip --add-user NAME` on this host, and sign in as that user");
+        return false;
       }
 
       try {
@@ -416,10 +405,6 @@ bool Config::load_from_yaml(const std::string& filename) {
 
       if (wants_turn && turn_shared_secret.empty()) {
         _logger->warn("'http.api.ice_servers' names a TURN server with no 'http.api.turn_shared_secret', so clients get a URL they cannot authenticate to");
-      }
-
-      if (http_api_enable && http_api_tokens.empty()) {
-        _logger->warn("http.api.enable is set with no tokens: every request will be refused");
       }
     }
 
@@ -552,18 +537,6 @@ std::string Config::effective_yaml() const {
   out << YAML::Key << "session_lifetime" << YAML::Value << http_api_session_lifetime;
   out << YAML::Key << "session_idle" << YAML::Value << http_api_session_idle;
 
-  // The scopes, never the token. What an operator needs from this is whether the tokens
-  // they think they configured are the ones the node read, and how many - which the
-  // scopes answer. The value itself is the credential that administers the node, and
-  // this output ends up in issues and in terminal scrollback.
-  out << YAML::Key << "tokens" << YAML::Value << YAML::BeginSeq;
-  for (const auto& token : http_api_tokens) {
-    out << YAML::BeginMap;
-    out << YAML::Key << "token" << YAML::Value << "<redacted>";
-    out << YAML::Key << "scopes" << YAML::Value << YAML::Flow << token.scopes;
-    out << YAML::EndMap;
-  }
-  out << YAML::EndSeq;
   out << YAML::EndMap;
 
   out << YAML::Key << "files" << YAML::Value << YAML::BeginMap;

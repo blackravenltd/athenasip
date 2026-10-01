@@ -238,8 +238,8 @@ void UsersAPI::_update(RouteContext context) {
 
       // Nobody locks themselves out of the door they are standing in. Agreed with the
       // console, and the reason is not politeness: an administrator who does this to
-      // themselves by accident needs the configuration token to get back in, which is a
-      // file on a host they may not have.
+      // themselves by accident needs `athenasip --add-user` on the host to get back in, which
+      // is a shell they may not have.
       if (self_edit && user->has_role(types::roles::manage_admin_users) &&
           std::find(wanted.begin(), wanted.end(), types::roles::manage_admin_users) == wanted.end()) {
         write_error(context.response, http::status::conflict, "would_lock_out", "a user cannot take manage-admin-users away from itself");

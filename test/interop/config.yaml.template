@@ -99,11 +99,8 @@ http:
 
   api:
     enable: true
-    tokens:
-      - token: "interop-admin"
-        scopes: [admin]
-      - token: "interop-client"
-        scopes: [client]
+    # No tokens. The node creates the fixture's user as it starts (docker-compose.yml), and
+    # everything that uses this API - up.sh provisioning, the browser spec - signs in as it.
 
     # What a browser is told to use for ICE, served by GET /api/v1/client/config. Rendered
     # by up.sh: empty unless coturn is in the fixture, because a client told about a TURN

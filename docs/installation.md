@@ -98,8 +98,9 @@ Record-Route, so one that advertises the wrong one is a node whose replies go no
 `docs/configuration.md` explains every setting. The three that matter first:
 
 - `sip.public_address` - what clients reach this node on.
-- `http.api.tokens` - **change them**. The example ships obvious ones, and the admin
-  API provisions realms and accounts.
+- There are no API tokens to set. Make the first administrator with `athenasip --add-user`
+  on this host; the admin API, which provisions realms and accounts, is signed in to as
+  that user.
 - `datastore.url` and `events.url` - `memory://` and `local://` for a single node;
   `redis://` and `mqtt://` for a cluster.
 

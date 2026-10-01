@@ -44,7 +44,7 @@ fixture that needs them fails for reasons that have nothing to do with SIP.
 | TCP | 5060 | |
 | TLS | 5061 | Verify against `tls/ca/snakeca.crt` |
 | WS | 8088 | Any path. `/ws` is what most clients ask for |
-| Admin API | 8080 | Bearer `interop-admin` or `interop-client` |
+| Admin API | 8080 | Sign in as `ATHENA_INTEROP_API_USER` with `ATHENA_INTEROP_API_PASSWORD`, from `generated/fixture.env` |
 
 Accounts `1001`, `1002` and `1003` live in realm `127.0.0.1` with the password
 `athenaphone`. The realm is named for the domain a client puts in its From and To,
@@ -112,8 +112,12 @@ in its own terms. What is still undecided is the very first offer this node send
 misleads - a WebRTC endpoint on UDP, TCP or TLS. A realm can settle it:
 
 ```bash
+source test/interop/generated/fixture.env
+TOKEN=$(curl -s -X POST http://127.0.0.1:8080/api/v1/auth/login -H 'Content-Type: application/json' \
+  -d "{\"username\":\"$ATHENA_INTEROP_API_USER\",\"password\":\"$ATHENA_INTEROP_API_PASSWORD\"}" |
+  sed -n 's/.*"token":"\([0-9a-f]*\)".*/\1/p')
 curl -X PUT http://127.0.0.1:8080/api/v1/realms/<realm> \
-  -H 'Authorization: Bearer interop-admin' -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"media_profiles":"webrtc"}'
 ```
 

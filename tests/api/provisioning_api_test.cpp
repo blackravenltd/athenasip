@@ -16,6 +16,7 @@
 #include <memory>
 #include <string>
 
+#include "../helpers/signed_in_users_helper.h"
 #include "../helpers/sync_datastore_helper.h"
 #include "../mocks/logger_mock.h"
 #include "api/admin_api.h"
@@ -50,6 +51,8 @@ struct ApiFixture {
   std::shared_ptr<SyncDatastore> store;
   std::shared_ptr<api::AdminAPI> admin;
   std::shared_ptr<api::Router> router;
+  SignedInUsers signed_in;
+  std::shared_ptr<api::Sessions> sessions;
   std::shared_ptr<api::ProvisioningAPI> provisioning;
 
   ApiFixture() {
@@ -64,18 +67,17 @@ struct ApiFixture {
     store = std::make_shared<SyncDatastore>(datastore);
     store->connect();
 
-    config->http_api_tokens = {
-        Config::ApiToken{"admin-token", {"admin"}},
-        Config::ApiToken{"client-token", {"client"}},
-    };
-
     admin = std::make_shared<api::AdminAPI>(logger, "127.0.0.1", 0);
-    router = std::make_shared<api::Router>(std::make_shared<api::BearerAuth>(config->http_api_tokens));
+    auto bearer = std::make_shared<api::BearerAuth>();
+    sessions = std::make_shared<api::Sessions>(logger, datastore, admin->executor(), api::Sessions::Lifetimes{3600, 600});
+    bearer->sessions_register(sessions);
+    router = std::make_shared<api::Router>(bearer);
     provisioning = std::make_shared<api::ProvisioningAPI>(logger, datastore, admin->executor(), config, "0.0.0-test");
     provisioning->register_routes(*router);
 
     admin->middlewares.push_back(router->middleware("/api/"));
     admin->start();
+    signed_in = SignedInUsers(sessions, *store);
   }
 
   ~ApiFixture() { admin->stop(); }
@@ -90,7 +92,7 @@ struct ApiFixture {
 
     http::request<http::string_body> request{method, target, 11};
     request.set(http::field::host, "127.0.0.1");
-    if (!token.empty()) request.set(http::field::authorization, "Bearer " + token);
+    if (!token.empty()) request.set(http::field::authorization, "Bearer " + signed_in.presented(token));
     if (!body.empty()) {
       request.set(http::field::content_type, "application/json");
       request.body() = body;
@@ -475,13 +477,12 @@ TEST(ProvisioningApiTest, ClientConfigMintsAFreshCredentialEachTime) {
   // The expiry is what the username is, so each request gives a credential good from when
   // it was asked for rather than from when the node started.
   //
-  // The name after the colon is "token" for a configuration token, and is protocol-safe by
-  // construction: coturn refuses a username containing a space, which it reports as 401
+  // The name after the colon is the signed-in user's, and has to be protocol-safe: coturn refuses a username containing a space, which it reports as 401
   // "wrong username" and then 400 Bad Request - indistinguishable from a bad secret at the
   // client. An earlier version of this put our own log prose in there and no browser could
   // allocate a relay.
   const auto username = std::string(first.at("ice_servers").at(0).at("username").as_string());
-  EXPECT_EQ(username, std::to_string(first.at("ice_servers").at(0).at("expires_at").as_int64()) + ":token");
+  EXPECT_EQ(username, std::to_string(first.at("ice_servers").at(0).at("expires_at").as_int64()) + ":test-status");
   EXPECT_EQ(username.find(' '), std::string::npos);
 }
 
