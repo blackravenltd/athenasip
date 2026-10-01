@@ -285,6 +285,7 @@ TEST(DialogsTest, ADialogIsSecureOnlyWithSipsOverTls) {
 
     std::shared_ptr<MockConnection> uac_connection;
     auto uac = f.make_channel("192.0.2.10", &uac_connection, transport);
+    f.on_strand([&uac]() { uac->authenticated_as("sip:alice@example.com"); });
 
     std::shared_ptr<MockConnection> uas_connection;
     auto uas = f.make_channel("192.0.2.30", &uas_connection, transport);

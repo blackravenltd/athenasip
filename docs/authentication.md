@@ -35,6 +35,20 @@ from the password and neither can be derived from the other. The password itself
 never stored and never recoverable. The registrar challenges, the endpoint answers, and
 `Registrar` checks the response against the stored HA1.
 
+Calls are checked too, by the proxy (RFC 3261 22.3), so the node is not an open relay:
+
+| The caller's From is | Calling | What happens |
+|---|---|---|
+| in a realm this node serves | anybody | proves it: a 407 with Proxy-Authenticate, answered with Proxy-Authorization as that same subscriber, or 403 for somebody else's credentials |
+| in a realm this node serves, on a TCP, TLS or WebSocket connection that carried an authenticated REGISTER for it | anybody | let through; the connection is that subscriber's |
+| anywhere else | a realm this node serves | let through: that is receiving a call |
+| anywhere else | anywhere else | 403 |
+
+A request inside a dialog the node is on, an ACK and a CANCEL are never challenged. A UDP
+phone answers a 407 on every call, because a source address proves nothing; a browser or
+a phone on TCP that registered over the connection it calls on does not. The Digest
+arithmetic for both the registrar and the proxy is in `src/digest.h`.
+
 This is standard, it works, and it is not what the rest of this document is about.
 
 The type is still called `Account` in the code and the resource is still

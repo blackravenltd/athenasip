@@ -156,7 +156,8 @@ TEST(ProxyNatTest, AByeReachesAUdpCallerWhoseFlowWasForgottenDuringTheCall) {
   invite += "Max-Forwards: 70\r\n";
   invite += "\r\n";
 
-  f.receive(alice, invite);
+  // A phone on UDP proves who it is by answering the challenge; a source address cannot.
+  f.receive(alice, f.with_credentials(invite, "alice", "alice-ha1"));
   f.receive(f.callee, f.response_from_callee(200, "OK"));
   f.settle();
 

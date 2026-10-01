@@ -133,6 +133,12 @@ struct ProfileFixture : ProxyFixture {
 
     callee = make_channel("192.0.2.20", &callee_connection, callee_transport);
     register_binding(bob, std::make_shared<types::SIPUri>("sip:bob@192.0.2.20:5060"), callee, 3600);
+
+    // Both registered over the connections they call on, as ProxyFixture's own pair have.
+    on_strand([this]() {
+      caller->authenticated_as("sip:alice@example.com");
+      callee->authenticated_as("sip:bob@example.com");
+    });
   }
 
   static std::string with_body(std::string raw, const std::string& sdp) {

@@ -64,6 +64,44 @@
     ]]>
   </send>
 
+  <!-- RFC 3261 22.3: a subscriber proves who it is to the proxy as well as to the
+       registrar, and on UDP nothing else can prove it. The 407 is acknowledged as any
+       final non-2xx is (17.1.1.3) and the INVITE sent again with credentials. -->
+  <recv response="100" optional="true"/>
+  <recv response="407" auth="true"/>
+
+  <send>
+    <![CDATA[
+
+      ACK sip:[field3]@[field0] SIP/2.0
+      [last_Via:]
+      From: <sip:[field1]@[field0]>;tag=uac-[call_number]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: 1 ACK
+      Max-Forwards: 70
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <send retrans="500">
+    <![CDATA[
+
+      INVITE sip:[field3]@[field0] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:[field1]@[field0]>;tag=uac-[call_number]
+      To: <sip:[field3]@[field0]>
+      Call-ID: [call_id]
+      CSeq: 2 INVITE
+      Contact: <sip:[field1]@[local_ip]:[local_port];transport=[transport]>
+      [authentication]
+      Max-Forwards: 70
+      Content-Length: 0
+
+    ]]>
+  </send>
+
   <recv response="100" optional="true"/>
   <recv response="180" optional="true"/>
 
@@ -85,7 +123,7 @@
       From: <sip:[field1]@[field0]>;tag=uac-[call_number]
       [last_To:]
       Call-ID: [call_id]
-      CSeq: 1 ACK
+      CSeq: 2 ACK
       [routes]
       Contact: <sip:[field1]@[local_ip]:[local_port];transport=[transport]>
       Max-Forwards: 70
@@ -113,7 +151,7 @@
       From: <sip:[field1]@[field0]>;tag=uac-[call_number]
       [last_To:]
       Call-ID: [call_id]
-      CSeq: 2 BYE
+      CSeq: 3 BYE
       [routes]
       Max-Forwards: 70
       Content-Length: 0
