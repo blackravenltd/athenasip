@@ -100,6 +100,36 @@ types::Session make_session(const std::string& token_hash, const std::string& us
   do {                                                                                \
   } while (0)
 
+// The connection's own chatter goes through this node's logger, with a level and a scope,
+// rather than straight to the console. On the console it lands in the output of
+// `athenasip --add-user`, whose whole point is a clean answer.
+TEST(RedisDatastoreTest, TheConnectionLogsThroughTheNodesLoggerAndNotTheConsole) {
+  const auto url = redis_url();
+  if (url.empty()) GTEST_SKIP() << "no Redis: set ATHENA_TEST_REDIS_URL to run these";
+
+  auto logger = std::make_shared<MockLogger>();
+  auto datastore = std::make_shared<SyncDatastore>(std::make_shared<RedisDatastore>(logger, std::make_shared<types::URL>(url)));
+
+  testing::internal::CaptureStderr();
+  testing::internal::CaptureStdout();
+  const bool connected = datastore->connect();
+  datastore->close();
+  const auto err = testing::internal::GetCapturedStderr();
+  const auto out = testing::internal::GetCapturedStdout();
+
+  ASSERT_TRUE(connected);
+
+  // "(Boost.Redis) " is the library's own prefix for what it prints by default.
+  EXPECT_EQ(err.find("Boost.Redis"), std::string::npos) << err;
+  EXPECT_EQ(out.find("Boost.Redis"), std::string::npos) << out;
+
+  bool heard = false;
+  for (const auto& line : logger->lines()) {
+    if (line.find("connection: ") != std::string::npos) heard = true;
+  }
+  EXPECT_TRUE(heard) << "nothing from the connection reached the node's logger";
+}
+
 TEST(RedisDatastoreTest, ConnectsAndReportsConnected) {
   REQUIRE_REDIS(datastore);
 
