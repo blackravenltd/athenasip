@@ -40,11 +40,16 @@ unsigned positive_or(const YAML::Node& node, unsigned fallback) {
 // DTLS is passive towards a browser because the browser is the one that starts the
 // handshake, and rtcp-mux is required there because a browser will not offer separate
 // RTCP (RFC 5761, and what every implementation does).
-void apply_profile(Bencode& command, Flags::Profile profile, bool source_wants_mux) {
+void apply_profile(Bencode& command, Flags::Profile profile, bool source_wants_mux, bool answering) {
   switch (profile) {
     case Flags::Profile::WebRtc:
       command.set("ICE", Bencode(std::string("force")));
-      command.set("DTLS", Bencode(std::string("passive")));
+      // Only in an offer. Towards an offerer that said actpass the engine has already
+      // chosen active and started the handshake as soon as ICE came up, which is its
+      // right as the answerer (RFC 5763 section 5). Telling it passive in the answer
+      // flips the role under a handshake in flight: the engine resets and waits, the
+      // offerer was told passive too late to start one, and nothing ever arrives.
+      if (!answering) command.set("DTLS", Bencode(std::string("passive")));
       command.set("transport-protocol", Bencode(std::string("UDP/TLS/RTP/SAVPF")));
       command.set("rtcp-mux", Bencode::list({Bencode(std::string("offer")), Bencode(std::string("require"))}));
       return;
@@ -454,7 +459,7 @@ void RtpengineMediaEngine::offer(plugins::Executor on, std::shared_ptr<Call> cal
   // through would tell the far end nothing had changed.
   command.set("replace", Bencode::list({Bencode(std::string("origin")), Bencode(std::string("session-connection")), Bencode(std::string("sdp-version"))}));
 
-  apply_profile(command, flags.target, flags.rtcp_mux);
+  apply_profile(command, flags.target, flags.rtcp_mux, false);
 
   if (!_media_address.empty()) command.set("media-address", Bencode(_media_address));
 
@@ -483,7 +488,7 @@ void RtpengineMediaEngine::answer(plugins::Executor on, std::shared_ptr<Call> ca
   command.set("sdp", Bencode(std::move(sdp)));
   command.set("replace", Bencode::list({Bencode(std::string("origin")), Bencode(std::string("session-connection")), Bencode(std::string("sdp-version"))}));
 
-  apply_profile(command, flags.target, flags.rtcp_mux);
+  apply_profile(command, flags.target, flags.rtcp_mux, true);
   if (!_media_address.empty()) command.set("media-address", Bencode(_media_address));
 
   auto self = shared_from_this();
