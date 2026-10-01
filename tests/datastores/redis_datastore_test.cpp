@@ -227,6 +227,31 @@ TEST(RedisDatastoreTest, AccountRoundTripsThroughRedis) {
   EXPECT_EQ(datastore->account_list(realm).size(), 0u);
 }
 
+// An account's media profile survives the store, and one that chose nothing comes back
+// having chosen nothing rather than whatever a default would have written for it.
+TEST(RedisDatastoreTest, AnAccountsMediaProfileRoundTrips) {
+  REQUIRE_REDIS(datastore);
+  const auto realm = "prof-" + unique_suffix() + ".example";
+
+  auto chose = make_account(4343, "sip:phone@" + realm);
+  chose->media_profile = types::MediaPolicy::Profiles::WebRtc;
+  ASSERT_TRUE(datastore->account_create(chose));
+
+  auto silent = make_account(4344, "sip:desk@" + realm);
+  ASSERT_TRUE(datastore->account_create(silent));
+
+  auto found = datastore->account_get(chose->identity);
+  ASSERT_NE(found, nullptr);
+  EXPECT_EQ(found->media_profile, types::MediaPolicy::Profiles::WebRtc);
+
+  found = datastore->account_get(silent->identity);
+  ASSERT_NE(found, nullptr);
+  EXPECT_FALSE(found->media_profile.has_value());
+
+  datastore->account_delete(chose->identity);
+  datastore->account_delete(silent->identity);
+}
+
 TEST(RedisDatastoreTest, RegistrationsAreListedFromTheLocationIndex) {
   REQUIRE_REDIS(datastore);
   const auto realm = "loc-" + unique_suffix() + ".example";

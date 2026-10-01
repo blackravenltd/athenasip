@@ -128,6 +128,9 @@ class Proxy : public TransactionUser {
     // from. An in-dialog request has none, and takes the one the call remembers.
     std::optional<types::MediaPolicy> media_policy;
 
+    // The callee's account's media profile, read where the account was in hand.
+    std::optional<types::MediaPolicy::Profiles> callee_profile;
+
     // RFC 3263 4.3: the places the current target can still be tried, when DNS listed more
     // than one and the branch in flight went to the first. A 503 or a timeout from that
     // branch is the server failing rather than the call being refused, and the same target

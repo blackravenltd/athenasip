@@ -11,6 +11,7 @@
 #include <sstream>
 #include <string>
 
+#include "realm.h"
 #include "sip_identity.h"
 
 namespace athenasip::types {
@@ -32,5 +33,11 @@ class Account {
 
   // SHA-256 (RFC 8760), empty when this account has no credential for it.
   std::string ha1_sha256;
+
+  // What this account's endpoint is, where the operator knows and nothing else can say:
+  // Asterisk's webrtc=yes. It decides the first description produced towards the leg,
+  // above the realm and the transport and below what the leg itself has said. Empty takes
+  // the realm's behaviour.
+  std::optional<MediaPolicy::Profiles> media_profile;
 };
 }  // namespace athenasip::types

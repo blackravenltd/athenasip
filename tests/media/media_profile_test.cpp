@@ -346,3 +346,51 @@ TEST(MediaProfileTest, ADelayedOfferIsAnsweredForTheEndThatOffered) {
   EXPECT_FALSE(calls.back().was_offer);
   EXPECT_EQ(calls.back().flags.target, Flags::Profile::WebRtc);
 }
+
+// Step 3 of the 2026-10-01 decision: an account can say what its endpoint is, as an
+// Asterisk endpoint's webrtc=yes does. It is for the leg nothing else can read -
+// AthenaPhone signals over TCP and its media is WebRTC - and it decides the first offer
+// towards that leg where the realm and the transport would have guessed.
+TEST(MediaProfileTest, AnAccountsProfileDecidesTheFirstOfferTowardsIt) {
+  ProfileFixture f("tcp", "udp");
+  f.bob->media_profile = types::MediaPolicy::Profiles::WebRtc;
+  ASSERT_TRUE(f.store->account_update(f.bob));
+
+  f.receive(f.caller, f.invite_with_body());
+
+  const auto calls = f.engine->calls();
+  ASSERT_FALSE(calls.empty());
+  EXPECT_EQ(calls[0].flags.target, Flags::Profile::WebRtc);
+}
+
+// And it is the operator's word about an endpoint, not the endpoint's: once the leg has
+// described itself, what it said is what it gets. An account that says plain RTP for a
+// phone that has since been replaced by a browser is answered as a browser.
+TEST(MediaProfileTest, WhatALegSaidOutranksItsAccount) {
+  ProfileFixture f("udp", "udp");
+  f.bob->media_profile = types::MediaPolicy::Profiles::PlainRtp;
+  ASSERT_TRUE(f.store->account_update(f.bob));
+
+  f.receive(f.caller, f.invite());
+  f.receive(f.callee, f.ok_with(kWebRtcOffer));
+  f.receive(f.caller, f.ack_with(kOffer));
+
+  const auto calls = f.engine->calls();
+  ASSERT_GE(calls.size(), 2u);
+  EXPECT_FALSE(calls.back().was_offer);
+  EXPECT_EQ(calls.back().flags.target, Flags::Profile::WebRtc);
+}
+
+// An account's setting takes the realm's values, transport and mirror included, so an
+// account can opt one endpoint out of a realm's rule.
+TEST(MediaProfileTest, AnAccountCanTakeItsLegOutOfTheTransportRule) {
+  ProfileFixture f("wss", "udp");
+  f.bob->media_profile = types::MediaPolicy::Profiles::Mirror;
+  ASSERT_TRUE(f.store->account_update(f.bob));
+
+  f.receive(f.caller, f.invite_with_body());
+
+  const auto calls = f.engine->calls();
+  ASSERT_FALSE(calls.empty());
+  EXPECT_EQ(calls[0].flags.target, Flags::Profile::Mirror);
+}

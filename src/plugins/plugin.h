@@ -57,7 +57,10 @@ namespace athenasip::plugins {
 // default - in place of a MediaPolicy with every field set, so a datastore stores only
 // what a realm chose. MediaEngine gains packets_relayed(), optional with a default, and a
 // query document's `legs` are named in the contract.
-inline constexpr std::uint32_t API_VERSION = 8;
+// 9 (2026-10-02): types::Account carries an optional media_profile, the operator's word
+// about what the account's endpoint is. A store that does not carry it loses the setting,
+// and the account's calls fall back to the realm's behaviour.
+inline constexpr std::uint32_t API_VERSION = 9;
 
 // The kinds AthenaSIP registers today. A kind is a plain string rather than an enum so
 // that a plugin can introduce one the core was not built knowing about.

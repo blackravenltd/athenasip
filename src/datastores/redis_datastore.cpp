@@ -563,6 +563,7 @@ void RedisDatastore::account_get(plugins::Executor on, std::shared_ptr<types::SI
       // Optional: an account imported as a bare MD5 hash has no SHA-256 credential, and
       // a missing field is that rather than a broken row.
       if (obj.if_contains("ha1_sha256")) account->ha1_sha256 = json_string(obj, "ha1_sha256");
+      if (obj.contains("media_profile")) account->media_profile = types::MediaPolicy::parse_profiles(json_string(obj, "media_profile"));
       _complete(on, handler, Answer::success(std::move(account)));
     } catch (const std::exception& ex) {
       _logger->error("account_get: " + std::string(ex.what()));
@@ -1006,6 +1007,9 @@ std::string RedisDatastore::_serialise_account(const std::shared_ptr<types::Acco
   // Only when there is one: an account imported as a bare MD5 HA1 has no SHA-256
   // credential, and writing an empty one would make it look like a hash of nothing.
   if (!account->ha1_sha256.empty()) obj["ha1_sha256"] = account->ha1_sha256;
+
+  // And only when the account chose one; absent is taking the realm's.
+  if (account->media_profile) obj["media_profile"] = types::MediaPolicy::to_string(*account->media_profile);
   obj["uri"] = account->identity->uri->to_string();
   return boost::json::serialize(obj);
 }
