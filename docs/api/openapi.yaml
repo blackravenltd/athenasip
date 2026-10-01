@@ -569,6 +569,32 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /media/reoffers:
+    get:
+      operationId: listMediaReoffers
+      tags: [media]
+      summary: Accounts that refused the media profile they were offered
+      description: |
+        When a callee answers an offer this node's engine produced with 488 Not Acceptable
+        Here, the node offers it the other profile once (WebRTC for plain RTP and back).
+        This lists each account that needed that, on this node and since it started, most
+        recent first. The node suggests and the operator decides: `suggested_media_profile`
+        is the value the account's `behaviour.media_profile` would be set to, and nothing
+        sets it.
+      responses:
+        "200":
+          description: The re-offers, most recent first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MediaReoffer"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /metrics:
     servers:
       - url: http://{host}:{port}
@@ -1347,6 +1373,31 @@ components:
         realm: example.com
         behaviour:
           media_profile: null
+
+    MediaReoffer:
+      type: object
+      required: [account, rejected, took, count, last_at, suggested_media_profile]
+      properties:
+        account:
+          type: string
+          description: The Request-URI the call was for, which is the account's address of record
+        rejected:
+          type: string
+          enum: [rtp, webrtc]
+        took:
+          type: string
+          nullable: true
+          enum: [rtp, webrtc, null]
+          description: Null when the other profile was refused as well
+        count:
+          type: integer
+        last_at:
+          type: string
+          format: date-time
+        suggested_media_profile:
+          type: string
+          nullable: true
+          enum: [rtp, webrtc, null]
 
     AccountBehaviour:
       type: object

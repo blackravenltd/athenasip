@@ -258,6 +258,40 @@ TEST(CallsApiTest, NoMediaEngineIsSaidPlainly) {
   EXPECT_FALSE(response.json().as_object().at("connected").as_bool());
 }
 
+// What the node had to re-offer, for the operator to act on: which account, what it
+// refused, what it took and so what its profile would be set to. In the setting's own
+// words, so the suggestion is a value the account API takes.
+TEST(CallsApiTest, ReoffersSayWhichAccountsNeededTheOtherProfile) {
+  CallsFixture f;
+  f.on_strand([&]() {
+    f.core->reoffers().record("sip:phone@example.com", media::Profile::PlainRtp, media::Profile::WebRtc, 1000);
+    f.core->reoffers().record("sip:phone@example.com", media::Profile::PlainRtp, media::Profile::WebRtc, 2000);
+    f.core->reoffers().record("sip:fax@example.com", media::Profile::WebRtc, std::nullopt, 1500);
+  });
+
+  const auto response = f.get("/api/v1/media/reoffers");
+  ASSERT_EQ(response.status, 200u) << response.body;
+
+  const auto json = response.json();
+  const auto& list = json.as_array();
+  ASSERT_EQ(list.size(), 2u);
+
+  const auto& phone = list[0].as_object();
+  EXPECT_EQ(phone.at("account").as_string(), "sip:phone@example.com");
+  EXPECT_EQ(phone.at("rejected").as_string(), "rtp");
+  EXPECT_EQ(phone.at("took").as_string(), "webrtc");
+  EXPECT_EQ(phone.at("count").as_int64(), 2);
+  EXPECT_EQ(phone.at("suggested_media_profile").as_string(), "webrtc");
+  EXPECT_FALSE(phone.at("last_at").as_string().empty());
+
+  // Refused both: there is nothing to suggest, and that is said rather than guessed.
+  const auto& fax = list[1].as_object();
+  EXPECT_TRUE(fax.at("took").is_null());
+  EXPECT_TRUE(fax.at("suggested_media_profile").is_null());
+
+  EXPECT_EQ(f.get("/api/v1/media/reoffers", "").status, 401u);
+}
+
 // The Prometheus text exposition format, version 0.0.4.
 TEST(CallsApiTest, MetricsAreInPrometheusTextFormat) {
   CallsFixture f;

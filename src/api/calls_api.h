@@ -36,6 +36,7 @@ class CallsAPI : public std::enable_shared_from_this<CallsAPI> {
   void _list(RouteContext context);
   void _get(RouteContext context);
   void _media(RouteContext context);
+  void _reoffers(RouteContext context);
   void _metrics(RouteContext context);
 
   // The calls given, each with its media as the engine reports it, in the order given.

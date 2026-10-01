@@ -75,6 +75,11 @@ class Proxy : public TransactionUser {
     std::shared_ptr<SIPUri> uri;
     std::shared_ptr<SIPUri> next_hop;
     std::weak_ptr<Channel> flow;
+
+    // Set on the one re-offer a 488 earns: the profile to offer this time, and the one the
+    // target refused.
+    std::optional<media::Profile> profile;
+    std::optional<media::Profile> rejected;
   };
 
   // The response context (16.7): the request as received, the server transaction it
@@ -130,6 +135,12 @@ class Proxy : public TransactionUser {
 
     // The callee's account's media profile, read where the account was in hand.
     std::optional<types::MediaPolicy::Profiles> callee_profile;
+
+    // The branch in flight's target, and the profile the engine made its offer for when
+    // nothing the callee had said decided it. A 488 to that offer is the one refusal this
+    // node can do something about.
+    Target current;
+    std::optional<media::Profile> offered;
 
     // RFC 3263 4.3: the places the current target can still be tried, when DNS listed more
     // than one and the branch in flight went to the first. A 503 or a timeout from that
@@ -222,6 +233,8 @@ class Proxy : public TransactionUser {
 
   // RFC 3261 16.7 step 6: what goes back when every branch has been tried.
   void _send_best(const std::shared_ptr<Context>& context);
+  bool _reoffer(const std::shared_ptr<Context>& context);
+  void _report_reoffer(const std::shared_ptr<Context>& context, bool took);
 
   // RFC 3261 16.10: the CANCEL for a branch already forwarded.
   void _cancel_branch(const std::shared_ptr<Context>& context);
