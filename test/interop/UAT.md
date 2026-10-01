@@ -151,34 +151,196 @@ client has been the one saying it.
 Fill this in and keep it. It is the first row of the interop matrix.
 
 ```
-Date:
-AthenaPhone version / device / OS:
-Browser:
-Node version:                       athenasip --version
-rtpengine version:
-Transport AthenaPhone signalled on:  udp / tcp / tls
-Fixture address and ports:
+Date:                                2026-09-30
+AthenaPhone version / device / OS:   0.2.1, develop a8eb8fa, debug build served by Metro
+                                     Blackview A85 (A85_EEA), Android 12, SDK 31
+Browser:                             Chrome on macOS, softphone.html from athenasip-admin
+Node version:                        0.7.0
+rtpengine version:                   9.4.0.0+0~mr9.4.0.0 git-master-1393dbfc
+Transport AthenaPhone signalled on:  tcp
+Fixture address and ports:           10.35.1.132 - udp/tcp 15060, tls 15061, ws 18088,
+                                     api 18080, rtpengine 22000-22100, coturn 3478
+                                     (moved off the defaults: athenaphone-asterisk held
+                                     5060, 5061, 8088 and 8089)
 
-Registration:            ok / failed -
-Browser calls phone:     connected / ringing only / failed -
-  audio browser -> phone: yes / no
-  audio phone -> browser: yes / no
-Phone calls browser:     connected / ringing only / failed -
-  audio phone -> browser: yes / no
-  audio browser -> phone: yes / no
-Hang up from browser:    both ends cleared / -
-Hang up from phone:      both ends cleared / -
+Registration:            ok - digest MD5, four messages, Service-Route returned
+Browser calls phone:     connected (the first attempt was refused 488, see below)
+  audio browser -> phone: yes - on the fixed build; no on every attempt before it
+  audio phone -> browser: yes - "full sound with feedback"
+Phone calls browser:     connected - AthenaPhone's first outbound INVITE to a non-Asterisk
+  audio phone -> browser: yes
+  audio browser -> phone: yes - on the last call; one earlier call was heard one way only
+Hang up from browser:    both ends cleared
+Hang up from phone:      both ends cleared
 
-rtpengine counters (media-stats.py, during each call):
+Heard, both ways, both directions, on the build carrying the fix below. Before the fix
+every call was silent, and this record keeps the silent attempts because they are what
+found the bug.
+
+rtpengine counters (from the engine's own Final packet stats):
+
+  browser calls phone, attempt 2      m7ou3bnvqde6tekveghs
+    phone    22032 <> 10.35.1.164:49537  opus/48000/2  1427 p, 84790 b, 0 e
+    browser  22050 <> 10.35.1.132:54121  unknown          4 p,   336 b, 0 e, SSRC 0
+
+  browser calls phone, attempt 3      m7ou3pmq5fgtn69flit7
+    phone    22088 <> 10.35.1.164:39878  opus/48000/2   611 p, 38578 b, 0 e
+    browser  22000 <> 10.35.1.132:62585  unknown          4 p,   336 b, 0 e, SSRC 0
+
+The browser leg is byte-identical across two independent attempts. A third attempt with
+the browser forced through coturn (relay=1) failed the same way, and a fourth - the phone
+calling the browser - also carried nothing.
+
+  on the fixed build
+    browser calls phone   gd54fha7e9drf4jhl9ao
+      browser  22042 <> 10.35.1.132:56667  2608 p, 174461 b, 0 e
+      phone    22028 <> 10.35.1.164:55324  2584 p, 228435 b, 0 e
+    phone calls browser   1umi2v4ip2jq4i2dh8ve  (live, mid-call)
+      browser  22076 <> 10.35.1.132:55082  2310 p  AEAD_AES_256_GCM  DTLS fingerprint verified
+      phone    22090 <> 10.35.1.164:39692  2292 p  AES_CM_128_HMAC_SHA1_80  DTLS fingerprint verified
 
 SDP the browser offered / was answered:
 
+  offered   m=audio 61974 UDP/TLS/RTP/SAVPF 111 63 9 0 8 13 110 126, a=setup:actpass
+  answered  m=audio 22050 UDP/TLS/RTP/SAVPF ..., c=IN IP4 10.35.1.132, a=setup:passive,
+            a=rtcp-mux, sha-256 fingerprint, a=candidate:... 10.35.1.132 22050 typ host
+
 SDP AthenaPhone offered / was answered:
+
+  answered  m=audio 49537 UDP/TLS/RTP/SAVPF 111 63 9 0 8 13 110 126
+            c=IN IP4 10.35.1.164, a=setup:active, a=rtcp-mux, sha-256 fingerprint
+            host candidates only - 10.35.1.164:49537, :43142, and a global IPv6
+  offered   step 3, roles reversed; captured by AthenaPhone's SipTrace
 
 SDP this node produced for each (from the node's log):
 
+  toward the phone, FIRST attempt - THE BUG
+    m=audio 22000 RTP/AVP 111 63 9 0 8 13 110 126
+    c=IN IP4 10.35.1.132
+    no a=fingerprint, no a=setup, no a=ice-ufrag, no a=ice-pwd, no a=rtcp-mux
+
+  toward the phone, after the fix (as AthenaPhone's trace received it)
+    m=audio 22032 UDP/TLS/RTP/SAVPF 111 63 9 0 8 13 110 126
+    c=IN IP4 10.35.1.132, a=setup:actpass, a=rtcp-mux, sha-256 fingerprint,
+    a=ice-ufrag / a=ice-pwd, a=candidate:... 10.35.1.132 22032 typ host
+
 Anything the node logged that looked wrong:
+
+  [core] SRTP output wanted, but no crypto suite was negotiated
+  [ice] Created candidate pair ... between 172.32.0.30 and 192.168.65.1:61675, type prflx
+
+  The second line is the whole finding. 192.168.65.1 is Docker Desktop's gateway, and it
+  appeared on the browser's leg in every attempt.
 ```
+
+### What this established
+
+A pass, on the second build of the evening. The first build was silent on every call,
+and finding out why took the whole session. What the run established, none of which any
+automated layer covers:
+
+- AthenaPhone registers against AthenaSIP over TCP with digest auth. Its first
+  conversation with anything other than its own Asterisk fixture.
+- **Inbound INVITE to a registered AthenaPhone works.** This path had never been
+  exercised at all. The node routed down the flow and never consulted the Contact.
+- CallKeep presents, rings and answers an inbound call on real hardware.
+- The phone negotiates DTLS-SRTP and sends real opus that rtpengine decrypts with zero
+  errors - 1427 packets on one call, 611 on another.
+- AthenaPhone places an outbound INVITE to this node and the browser answers it.
+- Two-way audio, heard by a person, in both call directions, with a BYE from each end.
+
+### Why there was no audio, and the fix
+
+The browser's leg never completed DTLS. ICE reached `connected`, `connectionState` stayed
+at `connecting`, and the engine counted 4 packets and 336 bytes on that leg in every
+attempt - the caller's leg, whichever end the caller was.
+
+The cause was this node, in `src/media/rtpengine_media_engine.cpp`: the WebRTC profile
+put `DTLS=passive` on every command, the answer included. rtpengine, as the answerer
+towards an offerer that said `a=setup:actpass`, chooses active and starts the handshake
+the moment ICE comes up - which is seconds before any 200 OK exists when the callee is a
+phone somebody has to pick up. From the engine's own log of one call:
+
+```
+794.741  offer received
+794.746  Creating active DTLS connection context     engine goes active toward the caller
+794.753  Sending DTLS packet                         ClientHello, 12 ms in
+796.000  Sending DTLS packet                         retransmit
+796.894  answer received  (our command: DTLS=passive)
+796.894  Resetting DTLS connection context
+796.894  Creating passive DTLS connection context    role flipped under a handshake in flight
+         caller sends STUN only, never a ClientHello, for the rest of the call
+```
+
+The answer's `DTLS=passive` reset an active handshake, the SDP then told the caller the
+engine was passive, and neither end started again. Any real ring time exposed it; the
+automated browser run never saw it because it answers within milliseconds and wins the
+race. RFC 5763 section 5 is the rule: the answerer chooses the role, and this node was
+overriding a choice the engine had already acted on. The fix is to say `DTLS=passive`
+only in the offer, and `tests/media/rtpengine_media_engine_test.cpp` now holds the test,
+written from the RFC and watched failing first.
+
+Two wrong explanations were written into this section before the right one, and both are
+worth keeping as a warning:
+
+- **Docker Desktop's NAT.** Real - the engine sees a browser on this Mac arrive from the
+  gateway `192.168.65.1` as a peer-reflexive candidate - and irrelevant, because the same
+  NAT is in the path when the call works. Written down on four reproductions of the
+  failure and no positive control; `browser.sh --direct` passed the moment it was run.
+- **Unlike legs.** Ruled out by reproducing the stall browser-to-browser with a
+  9-second ring. The control that had "ruled out" ring delay earlier had read the
+  callee's state, and the broken leg was the caller's.
+
+AthenaPhone's observation that the stall followed the offerer, not the browser, is what
+turned it around. What settled it was the engine's own per-leg DTLS timeline at
+`--log-level=7`, read next to the commands this node sent it.
+
+One caveat on the last phone-to-browser call, for whoever runs this next: the phone's
+inbound audio energy over 74 s was about a fortieth of its own microphone's, with the
+level mostly near zero and one burst. Tom reported hearing both ways; the number says the
+browser's send was quiet for most of the call. The browser's capture was verified live on
+the USB device before that call, so this reads as nobody at the microphone rather than a
+fault, but a repeat with somebody speaking into it continuously would close it.
+
+### Defects this found
+
+Ours:
+
+- **The realm's media profile offered a WebRTC-only client plain RTP/AVP.** `FromTransport`
+  reads ws and wss as WebRTC and everything else as plain RTP, so AthenaPhone signalling
+  over TCP was classified as a desk phone and rtpengine was told to bridge the browser's
+  media down. The phone refused with 488, correctly. Worked around for this run with
+  `PUT /api/v1/realms/{realm} {"media_profiles":"webrtc"}`.
+- **The fix for that is not the setting, and is not decided.** AthenaPhone's registration
+  carried `+sip.ice` in its Contact (RFC 5768), and this record first said that profiling a
+  leg from that tag would have offered SAVPF with nothing configured. It would, and it
+  would do the same to every PJSIP softphone with ICE switched on, which sends the tag by
+  default and wants plain RTP/AVP. The tag means ICE; nothing a client registers with says
+  DTLS-SRTP. What to offer a callee that has not yet described itself is decision 3 in
+  `TODO/ACTIVE.md`.
+
+AthenaPhone's, recorded here because this run is what surfaced them:
+
+- `verboseSipLogging` was wired to nothing - the SIP trace this record depends on did not
+  exist when the evening started. Written and fixed during the run.
+- Contact advertises `<host>.invalid;transport=ws` on non-WebSocket transports. Masked by
+  our flow routing while the connection holds, unroutable the moment it drops. Not fixed.
+- A SELF_MANAGED ConnectionService never rings on Android; the call was presented silently
+  and one attempt timed out unanswered because of it. Fixed during the run, along with a
+  missing `stopRingtone` that the fix would otherwise have exposed.
+- It does not send `rport` despite its own documentation saying it does.
+- Every account defaults to `stun:stun.l.google.com:19302`, so its outbound INVITE carried
+  two `typ srflx` candidates and a `c=` line of a public address - for a call that never
+  left the subnet. Two things follow for us: a real AthenaPhone will disclose its public
+  address to this node by default and contact a third party to learn it, and its INVITE was
+  2340 bytes, which is past the 1300-byte threshold its own UDP transport warns at. Expect
+  large REGISTERs and INVITEs from it, and expect fragmentation if it is ever tested on UDP.
+
+Environmental, and worth keeping:
+
+- `adb reverse tcp:8081 tcp:8081` is required for a wireless debugging session. Without it
+  RN 0.87 bridgeless kills the process rather than showing the red screen, which looks
+  exactly like a native crash on launch.
 
 ## If it fails
 
