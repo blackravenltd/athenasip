@@ -168,7 +168,24 @@ void RedisDatastore::connect(plugins::Executor on, plugins::StatusHandler handle
 
   try {
     _work_guard = std::make_unique<boost::asio::executor_work_guard<boost::asio::io_context::executor_type>>(_io_context.get_executor());
-    _connection = std::make_shared<boost::redis::connection>(_io_context.get_executor());
+    // The library's chatter goes through this node's logger rather than its own, which
+    // writes to stderr unscoped and at no level - and into the output of
+    // `athenasip --add-user`, whose whole point is a clean answer. Its info is connection
+    // lifecycle, which is this node's debug; anything it calls a warning or worse keeps
+    // that weight here. The logger is held by value because the library calls it from
+    // the IO thread, possibly after this object has begun to close.
+    using Level = boost::redis::logger::level;
+
+    auto logger = _logger;
+    boost::redis::logger forward(Level::debug, [logger](Level level, std::string_view message) {
+      const auto line = "connection: " + std::string(message);
+
+      if (level <= Level::err) return logger->error(line);
+      if (level == Level::warning) return logger->warn(line);
+      logger->debug(line);
+    });
+
+    _connection = std::make_shared<boost::redis::connection>(_io_context.get_executor(), std::move(forward));
 
     auto cfg = _make_config();
     _connection->async_run(cfg, boost::asio::consign(boost::asio::detached, _connection));
