@@ -456,7 +456,8 @@ behaviour:
   qualify_interval: 0
 ```
 
-Where the standards leave a choice, this section makes it. Leave it out and the node
+[Behaviour](behaviour.md) is the whole of it, with how to set it to match the server you
+are moving from. Where the standards leave a choice, this section makes it. Leave it out and the node
 behaves as the standards say, with one deliberate deviation: it anchors media when an
 engine is configured, which is what most servers in front of rtpengine do and what a
 call through NAT needs.

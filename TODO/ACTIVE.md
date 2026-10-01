@@ -360,10 +360,6 @@ Two things it found are this milestone's next work, in this order.
          admin session.
       5. is in: `behaviour.qualify_interval`, off by default, and `GET /api/v1/qualify`.
          What is left of this item is the caller's account for a delayed offer (step 3).
-- [ ] **Document the behaviour profiles for an operator.** Tom asked for it explicitly: a
-      page of its own, with examples, and "how to configure like Asterisk / Kamailio /
-      OpenSIPS / FreeSWITCH" for each setting, showing what each server does by default
-      and the AthenaSIP values that reproduce it. It ships with the feature, not after it.
 - [ ] **Ring the automated browser call.** `browser.sh` answers within milliseconds and
       so never rang long enough to hit the DTLS-role bug the live call found; a deliberate
       delay of a few seconds before the callee answers would have caught it. A knob on the

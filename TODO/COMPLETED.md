@@ -2309,3 +2309,11 @@ LAN is answered 403.
       client's own word on its media, and the proxy ranks it with what a leg says in a
       call: above the account, the realm and the transport. `GET /api/v1/qualify` lists
       the probed clients per node.
+
+### The behaviour section documented for an operator (2026-10-02)
+
+- [x] **`docs/behaviour.md`**, which Tom asked for: the three levels, each setting, the
+      precedence a leg's profile is decided by, the 488 re-offer and the qualify probe,
+      and "configure it like" a plain proxy, Kamailio/OpenSIPS with rtpengine, Asterisk
+      and FreeSWITCH, with the defaults each starts from. Linked from the README and
+      `docs/configuration.md`.

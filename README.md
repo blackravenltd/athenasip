@@ -57,6 +57,7 @@ claim the shipped configuration does not support.
 * [Installation](docs/installation.md)
 * [Compiling](docs/compiling.md)
 * [Configuration](docs/configuration.md)
+* [Behaviour](docs/behaviour.md) - the choices SIP servers differ on, and how to make AthenaSIP behave like Asterisk, Kamailio, OpenSIPS or FreeSWITCH
 * [Architecture](docs/architecture.md) - the shape, and why it is that shape
 * [Design](docs/design.md) - the transport layering
 * [Writing a plugin](docs/plugins.md)
