@@ -358,9 +358,8 @@ Two things it found are this milestone's next work, in this order.
       4. is in: one re-offer of the other profile on a 488, and
          `GET /api/v1/media/reoffers` for the operator. The console's side is with the
          admin session.
-      5. OPTIONS to registered clients (Asterisk `qualify`, Kamailio nathelper), reading the
-         SDP an OPTIONS 200 may carry (RFC 3261 11.2) as what the client says it supports.
-         The same ping keeps NAT mappings open.
+      5. is in: `behaviour.qualify_interval`, off by default, and `GET /api/v1/qualify`.
+         What is left of this item is the caller's account for a delayed offer (step 3).
 - [ ] **Document the behaviour profiles for an operator.** Tom asked for it explicitly: a
       page of its own, with examples, and "how to configure like Asterisk / Kamailio /
       OpenSIPS / FreeSWITCH" for each setting, showing what each server does by default

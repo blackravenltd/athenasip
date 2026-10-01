@@ -2295,3 +2295,17 @@ LAN is answered 403.
 - [x] **`GET /api/v1/media/reoffers`** (`media::Reoffers`, per node, bounded) lists each
       account that needed it, what it refused, what it took, and the
       `suggested_media_profile` that would save it the round trip. Nothing sets it.
+
+### Registered clients qualified with OPTIONS (2026-10-02)
+
+- [x] **Step 5 of the 2026-10-01 decision.** `behaviour.qualify_interval`, server-wide and
+      per realm, is the seconds between OPTIONS to each registered client (Asterisk's
+      qualify, Kamailio's nathelper ping); 0, the shipped default, sends none, since RFC
+      3261 does not ask for it. `Qualifier` probes down the flow the client registered on,
+      once at registration and then on the interval, in one conversation per binding
+      (same Call-ID, CSeq counting up), and stops when the binding is removed, expires or
+      its flow closes. Any final answer counts as there; silence is counted and the
+      probing goes on. A 200 carrying a session description (RFC 3261 11.2) is the
+      client's own word on its media, and the proxy ranks it with what a leg says in a
+      call: above the account, the realm and the transport. `GET /api/v1/qualify` lists
+      the probed clients per node.
