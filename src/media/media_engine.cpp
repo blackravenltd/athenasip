@@ -57,6 +57,11 @@ Flags Flags::from_sdp(const std::string& sdp_text) {
     // RFC 3711 and RFC 5764: SAVP is SRTP and SAVPF is SRTP with feedback, whichever way
     // the keys were agreed. The profile is the statement, not the attributes under it.
     if (media.description.proto.find("SAVP") != std::string::npos) flags.srtp = true;
+
+    // RFC 5764 section 8 and RFC 7850: UDP/TLS/RTP/SAVP(F) and TCP/DTLS/RTP/SAVPF are
+    // DTLS-SRTP by name, so the m-line says DTLS whether or not a fingerprint has been
+    // written yet - a capability description in an OPTIONS 200 has no session to have one.
+    if (media.description.proto.find("TLS/RTP/SAVP") != std::string::npos) flags.dtls = true;
   }
 
   return flags;
