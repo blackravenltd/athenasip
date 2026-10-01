@@ -89,7 +89,7 @@ build directories before believing a green run.
 
 ## The sipp harness
 
-Eight scenarios against one node in Docker, driven by real sipp clients.
+Ten scenarios against one node in Docker, driven by real sipp clients.
 
 ```bash
 test/e2e/run.sh                 # the in-process relay on the media path
@@ -97,7 +97,7 @@ test/e2e/run.sh --rtpengine     # the same, with a real rtpengine
 test/e2e/run.sh register        # only scenarios whose name contains "register"
 ```
 
-The rtpengine run adds a ninth check the builtin run cannot make: it reads the engine's
+The rtpengine run adds an eleventh check the builtin run cannot make: it reads the engine's
 counters afterwards and fails when nothing was relayed. A declined description travels
 on untouched and the two endpoints reach each other directly, which looks exactly like
 success from outside.
