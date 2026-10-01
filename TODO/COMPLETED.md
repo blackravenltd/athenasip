@@ -2207,3 +2207,33 @@ LAN is answered 403.
       give it too. When every hop fails the caller gets a 500, not the 503 (RFC 3261 16.7).
 
 870 tests.
+
+### Live calls, the media engine and /metrics on the admin API; a relay that waited (2026-10-01)
+
+- [x] **`GET /api/v1/calls`, `/api/v1/calls/{call}`, `/api/v1/media`, `/metrics`**
+      (`src/api/calls_api.cpp`), shaped with the admin console session before they were
+      written. A call is its id, state, times and participants, and the media its engine
+      reports: per end per stream, cumulative, `packets_in`/`bytes_in` from the end and
+      `packets_out`/`bytes_out` to it, so one-way audio shows as one direction standing
+      still. A direction the engine does not report is absent, not zero; rtpengine's query
+      documents only what each end sent. `participant` is null, because a relay knows an end
+      by its source address and behind a NAT that is not one anybody described. A Call-ID
+      holding `/` routes as one segment. `/metrics` is Prometheus text: calls, dialogs,
+      channels by transport, transactions, and media packets relayed when the engine can
+      count. Everything is read from Core's strand by snapshot and answered on the API's
+      executor. `docs/api/openapi.yaml` describes all four, and a new test parses it and
+      checks no operationId is used twice.
+- [x] **The builtin relay counts** what arrives from and goes to each end, and the relay
+      keeps a whole-life total; `MediaEngine::packets_relayed` reports it, optional in the
+      contract. The rtpengine driver reads each stream's `stats` into the same shape.
+- [x] **The harness now asserts the builtin relay carried media**, from `/metrics` before
+      and after the media scenario - the check only the rtpengine run could make before.
+- [x] **And that check failed at once, because it had not.** The builtin relay learned each
+      end from the first packet it sent and forwarded nothing until both had, so a leg that
+      only listens - the harness's echoing callee, a muted phone with silence suppression,
+      an IVR, a recorder - got no media at all, and the media scenario had been passing on
+      a call that carried nothing. Each end now starts at the address its description gave
+      (RFC 8866 5.7, 5.14) and moves to where its packets come from once heard (symmetric
+      latching, for NAT); once two ends are heard, an end that was only ever described is
+      dropped. Unit tests for the listen-only leg and for following an end behind a NAT
+      were watched failing first.

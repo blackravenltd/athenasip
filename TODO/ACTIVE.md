@@ -116,6 +116,14 @@ session that has lost its context needs to see them first.
    it should be settled before `corvus-fi-1` sees traffic it did not invite. Not scheduled
    into any milestone, which is the thing to fix.
 
+7. **What a `client` configuration token may read.** The `client` scope maps to
+   `view-cluster-status`, so a token meant for a SIP client fetching its own configuration
+   can also list every registration and, since 2026-10-01, every live call - who is calling
+   whom. Both use the role on purpose (status, not provisioning), and the console reads
+   them as a person with that role. The question is whether a client token should: a
+   narrower role for `/client/config` alone would close it, at the cost of a role and a
+   change to what existing tokens can do.
+
 One more, smaller, and for the two sessions rather than for a milestone: the admin console
 session's half of the browser relay phase is built and on disk in `../athenasip-admin` but
 uncommitted, waiting on a word from Tom. Nothing here depends on it.
@@ -388,12 +396,6 @@ media assertion.**
 - [ ] A harness scenario for a trunk, once a trunk is something the node can be
       configured with: an authenticated subscriber calling a number that leaves by it, and
       a call arriving from it. Today an off-node call goes wherever its Request-URI says.
-- [ ] A media assertion for the builtin relay to match the one rtpengine's counters
-      give. The rtpengine run fails when nothing was relayed; the builtin run cannot
-      tell, because the relay keeps no counters a harness can read and a declined
-      description looks exactly like a relayed one from outside. The engine's `query`
-      already reports idle time, so the admin API's live-calls page in M5 is where this
-      gets its answer.
 - [ ] Record which rtpengine instance owns a call in the datastore so any node can
       release it; support a pool of engines with health checks. The driver is proven
       against rtpengine 9.4.0, so this is the cluster's question and not the
@@ -535,11 +537,11 @@ configuration search path, the heartbeat and its will, SPA mode as a choice, the
 `corvus-fi-1`, both datastores holding users and sessions, the whole of admin
 authentication from session issue to the OpenAPI document, and the one-command stack.
 
-- [ ] Admin API, part 2, the live registries: `/api/v1/calls` (live and history,
-      hangup), `/api/v1/media` (engines, health), `/api/v1/events` (SSE stream bridging
-      `nodes/#`, `account/#`, `calls/#`). These read Core's own state and need
-      `call_on_strand`, which nothing in provisioning does. `/api/v1/registrations` and
-      `/api/v1/nodes` are done.
+- [ ] Admin API, part 2, what is left of it. `/api/v1/calls`, `/api/v1/calls/{call}`,
+      `/api/v1/media` and `/metrics` landed on 2026-10-01. Left: hanging up a call
+      (`DELETE /api/v1/calls/{call}`), which needs the node to send BYEs itself and so waits
+      for the local UA in M6; call history, which is M4's CDRs; and `/api/v1/events`, an SSE
+      stream bridging `nodes/#`, `account/#` and `calls/#`.
 - [ ] athenasip-admin: replace the empty `src/lib/API.js` with a client generated from
       the OpenAPI document; pages for realms, accounts, registrations, live calls,
       nodes, media engines, and the JsSIP test phone pointed at the server's own WSS.
@@ -560,7 +562,7 @@ authentication from session issue to the OpenAPI document, and the one-command s
       `athenasip plugins list` shows what loaded and why anything did not.
 - [ ] Packaging: Docker image, Debian package, Homebrew formula. In-tree plugins ship
       compiled in; the packages also carry the SDK headers.
-- [ ] Observability: structured log option, Prometheus `/metrics` on the admin port.
+- [ ] Observability: a structured log option. Prometheus `/metrics` landed on 2026-10-01.
 - [ ] Pipelining in `RedisDatastore`: the listing operations walk their index one key at
       a time because each step starts the next from its own completion. Correct, and
       slower than one MGET would be. Worth doing when a node has enough bindings for it
