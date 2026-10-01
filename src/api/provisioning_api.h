@@ -7,6 +7,7 @@
 #pragma once
 
 #include <boost/json.hpp>
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <string>
@@ -14,6 +15,7 @@
 #include "../config.h"
 #include "../datastores/datastore.h"
 #include "../loggers/logger.h"
+#include "../node_directory.h"
 #include "../types/account.h"
 #include "../types/location.h"
 #include "../types/realm.h"
@@ -36,6 +38,13 @@ class ProvisioningAPI : public std::enable_shared_from_this<ProvisioningAPI> {
   // Everything under /api/v1. The scope each route needs is named here and nowhere
   // else.
   void register_routes(Router& router);
+
+  // The other nodes, as they describe themselves on the event bus, and how often each says
+  // so. Without it the node list is this node alone, which is what a single node is.
+  void nodes_register(std::shared_ptr<NodeDirectory> nodes, std::chrono::seconds heartbeat) {
+    _nodes = std::move(nodes);
+    _node_heartbeat = heartbeat;
+  }
 
  private:
   // Realms
@@ -87,6 +96,8 @@ class ProvisioningAPI : public std::enable_shared_from_this<ProvisioningAPI> {
   plugins::Executor _executor;
   std::shared_ptr<Config> _config;
   std::string _version;
+  std::shared_ptr<NodeDirectory> _nodes;
+  std::chrono::seconds _node_heartbeat{30};
 };
 
 }  // namespace athenasip::api

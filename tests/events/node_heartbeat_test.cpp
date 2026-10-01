@@ -26,6 +26,10 @@ struct HeartbeatFixture : CoreFixture {
   explicit HeartbeatFixture(std::uint32_t interval_seconds) {
     config->sip_node_id = "test-node";
     config->events_status_interval = interval_seconds;
+    config->udp_enable = true;
+    config->udp_address = "0.0.0.0";
+    config->udp_port = 5060;
+    config->sip_public_address = "203.0.113.5";
 
     core->events = bus_record;
     core->version_set("9.9.9");
@@ -149,4 +153,21 @@ TEST(NodeHeartbeatTest, AWillSetAfterConnectingIsRefusedRatherThanSilentlyLost) 
   f.bus_record->will_set("nodes/somewhere/else", "{}");
 
   EXPECT_EQ(f.bus_record->will()->first, before->first) << "a bus that is already connected cannot take a new will";
+}
+
+// Where the node listens is in what it says, so that every node hearing it can tell a
+// client where else to go (the 2026-09-21 decision). The advertised address, as the
+// node list gives it: a client cannot dial a wildcard.
+TEST(NodeHeartbeatTest, TheStatusSaysWhereTheNodeListens) {
+  HeartbeatFixture f(30);
+
+  const auto status = f.latest_status();
+  ASSERT_TRUE(status.contains("transports")) << boost::json::serialize(status);
+
+  const auto& transports = status.at("transports").as_array();
+  ASSERT_FALSE(transports.empty());
+  for (const auto& transport : transports) {
+    EXPECT_FALSE(transport.at("uri").as_string().empty());
+    EXPECT_NE(transport.at("address").as_string(), "0.0.0.0");
+  }
 }

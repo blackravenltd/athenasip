@@ -597,4 +597,27 @@ std::string Config::effective_yaml() const {
   return std::string(out.c_str());
 }
 
+std::string Config::AdvertisedTransport::uri() const {
+  return std::string(secure ? "sips:" : "sip:") + address + ":" + std::to_string(port) + ";transport=" + transport;
+}
+
+// sip.public_address when it is set, because a node bound to 0.0.0.0 knows every address it
+// answers on and none that a client should use. Falling back to the bind address is right on
+// a single-homed host and honest everywhere else: what comes out is what the node was told,
+// and an operator who sees 0.0.0.0 knows why a client could not use it.
+std::vector<Config::AdvertisedTransport> Config::advertised_transports() const {
+  std::vector<AdvertisedTransport> out;
+
+  const auto add = [this, &out](const std::string& transport, const std::string& bind_address, std::uint16_t port, bool secure) {
+    out.push_back(AdvertisedTransport{transport, sip_public_address.empty() ? bind_address : sip_public_address, port, secure});
+  };
+
+  if (udp_enable) add("udp", udp_address, udp_port, false);
+  if (tcp_enable) add("tcp", tcp_address, tcp_port, false);
+  if (tls_enable) add("tls", tls_address, tls_port, true);
+  if (websocket_enable) add(websocket_tls ? "wss" : "ws", websocket_address, websocket_port, websocket_tls);
+
+  return out;
+}
+
 }  // namespace athenasip

@@ -23,6 +23,7 @@
 #include "api/router.h"
 #include "config.h"
 #include "datastores/memory_datastore.h"
+#include "node_directory.h"
 #include "types/url.h"
 
 using namespace athenasip;
@@ -515,6 +516,39 @@ TEST(ProvisioningApiTest, TheNodeListDescribesThisNode) {
 
   // sip.public_address, not the wildcard it is bound to: a client cannot dial 0.0.0.0.
   EXPECT_EQ(transport.at("address").as_string(), "203.0.113.5");
+}
+
+// And the other nodes, from what each has said on the event bus: where they listen, what
+// they said of themselves, and whether that is current. A client reading this from any
+// node gets the same cluster.
+TEST(ProvisioningApiTest, TheNodeListIncludesWhatTheOtherNodesSaid) {
+  ApiFixture f;
+  auto directory = std::make_shared<NodeDirectory>();
+  f.provisioning->nodes_register(directory, std::chrono::seconds(30));
+
+  directory->observe(
+      "nodes/node-b/status",
+      R"({"status":"ok","node":"node-b","version":"1.2.3","at":"2026-10-02T10:00:00Z","transports":[{"transport":"tls","address":"198.51.100.7","port":5061,"uri":"sips:198.51.100.7:5061;transport=tls"}]})");
+  directory->observe("nodes/test-node/status", R"({"status":"ok","node":"test-node","version":"0.0.0-test","transports":[]})");
+
+  auto response = f.get("/api/v1/nodes", "client-token");
+  ASSERT_EQ(response.status, 200u);
+
+  const auto body = response.json();
+  const auto& nodes = body.as_array();
+  ASSERT_EQ(nodes.size(), 2u) << "this node once, from its own config, and node-b";
+
+  EXPECT_EQ(nodes[0].at("id").as_string(), "test-node");
+  EXPECT_TRUE(nodes[0].at("self").as_bool());
+  EXPECT_EQ(nodes[0].at("status").as_string(), "ok");
+
+  const auto& other = nodes[1];
+  EXPECT_EQ(other.at("id").as_string(), "node-b");
+  EXPECT_FALSE(other.at("self").as_bool());
+  EXPECT_EQ(other.at("status").as_string(), "ok");
+  EXPECT_FALSE(other.at("stale").as_bool());
+  EXPECT_EQ(other.at("version").as_string(), "1.2.3");
+  EXPECT_EQ(other.at("transports").as_array()[0].at("uri").as_string(), "sips:198.51.100.7:5061;transport=tls");
 }
 
 TEST(ProvisioningApiTest, AnUnknownEndpointIs404AndAWrongMethodIs405) {

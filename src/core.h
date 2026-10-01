@@ -34,6 +34,7 @@
 #include "loggers/logger_scoped.h"
 #include "media/media_engine.h"
 #include "media/reoffers.h"
+#include "node_directory.h"
 #include "plugins/plugin.h"
 #include "rtp/rtp_relay_set.h"
 #include "servers/server.h"
@@ -286,7 +287,10 @@ class Core : public std::enable_shared_from_this<Core> {
   // would otherwise own this is built. Setting it afterwards is silently too late,
   // which is exactly the bug this shape exists to make impossible.
   static std::string node_status_json(const std::string& status, const std::string& node_id, const std::string& version, const std::string& datastore,
-                                      std::int64_t uptime);
+                                      std::int64_t uptime, const std::vector<Config::AdvertisedTransport>& transports = {});
+
+  // Every node's status as heard on the bus, this one's included, from node_status_start.
+  std::shared_ptr<NodeDirectory> nodes() const { return _nodes; }
 
   // The last thing a node says on the way out, so the retained message does not claim
   // for ever that a node which stopped cleanly is still up.
@@ -352,6 +356,7 @@ class Core : public std::enable_shared_from_this<Core> {
   std::shared_ptr<Timer> _flow_sweep_timer;
 
   std::shared_ptr<Timer> _node_status_timer;
+  std::shared_ptr<NodeDirectory> _nodes = std::make_shared<NodeDirectory>();
   std::string _version;
   std::time_t _started_at = 0;
 

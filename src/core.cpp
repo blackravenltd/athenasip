@@ -852,6 +852,19 @@ void Core::media_register(std::shared_ptr<media::MediaEngine> engine) {
 // never gets to speak again.
 void Core::node_status_start() {
   _started_at = std::time(nullptr);
+
+  // Every node's status, so that this one knows the cluster. Retained, so a node that
+  // starts late hears the others at once rather than an interval later.
+  std::weak_ptr<NodeDirectory> weak_nodes = _nodes;
+  events->subscribe(
+      _strand, "nodes/+/status",
+      [weak_nodes](std::string topic, std::string message) {
+        if (auto nodes = weak_nodes.lock()) nodes->observe(topic, message);
+      },
+      [this, self = shared_from_this()](plugins::Result<std::shared_ptr<events::Subscription>> subscribed) {
+        if (!subscribed.ok) _logger->warn("Cannot listen for the other nodes - " + subscribed.error);
+      });
+
   _node_status_publish();
 }
 
@@ -865,7 +878,7 @@ void Core::node_status_stop() {
 }
 
 std::string Core::node_status_json(const std::string& status, const std::string& node_id, const std::string& version, const std::string& datastore,
-                                   std::int64_t uptime) {
+                                   std::int64_t uptime, const std::vector<Config::AdvertisedTransport>& transports) {
   boost::json::object report;
 
   report["status"] = status;
@@ -875,13 +888,26 @@ std::string Core::node_status_json(const std::string& status, const std::string&
   report["at"] = Util::get_zulu_time();
   report["uptime"] = uptime;
 
+  // Where it listens, which is what makes the status a directory entry and not only a
+  // heartbeat.
+  boost::json::array listening;
+  for (const auto& transport : transports) {
+    boost::json::object entry;
+    entry["transport"] = transport.transport;
+    entry["address"] = transport.address;
+    entry["port"] = transport.port;
+    entry["uri"] = transport.uri();
+    listening.push_back(std::move(entry));
+  }
+  report["transports"] = std::move(listening);
+
   return boost::json::serialize(report);
 }
 
 std::string Core::node_status_json(const std::string& status) const {
   const auto uptime = _started_at == 0 ? 0 : static_cast<std::int64_t>(std::time(nullptr) - _started_at);
 
-  return node_status_json(status, config->sip_node_id, _version, datastore ? datastore->describe() : "none", uptime);
+  return node_status_json(status, config->sip_node_id, _version, datastore ? datastore->describe() : "none", uptime, config->advertised_transports());
 }
 
 void Core::_node_status_publish() {
