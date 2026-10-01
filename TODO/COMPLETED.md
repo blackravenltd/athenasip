@@ -2237,3 +2237,22 @@ LAN is answered 403.
       latching, for NAT); once two ends are heard, an end that was only ever described is
       dropped. Unit tests for the listen-only leg and for following an end behind a NAT
       were watched failing first.
+
+### A behaviour section, server-wide and per realm (2026-10-01)
+
+- [x] **`behaviour:` in the config and on every realm**, with `media_anchor` and
+      `media_profile`. The config holds the server's default (`types::MediaPolicy`); a
+      realm's `types::Behaviour` holds only what it chose, and `Behaviour::over` gives
+      what that comes to, so changing the file changes every realm that has not chosen
+      otherwise. The admin API returns both, `behaviour` and `behaviour_effective`; null
+      in an update goes back to inheriting. The Redis driver writes only what a realm
+      chose. Plugin contract version 8.
+- [x] **The shipped default is anchor on, profile `mirror`**, the decision of
+      2026-10-01: a callee is offered what the caller offered, and anchoring is the one
+      recorded deviation from RFC 3261 16.6. Kamailio's transport rule, which was the
+      default, is now the `transport` value.
+- [x] **Nothing unreadable is guessed at.** An unknown profile is an error at startup and
+      a 400 from the API that changes nothing; it had been read as the default. The old
+      top-level `media_anchor` and `media_profiles` are a 400 saying where they went.
+- [x] `docs/configuration.md`, `config/config.example.yaml`, the OpenAPI realm schemas
+      and the interop README describe the section; the admin session has the shape.
