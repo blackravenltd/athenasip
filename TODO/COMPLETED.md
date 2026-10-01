@@ -2256,3 +2256,15 @@ LAN is answered 403.
       top-level `media_anchor` and `media_profiles` are a 400 saying where they went.
 - [x] `docs/configuration.md`, `config/config.example.yaml`, the OpenAPI realm schemas
       and the interop README describe the section; the admin session has the shape.
+
+### An account says what its endpoint is (2026-10-02)
+
+- [x] **`behaviour.media_profile` on an account**, step 3 of the 2026-10-01 decision and
+      Asterisk's `webrtc=yes`. The proxy reads it where it already has the callee's
+      account in hand and keeps it on the leg (`Call::Participant::account_profile`), so
+      the first offer towards an endpoint nothing else can read - AthenaPhone on TCP - is
+      produced for what the operator says it is. What a leg has said in its own offer or
+      answer still outranks it; the realm and the server default decide only where it is
+      empty. The admin API takes and returns it in the account's own `behaviour` section,
+      refusing any other setting or value with a 400 that changes nothing. The Redis
+      driver stores it only when chosen. Plugin contract version 9.
