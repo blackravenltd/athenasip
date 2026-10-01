@@ -21,6 +21,7 @@
 #include "headers/via_header.h"
 #include "loggers/logger_scoped.h"
 #include "media/media_engine.h"
+#include "qualifier.h"
 #include "types/location.h"
 #include "util.h"
 
@@ -1034,6 +1035,9 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
     flags.target = *context->current.profile;
   } else if (!unheard) {
     flags.target = *call->participants[*recipient].profile;
+  } else if (!is_response && context && context->current.said) {
+    // What the callee said in answer to an OPTIONS, which is its own word too.
+    flags.target = *context->current.said;
   } else if (recipient && call->participants[*recipient].account_profile) {
     types::MediaPolicy account;
     account.profiles = *call->participants[*recipient].account_profile;
@@ -1665,6 +1669,7 @@ Proxy::Target Proxy::_target_for(const types::Location& binding) const {
   // is the only way back to either.
   if (auto flow = core->channel_find(binding.flow_id)) {
     target.flow = flow;
+    target.said = core->qualifier()->said(binding.flow_id);
     return target;
   }
 

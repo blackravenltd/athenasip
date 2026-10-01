@@ -52,6 +52,7 @@ using namespace athenasip::api;
 namespace athenasip {
 
 class Proxy;
+class Qualifier;
 class Registrar;
 
 // Core runs on a single strand. Every registry it owns - channels, transactions, dialogs
@@ -230,6 +231,9 @@ class Core : public std::enable_shared_from_this<Core> {
   // knows when a call has ended. Nothing routes on this.
   std::shared_ptr<Dialogs> dialogs();
 
+  // OPTIONS to registered clients, where their realm asks for it. See Qualifier.
+  std::shared_ptr<Qualifier> qualifier();
+
   // Calls
   bool call_register(std::shared_ptr<Call> call);
   bool call_unregister(std::string callId);
@@ -326,6 +330,7 @@ class Core : public std::enable_shared_from_this<Core> {
 
   std::shared_ptr<Registrar> _registrar;
   std::shared_ptr<Proxy> _proxy;
+  std::shared_ptr<Qualifier> _qualifier;
   std::shared_ptr<dns::SipLocator> _locator;
   std::shared_ptr<Dialogs> _dialogs;
 

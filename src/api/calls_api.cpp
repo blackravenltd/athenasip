@@ -14,6 +14,7 @@
 #include "../call.h"
 #include "../core.h"
 #include "../loggers/logger_scoped.h"
+#include "../qualifier.h"
 #include "../types/user.h"
 #include "../util.h"
 #include "api_json.h"
@@ -81,6 +82,7 @@ void CallsAPI::register_routes(Router& router) {
   router.add(http::verb::get, "/api/v1/calls/{call}", {view_cluster_status}, [self](RouteContext c) { self->_get(std::move(c)); });
   router.add(http::verb::get, "/api/v1/media", {view_cluster_status}, [self](RouteContext c) { self->_media(std::move(c)); });
   router.add(http::verb::get, "/api/v1/media/reoffers", {view_cluster_status}, [self](RouteContext c) { self->_reoffers(std::move(c)); });
+  router.add(http::verb::get, "/api/v1/qualify", {view_cluster_status}, [self](RouteContext c) { self->_qualify(std::move(c)); });
 
   // On the admin port and outside /api/v1, where Prometheus expects it. Behind the same
   // credential as everything else: what a node is carrying is not for anybody who asks.
@@ -288,6 +290,37 @@ void CallsAPI::_reoffers(RouteContext context) {
       entry["count"] = reoffer.count;
       entry["last_at"] = time_json(reoffer.last_at);
       entry["suggested_media_profile"] = setting_json(reoffer.took);
+      out.push_back(std::move(entry));
+    }
+
+    boost::asio::post(self->_executor, [context, out = std::move(out)]() mutable {
+      write_json(context.response, http::status::ok, out);
+      context.done();
+    });
+  });
+}
+
+// The registered clients this node is sending OPTIONS to, and what each has answered. Per
+// node: only the node holding a client's flow can probe it.
+void CallsAPI::_qualify(RouteContext context) {
+  auto core = _core.lock();
+  if (!core) {
+    write_error(context.response, http::status::service_unavailable, "unavailable", "the node is shutting down");
+    return context.done();
+  }
+
+  auto self = shared_from_this();
+  core->post([self, core, context]() mutable {
+    boost::json::array out;
+
+    for (const auto& probe : core->qualifier()->list()) {
+      boost::json::object entry;
+      entry["account"] = probe.aor;
+      entry["contact"] = probe.contact ? boost::json::value(probe.contact->to_string()) : boost::json::value(nullptr);
+      entry["interval"] = probe.interval;
+      entry["answered_at"] = time_json(probe.answered_at);
+      entry["unanswered"] = probe.unanswered;
+      entry["said_media_profile"] = setting_json(probe.said);
       out.push_back(std::move(entry));
     }
 

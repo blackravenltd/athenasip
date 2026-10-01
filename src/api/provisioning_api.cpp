@@ -76,6 +76,15 @@ std::string read_behaviour(const boost::json::object& body, types::Behaviour& be
       } else {
         return "behaviour.media_profile is mirror, transport, webrtc, rtp, srtp or null";
       }
+    } else if (key == "qualify_interval") {
+      if (value.is_null()) {
+        behaviour.qualify_interval.reset();
+      } else if (value.is_int64() && types::Behaviour::valid_qualify_interval(value.as_int64())) {
+        behaviour.qualify_interval = static_cast<std::uint32_t>(value.as_int64());
+      } else {
+        return "behaviour.qualify_interval is 0 for never, seconds from " + std::to_string(types::Behaviour::kQualifyMinimum) + " to " +
+               std::to_string(types::Behaviour::kQualifyMaximum) + ", or null";
+      }
     } else {
       return "behaviour has no setting called " + std::string(key);
     }
@@ -715,18 +724,20 @@ boost::json::object ProvisioningAPI::_realm_json(const types::Realm& realm) cons
   chosen["media_anchor"] = realm.behaviour.media_anchor ? boost::json::value(*realm.behaviour.media_anchor) : boost::json::value(nullptr);
   chosen["media_profile"] =
       realm.behaviour.media_profile ? boost::json::value(types::MediaPolicy::to_string(*realm.behaviour.media_profile)) : boost::json::value(nullptr);
+  chosen["qualify_interval"] = realm.behaviour.qualify_interval ? boost::json::value(*realm.behaviour.qualify_interval) : boost::json::value(nullptr);
   object["behaviour"] = std::move(chosen);
 
-  const auto policy_json = [](const types::MediaPolicy& policy) {
+  const auto policy_json = [](const types::MediaPolicy& policy, std::uint32_t qualify_interval) {
     boost::json::object json;
     json["media_anchor"] = policy.anchor;
     json["media_profile"] = types::MediaPolicy::to_string(policy.profiles);
+    json["qualify_interval"] = qualify_interval;
     return json;
   };
-  object["behaviour_effective"] = policy_json(realm.behaviour.over(_config->behaviour));
+  object["behaviour_effective"] = policy_json(realm.behaviour.over(_config->behaviour), realm.behaviour.qualify_over(_config->behaviour_qualify_interval));
   // And the server's default on its own, so a reader can say what choosing "inherit" would
   // come to for a setting the realm has chosen.
-  object["behaviour_default"] = policy_json(_config->behaviour);
+  object["behaviour_default"] = policy_json(_config->behaviour, _config->behaviour_qualify_interval);
 
   // nonce_secret is deliberately absent. It is the key this node mints nonces with, and
   // an API that hands it back is an API that leaks it into every log that records a

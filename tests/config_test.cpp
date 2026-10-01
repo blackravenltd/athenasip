@@ -291,6 +291,33 @@ TEST(ConfigTest, TheEffectiveConfigurationShowsTheBehaviourDefault) {
   EXPECT_NE(effective.find("media_anchor: true"), std::string::npos) << effective;
 }
 
+// Probing registered clients with OPTIONS is something servers do when configured to and
+// RFC 3261 does not ask for, so it is off unless the operator says how often.
+TEST(ConfigTest, QualifyingIsOffUnlessAnIntervalIsGiven) {
+  ConfigFile off("sip:\n  node_id: test-node\n");
+  bool ok = false;
+  auto config = off.load(ok);
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(config->behaviour_qualify_interval, 0u);
+  EXPECT_NE(config->effective_yaml().find("qualify_interval: 0"), std::string::npos);
+
+  ConfigFile on("sip:\n  node_id: test-node\nbehaviour:\n  qualify_interval: 60\n");
+  config = on.load(ok);
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(config->behaviour_qualify_interval, 60u);
+}
+
+// Every few seconds is a flood across thousands of registrations, and a negative interval
+// is a mistake. Both stop the node rather than being read as something else.
+TEST(ConfigTest, AnUnusableQualifyIntervalIsRefused) {
+  for (const auto* value : {"2", "-1", "often", "100000"}) {
+    ConfigFile file(std::string("sip:\n  node_id: test-node\nbehaviour:\n  qualify_interval: ") + value + "\n");
+    bool ok = true;
+    file.load(ok);
+    EXPECT_FALSE(ok) << value;
+  }
+}
+
 TEST(ConfigTest, SessionLifetimesAreTakenFromTheApiSection) {
   ConfigFile file(
       "sip:\n  node_id: test-node\n"

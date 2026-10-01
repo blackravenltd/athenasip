@@ -453,6 +453,7 @@ below, where a realm can override it.
 behaviour:
   media_anchor: true
   media_profile: mirror
+  qualify_interval: 0
 ```
 
 Where the standards leave a choice, this section makes it. Leave it out and the node
@@ -487,7 +488,17 @@ An account can say what its endpoint is with the same `media_profile` in its own
 `behaviour` section, which is Asterisk's `webrtc=yes`: AthenaPhone signals over TCP and
 its media is WebRTC, which neither the realm nor the transport can tell. Precedence, for
 the first description produced towards a leg, is what that leg has itself said in an
-offer or answer, then its account, then its realm, then this section.
+offer or answer or in answer to an OPTIONS, then its account, then its realm, then this
+section.
+
+`qualify_interval` is how often, in seconds, each registered client is sent an OPTIONS
+down the flow it registered on, which is Asterisk's `qualify` and Kamailio's nathelper
+ping. 0, the default, sends none, because RFC 3261 does not ask a registrar to; otherwise
+it is 5 to 86400. The probe keeps a NAT's mapping for the client open, and a client that
+answers with a session description (RFC 3261 11.2) has said what media it takes, which
+then counts as the client's own word: it decides the first offer towards it ahead of the
+account, the realm and this section. `GET /api/v1/qualify` lists the clients being probed,
+when each last answered and what it said.
 
 When a callee answers an offer the engine produced for it with 488 Not Acceptable Here,
 the node offers it the other profile once, WebRTC for plain RTP or the reverse, as a

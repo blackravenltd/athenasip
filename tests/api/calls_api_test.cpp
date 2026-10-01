@@ -22,6 +22,7 @@
 #include "api/router.h"
 #include "call.h"
 #include "media/media_engine.h"
+#include "qualifier.h"
 
 using namespace athenasip;
 
@@ -290,6 +291,31 @@ TEST(CallsApiTest, ReoffersSayWhichAccountsNeededTheOtherProfile) {
   EXPECT_TRUE(fax.at("suggested_media_profile").is_null());
 
   EXPECT_EQ(f.get("/api/v1/media/reoffers", "").status, 401u);
+}
+
+// Which clients the node is qualifying and what they last said, in the words the settings
+// use.
+TEST(CallsApiTest, QualifyListsTheProbedClients) {
+  CallsFixture f;
+  std::shared_ptr<MockConnection> connection;
+  auto channel = f.make_channel("192.0.2.10", &connection);
+
+  f.on_strand([&]() {
+    f.core->qualifier()->watch("sip:phone@example.com", std::make_shared<types::SIPUri>("sip:phone@192.0.2.10:5060"), channel->flow_id(), 30, 3600);
+  });
+
+  const auto response = f.get("/api/v1/qualify");
+  ASSERT_EQ(response.status, 200u) << response.body;
+
+  const auto json = response.json();
+  const auto& list = json.as_array();
+  ASSERT_EQ(list.size(), 1u);
+  EXPECT_EQ(list[0].at("account").as_string(), "sip:phone@example.com");
+  EXPECT_EQ(list[0].at("interval").as_int64(), 30);
+  EXPECT_TRUE(list[0].at("said_media_profile").is_null());
+  EXPECT_TRUE(list[0].at("answered_at").is_null());
+
+  EXPECT_EQ(f.get("/api/v1/qualify", "").status, 401u);
 }
 
 // The Prometheus text exposition format, version 0.0.4.

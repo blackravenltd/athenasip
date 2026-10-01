@@ -284,6 +284,13 @@ behaviour:
   # leg that. A leg that has already said what it speaks is always answered in kind.
   media_profile: mirror
 
+  # Seconds between OPTIONS to each registered client, down the flow it registered on:
+  # Asterisk's qualify, Kamailio's nathelper ping. 0, the default, never sends one, which
+  # is what RFC 3261 asks. Otherwise 5 to 86400. The probe keeps a NAT's mapping open, and
+  # a client that answers with a session description (RFC 3261 11.2) has said what media
+  # it takes. GET /api/v1/qualify shows who answered.
+  qualify_interval: 0
+
 http:
   address: 0.0.0.0
   port: 8080

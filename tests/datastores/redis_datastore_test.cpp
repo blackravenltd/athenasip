@@ -184,6 +184,31 @@ TEST(RedisDatastoreTest, ARealmThatChoseNoBehaviourInheritsAfterTheRoundTrip) {
   ASSERT_NE(found, nullptr);
   EXPECT_FALSE(found->behaviour.media_anchor.has_value());
   EXPECT_FALSE(found->behaviour.media_profile.has_value());
+  EXPECT_FALSE(found->behaviour.qualify_interval.has_value());
+
+  datastore->realm_delete(name);
+}
+
+TEST(RedisDatastoreTest, ARealmsQualifyIntervalRoundTrips) {
+  REQUIRE_REDIS(datastore);
+
+  const auto name = "qualify-" + unique_suffix() + ".example.com";
+  auto realm = std::make_shared<types::Realm>(name);
+  realm->id = 3;
+  realm->nonce_secret = "secret";
+  realm->behaviour.qualify_interval = 0;
+  ASSERT_TRUE(datastore->realm_create(realm));
+
+  // Zero is a choice - this realm is not probed whatever the server does - and not the
+  // same as having chosen nothing.
+  auto found = datastore->realm_get_by_name(name);
+  ASSERT_NE(found, nullptr);
+  ASSERT_TRUE(found->behaviour.qualify_interval.has_value());
+  EXPECT_EQ(*found->behaviour.qualify_interval, 0u);
+
+  realm->behaviour.qualify_interval = 45;
+  ASSERT_TRUE(datastore->realm_update(realm));
+  EXPECT_EQ(datastore->realm_get_by_name(name)->behaviour.qualify_interval, 45u);
 
   datastore->realm_delete(name);
 }
