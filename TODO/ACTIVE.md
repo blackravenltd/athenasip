@@ -386,10 +386,9 @@ milestone is the second node.
 
 ### Client failover, in the order decided on 2026-09-21
 
-- [ ] `GET /api/v1/client/config` as the bootstrap blob a web client fetches: the node list
-      (now fed from the discovery bus) plus what the realm expects of it, rather than a
-      second inventory. The inter-node TLS address joins each node's status when nodes
-      talk SIP to each other.
+- [ ] What the realm expects of a client, in `GET /api/v1/client/config` beside the node
+      list it now carries; and the inter-node TLS address in each node's status, once
+      nodes talk SIP to each other.
 - [ ] RFC 5626 outbound, the rest of it. Routing on the registered flow is done. What is
       left is what lets a client keep two flows to two nodes, which removes the
       reconnect window entirely: `+sip.instance` and `reg-id` on the binding, a flow
