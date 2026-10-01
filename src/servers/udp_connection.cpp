@@ -68,7 +68,7 @@ void UDPConnection::close() {
   // the next datagram from the address is handed to this closed connection instead of
   // making a live one: the flow is forgotten by the node and still occupies the map.
   if (auto server = _udp_server.lock()) {
-    server->remove_connection(remote_endpoint_name());
+    server->remove_connection(remote_endpoint_name(), this);
   }
 }
 

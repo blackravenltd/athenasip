@@ -84,9 +84,11 @@ void UDPServer::handle_receive_from(const boost::system::error_code& error, std:
     buffer->resize(bytes_transferred);
 
     // Look up or create the UDPConnection.
+    // A connection that has closed but not yet left the map is not one to deliver to: its
+    // channel has gone, and nothing would read what it was given.
     std::shared_ptr<UDPConnection> connection;
     auto it = _connections.find(sender_endpoint_str);
-    if (it != _connections.end()) {
+    if (it != _connections.end() && it->second->is_open()) {
       connection = it->second;
     } else {
       connection = std::make_shared<UDPConnection>(self, _socket.local_endpoint(), *sender_endpoint);
@@ -130,9 +132,48 @@ boost::asio::ip::tcp::endpoint UDPServer::local_endpoint() {
   return boost::asio::ip::tcp::endpoint(ep.address(), ep.port());
 }
 
-void UDPServer::remove_connection(const std::string& key) {
+// The connection is made here, on this server's strand, because the map is this strand's
+// and a datagram from the same peer may be arriving while it is asked for. The channel is
+// the caller's to make: one made here as well would be a second reader for one peer.
+bool UDPServer::open_datagram_flow(boost::asio::ip::udp::endpoint remote, std::function<void(std::shared_ptr<Connection>)> handler) {
+  boost::system::error_code ec;
+  const auto local = _socket.local_endpoint(ec);
+
+  // A socket bound to one family cannot send to the other.
+  if (ec || local.address().is_v4() != remote.address().is_v4()) return false;
+
+  auto self = std::static_pointer_cast<UDPServer>(this->shared_from_this());
+
+  boost::asio::dispatch(_strand, [this, self, remote, handler = std::move(handler)]() {
+    const auto key = remote.address().to_string() + ":" + std::to_string(remote.port());
+
+    std::shared_ptr<UDPConnection> connection;
+
+    // The registry had no channel for this peer or it would not have asked, so a live entry
+    // here is one a datagram has just made and whose channel is on its way. Answering it
+    // would be that second reader; the caller is told no and finds the channel instead.
+    auto it = _connections.find(key);
+    if (it != _connections.end() && it->second->is_open()) {
+      boost::asio::post(_core->strand(), [handler]() { handler(nullptr); });
+      return;
+    }
+
+    connection = std::make_shared<UDPConnection>(self, _socket.local_endpoint(), remote);
+    connection->start();
+    _connections[key] = connection;
+
+    boost::asio::post(_core->strand(), [handler, connection]() { handler(connection); });
+  });
+
+  return true;
+}
+
+void UDPServer::remove_connection(const std::string& key, const Connection* connection) {
   auto self = this->shared_from_this();
-  boost::asio::dispatch(_strand, [this, self, key]() { _connections.erase(key); });
+  boost::asio::dispatch(_strand, [this, self, key, connection]() {
+    auto it = _connections.find(key);
+    if (it != _connections.end() && it->second.get() == connection) _connections.erase(it);
+  });
 }
 
 }  // namespace athenasip::servers

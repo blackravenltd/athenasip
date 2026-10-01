@@ -27,6 +27,7 @@
 #include "dialogs.h"
 #include "events/event_system.h"
 #include "expiry_set.h"
+#include "flow_tokens.h"
 #include "global_io_context.h"
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
@@ -137,6 +138,10 @@ class Core : public std::enable_shared_from_this<Core> {
   // reaches an endpoint whose Contact resolves to nothing - a browser's always does.
   std::shared_ptr<Channel> channel_for_token(const std::string& token);
 
+  // What every channel's token is sealed with, and what opens one whose channel this node
+  // no longer holds. See FlowTokens.
+  const FlowTokens& flow_tokens() const { return _flow_tokens; }
+
   // The flow to a next hop, opening one when this node has none.
   //
   // A registered client is reached on the connection this node accepted, which
@@ -148,6 +153,8 @@ class Core : public std::enable_shared_from_this<Core> {
   // Async because it is a DNS lookup and a TCP handshake, and bounded by
   // Config::sip_connect_timeout_ms because the operating system's own bound is far
   // longer than the transaction has. The handler runs on the strand.
+  //
+  // UDP is opened through a listener's socket rather than dialled, and only TLS is refused.
   void channel_connect(std::string transport, std::string host, std::uint16_t port, plugins::Handler<std::shared_ptr<Channel>> handler);
 
   // A second name for a channel already registered: the name it was dialled by, when
@@ -287,6 +294,8 @@ class Core : public std::enable_shared_from_this<Core> {
   std::unordered_map<std::string, std::shared_ptr<Channel>> _channels_by_token;
   std::set<std::string> _local_addresses;
 
+  FlowTokens _flow_tokens;
+
   std::vector<std::shared_ptr<Server>> _servers;
 
   std::shared_ptr<api::AdminAPI> _adminAPI;
@@ -328,6 +337,10 @@ class Core : public std::enable_shared_from_this<Core> {
   void _call_sweep();
 
   // Forgetting a connectionless flow that has gone quiet. See sip.flow_idle_timeout.
+  // channel_connect's UDP half. See there.
+  void _connect_datagram(std::string host, std::uint16_t port, plugins::Handler<std::shared_ptr<Channel>> handler);
+  void _open_datagram(std::vector<boost::asio::ip::udp::endpoint> candidates, std::string key, plugins::Handler<std::shared_ptr<Channel>> handler);
+
   void _flow_sweep_schedule();
   void _flow_sweep();
 

@@ -53,7 +53,9 @@ sip:
   #
   # Five minutes is well past every RFC 3261 section 17 timer, the longest being 64*T1 at 32
   # seconds, so nothing with a transaction outstanding is ever swept. Forgetting a flow costs
-  # a UDP peer nothing it notices: its next datagram makes a new one.
+  # a UDP peer nothing it notices: its next datagram makes a new one, and a call or a BYE
+  # for it goes to the address it was last heard from, which behind a NAT is the only one
+  # that reaches it.
   flow_idle_timeout: 300
 
   # --------------------------------------------------------------------------------

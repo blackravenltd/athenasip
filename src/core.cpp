@@ -229,10 +229,9 @@ void Core::channel_connect(std::string transport, std::string host, std::uint16_
 
   if (auto existing = channel_find(transport, host, port)) return handler(ChannelResult::success(existing));
 
-  // UDP has no connection to open. A datagram to a host this node has never heard from
-  // has to leave by the listener's own socket so that the source port is the one the far
-  // end will answer to, and that socket belongs to the UDP server rather than to this
-  // registry. TLS outbound waits for the trust configuration the cluster CA brings.
+  if (transport == "udp") return _connect_datagram(host, port, std::move(handler));
+
+  // TLS outbound waits for the trust configuration the cluster CA brings.
   if (transport != "tcp") {
     return handler(ChannelResult::failure("cannot open an outbound " + transport + " flow"));
   }
@@ -299,6 +298,93 @@ void Core::channel_connect(std::string transport, std::string host, std::uint16_
       answer(ChannelResult::success(channel));
     });
   });
+}
+
+// UDP has no connection to open. A datagram to a host this node has never heard from has to
+// leave by a listener's own socket, so that the source port is the one the far end answers
+// to and the one a NAT in front of it already has a mapping for (RFC 3261 18.1.1, RFC 3581).
+// The listener makes the connection; the channel over it is made here, as for TCP.
+void Core::_connect_datagram(std::string host, std::uint16_t port, plugins::Handler<std::shared_ptr<Channel>> handler) {
+  using ChannelResult = plugins::Result<std::shared_ptr<Channel>>;
+
+  const auto key = channel_key("udp", host, port);
+
+  // A literal address, which is every flow this node is reopening and most Contacts, needs
+  // no resolver and no trip off the strand.
+  boost::system::error_code literal;
+  const auto address = boost::asio::ip::make_address(host, literal);
+  if (!literal) return _open_datagram({boost::asio::ip::udp::endpoint(address, port)}, key, std::move(handler));
+
+  auto& io_context = detail::get_global_io_context();
+  auto resolver = std::make_shared<boost::asio::ip::udp::resolver>(io_context);
+  auto deadline = std::make_shared<boost::asio::steady_timer>(io_context);
+
+  // Bounded as the TCP dial is: a name can hang for as long as the system resolver likes,
+  // and nothing else is timing this request yet. Whichever answers first is the answer, and
+  // it is given on the strand.
+  auto answered = std::make_shared<std::atomic<bool>>(false);
+  auto answer = [answered, deadline, handler](ChannelResult result) {
+    if (answered->exchange(true)) return;
+
+    deadline->cancel();
+    handler(std::move(result));
+  };
+
+  std::weak_ptr<Core> weak_self = weak_from_this();
+
+  deadline->expires_after(std::chrono::milliseconds(config->sip_connect_timeout_ms));
+  deadline->async_wait([weak_self, answer, key](const boost::system::error_code& ec) {
+    if (ec == boost::asio::error::operation_aborted) return;
+    if (auto self = weak_self.lock()) boost::asio::post(self->_strand, [answer, key]() { answer(ChannelResult::failure("timed out resolving " + key)); });
+  });
+
+  resolver->async_resolve(host, std::to_string(port), [weak_self, resolver, answer, key](const boost::system::error_code& ec, auto results) {
+    auto self = weak_self.lock();
+    if (!self) return;
+
+    std::vector<boost::asio::ip::udp::endpoint> candidates;
+    if (!ec) {
+      for (const auto& entry : results) candidates.push_back(entry.endpoint());
+    }
+
+    boost::asio::post(self->_strand, [self, candidates, answer, key, ec]() {
+      if (candidates.empty()) return answer(ChannelResult::failure("cannot resolve " + key + (ec ? " - " + ec.message() : "")));
+      self->_open_datagram(candidates, key, answer);
+    });
+  });
+}
+
+// On the strand, which is where the server list is read.
+void Core::_open_datagram(std::vector<boost::asio::ip::udp::endpoint> candidates, std::string key, plugins::Handler<std::shared_ptr<Channel>> handler) {
+  using ChannelResult = plugins::Result<std::shared_ptr<Channel>>;
+
+  auto self = shared_from_this();
+
+  for (const auto& remote : candidates) {
+    for (const auto& server : _servers) {
+      const bool asked = server->open_datagram_flow(remote, [self, remote, key, handler](std::shared_ptr<servers::Connection> connection) {
+        if (!connection) {
+          // A datagram from the peer made its flow first. That flow's channel is the one, if
+          // it has registered by now; if not, this attempt fails and the next request finds it.
+          if (auto existing = self->channel_find("udp", remote.address().to_string(), remote.port())) return handler(ChannelResult::success(existing));
+          return handler(ChannelResult::failure("a flow to " + key + " was being made by a datagram from it"));
+        }
+
+        auto channel = std::make_shared<Channel>(self->_logger->base_logger(), self, connection);
+
+        // On the strand already, so this registers before the answer goes back.
+        channel->start();
+        if (channel->flow_id() != key) self->channel_alias(key, channel);
+
+        self->_logger->info("Opened flow to " + key + " as " + connection->remote_endpoint_name());
+        handler(ChannelResult::success(channel));
+      });
+
+      if (asked) return;
+    }
+  }
+
+  handler(ChannelResult::failure("no UDP listener can send to " + key));
 }
 
 void Core::local_address_add(std::string host_port) { _local_addresses.insert(std::move(host_port)); }

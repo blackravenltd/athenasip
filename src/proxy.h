@@ -232,9 +232,10 @@ class Proxy : public TransactionUser {
 
   // RFC 5626: the flow a binding was registered over is the route back to it, and for a
   // browser or a NAT'd client it is the only one - their Contact resolves to nothing
-  // reachable. Null when the binding named no flow or the flow has since closed, and the
-  // Contact is then all there is to go on.
-  std::shared_ptr<Channel> _flow_for(const types::Location& binding) const;
+  // reachable. A UDP flow this node has forgotten is still sent down; a reliable one that
+  // has closed leaves the Contact as all there is to go on.
+  Target _target_for(const types::Location& binding) const;
+  static std::shared_ptr<SIPUri> _datagram_hop(const std::string& flow_id);
 
   static NextHop _next_hop_of(const SIPUri& uri);
 
