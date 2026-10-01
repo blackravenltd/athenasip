@@ -87,6 +87,11 @@ ASan is ASan plus UBSan. Both take the same environment variables as the plain r
 build interrupted partway leaves a stale object behind - check the test counts agree across
 build directories before believing a green run.
 
+With GoogleTest from Homebrew, ASan reports a `container-overflow` inside GoogleTest's own
+filter parsing before any test runs. It is a false positive - the library is not built with
+ASan, and container annotations only agree when everything is - so turn that one check off:
+`ASAN_OPTIONS=detect_container_overflow=0 ./build-asan/athenasip_tests`.
+
 ## The sipp harness
 
 Eleven scenarios against one node in Docker, driven by real sipp clients.

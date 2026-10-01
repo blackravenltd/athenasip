@@ -7,11 +7,15 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <chrono>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
+#include "dns/sip_locator.h"
 #include "headers/sip_identity_header.h"
+#include "helpers/fake_resolver_helper.h"
 #include "helpers/proxy_fixture_helper.h"
 #include "servers/server.h"
 #include "types/sip_uri.h"
@@ -241,6 +245,147 @@ TEST(ProxyNatTest, AStrayResponseWithAnRportThatIsNotAPortIsDropped) {
   }
 
   EXPECT_TRUE(listener->opened.empty());
+}
+
+// RFC 3263, through the proxy: a request for a URI naming a host goes where DNS says, in
+// the order it says, and a place that cannot be reached is passed over for the next (4.3).
+// NAPTR puts TCP first here and the TCP server is not listening, so the INVITE leaves by
+// UDP to the second service's host.
+TEST(ProxyNatTest, AHostIsLocatedByDnsAndAnUnreachableHopIsPassedOver) {
+  ProxyFixture f;
+
+  auto listener = std::make_shared<DatagramListener>(f.logger, f.core);
+  f.core->server_register(listener);
+
+  auto resolver = std::make_shared<FakeResolver>();
+  resolver->naptr("trunk.example.net", 10, 10, "SIP+D2T", "_sip._tcp.trunk.example.net");
+  resolver->naptr("trunk.example.net", 20, 10, "SIP+D2U", "_sip._udp.trunk.example.net");
+  resolver->srv("_sip._tcp.trunk.example.net", 0, 0, 1, "closed.trunk.example.net");
+  resolver->srv("_sip._udp.trunk.example.net", 0, 0, 5080, "media.trunk.example.net");
+  resolver->a("closed.trunk.example.net", "127.0.0.1");
+  resolver->a("media.trunk.example.net", "198.51.100.80");
+  f.core->locator_set(std::make_shared<dns::SipLocator>(resolver));
+
+  f.receive(f.caller, f.invite("z9hG4bK-trunk", "sip:+15551234567@trunk.example.net"));
+
+  // The TCP attempt is a real connect to a port nothing listens on, so it is refused by
+  // the kernel rather than by the clock; give it a moment either way.
+  for (int i = 0; i < 200 && !listener->opened_to("198.51.100.80", 5080); ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    f.settle();
+  }
+
+  auto reached = listener->opened_to("198.51.100.80", 5080);
+  ASSERT_NE(reached, nullptr) << "the request did not reach the host DNS named";
+
+  auto forwarded = ProxyFixture::request_with(reached, "INVITE");
+  ASSERT_NE(forwarded, nullptr);
+  EXPECT_EQ(forwarded->header->request_uri->host, "trunk.example.net") << "the Request-URI is the URI, not the hop";
+  EXPECT_TRUE(resolver->was_asked("trunk.example.net", dns::Type::NAPTR));
+}
+
+namespace {
+
+// A trunk known by name, served by two hosts of equal standing (RFC 2782 priorities 10 and
+// 20), both on UDP.
+struct TwoHopFixture : ProxyFixture {
+  std::shared_ptr<DatagramListener> listener;
+
+  TwoHopFixture() {
+    listener = std::make_shared<DatagramListener>(logger, core);
+    core->server_register(listener);
+
+    auto resolver = std::make_shared<FakeResolver>();
+    resolver->srv("_sip._udp.trunk.example.net", 10, 0, 5060, "one.trunk.example.net");
+    resolver->srv("_sip._udp.trunk.example.net", 20, 0, 5060, "two.trunk.example.net");
+    resolver->a("one.trunk.example.net", "198.51.100.1");
+    resolver->a("two.trunk.example.net", "198.51.100.2");
+    core->locator_set(std::make_shared<dns::SipLocator>(resolver));
+  }
+
+  void call() { receive(caller, invite("z9hG4bK-two-hops", "sip:+15551234567@trunk.example.net")); }
+
+  std::shared_ptr<athenasip::Channel> hop_channel(const std::string& address) {
+    return on_strand([this, address]() { return core->channel_find("udp", address, 5060); });
+  }
+
+  void answer_from(const std::string& address, int code, const std::string& reason) {
+    auto connection = listener->opened_to(address, 5060);
+    ASSERT_NE(connection, nullptr);
+    auto forwarded = ProxyFixture::request_with(connection, "INVITE");
+    ASSERT_NE(forwarded, nullptr);
+
+    std::string raw = "SIP/2.0 " + std::to_string(code) + " " + reason + "\r\n";
+    for (const auto& via : forwarded->header->headers_map["Via"]) raw += "Via: " + via->to_string() + "\r\n";
+    raw += "From: <sip:alice@example.com>;tag=alice\r\nTo: <sip:+15551234567@trunk.example.net>;tag=trunk\r\n";
+    raw += "Call-ID: call-proxy\r\nCSeq: 1 INVITE\r\n\r\n";
+
+    receive(hop_channel(address), raw);
+  }
+};
+
+}  // namespace
+
+// RFC 3263 4.3: "If a 503 ... is received, the element SHOULD try the next element in the
+// list". The server was too busy, not the call refused, and the next server may not be.
+TEST(ProxyNatTest, A503FromOneHopTriesTheNextHopOfTheSameTarget) {
+  TwoHopFixture f;
+  f.call();
+
+  ASSERT_NE(f.listener->opened_to("198.51.100.1", 5060), nullptr);
+  ASSERT_EQ(f.listener->opened_to("198.51.100.2", 5060), nullptr) << "the second hop is for when the first fails";
+
+  f.answer_from("198.51.100.1", 503, "Service Unavailable");
+
+  auto second = f.listener->opened_to("198.51.100.2", 5060);
+  ASSERT_NE(second, nullptr);
+  auto retried = ProxyFixture::request_with(second, "INVITE");
+  ASSERT_NE(retried, nullptr);
+  EXPECT_EQ(retried->header->request_uri->host, "trunk.example.net");
+
+  EXPECT_EQ(ProxyFixture::response_with(f.caller_connection, 503), nullptr);
+  EXPECT_EQ(ProxyFixture::response_with(f.caller_connection, 500), nullptr) << "the caller was answered before the next hop had its turn";
+}
+
+// 4.3: "... or a transaction timeout ..." - a server that never answered.
+TEST(ProxyNatTest, ATimeoutOnOneHopTriesTheNextHopOfTheSameTarget) {
+  TwoHopFixture f;
+  f.call();
+
+  ASSERT_NE(f.listener->opened_to("198.51.100.1", 5060), nullptr);
+
+  // Timer B, 64*T1, on the injectable clock.
+  f.timers->advance(std::chrono::seconds(33));
+  f.settle();
+
+  auto second = f.listener->opened_to("198.51.100.2", 5060);
+  ASSERT_NE(second, nullptr);
+  EXPECT_NE(ProxyFixture::request_with(second, "INVITE"), nullptr);
+}
+
+// But a 486 is the far end saying no, which another server for the same domain would say
+// too. Failover is for a server failing, not for an answer.
+TEST(ProxyNatTest, AnAnswerFromAHopIsNotFailedOver) {
+  TwoHopFixture f;
+  f.call();
+
+  f.answer_from("198.51.100.1", 486, "Busy Here");
+
+  EXPECT_EQ(f.listener->opened_to("198.51.100.2", 5060), nullptr);
+  EXPECT_NE(ProxyFixture::response_with(f.caller_connection, 486), nullptr);
+}
+
+// When every hop has failed, the caller is told, and a 503 is not passed upstream as one
+// (RFC 3261 16.7 step 6: it would make the caller think this node was overloaded).
+TEST(ProxyNatTest, WhenEveryHopFailsTheCallerIsAnswered) {
+  TwoHopFixture f;
+  f.call();
+
+  f.answer_from("198.51.100.1", 503, "Service Unavailable");
+  f.answer_from("198.51.100.2", 503, "Service Unavailable");
+
+  EXPECT_EQ(ProxyFixture::response_with(f.caller_connection, 503), nullptr);
+  EXPECT_NE(ProxyFixture::response_with(f.caller_connection, 500), nullptr);
 }
 
 // A desk phone with a routable address, registered over UDP, whose flow this node has

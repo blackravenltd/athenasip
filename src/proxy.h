@@ -15,6 +15,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "dns/sip_locator.h"
 #include "loggers/logger.h"
 #include "media/media_engine.h"
 #include "sip_message.h"
@@ -126,6 +127,13 @@ class Proxy : public TransactionUser {
     // The realm's media policy, where target determination found a realm to read it
     // from. An in-dialog request has none, and takes the one the call remembers.
     std::optional<types::MediaPolicy> media_policy;
+
+    // RFC 3263 4.3: the places the current target can still be tried, when DNS listed more
+    // than one and the branch in flight went to the first. A 503 or a timeout from that
+    // branch is the server failing rather than the call being refused, and the same target
+    // goes to the next of these instead of the fork moving on.
+    std::vector<dns::Hop> hops_left;
+    std::optional<Target> hop_target;
   };
 
   // RFC 4028 section 8.1: this node's say in the session timer negotiation, applied to
@@ -171,6 +179,9 @@ class Proxy : public TransactionUser {
   // Opens a flow to the target first where this node has none, which is a round trip, so
   // the sending half is _forward_to.
   void _forward_next(const std::shared_ptr<Context>& context);
+  void _connect_hops(const std::shared_ptr<Context>& context, const Target& target, std::vector<dns::Hop> hops, std::size_t index);
+  void _unreachable(const std::shared_ptr<Context>& context);
+  bool _try_next_hop(const std::shared_ptr<Context>& context);
 
   // One target, one flow: the copy of the request, the rewrites 16.6 asks for, and the
   // send.

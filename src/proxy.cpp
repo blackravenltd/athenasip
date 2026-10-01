@@ -618,6 +618,8 @@ void Proxy::_forward_next(const std::shared_ptr<Context>& context) {
   // By value: the continuation below runs after a round trip, and the target set is the
   // context's rather than this frame's.
   const Target target = context->targets[context->next++];
+  context->hops_left.clear();
+  context->hop_target.reset();
 
   if (auto channel = target.flow.lock(); channel && channel->_connection) return _forward_to(context, target, channel);
 
@@ -625,26 +627,74 @@ void Proxy::_forward_next(const std::shared_ptr<Context>& context) {
   // client is answered on the connection it registered over, so this is the trunk, the
   // peer node, and the client whose connection has since closed.
   const auto hop = _next_hop_of(*target.next_hop);
-  const auto name = target.next_hop->to_string();
+
+  // An address is where to go already. A name is located first (RFC 3263): NAPTR, SRV,
+  // then A and AAAA, giving the places to try in the order to try them (4.3).
+  auto host = hop.host;
+  if (host.size() > 2 && host.front() == '[' && host.back() == ']') host = host.substr(1, host.size() - 2);
+
+  boost::system::error_code literal;
+  boost::asio::ip::make_address(host, literal);
+  if (!literal) return _connect_hops(context, target, {dns::Hop{hop.transport, host, hop.port}}, 0);
 
   auto self = shared_from_this();
 
-  core->channel_connect(hop.transport, hop.host, hop.port, [this, self, context, target, name](plugins::Result<std::shared_ptr<Channel>> opened) {
-    if (!opened.ok || !opened.value || !opened.value->_connection) {
-      // Unreachable is about this target and not about the request, so the rest of the
-      // target set still gets its turn (16.7).
-      _logger->info("No flow to " + name + " - " + opened.error + " - trying the next target");
-
-      auto unavailable = context->request->generate_response();
-      unavailable->header->response_code = 480;
-      unavailable->header->response_message = "Temporarily Unavailable";
-
-      if (!context->best) context->best = unavailable;
-      return _forward_next(context);
+  core->locator()->locate(core->strand(), *target.next_hop, [this, self, context, target](plugins::Result<std::vector<dns::Hop>> located) {
+    if (!located.ok || located.value.empty()) {
+      _logger->info("Nothing to send " + target.next_hop->to_string() + " to - " + (located.ok ? "DNS has no SIP service there" : located.error));
+      return _unreachable(context);
     }
 
-    _forward_to(context, target, opened.value);
+    _connect_hops(context, target, located.value, 0);
   });
+}
+
+// Each place a target can be reached, in turn, until one opens.
+void Proxy::_connect_hops(const std::shared_ptr<Context>& context, const Target& target, std::vector<dns::Hop> hops, std::size_t index) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  if (index >= hops.size()) return _unreachable(context);
+
+  const auto hop = hops[index];
+  auto self = shared_from_this();
+
+  core->channel_connect(hop.transport, hop.address, hop.port,
+                        [this, self, context, target, hops = std::move(hops), index, hop](plugins::Result<std::shared_ptr<Channel>> opened) mutable {
+                          if (!opened.ok || !opened.value || !opened.value->_connection) {
+                            _logger->info("No flow to " + target.next_hop->to_string() + " at " + hop.transport + "://" + hop.address + ":" +
+                                          std::to_string(hop.port) + " - " + opened.error);
+                            return _connect_hops(context, target, std::move(hops), index + 1);
+                          }
+
+                          context->hops_left.assign(hops.begin() + static_cast<std::ptrdiff_t>(index) + 1, hops.end());
+                          context->hop_target = target;
+                          _forward_to(context, target, opened.value);
+                        });
+}
+
+// RFC 3263 4.3, for the branch in flight: the same target at the next place DNS listed,
+// when there is one. False leaves the fork to move on as it would have.
+bool Proxy::_try_next_hop(const std::shared_ptr<Context>& context) {
+  if (context->hops_left.empty() || !context->hop_target || context->cancelled || context->answered) return false;
+
+  auto hops = std::move(context->hops_left);
+  context->hops_left.clear();
+
+  _logger->info("Trying " + context->hop_target->next_hop->to_string() + " at the next place DNS listed");
+  _connect_hops(context, *context->hop_target, std::move(hops), 0);
+  return true;
+}
+
+// Unreachable is about this target and not about the request, so the rest of the target
+// set still gets its turn (16.7).
+void Proxy::_unreachable(const std::shared_ptr<Context>& context) {
+  auto unavailable = context->request->generate_response();
+  unavailable->header->response_code = 480;
+  unavailable->header->response_message = "Temporarily Unavailable";
+
+  if (!context->best) context->best = unavailable;
+  _forward_next(context);
 }
 
 void Proxy::_forward_to(const std::shared_ptr<Context>& context, const Target& target, const std::shared_ptr<Channel>& channel) {
@@ -745,6 +795,7 @@ void Proxy::_write_forward(const std::shared_ptr<Context>& context, const std::s
 
         _timer_c_cancel(context);
         context->forwarded = nullptr;
+        if (_try_next_hop(context)) return;
         _forward_next(context);
       });
 
@@ -811,6 +862,10 @@ void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::sha
   // Otherwise remember it and try the next binding. Serial forking: lowest code wins,
   // which for the codes that reach here is the closest to an answer.
   if (!context->best || code < context->best->header->response_code) context->best = response;
+
+  // RFC 3263 4.3: a 503 is that server failing, and the next server for the same target may
+  // not be. Anything else is an answer, which another server would give as well.
+  if (code == 503 && _try_next_hop(context)) return;
 
   _forward_next(context);
 }
