@@ -47,6 +47,8 @@ call, which is the same path an operator uses and a second check that the API wo
 | `cancel-ringing` | A CANCEL after 180 is answered 200 and the INVITE it cancelled ends 487 | RFC 3261 9.1, 9.2 |
 | `busy` | A 486 from the callee reaches the caller unchanged | RFC 3261 21.4.24 |
 | `media` | Both descriptions point at the node's relay rather than at each other, and RTP flows through it | RFC 8866 5.7 |
+| `delayed-offer` | An INVITE with no body: the offer comes in the 200 and the answer in the ACK, and the node anchors both, so neither end learns the other's address | RFC 3261 13.2.1; RFC 3264 s5 |
+| `hold-resume` | Two re-INVITEs inside the dialog, by its route set: hold offers `sendonly` and is answered `recvonly`, resume offers `sendrecv`, and the direction survives the relay each way | RFC 3264 8.4; RFC 6337 5.3; RFC 3261 12.2.1.1 |
 | `invite-timeout` | An INVITE nothing answers is retransmitted and gives up at timer B, and the caller is told 408 | RFC 3261 17.1.1.2 |
 
 `invite-timeout` takes 32 seconds by design: timer B is 64*T1 and T1 is 500ms. It runs
