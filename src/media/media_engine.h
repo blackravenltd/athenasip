@@ -144,8 +144,17 @@ class MediaEngine : public plugins::Plugin {
   // never saw.
   virtual void release(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) = 0;
 
-  // What the engine currently holds for this call, for the admin API and diagnostics.
+  // What the engine currently holds for this call, for the admin API and diagnostics. A
+  // JSON object; the fields every engine is asked to give, and may leave out, are
+  // `idle_seconds` (how long all of the call's media has been silent) and `legs`, an array
+  // with one object per end per stream: "packets_in", "bytes_in" (from that end) and
+  // "packets_out", "bytes_out" (to it), cumulative, measured at the engine.
   virtual void query(plugins::Executor on, std::shared_ptr<Call> call, plugins::Handler<std::string> handler) = 0;
+
+  // Packets this engine has sent on over its whole life, or nothing when it cannot say.
+  // Synchronous because it is a counter, not a question to a server. Optional in the
+  // contract: an engine that leaves this alone reports nothing, and /metrics says so.
+  virtual std::optional<std::uint64_t> packets_relayed() const { return std::nullopt; }
 
   // Recording. Only meaningful when capabilities().record is set; the defaults decline,
   // so a driver that cannot record does not have to say so twice. Where the recording
