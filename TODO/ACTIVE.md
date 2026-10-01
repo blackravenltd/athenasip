@@ -76,12 +76,14 @@ session that has lost its context needs to see them first.
    holding for a yes or no and will use three times it, falling back to its configured
    value for nodes that do not carry it. See `docs/events.md`.
 
-2. **The `corvus-fi-1` deploy, and who the first user is.** The node there predates the
-   auth routes and still answers 404 to `POST /api/v1/auth/login`, so the console cannot
-   log in. Deploying is a live host and a release decision, so it is not something to do
-   on a peer's say-so. The first user's name and password want choosing by a person
-   rather than generated: either `POST /api/v1/users` with the configuration token already
-   in that node's config, or `athenasip --add-user` on the host.
+2. **Who the first user on `corvus-fi-1` is.** The node was deployed on 2026-10-01 with
+   everything to that date - Tom's word that day: "THERE IS NO PRODUCTION", so deploying
+   there needs no further say-so. It now serves the auth routes (`POST
+   /api/v1/auth/login` answers 401 for a user that does not exist, not 404), so the
+   console can log in once there is somebody to log in as. That name and password want
+   choosing by a person rather than generated: either `POST /api/v1/users` with the
+   configuration token already in that node's config, or `athenasip --add-user` on the
+   host.
 
 3. **A realm holding both WebRTC endpoints and plain-RTP ones.** The next item in
    Milestone 3's order, and the reason the milestone is stalled. Now that a leg's own

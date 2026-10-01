@@ -2166,7 +2166,9 @@ The policy is the 2026-10-01 decision in `ACTIVE.md` and the table in
 
 What a client needs to do about this is its own session's work. A browser or AthenaPhone
 on TCP that registers over the connection it calls on sees no change; one calling on UDP
-answers a 407 on every call. The deployed node on `corvus-fi-1` predates all of this.
+answers a 407 on every call. Deployed to `corvus-fi-1` the same day: every transport
+registers (`test/interop/smoke.py`), and a stranger's INVITE to an outside number from the
+LAN is answered 403.
 811 tests.
 
 ### RFC 3263, IPv6 config URLs, and Boost.Redis through the node's logger (2026-10-01)
