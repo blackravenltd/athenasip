@@ -19,6 +19,7 @@
 
 #include "api/admin_api.h"
 #include "api/auth_api.h"
+#include "api/calls_api.h"
 #include "api/provisioning_api.h"
 #include "api/router.h"
 #include "api/sessions.h"
@@ -370,7 +371,13 @@ int main(int argc, char* argv[]) {
       auto users = std::make_shared<api::UsersAPI>(logger, datastore, adminAPI->executor(), sessions);
       users->register_routes(*api_router);
 
+      // What the node is doing now: live calls, the media engine, and /metrics for a
+      // monitoring system. It reads Core's own state, on Core's strand.
+      auto calls = std::make_shared<api::CallsAPI>(logger, core, adminAPI->executor());
+      calls->register_routes(*api_router);
+
       adminAPI->middlewares.push_back(api_router->middleware("/api/"));
+      adminAPI->middlewares.push_back(api_router->middleware("/metrics"));
     }
 
     if (config->http_files_enable) {

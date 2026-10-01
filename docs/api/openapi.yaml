@@ -64,6 +64,10 @@ tags:
     description: The accounts within a realm
   - name: registrations
     description: Where accounts are currently reachable
+  - name: calls
+    description: What the node is carrying now, and what its media engine relayed for it
+  - name: media
+    description: The media engine and the node's counters
 
 paths:
   /health:
@@ -491,6 +495,117 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Registration"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /calls:
+    get:
+      operationId: listCalls
+      tags: [calls]
+      summary: The calls this node is carrying now
+      description: |
+        Live calls only. A call that has ended is gone from this list; call records are
+        Milestone 4.
+
+        `media` is null for a call nothing anchors - the realm does not anchor, or the
+        node has no media engine. Otherwise it is what the engine reports, cumulative
+        since the call began. Each leg is one end of one stream as the engine sees it,
+        counted at the engine in both directions: `_in` is what arrived from that end and
+        `_out` what the engine sent it, so one-way audio is one of the two standing still.
+        A direction the engine does not report is absent, never zero. `participant` is
+        null: a relay knows an end by the address its packets come from, which behind a
+        NAT is not one any participant described.
+      responses:
+        "200":
+          description: The live calls
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Call"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /calls/{call}:
+    parameters:
+      - name: call
+        in: path
+        required: true
+        schema:
+          type: string
+        description: |
+          The Call-ID, percent-encoded. RFC 3261 lets a Call-ID hold `@` and `/`, and an
+          encoded `/` (`%2F`) is one path segment, not two.
+        example: a84b4c76e66710%40pc33.atlanta.com
+    get:
+      operationId: getCall
+      tags: [calls]
+      summary: One live call
+      responses:
+        "200":
+          description: The call
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Call"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /media:
+    get:
+      operationId: getMediaEngine
+      tags: [media]
+      summary: The media engine and what it can do
+      description: Its name and capabilities, never its URL, which can carry an address and credentials.
+      responses:
+        "200":
+          description: The engine, or null fields when the node has none
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaEngine"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /metrics:
+    servers:
+      - url: http://{host}:{port}
+        variables:
+          host:
+            default: localhost
+          port:
+            default: "8080"
+    get:
+      operationId: getMetrics
+      tags: [media]
+      summary: Counters for a monitoring system
+      description: |
+        Prometheus text exposition format 0.0.4, on the admin port and outside `/api/v1`.
+
+        - `athenasip_calls_active` (gauge)
+        - `athenasip_dialogs_active` (gauge)
+        - `athenasip_channels_open{transport}` (gauge), each flow counted once
+        - `athenasip_transactions_active` (gauge)
+        - `athenasip_media_packets_relayed_total` (counter), only when the media engine
+          can count; absent rather than zero when it cannot
+      responses:
+        "200":
+          description: The counters
+          content:
+            text/plain; version=0.0.4:
+              schema:
+                type: string
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1254,6 +1369,97 @@ components:
           type: string
         ha1:
           type: string
+
+    Call:
+      type: object
+      required: [id, state, created_at, answered_at, participants, media]
+      properties:
+        id:
+          type: string
+          description: The Call-ID
+        state:
+          type: string
+          enum: [Initial, Trying, Ringing, Connected, Closing, Closed]
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+        answered_at:
+          type: string
+          format: date-time
+          nullable: true
+        participants:
+          type: array
+          items:
+            $ref: "#/components/schemas/CallParticipant"
+        media:
+          allOf:
+            - $ref: "#/components/schemas/CallMedia"
+          nullable: true
+
+    CallParticipant:
+      type: object
+      required: [identity, originator, profile]
+      properties:
+        identity:
+          type: string
+          description: The participant's SIP URI
+        originator:
+          type: boolean
+        profile:
+          type: string
+          enum: [webrtc, plain-rtp, srtp-sdes]
+          nullable: true
+          description: What the leg's own session description said it is, null until it has said
+
+    CallMedia:
+      type: object
+      required: [engine, idle_seconds, legs]
+      properties:
+        engine:
+          type: string
+          example: rtpengine
+        idle_seconds:
+          type: integer
+          nullable: true
+          description: How long all of the call's media has been silent
+        legs:
+          type: array
+          items:
+            $ref: "#/components/schemas/CallLeg"
+
+    CallLeg:
+      type: object
+      required: [participant]
+      properties:
+        participant:
+          type: integer
+          nullable: true
+          description: Always null today; see listCalls
+        packets_in:
+          type: integer
+        bytes_in:
+          type: integer
+        packets_out:
+          type: integer
+        bytes_out:
+          type: integer
+
+    MediaEngine:
+      type: object
+      required: [engine, connected, capabilities]
+      properties:
+        engine:
+          type: string
+          nullable: true
+          example: builtin
+        connected:
+          type: boolean
+        capabilities:
+          type: array
+          items:
+            type: string
+            enum: [bridge, conference, record, transcode]
 
     Registration:
       type: object

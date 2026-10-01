@@ -180,6 +180,9 @@ Result BuiltinMediaEngine::_map_media(std::shared_ptr<Call> call, const std::str
   auto sdp = std::make_shared<SDP>();
   if (!sdp->parse(sdp_text)) return Result::failure("could not parse SDP");
 
+  // Where this leg said to send its media, read before it is rewritten to be the relay's.
+  const auto session_address = sdp->has_connection() ? sdp->connection().address : std::string();
+
   // Make us the endpoint for everything.
   ConnectionInfo relay;
   relay.nettype = "IN";
@@ -247,6 +250,25 @@ Result BuiltinMediaEngine::_map_media(std::shared_ptr<Call> call, const std::str
 
     stream->rtp_set = relays.rtp;
     stream->rtcp_set = relays.rtcp;
+
+    // The relay starts sending to this leg where its description said, so a leg that only
+    // listens gets media before it has sent any. RTCP is where a=rtcp says (RFC 3605), or
+    // the port above (RFC 3550 11).
+    const auto described_address = media.has_connection() ? media.connection().address : session_address;
+    const auto described_port = media.description.port;
+    if (!described_address.empty() && described_port != 0) {
+      relays.rtp->expect(described_address, static_cast<std::uint16_t>(described_port));
+
+      auto rtcp_port = static_cast<std::uint16_t>(described_port + 1);
+      for (const auto& attribute : media.attributes()) {
+        if (attribute.rfind("rtcp:", 0) != 0) continue;
+        try {
+          rtcp_port = static_cast<std::uint16_t>(std::stoul(attribute.substr(5)));
+        } catch (const std::exception&) {
+        }
+      }
+      relays.rtcp->expect(described_address, rtcp_port);
+    }
 
     // Point the media at our relay port.
     media.description.port = relays.rtp->port;
@@ -375,7 +397,29 @@ std::string BuiltinMediaEngine::_query(std::shared_ptr<Call> call) {
 
   const auto idle_seconds = idle_ms < 0 ? std::string("null") : std::to_string(idle_ms / 1000);
 
-  return "{\"call_id\":\"" + call->id + "\",\"engine\":\"builtin\",\"relay_sets\":" + std::to_string(count) + ",\"idle_seconds\":" + idle_seconds + "}";
+  // Per end per stream, RTP only: RTCP is the same ends reporting on it. Which
+  // participant an end is cannot be said honestly - the relay learns an end from where its
+  // packets come from, and behind a NAT that is not the address its description gave.
+  std::string legs = "[";
+  if (it != _allocated.end()) {
+    for (const auto& [id, relays] : it->second) {
+      if (!relays.rtp) continue;
+      for (const auto& end : relays.rtp->counts()) {
+        if (legs.size() > 1) legs += ",";
+        legs += "{\"packets_in\":" + std::to_string(end.packets_in) + ",\"bytes_in\":" + std::to_string(end.bytes_in) +
+                ",\"packets_out\":" + std::to_string(end.packets_out) + ",\"bytes_out\":" + std::to_string(end.bytes_out) + "}";
+      }
+    }
+  }
+  legs += "]";
+
+  return "{\"call_id\":\"" + call->id + "\",\"engine\":\"builtin\",\"relay_sets\":" + std::to_string(count) + ",\"idle_seconds\":" + idle_seconds +
+         ",\"legs\":" + legs + "}";
+}
+
+std::optional<std::uint64_t> BuiltinMediaEngine::packets_relayed() const {
+  std::lock_guard<std::mutex> lock(_mutex);
+  return _relay ? _relay->packets_relayed() : 0;
 }
 
 }  // namespace athenasip::media

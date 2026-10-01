@@ -554,6 +554,10 @@ std::string RtpengineMediaEngine::_idle_document(const std::shared_ptr<Call>& ca
   std::int64_t newest = 0;
   std::size_t streams = 0;
 
+  // One per stream: rtpengine's "stats" is what arrived on the stream's port from its end,
+  // and "stats_out", where a version reports it, what the engine sent that end.
+  std::string legs = "[";
+
   if (const auto* tags = reply.find("tags"); tags != nullptr && tags->is_dictionary()) {
     for (const auto& [tag, leg] : tags->entries()) {
       const auto* medias = leg.find("medias");
@@ -570,6 +574,17 @@ std::string RtpengineMediaEngine::_idle_document(const std::shared_ptr<Call>& ca
           const auto seen = last > 0 ? last : created;
 
           if (seen > newest) newest = seen;
+
+          if (legs.size() > 1) legs += ",";
+          legs += "{";
+          const auto* in = stream.find("stats");
+          legs += "\"packets_in\":" + std::to_string(in && in->is_dictionary() ? in->integer_at("packets", 0) : 0);
+          legs += ",\"bytes_in\":" + std::to_string(in && in->is_dictionary() ? in->integer_at("bytes", 0) : 0);
+          if (const auto* out = stream.find("stats_out"); out && out->is_dictionary()) {
+            legs += ",\"packets_out\":" + std::to_string(out->integer_at("packets", 0));
+            legs += ",\"bytes_out\":" + std::to_string(out->integer_at("bytes", 0));
+          }
+          legs += "}";
         }
       }
     }
@@ -579,7 +594,10 @@ std::string RtpengineMediaEngine::_idle_document(const std::shared_ptr<Call>& ca
   // with null rather than with a number the sweep would act on.
   const auto idle = streams == 0 ? std::string("null") : std::to_string(now > newest ? now - newest : 0);
 
-  return "{\"call_id\":\"" + call->id + "\",\"engine\":\"rtpengine\",\"streams\":" + std::to_string(streams) + ",\"idle_seconds\":" + idle + "}";
+  legs += "]";
+
+  return "{\"call_id\":\"" + call->id + "\",\"engine\":\"rtpengine\",\"streams\":" + std::to_string(streams) + ",\"idle_seconds\":" + idle +
+         ",\"legs\":" + legs + "}";
 }
 
 void RtpengineMediaEngine::start_recording(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) {

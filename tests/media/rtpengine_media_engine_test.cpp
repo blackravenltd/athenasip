@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 #include <yaml-cpp/yaml.h>
 
+#include <boost/json.hpp>
 #include <ctime>
 #include <memory>
 #include <set>
@@ -329,6 +330,45 @@ TEST(RtpengineMediaEngineTest, QueryReportsTheShortestIdleAcrossEveryStream) {
 
   // Four seconds ago, give or take the time the test took.
   EXPECT_TRUE(document.find("\"idle_seconds\":4") != std::string::npos || document.find("\"idle_seconds\":5") != std::string::npos) << document;
+
+  engine->close();
+}
+
+// The ng protocol's query gives each stream a "stats" dictionary of packets, bytes and
+// errors received on it. Each is one end, inbound at the engine. What the engine sent to
+// that end is only reported where the engine reports it, as "stats_out"; nothing is made
+// up from the other leg, because the difference between the two is exactly what one-way
+// audio looks like.
+TEST(RtpengineMediaEngineTest, QueryReportsEachEndsCounts) {
+  auto with_out = Bencode::dictionary({{"stats", Bencode::dictionary({{"packets", Bencode(1427)}, {"bytes", Bencode(84790)}, {"errors", Bencode(0)}})},
+                                       {"stats_out", Bencode::dictionary({{"packets", Bencode(4)}, {"bytes", Bencode(336)}})}});
+  auto without_out = Bencode::dictionary({{"stats", Bencode::dictionary({{"packets", Bencode(4)}, {"bytes", Bencode(336)}, {"errors", Bencode(0)}})}});
+
+  auto phone = Bencode::dictionary({{"medias", Bencode::list({Bencode::dictionary({{"streams", Bencode::list({with_out})}})})}});
+  auto browser = Bencode::dictionary({{"medias", Bencode::list({Bencode::dictionary({{"streams", Bencode::list({without_out})}})})}});
+
+  FakeRtpengine fake;
+  fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
+  fake.answer("query", Bencode::dictionary({{"result", Bencode(std::string("ok"))}, {"tags", Bencode::dictionary({{"a", phone}, {"b", browser}})}}));
+
+  auto engine = make_engine(fake);
+  ASSERT_TRUE(engine->connect());
+
+  const auto document = boost::json::parse(engine->query(make_call())).as_object();
+  ASSERT_TRUE(document.contains("legs")) << boost::json::serialize(document);
+
+  const auto& legs = document.at("legs").as_array();
+  ASSERT_EQ(legs.size(), 2u);
+
+  const auto& first = legs[0].as_object();
+  EXPECT_EQ(first.at("packets_in").as_int64(), 1427);
+  EXPECT_EQ(first.at("bytes_in").as_int64(), 84790);
+  EXPECT_EQ(first.at("packets_out").as_int64(), 4);
+  EXPECT_EQ(first.at("bytes_out").as_int64(), 336);
+
+  const auto& second = legs[1].as_object();
+  EXPECT_EQ(second.at("packets_in").as_int64(), 4);
+  EXPECT_FALSE(second.contains("packets_out")) << "an engine that does not say what it sent is not made to";
 
   engine->close();
 }

@@ -802,6 +802,27 @@ bool Core::call_unregister(std::string callId) {
   return true;
 }
 
+std::vector<std::shared_ptr<Call>> Core::call_list() const {
+  std::vector<std::shared_ptr<Call>> calls;
+  calls.reserve(_calls.size());
+  for (const auto& [id, call] : _calls) {
+    if (call) calls.push_back(call);
+  }
+  return calls;
+}
+
+std::map<std::string, std::size_t> Core::channel_counts() const {
+  std::set<const Channel*> seen;
+  std::map<std::string, std::size_t> counts;
+
+  for (const auto& [name, channel] : _channels) {
+    if (!channel || !channel->_connection || !seen.insert(channel.get()).second) continue;
+    counts[Util::to_lower(channel->_connection->transport_name())]++;
+  }
+
+  return counts;
+}
+
 std::shared_ptr<Call> Core::call_get(std::string callId) {
   auto search = _calls.find(callId);
   if (search == _calls.end()) return nullptr;

@@ -231,6 +231,13 @@ class Core : public std::enable_shared_from_this<Core> {
   bool call_unregister(std::string callId);
   std::shared_ptr<Call> call_get(std::string callId);
 
+  // On the strand, for the admin API and /metrics: what is live, by snapshot.
+  std::vector<std::shared_ptr<Call>> call_list() const;
+  std::size_t call_count() const { return _calls.size(); }
+
+  // Open flows by transport, each counted once however many names it is filed under.
+  std::map<std::string, std::size_t> channel_counts() const;
+
   // Admin API
   void admin_register(std::shared_ptr<api::AdminAPI> adminAPI);
   void admin_start();

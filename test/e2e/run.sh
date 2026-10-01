@@ -239,15 +239,37 @@ run_pair() {
 # other directly, so the call completes and nothing says the engine did anything. The
 # engine's own counters are the only thing that does.
 #
-# Only rtpengine keeps counters this harness can read. The builtin relay's bridging is
-# proven by a unit test that sends real packets through it from two sockets.
-assert_media_relayed() {
-  [ "${ENGINE}" = "rtpengine" ] || return 0
+# rtpengine's counters are in its log; the builtin relay's total is on /metrics.
+# The builtin relay's running total, from /metrics. Empty when the node does not say.
+relayed_total() {
+  ${COMPOSE} run --rm --no-deps --entrypoint curl sipp-uac -fsS -H "Authorization: Bearer ${ADMIN_TOKEN}" "http://${NODE}:8080/metrics" 2>/dev/null |
+    awk '/^athenasip_media_packets_relayed_total /{print $2}'
+}
 
+assert_media_relayed() {
   case "media" in
     *${FILTER}*) ;;
     *) return 0 ;;
   esac
+
+  # The builtin relay counts what it sends on, and /metrics carries the total: the same
+  # question rtpengine's counters answer below, asked of the relay that has no log to read.
+  if [ "${ENGINE}" = "builtin" ]; then
+    after=$(relayed_total)
+    relayed=$(( ${after:-0} - ${relayed_before:-0} ))
+
+    echo "  media-relayed (${relayed} packets through the builtin relay)"
+
+    if [ -z "${after}" ] || [ "${relayed}" -le 0 ]; then
+      failed=$((failed + 1))
+      failures="${failures} media-relayed"
+      echo "    failed - the builtin relay sent nothing on, so the call did not go through it"
+      return 0
+    fi
+
+    passed=$((passed + 1))
+    return 0
+  fi
 
   stats=$(docker logs athenasip-e2e-rtpengine 2>&1 | grep -E '^\[.*Port .*<>.*[0-9]+ p,' || true)
 
@@ -283,6 +305,7 @@ run_one relay-refused           invite_relay_refused.xml  alice.csv alice alice-
 run_pair invite-bye     uas.xml         bob.csv   bob   invite_bye.xml       alice.csv          alice 30s
 run_pair cancel-ringing uas_ringing.xml bob.csv   bob   cancel_after_180.xml alice.csv          alice 30s
 run_pair busy           uas_busy.xml    bob.csv   bob   invite_busy.xml      alice.csv          alice 30s
+relayed_before=$(relayed_total)
 run_pair media          uas_media.xml   bob.csv   bob   invite_media.xml     alice.csv          alice 40s
 assert_media_relayed
 
