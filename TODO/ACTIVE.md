@@ -408,21 +408,11 @@ milestone is the second node.
 
 ### The node's own address
 
-- [ ] Public contact addresses, the rest of it. `sip.public_address` and
-      `Core::advertised_address` landed in M2 because the sipp harness showed the
-      wildcard bind bites on one node. What is left:
-      - The public port, which is not always the local one. A node behind port
-        forwarding writes its local port into both fields today, and the forwarded port
-        is what the far end has to come back to. It has to be configured per transport.
-      - A client on the same LAN reaching the public address depends on the router
-        hairpinning, and plenty do not. So the address a node advertises depends on who
-        is asking: a `localnet` list of private prefixes, the local address to anything
-        inside them and the public address to everything else, for Via, Record-Route and
-        Contact. `Util::is_ipv4_private` (`src/util.cpp`) and `Location.nat` are the
-        groundwork already in the tree.
-      The same split applies in the media plane: the builtin relay puts
-      `media.builtin.public_address` in `c=`, which is one address for every audience,
-      and the RTP port range has to be forwarded as a contiguous block.
+- [ ] The media plane's half of the node's address: the builtin relay puts
+      `media.builtin.public_address` in `c=`, one address for every audience, so a phone
+      inside `sip.localnet` is told the public address for media too. It wants the same
+      choice signalling now makes (`Core::advertised_for`). The RTP port range still has
+      to be forwarded as a contiguous block.
 - [ ] A node determines its own public address and reachability, rather than being told.
       Configuration stays and always wins, because an explicit answer beats a guessed
       one, but a node with nothing configured should work out the answer itself. Three
