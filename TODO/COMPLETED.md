@@ -2368,3 +2368,13 @@ LAN is answered 403.
       or 430 moves to the next flow, any other final answer is the client's and its other
       flows are dropped, a flow that has gone is that flow failing and never a reason to
       try the Contact, and a 430 is never passed to the caller (480 instead).
+
+### The node's address as each peer sees it (2026-10-02)
+
+- [x] **`sip.localnet` and a `public_port` per listener.** `Core::advertised_for(channel)`
+      decides what the node calls itself on a flow: a peer inside `localnet`, or any peer
+      when no public address is set, is given the local address and port, with a
+      wildcard bind resolved to the interface that reaches that peer; everyone else the
+      public address and the forwarded port. Via, both Record-Route values (each facing
+      its own end), Service-Route, the qualify probe and the node list all use it, and
+      every public name is recognised as this node's own in a Route.
