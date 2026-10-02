@@ -56,6 +56,16 @@ bool Config::load_from_yaml(const std::string& filename) {
   }
   if (sip["log_messages"]) sip_log_messages = sip["log_messages"].as<bool>();
   if (sip["public_address"]) sip_public_address = sip["public_address"].as<std::string>();
+
+  if (sip["localnet"]) {
+    try {
+      sip_localnet = sip["localnet"].as<std::vector<std::string>>();
+    } catch (const std::exception&) {
+      _logger->error("Invalid 'sip.localnet': it is a list of prefixes, such as [\"192.168.0.0/16\"]");
+      return false;
+    }
+  }
+  if (!parse_localnet()) return false;
   if (sip["media_timeout"]) sip_media_timeout = sip["media_timeout"].as<uint32_t>();
   if (sip["max_call_duration"]) sip_max_call_duration = sip["max_call_duration"].as<uint32_t>();
   if (sip["require_session_timer"]) sip_require_session_timer = sip["require_session_timer"].as<bool>();
@@ -306,6 +316,19 @@ bool Config::load_from_yaml(const std::string& filename) {
     if (media["url"]) media_url = media["url"].as<std::string>();
   }
 
+  // The port each listener is reached on from outside, when a router forwards a different
+  // one to it.
+  for (const auto& [name, field] : std::initializer_list<std::pair<const char*, std::uint16_t*>>{
+           {"udp", &udp_public_port}, {"tcp", &tcp_public_port}, {"tls", &tls_public_port}, {"websocket", &websocket_public_port}}) {
+    if (!config[name] || !config[name]["public_port"]) continue;
+    try {
+      *field = config[name]["public_port"].as<std::uint16_t>();
+    } catch (const std::exception&) {
+      _logger->error(std::string("Invalid '") + name + ".public_port': it is a port number");
+      return false;
+    }
+  }
+
   // --- Parse the 'behaviour' section ---
   //
   // The server's default for every behaviour that differs between SIP servers; a realm
@@ -514,6 +537,7 @@ std::string Config::effective_yaml() const {
   out << YAML::Key << "sip" << YAML::Value << YAML::BeginMap;
   out << YAML::Key << "node_id" << YAML::Value << sip_node_id;
   out << YAML::Key << "public_address" << YAML::Value << sip_public_address;
+  out << YAML::Key << "localnet" << YAML::Value << YAML::Flow << sip_localnet;
   out << YAML::Key << "allow_unencrypted" << YAML::Value << sip_allow_unencrypted;
   out << YAML::Key << "log_messages" << YAML::Value << sip_log_messages;
   out << YAML::Key << "session_expires" << YAML::Value << sip_session_expires;
@@ -535,25 +559,26 @@ std::string Config::effective_yaml() const {
   out << YAML::Key << "timer_reliable_transport_retransmits" << YAML::Value << sip_timer_reliable_transport_retransmits;
   out << YAML::EndMap;
 
-  const auto listener = [&out](const std::string& name, bool enable, const std::string& address, std::uint16_t port) {
+  const auto listener = [&out](const std::string& name, bool enable, const std::string& address, std::uint16_t port, std::uint16_t public_port) {
     out << YAML::Key << name << YAML::Value << YAML::BeginMap;
     out << YAML::Key << "enable" << YAML::Value << enable;
     out << YAML::Key << "address" << YAML::Value << address;
     out << YAML::Key << "port" << YAML::Value << port;
+    out << YAML::Key << "public_port" << YAML::Value << public_port;
   };
 
-  listener("udp", udp_enable, udp_address, udp_port);
+  listener("udp", udp_enable, udp_address, udp_port, udp_public_port);
   out << YAML::EndMap;
 
-  listener("tcp", tcp_enable, tcp_address, tcp_port);
+  listener("tcp", tcp_enable, tcp_address, tcp_port, tcp_public_port);
   out << YAML::EndMap;
 
-  listener("tls", tls_enable, tls_address, tls_port);
+  listener("tls", tls_enable, tls_address, tls_port, tls_public_port);
   out << YAML::Key << "cert_pem_filename" << YAML::Value << tls_cert_pem_filename;
   out << YAML::Key << "key_pem_filename" << YAML::Value << tls_key_pem_filename;
   out << YAML::EndMap;
 
-  listener("websocket", websocket_enable, websocket_address, websocket_port);
+  listener("websocket", websocket_enable, websocket_address, websocket_port, websocket_public_port);
   out << YAML::Key << "tls" << YAML::Value << websocket_tls;
   out << YAML::Key << "cert_pem_filename" << YAML::Value << websocket_cert_pem_filename;
   out << YAML::Key << "key_pem_filename" << YAML::Value << websocket_key_pem_filename;
@@ -617,7 +642,9 @@ std::vector<Config::AdvertisedTransport> Config::advertised_transports() const {
   std::vector<AdvertisedTransport> out;
 
   const auto add = [this, &out](const std::string& transport, const std::string& bind_address, std::uint16_t port, bool secure) {
-    out.push_back(AdvertisedTransport{transport, sip_public_address.empty() ? bind_address : sip_public_address, port, secure});
+    const auto public_port = public_port_for(transport);
+    out.push_back(AdvertisedTransport{transport, sip_public_address.empty() ? bind_address : sip_public_address,
+                                      !sip_public_address.empty() && public_port != 0 ? public_port : port, secure});
   };
 
   if (udp_enable) add("udp", udp_address, udp_port, false);
@@ -626,6 +653,63 @@ std::vector<Config::AdvertisedTransport> Config::advertised_transports() const {
   if (websocket_enable) add(websocket_tls ? "wss" : "ws", websocket_address, websocket_port, websocket_tls);
 
   return out;
+}
+
+// Each entry a prefix, or a bare address that is a prefix of one. A prefix with host bits set
+// is taken as the network it names, as an operator writing 192.168.1.2/24 means.
+bool Config::parse_localnet() {
+  _localnet_v4.clear();
+  _localnet_v6.clear();
+
+  for (const auto& entry : sip_localnet) {
+    boost::system::error_code error;
+    const auto slash = entry.find('/');
+
+    if (slash == std::string::npos) {
+      const auto address = boost::asio::ip::make_address(entry, error);
+      if (!error && address.is_v4()) _localnet_v4.emplace_back(address.to_v4(), 32);
+      if (!error && address.is_v6()) _localnet_v6.emplace_back(address.to_v6(), 128);
+    } else if (entry.find(':') == std::string::npos) {
+      const auto network = boost::asio::ip::make_network_v4(entry, error);
+      if (!error) _localnet_v4.push_back(network.canonical());
+    } else {
+      const auto network = boost::asio::ip::make_network_v6(entry, error);
+      if (!error) _localnet_v6.push_back(network.canonical());
+    }
+
+    if (error) {
+      if (_logger) _logger->error("Invalid 'sip.localnet' entry '" + entry + "': it is a prefix such as 192.168.0.0/16, or an address");
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool Config::in_localnet(const boost::asio::ip::address& address) const {
+  if (address.is_v4()) {
+    const auto v4 = address.to_v4();
+    for (const auto& network : _localnet_v4) {
+      if (boost::asio::ip::make_network_v4(v4, network.prefix_length()).canonical() == network) return true;
+    }
+    return false;
+  }
+
+  const auto v6 = address.to_v6();
+  if (v6.is_v4_mapped()) return in_localnet(boost::asio::ip::make_address_v4(boost::asio::ip::v4_mapped, v6));
+
+  for (const auto& network : _localnet_v6) {
+    if (boost::asio::ip::make_network_v6(v6, network.prefix_length()).canonical() == network) return true;
+  }
+  return false;
+}
+
+std::uint16_t Config::public_port_for(const std::string& transport) const {
+  if (transport == "udp") return udp_public_port;
+  if (transport == "tcp") return tcp_public_port;
+  if (transport == "tls") return tls_public_port;
+  if (transport == "ws" || transport == "wss") return websocket_public_port;
+  return 0;
 }
 
 }  // namespace athenasip

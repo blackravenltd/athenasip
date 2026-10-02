@@ -462,7 +462,6 @@ std::shared_ptr<headers::Header> Registrar::_service_route(const std::shared_ptr
   auto channel = request->channel.lock();
   if (!core || !channel || !channel->_connection) return nullptr;
 
-  const auto local = channel->_connection->local_endpoint();
   const auto transport = Util::to_lower(channel->_connection->transport_name());
 
   auto route = std::make_shared<types::SIPUri>();
@@ -473,8 +472,9 @@ std::shared_ptr<headers::Header> Registrar::_service_route(const std::shared_ptr
   // bound to the wildcard, so its local endpoint is 0.0.0.0 - and a Service-Route
   // pointing at 0.0.0.0 is a route the client cannot use, which is worse than sending
   // none at all. The same rule now decides the Via and the Record-Route.
-  route->host = core->advertised_address(local.address().to_string());
-  route->port = local.port();
+  const auto advertised = core->advertised_for(*channel);
+  route->host = advertised.host;
+  route->port = advertised.port;
 
   // 19.1.1 again: loose routing, so the next hop does not rewrite the Request-URI.
   route->set_parameter("lr", "");

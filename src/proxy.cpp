@@ -1233,7 +1233,6 @@ bool Proxy::_prepare_forward(const std::shared_ptr<SIPMessage>& copy, const std:
     header->add("Max-Forwards", std::make_shared<UIntHeader>(kDefaultMaxForwards));
   }
 
-  const auto local = channel->_connection->local_endpoint();
   const auto transport = Util::to_lower(channel->_connection->transport_name());
 
   // Step 4: Record-Route, on the requests that can start a dialog. It is what brings the
@@ -1256,12 +1255,14 @@ bool Proxy::_prepare_forward(const std::shared_ptr<SIPMessage>& copy, const std:
     const bool secure_request = Util::to_lower(header->request_uri->scheme) == "sips";
     auto inbound = copy->channel.lock();
 
-    auto record_route_for = [&](const std::string& interface_transport, const std::string& address, std::uint16_t port, const std::string& token) {
+    // Each value names this node as the end it faces sees it (sip.localnet, public ports).
+    auto record_route_for = [&](const std::string& interface_transport, const Channel& facing, const std::string& token) {
+      const auto advertised = core->advertised_for(facing);
       auto uri = std::make_shared<SIPUri>();
       uri->valid = true;
       uri->scheme = (interface_transport == "tls" || secure_request) ? "sips" : "sip";
-      uri->host = core->advertised_address(address);
-      uri->port = port;
+      uri->host = advertised.host;
+      uri->port = advertised.port;
 
       // RFC 5626 section 5.1: the flow token goes in the user part, where it is opaque
       // to everyone but the node that wrote it.
@@ -1281,12 +1282,10 @@ bool Proxy::_prepare_forward(const std::shared_ptr<SIPMessage>& copy, const std:
 
     // Added bottom first, because add_start puts each one in front of the last.
     if (inbound && inbound->_connection) {
-      const auto arrived_on = inbound->_connection->local_endpoint();
-      header->add_start("Record-Route", record_route_for(Util::to_lower(inbound->_connection->transport_name()), arrived_on.address().to_string(),
-                                                         arrived_on.port(), inbound->flow_token()));
+      header->add_start("Record-Route", record_route_for(Util::to_lower(inbound->_connection->transport_name()), *inbound, inbound->flow_token()));
     }
 
-    header->add_start("Record-Route", record_route_for(transport, local.address().to_string(), local.port(), channel->flow_token()));
+    header->add_start("Record-Route", record_route_for(transport, *channel, channel->flow_token()));
   }
 
   // Step 6: a top Route without lr belongs to a strict router, which expects to find
@@ -1312,8 +1311,9 @@ bool Proxy::_prepare_forward(const std::shared_ptr<SIPMessage>& copy, const std:
   // transactions while both still say where they have been.
   const auto branch = std::string(kMagicCookie) + loop_token + "." + Util::generate_random_string("", 12);
 
-  auto via = std::make_shared<ViaHeader>("SIP/2.0/" + Util::to_upper(transport) + " " + core->advertised_address(local.address().to_string()) + ":" +
-                                         std::to_string(local.port()) + ";branch=" + branch);
+  const auto advertised = core->advertised_for(*channel);
+  auto via =
+      std::make_shared<ViaHeader>("SIP/2.0/" + Util::to_upper(transport) + " " + advertised.host + ":" + std::to_string(advertised.port) + ";branch=" + branch);
 
   header->add_start("Via", via);
   copy->branch = branch;
@@ -1656,7 +1656,6 @@ void Proxy::_forward_cancel_statelessly(const std::shared_ptr<SIPMessage>& cance
   // as a new one the far end has never seen.
   const auto branch = std::string(kMagicCookie) + _loop_token(cancel);
 
-  const auto local = flow->_connection->local_endpoint();
   const auto transport = Util::to_lower(flow->_connection->transport_name());
 
   if (cancel->header->contains("Max-Forwards")) {
@@ -1674,8 +1673,9 @@ void Proxy::_forward_cancel_statelessly(const std::shared_ptr<SIPMessage>& cance
     cancel->header->add("Max-Forwards", std::make_shared<UIntHeader>(kDefaultMaxForwards));
   }
 
-  auto via = std::make_shared<ViaHeader>("SIP/2.0/" + Util::to_upper(transport) + " " + core->advertised_address(local.address().to_string()) + ":" +
-                                         std::to_string(local.port()) + ";branch=" + branch);
+  const auto advertised = core->advertised_for(*flow);
+  auto via =
+      std::make_shared<ViaHeader>("SIP/2.0/" + Util::to_upper(transport) + " " + advertised.host + ":" + std::to_string(advertised.port) + ";branch=" + branch);
 
   cancel->header->add_start("Via", via);
   cancel->branch = branch;

@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 #include <unistd.h>
 
+#include <boost/asio/ip/address.hpp>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -334,6 +335,36 @@ TEST(ConfigTest, RewritingContactsIsOffUnlessAskedFor) {
   EXPECT_TRUE(config->behaviour_rewrite_contact);
 
   ConfigFile wrong("sip:\n  node_id: test-node\nbehaviour:\n  rewrite_contact: sometimes\n");
+  ok = true;
+  wrong.load(ok);
+  EXPECT_FALSE(ok);
+}
+
+// The config: localnet is a list of prefixes, a bare address is a prefix of one, and
+// anything else stops the node. public_port belongs to each listener.
+TEST(ConfigTest, LocalnetAndPublicPortsAreRead) {
+  ConfigFile file(
+      "sip:\n  node_id: test-node\n  public_address: 203.0.113.5\n  localnet: [\"10.0.0.0/8\", \"192.168.1.7\", \"fd00::/8\"]\n"
+      "udp:\n  port: 5060\n  public_port: 5080\n"
+      "tls:\n  enable: false\n  port: 5061\n  public_port: 5081\n");
+
+  bool ok = false;
+  auto config = file.load(ok);
+  ASSERT_TRUE(ok);
+
+  EXPECT_EQ(config->udp_public_port, 5080);
+  EXPECT_EQ(config->tls_public_port, 5081);
+  EXPECT_TRUE(config->in_localnet(boost::asio::ip::make_address("10.1.2.3")));
+  EXPECT_TRUE(config->in_localnet(boost::asio::ip::make_address("192.168.1.7")));
+  EXPECT_FALSE(config->in_localnet(boost::asio::ip::make_address("192.168.1.8")));
+  EXPECT_TRUE(config->in_localnet(boost::asio::ip::make_address("fd12::1")));
+  EXPECT_FALSE(config->in_localnet(boost::asio::ip::make_address("203.0.113.9")));
+
+  const auto effective = config->effective_yaml();
+  EXPECT_NE(effective.find("localnet"), std::string::npos) << effective;
+  EXPECT_NE(effective.find("public_port: 5080"), std::string::npos) << effective;
+
+  ConfigFile wrong("sip:\n  node_id: test-node\n  localnet: [\"10.0.0.0/33\"]\n");
   ok = true;
   wrong.load(ok);
   EXPECT_FALSE(ok);

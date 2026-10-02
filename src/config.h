@@ -9,6 +9,9 @@
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
+#include <boost/asio/ip/address.hpp>
+#include <boost/asio/ip/network_v4.hpp>
+#include <boost/asio/ip/network_v6.hpp>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -47,6 +50,17 @@ class Config {
   // failover work in M4 - needs to be told. Empty means fall back to the bind address,
   // which is right on a single-homed host and useless on a wildcard bind.
   std::string sip_public_address;
+
+  // sip.localnet: the prefixes on this node's own side of the router. A far end inside
+  // them is given the node's local address and port, because the public address only
+  // reaches it if the router hairpins; everyone else is given the public ones (Asterisk's
+  // localnet). parse_localnet turns the strings into prefixes and says whether they all were.
+  std::vector<std::string> sip_localnet;
+  bool parse_localnet();
+  bool in_localnet(const boost::asio::ip::address& address) const;
+
+  // The public port for a transport by its name - udp, tcp, tls, ws or wss - or zero.
+  std::uint16_t public_port_for(const std::string& transport) const;
 
   // Where this node can be reached, one entry per enabled transport, at sip.public_address
   // when there is one and the bind address otherwise. The node list and the status the
@@ -172,6 +186,9 @@ class Config {
   bool tls_enable = false;
   std::string tls_address;
   uint16_t tls_port = 0;
+  // The port this listener is reached on from outside, when the router forwards another one
+  // to it. Zero is the bound port.
+  uint16_t tls_public_port = 0;
   std::string tls_cert_pem_filename;
   std::string tls_key_pem_filename;
 
@@ -179,16 +196,25 @@ class Config {
   bool tcp_enable = false;
   std::string tcp_address;  // e.g. "127.0.0.1"
   uint16_t tcp_port = 0;    // e.g. 5060
+  // The port this listener is reached on from outside, when the router forwards another one
+  // to it. Zero is the bound port.
+  uint16_t tcp_public_port = 0;
 
   // UDP Configuration
   bool udp_enable = false;
   std::string udp_address;  // e.g. "127.0.0.1"
   uint16_t udp_port = 0;    // e.g. 5060
+  // The port this listener is reached on from outside, when the router forwards another one
+  // to it. Zero is the bound port.
+  uint16_t udp_public_port = 0;
 
   // UDP Configuration
   bool websocket_enable = false;
   std::string websocket_address;  // e.g. "127.0.0.1"
   uint16_t websocket_port = 0;    // e.g. 5060
+  // The port this listener is reached on from outside, when the router forwards another one
+  // to it. Zero is the bound port.
+  uint16_t websocket_public_port = 0;
 
   // RFC 7118 over TLS. A browser will not open an insecure WebSocket from a page served
   // over https, so this is what a web client actually connects to; ws:// is for local
@@ -321,6 +347,9 @@ class Config {
   // else should read it: everything the server itself needs is parsed into the fields
   // above at load time.
   YAML::Node _root;
+
+  std::vector<boost::asio::ip::network_v4> _localnet_v4;
+  std::vector<boost::asio::ip::network_v6> _localnet_v6;
 };
 
 }  // namespace athenasip

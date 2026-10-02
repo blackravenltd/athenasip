@@ -128,8 +128,8 @@ void Qualifier::_probe(const std::string& key) {
     return;
   }
 
-  const auto local = channel->_connection->local_endpoint();
-  auto request = _options_for(probe, channel->_connection->transport_name(), core->advertised_address(local.address().to_string()), local.port());
+  const auto advertised = core->advertised_for(*channel);
+  auto request = _options_for(probe, channel->_connection->transport_name(), advertised.host, advertised.port);
 
   std::weak_ptr<Qualifier> weak_self = weak_from_this();
   core->client_transaction_start(
