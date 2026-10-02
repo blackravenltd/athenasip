@@ -6,6 +6,7 @@
 //
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 
 #include "server.h"
@@ -37,6 +38,9 @@ class TLSServer : public Server {
   uint16_t _port;
   std::shared_ptr<std::thread> _thread;
   boost::asio::ssl::context ctx;
+
+  // How long a connection has to finish its handshake before it is closed.
+  static constexpr std::chrono::seconds kHandshakeDeadline{10};
 };
 
 }  // namespace athenasip::servers
