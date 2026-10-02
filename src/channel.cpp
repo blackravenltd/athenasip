@@ -404,7 +404,7 @@ void Channel::_frame_stream() {
   }
 
   // A CRLF between messages is a keep-alive, not a message (RFC 5626 section 4.4.1).
-  while (_buffer.size() >= 2 && _buffer.compare(0, 2, "\r\n") == 0) _buffer.erase(0, 2);
+  _take_keep_alives();
 
   // As many whole messages as the buffer holds. A stream may deliver several in one
   // read and half of one in the next, and both have to come out right.
@@ -427,13 +427,31 @@ void Channel::_frame_stream() {
     }
 
     _incoming_message = message;
+    _crlf_run = 0;
 
     if (!_append_body()) return;
 
     receive(_incoming_message);
     _incoming_message = nullptr;
 
-    while (_buffer.size() >= 2 && _buffer.compare(0, 2, "\r\n") == 0) _buffer.erase(0, 2);
+    _take_keep_alives();
+  }
+}
+
+// RFC 5626 section 4.4.1: a double CRLF is the client's "ping" and a single CRLF back is the
+// "pong" it waits for; without one it decides the flow has failed. The ping may straddle two
+// reads, so the CRLFs are counted across them, and a message arriving resets the count.
+void Channel::_take_keep_alives() {
+  while (_buffer.size() >= 2 && _buffer.compare(0, 2, "\r\n") == 0) {
+    _buffer.erase(0, 2);
+
+    if (++_crlf_run == 2) {
+      _crlf_run = 0;
+
+      // TCP and TLS only: a WebSocket has ping frames of its own (RFC 6455, RFC 7118).
+      const auto transport = _connection ? Util::to_lower(_connection->transport_name()) : std::string();
+      if (transport != "ws" && transport != "wss") _schedule_async_write("\r\n");
+    }
   }
 }
 
