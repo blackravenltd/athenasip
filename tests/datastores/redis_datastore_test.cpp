@@ -282,6 +282,28 @@ TEST(RedisDatastoreTest, AnAccountsMediaProfileRoundTrips) {
   datastore->account_delete(silent->identity);
 }
 
+// RFC 5626 outbound's identity for a binding has to survive the store, or a second node
+// would not know which flow a re-registration replaces.
+TEST(RedisDatastoreTest, AnOutboundBindingKeepsItsInstanceAndRegId) {
+  REQUIRE_REDIS(datastore);
+  const auto realm = "ob-" + unique_suffix() + ".example";
+  auto account = make_account(5250, "sip:carol@" + realm);
+  ASSERT_TRUE(datastore->account_create(account));
+
+  types::Location binding;
+  binding.contact = std::make_shared<types::SIPUri>("sip:carol@192.0.2.10:5060");
+  binding.instance = "<urn:uuid:00000000-0000-1000-8000-000A95A0E128>";
+  binding.reg_id = 2;
+  ASSERT_TRUE(datastore->account_register(account, binding, 3600));
+
+  const auto found = datastore->location_list(5250);
+  ASSERT_EQ(found.size(), 1u);
+  EXPECT_EQ(found[0].instance, "<urn:uuid:00000000-0000-1000-8000-000A95A0E128>");
+  EXPECT_EQ(found[0].reg_id, 2u);
+
+  datastore->account_delete(account->identity);
+}
+
 TEST(RedisDatastoreTest, RegistrationsAreListedFromTheLocationIndex) {
   REQUIRE_REDIS(datastore);
   const auto realm = "loc-" + unique_suffix() + ".example";

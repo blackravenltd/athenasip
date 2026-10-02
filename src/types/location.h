@@ -35,6 +35,12 @@ struct Location {
   // The contact is on a private address, so it is behind NAT as far as we are
   // concerned and responses have to go back down the flow it arrived on.
   bool nat = false;
+
+  // RFC 5626 outbound: the client's +sip.instance and the reg-id of this flow, which
+  // together are what identifies the binding once the client has asked for outbound. Empty
+  // and zero for an ordinary binding, which is identified by its contact.
+  std::string instance;
+  std::uint32_t reg_id = 0;
 };
 
 }  // namespace athenasip::types

@@ -111,8 +111,10 @@ class Core : public std::enable_shared_from_this<Core> {
 
   // Accounts
   void account_get(std::shared_ptr<SIPIdentity> identity, plugins::Handler<std::shared_ptr<Account>> handler);
+  // instance and reg_id are RFC 5626 outbound's identity for the binding, empty and zero
+  // for an ordinary one.
   void account_register(std::shared_ptr<Account> account, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel, std::uint32_t expires_seconds,
-                        std::string path, plugins::StatusHandler handler);
+                        std::string path, plugins::StatusHandler handler, std::string instance = "", std::uint32_t reg_id = 0);
   void account_unregister(std::shared_ptr<Account> account, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel, plugins::StatusHandler handler);
   void location_list(std::uint64_t account_id, plugins::Handler<std::vector<types::Location>> handler);
 

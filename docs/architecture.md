@@ -88,6 +88,14 @@ socket a client registered on lives on one node, which is what `Location.node_id
 `Location.flow_id` record: a node that reads a binding it does not own forwards to the
 node that does.
 
+A client that supports RFC 5626 outbound identifies each flow by its `+sip.instance` and
+`reg-id`, which the binding keeps as `Location.instance` and `Location.reg_id`. The
+registrar treats that pair, not the Contact, as the binding: registering the same pair
+again from a new flow replaces the old one, and a second reg-id is a second flow from the
+same client, which is how a client holds flows to two nodes at once. The node answers a
+double-CRLF keep-alive on TCP and TLS with a CRLF, and a STUN Binding request on its SIP
+UDP port with the source address (RFC 5626 section 4.4).
+
 ## Media
 
 `MediaEngine` is not a two-party SDP rewriter. It advertises capabilities - `bridge`,

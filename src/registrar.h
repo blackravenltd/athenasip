@@ -56,10 +56,19 @@ class Registrar : public TransactionUser {
 
     // Seconds between OPTIONS to it, from the realm's behaviour; zero for none.
     std::uint32_t qualify = 0;
+
+    // RFC 5626 outbound's identity for it, when the client asked for outbound.
+    std::string instance;
+    std::uint32_t reg_id = 0;
   };
 
   void _write_bindings(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::shared_ptr<types::Account> account,
                        std::shared_ptr<std::vector<Binding>> bindings, std::size_t index, std::uint32_t expires_seconds);
+  void _store_binding(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::shared_ptr<types::Account> account,
+                      std::shared_ptr<std::vector<Binding>> bindings, std::size_t index, std::uint32_t expires_seconds, Binding binding,
+                      std::shared_ptr<Channel> channel);
+  void _remove_then(std::shared_ptr<types::Account> account, std::shared_ptr<Channel> channel, std::vector<std::shared_ptr<types::SIPUri>> contacts,
+                    std::size_t index, std::function<void()> then);
 
   // The lifetime the client asked for, from the Contact's expires parameter, then the
   // Expires header, then the realm default (RFC 3261 10.3 step 7). Absent everywhere
