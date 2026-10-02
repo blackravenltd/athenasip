@@ -381,6 +381,74 @@ TEST(TransportFramingTest, TlsCarriesARequestOverACompletedHandshake) {
   EXPECT_NE(answer.find("SIP/2.0 401"), std::string::npos) << answer;
 }
 
+// A connection that never completes a handshake - a port scanner, a client speaking plain
+// SIP to the TLS port, a certificate the far end will not accept - is that connection's
+// problem. The listener goes on accepting: before this, one failed handshake stopped it
+// for good and TLS was down until the node restarted.
+TEST(TransportFramingTest, TlsKeepsAcceptingAfterAFailedHandshake) {
+  TlsFixture f;
+
+  {
+    net::io_context io;
+    tcp::socket plain(io);
+    plain.connect(tcp::endpoint(net::ip::make_address("127.0.0.1"), f.port()));
+    net::write(plain, net::buffer(register_request("TCP", "z9hG4bK-not-tls")));
+    std::array<char, 256> buffer{};
+    boost::system::error_code ignored;
+    plain.read_some(net::buffer(buffer), ignored);
+  }
+
+  net::io_context io;
+  ssl::context context(ssl::context::tls_client);
+  context.set_verify_mode(ssl::verify_none);
+
+  ssl::stream<tcp::socket> stream(io, context);
+  stream.next_layer().connect(tcp::endpoint(net::ip::make_address("127.0.0.1"), f.port()));
+
+  boost::system::error_code handshake;
+  net::steady_timer deadline(io);
+  bool done = false;
+  stream.async_handshake(ssl::stream_base::client, [&](const boost::system::error_code& ec) {
+    handshake = ec;
+    done = true;
+  });
+  io.run_for(std::chrono::seconds(3));
+  ASSERT_TRUE(done) << "the listener stopped accepting";
+  ASSERT_FALSE(handshake) << handshake.message();
+
+  Reader<ssl::stream<tcp::socket>> reader(io, stream);
+  net::write(stream, net::buffer(register_request("TLS", "z9hG4bK-tls-after")));
+  const auto answer = reader.take(std::chrono::seconds(3));
+  EXPECT_NE(answer.find("SIP/2.0 401"), std::string::npos) << answer;
+}
+
+// And a connection that says nothing at all holds up nobody else: the handshake is each
+// connection's own, not the listener's.
+TEST(TransportFramingTest, ASilentTlsConnectionHoldsUpNobodyElse) {
+  TlsFixture f;
+
+  net::io_context silent_io;
+  tcp::socket silent(silent_io);
+  silent.connect(tcp::endpoint(net::ip::make_address("127.0.0.1"), f.port()));
+
+  net::io_context io;
+  ssl::context context(ssl::context::tls_client);
+  context.set_verify_mode(ssl::verify_none);
+
+  ssl::stream<tcp::socket> stream(io, context);
+  stream.next_layer().connect(tcp::endpoint(net::ip::make_address("127.0.0.1"), f.port()));
+
+  bool done = false;
+  boost::system::error_code handshake;
+  stream.async_handshake(ssl::stream_base::client, [&](const boost::system::error_code& ec) {
+    handshake = ec;
+    done = true;
+  });
+  io.run_for(std::chrono::seconds(3));
+  ASSERT_TRUE(done) << "a silent connection held up the next one";
+  EXPECT_FALSE(handshake) << handshake.message();
+}
+
 TEST(TransportFramingTest, UdpCarriesADatagramAndAnswersItToTheSourcePort) {
   UdpFixture f;
 

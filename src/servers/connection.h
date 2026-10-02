@@ -55,6 +55,10 @@ class Connection {
   virtual void close() = 0;
 
   virtual std::string transport_name() const = 0;
+
+  // Who the far end proved it is, for a connection that made it prove anything: the
+  // common name of a peer certificate the handshake verified. Empty everywhere else.
+  virtual std::string peer_identity() const { return ""; }
 };
 
 }  // namespace athenasip::servers

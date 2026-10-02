@@ -21,19 +21,30 @@ namespace athenasip::servers {
 
 class TLSConnection : public Connection {
  public:
-  TLSConnection(std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> ssl_socket)
+  // handshaken is for a flow this node opened, whose client handshake has already run.
+  TLSConnection(std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> ssl_socket, bool handshaken = false)
       : _ssl_socket(ssl_socket),
         _local_endpoint(_ssl_socket->lowest_layer().local_endpoint()),
-        _remote_endpoint(_ssl_socket->lowest_layer().remote_endpoint()) {}
+        _remote_endpoint(_ssl_socket->lowest_layer().remote_endpoint()),
+        _handshaken(handshaken) {
+    if (_handshaken) _read_peer();
+  }
 
   virtual bool start() override {
+    if (_handshaken) return true;
+
     try {
       _ssl_socket->handshake(ssl::stream_base::server);
     } catch (const std::exception& e) {
       return false;
     }
+
+    _handshaken = true;
+    _read_peer();
     return true;
   }
+
+  std::string peer_identity() const override { return _peer; }
 
   boost::asio::any_io_executor executor() override { return _ssl_socket->lowest_layer().get_executor(); }
 
@@ -67,9 +78,23 @@ class TLSConnection : public Connection {
   virtual std::string transport_name() const override { return "tls"; }
 
  protected:
+  // The verified peer certificate's common name, when the context asked for one.
+  void _read_peer() {
+    X509* certificate = SSL_get1_peer_certificate(_ssl_socket->native_handle());
+    if (certificate == nullptr) return;
+
+    if (SSL_get_verify_result(_ssl_socket->native_handle()) == X509_V_OK) {
+      char name[256] = {};
+      if (X509_NAME_get_text_by_NID(X509_get_subject_name(certificate), NID_commonName, name, sizeof(name)) > 0) _peer = name;
+    }
+    X509_free(certificate);
+  }
+
   std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> _ssl_socket;
   boost::asio::ip::tcp::endpoint _local_endpoint;
   boost::asio::ip::tcp::endpoint _remote_endpoint;
+  bool _handshaken = false;
+  std::string _peer;
 };
 
 }  // namespace athenasip::servers
