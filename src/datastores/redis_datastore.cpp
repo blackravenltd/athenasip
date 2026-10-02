@@ -907,6 +907,7 @@ std::string RedisDatastore::_serialise_realm(const std::shared_ptr<types::Realm>
   if (realm->behaviour.media_anchor) obj["media_anchor"] = *realm->behaviour.media_anchor;
   if (realm->behaviour.media_profile) obj["media_profiles"] = types::MediaPolicy::to_string(*realm->behaviour.media_profile);
   if (realm->behaviour.qualify_interval) obj["qualify_interval"] = *realm->behaviour.qualify_interval;
+  if (realm->behaviour.rewrite_contact) obj["rewrite_contact"] = *realm->behaviour.rewrite_contact;
   return boost::json::serialize(obj);
 }
 
@@ -926,6 +927,7 @@ std::shared_ptr<types::Realm> RedisDatastore::_parse_realm(const std::string& va
   // was doing - and a stored name that no longer reads leaves the setting unset.
   if (const auto* anchor = obj.if_contains("media_anchor"); anchor != nullptr && anchor->is_bool()) realm->behaviour.media_anchor = anchor->as_bool();
   if (obj.contains("media_profiles")) realm->behaviour.media_profile = types::MediaPolicy::parse_profiles(json_string(obj, "media_profiles"));
+  if (const auto* rewrite = obj.if_contains("rewrite_contact"); rewrite != nullptr && rewrite->is_bool()) realm->behaviour.rewrite_contact = rewrite->as_bool();
   if (const auto* qualify = obj.if_contains("qualify_interval"); qualify != nullptr && qualify->is_number()) {
     const auto seconds = qualify->to_number<std::int64_t>();
     if (types::Behaviour::valid_qualify_interval(seconds)) realm->behaviour.qualify_interval = static_cast<std::uint32_t>(seconds);

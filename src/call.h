@@ -106,6 +106,10 @@ class Call {
   // that started the call. It is decided once, where the realm is already in hand.
   MediaPolicy media_policy;
 
+  // Whether Contacts in this call are rewritten to where messages came from, decided with
+  // the media policy and for the same reason.
+  std::optional<bool> rewrite_contact;
+
   std::vector<Participant> participants;
 
   std::time_t created_at = 0;

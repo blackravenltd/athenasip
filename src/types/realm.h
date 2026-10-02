@@ -94,6 +94,12 @@ struct Behaviour {
 
   std::uint32_t qualify_over(std::uint32_t server) const { return qualify_interval.value_or(server); }
 
+  // Whether a Contact in a request or response this node forwards is rewritten to where the
+  // message came from: Asterisk's rewrite_contact, Kamailio's fix_nated_contact. A proxy
+  // forwards what an endpoint said about itself (RFC 3261 16.6), so the shipped default is
+  // false; it is for endpoints behind a NAT talking to something that ignores Record-Route.
+  std::optional<bool> rewrite_contact;
+
   // The effective policy: this realm's settings over the server's default.
   MediaPolicy over(const MediaPolicy& server) const {
     auto effective = server;

@@ -471,6 +471,14 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
   // RFC 4028 section 8.1: remembered for the duration of the transaction, and read again
   // in 8.2 when the final response comes back. Taken after _apply_session_timer has had
   // its say, so the interval is the one actually forwarded.
+  // Whether Contacts are rewritten: what the call decided when it was set up, for a request
+  // inside it, and the server's default until a realm says otherwise below.
+  if (auto call = core->call_get(value_of(request, "Call-ID")); call && call->rewrite_contact) {
+    context->rewrite_contact = *call->rewrite_contact;
+  } else {
+    context->rewrite_contact = core->config->behaviour_rewrite_contact;
+  }
+
   context->session_timer_supported = has_option_tag(request, "Supported", "timer");
   if (auto* session = session_field_of(request, "Session-Expires"); session != nullptr) context->session_interval = session->delta_seconds;
 
@@ -555,6 +563,10 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
     // with a body would be a datastore round trip on the media path, and an in-dialog
     // re-INVITE never looks a realm up at all.
     context->media_policy = found.value->behaviour.over(core->config->behaviour);
+    context->rewrite_contact = found.value->behaviour.rewrite_contact.value_or(core->config->behaviour_rewrite_contact);
+
+    // Kept on the call, because a request inside it arrives with no realm to ask.
+    if (auto call = core->call_get(value_of(request, "Call-ID"))) call->rewrite_contact = context->rewrite_contact;
 
     // Ours. The Request-URI names an address of record and the bindings the registrar
     // holds for it are the target set.
@@ -607,6 +619,35 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
       });
     });
   });
+}
+
+// Asterisk's rewrite_contact and Kamailio's fix_nated_contact, where a realm asks for them:
+// each Contact names where the message came from rather than what the endpoint believes its
+// address is, which behind a NAT is an address on somebody else's LAN. The user part and the
+// parameters are the endpoint's and stay. A WebSocket client is left alone: its Contact names
+// nothing reachable on purpose (RFC 7118) and the flow token is how it is reached, so an
+// address and port for its connection would be worse than what it wrote.
+void Proxy::_rewrite_contact(const std::shared_ptr<SIPMessage>& message, const std::shared_ptr<Channel>& from) const {
+  if (!from || !from->_connection || !message->header->contains("Contact")) return;
+
+  const auto transport = Util::to_lower(from->_connection->transport_name());
+  if (transport == "ws" || transport == "wss") return;
+
+  const auto source = from->_connection->remote_endpoint();
+  const auto address = source.address().to_string();
+  const auto port = source.port();
+
+  for (const auto& header : message->header->headers_map["Contact"]) {
+    auto contact = header->as<SIPIdentityHeader>();
+    if (contact == nullptr || contact->value == nullptr || contact->value->uri == nullptr) continue;
+
+    auto& uri = contact->value->uri;
+    if (uri->host == address && uri->port.value_or(5060) == port) continue;
+
+    _logger->debug("Contact " + uri->to_string() + " rewritten to " + address + ":" + std::to_string(port));
+    uri->host = source.address().is_v6() ? "[" + address + "]" : address;
+    uri->port = port;
+  }
 }
 
 // RFC 3264 section 5: an INVITE with no description has the callee make the offer, in its
@@ -731,6 +772,8 @@ void Proxy::_forward_to(const std::shared_ptr<Context>& context, const Target& t
     _logger->info("Max-Forwards exhausted - 483");
     return _send_status(context->server, context->request, 483, "Too Many Hops");
   }
+
+  if (context->rewrite_contact) _rewrite_contact(copy, context->request->channel.lock());
 
   // Step 6: the media engine has its say on the body before the copy goes anywhere, and
   // it is a round trip, so the send is the other side of it.
@@ -975,6 +1018,8 @@ void Proxy::_send_best(const std::shared_ptr<Context>& context) {
 }
 
 void Proxy::_forward_response(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response) {
+  if (context->rewrite_contact) _rewrite_contact(response, response->channel.lock());
+
   auto self = shared_from_this();
   auto server = context->server;
 

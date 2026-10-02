@@ -28,6 +28,7 @@ behaviour:
   media_anchor: true
   media_profile: mirror
   qualify_interval: 0
+  rewrite_contact: false
 ```
 
 ```sh
@@ -110,6 +111,20 @@ Any final answer, including a 405, counts as the client being there. An unanswer
 is counted, and probing goes on. `GET /api/v1/qualify` lists the clients being probed on
 each node, when each last answered and what it said.
 
+### rewrite_contact
+
+`false` (the default) forwards each Contact as the endpoint wrote it, which is what RFC
+3261 16.6 has a proxy do. `true` rewrites the Contact in every request and response this
+node forwards to the address and port the message actually came from. The user part and
+the parameters stay. This is Asterisk's `rewrite_contact` and Kamailio's
+`fix_nated_contact`. It is for endpoints behind a NAT whose Contact names their own LAN,
+talking to something that ignores the Record-Route this node writes. A WebSocket client is
+never rewritten, because its Contact names nothing reachable on purpose (RFC 7118) and it
+is reached through its flow.
+
+The realm decides for the calls it is asked to route, and a request inside a call keeps
+what the call started with.
+
 ## Configure it like
 
 AthenaSIP is a proxy. Asterisk and FreeSWITCH are back-to-back user agents, which end
@@ -139,7 +154,8 @@ pinging is the nathelper module's `natping_interval`, which is `0` (off) unless 
 behaviour:
   media_anchor: true
   media_profile: transport
-  qualify_interval: 0   # or your natping_interval, if you set one
+  qualify_interval: 0      # or your natping_interval, if you set one
+  rewrite_contact: false   # true where the script called fix_nated_contact
 ```
 
 A failure route that re-tries a 488 with the other flags is what AthenaSIP does by itself
@@ -155,7 +171,8 @@ AOR's `qualify_frequency`, which is `0` (off) unless set.
 behaviour:
   media_anchor: true
   media_profile: rtp
-  qualify_interval: 0   # or your qualify_frequency, commonly 60
+  qualify_interval: 0      # or your qualify_frequency, commonly 60
+  rewrite_contact: false   # true where endpoints had rewrite_contact=yes
 ```
 
 Then, for each account whose endpoint had `webrtc=yes`:

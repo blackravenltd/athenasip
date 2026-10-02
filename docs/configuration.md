@@ -454,6 +454,7 @@ behaviour:
   media_anchor: true
   media_profile: mirror
   qualify_interval: 0
+  rewrite_contact: false
 ```
 
 [Behaviour](behaviour.md) is the whole of it, with how to set it to match the server you
@@ -500,6 +501,10 @@ answers with a session description (RFC 3261 11.2) has said what media it takes,
 then counts as the client's own word: it decides the first offer towards it ahead of the
 account, the realm and this section. `GET /api/v1/qualify` lists the clients being probed,
 when each last answered and what it said.
+
+`rewrite_contact`, off by default, rewrites the Contact in what this node forwards to the
+address and port the message came from, as Asterisk's `rewrite_contact` does; see
+[Behaviour](behaviour.md#rewrite_contact).
 
 When a callee answers an offer the engine produced for it with 488 Not Acceptable Here,
 the node offers it the other profile once, WebRTC for plain RTP or the reverse, as a

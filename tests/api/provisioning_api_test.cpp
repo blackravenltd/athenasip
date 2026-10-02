@@ -296,6 +296,23 @@ TEST(ProvisioningApiTest, ARealmSetsHowOftenItsClientsAreQualified) {
   EXPECT_TRUE(f.get("/api/v1/realms/example.com").json().at("behaviour").at("qualify_interval").is_null());
 }
 
+TEST(ProvisioningApiTest, ARealmSetsWhetherContactsAreRewritten) {
+  ApiFixture f;
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+
+  auto json = f.get("/api/v1/realms/example.com").json();
+  EXPECT_TRUE(json.at("behaviour").at("rewrite_contact").is_null());
+  EXPECT_FALSE(json.at("behaviour_effective").at("rewrite_contact").as_bool());
+  EXPECT_FALSE(json.at("behaviour_default").at("rewrite_contact").as_bool());
+
+  auto updated = f.put("/api/v1/realms/example.com", R"({"behaviour":{"rewrite_contact":true}})");
+  ASSERT_EQ(updated.status, 200u) << updated.body;
+  EXPECT_TRUE(updated.json().at("behaviour_effective").at("rewrite_contact").as_bool());
+
+  EXPECT_EQ(f.put("/api/v1/realms/example.com", R"({"behaviour":{"rewrite_contact":"yes"}})").status, 400u);
+  EXPECT_TRUE(f.get("/api/v1/realms/example.com").json().at("behaviour").at("rewrite_contact").as_bool());
+}
+
 TEST(ProvisioningApiTest, AnUnreadableBehaviourIsRefusedAndChangesNothing) {
   ApiFixture f;
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com","behaviour":{"media_profile":"webrtc"}})").status, 201u);

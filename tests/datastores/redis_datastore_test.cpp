@@ -210,6 +210,11 @@ TEST(RedisDatastoreTest, ARealmsQualifyIntervalRoundTrips) {
   ASSERT_TRUE(datastore->realm_update(realm));
   EXPECT_EQ(datastore->realm_get_by_name(name)->behaviour.qualify_interval, 45u);
 
+  EXPECT_FALSE(datastore->realm_get_by_name(name)->behaviour.rewrite_contact.has_value());
+  realm->behaviour.rewrite_contact = true;
+  ASSERT_TRUE(datastore->realm_update(realm));
+  EXPECT_EQ(datastore->realm_get_by_name(name)->behaviour.rewrite_contact, true);
+
   datastore->realm_delete(name);
 }
 
