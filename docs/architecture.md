@@ -92,7 +92,10 @@ A client that supports RFC 5626 outbound identifies each flow by its `+sip.insta
 `reg-id`, which the binding keeps as `Location.instance` and `Location.reg_id`. The
 registrar treats that pair, not the Contact, as the binding: registering the same pair
 again from a new flow replaces the old one, and a second reg-id is a second flow from the
-same client, which is how a client holds flows to two nodes at once. The node answers a
+same client, which is how a client holds flows to two nodes at once. A call to the client
+goes down one of its flows at a time, the most recently registered first; a 408 or 430
+moves it to the next flow, any other answer is the client's, and a flow that has gone is
+never replaced by the Contact (RFC 5626 section 5.3). The node answers a
 double-CRLF keep-alive on TCP and TLS with a CRLF, and a STUN Binding request on its SIP
 UDP port with the source address (RFC 5626 section 4.4).
 

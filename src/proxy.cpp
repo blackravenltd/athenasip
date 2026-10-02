@@ -611,9 +611,7 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
         // whichever flow the account most recently used. A user registered from a desk
         // phone and a browser has two bindings and two flows, and sending both attempts
         // down one of them reaches one of the two devices twice and the other never.
-        for (const auto& binding : bindings.value) {
-          if (binding.contact) context->targets.push_back(_target_for(binding));
-        }
+        _add_targets(context, std::move(bindings.value));
 
         _read_caller_profile(context, [this, self, context]() { _forward_next(context); });
       });
@@ -684,6 +682,14 @@ void Proxy::_forward_next(const std::shared_ptr<Context>& context) {
   context->hop_target.reset();
   context->current = target;
   context->offered.reset();
+
+  // An outbound flow that has gone is that flow failing (RFC 5626 section 5.3), and the
+  // client's next flow takes its place.
+  if (target.dead) {
+    _logger->info("The outbound flow for " + target.uri->to_string() + " has gone - trying the client's next flow");
+    _try_other_flow(context);
+    return _forward_next(context);
+  }
 
   if (auto channel = target.flow.lock(); channel && channel->_connection) return _forward_to(context, target, channel);
 
@@ -862,6 +868,7 @@ void Proxy::_write_forward(const std::shared_ptr<Context>& context, const std::s
         _timer_c_cancel(context);
         context->forwarded = nullptr;
         if (_try_next_hop(context)) return;
+        if (!context->current.instance.empty()) _try_other_flow(context);
         _forward_next(context);
       });
 
@@ -947,12 +954,63 @@ void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::sha
   // not be. Anything else is an answer, which another server would give as well.
   if (code == 503 && _try_next_hop(context)) return;
 
+  // RFC 5626 section 5.3: a 408 or a 430 is the flow failing and the client's next flow is
+  // tried; any other answer is the client's, and its other flows are not.
+  if (!context->current.instance.empty()) {
+    if (code == 408 || code == 430) {
+      _try_other_flow(context);
+    } else {
+      context->other_flows.erase(context->current.instance);
+    }
+  }
+
   if (code == 488) {
     if (_reoffer(context)) return;
     _report_reoffer(context, false);
   }
 
   _forward_next(context);
+}
+
+// The target set for an address of record (RFC 3261 16.5), with RFC 5626 section 5.3's rule
+// for outbound: each client instance's flows are one target, the most recently registered
+// first, and the rest are kept back for when it fails. An ordinary binding is a target of
+// its own, as it always was.
+void Proxy::_add_targets(const std::shared_ptr<Context>& context, std::vector<types::Location> bindings) const {
+  std::stable_sort(bindings.begin(), bindings.end(), [](const types::Location& a, const types::Location& b) {
+    return a.registered_at != b.registered_at ? a.registered_at > b.registered_at : a.reg_id > b.reg_id;
+  });
+
+  for (const auto& binding : bindings) {
+    if (!binding.contact) continue;
+
+    auto target = _target_for(binding);
+    if (target.instance.empty()) {
+      context->targets.push_back(std::move(target));
+      continue;
+    }
+
+    const bool first_of_instance = context->other_flows.find(target.instance) == context->other_flows.end();
+    auto& others = context->other_flows[target.instance];
+
+    if (first_of_instance) {
+      context->targets.push_back(std::move(target));
+    } else {
+      others.push_back(std::move(target));
+    }
+  }
+}
+
+// The failed flow's client is tried down its next flow, next in line, if it has one left.
+bool Proxy::_try_other_flow(const std::shared_ptr<Context>& context) {
+  auto found = context->other_flows.find(context->current.instance);
+  if (found == context->other_flows.end() || found->second.empty()) return false;
+
+  auto next = std::move(found->second.front());
+  found->second.erase(found->second.begin());
+
+  context->targets.insert(context->targets.begin() + static_cast<std::ptrdiff_t>(context->next), std::move(next));
+  return true;
 }
 
 // Kamailio's failure-route pattern, and step 4 of the 2026-10-01 decision. A 488 (RFC 3261
@@ -1003,6 +1061,13 @@ void Proxy::_send_best(const std::shared_ptr<Context>& context) {
   // RFC 3261 16.7 step 6: a 503 says the next hop is out of service, which is about the
   // hop and not about the request. Passing it upstream would tell the caller something
   // untrue about this node, so it goes back as a 500.
+  // RFC 5626 section 11: 430 Flow Failed is between proxies, about a flow the caller never
+  // saw. All the caller can be told is that nobody could be reached.
+  if (context->best->header->response_code == 430) {
+    context->answered = true;
+    return _send_status(context->server, context->request, 480, "Temporarily Unavailable");
+  }
+
   if (context->best->header->response_code == 503) {
     context->answered = true;
     return _send_status(context->server, context->request, 500, "Server Internal Error");
@@ -1730,6 +1795,8 @@ Proxy::Target Proxy::_target_for(const types::Location& binding) const {
   auto core = _core.lock();
   if (!core) return target;
 
+  target.instance = binding.reg_id != 0 ? binding.instance : std::string();
+
   // The flow the registration was made over, when it is still open. This is the whole of
   // RFC 5626's routing: a browser's Contact URI has nothing listening behind it and a
   // NAT'd client's names the wrong side of the NAT, so the connection they registered on
@@ -1748,6 +1815,14 @@ Proxy::Target Proxy::_target_for(const types::Location& binding) const {
   if (auto hop = held_here ? _datagram_hop(binding.flow_id) : nullptr) {
     target.next_hop = hop;
     target.flow = _flow_to(*hop);
+    return target;
+  }
+
+  // RFC 5626 section 5.3: an outbound binding is reached down its flow, which is what the
+  // client registered to be reached by. Its flow having gone is the target failing.
+  target.instance = binding.reg_id != 0 ? binding.instance : std::string();
+  if (!target.instance.empty()) {
+    target.dead = true;
     return target;
   }
 
