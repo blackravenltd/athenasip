@@ -193,6 +193,25 @@ TEST(BuiltinMediaEngineTest, OfferRewritesTheRtcpAttribute) {
   EXPECT_NE(result.sdp.find("IN IP4 203.0.113.5"), std::string::npos);
 }
 
+// A leg on the node's own LAN is given the address that reaches the relay from there, which
+// the caller knows and the engine's one public address does not: the public address only
+// works for that leg if the router hairpins.
+TEST(BuiltinMediaEngineTest, AnAddressForTheLegReplacesThePublicOne) {
+  auto engine = make_engine(23295, 23299);
+  auto call = make_call();
+
+  Flags flags;
+  flags.address = "192.168.1.2";
+
+  auto result = engine->offer(call, kOffer, flags);
+  ASSERT_TRUE(result.ok) << result.error;
+
+  SDP rewritten;
+  ASSERT_TRUE(rewritten.parse(result.sdp));
+  EXPECT_EQ(rewritten.connection().address, "192.168.1.2");
+  EXPECT_EQ(result.sdp.find("203.0.113.5"), std::string::npos) << result.sdp;
+}
+
 TEST(BuiltinMediaEngineTest, StreamsAreHeldAgainstTheNamedParticipant) {
   auto engine = make_engine(23300, 23340);
   auto call = make_call();

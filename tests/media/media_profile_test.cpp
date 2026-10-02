@@ -256,7 +256,7 @@ TEST(MediaProfileTest, ADescriptionSaysWhatTheEndThatWroteItIs) {
   EXPECT_EQ(Flags::from_sdp(kSdesOffer).stated(), Flags::Profile::SrtpSdes);
   EXPECT_EQ(Flags::from_sdp(kOffer).stated(), Flags::Profile::PlainRtp);
 
-    // RFC 5764 section 8: UDP/TLS/RTP/SAVP and SAVPF are DTLS-SRTP by name. The profile on
+  // RFC 5764 section 8: UDP/TLS/RTP/SAVP and SAVPF are DTLS-SRTP by name. The profile on
   // the m-line is the statement, so a capability description - an OPTIONS 200 that has no
   // DTLS session to fingerprint yet - says WebRTC without one.
   const std::string profile_only =
@@ -635,4 +635,21 @@ TEST(MediaProfileTest, ADelayedOfferIsProducedForTheCallersAccount) {
   ASSERT_FALSE(calls.empty());
   EXPECT_TRUE(calls[0].was_offer);
   EXPECT_EQ(calls[0].flags.target, Flags::Profile::WebRtc);
+}
+
+// The media half of sip.localnet: a callee inside it is sent the relay's address as it
+// is seen from there, and a caller outside it is left to the engine's public address.
+TEST(MediaProfileTest, ALegOnTheLanIsGivenTheLocalAddressForMedia) {
+  ProfileFixture f("udp", "udp");
+  f.config->sip_public_address = "203.0.113.5";
+  f.config->sip_localnet = {"192.0.2.20/32"};
+  EXPECT_TRUE(f.config->parse_localnet());
+
+  f.receive(f.caller, f.invite_with_body());
+  f.receive(f.callee, f.ok_with(kOffer));
+
+  const auto calls = f.engine->calls();
+  ASSERT_GE(calls.size(), 2u);
+  EXPECT_EQ(calls[0].flags.address, "192.0.2.1") << "the offer towards the callee on the LAN";
+  EXPECT_EQ(calls.back().flags.address, "") << "the answer towards the caller outside";
 }
