@@ -1178,6 +1178,13 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
     flags.target = _profile_under(policy, outgoing && outgoing->_connection ? outgoing->_connection->transport_name() : std::string());
   }
 
+  // A leg on this node's own side of the router reaches the relay at the local address
+  // (sip.localnet); everyone else is left to the engine's public one.
+  if (outgoing && outgoing->_connection && !core->config->sip_public_address.empty() &&
+      core->config->in_localnet(outgoing->_connection->remote_endpoint().address())) {
+    flags.address = core->advertised_for(*outgoing).host;
+  }
+
   // What the offer towards an unheard callee is being made as, so that a refusal of it can
   // be answered with the other. Mirror is whatever the caller said.
   std::optional<media::Profile> offered;

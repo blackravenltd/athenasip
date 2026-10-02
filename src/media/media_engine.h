@@ -64,6 +64,13 @@ struct Flags {
   // exists for, and nothing in the offer says what is on the other side.
   Profile target = Profile::Mirror;
 
+  // The address the leg this description is produced for should send its media to, when
+  // the caller knows better than the engine's own configuration: a leg inside sip.localnet
+  // reaches the node at its local address, which the engine's one public address only
+  // reaches if the router hairpins. Empty leaves it to the engine. An engine that picks
+  // addresses from its own interfaces, as rtpengine does, may ignore it.
+  std::string address;
+
   // What the end that wrote this description is, which is the better answer to the same
   // question the transport is guessed from: a leg's own offer or answer says exactly
   // whether it asked for ICE, DTLS or SRTP. Nothing where the description could not be

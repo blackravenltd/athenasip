@@ -187,7 +187,7 @@ Result BuiltinMediaEngine::_map_media(std::shared_ptr<Call> call, const std::str
   ConnectionInfo relay;
   relay.nettype = "IN";
   relay.addrtype = "IP4";
-  relay.address = _public_address;
+  relay.address = flags.address.empty() ? _public_address : flags.address;
 
   sdp->set_connection(relay);
 
@@ -281,7 +281,7 @@ Result BuiltinMediaEngine::_map_media(std::shared_ptr<Call> call, const std::str
     // relay's RTCP port comes out of the same pool as its RTP port and is not reliably
     // the one above it, so an endpoint left to assume the convention would send its
     // receiver reports into somebody else's call.
-    const auto rtcp = "rtcp:" + std::to_string(relays.rtcp->port) + " IN IP4 " + _public_address;
+    const auto rtcp = "rtcp:" + std::to_string(relays.rtcp->port) + " IN IP4 " + relay.address;
     if (!media.set_attribute("rtcp:", rtcp)) media.add_attribute(rtcp);
   }
 

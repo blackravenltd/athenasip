@@ -66,7 +66,9 @@ namespace athenasip::plugins {
 // consequence for a store that does not carry it.
 // 12 (2026-10-02): types::Location carries RFC 5626 outbound's instance and reg_id, which a
 // store has to keep for the registrar to tell a re-registered flow from a new one.
-inline constexpr std::uint32_t API_VERSION = 12;
+// 13 (2026-10-02): media::Flags carries an address for the leg a description is produced
+// for, set for a leg inside sip.localnet. Empty is what every engine was given before.
+inline constexpr std::uint32_t API_VERSION = 13;
 
 // The kinds AthenaSIP registers today. A kind is a plain string rather than an enum so
 // that a plugin can introduce one the core was not built knowing about.

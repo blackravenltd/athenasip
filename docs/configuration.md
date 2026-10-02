@@ -91,6 +91,11 @@ reaches the node only if the router hairpins, and plenty of routers do not. A ba
 is a prefix of one. A listener bound to `0.0.0.0` gives the address the host would use to
 reach that peer.
 
+The builtin media relay follows the same rule: a leg inside `localnet` is told to send its
+media to that local address rather than `media.builtin.public_address`, which works when
+the relay is bound to `0.0.0.0` or to that address. rtpengine chooses its addresses from
+its own interface configuration and is not affected.
+
 #### `public_port`, on each listener
 
 ```yaml
