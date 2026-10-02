@@ -2381,3 +2381,13 @@ LAN is answered 403.
 - [x] **And for media**: `media::Flags::address` (plugin contract version 13) carries the
       local address for a leg inside `sip.localnet`, and the builtin relay writes it in
       `c=`, `o=` and `a=rtcp` in place of its one public address. rtpengine picks its own.
+
+### The cluster certificate authority, made by the node (2026-10-02)
+
+- [x] **`athenasip --ca-init` and `--ca-node ID [--san NAME]... [--replace]`**
+      (`src/cluster_ca.cpp`, OpenSSL's API with no new dependency), flags rather than the
+      plan's subcommands to match the command line there is. EC P-256 keys written 0600 with
+      O_EXCL; a CA:TRUE pathlen:0 authority for ten years that is never replaced; node
+      certificates for two years, CA:FALSE, server and client authentication, the node id
+      and every `--san` as DNS or IP names. Checked independently with `openssl verify`
+      and a mutual TLS handshake between two issued nodes. `docs/certificates.md`.

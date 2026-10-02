@@ -452,10 +452,8 @@ milestone is the second node.
       in the call record so BYE from either node releases it.
 - [ ] Call records (CDR) in the datastore: start, answer, end, participants, media
       engine, nodes. `GET /api/v1/calls`.
-- [ ] `athenasip ca init` and `athenasip ca node <id>` subcommands (or `bin/athena-ca`)
-      that generate the cluster CA and per-node certificates with sensible defaults, and
-      `athenasip check` that validates config and connectivity to Redis, MQTT, rtpengine
-      and peers. No OpenSSL incantations in the docs.
+- [ ] `athenasip check` that validates config and connectivity to Redis, MQTT, rtpengine
+      and peers. The CA half of this item is in: `--ca-init` and `--ca-node`.
 - [ ] `docker-compose.cluster.yml` with two nodes, and the sipp harness run across them.
 - [ ] Chaos test: kill node A mid-registration-cycle, assert re-REGISTER on node B and
       a new call completes within one registration interval.
