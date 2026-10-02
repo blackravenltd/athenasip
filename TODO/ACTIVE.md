@@ -379,14 +379,12 @@ milestone is the second node.
 - [ ] What the realm expects of a client, in `GET /api/v1/client/config` beside the node
       list it now carries; and the inter-node TLS address in each node's status, once
       nodes talk SIP to each other.
-- [ ] RFC 5626 outbound, the rest of it. Routing on the registered flow is done. What is
-      left is what lets a client keep two flows to two nodes, which removes the
-      reconnect window entirely: `+sip.instance` and `reg-id` on the binding, a flow
-      token in the Path this node writes, `Supported`/`Require: outbound`, `Flow-Timer`
-      and the keep-alives of section 4.4, and 430 Flow Failed for a binding whose flow
-      has gone (section 11), which wants the registrar to act on it. It changes what
-      identifies a binding, instance and reg-id rather than contact alone, so it is a
-      Datastore contract change and an `API_VERSION` bump.
+- [ ] RFC 5626 outbound, what is left of it. The keep-alives (CRLF pong, STUN on UDP) and
+      the registrar's half (instance and reg-id as the binding's identity, `Require:
+      outbound`, 439) are in. Left: the proxy's half of section 5.3 - one flow per
+      instance at a time, the next on failure, a dead outbound flow never replaced by its
+      Contact, and 430 Flow Failed for a flow token whose flow has gone - and a flow token
+      in the Path a node writes when it is the edge for another registrar.
 - [ ] `AthenaSIP-Alternate-Server`, the optional extension, and last because it is what
       the standards above do not cover: a client that cannot do outbound and has no DNS
       still has to learn where else to go. Four conditions, and it is not worth shipping
