@@ -99,7 +99,7 @@ void Core::location_list(std::uint64_t account_id, plugins::Handler<std::vector<
 }
 
 void Core::account_register(std::shared_ptr<Account> account, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel, std::uint32_t expires_seconds,
-                            std::string path, plugins::StatusHandler handler) {
+                            std::string path, plugins::StatusHandler handler, std::string instance, std::uint32_t reg_id) {
   // RFC 3261 10.3 step 7: the binding is written on every successful REGISTER. This
   // used to be skipped whenever the account record already existed, which is always,
   // so no contact was ever stored and the registrar had nothing to route to.
@@ -112,6 +112,8 @@ void Core::account_register(std::shared_ptr<Account> account, std::shared_ptr<SI
   binding.contact = contact;
   binding.path = std::move(path);
   binding.node_id = config->sip_node_id;
+  binding.instance = std::move(instance);
+  binding.reg_id = reg_id;
   if (channel) binding.flow_id = channel->flow_id();
 
   // The channel index and the event both wait for the write: a binding nobody stored is

@@ -64,7 +64,9 @@ namespace athenasip::plugins {
 // not carry it loses the realm's choice, and the realm takes the server's default.
 // 11 (2026-10-02): types::Behaviour carries an optional rewrite_contact, with the same
 // consequence for a store that does not carry it.
-inline constexpr std::uint32_t API_VERSION = 11;
+// 12 (2026-10-02): types::Location carries RFC 5626 outbound's instance and reg_id, which a
+// store has to keep for the registrar to tell a re-registered flow from a new one.
+inline constexpr std::uint32_t API_VERSION = 12;
 
 // The kinds AthenaSIP registers today. A kind is a plain string rather than an enum so
 // that a plugin can introduce one the core was not built knowing about.
