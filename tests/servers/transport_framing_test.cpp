@@ -470,6 +470,37 @@ TEST(TransportFramingTest, UdpKeepsListeningAfterADatagramThatIsNotSip) {
   EXPECT_NE(answer.find("SIP/2.0 401"), std::string::npos) << answer;
 }
 
+// RFC 5626 section 4.4.2: an outbound client keeps its UDP flow alive with STUN Binding
+// requests to the SIP port, and the node answers each with where it came from. Before
+// this a keep-alive was parsed as SIP and dropped, and the client heard nothing.
+TEST(TransportFramingTest, UdpAnswersAStunKeepAliveWithWhereItCameFrom) {
+  UdpFixture f;
+
+  net::io_context io;
+  udp::socket socket(io, udp::endpoint(net::ip::make_address("127.0.0.1"), 0));
+  const auto local_port = socket.local_endpoint().port();
+
+  std::string request("\x00\x01\x00\x00\x21\x12\xA4\x42", 8);
+  request += "keepalive-01";
+  socket.send_to(net::buffer(request), udp::endpoint(net::ip::make_address("127.0.0.1"), f.port()));
+
+  std::array<char, 512> buffer{};
+  udp::endpoint from;
+  std::size_t received = 0;
+  socket.async_receive_from(net::buffer(buffer), from, [&received](const boost::system::error_code& ec, std::size_t length) {
+    if (!ec) received = length;
+  });
+  io.run_for(std::chrono::seconds(2));
+
+  ASSERT_EQ(received, 32u);
+  const std::string response(buffer.data(), received);
+  EXPECT_EQ(response.substr(0, 2), std::string("\x01\x01", 2));
+  EXPECT_EQ(response.substr(8, 12), "keepalive-01");
+
+  const auto port = static_cast<std::uint16_t>(((static_cast<unsigned char>(response[26]) << 8) | static_cast<unsigned char>(response[27])) ^ 0x2112);
+  EXPECT_EQ(port, local_port);
+}
+
 // One flow per peer, not one per datagram. RFC 3261 18.2.1 has responses go back to the
 // source of the request, and the channel registry is keyed by transport, address and
 // port, so a second request from the same socket has to find the flow the first one
