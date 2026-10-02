@@ -408,11 +408,6 @@ milestone is the second node.
 
 ### The node's own address
 
-- [ ] The media plane's half of the node's address: the builtin relay puts
-      `media.builtin.public_address` in `c=`, one address for every audience, so a phone
-      inside `sip.localnet` is told the public address for media too. It wants the same
-      choice signalling now makes (`Core::advertised_for`). The RTP port range still has
-      to be forwarded as a contiguous block.
 - [ ] A node determines its own public address and reachability, rather than being told.
       Configuration stays and always wins, because an explicit answer beats a guessed
       one, but a node with nothing configured should work out the answer itself. Three
