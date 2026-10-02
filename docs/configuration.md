@@ -75,6 +75,34 @@ them, so without this those fields say `0.0.0.0` and nothing can route back. Lea
 unset on a single-homed host, where the address of the flow itself is right; set it in a
 container, behind a load balancer, or on a NAT'd public IP.
 
+#### `localnet`
+
+```yaml
+sip:
+  public_address: 203.0.113.5
+  localnet: ["192.168.0.0/16", "10.0.0.0/8"]
+```
+
+The prefixes on this node's side of the router, which is Asterisk's `localnet`. A peer
+whose address is inside one is given the node's local address and port, in every `Via`,
+`Record-Route`, `Service-Route` and request the node writes to it. Everyone else is given
+`public_address`. Without this a phone on the same LAN is handed the public address, which
+reaches the node only if the router hairpins, and plenty of routers do not. A bare address
+is a prefix of one. A listener bound to `0.0.0.0` gives the address the host would use to
+reach that peer.
+
+#### `public_port`, on each listener
+
+```yaml
+udp:
+  port: 5060
+  public_port: 5080
+```
+
+The port a router forwards to this listener, when it is not the one the listener is bound
+to. It is what peers outside `localnet` are given and what the node list says. Leave it out
+when the ports are the same.
+
 Realms and their nonce secrets are not configured here. They are provisioned over the
 admin API - `POST /api/v1/realms` - because a cluster shares them and a file on one node
 does not.

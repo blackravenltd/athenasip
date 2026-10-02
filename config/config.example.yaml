@@ -25,6 +25,13 @@ sip:
   # a container, behind a load balancer, or on a NAT'd public IP.
   # public_address: 203.0.113.5
 
+  # With a public address set, the prefixes on this node's own side of the router. A peer
+  # inside them is given the node's local address and port instead, because the public
+  # address only reaches it if the router hairpins (Asterisk's localnet). A listener bound
+  # to 0.0.0.0 gives the address it would reach that peer from. Each listener section
+  # takes a public_port as well, for a router that forwards a different port to it.
+  # localnet: ["192.168.0.0/16", "10.0.0.0/8"]
+
   # Permit SIP over an unencrypted transport. WSS is what a browser needs and TLS is what
   # a cluster talks, so this is the switch that allows plain UDP, TCP and WS.
   allow_unencrypted: true

@@ -11,6 +11,7 @@
 #include <atomic>
 #include <boost/asio/connect.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/ip/udp.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/json.hpp>
 #include <chrono>
@@ -168,9 +169,14 @@ bool Core::channel_register(std::string endpoint, std::shared_ptr<Channel> chann
     // the node does not know itself in its own route set, and it forwards the request
     // to itself - a loop, caught by 16.3.4 as a 482 instead of routing the BYE.
     const auto local = channel->_connection->local_endpoint();
-    const auto advertised = advertised_address(local.address().to_string());
+    const auto advertised = advertised_for(*channel);
+    local_address_add(advertised.host + ":" + std::to_string(advertised.port));
 
-    if (advertised != local.address().to_string()) local_address_add(advertised + ":" + std::to_string(local.port()));
+    // And the public name, which a Route from outside will carry whatever this flow is.
+    if (!config->sip_public_address.empty()) {
+      const auto public_port = config->public_port_for(Util::to_lower(channel->_connection->transport_name()));
+      local_address_add(config->sip_public_address + ":" + std::to_string(public_port != 0 ? public_port : local.port()));
+    }
   }
 
   events->publish(events::topics::node_channel(config->sip_node_id, channel->_connection->transport_name(), channel->_connection->remote_endpoint_name()),
@@ -539,6 +545,40 @@ void Core::_ensure_transaction_users() {
 std::shared_ptr<Dialogs> Core::dialogs() {
   _ensure_transaction_users();
   return _dialogs;
+}
+
+Core::Advertised Core::advertised_for(const Channel& channel) const {
+  Advertised out;
+  if (!channel._connection) return out;
+
+  const auto local = channel._connection->local_endpoint();
+  const auto remote = channel._connection->remote_endpoint();
+  const auto transport = Util::to_lower(channel._connection->transport_name());
+
+  if (!config->sip_public_address.empty() && !config->in_localnet(remote.address())) {
+    const auto public_port = config->public_port_for(transport);
+    out.host = config->sip_public_address;
+    out.port = public_port != 0 ? public_port : local.port();
+    return out;
+  }
+
+  out.host = local.address().to_string();
+  out.port = local.port();
+
+  // The kernel's answer to "which of my addresses would reach that peer": a connected UDP
+  // socket sends nothing, but has a local address once connected.
+  if (local.address().is_unspecified()) {
+    boost::system::error_code error;
+    boost::asio::ip::udp::socket probe(detail::get_global_io_context());
+    probe.open(remote.address().is_v4() ? boost::asio::ip::udp::v4() : boost::asio::ip::udp::v6(), error);
+    if (!error) probe.connect(boost::asio::ip::udp::endpoint(remote.address(), remote.port() != 0 ? remote.port() : 9), error);
+    if (!error) {
+      const auto chosen = probe.local_endpoint(error);
+      if (!error) out.host = chosen.address().to_string();
+    }
+  }
+
+  return out;
 }
 
 std::shared_ptr<Qualifier> Core::qualifier() {

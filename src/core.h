@@ -194,6 +194,18 @@ class Core : public std::enable_shared_from_this<Core> {
     return config->sip_public_address.empty() ? local_address : config->sip_public_address;
   }
 
+  // What this node calls itself on a flow, which depends on who is at the other end of it:
+  // a far end inside sip.localnet, or any far end when no public address is configured, is
+  // given the local address and port, and everyone else the public address and the port
+  // forwarded to this listener. A listener bound to the wildcard has no local address of
+  // its own, so the address it would send to that far end from is the one given. Via,
+  // Record-Route, Service-Route and the node's own requests all use this.
+  struct Advertised {
+    std::string host;
+    std::uint16_t port = 0;
+  };
+  Advertised advertised_for(const Channel& channel) const;
+
   // Nonce
   void nonce_create(std::shared_ptr<Realm> realm, plugins::Handler<std::string> handler);
   void nonce_check(std::string nonce, plugins::Handler<bool> handler);
