@@ -32,6 +32,14 @@ struct Options {
   std::string display_name;
   std::vector<std::string> roles;
 
+  // The cluster CA (see cluster_ca.h): make one, or issue a node its certificate. Neither
+  // reads the configuration. The directory defaults to ~/.athenasip/ca.
+  bool ca_init = false;
+  std::string ca_node;
+  std::string ca_dir;
+  std::vector<std::string> sans;
+  bool replace = false;
+
   // False stops the node before it starts. An argument it does not understand is not
   // ignored: a daemon that silently drops the one telling it where its configuration
   // is would read the wrong one and serve the wrong thing.
@@ -76,6 +84,7 @@ inline Options parse(int argc, char* argv[]) {
     };
 
     std::string role;
+    std::string san;
 
     if (argument == "--version" || argument == "-v") {
       options.version = true;
@@ -89,6 +98,14 @@ inline Options parse(int argc, char* argv[]) {
     } else if (takes("--display-name", "a name", options.display_name)) {
     } else if (takes("--role", "a role", role)) {
       if (!role.empty()) options.roles.push_back(role);
+    } else if (argument == "--ca-init") {
+      options.ca_init = true;
+    } else if (takes("--ca-node", "a node id", options.ca_node)) {
+    } else if (takes("--ca-dir", "a path", options.ca_dir)) {
+    } else if (takes("--san", "an address or host name", san)) {
+      if (!san.empty()) options.sans.push_back(san);
+    } else if (argument == "--replace") {
+      options.replace = true;
     } else {
       options.ok = false;
       options.error = "unknown option: " + argument;
@@ -116,6 +133,13 @@ inline std::string usage() {
          "  --role ROLE           may be given more than once; without it the new user\n"
          "                        holds manage-admin-users, because a recovery account\n"
          "                        that cannot administer anybody is not a way back in\n"
+         "\n"
+         "  --ca-init             make the cluster's certificate authority\n"
+         "  --ca-node ID          issue node ID its certificate, signed by that authority\n"
+         "  --san NAME            an address or host name the node is reached by; may be\n"
+         "                        given more than once\n"
+         "  --replace             issue again over an existing node certificate\n"
+         "  --ca-dir PATH         where the authority lives, ~/.athenasip/ca by default\n"
          "\n"
          "The password is read from the terminal without echoing it, or read from\n"
          "standard input when that is not a terminal. It is never taken from the\n"

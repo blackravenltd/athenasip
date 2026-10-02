@@ -28,6 +28,7 @@
 #include "build_version.h"
 #include "cli.h"
 #include "cli_add_user.h"
+#include "cluster_ca.h"
 #include "config.h"
 #include "core.h"
 #include "datastores/datastore.h"
@@ -154,6 +155,24 @@ int main(int argc, char* argv[]) {
 
   if (options.help) {
     std::cout << cli::usage();
+    return 0;
+  }
+
+  // The cluster CA needs no configuration and starts nothing.
+  if (options.ca_init || !options.ca_node.empty()) {
+    auto dir = options.ca_dir;
+    if (dir.empty()) {
+      const char* home = std::getenv("HOME");
+      dir = std::string(home != nullptr ? home : ".") + "/.athenasip/ca";
+    }
+
+    const auto made = options.ca_init ? ca::init(dir) : ca::issue_node(dir, options.ca_node, options.sans, options.replace);
+    if (!made.ok) {
+      std::cerr << "athenasip: " << made.error << "\n";
+      return 1;
+    }
+
+    std::cout << "Certificate: " << made.certificate << "\nKey:         " << made.key << "\n";
     return 0;
   }
 

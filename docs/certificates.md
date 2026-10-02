@@ -1,0 +1,38 @@
+# Certificates for a cluster
+
+Nodes in a cluster talk SIP to each other over mutual TLS. Each node proves who it is with a
+certificate signed by the cluster's own certificate authority, and trusts what that
+authority signed and nothing else. AthenaSIP makes both, so nothing here needs OpenSSL's
+command line.
+
+## Make the authority, once
+
+```sh
+athenasip --ca-init
+```
+
+This writes `ca.key` and `ca.crt` to `~/.athenasip/ca` (or to `--ca-dir PATH`). The key is
+the cluster: anyone holding it can make a certificate every node will trust. Keep it on one
+machine, readable only by you, and somewhere it is backed up. AthenaSIP writes it readable
+by its owner only, and refuses to make a second authority over the first, because that
+would orphan every node certificate the first one signed.
+
+## Issue each node its certificate
+
+```sh
+athenasip --ca-node node-a --san 10.35.1.20 --san node-a.example.com
+```
+
+This writes `node-a.key` and `node-a.crt` beside the authority. The certificate names the
+node id and every address and host name given with `--san`, which should be every way
+another node reaches it. It is good for both ends of a TLS connection, which mutual TLS
+needs. A node certificate lasts two years. Issue it again with `--replace` to renew it or to
+change its names. The authority lasts ten years.
+
+Copy `ca.crt`, `node-a.crt` and `node-a.key` to node A. Only `ca.key` stays behind.
+
+## What it makes
+
+Keys are EC P-256. The authority is `CA:TRUE` with a path length of zero, so it signs node
+certificates and cannot sign another authority. Node certificates are `CA:FALSE`, for
+digital signature and key agreement, and both server and client authentication.

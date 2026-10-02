@@ -117,3 +117,19 @@ TEST(CliTest, TheEffectiveConfigurationCanBeAskedFor) {
   EXPECT_TRUE(options.print_config);
   EXPECT_EQ(options.config, "/etc/athenasip/config.yaml");
 }
+
+// The cluster CA is made and used from the command line, with no OpenSSL to learn.
+TEST(CliTest, TheClusterCaCanBeMadeAndUsed) {
+  const auto init = parse_of({"--ca-init", "--ca-dir", "/srv/ca"});
+  ASSERT_TRUE(init.ok);
+  EXPECT_TRUE(init.ca_init);
+  EXPECT_EQ(init.ca_dir, "/srv/ca");
+
+  const auto node = parse_of({"--ca-node", "node-a", "--san", "10.35.1.20", "--san=node-a.example.com", "--replace"});
+  ASSERT_TRUE(node.ok);
+  EXPECT_EQ(node.ca_node, "node-a");
+  EXPECT_EQ(node.sans, (std::vector<std::string>{"10.35.1.20", "node-a.example.com"}));
+  EXPECT_TRUE(node.replace);
+
+  EXPECT_FALSE(parse_of({"--ca-node"}).ok);
+}
