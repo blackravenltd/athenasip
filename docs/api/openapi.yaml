@@ -1371,6 +1371,13 @@ components:
             Seconds between OPTIONS to each client registered in this realm, down the flow
             it registered on; 0 for never, otherwise 5 to 86400. A client that answers with
             a session description (RFC 3261 11.2) has said what media it takes.
+        rewrite_contact:
+          type: boolean
+          nullable: true
+          description: >-
+            Rewrite the Contact in each request and response this node forwards to the
+            address and port the message came from (Asterisk's rewrite_contact). WebSocket
+            clients are never rewritten.
 
     BehaviourEffective:
       type: object
@@ -1385,6 +1392,8 @@ components:
           enum: [mirror, transport, rtp, webrtc, srtp]
         qualify_interval:
           type: integer
+        rewrite_contact:
+          type: boolean
 
     RealmCreate:
       type: object

@@ -344,6 +344,13 @@ bool Config::load_from_yaml(const std::string& filename) {
       }
       behaviour_qualify_interval = static_cast<std::uint32_t>(seconds);
     }
+
+    try {
+      if (behaviour_section["rewrite_contact"]) behaviour_rewrite_contact = behaviour_section["rewrite_contact"].as<bool>();
+    } catch (const std::exception&) {
+      _logger->error("Invalid 'behaviour.rewrite_contact': it is true or false");
+      return false;
+    }
   }
 
   // --- Parse the 'http' section ---
@@ -572,6 +579,7 @@ std::string Config::effective_yaml() const {
   out << YAML::Key << "media_anchor" << YAML::Value << behaviour.anchor;
   out << YAML::Key << "media_profile" << YAML::Value << types::MediaPolicy::to_string(behaviour.profiles);
   out << YAML::Key << "qualify_interval" << YAML::Value << behaviour_qualify_interval;
+  out << YAML::Key << "rewrite_contact" << YAML::Value << behaviour_rewrite_contact;
   out << YAML::EndMap;
 
   out << YAML::Key << "http" << YAML::Value << YAML::BeginMap;

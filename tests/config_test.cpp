@@ -318,6 +318,27 @@ TEST(ConfigTest, AnUnusableQualifyIntervalIsRefused) {
   }
 }
 
+// A proxy that rewrites a Contact changes what an endpoint said about itself, so it is off
+// unless asked for, and anything but true or false stops the node.
+TEST(ConfigTest, RewritingContactsIsOffUnlessAskedFor) {
+  ConfigFile off("sip:\n  node_id: test-node\n");
+  bool ok = false;
+  auto config = off.load(ok);
+  ASSERT_TRUE(ok);
+  EXPECT_FALSE(config->behaviour_rewrite_contact);
+  EXPECT_NE(config->effective_yaml().find("rewrite_contact: false"), std::string::npos);
+
+  ConfigFile on("sip:\n  node_id: test-node\nbehaviour:\n  rewrite_contact: true\n");
+  config = on.load(ok);
+  ASSERT_TRUE(ok);
+  EXPECT_TRUE(config->behaviour_rewrite_contact);
+
+  ConfigFile wrong("sip:\n  node_id: test-node\nbehaviour:\n  rewrite_contact: sometimes\n");
+  ok = true;
+  wrong.load(ok);
+  EXPECT_FALSE(ok);
+}
+
 TEST(ConfigTest, SessionLifetimesAreTakenFromTheApiSection) {
   ConfigFile file(
       "sip:\n  node_id: test-node\n"

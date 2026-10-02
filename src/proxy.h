@@ -139,6 +139,9 @@ class Proxy : public TransactionUser {
     // The callee's account's media profile, read where the account was in hand.
     std::optional<types::MediaPolicy::Profiles> callee_profile;
 
+    // Whether Contacts are rewritten to where messages came from (types::Behaviour).
+    bool rewrite_contact = false;
+
     // The caller's, read only for an INVITE with no description (RFC 3264 section 5).
     std::optional<types::MediaPolicy::Profiles> caller_profile;
 
@@ -239,6 +242,7 @@ class Proxy : public TransactionUser {
 
   // RFC 3261 16.7 step 6: what goes back when every branch has been tried.
   void _send_best(const std::shared_ptr<Context>& context);
+  void _rewrite_contact(const std::shared_ptr<SIPMessage>& message, const std::shared_ptr<Channel>& from) const;
   void _read_caller_profile(const std::shared_ptr<Context>& context, std::function<void()> then);
   bool _reoffer(const std::shared_ptr<Context>& context);
   void _report_reoffer(const std::shared_ptr<Context>& context, bool took);

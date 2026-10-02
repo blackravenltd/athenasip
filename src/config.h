@@ -232,6 +232,9 @@ class Config {
   // never. Decided at registration rather than per call, so it is not on the media policy.
   std::uint32_t behaviour_qualify_interval = 0;
 
+  // behaviour.rewrite_contact, the server's default for types::Behaviour::rewrite_contact.
+  bool behaviour_rewrite_contact = false;
+
   bool http_files_enable = false;
   std::string http_files_path;
 

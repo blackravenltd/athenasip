@@ -291,6 +291,12 @@ behaviour:
   # it takes. GET /api/v1/qualify shows who answered.
   qualify_interval: 0
 
+  # Rewrite the Contact in each request and response this node forwards to the address
+  # and port the message came from: Asterisk's rewrite_contact, Kamailio's
+  # fix_nated_contact. Off by default, because a proxy forwards what an endpoint said
+  # about itself (RFC 3261 16.6). WebSocket clients are never rewritten.
+  rewrite_contact: false
+
 http:
   address: 0.0.0.0
   port: 8080
