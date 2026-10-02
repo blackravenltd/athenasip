@@ -443,6 +443,19 @@ int main(int argc, char* argv[]) {
     core->server_register(tlsServer);
   }
 
+  // The inter-node listener, and the same certificates for the flows this node opens to its
+  // peers. Mutual TLS: what the cluster CA signed is a node, and nothing else is let in.
+  if (config->cluster_enable) {
+    auto clusterServer = std::make_shared<servers::TLSServer>(logger, core, config->cluster_address, config->cluster_port);
+    if (!clusterServer->set_certificates(config->cluster_cert, config->cluster_key) || !clusterServer->require_peer_certificates(config->cluster_ca) ||
+        !core->cluster_tls_set(config->cluster_ca, config->cluster_cert, config->cluster_key)) {
+      logger->error("Cannot load the cluster certificates");
+      datastore->close();
+      return -4;
+    }
+    core->server_register(clusterServer);
+  }
+
   // Servers: Create the TCPServer instance with the logger and start it on the specified port
   if (config->tcp_enable) {
     auto tcpServer = std::make_shared<servers::TCPServer>(logger, core, config->tcp_address, config->tcp_port);

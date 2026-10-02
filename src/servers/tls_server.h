@@ -29,6 +29,10 @@ class TLSServer : public Server {
 
   bool set_certificates(std::string cert, std::string key);
 
+  // Make this the inter-node listener: a peer has to show a certificate the cluster CA
+  // signed (see tls_context.h).
+  bool require_peer_certificates(const std::string& ca);
+
  protected:
   void _handle_accept(const boost::system::error_code& error, std::shared_ptr<boost::asio::ip::tcp::socket> new_connection);
   void start_accept();

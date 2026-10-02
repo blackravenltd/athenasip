@@ -23,6 +23,8 @@ TLSServer::TLSServer(std::shared_ptr<Logger> logger, std::shared_ptr<Core> core,
 
 bool TLSServer::set_certificates(std::string cert, std::string key) { return load_tls_certificates(_logger, ctx, cert, key); }
 
+bool TLSServer::require_peer_certificates(const std::string& ca) { return athenasip::servers::require_peer_certificates(_logger, ctx, ca); }
+
 void TLSServer::start() {
   _logger->debug("Starting...");
 

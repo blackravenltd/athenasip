@@ -31,6 +31,25 @@ change its names. The authority lasts ten years.
 
 Copy `ca.crt`, `node-a.crt` and `node-a.key` to node A. Only `ca.key` stays behind.
 
+## Use them
+
+```yaml
+cluster:
+  enable: true
+  address: 0.0.0.0
+  port: 5062
+  ca: /etc/athenasip/cluster/ca.crt
+  cert: /etc/athenasip/cluster/node-a.crt
+  key: /etc/athenasip/cluster/node-a.key
+```
+
+This is the inter-node listener. A peer has to show a certificate the cluster CA signed,
+and the node records which node it is from that certificate. The same certificates are used
+for the TLS connections this node opens to its peers, where the peer's certificate has to
+be signed by the cluster CA and name the address that was dialled. A `cluster` section
+enabled without all three files stops the node at start-up, because a cluster listener
+that cannot tell a node from anybody else would be open to anyone.
+
 ## What it makes
 
 Keys are EC P-256. The authority is `CA:TRUE` with a path length of zero, so it signs node

@@ -10,6 +10,7 @@
 #include <openssl/rand.h>
 
 #include <boost/asio/post.hpp>
+#include <boost/asio/ssl.hpp>
 #include <boost/asio/strand.hpp>
 #include <future>
 #include <iostream>
@@ -170,6 +171,10 @@ class Core : public std::enable_shared_from_this<Core> {
   // longer than the transaction has. The handler runs on the strand.
   //
   // UDP is opened through a listener's socket rather than dialled, and only TLS is refused.
+  // The cluster's certificates, for the TLS flows this node opens to its peers. Without them
+  // channel_connect refuses tls. False when they could not be loaded.
+  bool cluster_tls_set(const std::string& ca, const std::string& cert, const std::string& key);
+
   void channel_connect(std::string transport, std::string host, std::uint16_t port, plugins::Handler<std::shared_ptr<Channel>> handler);
 
   // A second name for a channel already registered: the name it was dialled by, when
@@ -382,6 +387,10 @@ class Core : public std::enable_shared_from_this<Core> {
 
   // Forgetting a connectionless flow that has gone quiet. See sip.flow_idle_timeout.
   // channel_connect's UDP half. See there.
+  void _secure_flow(std::shared_ptr<boost::asio::ip::tcp::socket> socket, std::shared_ptr<boost::asio::ssl::context> context, const std::string& host,
+                    const std::string& key, std::function<void(plugins::Result<std::shared_ptr<Channel>>)> answer);
+  std::shared_ptr<boost::asio::ssl::context> _cluster_tls;
+
   void _connect_datagram(std::string host, std::uint16_t port, plugins::Handler<std::shared_ptr<Channel>> handler);
   void _open_datagram(std::vector<boost::asio::ip::udp::endpoint> candidates, std::string key, plugins::Handler<std::shared_ptr<Channel>> handler);
 

@@ -74,6 +74,10 @@ class Channel : public std::enable_shared_from_this<Channel> {
   // source address, which anybody can write on a datagram, and the proxy ignores this on
   // one. It lasts as long as the flow does.
   void authenticated_as(const std::string& aor);
+
+  // The cluster node at the other end, when this flow is mutual TLS with one: the node id
+  // its cluster certificate names. Empty for every client flow.
+  std::string peer_node() const { return _connection ? _connection->peer_identity() : std::string(); }
   bool is_authenticated_as(const std::string& aor) const;
 
   State state = State::Normal;

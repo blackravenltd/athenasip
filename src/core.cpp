@@ -26,6 +26,8 @@
 #include "registrar.h"
 #include "rtp/rtp_relay.h"
 #include "servers/tcp_connection.h"
+#include "servers/tls_connection.h"
+#include "servers/tls_context.h"
 #include "transactions/invite_client_transaction.h"
 #include "transactions/invite_server_transaction.h"
 #include "transactions/non_invite_client_transaction.h"
@@ -240,10 +242,18 @@ void Core::channel_connect(std::string transport, std::string host, std::uint16_
 
   if (transport == "udp") return _connect_datagram(host, port, std::move(handler));
 
-  // TLS outbound waits for the trust configuration the cluster CA brings.
-  if (transport != "tcp") {
+  // TLS outbound is to another node of the cluster, with the cluster's certificates, and
+  // to nothing else: what a node trusts beyond its own cluster is not a guess to make here.
+  if (transport == "tls" && !_cluster_tls) {
+    return handler(ChannelResult::failure("cannot open an outbound tls flow without the cluster's certificates"));
+  }
+
+  if (transport != "tcp" && transport != "tls") {
     return handler(ChannelResult::failure("cannot open an outbound " + transport + " flow"));
   }
+
+  const bool secure = transport == "tls";
+  auto cluster_tls = _cluster_tls;
 
   auto& io_context = detail::get_global_io_context();
 
@@ -283,29 +293,72 @@ void Core::channel_connect(std::string transport, std::string host, std::uint16_
   // Not RFC 3263: no NAPTR and no SRV, only the A and AAAA records for the host the URI
   // named. The service records are a step of their own, and what a cluster and a trunk
   // both need.
-  resolver->async_resolve(host, std::to_string(port), [weak_self, resolver, socket, answer, key](const boost::system::error_code& ec, auto results) {
-    if (ec) return answer(ChannelResult::failure("cannot resolve " + key + " - " + ec.message()));
+  resolver->async_resolve(
+      host, std::to_string(port), [weak_self, resolver, socket, answer, key, secure, cluster_tls, host](const boost::system::error_code& ec, auto results) {
+        if (ec) return answer(ChannelResult::failure("cannot resolve " + key + " - " + ec.message()));
 
-    boost::asio::async_connect(*socket, results, [weak_self, socket, answer, key](const boost::system::error_code& ec, auto) {
-      if (ec) return answer(ChannelResult::failure("cannot reach " + key + " - " + ec.message()));
+        boost::asio::async_connect(*socket, results, [weak_self, socket, answer, key, secure, cluster_tls, host](const boost::system::error_code& ec, auto) {
+          if (ec) return answer(ChannelResult::failure("cannot reach " + key + " - " + ec.message()));
 
-      auto self = weak_self.lock();
-      if (!self) return;
+          auto self = weak_self.lock();
+          if (!self) return;
 
-      std::shared_ptr<servers::Connection> connection = std::make_shared<servers::TCPConnection>(socket);
-      if (!connection->start()) return answer(ChannelResult::failure("cannot start the flow to " + key));
+          if (secure) return self->_secure_flow(socket, cluster_tls, host, key, answer);
 
-      auto channel = std::make_shared<Channel>(self->_logger->base_logger(), self, connection);
+          std::shared_ptr<servers::Connection> connection = std::make_shared<servers::TCPConnection>(socket);
+          if (!connection->start()) return answer(ChannelResult::failure("cannot start the flow to " + key));
 
-      // start() dispatches onto the strand and files the channel under the address it
-      // reached, which is not the name it was asked for when that name was a hostname.
-      channel->start();
+          auto channel = std::make_shared<Channel>(self->_logger->base_logger(), self, connection);
 
-      boost::asio::post(self->_strand, [self, channel, key]() { self->channel_alias(key, channel); });
+          // start() dispatches onto the strand and files the channel under the address it
+          // reached, which is not the name it was asked for when that name was a hostname.
+          channel->start();
 
-      self->_logger->info("Opened flow to " + key + " as " + connection->remote_endpoint_name());
-      answer(ChannelResult::success(channel));
-    });
+          boost::asio::post(self->_strand, [self, channel, key]() { self->channel_alias(key, channel); });
+
+          self->_logger->info("Opened flow to " + key + " as " + connection->remote_endpoint_name());
+          answer(ChannelResult::success(channel));
+        });
+      });
+}
+
+bool Core::cluster_tls_set(const std::string& ca, const std::string& cert, const std::string& key) {
+  auto context = std::make_shared<boost::asio::ssl::context>(boost::asio::ssl::context::tls_client);
+  if (!servers::load_tls_certificates(_logger, *context, cert, key) || !servers::require_peer_certificates(_logger, *context, ca)) return false;
+
+  _cluster_tls = std::move(context);
+  return true;
+}
+
+// The client half of the cluster's mutual TLS: this node's certificate shown, the peer's
+// checked against the cluster CA and against the address or name that was dialled, so a
+// member of the cluster cannot answer for another one.
+void Core::_secure_flow(std::shared_ptr<boost::asio::ip::tcp::socket> socket, std::shared_ptr<boost::asio::ssl::context> context, const std::string& host,
+                        const std::string& key, std::function<void(plugins::Result<std::shared_ptr<Channel>>)> answer) {
+  using ChannelResult = plugins::Result<std::shared_ptr<Channel>>;
+
+  auto stream = std::make_shared<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>>(std::move(*socket), *context);
+  stream->set_verify_callback(boost::asio::ssl::host_name_verification(host));
+
+  std::weak_ptr<Core> weak_self = weak_from_this();
+  stream->async_handshake(boost::asio::ssl::stream_base::client, [weak_self, stream, key, answer](const boost::system::error_code& ec) {
+    if (ec) {
+      boost::system::error_code ignored;
+      stream->lowest_layer().close(ignored);
+      return answer(ChannelResult::failure("TLS to " + key + " failed - " + ec.message()));
+    }
+
+    auto self = weak_self.lock();
+    if (!self) return;
+
+    auto connection = std::make_shared<servers::TLSConnection>(stream, true);
+    auto channel = std::make_shared<Channel>(self->_logger->base_logger(), self, connection);
+    channel->start();
+
+    boost::asio::post(self->_strand, [self, channel, key]() { self->channel_alias(key, channel); });
+
+    self->_logger->info("Opened TLS flow to " + key + ", node " + connection->peer_identity());
+    answer(ChannelResult::success(channel));
   });
 }
 

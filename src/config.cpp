@@ -329,6 +329,27 @@ bool Config::load_from_yaml(const std::string& filename) {
     }
   }
 
+  // --- Parse the 'cluster' section ---
+  if (YAML::Node cluster = config["cluster"]) {
+    try {
+      if (cluster["enable"]) cluster_enable = cluster["enable"].as<bool>();
+      if (cluster["address"]) cluster_address = cluster["address"].as<std::string>();
+      if (cluster["port"]) cluster_port = cluster["port"].as<std::uint16_t>();
+      if (cluster["ca"]) cluster_ca = cluster["ca"].as<std::string>();
+      if (cluster["cert"]) cluster_cert = cluster["cert"].as<std::string>();
+      if (cluster["key"]) cluster_key = cluster["key"].as<std::string>();
+    } catch (const std::exception& e) {
+      _logger->error("Invalid 'cluster' section: " + std::string(e.what()));
+      return false;
+    }
+
+    // A cluster listener with no way to tell a node from anybody else would be an open door.
+    if (cluster_enable && (cluster_ca.empty() || cluster_cert.empty() || cluster_key.empty())) {
+      _logger->error("'cluster' needs ca, cert and key: athenasip --ca-init and --ca-node make them (docs/certificates.md)");
+      return false;
+    }
+  }
+
   // --- Parse the 'behaviour' section ---
   //
   // The server's default for every behaviour that differs between SIP servers; a realm
@@ -598,6 +619,15 @@ std::string Config::effective_yaml() const {
   out << YAML::Key << "media" << YAML::Value << YAML::BeginMap;
   out << YAML::Key << "url" << YAML::Value << media_url;
   emit_plugin_sections(out, _root, "media", {"url"});
+  out << YAML::EndMap;
+
+  out << YAML::Key << "cluster" << YAML::Value << YAML::BeginMap;
+  out << YAML::Key << "enable" << YAML::Value << cluster_enable;
+  out << YAML::Key << "address" << YAML::Value << cluster_address;
+  out << YAML::Key << "port" << YAML::Value << cluster_port;
+  out << YAML::Key << "ca" << YAML::Value << cluster_ca;
+  out << YAML::Key << "cert" << YAML::Value << cluster_cert;
+  out << YAML::Key << "key" << YAML::Value << cluster_key;
   out << YAML::EndMap;
 
   out << YAML::Key << "behaviour" << YAML::Value << YAML::BeginMap;

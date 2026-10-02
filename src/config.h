@@ -258,6 +258,16 @@ class Config {
   // never. Decided at registration rather than per call, so it is not on the media policy.
   std::uint32_t behaviour_qualify_interval = 0;
 
+  // cluster: the inter-node listener, mutual TLS with every peer showing a certificate the
+  // cluster CA signed (docs/certificates.md), and the same certificates for the flows this
+  // node opens to its peers. Off on a node that is not part of a cluster.
+  bool cluster_enable = false;
+  std::string cluster_address = "0.0.0.0";
+  std::uint16_t cluster_port = 5062;
+  std::string cluster_ca;
+  std::string cluster_cert;
+  std::string cluster_key;
+
   // behaviour.rewrite_contact, the server's default for types::Behaviour::rewrite_contact.
   bool behaviour_rewrite_contact = false;
 
