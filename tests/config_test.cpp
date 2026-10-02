@@ -370,6 +370,31 @@ TEST(ConfigTest, LocalnetAndPublicPortsAreRead) {
   EXPECT_FALSE(ok);
 }
 
+// The inter-node listener is off unless asked for, and asked for without certificates it
+// would let anybody in, so that stops the node.
+TEST(ConfigTest, TheClusterListenerNeedsItsCertificates) {
+  ConfigFile off("sip:\n  node_id: test-node\n");
+  bool ok = false;
+  auto config = off.load(ok);
+  ASSERT_TRUE(ok);
+  EXPECT_FALSE(config->cluster_enable);
+  EXPECT_EQ(config->cluster_port, 5062);
+
+  ConfigFile on(
+      "sip:\n  node_id: test-node\n"
+      "cluster:\n  enable: true\n  port: 5070\n  ca: /ca/ca.crt\n  cert: /ca/node-a.crt\n  key: /ca/node-a.key\n");
+  config = on.load(ok);
+  ASSERT_TRUE(ok);
+  EXPECT_TRUE(config->cluster_enable);
+  EXPECT_EQ(config->cluster_port, 5070);
+  EXPECT_EQ(config->cluster_ca, "/ca/ca.crt");
+
+  ConfigFile bare("sip:\n  node_id: test-node\ncluster:\n  enable: true\n");
+  ok = true;
+  bare.load(ok);
+  EXPECT_FALSE(ok);
+}
+
 TEST(ConfigTest, SessionLifetimesAreTakenFromTheApiSection) {
   ConfigFile file(
       "sip:\n  node_id: test-node\n"
