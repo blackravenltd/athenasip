@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -83,6 +84,12 @@ class Proxy : public TransactionUser {
 
     // What the client on this target's flow said its media is when last qualified.
     std::optional<media::Profile> said;
+
+    // RFC 5626 outbound: the client instance this flow belongs to, empty for an ordinary
+    // binding, and whether the flow has gone - which for an outbound binding is the target
+    // failing, never a reason to try its Contact.
+    std::string instance;
+    bool dead = false;
   };
 
   // The response context (16.7): the request as received, the server transaction it
@@ -150,6 +157,10 @@ class Proxy : public TransactionUser {
     // node can do something about.
     Target current;
     std::optional<media::Profile> offered;
+
+    // RFC 5626 section 5.3: one flow per client instance is in the target set at a time,
+    // and these are each instance's other flows, best first, for when that one fails.
+    std::map<std::string, std::vector<Target>> other_flows;
 
     // RFC 3263 4.3: the places the current target can still be tried, when DNS listed more
     // than one and the branch in flight went to the first. A 503 or a timeout from that
@@ -245,6 +256,8 @@ class Proxy : public TransactionUser {
   void _rewrite_contact(const std::shared_ptr<SIPMessage>& message, const std::shared_ptr<Channel>& from) const;
   void _read_caller_profile(const std::shared_ptr<Context>& context, std::function<void()> then);
   bool _reoffer(const std::shared_ptr<Context>& context);
+  void _add_targets(const std::shared_ptr<Context>& context, std::vector<types::Location> bindings) const;
+  bool _try_other_flow(const std::shared_ptr<Context>& context);
   void _report_reoffer(const std::shared_ptr<Context>& context, bool took);
 
   // RFC 3261 16.10: the CANCEL for a branch already forwarded.

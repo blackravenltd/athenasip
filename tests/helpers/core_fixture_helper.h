@@ -86,6 +86,15 @@ struct CoreFixture {
         .ok;
   }
 
+  // An RFC 5626 outbound binding: the same, with the client's instance and this flow's reg-id.
+  bool register_outbound(const std::shared_ptr<athenasip::types::Account>& account, const std::shared_ptr<athenasip::types::SIPUri>& contact,
+                         const std::shared_ptr<athenasip::Channel>& channel, const std::string& instance, std::uint32_t reg_id) {
+    return await_on_strand([&](athenasip::plugins::StatusHandler handler) {
+             core->account_register(account, contact, channel, 3600, "", std::move(handler), instance, reg_id);
+           })
+        .ok;
+  }
+
   bool unregister_binding(const std::shared_ptr<athenasip::types::Account>& account, const std::shared_ptr<athenasip::types::SIPUri>& contact,
                           const std::shared_ptr<athenasip::Channel>& channel) {
     return await_on_strand([&](athenasip::plugins::StatusHandler handler) { core->account_unregister(account, contact, channel, std::move(handler)); }).ok;
