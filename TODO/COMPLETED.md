@@ -2378,3 +2378,6 @@ LAN is answered 403.
       public address and the forwarded port. Via, both Record-Route values (each facing
       its own end), Service-Route, the qualify probe and the node list all use it, and
       every public name is recognised as this node's own in a Route.
+- [x] **And for media**: `media::Flags::address` (plugin contract version 13) carries the
+      local address for a leg inside `sip.localnet`, and the builtin relay writes it in
+      `c=`, `o=` and `a=rtcp` in place of its one public address. rtpengine picks its own.
