@@ -96,6 +96,9 @@ class Channel : public std::enable_shared_from_this<Channel> {
   std::array<char, 65535> _read_buffer;
   std::string _buffer;
 
+  // CRLFs seen since the last message, for the keep-alive ping of RFC 5626 4.4.1.
+  int _crlf_run = 0;
+
   // What is waiting to go out, and how much of the front one already has. Both are
   // strand state: a message is queued on the strand and the queue is advanced on the
   // strand, so only the write itself happens on the connection's executor.
@@ -134,6 +137,7 @@ class Channel : public std::enable_shared_from_this<Channel> {
   // across as many reads as it takes, and a datagram is one whole message or nothing.
   void _frame();
   void _frame_stream();
+  void _take_keep_alives();
   void _frame_datagram();
 
   bool _append_body();

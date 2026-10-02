@@ -336,6 +336,33 @@ TEST(TransportFramingTest, TcpSurvivesAMalformedStartLine) {
   EXPECT_NE(answer.find("SIP/2.0 401"), std::string::npos) << answer;
 }
 
+// RFC 5626 section 4.4.1: on a stream transport a client's keep-alive is a double CRLF,
+// the "ping", and the server MUST answer it with a single CRLF, the "pong". A client that
+// hears no pong decides its flow has failed and registers again, so a server that
+// swallowed the ping would have every outbound client re-registering every few minutes.
+TEST(TransportFramingTest, TcpAnswersAKeepAlivePingWithAPong) {
+  TcpFixture f;
+
+  net::io_context io;
+  tcp::socket socket(io);
+  socket.connect(tcp::endpoint(net::ip::make_address("127.0.0.1"), f.port()));
+  Reader<tcp::socket> reader(io, socket);
+
+  net::write(socket, net::buffer(std::string("\r\n\r\n")));
+  EXPECT_EQ(reader.take(std::chrono::milliseconds(500), 0), "\r\n");
+
+  // The ping may arrive in two reads like anything else on a stream.
+  net::write(socket, net::buffer(std::string("\r\n")));
+  EXPECT_EQ(reader.take(std::chrono::milliseconds(300), 0), "") << "one CRLF is not a ping";
+  net::write(socket, net::buffer(std::string("\r\n")));
+  EXPECT_EQ(reader.take(std::chrono::milliseconds(500), 0), "\r\n");
+
+  // And a request after it is still a request.
+  net::write(socket, net::buffer(register_request("TCP", "z9hG4bK-after-ping")));
+  const auto answer = reader.take(std::chrono::seconds(3));
+  EXPECT_NE(answer.find("SIP/2.0 401"), std::string::npos) << answer;
+}
+
 TEST(TransportFramingTest, TlsCarriesARequestOverACompletedHandshake) {
   TlsFixture f;
 
