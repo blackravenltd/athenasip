@@ -379,12 +379,12 @@ milestone is the second node.
 - [ ] What the realm expects of a client, in `GET /api/v1/client/config` beside the node
       list it now carries; and the inter-node TLS address in each node's status, once
       nodes talk SIP to each other.
-- [ ] RFC 5626 outbound, what is left of it. The keep-alives (CRLF pong, STUN on UDP) and
-      the registrar's half (instance and reg-id as the binding's identity, `Require:
-      outbound`, 439) are in. Left: the proxy's half of section 5.3 - one flow per
-      instance at a time, the next on failure, a dead outbound flow never replaced by its
-      Contact, and 430 Flow Failed for a flow token whose flow has gone - and a flow token
-      in the Path a node writes when it is the edge for another registrar.
+- [ ] RFC 5626 outbound, what is left of it: a flow token in the Path a node writes when
+      it is the edge for another registrar, which is the cluster case. Deliberately not
+      done: 430 or 403 for an in-dialog request whose flow token names a gone flow. The
+      token is in every dialog's Record-Route, outbound or not, and today a desk phone
+      whose TCP connection dropped, or any dialog across a node restart, is still reached
+      through its Contact; a 430 would end those calls.
 - [ ] `AthenaSIP-Alternate-Server`, the optional extension, and last because it is what
       the standards above do not cover: a client that cannot do outbound and has no DNS
       still has to learn where else to go. Four conditions, and it is not worth shipping

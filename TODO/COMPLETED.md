@@ -2363,3 +2363,8 @@ LAN is answered 403.
       200 says `Require: outbound` and lists both parameters, and a first hop in `Path`
       without `ob` is answered 439. No `Flow-Timer`: the only value this node could give is
       longer than most NATs keep a UDP mapping.
+- [x] **The proxy's half of RFC 5626 section 5.3**: an outbound client's flows are one target,
+      most recently registered first, with the rest kept back (`Proxy::_add_targets`); a 408
+      or 430 moves to the next flow, any other final answer is the client's and its other
+      flows are dropped, a flow that has gone is that flow failing and never a reason to
+      try the Contact, and a 430 is never passed to the caller (480 instead).
