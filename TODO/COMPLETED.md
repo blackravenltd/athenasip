@@ -2406,3 +2406,8 @@ LAN is answered 403.
       address; without the cluster's certificates `tls` is still refused. Checked against
       the real binary with `openssl s_client`: a cluster certificate is let in and named,
       none is "certificate required", another authority's is "unknown ca".
+- [x] **A peer that resets before its connection is made no longer stops the node.** The
+      TCP, TLS and WebSocket connections read the peer's address with the throwing
+      `remote_endpoint()`, inside the listener's handler where nothing caught it, so a
+      reset at the wrong moment terminated the process. Found as an abort in the cluster
+      TLS test; reproduced deterministically with a socket that has no peer.
