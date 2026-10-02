@@ -58,7 +58,8 @@ void WebsocketServer::start_accept() {
 
 void WebsocketServer::_handle_accept(const boost::system::error_code& error, std::shared_ptr<boost::asio::ip::tcp::socket> socket) {
   if (!error) {
-    auto remote = socket->remote_endpoint();
+    boost::system::error_code gone;
+    auto remote = socket->remote_endpoint(gone);
     _logger->debug("Incoming Connection " + remote.address().to_string() + ":" + std::to_string(remote.port()));
 
     if (_tls) {

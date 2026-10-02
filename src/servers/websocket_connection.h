@@ -41,8 +41,10 @@ class WebsocketConnectionFor : public Connection, public std::enable_shared_from
 
   bool start() override {
     auto& socket = boost::beast::get_lowest_layer(*_ws);
-    _local_endpoint = socket.local_endpoint();
-    _remote_endpoint = socket.remote_endpoint();
+    // As TCPConnection: a peer that has gone has no address, and that is not an exception.
+    boost::system::error_code gone;
+    _local_endpoint = socket.local_endpoint(gone);
+    _remote_endpoint = socket.remote_endpoint(gone);
     return true;
   }
 

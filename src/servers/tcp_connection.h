@@ -21,8 +21,13 @@ namespace athenasip::servers {
 
 class TCPConnection : public Connection {
  public:
-  TCPConnection(std::shared_ptr<boost::asio::ip::tcp::socket> socket)
-      : _socket(socket), _local_endpoint(_socket->local_endpoint()), _remote_endpoint(_socket->remote_endpoint()) {}
+  TCPConnection(std::shared_ptr<boost::asio::ip::tcp::socket> socket) : _socket(socket) {
+    // The error_code forms: a peer that reset between the accept and this has no address,
+    // and the throwing forms took the whole node down from inside the listener's handler.
+    boost::system::error_code gone;
+    _local_endpoint = _socket->local_endpoint(gone);
+    _remote_endpoint = _socket->remote_endpoint(gone);
+  }
 
   virtual bool start() override { return true; }
 
