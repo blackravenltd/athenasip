@@ -2349,3 +2349,17 @@ LAN is answered 403.
       user part and parameters; WebSocket clients are never rewritten. Decided where the
       realm is in hand and kept on the call for the requests inside it. Plugin contract
       version 11.
+
+### RFC 5626 outbound: keep-alives and the registrar (2026-10-02)
+
+- [x] **A double CRLF on TCP or TLS is answered with a CRLF** (section 4.4.1). It had been
+      swallowed, so a client waiting for its pong would decide the flow had failed.
+- [x] **A STUN Binding request on the SIP UDP port is answered** with XOR-MAPPED-ADDRESS
+      (section 4.4.2, RFC 5389), by `src/stun.cpp`, written by hand and only that.
+- [x] **The registrar honours outbound** (section 6): with `Supported: outbound`, a
+      contact's `+sip.instance` and `reg-id` are the binding's identity, kept on
+      `Location` (plugin contract version 12); the same pair from a new flow replaces the
+      old binding, a second reg-id is a second flow, expires=0 removes by the pair, the
+      200 says `Require: outbound` and lists both parameters, and a first hop in `Path`
+      without `ob` is answered 439. No `Flow-Timer`: the only value this node could give is
+      longer than most NATs keep a UDP mapping.
