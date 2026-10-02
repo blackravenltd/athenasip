@@ -2339,3 +2339,13 @@ LAN is answered 403.
       It had been read as SDES-SRTP, which a capability description in an OPTIONS 200,
       with no DTLS session to fingerprint, would have hit. Found answering AthenaPhone's
       question about what such a description has to carry.
+
+### Contact rewriting, configurable and off (2026-10-02)
+
+- [x] **`behaviour.rewrite_contact`**, server-wide and per realm, off by default - Tom's
+      call on 2026-10-02 for the judgement the NAT item left open. On, each Contact in a
+      forwarded request or response is rewritten to the address and port the message came
+      from (Asterisk's `rewrite_contact`, Kamailio's `fix_nated_contact`), keeping the
+      user part and parameters; WebSocket clients are never rewritten. Decided where the
+      realm is in hand and kept on the call for the requests inside it. Plugin contract
+      version 11.

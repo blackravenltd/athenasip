@@ -349,18 +349,8 @@ including the behaviour profiles it led to. What is left of it is below.
 
 ### After that
 
-What is left of NAT is a judgement call, so read it before starting. The trunk scenario
-waits on trunks existing.
+The trunk scenario waits on trunks existing.
 
-- [ ] NAT handling for the client side, what is left of it. Routing is in: `rport` and
-      `received` are stamped on the way in (RFC 3581), a binding is reached down the flow
-      it registered on, and a UDP flow the idle sweep has forgotten is still sent down -
-      for a call to its binding and, through the sealed flow token, for a request in a
-      dialog it is on, and a stateless response goes to `received` and `rport` whether
-      or not the flow is still held. Left: a Contact rewrite policy for a client that is
-      neither registered here nor in a dialog through here, which is a judgement call
-      because a proxy that rewrites a Contact is changing what an endpoint said about
-      itself. The node's own address behind NAT is M4.
 - [ ] A harness scenario for a trunk, once a trunk is something the node can be
       configured with: an authenticated subscriber calling a number that leaves by it, and
       a call arriving from it. Today an off-node call goes wherever its Request-URI says.
