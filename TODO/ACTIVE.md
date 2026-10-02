@@ -438,11 +438,8 @@ milestone is the second node.
 
 ### The second node
 
-- [ ] Inter-node listener: TLS with `verify_peer | fail_if_no_peer_cert` against the
-      cluster CA; requests from cluster-CA peers are trusted for Route/Path.
-- [ ] Outbound TLS. `Core::channel_connect` refuses `tls://` rather than guessing at what
-      a node trusts; the cluster CA is what settles it. Until then a TLS peer has to
-      connect inwards.
+- [ ] Requests from cluster-CA peers trusted for Route/Path. The listener is in: the
+      `cluster` section, mutual TLS, `Channel::peer_node` naming the peer.
 - [ ] Discovery: retained `nodes/<id>/status` with SIP addresses, inter-node address,
       version, capabilities; node roster maintained from MQTT; heartbeat and expiry.
 - [ ] Forwarding: lookup returns owning node; INVITE routed to the peer with `Route`;

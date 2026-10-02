@@ -2391,3 +2391,18 @@ LAN is answered 403.
       certificates for two years, CA:FALSE, server and client authentication, the node id
       and every `--san` as DNS or IP names. Checked independently with `openssl verify`
       and a mutual TLS handshake between two issued nodes. `docs/certificates.md`.
+
+### The inter-node listener and outbound TLS (2026-10-02)
+
+- [x] **The TLS listener survives a bad handshake.** It handshook synchronously on the
+      accept thread and returned before re-arming the accept on a failure, so one failed
+      handshake stopped TLS until a restart and one silent connection held up every
+      other. Found by the cluster tests hanging; reproduced on the client-facing listener
+      and fixed there: an asynchronous handshake with a ten-second deadline.
+- [x] **`cluster:`** starts a second TLS listener that requires a certificate from the
+      cluster CA (`TLSServer::require_peer_certificates`); the verified peer's common name
+      is `Channel::peer_node`. **Outbound TLS** (`Core::cluster_tls_set`, `_secure_flow`)
+      shows this node's certificate and checks the peer's against the CA and the dialled
+      address; without the cluster's certificates `tls` is still refused. Checked against
+      the real binary with `openssl s_client`: a cluster certificate is let in and named,
+      none is "certificate required", another authority's is "unknown ca".
