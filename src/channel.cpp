@@ -37,6 +37,7 @@
 #include "servers/connection.h"
 #include "sip_header.h"
 #include "sip_message.h"
+#include "stun.h"
 #include "types/account.h"
 #include "types/authorization.h"
 #include "types/sip_identity.h"
@@ -463,6 +464,16 @@ void Channel::_frame_datagram() {
   std::string datagram;
   datagram.swap(_buffer);
   _incoming_message = nullptr;
+
+  // RFC 5626 section 4.4.2: the UDP keep-alive is a STUN Binding request to the SIP port,
+  // answered with where it came from, which is also how the client learns its NAT mapping
+  // has moved. Told from SIP by its first byte; never handed to the SIP parser.
+  if (stun::is_stun(datagram)) {
+    if (!_connection) return;
+    const auto from = _connection->remote_endpoint();
+    if (auto response = stun::binding_response(datagram, from.address(), from.port())) _schedule_async_write(std::move(*response));
+    return;
+  }
 
   // A datagram of CRLFs is a keep-alive, not a message (RFC 5626 section 4.4.1).
   std::size_t at = 0;
