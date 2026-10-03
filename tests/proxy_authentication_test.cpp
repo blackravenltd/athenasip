@@ -368,3 +368,34 @@ TEST(ProxyAuthenticationTest, TheRegistrarMarksTheConnectionItAuthenticated) {
   f.receive(tcp, AuthFixture::request("INVITE", "sip:bob@example.com", "sip:alice@example.com"));
   EXPECT_NE(ProxyFixture::request_with(f.callee_connection, "INVITE"), nullptr);
 }
+
+// The 2026-09-17 decision: a connection showing a certificate the cluster CA signed is a
+// peer node, and anything else is an endpoint. A peer has already done this node's job - it
+// challenged the caller, or took the call from its own subscriber - so what it sends on is
+// forwarded, not challenged a second time by a node the caller has no way to answer through.
+TEST(ProxyAuthenticationTest, ARequestFromAClusterPeerIsNotChallenged) {
+  AuthFixture f;
+
+  std::shared_ptr<MockConnection> peer_connection;
+  auto peer = f.make_channel("198.51.100.70", &peer_connection, "tls", 5062);
+  peer_connection->peer = "node-b";
+
+  f.receive(peer, AuthFixture::request("INVITE", "sip:bob@example.com", "sip:alice@example.com"));
+
+  EXPECT_EQ(ProxyFixture::response_with(peer_connection, 407), nullptr);
+  EXPECT_NE(ProxyFixture::request_with(f.callee_connection, "INVITE"), nullptr);
+}
+
+// The certificate is what makes a peer. The same request over TLS from something that
+// showed none is a caller claiming an identity, and is asked to prove it.
+TEST(ProxyAuthenticationTest, ATlsConnectionThatIsNotAPeerIsChallenged) {
+  AuthFixture f;
+
+  std::shared_ptr<MockConnection> tls_connection;
+  auto tls = f.make_channel("198.51.100.71", &tls_connection, "tls", 5061);
+
+  f.receive(tls, AuthFixture::request("INVITE", "sip:bob@example.com", "sip:alice@example.com"));
+
+  EXPECT_NE(ProxyFixture::response_with(tls_connection, 407), nullptr);
+  EXPECT_EQ(ProxyFixture::request_with(f.callee_connection, "INVITE"), nullptr);
+}

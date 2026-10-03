@@ -109,6 +109,11 @@ class MockConnection : public athenasip::servers::Connection {
 
   std::string transport_name() const override { return _transport; }
 
+  // The node a cluster-CA certificate named, as the inter-node listener reports it. Empty
+  // for everything that is not a peer.
+  std::string peer_identity() const override { return peer; }
+  std::string peer;
+
   // Observable state
   bool open = true;
   bool reliable = true;
