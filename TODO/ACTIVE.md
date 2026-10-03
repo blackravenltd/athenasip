@@ -1,37 +1,20 @@
 # AthenaSIP - Active Work
 
-Work happens on `develop`; `main` carries the last release, and `0.7.0` is the current
+Work happens on `develop`; `main` carries the last release, and `0.8.0` is the current
 one. Line numbers refer to the current tree; update them as files move.
 
-Milestones 1 and 2 are complete. Since `0.7.0`, on `develop` and not yet tagged, Milestone 3
-is done apart from one harness knob, a good part of Milestone 4 has landed, and Milestone 5
-ran out of order on purpose. `COMPLETED.md` has every item with what shipped; the shape of
-it:
+Milestones 1, 2 and 3 are complete apart from the items left under Milestone 3 below.
+`0.8.0` (2026-10-03) carried a good part of Milestone 4 and most of Milestone 5:
+`COMPLETED.md` has every item with what shipped.
 
-- **The mixed-transport call.** A browser called AthenaPhone on a real device through this
-  node and rtpengine on 2026-09-30 and was heard both ways (`test/interop/UAT.md`).
-- **Behaviour profiles (2026-10-01/02).** One `behaviour` section, server-wide in the
-  config and per realm in the API, with a per-subscriber media profile: anchoring, the media
-  profile (`mirror` by default), one re-offer on 488 reported to the operator, OPTIONS
-  qualifying, Contact rewriting. `docs/behaviour.md` says how to set it to behave like
-  Asterisk, Kamailio/OpenSIPS or FreeSWITCH.
-- **Milestone 4 so far (2026-10-02).** The node list fed from the discovery bus; RFC 5626
-  outbound (keep-alives, instance and reg-id, one flow per instance); `sip.localnet` and
-  per-listener public ports, for signalling and the builtin relay; the cluster CA made by
-  the node (`--ca-init`, `--ca-node`); the mutual-TLS inter-node listener and outbound TLS.
-- **Milestone 5, out of order.** Installs as a systemd service, `--add-user` as the only
-  way to the first administrator, admin authentication end to end, the one-command stack,
-  live calls and `/metrics` on the admin API, deployed on `corvus-fi-1`.
-- **Bugs found on the way**, each with its own commit: a failed branch closing the call
-  under a serial fork, the TLS listener stopping after one bad handshake, a peer reset
-  terminating the node, CRLF keep-alives never answered, a UDP/TLS/RTP/SAVPF description
-  read as SDES.
+1036 unit tests at `0.8.0`. **The sipp harnesses were not run on the tagged tree**: Docker
+was paused when Tom asked for the tag. The single-node harness last passed, 12 of 12, at
+`2e7ae4d`, and the two-node harness 9 of 11 a few commits before the tag, with the two
+failures the scenarios' own. Running both is the first thing to do with Docker back, and
+what they find goes into a 0.8.1.
 
-1014 tests on 2026-10-03; the sipp harness, 12 of 12, at `2e7ae4d`.
-
-**Next:** in Milestone 4, the rest of the scenarios and the connection-oriented transports
-across two nodes, then the chaos test. A call crosses two nodes as of 2026-10-03
-(`test/e2e/cluster.sh`, 5 of 5).
+**Next:** the two harnesses on the tagged tree, then in Milestone 4 the chaos test, and
+video through rtpengine.
 
 **Once things are stable, video calling is a primary feature** (Tom, 2026-10-03), not a
 later extra: principle 6 already says so, and this is the reminder that it is next in line

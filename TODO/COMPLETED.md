@@ -14,6 +14,14 @@ week, under Milestone 1. Everything after that is dated as it landed.
 
 Newest first. The detail is below, oldest first.
 
+- **0.8.0** (2026-10-03): a cluster that carries a call, and a console that can make one.
+  A node forwards a call to the node holding the subscriber's flow, over mutual TLS from
+  the cluster's own CA, and a call crossed two real nodes over UDP, TCP and WebSocket.
+  Installable as a service with users, sessions, roles and rate limits on its admin API;
+  HTTPS and a secure WebSocket beside the plain ones; call records; `--check`; behaviour
+  profiles; RFC 5626 outbound. Subscriber and user are the words everywhere and account
+  is none. A browser called AthenaPhone with video and was seen and heard both ways. The
+  sipp harnesses were not run on the tagged tree (Docker was paused).
 - **0.7.0** (2026-09-22): the mixed-transport call. A realm says what its calls ask of
   the media engine, the node record-routes both interfaces and carries a flow token in
   each so an in-dialog request can reach a browser, the SRTP profile arrives for a

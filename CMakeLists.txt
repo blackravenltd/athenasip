@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.23...4.2)
 
-project(athenasip VERSION 0.7.0 LANGUAGES CXX)
+project(athenasip VERSION 0.8.0 LANGUAGES CXX)
 
 option(ATHENA_BUILD_TESTING "Build test targets" OFF)
 set(ATHENA_SANITIZE "none" CACHE STRING "Sanitizer to build with: none, address, thread")
