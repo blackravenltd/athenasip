@@ -2571,3 +2571,7 @@ Tom's answers to the questions that were waiting on him, and what they led to.
 - [x] **`log.level` and `log.format`.** JSON lines with `at`, `level`, `scope` and
       `message`, the scope taken off the front of the message where a scoped logger put
       it. The node logged everything as text, always, with no way to say otherwise.
+- [x] **`media.builtin.public_address` may be a name**, resolved at start and every
+      minute after, the address written into descriptions. A node behind NAT on a dynamic
+      address (corvus-gbni-1, as `macnessa.athenasip.org`, kept current by manannan) has
+      its media follow the name. A name that resolves to nothing is declined, never written.

@@ -472,7 +472,7 @@ is rtpengine's ng control port, `2223` unless its own configuration says otherwi
 | Setting | Default | What it is |
 | --- | --- | --- |
 | `bind_address` | `0.0.0.0` | Where the relay binds |
-| `public_address` | `0.0.0.0` | The address written into the descriptions it hands out |
+| `public_address` | `0.0.0.0` | The address written into the descriptions it hands out. May be a name, such as the one a dynamic DNS updater keeps pointing at a site: it is resolved when the node starts and every minute after, and the address it resolves to is what is written, because phones do not resolve a name there. While a name resolves to nothing the relay declines and descriptions go through as they came |
 | `port_min` | `22000` | The bottom of the RTP port range |
 | `port_max` | `23000` | The top of it |
 
