@@ -7,6 +7,7 @@
 #include "proxy.h"
 
 #include <chrono>
+#include <set>
 #include <utility>
 
 #include "call.h"
@@ -988,8 +989,33 @@ void Proxy::_add_targets(const std::shared_ptr<Context>& context, std::vector<ty
     return a.registered_at != b.registered_at ? a.registered_at > b.registered_at : a.reg_id > b.reg_id;
   });
 
+  auto core = _core.lock();
+
+  // What a peer node sent is for the flows held here. Whoever holds the subscriber's other
+  // flows is that peer's to send to, and sending from here as well would ring those
+  // devices twice or pass the request round in a circle.
+  const auto arrived = context->request->channel.lock();
+  const bool from_peer = arrived && !arrived->peer_node().empty();
+
+  std::set<std::string> forwarded_to;
+
   for (const auto& binding : bindings) {
     if (!binding.contact) continue;
+
+    // The 2026-09-20 decision: a binding shares and a flow does not. A flow another node
+    // holds is reached through that node, once, however many of them it holds - it reads
+    // the same bindings and forks to its own.
+    if (core && _held_elsewhere(*core, binding)) {
+      if (from_peer) continue;
+
+      if (auto peer = _peer_target(*core, binding.node_id, context->request)) {
+        if (forwarded_to.insert(binding.node_id).second) context->targets.push_back(std::move(*peer));
+        continue;
+      }
+
+      // A node that is down, quiet or unknown cannot be asked. What is left is what a
+      // single node does with a flow it has no channel for.
+    }
 
     auto target = _target_for(binding);
     if (target.instance.empty()) {
@@ -1006,6 +1032,37 @@ void Proxy::_add_targets(const std::shared_ptr<Context>& context, std::vector<ty
       others.push_back(std::move(target));
     }
   }
+}
+
+// A binding whose flow was learned by another node and is not open here.
+bool Proxy::_held_elsewhere(Core& core, const types::Location& binding) const {
+  if (binding.node_id.empty() || binding.node_id == core.config->sip_node_id || binding.flow_id.empty()) return false;
+
+  return core.channel_find(binding.flow_id) == nullptr;
+}
+
+// The peer node as a target: the request as it arrived, address of record and all, sent to
+// the peer's inter-node listener. Nothing when the peer has not said it is up within three
+// of its status intervals, or has not said where its peers reach it.
+std::optional<Proxy::Target> Proxy::_peer_target(Core& core, const std::string& node_id, const std::shared_ptr<SIPMessage>& request) const {
+  const auto interval = core.config->events_status_interval;
+  const auto stale_after = interval == 0 ? std::chrono::seconds::max() : std::chrono::seconds(interval * 3);
+
+  const auto node = core.nodes()->find(node_id, stale_after);
+  if (!node || node->stale || node->status != "ok" || node->cluster_address.empty() || node->cluster_port == 0) return std::nullopt;
+
+  auto hop = std::make_shared<SIPUri>();
+  hop->valid = true;
+  hop->scheme = "sip";
+  hop->host = node->cluster_address;
+  hop->port = node->cluster_port;
+  hop->set_parameter("transport", "tls");
+
+  Target target;
+  target.uri = request->header->request_uri;
+  target.next_hop = hop;
+  target.flow = _flow_to(*hop);
+  return target;
 }
 
 // The failed flow's client is tried down its next flow, next in line, if it has one left.
@@ -1115,6 +1172,16 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
   // No call record and no dialog means nothing to anchor against - which end sent this
   // description is the one question the engine has to be told the answer to.
   if (!call || !dialog) return then();
+
+  // A call a peer node forwarded is anchored there, for its whole life: the first node
+  // holds the media, and a second pass here would relay a relay, or offer one rtpengine
+  // the same call twice. Decided by the request that made the call and kept on it,
+  // because the answer and every re-INVITE after come through here too.
+  if (!request->in_known_dialog && tag_of(request, "To").empty()) {
+    const auto arrived = request->channel.lock();
+    if (arrived && !arrived->peer_node().empty()) call->media_elsewhere = true;
+  }
+  if (call->media_elsewhere) return then();
 
   // The policy is the realm's, decided once where the realm was in hand and kept on
   // the call, because a re-INVITE arrives in-dialog with no realm to ask.

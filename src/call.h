@@ -110,6 +110,10 @@ class Call {
   // the media policy and for the same reason.
   std::optional<bool> rewrite_contact;
 
+  // A peer node forwarded this call here, so that node's engine holds the media and this
+  // one leaves every description in the call alone. The first node anchors.
+  bool media_elsewhere = false;
+
   std::vector<Participant> participants;
 
   std::time_t created_at = 0;

@@ -294,6 +294,11 @@ class Proxy : public TransactionUser {
   // reachable. A UDP flow this node has forgotten is still sent down; a reliable one that
   // has closed leaves the Contact as all there is to go on.
   Target _target_for(const types::Location& binding) const;
+
+  // Cluster forwarding: whether a binding's flow is another node's, and that node as the
+  // target for it.
+  bool _held_elsewhere(Core& core, const types::Location& binding) const;
+  std::optional<Target> _peer_target(Core& core, const std::string& node_id, const std::shared_ptr<SIPMessage>& request) const;
   static std::shared_ptr<SIPUri> _datagram_hop(const std::string& flow_id);
 
   static NextHop _next_hop_of(const SIPUri& uri);

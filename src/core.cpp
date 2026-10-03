@@ -608,6 +608,17 @@ Core::Advertised Core::advertised_for(const Channel& channel) const {
   const auto remote = channel._connection->remote_endpoint();
   const auto transport = Util::to_lower(channel._connection->transport_name());
 
+  // A peer node reaches this one at its inter-node listener, whichever of the two opened
+  // the connection between them: the local end of a connection this node opened is a port
+  // nothing listens on.
+  if (!channel.peer_node().empty()) {
+    if (const auto cluster = config->advertised_cluster()) {
+      out.host = cluster->address;
+      out.port = cluster->port;
+      return out;
+    }
+  }
+
   if (!config->sip_public_address.empty() && !config->in_localnet(remote.address())) {
     const auto public_port = config->public_port_for(transport);
     out.host = config->sip_public_address;
