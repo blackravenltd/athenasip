@@ -3,73 +3,40 @@
 Work happens on `develop`; `main` carries the last release, and `0.7.0` is the current
 one. Line numbers refer to the current tree; update them as files move.
 
-Milestones 1 and 2 are complete and recorded in `COMPLETED.md`. What M3 builds on: the
-header, URI, identity and message model follow RFC 3261; `Core` is a composition root on
-a single strand with no locks and no SIP semantics of its own; the four section 17 state
-machines sit behind a matcher with `Registrar` and `Proxy` as the transaction users;
-`Dialogs` observes calls so media is released and a call record closed when they end;
-`Datastore`, `EventSystem` and `MediaEngine` are async plugins behind one registry, with
-`memory://` and `redis://`, `local://` and `mqtt://`, and `builtin://` and
-`rtpengine://` in tree; a node decides for itself when a call it is holding is over;
-provisioning is over a JSON API; and the sipp harness proves a call end to end on UDP.
-885 tests.
+Milestones 1 and 2 are complete. Since `0.7.0`, on `develop` and not yet tagged, Milestone 3
+is done apart from one harness knob, a good part of Milestone 4 has landed, and Milestone 5
+ran out of order on purpose. `COMPLETED.md` has every item with what shipped; the shape of
+it:
 
-0.6.0 landed RFC 5626 flow routing, the rtpengine driver and the media profile that
-tells it which leg is the browser, and the behaviour tests that found eleven bugs in
-code nothing had ever tested. 0.7.0 is the mixed-transport call: a realm says what its
-calls ask of the engine, the node record-routes both interfaces and carries a flow
-token in each so an in-dialog request can reach a browser, and three recorded
-deviations from RFC 3261 and 3264 are closed. `COMPLETED.md` has the detail.
+- **The mixed-transport call.** A browser called AthenaPhone on a real device through this
+  node and rtpengine on 2026-09-30 and was heard both ways (`test/interop/UAT.md`).
+- **Behaviour profiles (2026-10-01/02).** One `behaviour` section, server-wide in the
+  config and per realm in the API, with a per-account media profile: anchoring, the media
+  profile (`mirror` by default), one re-offer on 488 reported to the operator, OPTIONS
+  qualifying, Contact rewriting. `docs/behaviour.md` says how to set it to behave like
+  Asterisk, Kamailio/OpenSIPS or FreeSWITCH.
+- **Milestone 4 so far (2026-10-02).** The node list fed from the discovery bus; RFC 5626
+  outbound (keep-alives, instance and reg-id, one flow per instance); `sip.localnet` and
+  per-listener public ports, for signalling and the builtin relay; the cluster CA made by
+  the node (`--ca-init`, `--ca-node`); the mutual-TLS inter-node listener and outbound TLS.
+- **Milestone 5, out of order.** Installs as a systemd service, `--add-user` as the only
+  way to the first administrator, admin authentication end to end, the one-command stack,
+  live calls and `/metrics` on the admin API, deployed on `corvus-fi-1`.
+- **Bugs found on the way**, each with its own commit: a failed branch closing the call
+  under a serial fork, the TLS listener stopping after one bad handshake, a peer reset
+  terminating the node, CRLF keep-alives never answered, a UDP/TLS/RTP/SAVPF description
+  read as SDES.
 
-Since 0.7.0, on `develop` and not yet tagged, in three parts, all recorded in
-`COMPLETED.md`.
+983 tests at `2686313`; the sipp harness last passed in full at `cc90599`.
 
-**Milestone 3.** A leg is profiled from what it has said rather than from the transport it
-signals over; the interop fixture has rtpengine on its media path and reaches outside
-Docker; this node serves the web client that drives its own harness; a browser calls a
-browser through it with audio proven at both ends; `GET /api/v1/client/config` tells a
-browser where to signal and what to use for ICE, with TURN credentials that expire on their
-own; and the relay path is automated, `browser.sh` running a direct phase and a relayed one.
-On 2026-09-30 a browser called an AthenaPhone on a real device through this node and
-rtpengine, and a person heard it both ways in both directions - once a DTLS-role bug in
-the rtpengine driver, which every call that actually rang had been hitting, was found and
-fixed. `test/interop/UAT.md` is the record.
-
-**Milestone 5, out of order on purpose.** The node installs, runs as a systemd service,
-takes a command line including `--print-config` and `--add-user`, says on the bus that it
-is alive and is deployed on a real host. Admin authentication is complete end to end -
-sessions, the three auth routes, roles on every route, the users routes, and an OpenAPI
-document the console runs a contract test against. `docker/up.sh` brings the whole stack up
-with one command: Redis, Mosquitto, rtpengine, coturn, a seeded realm, two accounts and the
-first administrator.
-
-**Bugs, several of them found by other people.** Two from the Corvus LoRa Bridge session, a
-truncated password hash that verified against almost anything and an MQTT run that could
-tear down its successor. Two from the admin console session, a 401 that should have been a
-403 and a TURN username carrying our own log prose. And a UDP flow that was never reaped,
-found while answering T.O.M.S about the monitoring topics.
-
-**2026-10-01, one long day, all in `COMPLETED.md`.** UDP flows stay reachable after the
-idle sweep forgets them, with outbound UDP and a sealed flow token. The proxy is no longer
-an open relay: callers are authenticated by Tom's policy. RFC 3263 locating is hand-written
-(NAPTR, SRV, A/AAAA, failover on 503 and timeout). The admin API serves live calls, the
-media engine and Prometheus `/metrics`. The builtin relay now sends to a leg that has not
-spoken yet, which the new metrics check found. Configured API tokens are gone: the first
-administrator is made with `athenasip --add-user`. Everything is deployed on
-`corvus-fi-1`, which Tom says is not production.
-
-The next work is Milestone 3's first item below: per-realm behaviour profiles, starting
-with the media profile a callee is offered. Tom decided it on 2026-10-01 and it is in
-**Decisions**. Read it before starting, with the two working rules that came with it: how
-established servers behave is the reference, and every behaviour that differs between
-them is a setting.
+**Next:** the second node, in Milestone 4 - Route and Path trust for cluster peers, then
+forwarding to the node that holds a flow, then `docker-compose.cluster.yml` and the harness
+across it. All of it needs Docker, which was paused at the end of 2026-10-02 (see Waiting
+on Tom).
 
 Milestones are in priority order and so are the items inside each one: work top to
-bottom, and say why when something is taken out of turn. Milestone 5 has been, twice -
-the deployment, because a node nobody can install is not one anybody will adopt, and
-admin authentication, because the console is built against it and cannot go further
-without it. Both are recorded that way. Move items to `COMPLETED.md` as they land, with
-a note on what shipped.
+bottom, and say why when something is taken out of turn. Move items to `COMPLETED.md` as
+they land, with a note on what shipped.
 
 ## Waiting on Tom
 
@@ -77,7 +44,19 @@ Nothing below can move until these are settled, and each one has somebody or som
 stopped against it. They are here rather than scattered through the milestones because a
 session that has lost its context needs to see them first.
 
-1. **`status_interval` in the heartbeat payload.** T.O.M.S has its Comms card live on
+1. **Docker Desktop is paused** (found 2026-10-02, and left paused because pausing it is a
+   choice). The sipp harness and every Milestone 4 item from here need it.
+
+2. **Two approvals that have to be given in the session that asked.** The admin console
+   build for the behaviour section, qualify, re-offers, nodes and `rewrite_contact` is ready
+   and waits on Tom's go-ahead given to the athenasip-admin session itself; a go-ahead relayed
+   through this session is not one it accepts. And AthenaPhone registering as
+   `sip:athenaphone@10.35.1.20` (account made, `media_profile: webrtc`) waits on Tom
+   entering its password on the phone - it is in `/root/.athenasip-athenaphone-password`
+   on `corvus-fi-1` - with the snakeoil CA `tls/ca/snakeca.crt` for TLS. The AthenaPhone
+   session will then check the first INVITE towards it is WebRTC with no 488 before it.
+
+3. **`status_interval` in the heartbeat payload.** T.O.M.S has its Comms card live on
    FI-1 and hardcodes a 90-second staleness threshold, which is three intervals by
    coincidence rather than by contract. Adding the interval to the retained
    `nodes/<id>/status` message lets the card derive its own. The field would be
@@ -85,21 +64,21 @@ session that has lost its context needs to see them first.
    holding for a yes or no and will use three times it, falling back to its configured
    value for nodes that do not carry it. See `docs/events.md`.
 
-2. **`/accounts` versus `/subscribers`.** The 2026-09-25 vocabulary decision says
+4. **`/accounts` versus `/subscribers`.** The 2026-09-25 vocabulary decision says
    subscriber; the type is `Account` and the resource is `/realms/{realm}/accounts`.
    Renaming is a breaking API change the console and the OpenAPI document follow, so it
    wants doing deliberately and in one go, or not at all. The console is building against
    `/accounts` until told otherwise. Question 5 in `docs/authentication.md`.
 
-3. **Whether deleting a realm cascades to its subscribers.** The console asked; it builds
+5. **Whether deleting a realm cascades to its subscribers.** The console asked; it builds
    against no cascade until told.
 
-4. **Rate limiting on `POST /api/v1/auth/login`.** Recorded as unsolved in
+6. **Rate limiting on `POST /api/v1/auth/login`.** Recorded as unsolved in
    `docs/authentication.md` since before the endpoint existed, and the endpoint is now
    reachable on `corvus-fi-1`'s LAN. Not scheduled into any milestone, which is the thing
    to fix.
 
-5. **How a browser that is only a SIP subscriber reaches `/client/config`.** It needs
+7. **How a browser that is only a SIP subscriber reaches `/client/config`.** It needs
    `view-cluster-status`, which only an admin user holds now that configured tokens are
    gone. The console's softphone signs in as an admin and is unaffected. A public web
    client for subscribers would need another way in. The proposal is HTTP Digest (RFC 7616)
@@ -253,6 +232,12 @@ Dated, and not reopened without asking.
   dialog this node is on, ACK and CANCEL are not challenged. Found because the proxy had
   no 407 at all and forwarded a stranger's INVITE anywhere. What a client needs to do
   about it is its own session's work.
+- (2026-10-02) Contact rewriting is a behaviour setting, off by default (Tom). The NAT item
+  had left it as a judgement call; it is `behaviour.rewrite_contact`, Asterisk's
+  `rewrite_contact`, and WebSocket clients are never rewritten.
+- (2026-10-02) The cluster CA is made by the node with flags, `--ca-init` and `--ca-node ID
+  --san NAME`, matching the command line there is rather than the subcommands this plan
+  first named.
 - (2026-09-29) A route declared with an empty role set means **any authenticated caller**,
   not a public route; a route open to anyone says so with `Router::add_open`. The old
   `public_scope` was an empty string, so a route that forgot to name its scope was open to
@@ -302,19 +287,24 @@ which is what would let a node send a BYE to both ends of a call it decided was 
 
 ### Known deviations from the standards
 
-Each is deliberate, each is an item below, and this list is so that none of them is
-mistaken for compliance. **Re-checked against the tree on 2026-09-30** - all six still
-hold, and nothing since 0.7.0 added or closed one:
+Each is deliberate and each is either an item below or a setting, and this list is so that
+none of them is mistaken for compliance. **Re-checked against the tree on 2026-10-03:**
 
-- RFC 3263 is in (2026-10-01): NAPTR, SRV and A/AAAA, and the next hop for a target that
-  refused a connection, answered 503 or timed out. There is no blacklisting of a server
-  that failed (4.3 permits it), so the next call tries it again first.
-- RFC 5626 is routing only: a binding records its flow and the fork uses it. There is no
-  `+sip.instance`, `reg-id`, `Flow-Timer` or keep-alive; M4.
+- RFC 3263: no blacklisting of a server that failed (4.3 permits it), so the next call
+  tries it again first.
+- RFC 5626: no `Flow-Timer`, by choice - the one value this node could give is longer than
+  most NATs keep a UDP mapping. No 430 or 403 for an in-dialog request whose flow token
+  names a flow that has gone, also by choice: the token is in every dialog's Record-Route,
+  outbound or not, and today that request still reaches a desk phone through its Contact.
+  No flow token in a Path this node writes as an edge for another registrar; M4.
 - Forking is serial. 16.7 allows it, and parallel forking is Parked.
-- A media-anchoring node rewrites the body it forwards, which 16.6 forbids a proxy. It
-  is the relay, and where it cannot anchor the message travels on untouched.
-- Outbound TLS to a host this node has never heard from is refused rather than faked; M4.
+- A media-anchoring node rewrites the body it forwards, which 16.6 forbids a proxy, and
+  re-offers the other profile once on a 488. It is the relay; `behaviour.media_anchor:
+  false` turns all of it off, and where it cannot anchor the message travels on untouched.
+- With `behaviour.rewrite_contact` on (off by default) the Contact an endpoint wrote is
+  replaced with the address its message came from, as Asterisk and Kamailio do.
+- Outbound TLS is to cluster peers only, with the cluster's certificates. To any other host
+  it is refused rather than faked.
 - Record-Route is written twice on every dialog-forming request rather than only where
   the interfaces differ. RFC 5658 requires the pair in that case and permits it in
   every case; the flow token in each value is what makes a call to a browser routable
@@ -377,14 +367,10 @@ milestone is the second node.
 ### Client failover, in the order decided on 2026-09-21
 
 - [ ] What the realm expects of a client, in `GET /api/v1/client/config` beside the node
-      list it now carries; and the inter-node TLS address in each node's status, once
-      nodes talk SIP to each other.
+      list it now carries.
 - [ ] RFC 5626 outbound, what is left of it: a flow token in the Path a node writes when
-      it is the edge for another registrar, which is the cluster case. Deliberately not
-      done: 430 or 403 for an in-dialog request whose flow token names a gone flow. The
-      token is in every dialog's Record-Route, outbound or not, and today a desk phone
-      whose TCP connection dropped, or any dialog across a node restart, is still reached
-      through its Contact; a 430 would end those calls.
+      it is the edge for another registrar, which is the cluster case. (No 430 for a gone
+      in-dialog flow, by choice: see Known deviations.)
 - [ ] `AthenaSIP-Alternate-Server`, the optional extension, and last because it is what
       the standards above do not cover: a client that cannot do outbound and has no DNS
       still has to learn where else to go. Four conditions, and it is not worth shipping
@@ -440,8 +426,8 @@ milestone is the second node.
 
 - [ ] Requests from cluster-CA peers trusted for Route/Path. The listener is in: the
       `cluster` section, mutual TLS, `Channel::peer_node` naming the peer.
-- [ ] Discovery: retained `nodes/<id>/status` with SIP addresses, inter-node address,
-      version, capabilities; node roster maintained from MQTT; heartbeat and expiry.
+- [ ] The rest of discovery: the inter-node TLS address and the node's capabilities in its
+      status. The SIP addresses, the roster from MQTT and staleness are in.
 - [ ] Forwarding: lookup returns owning node; INVITE routed to the peer with `Route`;
       peer delivers on the local flow; responses follow Via; Record-Route keeps both
       nodes in the dialog.
