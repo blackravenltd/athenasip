@@ -27,6 +27,30 @@ since only the plugin knows what it means. There are no API tokens to show: a fi
 still sets `http.api.tokens` is refused, and administrators are users made with
 `athenasip --add-user`.
 
+## Whether this node can reach what it needs
+
+```sh
+athenasip --check
+```
+
+Tries everything the node would connect to, one at a time, and says which answered: the
+datastore, the event bus, the media engine, every certificate a listener will ask for,
+and, in a cluster, a mutual-TLS handshake with each other node that has said it is up.
+
+```
+ok    configuration        /etc/athenasip/config.yaml
+ok    datastore            redis 0.0.1 at redis://:***@127.0.0.1:6379/3
+ok    events               mqtt 0.0.1 at mqtt://10.35.1.10:1883
+ok    media                builtin 0.0.1 at builtin://
+ok    tls certificate      /etc/athenasip/tls/node.cer
+FAIL  peer node-b          10.0.0.2:5062 - Connection refused
+```
+
+It exits 0 when everything passed and 1 when anything did not. Nothing is started and
+nothing is changed, so it is safe to run beside a node that is serving: it is the first
+thing to run when a node will not start, and before starting one for the first time. A
+password in a URL is not printed.
+
 ## Configuration
 
 `config/config.example.yaml` is the annotated reference: every setting appears in it with
