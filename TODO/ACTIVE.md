@@ -356,7 +356,10 @@ The trunk scenario waits on trunks existing.
       release it; support a pool of engines with health checks. The driver is proven
       against rtpengine 9.4.0, so this is the cluster's question and not the
       protocol's; it belongs with M4 as much as here.
-- [ ] Verify the rest against AthenaPhone: video, hold and resume, DTMF (RFC 4733
+- [ ] Video through rtpengine: a browser and AthenaPhone with the media anchored and
+      relayed (BUNDLE, rtcp-mux), which the 2026-10-03 call did not exercise because the
+      builtin relay passes a WebRTC description through. Then video in the sipp harness.
+- [ ] Verify the rest against AthenaPhone: hold and resume, DTMF (RFC 4733
       passthrough), blind transfer (REFER proxying).
 - [ ] Interop matrix documented: AthenaPhone, JsSIP in Chrome, Firefox and Safari,
       Linphone, a hardware desk phone, Asterisk as a trunk.
@@ -423,7 +426,7 @@ milestone is the second node.
       retained `nodes/<id>/status` roster, and a peer sends an OPTIONS (11.1) back to
       that address from outside. An address that does not answer is not advertised, and
       the node says so loudly instead of record-routing something unreachable.
-      `athenasip check` reports what was found, per transport, and how.
+      `athenasip --check` reports what was found, per transport, and how.
       The honest failure case has to be expressible: a node behind symmetric NAT or a
       connection-pinning balancer has no address peers can reach on their own, only
       flows clients opened. Discovery must be able to answer "not directly reachable",
@@ -436,16 +439,11 @@ milestone is the second node.
 - [ ] The rest of discovery: the node's capabilities in its status. The SIP addresses, the
       roster from MQTT, staleness and the inter-node address (`cluster.advertise`,
       `NodeDirectory::find`) are in.
-- [ ] Media ownership, the rest of it: the engine id in the call record so a BYE reaching
-      either node releases the media. The first node anchoring and the second leaving the
-      call alone is in.
-- [ ] Call records (CDR) in the datastore: start, answer, end, participants, media
-      engine, nodes. `GET /api/v1/calls`.
-- [ ] `athenasip check` that validates config and connectivity to Redis, MQTT, rtpengine
-      and peers. The CA half of this item is in: `--ca-init` and `--ca-node`.
-- [ ] The rest of the sipp scenarios across the two nodes. `test/e2e/cluster.sh` runs a
-      call, the same call the other way, and a media call; CANCEL, busy, delayed offer,
-      hold and the timeout have only ever run on one node.
+- [ ] Re-run `test/e2e/cluster.sh` in full. Cancel, busy, the timeout and the TCP and
+      WebSocket callees passed across two nodes on 2026-10-03; delayed offer and hold
+      failed on the scenarios' own check of the relay address, the harness was moved to the
+      subnet they expect, and Docker was paused before the re-run. The call records check
+      across the two nodes has not run at all.
 - [ ] Chaos test: kill node A mid-registration-cycle, assert re-REGISTER on node B and
       a new call completes within one registration interval.
 
