@@ -511,6 +511,22 @@ TEST(MediaProfileTest, ACallAPeerNodeForwardedIsNotAnchoredAgain) {
   EXPECT_TRUE(f.engine->calls().empty());
 }
 
+// But it does let go of it. Every node a call passed through tells its engine when the call
+// is over, whether or not it was the one that anchored: with one rtpengine between the
+// nodes that is what lets the end of the call, reaching either node, give the ports back.
+// An engine that never saw the call takes the release as nothing to do.
+TEST(MediaProfileTest, ACallAPeerNodeForwardedIsStillReleasedHereWhenItEnds) {
+  ProfileFixture f("tcp", "udp");
+  f.caller_connection->peer = "node-b";
+
+  f.receive(f.caller, f.invite_with_body());
+  f.receive(f.callee, f.response_to_latest(180, "Ringing"));
+  f.receive(f.callee, f.response_to_latest(486, "Busy Here"));
+
+  EXPECT_TRUE(f.engine->calls().empty());
+  EXPECT_EQ(f.engine->releases(), 1);
+}
+
 // Nothing is learned silently: the node says which subscriber needed it and what it took,
 // for the operator to set as that subscriber's profile or not.
 TEST(MediaProfileTest, AReofferThatWorksIsReportedForTheSubscriber) {
