@@ -7,6 +7,7 @@
 #include "memory_datastore.h"
 
 #include <boost/asio/post.hpp>
+#include <set>
 #include <utility>
 
 #include "../util.h"
@@ -84,7 +85,26 @@ bool MemoryDatastore::_realm_update(std::shared_ptr<types::Realm> realm) {
 
 bool MemoryDatastore::_realm_delete(const std::string& realm_name) {
   std::lock_guard<std::mutex> lock(_mutex);
-  return _realms.erase(realm_name) > 0;
+
+  if (_realms.erase(realm_name) == 0) return false;
+
+  // Everything in it goes too: its subscribers, and their bindings with them.
+  std::set<std::uint64_t> gone;
+  for (auto it = _accounts.begin(); it != _accounts.end();) {
+    const auto& account = it->second;
+    if (account->identity && account->identity->uri && account->identity->uri->host == realm_name) {
+      gone.insert(account->id);
+      it = _accounts.erase(it);
+    } else {
+      ++it;
+    }
+  }
+
+  for (auto it = _locations.begin(); it != _locations.end();) {
+    it = gone.count(it->second.account_id) ? _locations.erase(it) : std::next(it);
+  }
+
+  return true;
 }
 
 std::vector<std::shared_ptr<types::Realm>> MemoryDatastore::_realm_list() {

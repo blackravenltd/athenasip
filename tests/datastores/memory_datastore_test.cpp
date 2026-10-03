@@ -313,6 +313,34 @@ TEST(MemoryDatastoreTest, RealmDeleteAndList) {
   EXPECT_EQ(datastore->realm_get_by_name("one.example"), nullptr);
 }
 
+// A realm is deleted with everything in it (Tom, 2026-10-03). Subscribers left behind
+// would be unreachable through the API, which finds them through their realm, and their
+// bindings would go on routing calls into a domain this node no longer serves.
+TEST(MemoryDatastoreTest, RealmDeleteTakesItsSubscribersAndTheirRegistrations) {
+  auto datastore = make_datastore();
+
+  datastore->realm_create(make_realm("one.example"));
+  datastore->realm_create(make_realm("two.example"));
+
+  auto alice = make_account(1, "sip:alice@one.example");
+  auto carol = make_account(3, "sip:carol@two.example");
+  ASSERT_TRUE(datastore->account_create(alice));
+  ASSERT_TRUE(datastore->account_create(make_account(2, "sip:bob@one.example")));
+  ASSERT_TRUE(datastore->account_create(carol));
+  ASSERT_TRUE(datastore->account_register(alice, std::make_shared<types::SIPUri>("sip:alice@192.0.2.1:5060"), 3600, ""));
+  ASSERT_TRUE(datastore->account_register(carol, std::make_shared<types::SIPUri>("sip:carol@192.0.2.3:5060"), 3600, ""));
+
+  ASSERT_TRUE(datastore->realm_delete("one.example"));
+
+  EXPECT_EQ(datastore->account_list("one.example").size(), 0u);
+  EXPECT_EQ(datastore->account_get(std::make_shared<types::SIPIdentity>("sip:alice@one.example")), nullptr);
+  EXPECT_EQ(datastore->location_list(1).size(), 0u);
+
+  // And nothing of anybody else's.
+  EXPECT_EQ(datastore->account_list("two.example").size(), 1u);
+  EXPECT_EQ(datastore->location_list(3).size(), 1u);
+}
+
 TEST(MemoryDatastoreTest, AccountCreateRefusesADuplicate) {
   auto datastore = make_datastore();
 

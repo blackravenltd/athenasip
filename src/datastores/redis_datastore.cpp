@@ -284,7 +284,37 @@ void RedisDatastore::realm_update(plugins::Executor on, std::shared_ptr<types::R
   });
 }
 
+// Its subscribers first, each through account_delete so their bindings go with them, and
+// the realm last: a delete that fails part way leaves a realm that can be deleted again,
+// never subscribers whose realm is gone and whom the API can therefore no longer reach.
 void RedisDatastore::realm_delete(plugins::Executor on, std::string realm_name, plugins::StatusHandler handler) {
+  _async_smembers(_account_index_key(realm_name), [this, on, handler, realm_name](RedisError error, std::vector<std::string> users) mutable {
+    if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
+
+    auto failed = std::make_shared<std::string>();
+
+    run_sequence(
+        std::move(users),
+        [this, on, realm_name, failed](std::string user, std::function<void()> next) {
+          if (!failed->empty()) return next();
+
+          auto identity = std::make_shared<types::SIPIdentity>("sip:" + user + "@" + realm_name);
+
+          account_delete(on, std::move(identity), [failed, next](plugins::Status status) mutable {
+            // Already gone is not a failure here: the index can name a user whose record a
+            // concurrent delete has just taken.
+            if (!status.ok && status.error != "account_delete failed") *failed = status.error;
+            next();
+          });
+        },
+        [this, on, handler, realm_name, failed]() {
+          if (!failed->empty()) return _complete(on, handler, plugins::Status::failure("realm_delete: " + *failed));
+          _realm_delete_record(on, handler, realm_name);
+        });
+  });
+}
+
+void RedisDatastore::_realm_delete_record(plugins::Executor on, plugins::StatusHandler handler, std::string realm_name) {
   const auto index = _realm_index_key();
 
   _async_del(_realm_key(realm_name), [this, on, handler, index, realm_name](RedisError error, std::int64_t removed) mutable {

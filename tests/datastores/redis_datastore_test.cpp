@@ -169,6 +169,37 @@ TEST(RedisDatastoreTest, RealmRoundTripsThroughRedis) {
   EXPECT_EQ(datastore->realm_get_by_name(name), nullptr);
 }
 
+// A realm is deleted with its subscribers and their bindings (Tom, 2026-10-03), and with
+// nothing of any other realm's.
+TEST(RedisDatastoreTest, RealmDeleteTakesItsSubscribersAndTheirRegistrations) {
+  REQUIRE_REDIS(datastore);
+  const auto name = "gone-" + unique_suffix() + ".example";
+  const auto other = "kept-" + unique_suffix() + ".example";
+
+  ASSERT_TRUE(datastore->realm_create(make_realm(name)));
+  ASSERT_TRUE(datastore->realm_create(make_realm(other)));
+
+  auto alice = make_account(6101, "sip:alice@" + name);
+  auto carol = make_account(6103, "sip:carol@" + other);
+  ASSERT_TRUE(datastore->account_create(alice));
+  ASSERT_TRUE(datastore->account_create(make_account(6102, "sip:bob@" + name)));
+  ASSERT_TRUE(datastore->account_create(carol));
+  ASSERT_TRUE(datastore->account_register(alice, std::make_shared<types::SIPUri>("sip:alice@192.0.2.1:5060"), 3600, ""));
+  ASSERT_TRUE(datastore->account_register(carol, std::make_shared<types::SIPUri>("sip:carol@192.0.2.3:5060"), 3600, ""));
+
+  ASSERT_TRUE(datastore->realm_delete(name));
+
+  EXPECT_EQ(datastore->realm_get_by_name(name), nullptr);
+  EXPECT_EQ(datastore->account_list(name).size(), 0u);
+  EXPECT_EQ(datastore->account_get(std::make_shared<types::SIPIdentity>("sip:alice@" + name)), nullptr);
+  EXPECT_EQ(datastore->location_list(6101).size(), 0u);
+
+  EXPECT_EQ(datastore->account_list(other).size(), 1u);
+  EXPECT_EQ(datastore->location_list(6103).size(), 1u);
+
+  datastore->realm_delete(other);
+}
+
 // And what it did not choose stays unchosen, so it follows the server's default - which
 // may change after the realm is written - rather than freezing the default of the day.
 TEST(RedisDatastoreTest, ARealmThatChoseNoBehaviourInheritsAfterTheRoundTrip) {
