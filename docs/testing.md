@@ -99,12 +99,20 @@ Eleven scenarios against one node in Docker, driven by real sipp clients.
 test/e2e/run.sh                 # the in-process relay on the media path
 test/e2e/run.sh --rtpengine     # the same, with a real rtpengine
 test/e2e/run.sh register        # only scenarios whose name contains "register"
+test/e2e/cluster.sh             # two nodes, one Redis, one broker: a call across them
 ```
 
 The rtpengine run adds a twelfth check the builtin run cannot make: it reads the engine's
 counters afterwards and fails when nothing was relayed. A declined description travels
 on untouched and the two endpoints reach each other directly, which looks exactly like
 success from outside.
+
+`cluster.sh` is the two-node harness (`docker-compose.cluster.yml`): two nodes sharing one
+Redis and one Mosquitto, made a cluster with certificates from the node's own `--ca-init`
+and `--ca-node`. Its first call has both ends on one node, as a control; then it calls a
+subscriber held by the other node, in each direction, and checks that the media of a call
+across the two went through the first node's relay and not the second's. It registers over
+UDP, and runs only those scenarios.
 
 `invite-timeout` takes 32 seconds by design and runs last. Logs land in
 `test/e2e/results/`, one per end, plus the node's own.
