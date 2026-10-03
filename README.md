@@ -62,6 +62,7 @@ claim the shipped configuration does not support.
 * [Design](docs/design.md) - the transport layering
 * [Writing a plugin](docs/plugins.md)
 * [Events](docs/events.md) - the topic scheme
+* [Glossary](docs/glossary.md) - the words this project uses, and the one thing each means
 * [Testing](docs/testing.md) - the five layers, and how compliance is proven
 * [Certificates](docs/certificates.md) - the cluster's own certificate authority, made by the node
 * [Authentication](docs/authentication.md) - SIP Digest, and the admin plane design
