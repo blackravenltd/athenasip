@@ -54,6 +54,7 @@ class AuthAPI : public std::enable_shared_from_this<AuthAPI> {
 
   std::shared_ptr<loggers::Logger> _logger;
   std::shared_ptr<Sessions> _sessions;
+  std::shared_ptr<Throttle> _throttle;
 };
 
 }  // namespace athenasip::api

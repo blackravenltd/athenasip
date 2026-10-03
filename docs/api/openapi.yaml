@@ -30,6 +30,19 @@ info:
     a disabled user - and is the one that means sign in again. `403` is a real credential
     that does not hold the role. `503` is the node being unable to tell, because its
     datastore did not answer; it is a retry, not a bad password.
+
+    Every route is rate limited, and `429` is the fourth answer: wait the seconds in
+    `Retry-After` and try again. It is never a reason to sign out. The limits are per node:
+
+    | Who | Keyed by | Burst | Then |
+    | --- | --- | --- | --- |
+    | Open routes, unknown endpoints, and any credential that does not resolve | source address | 30 | 30 a minute |
+    | `POST /auth/login`, on top of that | source address | 10 | 5 a minute |
+    | `POST /auth/login`, on top of that | username | 5 | 1 a minute |
+    | A signed-in caller | session | 60 | 300 a minute |
+
+    The login limits count every attempt, not only failures. The source address is the
+    peer of the connection; a node behind a reverse proxy sees every caller as the proxy.
   license:
     name: GPL-3.0-or-later
     url: https://www.gnu.org/licenses/gpl-3.0.html
@@ -972,6 +985,17 @@ components:
             $ref: "#/components/schemas/Error"
     Unauthorized:
       description: No token, or not one this node knows
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    TooManyRequests:
+      description: Rate limited. Wait the seconds in Retry-After; the credential, if any, is still good.
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+          description: Seconds until a request would be let through
       content:
         application/json:
           schema:

@@ -107,7 +107,8 @@ void AdminAPI::_do_accept() {
 
 // send_status_end: set HTTP status and message and end
 HttpMiddleware AdminAPI::send_status_end(uint16_t code, std::string message) {
-  return [code, message](const http::request<http::string_body>& req, std::shared_ptr<http::response<http::string_body>> res, std::function<void(bool)> next) {
+  return [code, message](const http::request<http::string_body>& req, const std::string&, std::shared_ptr<http::response<http::string_body>> res,
+                         std::function<void(bool)> next) {
     res->result(code);
     res->set(http::field::server, "AthenaSIP");
     res->set(http::field::content_type, "application/json");
@@ -128,8 +129,10 @@ HttpMiddleware AdminAPI::send_500_end() { return AdminAPI::send_status_end(500, 
 
 // HttpSession constructor: stores the socket and a reference to the server.
 HttpSession::HttpSession(tcp::socket socket, AdminAPI& server) : _socket(std::move(socket)), _server(server) {
-  auto rm = _socket.remote_endpoint();
-  _logger = std::make_shared<loggers::LoggerScoped>(rm.address().to_string() + ":" + std::to_string(rm.port()), server._logger);
+  boost::system::error_code ec;
+  auto rm = _socket.remote_endpoint(ec);
+  _remote = ec ? std::string() : rm.address().to_string();
+  _logger = std::make_shared<loggers::LoggerScoped>(ec ? std::string("unknown") : _remote + ":" + std::to_string(rm.port()), server._logger);
 }
 
 // Start the session by initiating an asynchronous read.
@@ -171,7 +174,7 @@ void HttpSession::process_middleware_chain(std::size_t index, std::shared_ptr<ht
       }
     };
     // Invoke the middleware at the current index.
-    _server.middlewares[index](_req, res, next);
+    _server.middlewares[index](_req, _remote, res, next);
   } else {
     // All middleware have been processed; send the response.
     res->prepare_payload();
