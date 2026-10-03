@@ -2436,3 +2436,27 @@ Tom's answers to the questions that were waiting on him, and what they led to.
       version 14) and the Redis keys `athena:subscriber:*`. What reads the event bus is a
       consumer. A Redis store written before the rename is recreated, not migrated.
 - [x] The sipp harness passes in full on the renamed tree: 12 of 12 at `8e3ba0e`.
+- [x] **No re-offer in a profile the engine cannot make.** sipp as 1001 (RTP/AVP) to
+      AthenaPhone through the builtin relay on `corvus-fi-1`: the phone refused with 488,
+      the node "offered the other profile", and what it sent was the refused offer byte
+      for byte, which the phone answered with 482. `MediaEngine::produces(Profile)`
+      (contract version 15, defaulted to yes) is what the proxy now asks first; builtin
+      says plain RTP only. The 488 goes to the caller, and the node warns when a
+      subscriber's profile asks for what the engine cannot produce. The phone's 180 before
+      its 488 and its 482 were AthenaPhone's own, and that session has them.
+
+### The second node, begun (2026-10-03)
+
+- [x] **A request from a cluster peer is not challenged.** `Proxy::_authorize` lets through
+      what arrives on a channel whose certificate the cluster CA signed
+      (`Channel::peer_node`): the peer challenged the caller or took the call from its own
+      subscriber, and a second challenge would go to a caller with no way to answer through
+      this node. Trust is the certificate and nothing in the message. Path is left as RFC
+      3327 has it, accepted from anybody on a REGISTER that authenticated: it only routes
+      calls to the subscriber that registered, and an edge proxy in front of the cluster
+      that is not a node has to be able to add one.
+- [x] **A node says where its peers reach it.** `cluster` in the node status carries the
+      inter-node listener's address and port, from `cluster.advertise`, or the bound
+      address, or `sip.public_address` where the listener is bound to every address.
+      `NodeDirectory::find` reads it back, and `GET /api/v1/nodes` lists it for an
+      administrator and not for a client.

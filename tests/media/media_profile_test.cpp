@@ -49,6 +49,10 @@ class RecordingMediaEngine : public media::MediaEngine {
     return capabilities;
   }
 
+  // An engine that relays plain RTP and converts nothing, which is what builtin is.
+  void plain_rtp_only_set() { _plain_rtp_only = true; }
+  bool produces(media::Profile profile) const override { return !_plain_rtp_only || profile == media::Profile::PlainRtp || profile == media::Profile::Mirror; }
+
   void offer(plugins::Executor on, std::shared_ptr<athenasip::Call> call, std::string sdp, Flags flags, MediaHandler handler) override {
     (void)call;
     _record(true, flags);
@@ -89,6 +93,7 @@ class RecordingMediaEngine : public media::MediaEngine {
   std::vector<Call> _calls;
   std::atomic<int> _releases{0};
   bool _connected = false;
+  bool _plain_rtp_only = false;
 };
 
 const std::string kOffer =
@@ -454,6 +459,40 @@ TEST(MediaProfileTest, A488ToAGuessIsReofferedWithTheOtherProfile) {
   EXPECT_EQ(f.response_with(f.caller_connection, 488), nullptr);
   f.receive(f.callee, f.response_to_latest(200, "OK", kWebRtcOffer));
   EXPECT_NE(f.response_with(f.caller_connection, 200), nullptr);
+}
+
+// The other profile is only worth offering if the engine can make it. A relay that does
+// plain RTP and nothing else would send the refused offer again, byte for byte, which is
+// what corvus-fi-1 did to AthenaPhone on 2026-10-03: the phone answered the copy with 482.
+// The 488 is the answer, and the caller hears it.
+TEST(MediaProfileTest, NothingIsReofferedWhenTheEngineCannotMakeTheOtherProfile) {
+  ProfileFixture f("tcp", "udp");
+  f.engine->plain_rtp_only_set();
+
+  f.receive(f.caller, f.invite_with_body());
+  f.receive(f.callee, f.response_to_latest(488, "Not Acceptable Here"));
+
+  EXPECT_EQ(ProfileFixture::requests_with(f.callee_connection, "INVITE").size(), 1u);
+  EXPECT_NE(f.response_with(f.caller_connection, 488), nullptr);
+  EXPECT_TRUE(f.reoffers().empty());
+}
+
+// And the same when the first offer was asked for in a profile the engine cannot make: a
+// subscriber the operator marked webrtc, behind a relay that only does plain RTP. What went
+// out was plain RTP whatever was asked, so plain RTP is not "the other" to try next.
+TEST(MediaProfileTest, NothingIsReofferedWhenTheEngineCouldNotMakeTheFirstOfferAsAsked) {
+  ProfileFixture f("tcp", "udp");
+  f.engine->plain_rtp_only_set();
+
+  f.bob->media_profile = types::MediaPolicy::Profiles::WebRtc;
+  ASSERT_TRUE(f.store->subscriber_update(f.bob));
+
+  f.receive(f.caller, f.invite_with_body());
+  f.receive(f.callee, f.response_to_latest(488, "Not Acceptable Here"));
+
+  EXPECT_EQ(ProfileFixture::requests_with(f.callee_connection, "INVITE").size(), 1u);
+  EXPECT_NE(f.response_with(f.caller_connection, 488), nullptr);
+  EXPECT_TRUE(f.reoffers().empty());
 }
 
 // Nothing is learned silently: the node says which subscriber needed it and what it took,

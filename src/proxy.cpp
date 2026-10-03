@@ -1033,6 +1033,10 @@ bool Proxy::_reoffer(const std::shared_ptr<Context>& context) {
 
   _logger->info(context->request->header->request_uri->to_string() + " refused the offer it was made - offering the other profile");
   _forward_next(context);
+  // The other profile from an engine that cannot make it is the refused offer again.
+  auto core = _core.lock();
+  if (!core || !core->media || !core->media->produces(*other)) return false;
+
   return true;
 }
 
@@ -1197,6 +1201,15 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
   auto handler = [this, self, message, context, offered, then = std::move(then)](media::Result result) {
     if (result.ok) {
       // Only an offer the engine made counts as this node's; one passed through untouched
+
+    // An engine that cannot make what was asked sends what it can, and the operator is
+    // told rather than left to work it out from a 488. Whatever goes out is then not a
+    // guess with an "other" to try next, so nothing is remembered as offered.
+    if (offered && !core->media->produces(*offered)) {
+      _logger->warn("The media engine cannot produce " + std::string(media::setting_name(*offered)) + " for " + message->header->request_uri->to_string() +
+                    " - offering what it can");
+      offered.reset();
+    }
       // is the caller's, and a refusal of it is the caller's to hear.
       if (context && offered) context->offered = offered;
       message->body = std::move(result.sdp);

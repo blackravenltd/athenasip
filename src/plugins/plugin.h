@@ -71,7 +71,9 @@ namespace athenasip::plugins {
 // 14 (2026-10-03): types::Account is types::Subscriber and the Datastore operations named
 // account_* are subscriber_*, with Location::account_id following. A rename and nothing
 // else, but a driver built against 13 does not override what the server now calls.
-inline constexpr std::uint32_t API_VERSION = 14;
+// 15 (2026-10-03): MediaEngine::produces(Profile), defaulted to yes. An engine that cannot
+// make a profile says so, and the node does not re-offer in it after a 488.
+inline constexpr std::uint32_t API_VERSION = 15;
 
 // The kinds AthenaSIP registers today. A kind is a plain string rather than an enum so
 // that a plugin can introduce one the core was not built knowing about.

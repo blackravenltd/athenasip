@@ -136,6 +136,10 @@ Capabilities BuiltinMediaEngine::capabilities() const {
   return capabilities;
 }
 
+// A relay and nothing more: what comes in plain goes out plain. Mirror is whatever the
+// caller sent, which is what this engine sends on.
+bool BuiltinMediaEngine::produces(Profile profile) const { return profile == Profile::PlainRtp || profile == Profile::Mirror; }
+
 // The relay is in this process and answers at once; the contract is about where the
 // handler runs. Posting it is what lets an rtpengine driver, which really does go to
 // the network, be dropped in without the caller changing.

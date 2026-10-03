@@ -367,18 +367,6 @@ The trunk scenario waits on trunks existing.
 
 ---
 
-## Found on 2026-10-03, not yet looked at
-
-- [ ] A 488 re-offer through the builtin engine. sipp as 1001 (RTP/AVP 8) to AthenaPhone on
-      `corvus-fi-1`: the phone answered 180 then 488, the node logged "refused the offer it
-      was made - offering the other profile" and re-sent, and the phone answered the
-      second INVITE (same Call-ID, From tag and CSeq, new branch) with 482. Two questions
-      for this side: whether builtin, which cannot produce SAVPF, re-offered RTP/AVP 8
-      again, in which case `_reoffer` in `src/proxy.cpp` should not fire when the engine
-      cannot make the other profile; and why a subscriber set `media_profile: webrtc` was
-      offered a guess at all. The 180 and the 482 are AthenaPhone's to look at, and its
-      session has them.
-
 ## Milestone 4 - Cluster
 
 Goal: two nodes, one Redis, one Mosquitto, one rtpengine; a subscriber on node A calls

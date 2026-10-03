@@ -20,4 +20,20 @@ namespace athenasip::media {
 // UDP/TLS/RTP/SAVPF.
 enum class Profile { Mirror, PlainRtp, WebRtc, SrtpSdes };
 
+// A profile in the words the behaviour settings use, so what is logged or reported can be
+// set as it is read.
+inline const char* setting_name(Profile profile) {
+  switch (profile) {
+    case Profile::WebRtc:
+      return "webrtc";
+    case Profile::PlainRtp:
+      return "rtp";
+    case Profile::SrtpSdes:
+      return "srtp";
+    case Profile::Mirror:
+      return "mirror";
+  }
+  return "";
+}
+
 }  // namespace athenasip::media

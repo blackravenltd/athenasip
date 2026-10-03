@@ -95,6 +95,11 @@ browser call a desk phone. The node does not learn from this. `GET /api/v1/media
 lists the subscribers that needed the second offer and the `media_profile` that would save
 them the round trip. Setting it is the operator's decision.
 
+The second offer is only made if the media engine can make it. The builtin relay does plain
+RTP and nothing else, so behind it there is no other profile to offer: the 488 goes back to
+the caller, and the node logs that the engine could not produce what was asked. Converting
+between a browser and a desk phone needs rtpengine.
+
 ### qualify_interval
 
 Seconds between OPTIONS to each registered client, sent down the flow the client
