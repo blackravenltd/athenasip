@@ -14,7 +14,10 @@
 
 #include "../helpers/core_fixture_helper.h"
 #include "../helpers/recording_event_system_helper.h"
+#include "../mocks/logger_mock.h"
 #include "events/topics.h"
+#include "media/builtin_media_engine.h"
+#include "types/url.h"
 
 using namespace athenasip;
 
@@ -199,4 +202,36 @@ TEST(NodeHeartbeatTest, TheStatusSaysWhereAPeerDialsWhenTheNodeIsInACluster) {
   ASSERT_TRUE(status.contains("cluster")) << boost::json::serialize(status);
   EXPECT_EQ(status.at("cluster").at("address").as_string(), "10.0.0.1");
   EXPECT_EQ(status.at("cluster").at("port").as_int64(), 5062);
+}
+
+// What the node can do with media, so a monitor, the console and a peer deciding where a
+// call should be anchored can tell a node with rtpengine from one with the builtin relay
+// without asking it: the engine, its capabilities and the profiles it can produce. A node
+// with no engine says null rather than nothing, so "none" is not mistaken for "not said".
+TEST(NodeHeartbeatTest, TheStatusSaysWhatTheNodeCanDoWithMedia) {
+  HeartbeatFixture f(30);
+
+  const auto without = f.latest_status();
+  ASSERT_TRUE(without.contains("media")) << boost::json::serialize(without);
+  EXPECT_TRUE(without.at("media").is_null());
+
+  auto logger = std::make_shared<MockLogger>();
+  auto engine = std::make_shared<media::BuiltinMediaEngine>(
+      logger, std::make_shared<types::URL>("builtin://?bind_address=127.0.0.1&public_address=127.0.0.1&port_min=26000&port_max=26010"));
+  f.on_strand([&f, engine]() { f.core->media_register(engine); });
+  f.advance(std::chrono::seconds(30));
+
+  const auto status = f.latest_status();
+  ASSERT_TRUE(status.at("media").is_object()) << boost::json::serialize(status);
+
+  const auto& media = status.at("media").as_object();
+  EXPECT_NE(std::string(media.at("engine").as_string()).find("builtin"), std::string::npos);
+
+  const auto& capabilities = media.at("capabilities").as_array();
+  ASSERT_EQ(capabilities.size(), 1u);
+  EXPECT_EQ(capabilities[0].as_string(), "bridge");
+
+  const auto& produces = media.at("produces").as_array();
+  ASSERT_EQ(produces.size(), 1u);
+  EXPECT_EQ(produces[0].as_string(), "rtp");
 }

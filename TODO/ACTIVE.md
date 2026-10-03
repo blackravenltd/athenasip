@@ -419,9 +419,6 @@ milestone is the second node.
 
 ### The second node
 
-- [ ] The rest of discovery: the node's capabilities in its status. The SIP addresses, the
-      roster from MQTT, staleness and the inter-node address (`cluster.advertise`,
-      `NodeDirectory::find`) are in.
 - [ ] Re-run `test/e2e/cluster.sh` in full. Cancel, busy, the timeout and the TCP and
       WebSocket callees passed across two nodes on 2026-10-03; delayed offer and hold
       failed on the scenarios' own check of the relay address, the harness was moved to the
