@@ -452,8 +452,6 @@ milestone is the second node.
 - [ ] The rest of the sipp scenarios across the two nodes. `test/e2e/cluster.sh` runs a
       call, the same call the other way, and a media call; CANCEL, busy, delayed offer,
       hold and the timeout have only ever run on one node.
-- [ ] TCP and WebSocket flows across the two nodes. The harness registers over UDP, and a
-      flow that is a connection is the case forwarding exists for.
 - [ ] Chaos test: kill node A mid-registration-cycle, assert re-REGISTER on node B and
       a new call completes within one registration interval.
 

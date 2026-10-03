@@ -2481,3 +2481,9 @@ Tom's answers to the questions that were waiting on him, and what they led to.
       crossed the same way, node B challenged nothing a peer sent, and 101 packets went
       through node A's relay and none through node B's. Over UDP only, and only these
       scenarios.
+- [x] **A call reaches a connection another node holds.** `test/e2e/flow_callee.py`
+      registers over TCP or a WebSocket, keeps the connection and answers one call on it,
+      which sipp cannot do; `cluster.sh` runs it on the caller's node as a control and then
+      held by the other node, for both transports: 4 of 4. The WebSocket callee's Contact
+      is a `.invalid` name, so the INVITE, the ACK and the BYE can only have arrived down
+      the flow node B holds. The image for it is `python:3-alpine`, standard library only.

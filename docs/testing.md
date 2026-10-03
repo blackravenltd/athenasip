@@ -111,8 +111,10 @@ success from outside.
 Redis and one Mosquitto, made a cluster with certificates from the node's own `--ca-init`
 and `--ca-node`. Its first call has both ends on one node, as a control; then it calls a
 subscriber held by the other node, in each direction, and checks that the media of a call
-across the two went through the first node's relay and not the second's. It registers over
-UDP, and runs only those scenarios.
+across the two went through the first node's relay and not the second's. Then a callee that
+holds a TCP connection, and one that holds a WebSocket, to the other node
+(`test/e2e/flow_callee.py`): reachable only down that connection, which is the case
+forwarding between nodes exists for.
 
 `invite-timeout` takes 32 seconds by design and runs last. Logs land in
 `test/e2e/results/`, one per end, plus the node's own.
