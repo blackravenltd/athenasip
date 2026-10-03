@@ -376,6 +376,27 @@ What it took to make the call at all, each of which is a defect or a gap:
   offer that was already WebRTC and went through untouched. The warning is for an offer
   the node would have had to convert, and here it is wrong.
 
+### A video call, browser to AthenaPhone on corvus-fi-1 (2026-10-03)
+
+The console softphone with its Video option, opened at `https://10.35.1.20:8443` and
+registered over `wss://10.35.1.20:8089`, calling `sip:athenaphone@10.35.1.20`. No tunnel:
+the HTTPS listener and the secure WebSocket are what made the console's own address usable.
+The first video call the phone app had ever taken.
+
+| | 22:44 |
+|---|---|
+| Signalling | INVITE, 100, 180, 200, ACK, BYE, 200. One INVITE, no 488, no 486 |
+| Descriptions | the browser's offer and the phone's answer, audio and video, passed through untouched |
+| ICE, DTLS | connected, connected; host to host on the LAN |
+| Audio | opus; 2050 sent, 2000 received, 0 lost |
+| Video | VP8, sendrecv both ends, bundled; 6366 sent, 9315 received, 464 frames decoded in about 40 seconds |
+| Seen and heard | video and voice both ways (Tom) |
+| Call record | written by the node, with its thirty-day expiry |
+
+Two things it needed that the audio call did not: the camera permission granted to the app
+on the phone, without which it answers a video call with 486 and no fallback to audio; and
+the console served from a secure context for the camera, as for the microphone.
+
 ## If it fails
 
 - **Registration fails but `smoke.py` passes.** The difference is in the client. Get its
