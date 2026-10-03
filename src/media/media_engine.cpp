@@ -6,6 +6,7 @@
 //
 #include "media_engine.h"
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -28,6 +29,8 @@ Flags Flags::from_sdp(const std::string& sdp_text) {
   // Nothing readable says nothing, and the engine that is handed the description is
   // what refuses it. Guessing here would be worse than saying so.
   if (!sdp.parse(sdp_text)) return flags;
+
+  flags.readable = true;
 
   auto read = [&flags](const std::vector<std::string>& attributes) {
     for (const auto& attribute : attributes) {
@@ -54,9 +57,25 @@ Flags Flags::from_sdp(const std::string& sdp_text) {
     // RFC 3711 and RFC 5764: SAVP is SRTP and SAVPF is SRTP with feedback, whichever way
     // the keys were agreed. The profile is the statement, not the attributes under it.
     if (media.description.proto.find("SAVP") != std::string::npos) flags.srtp = true;
+
+    // RFC 5764 section 8 and RFC 7850: UDP/TLS/RTP/SAVP(F) and TCP/DTLS/RTP/SAVPF are
+    // DTLS-SRTP by name, so the m-line says DTLS whether or not a fingerprint has been
+    // written yet - a capability description in an OPTIONS 200 has no session to have one.
+    if (media.description.proto.find("TLS/RTP/SAVP") != std::string::npos) flags.dtls = true;
   }
 
   return flags;
+}
+
+// DTLS is the WebRTC handshake (RFC 8122, RFC 5764) and nothing else announces one;
+// keys in the description are the desk phone's SRTP (RFC 4568); anything else is plain
+// RTP. ICE on its own is not WebRTC - RFC 8839 predates it and stands alone.
+std::optional<Flags::Profile> Flags::stated() const {
+  if (!readable) return std::nullopt;
+  if (dtls) return Profile::WebRtc;
+  if (srtp) return Profile::SrtpSdes;
+
+  return Profile::PlainRtp;
 }
 
 Flags::Profile Flags::profile_for_transport(const std::string& transport) {

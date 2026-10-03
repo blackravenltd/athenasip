@@ -1,7 +1,7 @@
 # AthenaSIP - Writing a Plugin
 
 Almost everything AthenaSIP talks to is a plugin: the datastore that holds realms,
-accounts and bindings; the event system it publishes to; the media engine that
+subscribers and bindings; the event system it publishes to; the media engine that
 anchors RTP. Routing policy and others follow. They all register through one contract,
 and the ones that ship in the tree use exactly the contract an external plugin uses.
 
@@ -136,7 +136,7 @@ template <typename T> struct Result { bool ok; std::string error; T value; };
 ```
 
 A read that finds nothing **succeeds** with an empty value. A read that could not happen
-**fails** with an error. "No such account" is a 404 and "Redis is unreachable" is a
+**fails** with an error. "No such subscriber" is a 404 and "Redis is unreachable" is a
 500, and a driver that reports them the same way makes that distinction impossible
 upstream.
 
@@ -173,6 +173,32 @@ For a plugin compiled into the server that check can never fail. It exists for w
 comes next: plugins loaded from shared libraries, where a mismatch is a crash rather
 than a warning. The version is bumped whenever `Plugin`, or any interface derived from
 it, changes shape.
+
+Not every operation is pure virtual. An operation added to an interface after the fact is
+defaulted to a failure that says which one is missing:
+
+```
+memory does not support user_get
+```
+
+A driver written against an earlier contract therefore keeps compiling, and says plainly
+what it cannot hold rather than failing to build or, worse, quietly succeeding. The
+`user_*` and `session_*` operations on `Datastore` are the first of these: a datastore
+only has to implement them if the deployment wants admin logins out of it, and
+`docs/authentication.md` says what they mean. A driver that leaves one defaulted is not
+broken; a driver that implements one and gets the create/update split wrong is, because
+the admin API tells "already exists" from "changed" by which of the two failed.
+
+The version tracks shape, and shape is not the whole contract: what an operation is
+allowed to report can matter as much as what it is called. `session_delete` is the example
+in the tree - it succeeds whether or not that hash was held, because a session is named by
+a secret the caller presented and an answer that distinguishes the two is a way to ask
+whether a token is real. A driver that reported the difference would compile, load and
+pass the version check, and would turn a logout into a guessing game. `realm_delete` is the
+other: it takes the realm's subscribers and their bindings with it, and a driver that deleted
+only the realm record would pass every check and leave subscribers nobody can reach. Read
+the comment on the operation, not only its signature; where behaviour like that is load-bearing it is
+written at the declaration.
 
 ## Testing a plugin
 

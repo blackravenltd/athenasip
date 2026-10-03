@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+
+<!--
+  The callee's half of the delayed offer. The INVITE arrives with no body, so this end
+  makes the offer in its 200 (RFC 3264 section 5), and the answer it is given in the ACK
+  has to name the relay rather than the caller at 172.31.0.21.
+
+  run.sh registers it first, in a run of its own; see uas.xml for why.
+-->
+<scenario name="Callee: offer in the 200, answer in the ACK">
+
+  <recv request="INVITE" crlf="true">
+    <action>
+      <!-- Still no body: the node has nothing to offer on the caller's behalf, and making
+           one up would be answering a question nobody asked. -->
+      <ereg regexp="^ *0 *$" search_in="hdr" header="Content-Length:" check_it="true" assign_to="no_offer"/>
+    </action>
+  </recv>
+
+  <send>
+    <![CDATA[
+
+      SIP/2.0 180 Ringing
+      [last_Via:]
+      [last_From:]
+      [last_To:];tag=uas-[call_number]
+      [last_Call-ID:]
+      [last_CSeq:]
+      [last_Record-Route:]
+      Contact: <sip:[local_ip]:[local_port];transport=[transport]>
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <pause milliseconds="200"/>
+
+  <send retrans="500">
+    <![CDATA[
+
+      SIP/2.0 200 OK
+      [last_Via:]
+      [last_From:]
+      [last_To:];tag=uas-[call_number]
+      [last_Call-ID:]
+      [last_CSeq:]
+      [last_Record-Route:]
+      Contact: <sip:[local_ip]:[local_port];transport=[transport]>
+      Content-Type: application/sdp
+      Content-Length: [len]
+
+      v=0
+      o=callee 53655765 2353687637 IN IP[local_ip_type] [local_ip]
+      s=-
+      c=IN IP[media_ip_type] [media_ip]
+      t=0 0
+      m=audio [media_port] RTP/AVP 0
+      a=rtpmap:0 PCMU/8000
+
+    ]]>
+  </send>
+
+  <recv request="ACK" rtd="true" crlf="true">
+    <action>
+      <ereg regexp="c=IN IP4 172\.31\.0\.(10|30)" search_in="body" check_it="true" assign_to="answer_anchored"/>
+    </action>
+  </recv>
+
+  <recv request="BYE"/>
+
+  <send>
+    <![CDATA[
+
+      SIP/2.0 200 OK
+      [last_Via:]
+      [last_From:]
+      [last_To:]
+      [last_Call-ID:]
+      [last_CSeq:]
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <Reference variables="no_offer,answer_anchored"/>
+
+</scenario>

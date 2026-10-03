@@ -22,9 +22,21 @@ contract.
   and the in-tree drivers use exactly the contract an external one would.
 * **Browser-ready.** SIP over WebSocket and secure WebSocket (RFC 7118) are here now,
   because a browser is a first-class client rather than a later port.
-* **API-driven.** Realms, accounts and registrations are provisioned over a JSON API
-  with bearer tokens, described by [an OpenAPI document](docs/api/openapi.yaml). The
-  React admin client is [AthenaSIP Admin](https://github.com/blackravenltd/athenasip-admin).
+* **API-driven.** Realms, subscribers, registrations and the administrators themselves are
+  provisioned over a JSON API described by [an OpenAPI document](docs/api/openapi.yaml).
+  Administrators log in for a session token and hold roles. There are no configured tokens:
+  the first administrator, and the way back in, is `athenasip --add-user` on the host. The React admin client is
+  [AthenaSIP Admin](https://github.com/blackravenltd/athenasip-admin).
+
+## Try it
+
+```
+docker/up.sh
+```
+
+AthenaSIP with Redis, Mosquitto, rtpengine and coturn, a realm, two subscribers and an
+administrator, in one command. [Quick Start](docs/quick_start.md) says what it gives you
+and how to do the same thing by hand on one process with nothing external.
 
 ## What it is not, yet
 
@@ -41,15 +53,21 @@ claim the shipped configuration does not support.
 
 ## Documentation
 
-* [Quick Start](docs/quick_start.md) - two accounts calling each other, from nothing
+* [Quick Start](docs/quick_start.md) - two subscribers calling each other, from nothing
 * [Installation](docs/installation.md)
 * [Compiling](docs/compiling.md)
 * [Configuration](docs/configuration.md)
+* [Behaviour](docs/behaviour.md) - the choices SIP servers differ on, and how to make AthenaSIP behave like Asterisk, Kamailio, OpenSIPS or FreeSWITCH
 * [Architecture](docs/architecture.md) - the shape, and why it is that shape
 * [Design](docs/design.md) - the transport layering
 * [Writing a plugin](docs/plugins.md)
 * [Events](docs/events.md) - the topic scheme
+* [Glossary](docs/glossary.md) - the words this project uses, and the one thing each means
+* [Testing](docs/testing.md) - the five layers, and how compliance is proven
+* [Certificates](docs/certificates.md) - the cluster's own certificate authority, made by the node
+* [Authentication](docs/authentication.md) - SIP Digest, and the admin plane design
 * [Admin API](docs/api/openapi.yaml)
+* [Interop fixture](test/interop/README.md) - a node to point a real SIP client at
 
 The plan and the decisions behind it are in [`TODO/ACTIVE.md`](TODO/ACTIVE.md); what has
 landed is in [`TODO/COMPLETED.md`](TODO/COMPLETED.md).

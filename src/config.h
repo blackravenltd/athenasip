@@ -9,13 +9,18 @@
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
+#include <boost/asio/ip/address.hpp>
+#include <boost/asio/ip/network_v4.hpp>
+#include <boost/asio/ip/network_v6.hpp>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
+#include "types/realm.h"
 #include "types/url.h"
 
 using namespace athenasip::loggers;
@@ -33,12 +38,47 @@ class Config {
   // what a cluster talks, so this is the switch that permits plain UDP, TCP and WS.
   bool sip_allow_unencrypted = true;
 
+  // Whether to log the whole of every message rather than only its first line. A
+  // session description is the one thing a node is better placed to show than either
+  // end of a call, and it is also most of the bytes, so it is asked for rather than
+  // assumed. Credentials are redacted whichever way they were going.
+  bool sip_log_messages = false;
+
   // The address this node tells the outside world to reach it on. A node bound to
   // 0.0.0.0 knows every address it answers on and none that a client should use, so
   // anything that has to name this node to somebody else - the node list, and the
   // failover work in M4 - needs to be told. Empty means fall back to the bind address,
   // which is right on a single-homed host and useless on a wildcard bind.
   std::string sip_public_address;
+
+  // sip.localnet: the prefixes on this node's own side of the router. A far end inside
+  // them is given the node's local address and port, because the public address only
+  // reaches it if the router hairpins; everyone else is given the public ones (Asterisk's
+  // localnet). parse_localnet turns the strings into prefixes and says whether they all were.
+  std::vector<std::string> sip_localnet;
+  bool parse_localnet();
+  bool in_localnet(const boost::asio::ip::address& address) const;
+
+  // The public port for a transport by its name - udp, tcp, tls, ws or wss - or zero.
+  std::uint16_t public_port_for(const std::string& transport) const;
+
+  // Where this node can be reached, one entry per enabled transport, at sip.public_address
+  // when there is one and the bind address otherwise. The node list and the status the
+  // node publishes both say this, so they are one function.
+  struct AdvertisedTransport {
+    std::string transport;
+    std::string address;
+    std::uint16_t port = 0;
+    bool secure = false;
+
+    std::string uri() const;
+  };
+  std::vector<AdvertisedTransport> advertised_transports() const;
+
+  // Where a peer node reaches the inter-node listener, or nothing when this node is not in
+  // a cluster. cluster.advertise when it is said; otherwise the address the listener is
+  // bound to, and where that is every address, sip.public_address.
+  std::optional<AdvertisedTransport> advertised_cluster() const;
 
   // RFC 4028 section 8.1: the session interval this node puts on a call that asked for
   // none, in seconds. Zero leaves such a call without one.
@@ -130,10 +170,30 @@ class Config {
   // to have room to try more than the first.
   uint32_t sip_connect_timeout_ms = 4000;
 
+  // How long a connectionless flow may sit idle before this node forgets it, in seconds.
+  // Zero never forgets one, which is what it did before this existed.
+  //
+  // Only UDP needs it. A TCP, TLS or WebSocket flow ends when its socket does; UDP has no
+  // socket per peer and no close to wait for, so a flow made by a single datagram lived as
+  // long as the process - and the map it lived in is keyed by a remote address that a
+  // datagram can claim to be from, which on a public listener is a way to grow a node's
+  // memory from off the network.
+  //
+  // Five minutes is comfortably past every RFC 3261 section 17 timer - the longest is
+  // 64*T1, 32 seconds - so nothing with transaction state outstanding is ever swept.
+  // Forgetting a flow costs a UDP peer nothing it notices: the next datagram makes a new
+  // one, and a request for it is sent to the address the flow named, which a binding and a
+  // flow token both still carry. That address, and not the Contact, is what a peer behind
+  // a NAT is reachable at.
+  std::uint32_t sip_flow_idle_timeout = 300;
+
   // TLS Configuration
   bool tls_enable = false;
   std::string tls_address;
   uint16_t tls_port = 0;
+  // The port this listener is reached on from outside, when the router forwards another one
+  // to it. Zero is the bound port.
+  uint16_t tls_public_port = 0;
   std::string tls_cert_pem_filename;
   std::string tls_key_pem_filename;
 
@@ -141,22 +201,41 @@ class Config {
   bool tcp_enable = false;
   std::string tcp_address;  // e.g. "127.0.0.1"
   uint16_t tcp_port = 0;    // e.g. 5060
+  // The port this listener is reached on from outside, when the router forwards another one
+  // to it. Zero is the bound port.
+  uint16_t tcp_public_port = 0;
 
   // UDP Configuration
   bool udp_enable = false;
   std::string udp_address;  // e.g. "127.0.0.1"
   uint16_t udp_port = 0;    // e.g. 5060
+  // The port this listener is reached on from outside, when the router forwards another one
+  // to it. Zero is the bound port.
+  uint16_t udp_public_port = 0;
 
   // UDP Configuration
   bool websocket_enable = false;
   std::string websocket_address;  // e.g. "127.0.0.1"
   uint16_t websocket_port = 0;    // e.g. 5060
+  // The port this listener is reached on from outside, when the router forwards another one
+  // to it. Zero is the bound port.
+  uint16_t websocket_public_port = 0;
 
   // RFC 7118 over TLS. A browser will not open an insecure WebSocket from a page served
   // over https, so this is what a web client actually connects to; ws:// is for local
   // development. The certificate is the listener's own rather than the tls section's,
   // because the name a browser reaches the node by is rarely the name a SIP peer does.
   bool websocket_tls = false;
+
+  // websocket.secure_port: a second WebSocket listener, wss, beside a plain one. A page
+  // served over HTTPS may only open a secure WebSocket, and a page served from localhost
+  // or by a development client may only have a plain one to hand, so a node can need
+  // both. Zero is none. Not used when the listener above is already secure.
+  std::uint16_t websocket_secure_port = 0;
+
+  // The certificate a secure WebSocket shows: the websocket section's, or the tls section's.
+  std::string websocket_cert() const { return websocket_cert_pem_filename.empty() ? tls_cert_pem_filename : websocket_cert_pem_filename; }
+  std::string websocket_key() const { return websocket_key_pem_filename.empty() ? tls_key_pem_filename : websocket_key_pem_filename; }
   std::string websocket_cert_pem_filename;
   std::string websocket_key_pem_filename;
 
@@ -172,6 +251,12 @@ class Config {
   // default and a cluster names its broker.
   std::string events_url = "local://";  // or "mqtt://user:pass@127.0.0.1:1883/athenasip?client_id=sip-01&keep_alive=30"
 
+  // How often a node says on the bus that it is alive, in seconds. Zero turns it off.
+  //
+  // A message published once at startup says a node started, which is a different
+  // question from whether it is running now and one nobody is asking an hour later.
+  std::uint32_t events_status_interval = 30;
+
   // Media configuration
   std::string media_url = "builtin://";  // or "rtpengine://host:port"
 
@@ -179,22 +264,118 @@ class Config {
   std::string http_address;
   uint16_t http_port = 0;  // e.g. 5060
   bool http_api_enable = false;
+  // The server's default for every behaviour that differs between SIP servers, which a
+  // realm overrides setting by setting (types::Behaviour). What ships is the 2026-10-01
+  // decision: standard, apart from anchoring media.
+  types::MediaPolicy behaviour;
+
+  // behaviour.qualify_interval: seconds between OPTIONS to a registered client, zero for
+  // never. Decided at registration rather than per call, so it is not on the media policy.
+  std::uint32_t behaviour_qualify_interval = 0;
+
+  // cluster: the inter-node listener, mutual TLS with every peer showing a certificate the
+  // cluster CA signed (docs/certificates.md), and the same certificates for the flows this
+  // node opens to its peers. Off on a node that is not part of a cluster.
+  bool cluster_enable = false;
+  std::string cluster_address = "0.0.0.0";
+  std::uint16_t cluster_port = 5062;
+
+  // What this node tells its peers to dial: a name or an address its certificate names,
+  // since a peer checks the certificate against what it dialled. Empty works it out.
+  std::string cluster_advertise;
+  std::string cluster_ca;
+  std::string cluster_cert;
+  std::string cluster_key;
+
+  // behaviour.rewrite_contact, the server's default for types::Behaviour::rewrite_contact.
+  bool behaviour_rewrite_contact = false;
+
   bool http_files_enable = false;
   std::string http_files_path;
 
-  // What a bearer token is allowed to do. admin provisions; client reads what a client
-  // may see. A token with no scope can do nothing, which is what an empty list means.
+  // Single-page application mode: a path with nothing behind it is answered with
+  // index.html from the document root, so a client-side route survives a reload or a
+  // link. /api/ is never answered this way, so an unknown API path still 404s, and
+  // neither is a path that names a file extension, so a missing asset stays missing.
   //
-  // Tokens live in the config for now. They belong in the datastore once there is
-  // anything to administer them with, and the shape here is what that would replace.
-  struct ApiToken {
-    std::string token;
-    std::vector<std::string> scopes;
+  // On by default, because the thing this node serves is the admin client and that is
+  // what it needs. False makes it an ordinary file server.
+  bool http_files_spa = true;
 
-    bool has_scope(const std::string& scope) const { return std::find(scopes.begin(), scopes.end(), scope) != scopes.end(); }
+  // How long an admin login is good for, and how long it survives unused, in seconds.
+  //
+  // Absolute lifetime is written on the session record and is what the datastore prunes
+  // on, so it cannot be zero: a session no store can expire is not one it can hold. Idle
+  // timeout is the caller's rule - no driver is told it - and zero turns it off.
+  //
+  // The defaults suit a console somebody keeps open on a screen: a working day before it
+  // asks for the password again, an hour of being ignored before it stops trusting the
+  // tab.
+  std::uint32_t http_api_session_lifetime = 12 * 60 * 60;
+  std::uint32_t http_api_session_idle = 60 * 60;
+
+  // http.api.rate_limits: how many requests a caller is let make at once, and how many a
+  // minute after that. Zero in either turns that limit off, which is what an operator who
+  // fronts the API with something that limits already sets. The defaults are chosen for
+  // the callers there are: a person at a login prompt, a monitor polling health, and the
+  // console, which polls every two seconds and makes several requests when it does.
+  struct RateLimit {
+    std::uint32_t burst = 0;
+    std::uint32_t per_minute = 0;
   };
 
-  std::vector<ApiToken> http_api_tokens;
+  // Open routes, unknown endpoints and credentials that do not resolve, by source address.
+  RateLimit http_api_limit_open{30, 30};
+  // The login on top of that, by source address and by username.
+  RateLimit http_api_limit_login_source{10, 5};
+  RateLimit http_api_limit_login_user{5, 1};
+  // A signed-in caller, by session.
+  RateLimit http_api_limit_session{60, 300};
+
+  // calls.history_retention: how long the record of a call that has ended is kept, in
+  // seconds. Thirty days. Zero keeps every record for ever, which on a busy node is a
+  // datastore that only grows.
+  std::uint32_t calls_history_retention = 30 * 24 * 60 * 60;
+
+  // http.tls: an HTTPS listener beside the plain one, serving the same thing. A browser
+  // gives a page that is not a secure context no microphone, so the console's softphone
+  // needs it. The certificate is the tls section's unless this section names its own.
+  bool http_tls_enable = false;
+  std::string http_tls_address;
+  std::uint16_t http_tls_port = 8443;
+  std::string http_tls_cert_pem_filename;
+  std::string http_tls_key_pem_filename;
+
+  // The certificate and key the HTTPS listener uses: its own, or the tls section's.
+  std::string http_tls_cert() const { return http_tls_cert_pem_filename.empty() ? tls_cert_pem_filename : http_tls_cert_pem_filename; }
+  std::string http_tls_key() const { return http_tls_key_pem_filename.empty() ? tls_key_pem_filename : http_tls_key_pem_filename; }
+
+  // What a web client is told to use for ICE, served by `GET /api/v1/client/config`.
+  //
+  // A browser cannot be configured by hand and cannot read a YAML file, so everything it
+  // needs to place a call has to be fetched. Nothing here changes what this node does with
+  // media: it is what the client is told, and the client is what acts on it.
+  struct IceServer {
+    // stun:host:port or turn:host:port, as RFC 7064 and 7065 write them. A turn: URL gets
+    // credentials; a stun: one needs none and is given none.
+    std::string url;
+  };
+
+  std::vector<IceServer> ice_servers;
+
+  // The coturn shared-secret scheme (its `use-auth-secret` / `static-auth-secret`): the
+  // username is an expiry, the password is an HMAC of it under a secret this node and the
+  // TURN server both hold. It means a client can be handed a credential that stops working
+  // on its own, without the TURN server knowing anything about users.
+  //
+  // Empty turns TURN credentials off, and then a turn: URL is served without them - which
+  // is useless to a browser and is said out loud at startup rather than quietly.
+  std::string turn_shared_secret;
+
+  // How long a credential this node mints is good for. Long enough to place a call and
+  // for that call to run; short enough that one copied out of a page is not a permanent
+  // relay for whoever took it.
+  std::uint32_t turn_credential_ttl = 3600;
 
   // Loads configuration from a YAML file.
   bool load_from_yaml(const std::string& filename);
@@ -212,6 +393,18 @@ class Config {
   // three Redis schemes share one section instead of needing three.
   YAML::Node plugin_root(const std::string& kind, const std::string& name) const;
 
+  // Every value this node is actually running on, as YAML, after the file, the search
+  // path and the defaults have all had their say. What `athenasip --print-config` prints.
+  //
+  // It is the fields rather than the document, deliberately: the interesting question is
+  // never "what did I write" - that is what `cat` is for - but "what did it decide", and
+  // most of the answer is defaults nobody wrote down. Plugin sections are carried through
+  // from the document, because only the plugin knows what they mean.
+  //
+  // Secrets are redacted. An operator pasting this into an issue should not be handing
+  // over the credential that administers their node.
+  std::string effective_yaml() const;
+
  private:
   std::shared_ptr<Logger> _logger;
 
@@ -219,6 +412,9 @@ class Config {
   // else should read it: everything the server itself needs is parsed into the fields
   // above at load time.
   YAML::Node _root;
+
+  std::vector<boost::asio::ip::network_v4> _localnet_v4;
+  std::vector<boost::asio::ip::network_v6> _localnet_v6;
 };
 
 }  // namespace athenasip

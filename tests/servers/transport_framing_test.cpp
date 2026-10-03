@@ -336,6 +336,33 @@ TEST(TransportFramingTest, TcpSurvivesAMalformedStartLine) {
   EXPECT_NE(answer.find("SIP/2.0 401"), std::string::npos) << answer;
 }
 
+// RFC 5626 section 4.4.1: on a stream transport a client's keep-alive is a double CRLF,
+// the "ping", and the server MUST answer it with a single CRLF, the "pong". A client that
+// hears no pong decides its flow has failed and registers again, so a server that
+// swallowed the ping would have every outbound client re-registering every few minutes.
+TEST(TransportFramingTest, TcpAnswersAKeepAlivePingWithAPong) {
+  TcpFixture f;
+
+  net::io_context io;
+  tcp::socket socket(io);
+  socket.connect(tcp::endpoint(net::ip::make_address("127.0.0.1"), f.port()));
+  Reader<tcp::socket> reader(io, socket);
+
+  net::write(socket, net::buffer(std::string("\r\n\r\n")));
+  EXPECT_EQ(reader.take(std::chrono::milliseconds(500), 0), "\r\n");
+
+  // The ping may arrive in two reads like anything else on a stream.
+  net::write(socket, net::buffer(std::string("\r\n")));
+  EXPECT_EQ(reader.take(std::chrono::milliseconds(300), 0), "") << "one CRLF is not a ping";
+  net::write(socket, net::buffer(std::string("\r\n")));
+  EXPECT_EQ(reader.take(std::chrono::milliseconds(500), 0), "\r\n");
+
+  // And a request after it is still a request.
+  net::write(socket, net::buffer(register_request("TCP", "z9hG4bK-after-ping")));
+  const auto answer = reader.take(std::chrono::seconds(3));
+  EXPECT_NE(answer.find("SIP/2.0 401"), std::string::npos) << answer;
+}
+
 TEST(TransportFramingTest, TlsCarriesARequestOverACompletedHandshake) {
   TlsFixture f;
 
@@ -352,6 +379,74 @@ TEST(TransportFramingTest, TlsCarriesARequestOverACompletedHandshake) {
 
   const auto answer = reader.take(std::chrono::seconds(3));
   EXPECT_NE(answer.find("SIP/2.0 401"), std::string::npos) << answer;
+}
+
+// A connection that never completes a handshake - a port scanner, a client speaking plain
+// SIP to the TLS port, a certificate the far end will not accept - is that connection's
+// problem. The listener goes on accepting: before this, one failed handshake stopped it
+// for good and TLS was down until the node restarted.
+TEST(TransportFramingTest, TlsKeepsAcceptingAfterAFailedHandshake) {
+  TlsFixture f;
+
+  {
+    net::io_context io;
+    tcp::socket plain(io);
+    plain.connect(tcp::endpoint(net::ip::make_address("127.0.0.1"), f.port()));
+    net::write(plain, net::buffer(register_request("TCP", "z9hG4bK-not-tls")));
+    std::array<char, 256> buffer{};
+    boost::system::error_code ignored;
+    plain.read_some(net::buffer(buffer), ignored);
+  }
+
+  net::io_context io;
+  ssl::context context(ssl::context::tls_client);
+  context.set_verify_mode(ssl::verify_none);
+
+  ssl::stream<tcp::socket> stream(io, context);
+  stream.next_layer().connect(tcp::endpoint(net::ip::make_address("127.0.0.1"), f.port()));
+
+  boost::system::error_code handshake;
+  net::steady_timer deadline(io);
+  bool done = false;
+  stream.async_handshake(ssl::stream_base::client, [&](const boost::system::error_code& ec) {
+    handshake = ec;
+    done = true;
+  });
+  io.run_for(std::chrono::seconds(3));
+  ASSERT_TRUE(done) << "the listener stopped accepting";
+  ASSERT_FALSE(handshake) << handshake.message();
+
+  Reader<ssl::stream<tcp::socket>> reader(io, stream);
+  net::write(stream, net::buffer(register_request("TLS", "z9hG4bK-tls-after")));
+  const auto answer = reader.take(std::chrono::seconds(3));
+  EXPECT_NE(answer.find("SIP/2.0 401"), std::string::npos) << answer;
+}
+
+// And a connection that says nothing at all holds up nobody else: the handshake is each
+// connection's own, not the listener's.
+TEST(TransportFramingTest, ASilentTlsConnectionHoldsUpNobodyElse) {
+  TlsFixture f;
+
+  net::io_context silent_io;
+  tcp::socket silent(silent_io);
+  silent.connect(tcp::endpoint(net::ip::make_address("127.0.0.1"), f.port()));
+
+  net::io_context io;
+  ssl::context context(ssl::context::tls_client);
+  context.set_verify_mode(ssl::verify_none);
+
+  ssl::stream<tcp::socket> stream(io, context);
+  stream.next_layer().connect(tcp::endpoint(net::ip::make_address("127.0.0.1"), f.port()));
+
+  bool done = false;
+  boost::system::error_code handshake;
+  stream.async_handshake(ssl::stream_base::client, [&](const boost::system::error_code& ec) {
+    handshake = ec;
+    done = true;
+  });
+  io.run_for(std::chrono::seconds(3));
+  ASSERT_TRUE(done) << "a silent connection held up the next one";
+  EXPECT_FALSE(handshake) << handshake.message();
 }
 
 TEST(TransportFramingTest, UdpCarriesADatagramAndAnswersItToTheSourcePort) {
@@ -441,6 +536,37 @@ TEST(TransportFramingTest, UdpKeepsListeningAfterADatagramThatIsNotSip) {
 
   const auto answer = reader.take(std::chrono::seconds(3));
   EXPECT_NE(answer.find("SIP/2.0 401"), std::string::npos) << answer;
+}
+
+// RFC 5626 section 4.4.2: an outbound client keeps its UDP flow alive with STUN Binding
+// requests to the SIP port, and the node answers each with where it came from. Before
+// this a keep-alive was parsed as SIP and dropped, and the client heard nothing.
+TEST(TransportFramingTest, UdpAnswersAStunKeepAliveWithWhereItCameFrom) {
+  UdpFixture f;
+
+  net::io_context io;
+  udp::socket socket(io, udp::endpoint(net::ip::make_address("127.0.0.1"), 0));
+  const auto local_port = socket.local_endpoint().port();
+
+  std::string request("\x00\x01\x00\x00\x21\x12\xA4\x42", 8);
+  request += "keepalive-01";
+  socket.send_to(net::buffer(request), udp::endpoint(net::ip::make_address("127.0.0.1"), f.port()));
+
+  std::array<char, 512> buffer{};
+  udp::endpoint from;
+  std::size_t received = 0;
+  socket.async_receive_from(net::buffer(buffer), from, [&received](const boost::system::error_code& ec, std::size_t length) {
+    if (!ec) received = length;
+  });
+  io.run_for(std::chrono::seconds(2));
+
+  ASSERT_EQ(received, 32u);
+  const std::string response(buffer.data(), received);
+  EXPECT_EQ(response.substr(0, 2), std::string("\x01\x01", 2));
+  EXPECT_EQ(response.substr(8, 12), "keepalive-01");
+
+  const auto port = static_cast<std::uint16_t>(((static_cast<unsigned char>(response[26]) << 8) | static_cast<unsigned char>(response[27])) ^ 0x2112);
+  EXPECT_EQ(port, local_port);
 }
 
 // One flow per peer, not one per datagram. RFC 3261 18.2.1 has responses go back to the

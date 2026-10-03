@@ -6,51 +6,100 @@
 //
 #pragma once
 
+#include <algorithm>
 #include <boost/beast/http.hpp>
+#include <functional>
+#include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "../config.h"
+#include "../types/user.h"
+#include "sessions.h"
 
 namespace athenasip::api {
 
 namespace http = boost::beast::http;
 
-// Who is calling, and whether they may. Tokens come from the config for now; the shape
-// is what a datastore-backed token table would replace.
+// Who is calling, and what they may do.
 //
-// Two scopes: admin provisions, client reads what a client may see. A route names the
-// scope it needs and nothing else decides, so adding a route cannot accidentally leave
-// it open.
+// One kind of credential reaches this node: a session token, held by a user who logged in.
+// The roles are the user's, read on every request so one taken away takes effect at once.
+// Configured tokens were removed on 2026-10-01; the first administrator is made with
+// `athenasip --add-user` on the host, and everything after that is a user.
 class BearerAuth {
  public:
-  enum class Result {
-    ok,
-    missing,    // no Authorization header, or not a Bearer one: 401
-    unknown,    // a token, but not one we know: 401
-    forbidden,  // a token we know, without the scope this route needs: 403
-  };
+  // The caller, resolved. A route decides on the roles; the user is here because there are
+  // routes where who you are decides what you may do to yourself.
+  struct Caller {
+    enum class Kind {
+      none,  // nothing presented, or nothing that resolved: 401
+      user,  // a session token, and the user holding it
+    };
 
-  explicit BearerAuth(std::vector<Config::ApiToken> tokens) : _tokens(std::move(tokens)) {}
+    Kind kind = Kind::none;
+    std::vector<std::string> roles;
 
-  Result check(const http::request<http::string_body>& request, const std::string& scope) const {
-    const auto presented = _presented_token(request);
-    if (presented.empty()) return Result::missing;
+    // Set for Kind::user only: the user, and when the session it presented runs out.
+    std::shared_ptr<types::User> user;
+    std::time_t expires_at = 0;
 
-    for (const auto& token : _tokens) {
-      // Length first, then every byte: a comparison that stops at the first difference
-      // tells the caller how much of a guess was right.
-      if (!_equal(token.token, presented)) continue;
+    // The store could not be asked, which is not a refusal: 503, not 401.
+    bool unavailable = false;
 
-      return token.has_scope(scope) ? Result::ok : Result::forbidden;
+    bool authenticated() const { return kind != Kind::none; }
+
+    bool has_role(const std::string& role) const { return std::find(roles.begin(), roles.end(), role) != roles.end(); }
+
+    // Any of them admits, which is what a route's role set means.
+    bool has_any(const std::vector<std::string>& wanted) const {
+      return std::any_of(wanted.begin(), wanted.end(), [this](const std::string& role) { return has_role(role); });
     }
 
-    return Result::unknown;
+    // For a log line, never for a response body.
+    std::string describe() const {
+      if (kind == Kind::user) return user ? user->key() : "a user";
+
+      return "nobody";
+    }
+  };
+
+  BearerAuth() = default;
+
+  // Where session tokens are resolved. A node whose datastore cannot hold users has no way
+  // in to its API at all, which every request is told with a 401.
+  void sessions_register(std::shared_ptr<Sessions> sessions) { _sessions = std::move(sessions); }
+
+  // The caller behind a presented token. Answers on the executor Sessions was given, or
+  // inline when no store had to be asked.
+  void resolve(const std::string& presented, std::function<void(Caller)> handler) const {
+    if (presented.empty()) return handler(Caller{});
+
+    if (!_sessions) return handler(Caller{});
+
+    _sessions->resolve(presented, [handler](Sessions::Lookup answer) {
+      Caller caller;
+
+      if (answer.outcome == Sessions::Outcome::unavailable) {
+        caller.unavailable = true;
+        return handler(std::move(caller));
+      }
+
+      if (!answer.ok()) return handler(std::move(caller));
+
+      caller.kind = Caller::Kind::user;
+      caller.user = answer.value.user;
+      caller.roles = answer.value.user->roles;
+      caller.expires_at = answer.value.expires_at;
+
+      handler(std::move(caller));
+    });
   }
 
- private:
-  static std::string _presented_token(const http::request<http::string_body>& request) {
+  // How a bearer token is read off a request: one answer for the router, for this class,
+  // and for a handler that needs the token itself rather than a verdict on it.
+  static std::string presented_token(const http::request<http::string_body>& request) {
     const auto header = request[http::field::authorization];
     if (header.empty()) return {};
 
@@ -69,16 +118,8 @@ class BearerAuth {
     return value.substr(start);
   }
 
-  static bool _equal(const std::string& expected, const std::string& presented) {
-    if (expected.size() != presented.size()) return false;
-
-    unsigned char difference = 0;
-    for (std::size_t i = 0; i < expected.size(); ++i) difference |= static_cast<unsigned char>(expected[i] ^ presented[i]);
-
-    return difference == 0;
-  }
-
-  std::vector<Config::ApiToken> _tokens;
+ private:
+  std::shared_ptr<Sessions> _sessions;
 };
 
 }  // namespace athenasip::api

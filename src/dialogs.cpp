@@ -131,6 +131,7 @@ void Dialogs::observe_request(const std::shared_ptr<SIPMessage>& request) {
     dialog->caller_cseq = cseq_of(request);
     dialog->secure = is_secure(request);
     dialog->created_at = std::time(nullptr);
+    if (const auto channel = request->channel.lock()) dialog->from_node = channel->peer_node();
 
     branches.push_back(dialog);
 
@@ -244,6 +245,37 @@ void Dialogs::observe_response(const std::shared_ptr<SIPMessage>& request, const
   }
 
   _changed(dialog);
+}
+
+void Dialogs::observe_branch_failure(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<SIPMessage>& response) {
+  if (request->header->request_method != "INVITE") return;
+
+  const auto callee_tag = tag_of(response, "To");
+  if (callee_tag.empty()) return;
+
+  auto search = _by_call_id.find(call_id_of(request));
+  if (search == _by_call_id.end()) return;
+
+  auto& branches = search->second;
+  auto failed = std::find_if(branches.begin(), branches.end(), [&callee_tag](const auto& dialog) { return dialog->callee_tag == callee_tag; });
+  if (failed == branches.end() || (*failed)->state != Dialog::State::Early) return;
+
+  // Another branch's dialog carries the call on, and this one simply goes. Quietly: the
+  // call record follows the dialog it is told about, and this one ending is not the call.
+  if (branches.size() > 1) {
+    _logger->debug("Early dialog " + (*failed)->id() + " ended with its branch");
+    branches.erase(failed);
+    return;
+  }
+
+  // The only one, which is the attempt itself with this branch's half filled in. It goes
+  // back to being an attempt, ready for the next branch to give it a callee.
+  auto& attempt = *failed;
+  attempt->callee_tag.clear();
+  attempt->callee = identity_of(request, "To");
+  attempt->callee_target.reset();
+  attempt->route_set.clear();
+  attempt->callee_cseq = 0;
 }
 
 std::shared_ptr<Dialog> Dialogs::_for_tag(const std::string& call_id, const std::string& callee_tag) {

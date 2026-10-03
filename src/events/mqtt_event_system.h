@@ -60,6 +60,8 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
 
   void publish(std::string event_name, std::string message) override;
   void publish(plugins::Executor on, std::string event_name, std::string message, plugins::StatusHandler handler) override;
+  void publish_state(std::string event_name, std::string message) override;
+  void will_set(std::string event_name, std::string message) override;
 
   void subscribe(plugins::Executor on, std::string event_name, Subscription::EventCallbackFn event_callback,
                  plugins::Handler<std::shared_ptr<Subscription>> handler) override;
@@ -77,7 +79,7 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
   Completion bind_completion(plugins::Executor on, plugins::StatusHandler handler);
   static void finish(const Completion& completion, plugins::Status status);
 
-  void publish_event(std::string event_name, std::string message, Completion completion);
+  void publish_event(std::string event_name, std::string message, Completion completion, bool retain = false);
 
   using MQTTClient = mqtt::mqtt_client<asio::ip::tcp::socket>;
   using MQTTStrand = asio::strand<asio::io_context::executor_type>;
@@ -100,6 +102,10 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
   std::uint16_t _keep_alive_seconds;
   std::string _prefix;
 
+  // Taken by the broker when the session opens and never afterwards.
+  std::string _will_topic;
+  std::string _will_message;
+
   // How long connect() waits for the broker to answer before reporting that it is not
   // there. boost.mqtt5 is an always-online client: it queues and reconnects for ever,
   // so without a bound a node with the wrong broker address would hang at startup
@@ -110,6 +116,13 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
   MQTTStrand _mqtt_strand;
   std::optional<MQTTWorkGuard> _mqtt_work_guard;
   MQTTClient _client;
+
+  // Which run a completion handler belongs to. One mqtt_client is reused across
+  // connect/close cycles, so a handler from a finished run can still be in flight while the
+  // next one is starting - and it cannot tell from _connected alone, because connect() sets
+  // that true before it joins the previous thread. Each run captures this value and a
+  // completion that does not match it is a late arrival from a run that is over.
+  std::atomic<std::uint64_t> _run_generation{0};
 
   std::atomic_bool _connected{false};
   std::thread _mqtt_thread;
@@ -123,7 +136,7 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
   // MQTT 5 subscription identifiers, which are how a client knows which of its own
   // subscriptions a message arrived for. Without them a message matching two of this
   // client's filters is delivered once per filter and fanned out to every matching
-  // subscriber, so each one sees it twice.
+  // consumer, so each one sees it twice.
   std::unordered_map<std::int32_t, std::string> _events_by_identifier;
   std::int32_t _next_subscription_identifier = 1;
 
@@ -144,13 +157,13 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
 
   [[nodiscard]] std::vector<std::string> current_subscription_events() const;
   [[nodiscard]] std::unordered_set<std::shared_ptr<Subscription>> collect_matching_subscriptions(std::string event_name) const;
-  [[nodiscard]] std::unordered_set<std::shared_ptr<Subscription>> subscribers_of(const std::string& filter) const;
+  [[nodiscard]] std::unordered_set<std::shared_ptr<Subscription>> consumers_of(const std::string& filter) const;
 
   void subscribe_events_on_mqtt(std::vector<std::string> event_names, Completion completion);
   void ensure_receive_loop();
   void receive_next();
   void dispatch_event(std::string event_name, std::string message, const mqtt::publish_props& props);
-  void deliver_to(const std::unordered_set<std::shared_ptr<Subscription>>& subscribers, const std::string& event_name, const std::string& message);
+  void deliver_to(const std::unordered_set<std::shared_ptr<Subscription>>& consumers, const std::string& event_name, const std::string& message);
 };
 
 }  // namespace athenasip::events

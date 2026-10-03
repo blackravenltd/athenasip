@@ -11,8 +11,9 @@
 #include <vector>
 
 #include "core_fixture_helper.h"
+#include "util.h"
 
-// A node with two accounts on it, Alice calling and Bob answering, driven as a
+// A node with two subscribers on it, Alice calling and Bob answering, driven as a
 // transport drives it. Every channel the mock builds is local to 192.0.2.1:5060, which
 // is what the node's own Record-Route and Via name and what a Route coming back has to
 // be recognised against.
@@ -23,7 +24,8 @@ struct ProxyFixture : CoreFixture {
   std::shared_ptr<MockConnection> callee_connection;
   std::shared_ptr<athenasip::Channel> callee;
 
-  std::shared_ptr<athenasip::types::Account> bob;
+  std::shared_ptr<athenasip::types::Subscriber> alice;
+  std::shared_ptr<athenasip::types::Subscriber> bob;
 
   // The public address is taken before any channel opens, because that is the order a
   // node starts in: the configuration is read, then the listeners bind. What a flow
@@ -32,16 +34,44 @@ struct ProxyFixture : CoreFixture {
     if (!public_address.empty()) config->sip_public_address = public_address;
 
     seed_realm("example.com");
-    seed_account(1, "sip:alice@example.com", "alice-ha1");
-    bob = seed_account(2, "sip:bob@example.com", "bob-ha1");
+    alice = seed_subscriber(1, "sip:alice@example.com", "alice-ha1");
+    bob = seed_subscriber(2, "sip:bob@example.com", "bob-ha1");
 
     caller = make_channel("192.0.2.10", &caller_connection);
     callee = make_channel("192.0.2.20", &callee_connection);
+
+    // Alice has registered over her connection, so the node knows who is on the other end
+    // of it and her calls are not challenged (RFC 3261 22.3; tests/proxy_authentication_test
+    // is where the challenge itself is tested). The mock connection is a reliable one, which
+    // is the only kind that can carry this.
+    on_strand([this]() { caller->authenticated_as("sip:alice@example.com"); });
   }
 
-  // Puts Bob on the callee channel, the way a successful REGISTER would.
+  // Puts Bob on the callee channel, the way a successful REGISTER would - including what a
+  // REGISTER the registrar authenticated tells the node about the connection.
   void bind_bob(const std::string& contact = "sip:bob@192.0.2.20:5060") {
     register_binding(bob, std::make_shared<athenasip::types::SIPUri>(contact), callee, 3600);
+    on_strand([this]() { callee->authenticated_as("sip:bob@example.com"); });
+  }
+
+  // The request as a caller sends it once it has answered this node's 407 (RFC 3261 22.3):
+  // a Proxy-Authorization over a nonce this node minted, computed from the request's own
+  // method and Request-URI. RFC 2617 without qop, which is what the challenge asks for.
+  std::string with_credentials(const std::string& raw, const std::string& user, const std::string& ha1) {
+    const auto nonce = mint_nonce(store->realm_get_by_name("example.com"));
+
+    const auto line_end = raw.find("\r\n");
+    const auto first = raw.substr(0, line_end);
+    const auto method = first.substr(0, first.find(' '));
+    const auto uri = first.substr(method.size() + 1, first.rfind(' ') - method.size() - 1);
+
+    const auto response = athenasip::Util::md5(ha1 + ":" + nonce + ":" + athenasip::Util::md5(method + ":" + uri));
+    const auto header = "Proxy-Authorization: Digest username=\"" + user + "\", realm=\"example.com\", nonce=\"" + nonce + "\", uri=\"" + uri +
+                        "\", response=\"" + response + "\", algorithm=MD5\r\n";
+
+    auto out = raw;
+    out.insert(line_end + 2, header);
+    return out;
   }
 
   std::string invite(const std::string& branch = "z9hG4bK-invite", const std::string& to = "sip:bob@example.com", const std::string& max_forwards = "70") {

@@ -20,7 +20,7 @@
 // strand and must not wait there. A test is not on the strand.
 //
 // The fire-and-forget publish is not here. It answers nothing by design, so a test of
-// it waits on what the subscriber saw instead.
+// it waits on what the consumer saw instead.
 class SyncEventSystem {
  public:
   explicit SyncEventSystem(std::shared_ptr<athenasip::events::EventSystem> events) : _events(std::move(events)) {}

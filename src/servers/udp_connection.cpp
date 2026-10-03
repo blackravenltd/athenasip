@@ -51,7 +51,26 @@ bool UDPConnection::is_open() { return _is_open; }
 
 void UDPConnection::shutdown() { _is_open = false; }
 
-void UDPConnection::close() { _is_open = false; }
+// Everything a UDP flow has to let go of, because nothing else will.
+//
+// A TCP or TLS connection closing is a socket closing, which errors the pending read and
+// unwinds the channel. UDP has neither: the read waits on a queue that will never be fed
+// again, and the server's map holds this connection under a key nothing removes. So this
+// does both by hand - releases the reader, which is holding the channel, and asks the
+// server to forget the key.
+void UDPConnection::close() {
+  _is_open = false;
+
+  _buffer_queue.close();
+
+  // Keyed the way UDPServer keys it - bare host:port - and not the way Core keys a flow,
+  // which prefixes the transport. Getting that wrong leaves the entry in place, and then
+  // the next datagram from the address is handed to this closed connection instead of
+  // making a live one: the flow is forgotten by the node and still occupies the map.
+  if (auto server = _udp_server.lock()) {
+    server->remove_connection(remote_endpoint_name(), this);
+  }
+}
 
 void UDPConnection::deliver(std::shared_ptr<std::vector<char>> buffer) { _buffer_queue.push(buffer); }
 

@@ -46,6 +46,10 @@ struct Dialog {
   std::string caller_tag;
   std::string callee_tag;
 
+  // The peer node that forwarded the request that began this dialog, when one did. Empty
+  // on the node the caller reached, which is the node that owns the call's record.
+  std::string from_node;
+
   std::shared_ptr<SIPIdentity> caller;
   std::shared_ptr<SIPIdentity> callee;
 

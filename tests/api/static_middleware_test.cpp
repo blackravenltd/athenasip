@@ -40,6 +40,11 @@ struct DocumentRoot {
     write(root / "index.html", "<html>root</html>");
     write(root / "app" / "index.html", "<html>app</html>");
     write(root / "app" / "bundle.js", "console.log(1)");
+    write(root / "app" / "bundle.mjs", "export default 1");
+    write(root / "app" / "bundle.js.map", "{}");
+    write(root / "app" / "logo.svg", "<svg/>");
+    write(root / "app" / "font.woff2", "woff");
+    write(root / "favicon.ico", "icon");
     write(sibling / "secret.txt", "the secret");
 
     // Somewhere outside the tree entirely, for the symlink.
@@ -66,18 +71,18 @@ struct Served {
   std::string content_type;
 };
 
-Served get(const std::string& target, const DocumentRoot& tree, const StaticOptions& options = StaticOptions()) {
+Served serve(boost::beast::http::verb method, const std::string& target, const DocumentRoot& tree, const StaticOptions& options = StaticOptions()) {
   auto middleware = StaticMiddleware::add(tree.root.string(), options);
 
   boost::beast::http::request<boost::beast::http::string_body> request;
-  request.method(boost::beast::http::verb::get);
+  request.method(method);
   request.target(target);
 
   auto response = std::make_shared<boost::beast::http::response<boost::beast::http::string_body>>();
 
   Served served;
 
-  middleware(request, response, [&served, response](bool next) {
+  middleware(request, "127.0.0.1", response, [&served, response](bool next) {
     served.passed_on = next;
 
     if (!next) {
@@ -87,6 +92,10 @@ Served get(const std::string& target, const DocumentRoot& tree, const StaticOpti
   });
 
   return served;
+}
+
+Served get(const std::string& target, const DocumentRoot& tree, const StaticOptions& options = StaticOptions()) {
+  return serve(boost::beast::http::verb::get, target, tree, options);
 }
 
 }  // namespace
@@ -101,11 +110,85 @@ TEST(StaticMiddlewareTest, ServesAFileFromTheDocumentRootWithItsType) {
   EXPECT_EQ(served.content_type, "application/javascript");
 }
 
+// A browser refuses a module script that does not arrive as JavaScript, and an SVG that
+// does not arrive as image/svg+xml is not rendered as one. A built bundle is made of
+// exactly these, so a document root that cannot name them cannot serve a web client -
+// which is what this one exists to do.
+TEST(StaticMiddlewareTest, NamesTheTypesABuiltBundleIsMadeOf) {
+  DocumentRoot tree;
+
+  EXPECT_EQ(get("/app/bundle.mjs", tree).content_type, "application/javascript");
+  EXPECT_EQ(get("/app/logo.svg", tree).content_type, "image/svg+xml");
+  EXPECT_EQ(get("/app/font.woff2", tree).content_type, "font/woff2");
+  EXPECT_EQ(get("/favicon.ico", tree).content_type, "image/x-icon");
+
+  // A source map is JSON, and a browser only fetches it when the developer tools ask.
+  EXPECT_EQ(get("/app/bundle.js.map", tree).content_type, "application/json");
+}
+
 TEST(StaticMiddlewareTest, ServesTheIndexForADirectory) {
   DocumentRoot tree;
 
   EXPECT_EQ(get("/", tree).body, "<html>root</html>");
   EXPECT_EQ(get("/app/", tree).body, "<html>app</html>");
+}
+
+// A client-side router keeps real paths, and a person who reloads one, or opens a link
+// to one, asks this node for a document that is not on disk. Answering 404 makes every
+// page of the client work only if you arrived at it from somewhere else, which is not a
+// working client. The document that knows how to route the path is index.html.
+TEST(StaticMiddlewareTest, APathWithNoFileBehindItGetsTheDocumentThatCanRouteIt) {
+  DocumentRoot tree;
+
+  EXPECT_EQ(get("/diagnostics/softphone", tree).body, "<html>root</html>");
+  EXPECT_EQ(get("/sip/realms", tree).body, "<html>root</html>");
+
+  // The query is not part of the path here either.
+  EXPECT_EQ(get("/diagnostics/softphone?register=1", tree).body, "<html>root</html>");
+
+  // Its own type, not the type of whatever was asked for.
+  EXPECT_EQ(get("/diagnostics/softphone", tree).content_type, "text/html");
+}
+
+// The fallback is for a route, and these are not routes. A missing asset has to stay
+// missing: a bundle that 200s with HTML in it is a far worse thing to debug than one
+// that 404s, and an unknown API path answering with a web page would be a lie about
+// what this node serves.
+TEST(StaticMiddlewareTest, TheFallbackDoesNotInventAssetsOrApiRoutes) {
+  DocumentRoot tree;
+
+  EXPECT_TRUE(get("/app/missing.js", tree).passed_on);
+  EXPECT_TRUE(get("/app/missing.css", tree).passed_on);
+  EXPECT_TRUE(get("/api/v1/nothing", tree).passed_on);
+
+  // A write to a path that does not exist is not a page view.
+  EXPECT_TRUE(serve(boost::beast::http::verb::post, "/diagnostics/softphone", tree).passed_on);
+  EXPECT_TRUE(serve(boost::beast::http::verb::delete_, "/sip/realms", tree).passed_on);
+}
+
+// And a file that is really there is still served as itself.
+TEST(StaticMiddlewareTest, TheFallbackNeverShadowsAFileThatExists) {
+  DocumentRoot tree;
+
+  EXPECT_EQ(get("/app/bundle.js", tree).content_type, "application/javascript");
+  EXPECT_EQ(get("/app/", tree).body, "<html>app</html>");
+}
+
+// SPA mode is a choice, not a fact about every document root. A plain file server that
+// invented index.html for a missing page would hide a broken link behind a 200, so the
+// node has to be told that the thing it is serving is a single-page application.
+TEST(StaticMiddlewareTest, TheRoutingFallbackCanBeTurnedOff) {
+  DocumentRoot tree;
+
+  StaticOptions plain;
+  plain.fallback.clear();
+
+  EXPECT_TRUE(get("/diagnostics/softphone", tree, plain).passed_on);
+  EXPECT_TRUE(get("/sip/realms", tree, plain).passed_on);
+
+  // What is really there is still served, which is the whole of what it does now.
+  EXPECT_EQ(get("/app/bundle.js", tree, plain).content_type, "application/javascript");
+  EXPECT_EQ(get("/", tree, plain).body, "<html>root</html>");
 }
 
 TEST(StaticMiddlewareTest, PassesOnWhatItDoesNotHave) {
@@ -129,8 +212,10 @@ TEST(StaticMiddlewareTest, RefusesToLeaveTheDocumentRoot) {
   EXPECT_TRUE(get("/%2E%2E/public-secrets/secret.txt", tree).passed_on);
 
   // An absolute path, in case the root is treated as a prefix to concatenate rather
-  // than a directory to resolve within.
+  // than a directory to resolve within. The routing fallback does not stand in for it
+  // either: a route is made of names, and this one has an empty segment.
   EXPECT_TRUE(get("//etc/hosts", tree).passed_on);
+  EXPECT_TRUE(get("//etc/shadow", tree).passed_on);
 }
 
 // A symlink is the other way out, and the one the path check cannot see: the path never

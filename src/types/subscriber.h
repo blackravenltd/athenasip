@@ -11,6 +11,7 @@
 #include <sstream>
 #include <string>
 
+#include "realm.h"
 #include "sip_identity.h"
 
 namespace athenasip::types {
@@ -18,11 +19,11 @@ namespace athenasip::types {
 // What this server knows about somebody who may register.
 //
 // The password is never held. What is held is HA1 - the hash of user, realm and
-// password (RFC 2617) - once per algorithm this account can authenticate with, because
+// password (RFC 2617) - once per algorithm this subscriber can authenticate with, because
 // the two hashes are computed from the password and cannot be derived from each other.
-// An account provisioned with a password has both; one imported as a bare MD5 HA1 has
+// A subscriber provisioned with a password has both; one imported as a bare MD5 HA1 has
 // only that, and is challenged for MD5 alone.
-class Account {
+class Subscriber {
  public:
   uint64_t id;
   std::shared_ptr<SIPIdentity> identity;
@@ -30,7 +31,13 @@ class Account {
   // MD5, which every SIP client speaks (RFC 3261 22.4).
   std::string ha1;
 
-  // SHA-256 (RFC 8760), empty when this account has no credential for it.
+  // SHA-256 (RFC 8760), empty when this subscriber has no credential for it.
   std::string ha1_sha256;
+
+  // What this subscriber's endpoint is, where the operator knows and nothing else can say:
+  // Asterisk's webrtc=yes. It decides the first description produced towards the leg,
+  // above the realm and the transport and below what the leg itself has said. Empty takes
+  // the realm's behaviour.
+  std::optional<MediaPolicy::Profiles> media_profile;
 };
 }  // namespace athenasip::types

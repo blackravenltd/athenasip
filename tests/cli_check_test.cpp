@@ -1,0 +1,140 @@
+//
+// AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
+//
+// Copyright (C) 2026 Tom Cully <mail@tomcully.com>
+// Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
+//
+#include "cli_check.h"
+
+#include <gtest/gtest.h>
+
+#include <boost/asio/io_context.hpp>
+#include <chrono>
+#include <memory>
+#include <string>
+
+#include "cli.h"
+#include "config.h"
+#include "datastores/datastore_drivers.h"
+#include "events/event_system_drivers.h"
+#include "media/media_engine_drivers.h"
+#include "mocks/logger_mock.h"
+
+using namespace athenasip;
+
+namespace {
+
+// What main gives the checks: a connect, waited for. Here on a context of its own.
+plugins::Status wait_for(const std::function<void(plugins::Executor, plugins::StatusHandler)>& start) {
+  boost::asio::io_context io;
+  auto status = plugins::Status::failure("the driver never answered");
+
+  start(io.get_executor(), [&status](plugins::Status answered) { status = std::move(answered); });
+  io.run_for(std::chrono::seconds(5));
+
+  return status;
+}
+
+struct CheckFixture {
+  std::shared_ptr<MockLogger> logger = std::make_shared<MockLogger>();
+  std::shared_ptr<Config> config = std::make_shared<Config>(logger);
+
+  CheckFixture() {
+    datastores::register_builtin_datastores(logger);
+    events::register_builtin_event_systems(logger);
+    media::register_builtin_media_engines(logger);
+
+    config->sip_node_id = "test-node";
+    config->db_url = "memory://";
+    config->events_url = "local://";
+    config->media_url = "builtin://";
+  }
+
+  std::vector<cli::CheckLine> run() { return cli::check(logger, config, wait_for); }
+
+  static const cli::CheckLine* find(const std::vector<cli::CheckLine>& lines, const std::string& what) {
+    for (const auto& line : lines) {
+      if (line.what == what) return &line;
+    }
+    return nullptr;
+  }
+};
+
+}  // namespace
+
+// The ten-line configuration: nothing external, and everything answers.
+TEST(CliCheckTest, ANodeThatNeedsNothingExternalPasses) {
+  CheckFixture f;
+
+  const auto lines = f.run();
+
+  ASSERT_NE(CheckFixture::find(lines, "datastore"), nullptr);
+  ASSERT_NE(CheckFixture::find(lines, "events"), nullptr);
+  ASSERT_NE(CheckFixture::find(lines, "media"), nullptr);
+  EXPECT_TRUE(cli::passed(lines)) << cli::report(lines);
+}
+
+// A driver nobody wrote is said plainly, and the rest is still tried: one answer per thing,
+// not the first failure and silence.
+TEST(CliCheckTest, AnUnknownDriverFailsAndTheRestIsStillTried) {
+  CheckFixture f;
+  f.config->db_url = "carrier-pigeon://loft";
+
+  const auto lines = f.run();
+
+  const auto* datastore = CheckFixture::find(lines, "datastore");
+  ASSERT_NE(datastore, nullptr);
+  EXPECT_FALSE(datastore->ok);
+  EXPECT_NE(datastore->detail.find("carrier-pigeon"), std::string::npos);
+
+  const auto* media = CheckFixture::find(lines, "media");
+  ASSERT_NE(media, nullptr);
+  EXPECT_TRUE(media->ok);
+
+  EXPECT_FALSE(cli::passed(lines));
+}
+
+// A certificate a listener will ask for and cannot have is found here rather than by the
+// first client to connect.
+TEST(CliCheckTest, AMissingCertificateIsFound) {
+  CheckFixture f;
+  f.config->http_tls_enable = true;
+  f.config->http_tls_cert_pem_filename = "/nowhere/admin.cer";
+  f.config->http_tls_key_pem_filename = "/nowhere/admin.key";
+
+  const auto lines = f.run();
+
+  const auto* certificate = CheckFixture::find(lines, "http certificate");
+  ASSERT_NE(certificate, nullptr);
+  EXPECT_FALSE(certificate->ok);
+  EXPECT_FALSE(cli::passed(lines));
+}
+
+// A cluster's first node has nobody to find, and that is not a failure.
+TEST(CliCheckTest, AClusterOfOneHasNoPeersAndStillPasses) {
+  CheckFixture f;
+  f.config->cluster_enable = true;
+
+  const auto lines = f.run();
+
+  const auto* peers = CheckFixture::find(lines, "peers");
+  ASSERT_NE(peers, nullptr);
+  EXPECT_TRUE(peers->ok);
+}
+
+// The report is printed, so a password in a URL is not.
+TEST(CliCheckTest, APasswordInAUrlIsNotPrinted) {
+  EXPECT_EQ(cli::redacted("memory://"), "memory://");
+
+  const auto shown = cli::redacted("redis://:hunter2@127.0.0.1:6379/3");
+  EXPECT_EQ(shown.find("hunter2"), std::string::npos) << shown;
+  EXPECT_NE(shown.find("127.0.0.1"), std::string::npos) << shown;
+}
+
+TEST(CliCheckTest, TheFlagIsRead) {
+  const char* argv[] = {"athenasip", "--check"};
+  const auto options = cli::parse(2, const_cast<char**>(argv));
+
+  EXPECT_TRUE(options.ok);
+  EXPECT_TRUE(options.check);
+}

@@ -13,7 +13,7 @@
 
 namespace athenasip::types {
 
-MediaPolicy::Profiles MediaPolicy::profiles_from_string(const std::string& value, Profiles fallback) {
+std::optional<MediaPolicy::Profiles> MediaPolicy::parse_profiles(const std::string& value) {
   const auto name = Util::to_lower(Util::trim(value));
 
   if (name == "transport") return Profiles::FromTransport;
@@ -22,8 +22,10 @@ MediaPolicy::Profiles MediaPolicy::profiles_from_string(const std::string& value
   if (name == "webrtc") return Profiles::WebRtc;
   if (name == "srtp") return Profiles::SrtpSdes;
 
-  return fallback;
+  return std::nullopt;
 }
+
+MediaPolicy::Profiles MediaPolicy::profiles_from_string(const std::string& value, Profiles fallback) { return parse_profiles(value).value_or(fallback); }
 
 std::string MediaPolicy::to_string(Profiles value) {
   switch (value) {
@@ -39,7 +41,7 @@ std::string MediaPolicy::to_string(Profiles value) {
       return "srtp";
   }
 
-  return "transport";
+  return "mirror";
 }
 
 Realm::Realm() {}

@@ -25,15 +25,45 @@ sip:
   # a container, behind a load balancer, or on a NAT'd public IP.
   # public_address: 203.0.113.5
 
+  # With a public address set, the prefixes on this node's own side of the router. A peer
+  # inside them is given the node's local address and port instead, because the public
+  # address only reaches it if the router hairpins (Asterisk's localnet). A listener bound
+  # to 0.0.0.0 gives the address it would reach that peer from. Each listener section
+  # takes a public_port as well, for a router that forwards a different port to it.
+  # localnet: ["192.168.0.0/16", "10.0.0.0/8"]
+
   # Permit SIP over an unencrypted transport. WSS is what a browser needs and TLS is what
   # a cluster talks, so this is the switch that allows plain UDP, TCP and WS.
   allow_unencrypted: true
+
+  # Log the whole of every message in and out rather than only its first line. Off by
+  # default: it is most of the bytes, and a node under load writes a great many of them.
+  # Turn it on to see the session descriptions - which is the one thing a node is better
+  # placed to show than either end of a call - while working out why two clients cannot
+  # agree on media. Credentials are redacted whichever way they were going.
+  # log_messages: false
 
   # How long this node will spend opening a connection to a next hop it has no flow to
   # (RFC 3261 16.6 step 7), in milliseconds. Not an RFC timer, but it has to be bounded:
   # the operating system's own limit is well over a minute, and timer B gives the whole
   # transaction thirty-two seconds, which a fork with several bindings has to share.
   connect_timeout_ms: 4000
+
+  # How long a connectionless flow may sit idle before this node forgets it, in seconds.
+  # Zero never forgets one.
+  #
+  # Only UDP needs it. A TCP, TLS or WebSocket flow ends when its socket does; UDP has no
+  # socket per peer and no close to wait for, so a flow made by a single datagram would live
+  # as long as the process - and the map it lives in is keyed by a remote address a datagram
+  # can claim to be from, which on a public listener is a way to grow this node's memory
+  # from off the network.
+  #
+  # Five minutes is well past every RFC 3261 section 17 timer, the longest being 64*T1 at 32
+  # seconds, so nothing with a transaction outstanding is ever swept. Forgetting a flow costs
+  # a UDP peer nothing it notices: its next datagram makes a new one, and a call or a BYE
+  # for it goes to the address it was last heard from, which behind a NAT is the only one
+  # that reaches it.
+  flow_idle_timeout: 300
 
   # --------------------------------------------------------------------------------
   # Deciding a call is over
@@ -172,6 +202,10 @@ websocket:
   # cert_pem_filename: "../tls/snakeoil.cer"
   # key_pem_filename: "../tls/snakeoil.key"
 
+  # Or both: a second, secure listener on a port of its own, beside the plain one above.
+  # It shows the certificate named here, or the tls section's. Zero is none.
+  # secure_port: 9443
+
 # The three plugin kinds. Each is a URL whose scheme picks the driver, plus an optional
 # section named after that driver for what the URL cannot express. The URL on its own is
 # a working configuration.
@@ -188,6 +222,12 @@ events:
   # local:// keeps events inside this process. mqtt:// publishes them to a broker, where
   # they are also how nodes find each other.
   url: "local://"
+
+  # How often this node publishes its retained status, in seconds. Zero says it once at
+  # startup and never again, which is a different question from whether it is running now.
+  # A monitor decides a node has gone quiet by how long ago the last one arrived, so this
+  # is the number its staleness threshold has to be a small multiple of.
+  status_interval: 30
 
   mqtt:
     # Unique on the broker, because MQTT makes a repeated client identifier mean "the
@@ -239,22 +279,114 @@ media:
     # out and rtpengine's own interface configuration decides, which is usually right.
     # media_address: 203.0.113.9
 
+# How this node behaves where the standards leave a choice. Leave the whole section out
+# and it behaves as the standards say, apart from anchoring media, which is the one
+# deliberate deviation and what most servers in front of rtpengine do. Each realm can
+# override any of these over the admin API; what it does not set it takes from here.
+behaviour:
+  # Put this node in the media path when a media engine is configured. false leaves
+  # every session description untouched and lets the media go end to end (RFC 3261
+  # 16.6), which is right for endpoints that can reach each other and wrong behind NAT.
+  media_anchor: true
+
+  # What the engine is asked to produce for a leg. mirror, the default, imposes nothing:
+  # a callee is offered what the caller offered. transport reads the leg's flow, so ws
+  # and wss are WebRTC and everything else plain RTP. rtp, webrtc and srtp make every
+  # leg that. A leg that has already said what it speaks is always answered in kind.
+  media_profile: mirror
+
+  # Seconds between OPTIONS to each registered client, down the flow it registered on:
+  # Asterisk's qualify, Kamailio's nathelper ping. 0, the default, never sends one, which
+  # is what RFC 3261 asks. Otherwise 5 to 86400. The probe keeps a NAT's mapping open, and
+  # a client that answers with a session description (RFC 3261 11.2) has said what media
+  # it takes. GET /api/v1/qualify shows who answered.
+  qualify_interval: 0
+
+  # Rewrite the Contact in each request and response this node forwards to the address
+  # and port the message came from: Asterisk's rewrite_contact, Kamailio's
+  # fix_nated_contact. Off by default, because a proxy forwards what an endpoint said
+  # about itself (RFC 3261 16.6). WebSocket clients are never rewritten.
+  rewrite_contact: false
+
+# Call records: one for each call that has ended, in the datastore, listed by
+# GET /api/v1/call-records. Kept for this many seconds - thirty days - and zero keeps them
+# for ever.
+calls:
+  history_retention: 2592000
+
 http:
   address: 0.0.0.0
   port: 8080
 
+  # HTTPS, beside the plain listener above and serving the same thing. A browser gives a
+  # page that is not HTTPS (or localhost) no microphone, so the admin console's softphone
+  # needs this to place a call. The certificate is the tls section's unless
+  # cert_pem_filename and key_pem_filename are set here.
+  tls:
+    enable: false
+    port: 8443
+
   api:
     enable: true
 
-    # Bearer tokens, with what each one may do. admin provisions realms and accounts;
-    # client reads the node list and who is registered. A request with no matching token
-    # is refused, so an API switched on with no tokens is one nobody can call.
-    tokens:
-      - token: "change-me-admin"
-        scopes: [admin]
-      - token: "change-me-client"
-        scopes: [client]
+    # How many requests a caller may make at once (burst), and how many a minute after
+    # that. Zero in either turns that limit off. A refused request is answered 429 with
+    # Retry-After.
+    #   open          no credential, an unknown endpoint, or a token that is not one: by
+    #                 source address
+    #   login_source  the login, on top of that: by source address
+    #   login_user    the login, on top of that: by username, counting every attempt
+    #   session       a signed-in caller: by session
+    rate_limits:
+      open: { burst: 30, per_minute: 30 }
+      login_source: { burst: 10, per_minute: 5 }
+      login_user: { burst: 5, per_minute: 1 }
+      session: { burst: 60, per_minute: 300 }
 
+    # Who can use this API: users, signed in with POST /api/v1/auth/login. There are no
+    # tokens to configure here. The first administrator is made on this host with
+    # `athenasip --add-user NAME`, which is also the way back in if every password is lost.
+
+    # How long a login lasts, in seconds, and how long it survives unused. The first is
+    # written on the session and is what the datastore expires it on, so it cannot be
+    # zero; the second is checked on each request, and zero turns it off.
+    session_lifetime: 43200
+    session_idle: 3600
+
+    # What a web client is told to use for ICE, served by GET /api/v1/client/config. A
+    # browser cannot be configured by hand and reads no file, so this is how it learns
+    # where the STUN and TURN servers are. Nothing here changes what this node does with
+    # media: it is what the client is handed, and the client is what acts on it.
+    #
+    # Empty by default, because a deployment with no TURN server should not tell clients
+    # there is one.
+    # ice_servers:
+    #   - url: "stun:stun.example.com:3478"
+    #   - url: "turn:turn.example.com:3478"
+
+    # The coturn shared-secret scheme (its use-auth-secret / static-auth-secret). The node
+    # and the TURN server never talk: the node mints a credential under this secret and
+    # the TURN server recomputes the same HMAC to check one, so it needs no user database.
+    # Empty means TURN credentials are not issued, and a turn: URL above would then be
+    # served without one - which a browser cannot use, and which is warned about at
+    # startup rather than left to fail during a call.
+    # turn_shared_secret: ""
+
+    # How long a credential this node mints is good for, in seconds. Long enough to place
+    # a call and for that call to run; short enough that one copied out of a page is not a
+    # permanent relay for whoever took it.
+    turn_credential_ttl: 3600
+
+  # Static files, served from the same listener as the API. The API is routed first, so
+  # /api/v1 always wins and this never shadows it.
   files:
     enable: true
     path: "../admin/"
+
+    # Single-page application mode. A path with nothing behind it - /sip/realms, say -
+    # is answered with index.html from the root, so a client-side route survives a
+    # reload or a link somebody pasted. /api/ is never answered this way, so an unknown
+    # API path still 404s rather than returning a web page, and neither is a path that
+    # names a file extension, so a missing asset stays missing instead of hiding behind
+    # a 200. Set false for an ordinary document root.
+    spa: true

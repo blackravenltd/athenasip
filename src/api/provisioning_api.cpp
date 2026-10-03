@@ -12,6 +12,7 @@
 
 #include "../loggers/logger_scoped.h"
 #include "../types/sip_identity.h"
+#include "../types/turn_credential.h"
 #include "../util.h"
 #include "api_json.h"
 
@@ -19,7 +20,7 @@ namespace athenasip::api {
 
 namespace {
 
-// An account is identified by the realm it lives in and the user within it, which is
+// A subscriber is identified by the realm it lives in and the user within it, which is
 // exactly a SIP URI. The API takes the two apart in the path because a path segment
 // with an @ in it reads badly; this puts them back together.
 std::shared_ptr<types::SIPIdentity> identity_of(const std::string& realm_name, const std::string& user) {
@@ -36,21 +37,90 @@ std::string ha1_of(const std::string& user, const std::string& realm_name, const
 }
 
 // RFC 8760, the same thing with SHA-256. Both are computed while the password is in
-// hand, because neither can be derived from the other afterwards: an account
+// hand, because neither can be derived from the other afterwards: a subscriber
 // provisioned with a password can answer either challenge, and one imported as a bare
 // MD5 hash can only ever answer that one.
 std::string ha1_sha256_of(const std::string& user, const std::string& realm_name, const std::string& password) {
   return Util::to_lower(Util::sha256(user + ":" + realm_name + ":" + password));
 }
 
-// The realm's media policy, as two independent fields: whether to anchor, and how a
-// leg's profile is decided. Only what was given, like everything else here.
-void read_media_policy(const boost::json::object& body, types::MediaPolicy& policy) {
-  if (const auto anchor = body.if_contains("media_anchor"); anchor != nullptr && anchor->is_bool()) policy.anchor = anchor->as_bool();
-
-  if (const auto profiles = string_field(body, "media_profiles")) {
-    policy.profiles = types::MediaPolicy::profiles_from_string(*profiles, policy.profiles);
+// A realm's behaviour section: what it does differently from the server's default. Only what
+// was given, like everything else here, and a setting given as null goes back to inheriting.
+// Anything unreadable is refused with what was wrong, because a setting silently not taken is
+// a realm behaving other than its operator thinks. Empty on success, the reason otherwise.
+std::string read_behaviour(const boost::json::object& body, types::Behaviour& behaviour) {
+  // Where these lived before the section existed. Refused rather than ignored, so a client
+  // still sending them learns where they went instead of wondering why nothing changed.
+  for (const auto* moved : {"media_anchor", "media_profiles"}) {
+    if (body.contains(moved)) return std::string(moved) + " has moved into the behaviour section";
   }
+
+  const auto* section = body.if_contains("behaviour");
+  if (section == nullptr) return "";
+  if (!section->is_object()) return "behaviour is an object";
+
+  for (const auto& [key, value] : section->as_object()) {
+    if (key == "media_anchor") {
+      if (value.is_null()) {
+        behaviour.media_anchor.reset();
+      } else if (value.is_bool()) {
+        behaviour.media_anchor = value.as_bool();
+      } else {
+        return "behaviour.media_anchor is true, false or null";
+      }
+    } else if (key == "media_profile") {
+      if (value.is_null()) {
+        behaviour.media_profile.reset();
+      } else if (const auto profiles = value.is_string() ? types::MediaPolicy::parse_profiles(std::string(value.as_string())) : std::nullopt) {
+        behaviour.media_profile = *profiles;
+      } else {
+        return "behaviour.media_profile is mirror, transport, webrtc, rtp, srtp or null";
+      }
+    } else if (key == "rewrite_contact") {
+      if (value.is_null()) {
+        behaviour.rewrite_contact.reset();
+      } else if (value.is_bool()) {
+        behaviour.rewrite_contact = value.as_bool();
+      } else {
+        return "behaviour.rewrite_contact is true, false or null";
+      }
+    } else if (key == "qualify_interval") {
+      if (value.is_null()) {
+        behaviour.qualify_interval.reset();
+      } else if (value.is_int64() && types::Behaviour::valid_qualify_interval(value.as_int64())) {
+        behaviour.qualify_interval = static_cast<std::uint32_t>(value.as_int64());
+      } else {
+        return "behaviour.qualify_interval is 0 for never, seconds from " + std::to_string(types::Behaviour::kQualifyMinimum) + " to " +
+               std::to_string(types::Behaviour::kQualifyMaximum) + ", or null";
+      }
+    } else {
+      return "behaviour has no setting called " + std::string(key);
+    }
+  }
+
+  return "";
+}
+
+// A subscriber's behaviour section is the same shape with one setting in it: what its endpoint
+// is. Anchoring is a question about a realm's media path and not about one endpoint.
+std::string read_behaviour(const boost::json::object& body, types::Subscriber& subscriber) {
+  const auto* section = body.if_contains("behaviour");
+  if (section == nullptr) return "";
+  if (!section->is_object()) return "behaviour is an object";
+
+  for (const auto& [key, value] : section->as_object()) {
+    if (key != "media_profile") return "a subscriber's behaviour has no setting called " + std::string(key);
+
+    if (value.is_null()) {
+      subscriber.media_profile.reset();
+    } else if (const auto profiles = value.is_string() ? types::MediaPolicy::parse_profiles(std::string(value.as_string())) : std::nullopt) {
+      subscriber.media_profile = *profiles;
+    } else {
+      return "behaviour.media_profile is mirror, transport, webrtc, rtp, srtp or null";
+    }
+  }
+
+  return "";
 }
 
 }  // namespace
@@ -66,36 +136,53 @@ ProvisioningAPI::ProvisioningAPI(std::shared_ptr<loggers::Logger> logger, std::s
 void ProvisioningAPI::register_routes(Router& router) {
   auto self = shared_from_this();
 
+  using namespace types::roles;
+
+  // Anyone placing a subscriber has to be able to discover which realms exist, so reading
+  // them admits either role. Changing one is manage-realms alone. Agreed with the console,
+  // which needs exactly this to show a realm picker to somebody who only manages subscribers.
+  const std::vector<std::string> read_realms = {manage_realms, manage_realm_subscribers};
+
   // Open, because a container healthcheck and a load balancer reach it before they have
   // any credentials to present. It says the node is up and what it is; nothing about
   // who is on it.
-  router.add(http::verb::get, "/api/v1/health", Router::public_scope, [self](RouteContext c) { self->_health(std::move(c)); });
+  router.add_open(http::verb::get, "/api/v1/health", [self](RouteContext c) { self->_health(std::move(c)); });
 
-  // client, not admin: this is what a client reads to know where the realm is served
-  // from, and it says nothing about who is on it.
-  router.add(http::verb::get, "/api/v1/nodes", "client", [self](RouteContext c) { self->_node_list(std::move(c)); });
+  // What a client reads to know where the realm is served from. It says nothing about who
+  // is on it, which is why it is the cluster-status role rather than a provisioning one.
+  router.add(http::verb::get, "/api/v1/nodes", {view_cluster_status}, [self](RouteContext c) { self->_node_list(std::move(c)); });
 
-  router.add(http::verb::get, "/api/v1/realms", "admin", [self](RouteContext c) { self->_realm_list(std::move(c)); });
-  router.add(http::verb::post, "/api/v1/realms", "admin", [self](RouteContext c) { self->_realm_create(std::move(c)); });
-  router.add(http::verb::get, "/api/v1/realms/{realm}", "admin", [self](RouteContext c) { self->_realm_get(std::move(c)); });
-  router.add(http::verb::put, "/api/v1/realms/{realm}", "admin", [self](RouteContext c) { self->_realm_update(std::move(c)); });
-  router.add(http::verb::delete_, "/api/v1/realms/{realm}", "admin", [self](RouteContext c) { self->_realm_delete(std::move(c)); });
+  router.add(http::verb::get, "/api/v1/realms", read_realms, [self](RouteContext c) { self->_realm_list(std::move(c)); });
+  router.add(http::verb::post, "/api/v1/realms", {manage_realms}, [self](RouteContext c) { self->_realm_create(std::move(c)); });
+  router.add(http::verb::get, "/api/v1/realms/{realm}", read_realms, [self](RouteContext c) { self->_realm_get(std::move(c)); });
+  router.add(http::verb::put, "/api/v1/realms/{realm}", {manage_realms}, [self](RouteContext c) { self->_realm_update(std::move(c)); });
+  router.add(http::verb::delete_, "/api/v1/realms/{realm}", {manage_realms}, [self](RouteContext c) { self->_realm_delete(std::move(c)); });
 
-  router.add(http::verb::get, "/api/v1/realms/{realm}/accounts", "admin", [self](RouteContext c) { self->_account_list(std::move(c)); });
-  router.add(http::verb::post, "/api/v1/realms/{realm}/accounts", "admin", [self](RouteContext c) { self->_account_create(std::move(c)); });
-  router.add(http::verb::get, "/api/v1/realms/{realm}/accounts/{user}", "admin", [self](RouteContext c) { self->_account_get(std::move(c)); });
-  router.add(http::verb::put, "/api/v1/realms/{realm}/accounts/{user}", "admin", [self](RouteContext c) { self->_account_update(std::move(c)); });
-  router.add(http::verb::delete_, "/api/v1/realms/{realm}/accounts/{user}", "admin", [self](RouteContext c) { self->_account_delete(std::move(c)); });
+  router.add(http::verb::get, "/api/v1/realms/{realm}/subscribers", {manage_realm_subscribers},
+             [self](RouteContext c) { self->_subscriber_list(std::move(c)); });
+  router.add(http::verb::post, "/api/v1/realms/{realm}/subscribers", {manage_realm_subscribers},
+             [self](RouteContext c) { self->_subscriber_create(std::move(c)); });
+  router.add(http::verb::get, "/api/v1/realms/{realm}/subscribers/{user}", {manage_realm_subscribers},
+             [self](RouteContext c) { self->_subscriber_get(std::move(c)); });
+  router.add(http::verb::put, "/api/v1/realms/{realm}/subscribers/{user}", {manage_realm_subscribers},
+             [self](RouteContext c) { self->_subscriber_update(std::move(c)); });
+  router.add(http::verb::delete_, "/api/v1/realms/{realm}/subscribers/{user}", {manage_realm_subscribers},
+             [self](RouteContext c) { self->_subscriber_delete(std::move(c)); });
 
-  // client rather than admin: where a subscriber is registered is what a client needs
-  // to show a presence list, and it provisions nothing.
-  router.add(http::verb::get, "/api/v1/registrations", "client", [self](RouteContext c) { self->_registration_list(std::move(c)); });
+  // Where a subscriber is registered is what a client needs to show a presence list, and
+  // it provisions nothing, so it reads rather than manages.
+  router.add(http::verb::get, "/api/v1/registrations", {view_cluster_status}, [self](RouteContext c) { self->_registration_list(std::move(c)); });
+
+  // The same role as /nodes, and for the same reason: it is what a client reads to learn
+  // how to reach the realm, and it says nothing about who is on it.
+  router.add(http::verb::get, "/api/v1/client/config", {view_cluster_status}, [self](RouteContext c) { self->_client_config(std::move(c)); });
 }
 
 // Realms
 
 void ProvisioningAPI::_realm_list(RouteContext context) {
-  _datastore->realm_list(_executor, [context](plugins::Result<std::vector<std::shared_ptr<types::Realm>>> result) mutable {
+  auto self = shared_from_this();
+  _datastore->realm_list(_executor, [self, context](plugins::Result<std::vector<std::shared_ptr<types::Realm>>> result) mutable {
     if (!result.ok) {
       write_error(context.response, http::status::internal_server_error, "datastore_error", result.error);
       return context.done();
@@ -103,7 +190,7 @@ void ProvisioningAPI::_realm_list(RouteContext context) {
 
     boost::json::array realms;
     for (const auto& realm : result.value) {
-      if (realm) realms.push_back(_realm_json(*realm));
+      if (realm) realms.push_back(self->_realm_json(*realm));
     }
 
     write_json(context.response, http::status::ok, realms);
@@ -135,7 +222,10 @@ void ProvisioningAPI::_realm_create(RouteContext context) {
   if (const auto timeout = uint_field(*body, "registration_timeout")) realm->registration_timeout = *timeout;
   if (const auto minimum = uint_field(*body, "registration_minimum")) realm->registration_minimum = *minimum;
 
-  read_media_policy(*body, realm->media);
+  if (const auto refused = read_behaviour(*body, realm->behaviour); !refused.empty()) {
+    write_error(context.response, http::status::bad_request, "invalid_request", refused);
+    return context.done();
+  }
 
   auto self = shared_from_this();
   _datastore->realm_create(_executor, realm, [self, context, realm](plugins::Status status) mutable {
@@ -143,7 +233,7 @@ void ProvisioningAPI::_realm_create(RouteContext context) {
       return self->_fail(std::move(context), status, "conflict", "realm " + realm->name + " already exists", http::status::conflict);
     }
 
-    write_json(context.response, http::status::created, _realm_json(*realm));
+    write_json(context.response, http::status::created, self->_realm_json(*realm));
     context.done();
   });
 }
@@ -151,8 +241,9 @@ void ProvisioningAPI::_realm_create(RouteContext context) {
 void ProvisioningAPI::_realm_get(RouteContext context) {
   const auto name = context.parameter("realm");
 
-  _with_realm(name, std::move(context), [](std::shared_ptr<types::Realm> realm, RouteContext context) {
-    write_json(context.response, http::status::ok, _realm_json(*realm));
+  auto self = shared_from_this();
+  _with_realm(name, std::move(context), [self](std::shared_ptr<types::Realm> realm, RouteContext context) {
+    write_json(context.response, http::status::ok, self->_realm_json(*realm));
     context.done();
   });
 }
@@ -175,15 +266,18 @@ void ProvisioningAPI::_realm_update(RouteContext context) {
     if (const auto timeout = uint_field(*body, "registration_timeout")) realm->registration_timeout = *timeout;
     if (const auto minimum = uint_field(*body, "registration_minimum")) realm->registration_minimum = *minimum;
 
-    read_media_policy(*body, realm->media);
+    if (const auto refused = read_behaviour(*body, realm->behaviour); !refused.empty()) {
+      write_error(context.response, http::status::bad_request, "invalid_request", refused);
+      return context.done();
+    }
 
-    self->_datastore->realm_update(self->_executor, realm, [context, realm](plugins::Status status) mutable {
+    self->_datastore->realm_update(self->_executor, realm, [self, context, realm](plugins::Status status) mutable {
       if (!status.ok) {
         write_error(context.response, http::status::internal_server_error, "datastore_error", status.error);
         return context.done();
       }
 
-      write_json(context.response, http::status::ok, _realm_json(*realm));
+      write_json(context.response, http::status::ok, self->_realm_json(*realm));
       context.done();
     });
   });
@@ -207,32 +301,32 @@ void ProvisioningAPI::_realm_delete(RouteContext context) {
   });
 }
 
-// Accounts
+// Subscribers
 
-void ProvisioningAPI::_account_list(RouteContext context) {
+void ProvisioningAPI::_subscriber_list(RouteContext context) {
   const auto realm_name = context.parameter("realm");
 
   auto self = shared_from_this();
 
   _with_realm(realm_name, std::move(context), [self](std::shared_ptr<types::Realm> realm, RouteContext context) {
-    self->_datastore->account_list(self->_executor, realm->name, [context](plugins::Result<std::vector<std::shared_ptr<types::Account>>> result) mutable {
+    self->_datastore->subscriber_list(self->_executor, realm->name, [context](plugins::Result<std::vector<std::shared_ptr<types::Subscriber>>> result) mutable {
       if (!result.ok) {
         write_error(context.response, http::status::internal_server_error, "datastore_error", result.error);
         return context.done();
       }
 
-      boost::json::array accounts;
-      for (const auto& account : result.value) {
-        if (account) accounts.push_back(_account_json(*account));
+      boost::json::array subscribers;
+      for (const auto& subscriber : result.value) {
+        if (subscriber) subscribers.push_back(_subscriber_json(*subscriber));
       }
 
-      write_json(context.response, http::status::ok, accounts);
+      write_json(context.response, http::status::ok, subscribers);
       context.done();
     });
   });
 }
 
-void ProvisioningAPI::_account_create(RouteContext context) {
+void ProvisioningAPI::_subscriber_create(RouteContext context) {
   const auto body = parse_object(context.body);
   if (!body) {
     write_error(context.response, http::status::bad_request, "invalid_json", "the body is not a JSON object");
@@ -252,59 +346,64 @@ void ProvisioningAPI::_account_create(RouteContext context) {
     const auto password = string_field(*body, "password");
     const auto ha1 = string_field(*body, "ha1");
 
-    // ha1 is for importing accounts from somewhere that already holds one. Either is
-    // enough; neither is an account that can never authenticate.
+    // ha1 is for importing subscribers from somewhere that already holds one. Either is
+    // enough; neither is a subscriber that can never authenticate.
     if (!password && !ha1) {
       write_error(context.response, http::status::bad_request, "invalid_request", "password or ha1 is required");
       return context.done();
     }
 
-    auto account = std::make_shared<types::Account>();
-    account->identity = identity_of(realm->name, *user);
-    account->id = Util::stable_id(uri_of(realm->name, *user));
+    auto subscriber = std::make_shared<types::Subscriber>();
+    subscriber->identity = identity_of(realm->name, *user);
+    subscriber->id = Util::stable_id(uri_of(realm->name, *user));
 
     if (password) {
-      account->ha1 = ha1_of(*user, realm->name, *password);
-      account->ha1_sha256 = ha1_sha256_of(*user, realm->name, *password);
+      subscriber->ha1 = ha1_of(*user, realm->name, *password);
+      subscriber->ha1_sha256 = ha1_sha256_of(*user, realm->name, *password);
     }
 
     // An explicit hash wins over one derived from a password, which is what makes an
     // import of either kind work.
-    if (ha1) account->ha1 = *ha1;
-    if (const auto imported = string_field(*body, "ha1_sha256")) account->ha1_sha256 = *imported;
+    if (ha1) subscriber->ha1 = *ha1;
+    if (const auto imported = string_field(*body, "ha1_sha256")) subscriber->ha1_sha256 = *imported;
 
-    self->_datastore->account_create(self->_executor, account, [self, context, account](plugins::Status status) mutable {
+    if (const auto why = read_behaviour(*body, *subscriber); !why.empty()) {
+      write_error(context.response, http::status::bad_request, "invalid_request", why);
+      return context.done();
+    }
+
+    self->_datastore->subscriber_create(self->_executor, subscriber, [self, context, subscriber](plugins::Status status) mutable {
       if (!status.ok) {
-        return self->_fail(std::move(context), status, "conflict", "that account already exists", http::status::conflict);
+        return self->_fail(std::move(context), status, "conflict", "that subscriber already exists", http::status::conflict);
       }
 
-      write_json(context.response, http::status::created, _account_json(*account));
+      write_json(context.response, http::status::created, _subscriber_json(*subscriber));
       context.done();
     });
   });
 }
 
-void ProvisioningAPI::_account_get(RouteContext context) {
+void ProvisioningAPI::_subscriber_get(RouteContext context) {
   const auto realm_name = context.parameter("realm");
   const auto user = context.parameter("user");
 
-  _datastore->account_get(_executor, identity_of(realm_name, user), [context](plugins::Result<std::shared_ptr<types::Account>> result) mutable {
+  _datastore->subscriber_get(_executor, identity_of(realm_name, user), [context](plugins::Result<std::shared_ptr<types::Subscriber>> result) mutable {
     if (!result.ok) {
       write_error(context.response, http::status::internal_server_error, "datastore_error", result.error);
       return context.done();
     }
 
     if (!result.value) {
-      write_error(context.response, http::status::not_found, "not_found", "no such account");
+      write_error(context.response, http::status::not_found, "not_found", "no such subscriber");
       return context.done();
     }
 
-    write_json(context.response, http::status::ok, _account_json(*result.value));
+    write_json(context.response, http::status::ok, _subscriber_json(*result.value));
     context.done();
   });
 }
 
-void ProvisioningAPI::_account_update(RouteContext context) {
+void ProvisioningAPI::_subscriber_update(RouteContext context) {
   const auto body = parse_object(context.body);
   if (!body) {
     write_error(context.response, http::status::bad_request, "invalid_json", "the body is not a JSON object");
@@ -315,61 +414,67 @@ void ProvisioningAPI::_account_update(RouteContext context) {
   const auto user = context.parameter("user");
 
   auto self = shared_from_this();
-  _datastore->account_get(_executor, identity_of(realm_name, user),
-                          [self, context, body, realm_name, user](plugins::Result<std::shared_ptr<types::Account>> result) mutable {
-                            if (!result.ok) {
-                              write_error(context.response, http::status::internal_server_error, "datastore_error", result.error);
-                              return context.done();
-                            }
+  _datastore->subscriber_get(_executor, identity_of(realm_name, user),
+                             [self, context, body, realm_name, user](plugins::Result<std::shared_ptr<types::Subscriber>> result) mutable {
+                               if (!result.ok) {
+                                 write_error(context.response, http::status::internal_server_error, "datastore_error", result.error);
+                                 return context.done();
+                               }
 
-                            if (!result.value) {
-                              write_error(context.response, http::status::not_found, "not_found", "no such account");
-                              return context.done();
-                            }
+                               if (!result.value) {
+                                 write_error(context.response, http::status::not_found, "not_found", "no such subscriber");
+                                 return context.done();
+                               }
 
-                            auto account = result.value;
+                               auto subscriber = result.value;
 
-                            if (const auto password = string_field(*body, "password")) {
-                              account->ha1 = ha1_of(user, realm_name, *password);
-                              account->ha1_sha256 = ha1_sha256_of(user, realm_name, *password);
-                            }
+                               if (const auto password = string_field(*body, "password")) {
+                                 subscriber->ha1 = ha1_of(user, realm_name, *password);
+                                 subscriber->ha1_sha256 = ha1_sha256_of(user, realm_name, *password);
+                               }
 
-                            if (const auto ha1 = string_field(*body, "ha1")) account->ha1 = *ha1;
-                            if (const auto sha256 = string_field(*body, "ha1_sha256")) account->ha1_sha256 = *sha256;
+                               if (const auto ha1 = string_field(*body, "ha1")) subscriber->ha1 = *ha1;
+                               if (const auto sha256 = string_field(*body, "ha1_sha256")) subscriber->ha1_sha256 = *sha256;
 
-                            self->_datastore->account_update(self->_executor, account, [context, account](plugins::Status status) mutable {
-                              if (!status.ok) {
-                                write_error(context.response, http::status::internal_server_error, "datastore_error", status.error);
-                                return context.done();
-                              }
+                               // Read before anything is written, so a refusal changes nothing.
+                               if (const auto why = read_behaviour(*body, *subscriber); !why.empty()) {
+                                 write_error(context.response, http::status::bad_request, "invalid_request", why);
+                                 return context.done();
+                               }
 
-                              write_json(context.response, http::status::ok, _account_json(*account));
-                              context.done();
-                            });
-                          });
+                               self->_datastore->subscriber_update(self->_executor, subscriber, [context, subscriber](plugins::Status status) mutable {
+                                 if (!status.ok) {
+                                   write_error(context.response, http::status::internal_server_error, "datastore_error", status.error);
+                                   return context.done();
+                                 }
+
+                                 write_json(context.response, http::status::ok, _subscriber_json(*subscriber));
+                                 context.done();
+                               });
+                             });
 }
 
-void ProvisioningAPI::_account_delete(RouteContext context) {
+void ProvisioningAPI::_subscriber_delete(RouteContext context) {
   const auto realm_name = context.parameter("realm");
   const auto user = context.parameter("user");
 
   auto self = shared_from_this();
   auto identity = identity_of(realm_name, user);
 
-  // Delete answers "it did not happen" for a account that was never there, and that is
+  // Delete answers "it did not happen" for a subscriber that was never there, and that is
   // a 404 rather than a 500. The read is what tells the two apart.
-  _datastore->account_get(_executor, identity, [self, context, identity](plugins::Result<std::shared_ptr<types::Account>> result) mutable {
+  _datastore->subscriber_get(_executor, identity, [self, context, identity](plugins::Result<std::shared_ptr<types::Subscriber>> result) mutable {
     if (!result.ok) {
       write_error(context.response, http::status::internal_server_error, "datastore_error", result.error);
       return context.done();
     }
 
     if (!result.value) {
-      write_error(context.response, http::status::not_found, "not_found", "no such account");
+      write_error(context.response, http::status::not_found, "not_found", "no such subscriber");
       return context.done();
     }
 
-    self->_datastore->account_delete(self->_executor, identity, [context](plugins::Status status) mutable {
+    self->_datastore->subscriber_delete(self->_executor, identity, [context](plugins::Status status) mutable {
       if (!status.ok) {
         write_error(context.response, http::status::internal_server_error, "datastore_error", status.error);
         return context.done();
@@ -387,7 +492,7 @@ void ProvisioningAPI::_registration_list(RouteContext context) {
   auto self = shared_from_this();
 
   // One realm when asked for one, every realm otherwise. Walking them is a read per
-  // account and this is a diagnostic rather than something on the call path, so the
+  // subscriber and this is a diagnostic rather than something on the call path, so the
   // cost is the caller's to choose.
   const auto realm_filter = context.query.find("realm");
   const auto wanted = realm_filter == context.query.end() ? std::string() : realm_filter->second;
@@ -401,24 +506,24 @@ void ProvisioningAPI::_registration_list(RouteContext context) {
 
   // Each step starts the next from its own completion: with nothing to block on, a walk
   // is a chain.
-  auto walk_accounts = [self, registrations](std::vector<std::shared_ptr<types::Account>> accounts, std::function<void()> done) {
+  auto walk_subscribers = [self, registrations](std::vector<std::shared_ptr<types::Subscriber>> subscribers, std::function<void()> done) {
     struct Walk : std::enable_shared_from_this<Walk> {
       std::shared_ptr<ProvisioningAPI> api;
       std::shared_ptr<boost::json::array> out;
-      std::vector<std::shared_ptr<types::Account>> accounts;
+      std::vector<std::shared_ptr<types::Subscriber>> subscribers;
       std::function<void()> done;
       std::size_t index = 0;
 
       void step() {
-        if (index >= accounts.size()) return done();
+        if (index >= subscribers.size()) return done();
 
-        auto account = accounts[index++];
-        if (!account || !account->identity || !account->identity->uri) return step();
+        auto subscriber = subscribers[index++];
+        if (!subscriber || !subscriber->identity || !subscriber->identity->uri) return step();
 
         auto self = shared_from_this();
-        const auto uri = account->identity->uri->to_string();
+        const auto uri = subscriber->identity->uri->to_string();
 
-        api->_datastore->location_list(api->_executor, account->id, [self, uri](plugins::Result<std::vector<types::Location>> result) mutable {
+        api->_datastore->location_list(api->_executor, subscriber->id, [self, uri](plugins::Result<std::vector<types::Location>> result) mutable {
           if (result.ok) {
             for (const auto& location : result.value) self->out->push_back(_location_json(location, uri));
           }
@@ -431,24 +536,25 @@ void ProvisioningAPI::_registration_list(RouteContext context) {
     auto walk = std::make_shared<Walk>();
     walk->api = self;
     walk->out = registrations;
-    walk->accounts = std::move(accounts);
+    walk->subscribers = std::move(subscribers);
     walk->done = std::move(done);
     walk->step();
   };
 
   if (!wanted.empty()) {
-    _datastore->account_list(_executor, wanted, [context, walk_accounts, finish](plugins::Result<std::vector<std::shared_ptr<types::Account>>> result) mutable {
-      if (!result.ok) {
-        write_error(context.response, http::status::internal_server_error, "datastore_error", result.error);
-        return context.done();
-      }
+    _datastore->subscriber_list(_executor, wanted,
+                                [context, walk_subscribers, finish](plugins::Result<std::vector<std::shared_ptr<types::Subscriber>>> result) mutable {
+                                  if (!result.ok) {
+                                    write_error(context.response, http::status::internal_server_error, "datastore_error", result.error);
+                                    return context.done();
+                                  }
 
-      walk_accounts(std::move(result.value), finish);
-    });
+                                  walk_subscribers(std::move(result.value), finish);
+                                });
     return;
   }
 
-  _datastore->realm_list(_executor, [self, context, walk_accounts, finish](plugins::Result<std::vector<std::shared_ptr<types::Realm>>> result) mutable {
+  _datastore->realm_list(_executor, [self, context, walk_subscribers, finish](plugins::Result<std::vector<std::shared_ptr<types::Realm>>> result) mutable {
     if (!result.ok) {
       write_error(context.response, http::status::internal_server_error, "datastore_error", result.error);
       return context.done();
@@ -458,18 +564,18 @@ void ProvisioningAPI::_registration_list(RouteContext context) {
     auto index = std::make_shared<std::size_t>(0);
 
     auto next = std::make_shared<std::function<void()>>();
-    *next = [self, realms, index, walk_accounts, finish, next]() mutable {
+    *next = [self, realms, index, walk_subscribers, finish, next]() mutable {
       if (*index >= realms->size()) return finish();
 
       auto realm = (*realms)[(*index)++];
       if (!realm) return (*next)();
 
-      self->_datastore->account_list(self->_executor, realm->name,
-                                     [walk_accounts, next](plugins::Result<std::vector<std::shared_ptr<types::Account>>> accounts) mutable {
-                                       if (!accounts.ok) return (*next)();
+      self->_datastore->subscriber_list(self->_executor, realm->name,
+                                        [walk_subscribers, next](plugins::Result<std::vector<std::shared_ptr<types::Subscriber>>> subscribers) mutable {
+                                          if (!subscribers.ok) return (*next)();
 
-                                       walk_accounts(std::move(accounts.value), [next]() { (*next)(); });
-                                     });
+                                          walk_subscribers(std::move(subscribers.value), [next]() { (*next)(); });
+                                        });
     };
 
     (*next)();
@@ -487,49 +593,146 @@ void ProvisioningAPI::_health(RouteContext context) {
   context.done();
 }
 
-void ProvisioningAPI::_node_list(RouteContext context) {
+void ProvisioningAPI::_client_config(RouteContext context) {
+  boost::json::object out;
+
+  // Every transport this node serves, the same list /nodes gives. A browser takes the wss
+  // entry and ignores the rest; something else on the page may want the others.
+  out["transports"] = _local_transports();
+
+  // The one a browser can actually use, pulled out so a client does not have to know that
+  // "wss" is the answer. Absent rather than empty when there is no secure WebSocket
+  // listener, because a browser being handed ws:// from an https page cannot use it and
+  // should be told there is nothing rather than given something that will not work.
+  for (const auto& transport : _local_transports()) {
+    if (transport.at("transport").as_string() == "wss") {
+      out["websocket_uri"] =
+          "wss://" + std::string(transport.at("address").as_string()) + ":" + std::to_string(transport.at("port").to_number<std::uint64_t>());
+      break;
+    }
+  }
+
+  // Where else it can go: this node first, then the others that are up and current, and
+  // their secure WebSocket URIs in the same order for a browser to fail over along.
+  auto nodes = _nodes_json(true);
+  boost::json::array websocket_uris;
+  for (const auto& node : nodes) {
+    // Another node's entries came off the bus, so they are read as carefully as anything
+    // else that did: one that is not shaped right is skipped, not trusted.
+    const auto* transports = node.as_object().if_contains("transports");
+    if (transports == nullptr || !transports->is_array()) continue;
+
+    for (const auto& transport : transports->as_array()) {
+      if (!transport.is_object()) continue;
+      const auto* kind = transport.as_object().if_contains("transport");
+      const auto* address = transport.as_object().if_contains("address");
+      const auto* port = transport.as_object().if_contains("port");
+      if (kind == nullptr || address == nullptr || port == nullptr || !kind->is_string() || !address->is_string() || !port->is_number()) continue;
+      if (kind->as_string() != "wss") continue;
+
+      websocket_uris.push_back(boost::json::string("wss://" + std::string(address->as_string()) + ":" + std::to_string(port->to_number<std::uint64_t>())));
+    }
+  }
+  out["nodes"] = std::move(nodes);
+  out["websocket_uris"] = std::move(websocket_uris);
+
+  // Shaped as RTCIceServer, so a browser can hand this to RTCPeerConnection unchanged.
+  // Credentials are minted per request and expire on their own; a stun: URL gets none,
+  // because STUN has nothing to authenticate to.
+  boost::json::array ice;
+  const auto now = std::time(nullptr);
+
+  for (const auto& server : _config->ice_servers) {
+    boost::json::object entry;
+    entry["urls"] = server.url;
+
+    const bool needs_credential = server.url.rfind("turn:", 0) == 0 || server.url.rfind("turns:", 0) == 0;
+
+    if (needs_credential) {
+      // The caller's own name where there is one, so a relay session can be tied back to
+      // it in the TURN server's log. Not Caller::describe(), which is prose for a log line
+      // of ours and says so - putting prose in a protocol field is what once made coturn
+      // answer 400 rather than relay anything.
+      const auto asked_by = context.caller.user ? context.caller.user->key() : std::string("anonymous");
+
+      const auto credential = types::TurnCredential::issue(_config->turn_shared_secret, asked_by, now, _config->turn_credential_ttl);
+
+      if (!credential.username.empty()) {
+        entry["username"] = credential.username;
+        entry["credential"] = credential.password;
+        entry["expires_at"] = static_cast<std::int64_t>(credential.expires_at);
+      }
+    }
+
+    ice.push_back(std::move(entry));
+  }
+
+  out["ice_servers"] = std::move(ice);
+
+  write_json(context.response, http::status::ok, out);
+  context.done();
+}
+
+boost::json::array ProvisioningAPI::_nodes_json(bool usable_only) const {
   boost::json::object node;
   node["id"] = _config->sip_node_id;
 
   // Every node answers "this is me" about itself. A client that reads the list from one
   // node and finds no entry marked self is talking to something that is not a node.
   node["self"] = true;
+  node["status"] = "ok";
+  node["version"] = _version;
   node["transports"] = _local_transports();
 
   boost::json::array nodes;
   nodes.push_back(std::move(node));
 
-  write_json(context.response, http::status::ok, nodes);
+  // The others, as each last described itself on the bus. Three missed heartbeats make a
+  // report stale: listed, so "gone quiet" can be told from "never heard of", and marked,
+  // so nobody routes to it on the strength of an old "ok".
+  if (_nodes) {
+    for (const auto& other : _nodes->list(_node_heartbeat * 3)) {
+      if (other.id == _config->sip_node_id) continue;
+      if (usable_only && (other.stale || other.status != "ok")) continue;
+
+      boost::json::object entry;
+      entry["id"] = other.id;
+      entry["self"] = false;
+      entry["status"] = other.status;
+      entry["stale"] = other.stale;
+      entry["version"] = other.version;
+      entry["at"] = other.at;
+      entry["transports"] = other.transports;
+
+      // For whoever administers the cluster; a client has no use for the inter-node listener.
+      if (!usable_only && !other.cluster_address.empty()) {
+        boost::json::object peer;
+        peer["address"] = other.cluster_address;
+        peer["port"] = other.cluster_port;
+        entry["cluster"] = std::move(peer);
+      }
+      nodes.push_back(std::move(entry));
+    }
+  }
+
+  return nodes;
+}
+
+void ProvisioningAPI::_node_list(RouteContext context) {
+  write_json(context.response, http::status::ok, _nodes_json(false));
   context.done();
 }
 
 boost::json::array ProvisioningAPI::_local_transports() const {
   boost::json::array transports;
 
-  // sip.public_address when it is set, because a node bound to 0.0.0.0 knows every
-  // address it answers on and none that a client should use. Falling back to the bind
-  // address is right on a single-homed host and honest everywhere else: what comes out
-  // is what the node was told, and an operator who sees 0.0.0.0 here knows why a client
-  // could not use it.
-  const auto advertised = [this](const std::string& bind_address) { return _config->sip_public_address.empty() ? bind_address : _config->sip_public_address; };
-
-  const auto add = [&transports, &advertised](const std::string& transport, const std::string& bind_address, std::uint16_t port, bool secure) {
+  for (const auto& advertised : _config->advertised_transports()) {
     boost::json::object entry;
-    entry["transport"] = transport;
-    entry["address"] = advertised(bind_address);
-    entry["port"] = port;
-    entry["uri"] = std::string(secure ? "sips:" : "sip:") + advertised(bind_address) + ":" + std::to_string(port) + ";transport=" + transport;
-
+    entry["transport"] = advertised.transport;
+    entry["address"] = advertised.address;
+    entry["port"] = advertised.port;
+    entry["uri"] = advertised.uri();
     transports.push_back(std::move(entry));
-  };
-
-  if (_config->udp_enable) add("udp", _config->udp_address, _config->udp_port, false);
-  if (_config->tcp_enable) add("tcp", _config->tcp_address, _config->tcp_port, false);
-  if (_config->tls_enable) add("tls", _config->tls_address, _config->tls_port, true);
-
-  if (_config->websocket_enable) {
-    const bool secure = _config->websocket_tls;
-    add(secure ? "wss" : "ws", _config->websocket_address, _config->websocket_port, secure);
   }
 
   return transports;
@@ -560,15 +763,36 @@ void ProvisioningAPI::_fail(RouteContext context, const plugins::Status& status,
   context.done();
 }
 
-boost::json::object ProvisioningAPI::_realm_json(const types::Realm& realm) {
+boost::json::object ProvisioningAPI::_realm_json(const types::Realm& realm) const {
   boost::json::object object;
   object["name"] = realm.name;
   object["id"] = realm.id;
   object["nonce_expiry"] = realm.nonce_expiry;
   object["registration_timeout"] = realm.registration_timeout;
   object["registration_minimum"] = realm.registration_minimum;
-  object["media_anchor"] = realm.media.anchor;
-  object["media_profiles"] = types::MediaPolicy::to_string(realm.media.profiles);
+  // What the realm chose, null for what it inherits; and what it comes to, with the server's
+  // default laid under it, so a reader sees both the choice and its effect.
+  boost::json::object chosen;
+  chosen["media_anchor"] = realm.behaviour.media_anchor ? boost::json::value(*realm.behaviour.media_anchor) : boost::json::value(nullptr);
+  chosen["media_profile"] =
+      realm.behaviour.media_profile ? boost::json::value(types::MediaPolicy::to_string(*realm.behaviour.media_profile)) : boost::json::value(nullptr);
+  chosen["rewrite_contact"] = realm.behaviour.rewrite_contact ? boost::json::value(*realm.behaviour.rewrite_contact) : boost::json::value(nullptr);
+  chosen["qualify_interval"] = realm.behaviour.qualify_interval ? boost::json::value(*realm.behaviour.qualify_interval) : boost::json::value(nullptr);
+  object["behaviour"] = std::move(chosen);
+
+  const auto policy_json = [](const types::MediaPolicy& policy, std::uint32_t qualify_interval, bool rewrite_contact) {
+    boost::json::object json;
+    json["media_anchor"] = policy.anchor;
+    json["media_profile"] = types::MediaPolicy::to_string(policy.profiles);
+    json["qualify_interval"] = qualify_interval;
+    json["rewrite_contact"] = rewrite_contact;
+    return json;
+  };
+  object["behaviour_effective"] = policy_json(realm.behaviour.over(_config->behaviour), realm.behaviour.qualify_over(_config->behaviour_qualify_interval),
+                                              realm.behaviour.rewrite_contact.value_or(_config->behaviour_rewrite_contact));
+  // And the server's default on its own, so a reader can say what choosing "inherit" would
+  // come to for a setting the realm has chosen.
+  object["behaviour_default"] = policy_json(_config->behaviour, _config->behaviour_qualify_interval, _config->behaviour_rewrite_contact);
 
   // nonce_secret is deliberately absent. It is the key this node mints nonces with, and
   // an API that hands it back is an API that leaks it into every log that records a
@@ -576,15 +800,21 @@ boost::json::object ProvisioningAPI::_realm_json(const types::Realm& realm) {
   return object;
 }
 
-boost::json::object ProvisioningAPI::_account_json(const types::Account& account) {
+boost::json::object ProvisioningAPI::_subscriber_json(const types::Subscriber& subscriber) {
   boost::json::object object;
-  object["id"] = account.id;
+  object["id"] = subscriber.id;
 
-  if (account.identity && account.identity->uri) {
-    object["uri"] = account.identity->uri->to_string();
-    object["user"] = account.identity->uri->user;
-    object["realm"] = account.identity->uri->host;
+  if (subscriber.identity && subscriber.identity->uri) {
+    object["uri"] = subscriber.identity->uri->to_string();
+    object["user"] = subscriber.identity->uri->user;
+    object["realm"] = subscriber.identity->uri->host;
   }
+
+  // What the subscriber chose, null for taking its realm's.
+  boost::json::object behaviour;
+  behaviour["media_profile"] =
+      subscriber.media_profile ? boost::json::value(types::MediaPolicy::to_string(*subscriber.media_profile)) : boost::json::value(nullptr);
+  object["behaviour"] = std::move(behaviour);
 
   // ha1 is the password in the only form this server holds it. It does not come back
   // out.
@@ -593,8 +823,8 @@ boost::json::object ProvisioningAPI::_account_json(const types::Account& account
 
 boost::json::object ProvisioningAPI::_location_json(const types::Location& location, const std::string& uri) {
   boost::json::object object;
-  object["account"] = uri;
-  object["account_id"] = location.account_id;
+  object["subscriber"] = uri;
+  object["subscriber_id"] = location.subscriber_id;
   object["contact"] = location.contact ? location.contact->to_string() : "";
   object["registered_at"] = static_cast<std::int64_t>(location.registered_at);
   object["expires_at"] = static_cast<std::int64_t>(location.expires_at);

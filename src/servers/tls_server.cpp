@@ -23,6 +23,8 @@ TLSServer::TLSServer(std::shared_ptr<Logger> logger, std::shared_ptr<Core> core,
 
 bool TLSServer::set_certificates(std::string cert, std::string key) { return load_tls_certificates(_logger, ctx, cert, key); }
 
+bool TLSServer::require_peer_certificates(const std::string& ca) { return athenasip::servers::require_peer_certificates(_logger, ctx, ca); }
+
 void TLSServer::start() {
   _logger->debug("Starting...");
 
@@ -57,36 +59,46 @@ void TLSServer::start_accept() {
   _acceptor.async_accept(*new_connection, boost::bind(&TLSServer::_handle_accept, this, placeholders::error, new_connection));
 }
 
+// The handshake is each connection's own business and runs asynchronously, bounded by a
+// deadline, while the listener goes straight back to accepting. Done on the accept thread
+// it let one silent connection hold up every other, and one that failed stopped the
+// listener for good.
 void TLSServer::_handle_accept(const boost::system::error_code& error, std::shared_ptr<ip::tcp::socket> socket) {
-  boost::system::error_code ec;
-
-  if (!error) {
-    // Generate new Connection
-    auto ssl_socket = std::make_shared<ssl::stream<ip::tcp::socket>>(std::move(*socket), ctx);
-    std::shared_ptr<Connection> new_connection = std::make_shared<TLSConnection>(ssl_socket);
-
-    _logger->debug("Starting TLS Connection: " + new_connection->remote_endpoint_name());
-
-    if (!new_connection->start()) {
-      _logger->info("Incoming TLS Connection Error: " + new_connection->remote_endpoint_name());
-
-      new_connection->shutdown();
-      new_connection->close();
-      return;
-    }
-
-    // Create Channel from connection
-    auto new_channel = std::make_shared<Channel>(_logger->base_logger(), _core, new_connection);
-    _logger->info("Incoming TLS Connection Accepted: " + new_connection->remote_endpoint_name());
-
-    new_channel->start();
-
+  if (error) {
+    _logger->error("Incoming Connection Accept Error: " + error.message());
   } else {
-    _logger->error("Incoming Connection Accept Error: " + ec.message());
+    auto ssl_socket = std::make_shared<ssl::stream<ip::tcp::socket>>(std::move(*socket), ctx);
+    auto deadline = std::make_shared<boost::asio::steady_timer>(_io_context);
+
+    deadline->expires_after(kHandshakeDeadline);
+    deadline->async_wait([ssl_socket](const boost::system::error_code& ec) {
+      if (ec == boost::asio::error::operation_aborted) return;
+      boost::system::error_code ignored;
+      ssl_socket->lowest_layer().close(ignored);
+    });
+
+    ssl_socket->async_handshake(ssl::stream_base::server, [this, ssl_socket, deadline](const boost::system::error_code& ec) {
+      deadline->cancel();
+
+      boost::system::error_code ignored;
+      const auto remote = ssl_socket->lowest_layer().remote_endpoint(ignored);
+      const auto name = remote.address().to_string() + ":" + std::to_string(remote.port());
+
+      if (ec) {
+        _logger->info("TLS handshake with " + name + " failed - " + ec.message());
+        ssl_socket->lowest_layer().close(ignored);
+        return;
+      }
+
+      std::shared_ptr<Connection> connection = std::make_shared<TLSConnection>(ssl_socket, true);
+      auto channel = std::make_shared<Channel>(_logger->base_logger(), _core, connection);
+      _logger->info("Incoming TLS Connection Accepted: " + name + (connection->peer_identity().empty() ? "" : ", node " + connection->peer_identity()));
+
+      channel->start();
+    });
   }
 
-  // Start accepting next connection
-  boost::asio::post(_io_context, [this]() { start_accept(); });
+  start_accept();
 }
 
 }  // namespace athenasip::servers

@@ -10,9 +10,11 @@
 #include <boost/asio/dispatch.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/system/error_code.hpp>
+#include <chrono>
 #include <cstddef>
 #include <deque>
 #include <memory>
+#include <set>
 #include <string>
 
 #include "core.h"
@@ -66,6 +68,18 @@ class Channel : public std::enable_shared_from_this<Channel> {
   // restart either.
   const std::string& flow_token() const { return _flow_token; }
 
+  // The subscribers that have proved who they are over this flow, by a REGISTER the
+  // registrar authenticated on it. Only meaningful on a connection - TCP, TLS or a
+  // WebSocket - which belongs to the one client at the other end of it; a UDP flow is a
+  // source address, which anybody can write on a datagram, and the proxy ignores this on
+  // one. It lasts as long as the flow does.
+  void authenticated_as(const std::string& aor);
+
+  // The cluster node at the other end, when this flow is mutual TLS with one: the node id
+  // its cluster certificate names. Empty for every client flow.
+  std::string peer_node() const { return _connection ? _connection->peer_identity() : std::string(); }
+  bool is_authenticated_as(const std::string& aor) const;
+
   State state = State::Normal;
 
   std::shared_ptr<SIPMessage> _incoming_message;
@@ -81,8 +95,13 @@ class Channel : public std::enable_shared_from_this<Channel> {
   std::string _flow_id;
   std::string _flow_token;
 
+  std::set<std::string> _authenticated;
+
   std::array<char, 65535> _read_buffer;
   std::string _buffer;
+
+  // CRLFs seen since the last message, for the keep-alive ping of RFC 5626 4.4.1.
+  int _crlf_run = 0;
 
   // What is waiting to go out, and how much of the front one already has. Both are
   // strand state: a message is queued on the strand and the queue is advanced on the
@@ -98,6 +117,22 @@ class Channel : public std::enable_shared_from_this<Channel> {
   void _schedule_async_read();
   void _schedule_async_write(std::string message);
 
+ public:
+  // When this flow last carried anything, either way.
+  //
+  // It exists for UDP. A TCP, TLS or WebSocket flow ends when its socket does, and the
+  // read completing with an error is what tears the channel down. UDP has no socket per
+  // peer and no close to wait for, so a flow made by one datagram would otherwise live
+  // as long as the process - see Core::_flow_sweep.
+  std::chrono::steady_clock::time_point last_activity() const { return _last_activity; }
+
+  // Defined where Core is a complete type. It reads Core's clock rather than steady_clock
+  // so that the stamp and the sweep that reads it are the same clock.
+  void touch();
+
+ private:
+  std::chrono::steady_clock::time_point _last_activity = std::chrono::steady_clock::now();
+
   // Strand-confined: start the next write, or stop when there is nothing left.
   void _write_next();
   void _on_write(boost::system::error_code ec, std::size_t length);
@@ -106,6 +141,7 @@ class Channel : public std::enable_shared_from_this<Channel> {
   // across as many reads as it takes, and a datagram is one whole message or nothing.
   void _frame();
   void _frame_stream();
+  void _take_keep_alives();
   void _frame_datagram();
 
   bool _append_body();

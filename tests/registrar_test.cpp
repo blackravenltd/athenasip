@@ -43,7 +43,7 @@ struct Fixture : CoreFixture {
 
   Fixture() {
     seed_realm("example.com");
-    seed_account(7, "sip:alice@example.com", kHa1);
+    seed_subscriber(7, "sip:alice@example.com", kHa1);
     channel = make_channel("192.0.2.10", &connection);
   }
 
@@ -140,9 +140,9 @@ TEST(RegistrarTest, ARegisterForAnUnservedDomainIs404) {
   EXPECT_NE(f.response_with(f.connection, 404), nullptr);
 }
 
-// An account that does not exist inside a realm we do serve is challenged rather than
-// refused, so a REGISTER sweep cannot tell an absent account from a wrong password.
-TEST(RegistrarTest, AnUnknownAccountInAServedRealmIsChallenged) {
+// A subscriber that does not exist inside a realm we do serve is challenged rather than
+// refused, so a REGISTER sweep cannot tell an absent subscriber from a wrong password.
+TEST(RegistrarTest, AnUnknownSubscriberInAServedRealmIsChallenged) {
   Fixture f;
 
   const auto nonce = f.fresh_nonce();
@@ -330,15 +330,15 @@ TEST(RegistrarTest, TheAlgorithmIsSentAsATokenNotAQuotedString) {
   EXPECT_EQ(f.connection->written.find("algorithm=\"SHA-256\""), std::string::npos);
 }
 
-// The point of offering it: an account with a SHA-256 credential authenticates with one.
+// The point of offering it: a subscriber with a SHA-256 credential authenticates with one.
 TEST(RegistrarTest, ASha256ResponseAuthenticates) {
   Fixture f;
 
   // Provisioned from a password, so it has both credentials.
-  auto account = f.store->account_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
-  ASSERT_NE(account, nullptr);
-  account->ha1_sha256 = kHa1Sha256;
-  ASSERT_TRUE(f.store->account_update(account));
+  auto subscriber = f.store->subscriber_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
+  ASSERT_NE(subscriber, nullptr);
+  subscriber->ha1_sha256 = kHa1Sha256;
+  ASSERT_TRUE(f.store->subscriber_update(subscriber));
 
   f.receive(f.channel, f.register_request(f.credentials_sha256(f.fresh_nonce())));
 
@@ -346,10 +346,10 @@ TEST(RegistrarTest, ASha256ResponseAuthenticates) {
   EXPECT_EQ(f.store->location_list(7).size(), 1u);
 }
 
-// An account imported as a bare MD5 hash has no SHA-256 credential. Answering the
+// A subscriber imported as a bare MD5 hash has no SHA-256 credential. Answering the
 // SHA-256 challenge cannot be checked against nothing, so it is challenged again rather
 // than let in or answered 500.
-TEST(RegistrarTest, ASha256ResponseFromAnMd5OnlyAccountIsChallenged) {
+TEST(RegistrarTest, ASha256ResponseFromAnMd5OnlySubscriberIsChallenged) {
   Fixture f;
 
   f.receive(f.channel, f.register_request(f.credentials_sha256(f.fresh_nonce())));
@@ -540,4 +540,129 @@ TEST(RegistrarTest, AQueryIsNotRefusedAsTooBrief) {
   f.receive(f.channel, raw);
 
   EXPECT_NE(f.response_with(f.connection, 200), nullptr);
+}
+
+// --- RFC 5626 outbound (section 6) ---
+
+namespace {
+
+const std::string kInstance = "\"<urn:uuid:00000000-0000-1000-8000-000A95A0E128>\"";
+
+std::string outbound_contact(const std::string& address, int reg_id) {
+  return "<sip:alice@" + address + ">;+sip.instance=" + kInstance + ";reg-id=" + std::to_string(reg_id);
+}
+
+std::string with_header(std::string raw, const std::string& header) {
+  raw.insert(raw.size() - 2, header + "\r\n");
+  return raw;
+}
+
+}  // namespace
+
+// A client that supports outbound and registers a flow with an instance and a reg-id is told
+// the registrar did so: Require: outbound in the 200. The binding keeps both, because they
+// are what identifies it from now on.
+TEST(RegistrarTest, AnOutboundRegistrationIsHonouredAndSaidToBe) {
+  Fixture f;
+
+  f.receive(f.channel,
+            with_header(f.register_request(f.credentials(f.fresh_nonce()), "", outbound_contact("192.0.2.10:5060", 1)), "Supported: outbound, path"));
+
+  auto ok = f.response_with(f.connection, 200);
+  ASSERT_NE(ok, nullptr);
+  ASSERT_TRUE(ok->header->contains("Require"));
+  EXPECT_NE(ok->header->headers_map["Require"][0]->to_string().find("outbound"), std::string::npos);
+
+  // And the Contact it lists back carries them (section 6).
+  const auto listed = ok->header->headers_map["Contact"][0]->to_string();
+  EXPECT_NE(listed.find("reg-id=1"), std::string::npos) << listed;
+  EXPECT_NE(listed.find("+sip.instance"), std::string::npos) << listed;
+
+  const auto bindings = f.store->location_list(7);
+  ASSERT_EQ(bindings.size(), 1u);
+  EXPECT_EQ(bindings[0].instance, "<urn:uuid:00000000-0000-1000-8000-000A95A0E128>");
+  EXPECT_EQ(bindings[0].reg_id, 1u);
+}
+
+// Section 6: a binding with an instance and a reg-id is that pair, not its Contact. The same
+// client registering the same reg-id again - from a new flow after its connection dropped,
+// with a new port in its Contact - replaces the binding rather than adding a dead one.
+TEST(RegistrarTest, AnOutboundFlowRegisteredAgainReplacesTheOldOne) {
+  Fixture f;
+
+  f.receive(f.channel, with_header(f.register_request(f.credentials(f.fresh_nonce()), "", outbound_contact("192.0.2.10:5060", 1)), "Supported: outbound"));
+  ASSERT_NE(f.response_with(f.connection, 200), nullptr);
+
+  std::shared_ptr<MockConnection> second_connection;
+  auto second = f.make_channel("192.0.2.10", &second_connection, "udp", 5070);
+  f.receive(second, with_header(f.register_request(f.credentials(f.fresh_nonce()), "", outbound_contact("192.0.2.10:5070", 1), "z9hG4bK-reg-2"),
+                                "Supported: outbound"));
+  ASSERT_NE(f.response_with(second_connection, 200), nullptr);
+
+  const auto bindings = f.store->location_list(7);
+  ASSERT_EQ(bindings.size(), 1u);
+  EXPECT_EQ(bindings[0].contact->port, 5070);
+  EXPECT_EQ(bindings[0].flow_id, second->flow_id());
+}
+
+// A second reg-id is a second flow from the same client, which is the point of outbound: two
+// flows, to two nodes or one, so losing one loses nothing.
+TEST(RegistrarTest, ASecondRegIdIsASecondFlow) {
+  Fixture f;
+
+  f.receive(f.channel, with_header(f.register_request(f.credentials(f.fresh_nonce()), "", outbound_contact("192.0.2.10:5060", 1)), "Supported: outbound"));
+  f.receive(f.channel, with_header(f.register_request(f.credentials(f.fresh_nonce()), "", outbound_contact("192.0.2.10:5061", 2), "z9hG4bK-reg-2"),
+                                   "Supported: outbound"));
+
+  EXPECT_EQ(f.store->location_list(7).size(), 2u);
+}
+
+// Removing the flow is by the same identity: expires=0 for the instance and reg-id removes it
+// whatever Contact the client now writes.
+TEST(RegistrarTest, AnOutboundFlowIsRemovedByItsIdentity) {
+  Fixture f;
+
+  f.receive(f.channel, with_header(f.register_request(f.credentials(f.fresh_nonce()), "", outbound_contact("192.0.2.10:5060", 1)), "Supported: outbound"));
+  ASSERT_EQ(f.store->location_list(7).size(), 1u);
+
+  f.receive(f.channel, with_header(f.register_request(f.credentials(f.fresh_nonce()), "0", outbound_contact("192.0.2.10:5099", 1), "z9hG4bK-reg-2"),
+                                   "Supported: outbound"));
+  EXPECT_TRUE(f.store->location_list(7).empty());
+}
+
+// Without Supported: outbound the client has not asked, and a reg-id is just a parameter: no
+// Require in the answer and an ordinary binding (section 6).
+TEST(RegistrarTest, ARegIdWithoutSupportedOutboundIsAnOrdinaryBinding) {
+  Fixture f;
+
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "", outbound_contact("192.0.2.10:5060", 1)));
+
+  auto ok = f.response_with(f.connection, 200);
+  ASSERT_NE(ok, nullptr);
+  EXPECT_FALSE(ok->header->contains("Require"));
+
+  const auto bindings = f.store->location_list(7);
+  ASSERT_EQ(bindings.size(), 1u);
+  EXPECT_EQ(bindings[0].reg_id, 0u);
+}
+
+// Section 6: an outbound registration that reached the registrar through an edge proxy whose
+// Path entry lacks the "ob" parameter went through a first hop that will not keep the flow,
+// and is refused with 439 First Hop Lacks Outbound Support.
+TEST(RegistrarTest, AnOutboundRegistrationThroughAnEdgeWithoutObIsRefused) {
+  Fixture f;
+
+  auto request = with_header(f.register_request(f.credentials(f.fresh_nonce()), "", outbound_contact("192.0.2.10:5060", 1)), "Supported: outbound, path");
+  request = with_header(request, "Path: <sip:edge.example.com;lr>");
+  f.receive(f.channel, request);
+
+  EXPECT_NE(f.response_with(f.connection, 439), nullptr);
+  EXPECT_TRUE(f.store->location_list(7).empty());
+
+  // The same through an edge that says ob is fine.
+  auto through_ob = with_header(f.register_request(f.credentials(f.fresh_nonce()), "", outbound_contact("192.0.2.10:5060", 1), "z9hG4bK-reg-ob"),
+                                "Supported: outbound, path");
+  through_ob = with_header(through_ob, "Path: <sip:edge.example.com;lr;ob>");
+  f.receive(f.channel, through_ob);
+  EXPECT_EQ(f.store->location_list(7).size(), 1u);
 }

@@ -158,7 +158,7 @@ TEST(CoreMediaSweepTest, NoByeIsSentToEitherEnd) {
   EXPECT_TRUE(ProxyFixture::requests_with(f.callee_connection, "BYE").empty());
 }
 
-// Zero is off, and off has to mean the node never ends a call on its own account.
+// Zero is off, and off has to mean the node never ends a call on its own subscriber.
 TEST(CoreMediaSweepTest, ATimeoutOfZeroNeverEndsACall) {
   SweepFixture f;
   f.config->sip_media_timeout = 0;

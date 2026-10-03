@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -19,6 +20,7 @@
 #include "../plugins/plugin.h"
 #include "../plugins/plugin_registry.h"
 #include "../types/url.h"
+#include "media_profile.h"
 
 namespace athenasip::media {
 
@@ -45,24 +47,35 @@ struct Flags {
   bool srtp = false;
   bool rtcp_mux = false;
 
+  // Whether the description this was read from parsed at all. A description nothing can
+  // read says nothing, which is not the same thing as a plain RTP one asking for
+  // nothing, and only one of the two is worth remembering about the leg that sent it.
+  bool readable = false;
+
   // The participant this offer or answer belongs to, as an index into
   // Call::participants. A multi-party call has more than two.
   std::size_t participant = 0;
+
+  using Profile = media::Profile;
 
   // What the description this node is about to produce has to be, as opposed to what
   // the one it was handed is. The two are the same question only when both ends of the
   // call are alike; a browser calling a desk phone is exactly the case an engine
   // exists for, and nothing in the offer says what is on the other side.
-  //
-  // Mirror leaves it to the engine, which is right for a call whose ends match and
-  // wrong for one that does not. The others say plainly which.
-  // SrtpSdes is the desk phone that wants its media encrypted and has never heard of
-  // DTLS: RTP/SAVP with the keys in the description (RFC 4568), rather than a browser's
-  // UDP/TLS/RTP/SAVPF. Nothing about a flow says which of the two an endpoint is, so
-  // unlike the others this one is only ever chosen by a realm's policy.
-  enum class Profile { Mirror, PlainRtp, WebRtc, SrtpSdes };
-
   Profile target = Profile::Mirror;
+
+  // The address the leg this description is produced for should send its media to, when
+  // the caller knows better than the engine's own configuration: a leg inside sip.localnet
+  // reaches the node at its local address, which the engine's one public address only
+  // reaches if the router hairpins. Empty leaves it to the engine. An engine that picks
+  // addresses from its own interfaces, as rtpengine does, may ignore it.
+  std::string address;
+
+  // What the end that wrote this description is, which is the better answer to the same
+  // question the transport is guessed from: a leg's own offer or answer says exactly
+  // whether it asked for ICE, DTLS or SRTP. Nothing where the description could not be
+  // read, because a leg that has not been understood has not spoken.
+  std::optional<Profile> stated() const;
 
   // From the transport of the flow the message is going out on, which before the far
   // leg has described itself is the only thing that says what it is. A browser cannot
@@ -129,6 +142,15 @@ class MediaEngine : public plugins::Plugin {
   // What this driver can do is local knowledge and needs no round trip.
   virtual Capabilities capabilities() const = 0;
 
+  // Whether this driver can produce a description in that profile, whatever it was handed.
+  // Local knowledge like capabilities(). The node asks before it promises a leg something:
+  // a re-offer in a profile the engine cannot make would be the refused offer over again.
+  // Defaulted to yes, which is what a driver written before this was assumed to be.
+  virtual bool produces(Profile profile) const {
+    (void)profile;
+    return true;
+  }
+
   // Two-way media setup. offer() takes the offer from one participant and answers with
   // the SDP to send on; answer() takes the answer coming back.
   virtual void offer(plugins::Executor on, std::shared_ptr<Call> call, std::string sdp, Flags flags, MediaHandler handler) = 0;
@@ -138,8 +160,17 @@ class MediaEngine : public plugins::Plugin {
   // never saw.
   virtual void release(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) = 0;
 
-  // What the engine currently holds for this call, for the admin API and diagnostics.
+  // What the engine currently holds for this call, for the admin API and diagnostics. A
+  // JSON object; the fields every engine is asked to give, and may leave out, are
+  // `idle_seconds` (how long all of the call's media has been silent) and `legs`, an array
+  // with one object per end per stream: "packets_in", "bytes_in" (from that end) and
+  // "packets_out", "bytes_out" (to it), cumulative, measured at the engine.
   virtual void query(plugins::Executor on, std::shared_ptr<Call> call, plugins::Handler<std::string> handler) = 0;
+
+  // Packets this engine has sent on over its whole life, or nothing when it cannot say.
+  // Synchronous because it is a counter, not a question to a server. Optional in the
+  // contract: an engine that leaves this alone reports nothing, and /metrics says so.
+  virtual std::optional<std::uint64_t> packets_relayed() const { return std::nullopt; }
 
   // Recording. Only meaningful when capabilities().record is set; the defaults decline,
   // so a driver that cannot record does not have to say so twice. Where the recording

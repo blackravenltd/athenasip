@@ -46,10 +46,14 @@ class RTPRelay : public std::enable_shared_from_this<RTPRelay> {
       return nullptr;
     }
 
-    auto relay = std::make_shared<RTPRelaySet>(_logger, _bind_address, port);
+    auto relay = std::make_shared<RTPRelaySet>(_logger, _bind_address, port, _relayed);
     _relays.insert(relay);
     return relay;
   }
+
+  // Packets sent on by every set this relay has ever allocated: the node's whole-life
+  // count of media carried, for /metrics and for a harness asking whether anything was.
+  std::uint64_t packets_relayed() const { return _relayed->load(std::memory_order_relaxed); }
 
   void release_relay_set(std::shared_ptr<RTPRelaySet> relay) {
     relay->stop();
@@ -58,6 +62,7 @@ class RTPRelay : public std::enable_shared_from_this<RTPRelay> {
   }
 
  private:
+  std::shared_ptr<std::atomic<std::uint64_t>> _relayed = std::make_shared<std::atomic<std::uint64_t>>(0);
   std::shared_ptr<Logger> _logger;
   std::string _bind_address;
 

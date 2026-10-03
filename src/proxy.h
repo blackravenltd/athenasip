@@ -9,12 +9,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
+#include "dns/sip_locator.h"
 #include "loggers/logger.h"
 #include "media/media_engine.h"
 #include "sip_message.h"
@@ -74,6 +76,20 @@ class Proxy : public TransactionUser {
     std::shared_ptr<SIPUri> uri;
     std::shared_ptr<SIPUri> next_hop;
     std::weak_ptr<Channel> flow;
+
+    // Set on the one re-offer a 488 earns: the profile to offer this time, and the one the
+    // target refused.
+    std::optional<media::Profile> profile;
+    std::optional<media::Profile> rejected;
+
+    // What the client on this target's flow said its media is when last qualified.
+    std::optional<media::Profile> said;
+
+    // RFC 5626 outbound: the client instance this flow belongs to, empty for an ordinary
+    // binding, and whether the flow has gone - which for an outbound binding is the target
+    // failing, never a reason to try its Contact.
+    std::string instance;
+    bool dead = false;
   };
 
   // The response context (16.7): the request as received, the server transaction it
@@ -126,6 +142,32 @@ class Proxy : public TransactionUser {
     // The realm's media policy, where target determination found a realm to read it
     // from. An in-dialog request has none, and takes the one the call remembers.
     std::optional<types::MediaPolicy> media_policy;
+
+    // The callee's subscriber's media profile, read where the subscriber was in hand.
+    std::optional<types::MediaPolicy::Profiles> callee_profile;
+
+    // Whether Contacts are rewritten to where messages came from (types::Behaviour).
+    bool rewrite_contact = false;
+
+    // The caller's, read only for an INVITE with no description (RFC 3264 section 5).
+    std::optional<types::MediaPolicy::Profiles> caller_profile;
+
+    // The branch in flight's target, and the profile the engine made its offer for when
+    // nothing the callee had said decided it. A 488 to that offer is the one refusal this
+    // node can do something about.
+    Target current;
+    std::optional<media::Profile> offered;
+
+    // RFC 5626 section 5.3: one flow per client instance is in the target set at a time,
+    // and these are each instance's other flows, best first, for when that one fails.
+    std::map<std::string, std::vector<Target>> other_flows;
+
+    // RFC 3263 4.3: the places the current target can still be tried, when DNS listed more
+    // than one and the branch in flight went to the first. A 503 or a timeout from that
+    // branch is the server failing rather than the call being refused, and the same target
+    // goes to the next of these instead of the fork moving on.
+    std::vector<dns::Hop> hops_left;
+    std::optional<Target> hop_target;
   };
 
   // RFC 4028 section 8.1: this node's say in the session timer negotiation, applied to
@@ -171,6 +213,9 @@ class Proxy : public TransactionUser {
   // Opens a flow to the target first where this node has none, which is a round trip, so
   // the sending half is _forward_to.
   void _forward_next(const std::shared_ptr<Context>& context);
+  void _connect_hops(const std::shared_ptr<Context>& context, const Target& target, std::vector<dns::Hop> hops, std::size_t index);
+  void _unreachable(const std::shared_ptr<Context>& context);
+  bool _try_next_hop(const std::shared_ptr<Context>& context);
 
   // One target, one flow: the copy of the request, the rewrites 16.6 asks for, and the
   // send.
@@ -208,6 +253,12 @@ class Proxy : public TransactionUser {
 
   // RFC 3261 16.7 step 6: what goes back when every branch has been tried.
   void _send_best(const std::shared_ptr<Context>& context);
+  void _rewrite_contact(const std::shared_ptr<SIPMessage>& message, const std::shared_ptr<Channel>& from) const;
+  void _read_caller_profile(const std::shared_ptr<Context>& context, std::function<void()> then);
+  bool _reoffer(const std::shared_ptr<Context>& context);
+  void _add_targets(const std::shared_ptr<Context>& context, std::vector<types::Location> bindings) const;
+  bool _try_other_flow(const std::shared_ptr<Context>& context);
+  void _report_reoffer(const std::shared_ptr<Context>& context, bool took);
 
   // RFC 3261 16.10: the CANCEL for a branch already forwarded.
   void _cancel_branch(const std::shared_ptr<Context>& context);
@@ -227,14 +278,28 @@ class Proxy : public TransactionUser {
   void _send_status(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request, std::uint16_t code,
                     const std::string& reason);
 
+  // Who may send this where (RFC 3261 22.3, and the 2026-10-01 decision). `then` runs only
+  // for a request that may go on; anything else has been answered.
+  void _authorize(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction, std::function<void()> then);
+  void _authenticate(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
+                     const std::shared_ptr<types::Realm>& realm, const std::shared_ptr<SIPUri>& caller, std::function<void()> then);
+  void _send_proxy_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
+                             const std::shared_ptr<types::Realm>& realm);
+
   bool _names_this_node(const SIPUri& uri) const;
   std::shared_ptr<Channel> _flow_to(const SIPUri& uri) const;
 
   // RFC 5626: the flow a binding was registered over is the route back to it, and for a
   // browser or a NAT'd client it is the only one - their Contact resolves to nothing
-  // reachable. Null when the binding named no flow or the flow has since closed, and the
-  // Contact is then all there is to go on.
-  std::shared_ptr<Channel> _flow_for(const types::Location& binding) const;
+  // reachable. A UDP flow this node has forgotten is still sent down; a reliable one that
+  // has closed leaves the Contact as all there is to go on.
+  Target _target_for(const types::Location& binding) const;
+
+  // Cluster forwarding: whether a binding's flow is another node's, and that node as the
+  // target for it.
+  bool _held_elsewhere(Core& core, const types::Location& binding) const;
+  std::optional<Target> _peer_target(Core& core, const std::string& node_id, const std::shared_ptr<SIPMessage>& request) const;
+  static std::shared_ptr<SIPUri> _datagram_hop(const std::string& flow_id);
 
   static NextHop _next_hop_of(const SIPUri& uri);
 

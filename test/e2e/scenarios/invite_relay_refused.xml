@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+
+<!--
+  The open relay, from outside. Somebody who is nobody's subscriber here sends an INVITE to
+  a number on somebody else's network, which is the call a toll fraudster wants a proxy to
+  place for them. There is no subscriber to challenge for, so the answer is 403 and nothing
+  leaves the node (RFC 3261 22.3 says how a proxy asks; who it serves is the 2026-10-01
+  decision in TODO/ACTIVE.md).
+-->
+<scenario name="Stranger: INVITE to somewhere else, refused">
+
+  <send retrans="500">
+    <![CDATA[
+
+      INVITE sip:+15551234567@198.51.100.99 SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:mallory@elsewhere.example>;tag=uac-[call_number]
+      To: <sip:+15551234567@198.51.100.99>
+      Call-ID: [call_id]
+      CSeq: 1 INVITE
+      Contact: <sip:mallory@[local_ip]:[local_port];transport=[transport]>
+      Max-Forwards: 70
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <recv response="100" optional="true"/>
+  <recv response="403"/>
+
+  <send>
+    <![CDATA[
+
+      ACK sip:+15551234567@198.51.100.99 SIP/2.0
+      [last_Via:]
+      From: <sip:mallory@elsewhere.example>;tag=uac-[call_number]
+      [last_To:]
+      Call-ID: [call_id]
+      CSeq: 1 ACK
+      Max-Forwards: 70
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+</scenario>

@@ -40,11 +40,16 @@ unsigned positive_or(const YAML::Node& node, unsigned fallback) {
 // DTLS is passive towards a browser because the browser is the one that starts the
 // handshake, and rtcp-mux is required there because a browser will not offer separate
 // RTCP (RFC 5761, and what every implementation does).
-void apply_profile(Bencode& command, Flags::Profile profile, bool source_wants_mux) {
+void apply_profile(Bencode& command, Flags::Profile profile, bool source_wants_mux, bool answering) {
   switch (profile) {
     case Flags::Profile::WebRtc:
       command.set("ICE", Bencode(std::string("force")));
-      command.set("DTLS", Bencode(std::string("passive")));
+      // Only in an offer. Towards an offerer that said actpass the engine has already
+      // chosen active and started the handshake as soon as ICE came up, which is its
+      // right as the answerer (RFC 5763 section 5). Telling it passive in the answer
+      // flips the role under a handshake in flight: the engine resets and waits, the
+      // offerer was told passive too late to start one, and nothing ever arrives.
+      if (!answering) command.set("DTLS", Bencode(std::string("passive")));
       command.set("transport-protocol", Bencode(std::string("UDP/TLS/RTP/SAVPF")));
       command.set("rtcp-mux", Bencode::list({Bencode(std::string("offer")), Bencode(std::string("require"))}));
       return;
@@ -454,7 +459,7 @@ void RtpengineMediaEngine::offer(plugins::Executor on, std::shared_ptr<Call> cal
   // through would tell the far end nothing had changed.
   command.set("replace", Bencode::list({Bencode(std::string("origin")), Bencode(std::string("session-connection")), Bencode(std::string("sdp-version"))}));
 
-  apply_profile(command, flags.target, flags.rtcp_mux);
+  apply_profile(command, flags.target, flags.rtcp_mux, false);
 
   if (!_media_address.empty()) command.set("media-address", Bencode(_media_address));
 
@@ -483,7 +488,7 @@ void RtpengineMediaEngine::answer(plugins::Executor on, std::shared_ptr<Call> ca
   command.set("sdp", Bencode(std::move(sdp)));
   command.set("replace", Bencode::list({Bencode(std::string("origin")), Bencode(std::string("session-connection")), Bencode(std::string("sdp-version"))}));
 
-  apply_profile(command, flags.target, flags.rtcp_mux);
+  apply_profile(command, flags.target, flags.rtcp_mux, true);
   if (!_media_address.empty()) command.set("media-address", Bencode(_media_address));
 
   auto self = shared_from_this();
@@ -549,6 +554,10 @@ std::string RtpengineMediaEngine::_idle_document(const std::shared_ptr<Call>& ca
   std::int64_t newest = 0;
   std::size_t streams = 0;
 
+  // One per stream: rtpengine's "stats" is what arrived on the stream's port from its end,
+  // and "stats_out", where a version reports it, what the engine sent that end.
+  std::string legs = "[";
+
   if (const auto* tags = reply.find("tags"); tags != nullptr && tags->is_dictionary()) {
     for (const auto& [tag, leg] : tags->entries()) {
       const auto* medias = leg.find("medias");
@@ -565,6 +574,17 @@ std::string RtpengineMediaEngine::_idle_document(const std::shared_ptr<Call>& ca
           const auto seen = last > 0 ? last : created;
 
           if (seen > newest) newest = seen;
+
+          if (legs.size() > 1) legs += ",";
+          legs += "{";
+          const auto* in = stream.find("stats");
+          legs += "\"packets_in\":" + std::to_string(in && in->is_dictionary() ? in->integer_at("packets", 0) : 0);
+          legs += ",\"bytes_in\":" + std::to_string(in && in->is_dictionary() ? in->integer_at("bytes", 0) : 0);
+          if (const auto* out = stream.find("stats_out"); out && out->is_dictionary()) {
+            legs += ",\"packets_out\":" + std::to_string(out->integer_at("packets", 0));
+            legs += ",\"bytes_out\":" + std::to_string(out->integer_at("bytes", 0));
+          }
+          legs += "}";
         }
       }
     }
@@ -574,7 +594,10 @@ std::string RtpengineMediaEngine::_idle_document(const std::shared_ptr<Call>& ca
   // with null rather than with a number the sweep would act on.
   const auto idle = streams == 0 ? std::string("null") : std::to_string(now > newest ? now - newest : 0);
 
-  return "{\"call_id\":\"" + call->id + "\",\"engine\":\"rtpengine\",\"streams\":" + std::to_string(streams) + ",\"idle_seconds\":" + idle + "}";
+  legs += "]";
+
+  return "{\"call_id\":\"" + call->id + "\",\"engine\":\"rtpengine\",\"streams\":" + std::to_string(streams) + ",\"idle_seconds\":" + idle +
+         ",\"legs\":" + legs + "}";
 }
 
 void RtpengineMediaEngine::start_recording(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) {

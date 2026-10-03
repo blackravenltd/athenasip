@@ -152,7 +152,7 @@ std::unordered_set<std::shared_ptr<Subscription>> LocalEventSystem::collect_matc
     to_publish.insert(exact->second.begin(), exact->second.end());
   }
 
-  for (const auto& [filter, subscribers] : _subscriptions) {
+  for (const auto& [filter, consumers] : _subscriptions) {
     if (filter == event_name || !TopicFilter::is_filter(filter)) {
       continue;
     }
@@ -161,7 +161,7 @@ std::unordered_set<std::shared_ptr<Subscription>> LocalEventSystem::collect_matc
       continue;
     }
 
-    to_publish.insert(subscribers.begin(), subscribers.end());
+    to_publish.insert(consumers.begin(), consumers.end());
   }
 
   return to_publish;

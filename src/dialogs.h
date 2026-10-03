@@ -47,6 +47,11 @@ class Dialogs : public std::enable_shared_from_this<Dialogs> {
   // the dialog comes from.
   void observe_response(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<SIPMessage>& response);
 
+  // A branch of a fork that failed while the fork goes on (RFC 3261 16.7). It ends that
+  // branch's early dialog, if it made one, and not the attempt: the caller's call is over
+  // when the final response this node sends it says so, which observe_response is told.
+  void observe_branch_failure(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<SIPMessage>& response);
+
   // RFC 3261 12.2.2: the dialog a message belongs to, or null.
   std::shared_ptr<types::Dialog> find(const std::shared_ptr<SIPMessage>& message) const;
 

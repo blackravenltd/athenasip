@@ -1,0 +1,122 @@
+#
+# AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
+#
+# Copyright (C) 2026 Tom Cully <mail@tomcully.com>
+# Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
+#
+# An overlay that puts rtpengine on the interop fixture's media path.
+#
+#   test/interop/up.sh --rtpengine
+#
+# The end-to-end harness keeps rtpengine on a bridge where the node and sipp both live,
+# so nothing it does has to be reachable from outside Docker. This fixture is the
+# opposite case and the one that matters for a real call: the client is a browser on
+# the host or a phone on the LAN, and the address rtpengine puts in the session
+# description has to be one that client can send to.
+#
+# Two things make that work. rtpengine's --interface takes internal!advertised, so it
+# binds the address it has and writes the one the client can reach; and the media port
+# range is published to the host, because an address a packet cannot arrive on is no
+# better than the container's own.
+#
+# The range is deliberately small. Docker Desktop publishes wide UDP ranges slowly, and
+# a fixture needs a handful of calls rather than a switch's worth.
+#
+# The ranges have three things to stay clear of, and two of them bit while this was being
+# written. 22222 is rtpengine's ng control port and is published on loopback, so a TURN range
+# spanning it - 22200-22250 did - fails to start with "port is already allocated". And
+# 23100-24710 is what the unit suite binds for the builtin relay's own tests, so a fixture
+# sitting there makes the suite fail for reasons that have nothing to do with the code under
+# test. Hence the engine at 22000-22100, TURN at 22300-22350, and nothing in between.
+#
+# coturn is here too, because a relay needs rtpengine anyway and there is nothing for it
+# to relay to without one. It is what puts the TURN path in the automated browser layer
+# instead of leaving it a manual check: the credential this node mints, coturn accepting
+# it, and the relay reaching the engine.
+#
+# ATHENA_INTEROP_RTPENGINE_ADVERTISE is what makes the relay case work. No single
+# advertised address serves both cases: from the host the engine is reachable on its
+# published ports at loopback, from coturn only at its address on this network, and
+# nothing is both without putting the fixture on the LAN. So browser.sh runs the direct
+# case with the engine advertising the public address and the relay case with it
+# advertising ATHENA_INTEROP_RTPENGINE_ADDRESS, restarting between them.
+
+services:
+  coturn:
+    image: coturn/coturn:${ATHENA_INTEROP_COTURN_TAG:-4.18.0}
+    container_name: ${ATHENA_INTEROP_NAME:-athenasip-interop}-coturn
+    volumes:
+      - ./generated/coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    command: ["-c", "/etc/coturn/turnserver.conf"]
+    ports:
+      - "${ATHENA_INTEROP_BIND:-127.0.0.1}:${ATHENA_INTEROP_TURN_PORT:-3478}:3478/udp"
+      - "${ATHENA_INTEROP_BIND:-127.0.0.1}:${ATHENA_INTEROP_TURN_PORT:-3478}:3478/tcp"
+      - "${ATHENA_INTEROP_BIND:-127.0.0.1}:${ATHENA_INTEROP_TURN_MIN:-22300}-${ATHENA_INTEROP_TURN_MAX:-22350}:${ATHENA_INTEROP_TURN_MIN:-22300}-${ATHENA_INTEROP_TURN_MAX:-22350}/udp"
+    networks:
+      - interop
+    healthcheck:
+      # The coturn image carries neither ss nor netstat, so this reads /proc directly. 3478
+      # is 0x0D96, and the port inside the container is always 3478 whatever the host
+      # publishes it on.
+      test: ["CMD-SHELL", "grep -qi ':0D96' /proc/net/udp"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+      start_period: 2s
+
+  rtpengine:
+    image: drachtio/rtpengine:latest
+    container_name: ${ATHENA_INTEROP_NAME:-athenasip-interop}-rtpengine
+    command:
+      - rtpengine
+      - --interface=${ATHENA_INTEROP_RTPENGINE_ADDRESS:-172.32.0.30}!${ATHENA_INTEROP_RTPENGINE_ADVERTISE:-${ATHENA_INTEROP_PUBLIC_ADDRESS:-127.0.0.1}}
+      - --listen-ng=${ATHENA_INTEROP_RTPENGINE_ADDRESS:-172.32.0.30}:22222
+      - --port-min=${ATHENA_INTEROP_RTP_MIN:-22000}
+      - --port-max=${ATHENA_INTEROP_RTP_MAX:-22100}
+      - --foreground
+      - --log-stderr
+      - --log-level=7
+      - --delete-delay=0
+    ports:
+      - "${ATHENA_INTEROP_BIND:-127.0.0.1}:${ATHENA_INTEROP_RTP_MIN:-22000}-${ATHENA_INTEROP_RTP_MAX:-22100}:${ATHENA_INTEROP_RTP_MIN:-22000}-${ATHENA_INTEROP_RTP_MAX:-22100}/udp"
+
+      # The ng control port, on loopback and only ever on loopback whatever the media
+      # is published on: it is how media-stats.py reads the engine's counters after a
+      # call, and anything that can reach it can redirect anybody's media.
+      - "127.0.0.1:${ATHENA_INTEROP_NG_PORT:-22222}:22222/udp"
+    networks:
+      interop:
+        ipv4_address: ${ATHENA_INTEROP_RTPENGINE_ADDRESS:-172.32.0.30}
+    healthcheck:
+      # rtpengine answers ng over UDP and has no TCP socket to knock on, so the check
+      # is that the process is up and the control port is bound.
+      test: ["CMD-SHELL", "ss -lun | grep -q 22222 || netstat -lun | grep -q 22222"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+      start_period: 2s
+
+  athenasip:
+    # The node has to be on the same network to reach the ng port, and it no longer
+    # needs the relay's range published: the ports a client sends to are rtpengine's.
+    networks:
+      interop:
+        ipv4_address: ${ATHENA_INTEROP_NODE_ADDRESS:-172.32.0.10}
+    ports: !override
+      - "${ATHENA_INTEROP_BIND:-127.0.0.1}:${ATHENA_INTEROP_SIP_PORT:-5060}:${ATHENA_INTEROP_SIP_PORT:-5060}/udp"
+      - "${ATHENA_INTEROP_BIND:-127.0.0.1}:${ATHENA_INTEROP_SIP_PORT:-5060}:${ATHENA_INTEROP_SIP_PORT:-5060}/tcp"
+      - "${ATHENA_INTEROP_BIND:-127.0.0.1}:${ATHENA_INTEROP_TLS_PORT:-5061}:${ATHENA_INTEROP_TLS_PORT:-5061}/tcp"
+      - "${ATHENA_INTEROP_BIND:-127.0.0.1}:${ATHENA_INTEROP_WS_PORT:-8088}:${ATHENA_INTEROP_WS_PORT:-8088}/tcp"
+      - "${ATHENA_INTEROP_BIND:-127.0.0.1}:${ATHENA_INTEROP_API_PORT:-8080}:${ATHENA_INTEROP_API_PORT:-8080}/tcp"
+    depends_on:
+      rtpengine:
+        condition: service_healthy
+      coturn:
+        condition: service_healthy
+
+networks:
+  interop:
+    name: ${ATHENA_INTEROP_NAME:-athenasip-interop}-net
+    ipam:
+      config:
+        - subnet: ${ATHENA_INTEROP_SUBNET:-172.32.0.0/24}

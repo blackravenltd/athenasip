@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 #include <yaml-cpp/yaml.h>
 
+#include <boost/json.hpp>
 #include <ctime>
 #include <memory>
 #include <set>
@@ -333,6 +334,45 @@ TEST(RtpengineMediaEngineTest, QueryReportsTheShortestIdleAcrossEveryStream) {
   engine->close();
 }
 
+// The ng protocol's query gives each stream a "stats" dictionary of packets, bytes and
+// errors received on it. Each is one end, inbound at the engine. What the engine sent to
+// that end is only reported where the engine reports it, as "stats_out"; nothing is made
+// up from the other leg, because the difference between the two is exactly what one-way
+// audio looks like.
+TEST(RtpengineMediaEngineTest, QueryReportsEachEndsCounts) {
+  auto with_out = Bencode::dictionary({{"stats", Bencode::dictionary({{"packets", Bencode(1427)}, {"bytes", Bencode(84790)}, {"errors", Bencode(0)}})},
+                                       {"stats_out", Bencode::dictionary({{"packets", Bencode(4)}, {"bytes", Bencode(336)}})}});
+  auto without_out = Bencode::dictionary({{"stats", Bencode::dictionary({{"packets", Bencode(4)}, {"bytes", Bencode(336)}, {"errors", Bencode(0)}})}});
+
+  auto phone = Bencode::dictionary({{"medias", Bencode::list({Bencode::dictionary({{"streams", Bencode::list({with_out})}})})}});
+  auto browser = Bencode::dictionary({{"medias", Bencode::list({Bencode::dictionary({{"streams", Bencode::list({without_out})}})})}});
+
+  FakeRtpengine fake;
+  fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
+  fake.answer("query", Bencode::dictionary({{"result", Bencode(std::string("ok"))}, {"tags", Bencode::dictionary({{"a", phone}, {"b", browser}})}}));
+
+  auto engine = make_engine(fake);
+  ASSERT_TRUE(engine->connect());
+
+  const auto document = boost::json::parse(engine->query(make_call())).as_object();
+  ASSERT_TRUE(document.contains("legs")) << boost::json::serialize(document);
+
+  const auto& legs = document.at("legs").as_array();
+  ASSERT_EQ(legs.size(), 2u);
+
+  const auto& first = legs[0].as_object();
+  EXPECT_EQ(first.at("packets_in").as_int64(), 1427);
+  EXPECT_EQ(first.at("bytes_in").as_int64(), 84790);
+  EXPECT_EQ(first.at("packets_out").as_int64(), 4);
+  EXPECT_EQ(first.at("bytes_out").as_int64(), 336);
+
+  const auto& second = legs[1].as_object();
+  EXPECT_EQ(second.at("packets_in").as_int64(), 4);
+  EXPECT_FALSE(second.contains("packets_out")) << "an engine that does not say what it sent is not made to";
+
+  engine->close();
+}
+
 // A stream nothing has ever arrived on is idle from when the call was created rather
 // than not idle at all, which is what the builtin relay reports and what stops a call
 // that never carried media living for ever.
@@ -417,7 +457,8 @@ TEST(RtpengineMediaEngineTest, TheWebRtcProfileAsksRtpengineForIceDtlsAndSavpf) 
 
   EXPECT_EQ(request->string_at("ICE"), "force");
 
-  // Passive, because the browser is the end that starts the DTLS handshake.
+  // Passive in the offer, so the engine advertises actpass and prefers to let the
+  // callee start the handshake. Only in the offer - see the answer test below.
   EXPECT_EQ(request->string_at("DTLS"), "passive");
   EXPECT_EQ(request->string_at("transport-protocol"), "UDP/TLS/RTP/SAVPF");
 
@@ -426,6 +467,41 @@ TEST(RtpengineMediaEngineTest, TheWebRtcProfileAsksRtpengineForIceDtlsAndSavpf) 
   ASSERT_EQ(mux->values().size(), 2u);
   EXPECT_EQ(mux->values()[0].string(), "offer");
   EXPECT_EQ(mux->values()[1].string(), "require");
+
+  engine->close();
+}
+
+// RFC 5763 section 5: the offerer says actpass and the answerer chooses. Towards an
+// offerer, rtpengine is the answerer, and it chooses active and starts the handshake
+// the moment ICE comes up - seconds before any 200 OK exists when the callee is a phone
+// somebody has to pick up. Telling it "passive" in the answer flips the role under a
+// handshake in flight: the engine resets and waits for a ClientHello, the offerer was
+// told the engine is passive after it had already been receiving ClientHellos, and
+// neither end ever starts again. The 2026-09-30 live call was silent for exactly this,
+// and the automated browser run never saw it because it answers within milliseconds.
+TEST(RtpengineMediaEngineTest, TheWebRtcAnswerLeavesTheDtlsRoleToTheEngine) {
+  FakeRtpengine fake;
+  fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
+  fake.answer("answer", ok_with_sdp("v=0\r\no=- 1 1 IN IP4 203.0.113.9\r\ns=-\r\nt=0 0\r\nm=audio 30002 UDP/TLS/RTP/SAVPF 111\r\n"));
+
+  auto engine = make_engine(fake);
+  ASSERT_TRUE(engine->connect());
+
+  Flags flags;
+  flags.participant = 1;
+  flags.target = Flags::Profile::WebRtc;
+
+  ASSERT_TRUE(engine->answer(make_call(), kOffer, flags).ok);
+
+  auto request = fake.last("answer");
+  ASSERT_TRUE(request.has_value());
+
+  // Everything else the profile says still applies to the answer.
+  EXPECT_EQ(request->string_at("ICE"), "force");
+  EXPECT_EQ(request->string_at("transport-protocol"), "UDP/TLS/RTP/SAVPF");
+
+  // The role does not: the engine already chose it.
+  EXPECT_EQ(request->find("DTLS"), nullptr);
 
   engine->close();
 }

@@ -32,8 +32,12 @@ class UDPServer : public Server {
   // of them, so it is their executor too.
   boost::asio::any_io_executor executor() { return _strand; }
 
-  // Remove a connection from the mapping (e.g. after shutdown).
-  void remove_connection(const std::string& key);
+  bool open_datagram_flow(boost::asio::ip::udp::endpoint remote, std::function<void(std::shared_ptr<Connection>)> handler) override;
+
+  // Remove a connection from the mapping (e.g. after shutdown). Only that connection: a
+  // closing one is removed after the fact, and by then a new flow to the same peer may have
+  // taken its key.
+  void remove_connection(const std::string& key, const Connection* connection);
 
  protected:
   // Start an asynchronous receive.

@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 
 #include <boost/asio.hpp>
+#include <boost/json.hpp>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -190,6 +191,25 @@ TEST(BuiltinMediaEngineTest, OfferRewritesTheRtcpAttribute) {
   EXPECT_NE(result.sdp.find("a=rtcp:"), std::string::npos);
   EXPECT_EQ(result.sdp.find("a=rtcp:49171"), std::string::npos);
   EXPECT_NE(result.sdp.find("IN IP4 203.0.113.5"), std::string::npos);
+}
+
+// A leg on the node's own LAN is given the address that reaches the relay from there, which
+// the caller knows and the engine's one public address does not: the public address only
+// works for that leg if the router hairpins.
+TEST(BuiltinMediaEngineTest, AnAddressForTheLegReplacesThePublicOne) {
+  auto engine = make_engine(23295, 23299);
+  auto call = make_call();
+
+  Flags flags;
+  flags.address = "192.168.1.2";
+
+  auto result = engine->offer(call, kOffer, flags);
+  ASSERT_TRUE(result.ok) << result.error;
+
+  SDP rewritten;
+  ASSERT_TRUE(rewritten.parse(result.sdp));
+  EXPECT_EQ(rewritten.connection().address, "192.168.1.2");
+  EXPECT_EQ(result.sdp.find("203.0.113.5"), std::string::npos) << result.sdp;
 }
 
 TEST(BuiltinMediaEngineTest, StreamsAreHeldAgainstTheNamedParticipant) {
@@ -415,6 +435,186 @@ TEST(BuiltinMediaEngineTest, BridgesMediaBetweenTheTwoLegs) {
 
   EXPECT_EQ(received(callee), "from-caller");
   EXPECT_EQ(received(caller), "from-callee");
+
+  engine->release(call);
+}
+
+namespace {
+
+std::string description_at(std::uint16_t port, const std::string& who) {
+  return "v=0\r\no=" + who + " 1 1 IN IP4 127.0.0.1\r\ns=-\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio " + std::to_string(port) +
+         " RTP/AVP 0\r\na=rtpmap:0 PCMU/8000\r\n";
+}
+
+// Waits a little for a datagram; empty when none came.
+std::string datagram(boost::asio::ip::udp::socket& socket, std::chrono::milliseconds bound = std::chrono::milliseconds(500)) {
+  const auto until = std::chrono::steady_clock::now() + bound;
+  while (std::chrono::steady_clock::now() < until) {
+    if (socket.available() > 0) {
+      char buffer[64] = {};
+      boost::asio::ip::udp::endpoint from;
+      const auto bytes = socket.receive_from(boost::asio::buffer(buffer), from);
+      return std::string(buffer, bytes);
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  return std::string();
+}
+
+void drain(boost::asio::ip::udp::socket& socket) {
+  while (!datagram(socket, std::chrono::milliseconds(100)).empty()) {
+  }
+}
+
+}  // namespace
+
+// A leg that only listens - muted with silence suppression, an IVR, a recorder, the echo in
+// the sipp harness - never sends first. A relay that waited to hear from both ends before
+// forwarding anything carried nothing to it, ever. Each end starts at the address its own
+// description gave, so media flows to it before it has said a word (RFC 8866 5.7 and 5.14:
+// that is where it said to send).
+TEST(BuiltinMediaEngineTest, MediaReachesALegThatHasNotSentAnything) {
+  auto engine = make_engine(24000, 24040);
+  auto call = make_call();
+
+  boost::asio::io_context io;
+  boost::asio::ip::udp::socket caller(io, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0));
+  boost::asio::ip::udp::socket callee(io, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0));
+
+  Flags from_caller;
+  from_caller.participant = 0;
+  const auto to_callee = engine->offer(call, description_at(caller.local_endpoint().port(), "caller"), from_caller);
+  ASSERT_TRUE(to_callee.ok) << to_callee.error;
+
+  Flags from_callee;
+  from_callee.participant = 1;
+  const auto to_caller = engine->answer(call, description_at(callee.local_endpoint().port(), "callee"), from_callee);
+  ASSERT_TRUE(to_caller.ok) << to_caller.error;
+
+  SDP caller_side;
+  ASSERT_TRUE(caller_side.parse(to_caller.sdp));
+  const boost::asio::ip::udp::endpoint relay(boost::asio::ip::make_address("127.0.0.1"), caller_side.media()[0].description.port);
+
+  // Only the caller ever sends.
+  for (int i = 0; i < 3; ++i) caller.send_to(boost::asio::buffer("one-way", 7), relay);
+
+  EXPECT_EQ(datagram(callee), "one-way") << "nothing reached the leg that had not sent";
+
+  // And the counters show it for what it is: out to the callee, nothing in from it.
+  const auto document = boost::json::parse(engine->query(call)).as_object();
+  std::int64_t silent_ends = 0;
+  for (const auto& leg : document.at("legs").as_array()) {
+    const auto& end = leg.as_object();
+    if (end.at("packets_in").as_int64() == 0 && end.at("packets_out").as_int64() > 0) ++silent_ends;
+  }
+  EXPECT_EQ(silent_ends, 1) << boost::json::serialize(document);
+
+  engine->release(call);
+}
+
+// Behind a NAT an end's packets come from somewhere other than the address it described.
+// Once it is heard from, that is where it is: media goes there and no longer to the address
+// in its description, which nothing outside its LAN can reach (symmetric latching).
+TEST(BuiltinMediaEngineTest, AnEndIsFollowedToWhereItsPacketsComeFrom) {
+  auto engine = make_engine(24050, 24090);
+  auto call = make_call();
+
+  boost::asio::io_context io;
+  boost::asio::ip::udp::socket caller(io, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0));
+  boost::asio::ip::udp::socket described(io, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0));
+  boost::asio::ip::udp::socket actual(io, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0));
+
+  Flags from_caller;
+  from_caller.participant = 0;
+  const auto to_callee = engine->offer(call, description_at(caller.local_endpoint().port(), "caller"), from_caller);
+  ASSERT_TRUE(to_callee.ok);
+
+  Flags from_callee;
+  from_callee.participant = 1;
+  const auto to_caller = engine->answer(call, description_at(described.local_endpoint().port(), "callee"), from_callee);
+  ASSERT_TRUE(to_caller.ok);
+
+  SDP callee_side, caller_side;
+  ASSERT_TRUE(callee_side.parse(to_callee.sdp));
+  ASSERT_TRUE(caller_side.parse(to_caller.sdp));
+  const boost::asio::ip::udp::endpoint caller_relay(boost::asio::ip::make_address("127.0.0.1"), caller_side.media()[0].description.port);
+  const boost::asio::ip::udp::endpoint callee_relay(boost::asio::ip::make_address("127.0.0.1"), callee_side.media()[0].description.port);
+
+  caller.send_to(boost::asio::buffer("before", 6), caller_relay);
+  EXPECT_EQ(datagram(described), "before");
+
+  // The callee speaks, from an address its description did not name.
+  actual.send_to(boost::asio::buffer("hello", 5), callee_relay);
+  EXPECT_EQ(datagram(caller), "hello");
+  drain(described);
+
+  caller.send_to(boost::asio::buffer("after", 5), caller_relay);
+  EXPECT_EQ(datagram(actual), "after") << "media did not follow the end to where it is";
+  EXPECT_TRUE(datagram(described, std::chrono::milliseconds(200)).empty()) << "media still went to the address it was described at";
+
+  engine->release(call);
+}
+
+// The relay says how much it carried, per sending end and in total, so a harness and an
+// operator can tell a relayed call from one whose description was declined and whose media
+// went end to end - which from outside look exactly alike.
+TEST(BuiltinMediaEngineTest, CountsWhatItCarries) {
+  auto engine = make_engine(23950, 23990);
+  auto call = make_call();
+
+  const auto relayed_before = engine->driver()->packets_relayed();
+  ASSERT_TRUE(relayed_before.has_value()) << "the builtin relay is in a position to know";
+
+  boost::asio::io_context io;
+  boost::asio::ip::udp::socket caller(io, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0));
+  boost::asio::ip::udp::socket callee(io, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0));
+
+  // Each end describes the socket it really sends from, as an endpoint not behind a NAT does.
+  Flags from_caller;
+  from_caller.participant = 0;
+  const auto to_callee = engine->offer(call, description_at(caller.local_endpoint().port(), "caller"), from_caller);
+  ASSERT_TRUE(to_callee.ok);
+
+  Flags from_callee;
+  from_callee.participant = 1;
+  const auto to_caller = engine->answer(call, description_at(callee.local_endpoint().port(), "callee"), from_callee);
+  ASSERT_TRUE(to_caller.ok);
+
+  SDP callee_side, caller_side;
+  ASSERT_TRUE(callee_side.parse(to_callee.sdp));
+  ASSERT_TRUE(caller_side.parse(to_caller.sdp));
+  const boost::asio::ip::udp::endpoint caller_sends_to(boost::asio::ip::make_address("127.0.0.1"), caller_side.media()[0].description.port);
+  const boost::asio::ip::udp::endpoint callee_sends_to(boost::asio::ip::make_address("127.0.0.1"), callee_side.media()[0].description.port);
+
+  // Eleven 20-byte packets each way.
+  for (int i = 0; i < 11; ++i) {
+    caller.send_to(boost::asio::buffer(std::string(20, 'c')), caller_sends_to);
+    callee.send_to(boost::asio::buffer(std::string(20, 'e')), callee_sends_to);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+  const auto document = boost::json::parse(engine->query(call)).as_object();
+  ASSERT_TRUE(document.contains("legs")) << boost::json::serialize(document);
+
+  const auto& legs = document.at("legs").as_array();
+  ASSERT_EQ(legs.size(), 2u) << boost::json::serialize(document);
+
+  // Split by direction at the relay, which is what shows one-way audio: in is what the
+  // end sent, out what the relay sent it. Both ends were known from their descriptions, so
+  // every packet each sent was passed on to the other - none was lost to latching.
+  std::int64_t out_total = 0;
+  for (const auto& leg : legs) {
+    const auto& end = leg.as_object();
+    EXPECT_EQ(end.at("packets_in").as_int64(), 11) << boost::json::serialize(document);
+    EXPECT_EQ(end.at("bytes_in").as_int64(), 220) << boost::json::serialize(document);
+    EXPECT_EQ(end.at("bytes_out").as_int64(), end.at("packets_out").as_int64() * 20) << boost::json::serialize(document);
+    out_total += end.at("packets_out").as_int64();
+  }
+  EXPECT_EQ(out_total, 22);
+
+  const auto relayed = *engine->driver()->packets_relayed() - *relayed_before;
+  EXPECT_EQ(relayed, 22u);
 
   engine->release(call);
 }

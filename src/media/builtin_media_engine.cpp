@@ -136,6 +136,10 @@ Capabilities BuiltinMediaEngine::capabilities() const {
   return capabilities;
 }
 
+// A relay and nothing more: what comes in plain goes out plain. Mirror is whatever the
+// caller sent, which is what this engine sends on.
+bool BuiltinMediaEngine::produces(Profile profile) const { return profile == Profile::PlainRtp || profile == Profile::Mirror; }
+
 // The relay is in this process and answers at once; the contract is about where the
 // handler runs. Posting it is what lets an rtpengine driver, which really does go to
 // the network, be dropped in without the caller changing.
@@ -180,11 +184,14 @@ Result BuiltinMediaEngine::_map_media(std::shared_ptr<Call> call, const std::str
   auto sdp = std::make_shared<SDP>();
   if (!sdp->parse(sdp_text)) return Result::failure("could not parse SDP");
 
+  // Where this leg said to send its media, read before it is rewritten to be the relay's.
+  const auto session_address = sdp->has_connection() ? sdp->connection().address : std::string();
+
   // Make us the endpoint for everything.
   ConnectionInfo relay;
   relay.nettype = "IN";
   relay.addrtype = "IP4";
-  relay.address = _public_address;
+  relay.address = flags.address.empty() ? _public_address : flags.address;
 
   sdp->set_connection(relay);
 
@@ -206,6 +213,25 @@ Result BuiltinMediaEngine::_map_media(std::shared_ptr<Call> call, const std::str
 
   for (auto& media : sdp->media()) {
     const auto id = media.unique_id();
+
+    // RFC 3264 sections 5.1, 6 and 8.2: a stream with port zero is one that is not offered,
+    // was declined, or has been taken away. It keeps its place in the description and gets
+    // nothing else: no relay, and above all no relay port, which would tell the other end
+    // that a stream its peer refused had been accepted. A phone with no camera answering a
+    // video call is the usual one. What the stream held, if anything, goes back.
+    if (media.description.port == 0) {
+      std::lock_guard<std::mutex> lock(_mutex);
+      auto& streams = _allocated[call->id];
+
+      if (auto declined = streams.find(id); declined != streams.end()) {
+        _relay->release_relay_set(declined->second.rtp);
+        _relay->release_relay_set(declined->second.rtcp);
+        streams.erase(declined);
+      }
+
+      participant.streams.erase(id);
+      continue;
+    }
 
     StreamRelays relays;
 
@@ -248,6 +274,25 @@ Result BuiltinMediaEngine::_map_media(std::shared_ptr<Call> call, const std::str
     stream->rtp_set = relays.rtp;
     stream->rtcp_set = relays.rtcp;
 
+    // The relay starts sending to this leg where its description said, so a leg that only
+    // listens gets media before it has sent any. RTCP is where a=rtcp says (RFC 3605), or
+    // the port above (RFC 3550 11).
+    const auto described_address = media.has_connection() ? media.connection().address : session_address;
+    const auto described_port = media.description.port;
+    if (!described_address.empty() && described_port != 0) {
+      relays.rtp->expect(described_address, static_cast<std::uint16_t>(described_port));
+
+      auto rtcp_port = static_cast<std::uint16_t>(described_port + 1);
+      for (const auto& attribute : media.attributes()) {
+        if (attribute.rfind("rtcp:", 0) != 0) continue;
+        try {
+          rtcp_port = static_cast<std::uint16_t>(std::stoul(attribute.substr(5)));
+        } catch (const std::exception&) {
+        }
+      }
+      relays.rtcp->expect(described_address, rtcp_port);
+    }
+
     // Point the media at our relay port.
     media.description.port = relays.rtp->port;
 
@@ -259,7 +304,7 @@ Result BuiltinMediaEngine::_map_media(std::shared_ptr<Call> call, const std::str
     // relay's RTCP port comes out of the same pool as its RTP port and is not reliably
     // the one above it, so an endpoint left to assume the convention would send its
     // receiver reports into somebody else's call.
-    const auto rtcp = "rtcp:" + std::to_string(relays.rtcp->port) + " IN IP4 " + _public_address;
+    const auto rtcp = "rtcp:" + std::to_string(relays.rtcp->port) + " IN IP4 " + relay.address;
     if (!media.set_attribute("rtcp:", rtcp)) media.add_attribute(rtcp);
   }
 
@@ -375,7 +420,29 @@ std::string BuiltinMediaEngine::_query(std::shared_ptr<Call> call) {
 
   const auto idle_seconds = idle_ms < 0 ? std::string("null") : std::to_string(idle_ms / 1000);
 
-  return "{\"call_id\":\"" + call->id + "\",\"engine\":\"builtin\",\"relay_sets\":" + std::to_string(count) + ",\"idle_seconds\":" + idle_seconds + "}";
+  // Per end per stream, RTP only: RTCP is the same ends reporting on it. Which
+  // participant an end is cannot be said honestly - the relay learns an end from where its
+  // packets come from, and behind a NAT that is not the address its description gave.
+  std::string legs = "[";
+  if (it != _allocated.end()) {
+    for (const auto& [id, relays] : it->second) {
+      if (!relays.rtp) continue;
+      for (const auto& end : relays.rtp->counts()) {
+        if (legs.size() > 1) legs += ",";
+        legs += "{\"packets_in\":" + std::to_string(end.packets_in) + ",\"bytes_in\":" + std::to_string(end.bytes_in) +
+                ",\"packets_out\":" + std::to_string(end.packets_out) + ",\"bytes_out\":" + std::to_string(end.bytes_out) + "}";
+      }
+    }
+  }
+  legs += "]";
+
+  return "{\"call_id\":\"" + call->id + "\",\"engine\":\"builtin\",\"relay_sets\":" + std::to_string(count) + ",\"idle_seconds\":" + idle_seconds +
+         ",\"legs\":" + legs + "}";
+}
+
+std::optional<std::uint64_t> BuiltinMediaEngine::packets_relayed() const {
+  std::lock_guard<std::mutex> lock(_mutex);
+  return _relay ? _relay->packets_relayed() : 0;
 }
 
 }  // namespace athenasip::media

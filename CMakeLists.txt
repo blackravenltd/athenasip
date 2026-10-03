@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.23...4.2)
 
-project(athenasip VERSION 0.7.0 LANGUAGES CXX)
+project(athenasip VERSION 0.8.0 LANGUAGES CXX)
 
 option(ATHENA_BUILD_TESTING "Build test targets" OFF)
 set(ATHENA_SANITIZE "none" CACHE STRING "Sanitizer to build with: none, address, thread")
@@ -199,4 +199,72 @@ if(ATHENA_BUILD_TESTING)
 
     include(GoogleTest)
     gtest_discover_tests(athenasip_tests DISCOVERY_TIMEOUT 60)
+endif()
+# --- Install ------------------------------------------------------------------------
+#
+# What a package puts on a host: the binary, a unit, and a configuration file that is
+# never overwritten once it exists. Principle 3 says a node should be easy to install,
+# and "easy" includes "upgrading does not silently replace what you configured".
+
+include(GNUInstallDirs)
+
+# Where a node's live configuration lives. /etc for a system prefix, and under the
+# prefix for anything else, so a --prefix=$HOME/opt install is self-contained.
+if(NOT DEFINED ATHENA_CONFIG_INSTALL_DIR)
+    if(CMAKE_INSTALL_PREFIX STREQUAL "/usr" OR CMAKE_INSTALL_PREFIX STREQUAL "/usr/local")
+        set(ATHENA_CONFIG_INSTALL_DIR "/etc/athenasip")
+    else()
+        set(ATHENA_CONFIG_INSTALL_DIR "${CMAKE_INSTALL_PREFIX}/etc/athenasip")
+    endif()
+endif()
+
+install(TARGETS athenasip RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+# The example is installed as a reference under the docs, always, so a host carries the
+# annotated original whatever its live configuration has become.
+install(FILES config/config.example.yaml
+        DESTINATION ${CMAKE_INSTALL_DOCDIR}
+        RENAME config.example.yaml)
+
+# And as the live configuration only where there is none. An install that clobbered it
+# would take the node down on upgrade, which is the worst possible moment.
+#
+# DESTDIR is honoured by hand here, because install(CODE) writes the paths it is given
+# and nothing prepends it for us. Without this a packager staging a build would have
+# the real /etc/athenasip written by a build that was never meant to touch the host.
+install(CODE "
+    set(ATHENA_CONFIG_DIR \"${ATHENA_CONFIG_INSTALL_DIR}\")
+
+    if(NOT \"\$ENV{DESTDIR}\" STREQUAL \"\")
+        set(ATHENA_CONFIG_DIR \"\$ENV{DESTDIR}/\${ATHENA_CONFIG_DIR}\")
+    endif()
+
+    if(EXISTS \"\${ATHENA_CONFIG_DIR}/config.yaml\")
+        message(STATUS \"Keeping existing \${ATHENA_CONFIG_DIR}/config.yaml\")
+    else()
+        message(STATUS \"Installing \${ATHENA_CONFIG_DIR}/config.yaml\")
+        file(MAKE_DIRECTORY \"\${ATHENA_CONFIG_DIR}\")
+        file(COPY_FILE \"${CMAKE_CURRENT_SOURCE_DIR}/config/config.example.yaml\"
+                       \"\${ATHENA_CONFIG_DIR}/config.yaml\")
+    endif()
+")
+
+# The unit, where systemd looks for one that came from a package rather than from an
+# administrator. ATHENA_SYSTEMD_UNIT_DIR moves it for a distribution that disagrees.
+if(NOT DEFINED ATHENA_SYSTEMD_UNIT_DIR)
+    set(ATHENA_SYSTEMD_UNIT_DIR "${CMAKE_INSTALL_PREFIX}/lib/systemd/system")
+
+    if(CMAKE_INSTALL_PREFIX STREQUAL "/usr" OR CMAKE_INSTALL_PREFIX STREQUAL "/usr/local")
+        set(ATHENA_SYSTEMD_UNIT_DIR "/lib/systemd/system")
+    endif()
+endif()
+
+if(UNIX AND NOT APPLE)
+    # Generated rather than copied, so ExecStart names where the binary actually went
+    # and the unit cannot drift from the install prefix.
+    configure_file(packaging/athenasip.service.in
+                   ${CMAKE_CURRENT_BINARY_DIR}/athenasip.service @ONLY)
+
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/athenasip.service
+            DESTINATION ${ATHENA_SYSTEMD_UNIT_DIR})
 endif()

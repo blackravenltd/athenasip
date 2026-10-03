@@ -6,6 +6,7 @@
 //
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <regex>
 #include <sstream>
@@ -13,10 +14,16 @@
 
 namespace athenasip::types {
 
-// What a realm's calls ask of the media engine. These are the two questions an
-// operator has that the signalling cannot answer for itself: whether this node should
-// put itself in the media path at all, and how to decide what each leg of a call
-// needs when the leg has not yet said.
+// What a call asks of the media engine, once the realm's settings have been laid over the
+// server's default (see Behaviour). These are the two questions an operator has that the
+// signalling cannot answer for itself: whether this node should put itself in the media
+// path at all, and how to decide what each leg of a call needs when the leg has not yet
+// said.
+//
+// The values here are the shipped default, decided on 2026-10-01: exactly what the
+// standards say, apart from anchoring. RFC 3261 16.6 has a proxy forward a body untouched,
+// and anchoring is a recorded, deliberate deviation from that - the one most servers in
+// front of rtpengine make. Within it, each leg's profile passes through as the leg wrote it.
 struct MediaPolicy {
   // Whether the node anchors media when an engine is configured. Off means every
   // description travels untouched and the media goes end to end, which is right for
@@ -27,12 +34,13 @@ struct MediaPolicy {
   // leg has not described itself, and the engine sees neither where a message is going
   // nor over what.
   enum class Profiles {
-    // ws and wss are WebRTC and everything else is plain RTP. Right wherever a
-    // WebSocket means a browser, which is almost everywhere.
+    // ws and wss are WebRTC and everything else is plain RTP: Kamailio's usual routing.
+    // Right wherever a WebSocket means a browser and nothing else means one.
     FromTransport,
 
-    // Say nothing and let the engine keep what it was handed. For a realm whose calls
-    // are always like to like.
+    // Say nothing and let the engine keep what it was handed, so a callee is offered what
+    // the caller offered. The default: it imposes nothing, and like-to-like calls work
+    // whatever the transports.
     Mirror,
 
     // Every leg is plain RTP, for a realm whose WebSocket clients are SIP phones
@@ -49,14 +57,56 @@ struct MediaPolicy {
     SrtpSdes,
   };
 
-  Profiles profiles = Profiles::FromTransport;
+  Profiles profiles = Profiles::Mirror;
 
-  // "transport", "mirror", "rtp", "webrtc" or "srtp". Anything else is the fallback,
-  // because a
-  // realm with a typo in it should keep working the way it did rather than change
-  // what it does to media.
-  static Profiles profiles_from_string(const std::string& value, Profiles fallback = Profiles::FromTransport);
+  // "transport", "mirror", "rtp", "webrtc" or "srtp", and nothing else: what a config file
+  // or an API body names is either one of these or a mistake to report.
+  static std::optional<Profiles> parse_profiles(const std::string& value);
+
+  // The same, for a stored value, where anything unreadable is the fallback: a realm with
+  // a typo in it keeps working the way it did rather than changing what it does to media.
+  static Profiles profiles_from_string(const std::string& value, Profiles fallback = Profiles::Mirror);
   static std::string to_string(Profiles value);
+};
+
+// How a realm differs from the server's default behaviour (Config::behaviour). Each setting
+// is unset unless the realm chose it, and an unset one is the server's - so changing the
+// server's default changes every realm that has not chosen otherwise, and a realm says
+// only what is different about it. One place for every behaviour that differs between SIP
+// servers, so that a realm can be set to behave like any of them (the 2026-10-01 decision
+// in TODO/ACTIVE.md).
+struct Behaviour {
+  std::optional<bool> media_anchor;
+  std::optional<MediaPolicy::Profiles> media_profile;
+
+  // How often, in seconds, a client registered in this realm is sent OPTIONS (Asterisk's
+  // qualify, Kamailio's nathelper ping), and zero for never. RFC 3261 does not ask for it,
+  // so the shipped default is zero. The reply says the client is there, and an SDP in it
+  // (11.2) says what media the client takes.
+  std::optional<std::uint32_t> qualify_interval;
+
+  static constexpr std::uint32_t kQualifyMinimum = 5;
+  static constexpr std::uint32_t kQualifyMaximum = 86400;
+
+  // Zero, or often enough to matter and not so often that thousands of registrations
+  // become a flood.
+  static bool valid_qualify_interval(std::int64_t seconds) { return seconds == 0 || (seconds >= kQualifyMinimum && seconds <= kQualifyMaximum); }
+
+  std::uint32_t qualify_over(std::uint32_t server) const { return qualify_interval.value_or(server); }
+
+  // Whether a Contact in a request or response this node forwards is rewritten to where the
+  // message came from: Asterisk's rewrite_contact, Kamailio's fix_nated_contact. A proxy
+  // forwards what an endpoint said about itself (RFC 3261 16.6), so the shipped default is
+  // false; it is for endpoints behind a NAT talking to something that ignores Record-Route.
+  std::optional<bool> rewrite_contact;
+
+  // The effective policy: this realm's settings over the server's default.
+  MediaPolicy over(const MediaPolicy& server) const {
+    auto effective = server;
+    if (media_anchor) effective.anchor = *media_anchor;
+    if (media_profile) effective.profiles = *media_profile;
+    return effective;
+  }
 };
 
 class Realm {
@@ -83,10 +133,8 @@ class Realm {
   // would degrade registrar performance".
   uint32_t registration_minimum = 0;
 
-  // What this realm's calls ask of the media engine. Defaults to anchoring and to
-  // reading each leg from its transport, which is what a node did before a realm could
-  // say otherwise.
-  MediaPolicy media;
+  // What this realm does differently from the server's default; nothing, unless it says.
+  Behaviour behaviour;
 
   std::string to_string() const;
 };
