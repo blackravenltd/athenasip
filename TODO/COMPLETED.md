@@ -2411,3 +2411,28 @@ LAN is answered 403.
       `remote_endpoint()`, inside the listener's handler where nothing caught it, so a
       reset at the wrong moment terminated the process. Found as an abort in the cluster
       TLS test; reproduced deterministically with a socket that has no peer.
+
+### The words, the realm delete and the rate limits (2026-10-03)
+
+Tom's answers to the questions that were waiting on him, and what they led to.
+
+- [x] **`status_interval` in the node status**, in seconds, in the will too, so a monitor
+      derives staleness from the node. T.O.M.S reads it.
+- [x] **Deleting a realm deletes what is in it.** `Datastore::realm_delete` takes the
+      realm's subscribers and their bindings, in both drivers, and the contract says every
+      driver must. In Redis the subscribers go first and the realm record last, so a
+      delete that fails part way can be run again. Live calls and open connections are
+      left alone.
+- [x] **Every admin API route is rate limited** (`src/api/rate_limiter.h`): token buckets,
+      per node, in memory. Open routes, unknown endpoints and credentials that do not
+      resolve by source address (30, then 30 a minute); the login on top by source address
+      (10, then 5 a minute) and by username (5, then 1 a minute), counting every attempt;
+      a signed-in caller by session (60, then 300 a minute). 429 with Retry-After. The
+      limits are not configurable yet and static files are not limited.
+- [x] **One word for one thing, and `docs/glossary.md` to say which.** A subscriber belongs
+      to a realm; a user signs in and manages the cluster; account names nothing. The API
+      resource is `/realms/{realm}/subscribers`, the event topic `subscribers/<uri>/status`,
+      the type `types::Subscriber`, the datastore operations `subscriber_*` (contract
+      version 14) and the Redis keys `athena:subscriber:*`. What reads the event bus is a
+      consumer. A Redis store written before the rename is recreated, not migrated.
+- [x] The sipp harness passes in full on the renamed tree: 12 of 12 at `8e3ba0e`.
