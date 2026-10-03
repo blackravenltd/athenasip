@@ -124,7 +124,7 @@ run_phase() {
   set +a
 
   echo
-  echo "Calling ${ATHENA_INTEROP_ACCOUNTS:-1001,1002} on ${ATHENA_INTEROP_REALM}, media through ${ATHENA_INTEROP_MEDIA_ENGINE} to ${ATHENA_INTEROP_RTPENGINE_ADVERTISE}..."
+  echo "Calling ${ATHENA_INTEROP_SUBSCRIBERS:-1001,1002} on ${ATHENA_INTEROP_REALM}, media through ${ATHENA_INTEROP_MEDIA_ENGINE} to ${ATHENA_INTEROP_RTPENGINE_ADVERTISE}..."
   echo
 
   (cd "$ADMIN_REPO" && npm run test:e2e)
