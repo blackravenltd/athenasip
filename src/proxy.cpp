@@ -308,15 +308,15 @@ void Proxy::_authenticate(const std::shared_ptr<SIPMessage>& request, const std:
         // who the From says comes after, so the two failures get their own answers.
         auto claimed = std::make_shared<SIPIdentity>("sip:" + credentials->fields["username"] + "@" + realm->name);
 
-        core->account_get(
-            claimed, [this, self, request, transaction, realm, caller, credentials, answered, then](plugins::Result<std::shared_ptr<types::Account>> found) {
+        core->subscriber_get(
+            claimed, [this, self, request, transaction, realm, caller, credentials, answered, then](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
               if (!found.ok) {
                 _logger->error("Could not read a subscriber - " + found.error);
                 return _send_status(transaction, request, 500, "Server Internal Error");
               }
 
               // An unknown user is challenged like a wrong password, so this cannot be used to
-              // find out which accounts exist.
+              // find out which subscribers exist.
               if (!found.value) {
                 _logger->info("Request from " + caller->to_string() + " with credentials for no subscriber - challenging");
                 return _send_proxy_challenge(transaction, request, realm);
@@ -572,7 +572,7 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
     // holds for it are the target set.
     auto identity = std::make_shared<SIPIdentity>(request->header->request_uri->to_string());
 
-    core->account_get(identity, [this, self, context](plugins::Result<std::shared_ptr<types::Account>> found) {
+    core->subscriber_get(identity, [this, self, context](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
       auto core = _core.lock();
       if (!core) return;
 
@@ -588,10 +588,10 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
         return _send_status(context->server, request, 404, "Not Found");
       }
 
-      auto account = found.value;
-      context->callee_profile = account->media_profile;
+      auto subscriber = found.value;
+      context->callee_profile = subscriber->media_profile;
 
-      core->location_list(account->id, [this, self, context, account](plugins::Result<std::vector<types::Location>> bindings) {
+      core->location_list(subscriber->id, [this, self, context, subscriber](plugins::Result<std::vector<types::Location>> bindings) {
         auto core = _core.lock();
         if (!core) return;
 
@@ -608,7 +608,7 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
         }
 
         // RFC 5626: each binding goes back down the flow it was registered over, not down
-        // whichever flow the account most recently used. A user registered from a desk
+        // whichever flow the subscriber most recently used. A user registered from a desk
         // phone and a browser has two bindings and two flows, and sending both attempts
         // down one of them reaches one of the two devices twice and the other never.
         _add_targets(context, std::move(bindings.value));
@@ -650,7 +650,7 @@ void Proxy::_rewrite_contact(const std::shared_ptr<SIPMessage>& message, const s
 
 // RFC 3264 section 5: an INVITE with no description has the callee make the offer, in its
 // 200, and that offer is produced for the caller - a leg that has not said what it speaks.
-// That is the only case its account is needed, so it is the only INVITE that pays for
+// That is the only case its subscriber is needed, so it is the only INVITE that pays for
 // reading it. One that cannot be read is no different from one that says nothing.
 void Proxy::_read_caller_profile(const std::shared_ptr<Context>& context, std::function<void()> then) {
   auto core = _core.lock();
@@ -661,7 +661,7 @@ void Proxy::_read_caller_profile(const std::shared_ptr<Context>& context, std::f
   if (from == nullptr || from->value == nullptr || from->value->uri == nullptr) return then();
 
   auto identity = std::make_shared<SIPIdentity>(from->value->uri->to_string());
-  core->account_get(identity, [context, then = std::move(then)](plugins::Result<std::shared_ptr<types::Account>> found) {
+  core->subscriber_get(identity, [context, then = std::move(then)](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
     if (found.ok && found.value) context->caller_profile = found.value->media_profile;
     then();
   });
@@ -1037,7 +1037,7 @@ bool Proxy::_reoffer(const std::shared_ptr<Context>& context) {
 }
 
 // What the re-offer came to, for the operator. Nothing is learned from it: the node says
-// which account needed the other profile and the operator decides whether to set it.
+// which subscriber needed the other profile and the operator decides whether to set it.
 void Proxy::_report_reoffer(const std::shared_ptr<Context>& context, bool took) {
   const auto& current = context->current;
   if (!current.profile || !current.rejected) return;
@@ -1045,10 +1045,10 @@ void Proxy::_report_reoffer(const std::shared_ptr<Context>& context, bool took) 
   auto core = _core.lock();
   if (!core) return;
 
-  const auto account = context->request->header->request_uri->to_string();
-  core->reoffers().record(account, *current.rejected, took ? current.profile : std::nullopt);
+  const auto subscriber = context->request->header->request_uri->to_string();
+  core->reoffers().record(subscriber, *current.rejected, took ? current.profile : std::nullopt);
 
-  if (took) _logger->warn(account + " took the other media profile after refusing the first - see /api/v1/media/reoffers");
+  if (took) _logger->warn(subscriber + " took the other media profile after refusing the first - see /api/v1/media/reoffers");
 }
 
 void Proxy::_send_best(const std::shared_ptr<Context>& context) {
@@ -1109,12 +1109,12 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
   // the call, because a re-INVITE arrives in-dialog with no realm to ask.
   if (context && context->media_policy) call->media_policy = *context->media_policy;
 
-  // Likewise each end's account, kept on its leg.
+  // Likewise each end's subscriber, kept on its leg.
   if (context && context->callee_profile) {
-    if (const auto callee = call->participant_index(false)) call->participants[*callee].account_profile = context->callee_profile;
+    if (const auto callee = call->participant_index(false)) call->participants[*callee].subscriber_profile = context->callee_profile;
   }
   if (context && context->caller_profile) {
-    if (const auto caller = call->participant_index(true)) call->participants[*caller].account_profile = context->caller_profile;
+    if (const auto caller = call->participant_index(true)) call->participants[*caller].subscriber_profile = context->caller_profile;
   }
 
   const auto& policy = call->media_policy;
@@ -1157,7 +1157,7 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
   // What the far leg needs, which the description in hand cannot say. What that leg has
   // already told this node comes first: a delayed offer, an answer going back to the end
   // that offered and every re-INVITE after are all a leg this node has heard describe
-  // itself. Then the leg's account, where the operator has said what the endpoint is.
+  // itself. Then the leg's subscriber, where the operator has said what the endpoint is.
   // The realm's setting, and where it has none the transport of the outgoing flow,
   // decide only for the first description produced towards a leg nobody has spoken for.
   const bool unheard = !(recipient && call->participants[*recipient].profile);
@@ -1170,10 +1170,10 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
   } else if (!is_response && context && context->current.said) {
     // What the callee said in answer to an OPTIONS, which is its own word too.
     flags.target = *context->current.said;
-  } else if (recipient && call->participants[*recipient].account_profile) {
-    types::MediaPolicy account;
-    account.profiles = *call->participants[*recipient].account_profile;
-    flags.target = _profile_under(account, outgoing && outgoing->_connection ? outgoing->_connection->transport_name() : std::string());
+  } else if (recipient && call->participants[*recipient].subscriber_profile) {
+    types::MediaPolicy subscriber;
+    subscriber.profiles = *call->participants[*recipient].subscriber_profile;
+    flags.target = _profile_under(subscriber, outgoing && outgoing->_connection ? outgoing->_connection->transport_name() : std::string());
   } else {
     flags.target = _profile_under(policy, outgoing && outgoing->_connection ? outgoing->_connection->transport_name() : std::string());
   }

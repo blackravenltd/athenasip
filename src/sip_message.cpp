@@ -64,7 +64,7 @@ std::shared_ptr<SIPMessage> SIPMessage::clone() const {
   copy->source_port = source_port;
   copy->channel = channel;
   copy->call = call;
-  copy->account = account;
+  copy->subscriber = subscriber;
   copy->contact = contact;
   copy->authenticated = authenticated;
 

@@ -16,7 +16,7 @@ using namespace athenasip;
 namespace {
 
 // Bob, registered twice: a desk phone on one connection and a second device on another.
-// Which is the ordinary case for one person, and the case a single flow per account gets
+// Which is the ordinary case for one person, and the case a single flow per subscriber gets
 // wrong.
 struct TwoDeviceFixture : ProxyFixture {
   std::shared_ptr<MockConnection> desk_connection;
@@ -37,7 +37,7 @@ struct TwoDeviceFixture : ProxyFixture {
 }  // namespace
 
 // RFC 5626: a binding is reached over the flow it was registered on. The node kept one
-// flow per account instead - the last one to register - so a user with a desk phone and a
+// flow per subscriber instead - the last one to register - so a user with a desk phone and a
 // browser had two bindings and one connection, and the fork sent both attempts to
 // whichever device had registered most recently. One device rang twice and the other
 // never rang at all.
@@ -84,7 +84,7 @@ TEST(ProxyFlowRoutingTest, EveryBranchGoesDownTheFlowOfTheBindingItIsFor) {
 }
 
 // The second branch has to reach the other device, which is the other half of the same
-// bug: with one flow for the account, the second attempt went back to the first device.
+// bug: with one flow for the subscriber, the second attempt went back to the first device.
 TEST(ProxyFlowRoutingTest, TheSecondBranchReachesTheOtherDevice) {
   TwoDeviceFixture f;
 

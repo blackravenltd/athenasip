@@ -77,9 +77,9 @@ TEST(TopicFilterTest, LevelCountMustMatchWithoutMultiLevelWildcard) {
   EXPECT_FALSE(TopicFilter::matches("nodes/sip-0001/status", "nodes/sip-0001"));
 }
 
-// This is the shape that made the account callback fire on the node's own status
-// publish: a trailing '#' under the account prefix matches every sibling topic.
-TEST(TopicFilterTest, AccountHashFilterMatchesStatusAndInvite) {
+// This is the shape that made the subscriber callback fire on the node's own status
+// publish: a trailing '#' under the subscriber prefix matches every sibling topic.
+TEST(TopicFilterTest, SubscriberHashFilterMatchesStatusAndInvite) {
   const std::string hash = "subscribers/sip:alice@example.com/#";
   EXPECT_TRUE(TopicFilter::matches(hash, "subscribers/sip:alice@example.com/status"));
   EXPECT_TRUE(TopicFilter::matches(hash, "subscribers/sip:alice@example.com/invite"));

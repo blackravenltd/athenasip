@@ -92,19 +92,19 @@ void Core::realm_get_by_name(std::string realm_name, plugins::Handler<std::share
   datastore->realm_get_by_name(_strand, std::move(realm_name), std::move(handler));
 }
 
-// Accounts
-void Core::account_get(std::shared_ptr<SIPIdentity> identity, plugins::Handler<std::shared_ptr<Account>> handler) {
-  datastore->account_get(_strand, std::move(identity), std::move(handler));
+// Subscribers
+void Core::subscriber_get(std::shared_ptr<SIPIdentity> identity, plugins::Handler<std::shared_ptr<Subscriber>> handler) {
+  datastore->subscriber_get(_strand, std::move(identity), std::move(handler));
 }
 
-void Core::location_list(std::uint64_t account_id, plugins::Handler<std::vector<types::Location>> handler) {
-  datastore->location_list(_strand, account_id, std::move(handler));
+void Core::location_list(std::uint64_t subscriber_id, plugins::Handler<std::vector<types::Location>> handler) {
+  datastore->location_list(_strand, subscriber_id, std::move(handler));
 }
 
-void Core::account_register(std::shared_ptr<Account> account, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel, std::uint32_t expires_seconds,
-                            std::string path, plugins::StatusHandler handler, std::string instance, std::uint32_t reg_id) {
+void Core::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel,
+                               std::uint32_t expires_seconds, std::string path, plugins::StatusHandler handler, std::string instance, std::uint32_t reg_id) {
   // RFC 3261 10.3 step 7: the binding is written on every successful REGISTER. This
-  // used to be skipped whenever the account record already existed, which is always,
+  // used to be skipped whenever the subscriber record already existed, which is always,
   // so no contact was ever stored and the registrar had nothing to route to.
   //
   // What the node knows and the Contact does not: the flow the REGISTER arrived over and
@@ -121,30 +121,30 @@ void Core::account_register(std::shared_ptr<Account> account, std::shared_ptr<SI
 
   // The channel index and the event both wait for the write: a binding nobody stored is
   // not one to announce.
-  datastore->account_register(
-      _strand, account, std::move(binding), expires_seconds, [this, account, contact, channel, handler](plugins::Status status) mutable {
+  datastore->subscriber_register(
+      _strand, subscriber, std::move(binding), expires_seconds, [this, subscriber, contact, channel, handler](plugins::Status status) mutable {
         if (!status.ok) {
-          _logger->error("Cannot register subscriber " + account->identity->to_string() + " - " + status.error);
+          _logger->error("Cannot register subscriber " + subscriber->identity->to_string() + " - " + status.error);
           if (handler) handler(status);
           return;
         }
 
         events->publish(
-            events::topics::subscriber_status(account->identity->uri->to_string()),
+            events::topics::subscriber_status(subscriber->identity->uri->to_string()),
             "{\"contact\":\"" + contact->to_string() + "\",\"node\":\"" + config->sip_node_id + "\",\"registered\":\"" + Util::get_zulu_time() + "\"}");
 
         if (handler) handler(status);
       });
 }
 
-void Core::account_unregister(std::shared_ptr<Account> account, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel,
-                              plugins::StatusHandler handler) {
+void Core::subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel,
+                                 plugins::StatusHandler handler) {
   (void)channel;
 
   auto self = shared_from_this();
 
-  datastore->account_unregister(_strand, account, contact, [this, self, account, handler](plugins::Status status) mutable {
-    if (!status.ok) _logger->error("Cannot unregister subscriber " + account->identity->to_string() + " - " + status.error);
+  datastore->subscriber_unregister(_strand, subscriber, contact, [this, self, subscriber, handler](plugins::Status status) mutable {
+    if (!status.ok) _logger->error("Cannot unregister subscriber " + subscriber->identity->to_string() + " - " + status.error);
     if (handler) handler(status);
   });
 }

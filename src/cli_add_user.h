@@ -48,7 +48,7 @@ AddUserResult add_user(std::shared_ptr<datastores::Datastore> datastore, plugins
                        const std::string& display_name, const std::vector<std::string>& roles, const std::string& password,
                        std::uint32_t iterations = types::Password::default_iterations);
 
-// What a new administrator holds when the command line named no roles. A recovery account
+// What a new administrator holds when the command line named no roles. A recovery user
 // that cannot administer anybody is not a way back in.
 std::vector<std::string> default_roles();
 

@@ -75,15 +75,16 @@ struct Fixture {
     return future.get();
   }
 
-  bool register_binding(const std::shared_ptr<types::Account>& account, const std::shared_ptr<types::SIPUri>& contact, const std::shared_ptr<Channel>& channel,
-                        std::uint32_t expires_seconds) {
-    return await_on_strand([&](plugins::StatusHandler handler) { core->account_register(account, contact, channel, expires_seconds, "", std::move(handler)); })
+  bool register_binding(const std::shared_ptr<types::Subscriber>& subscriber, const std::shared_ptr<types::SIPUri>& contact,
+                        const std::shared_ptr<Channel>& channel, std::uint32_t expires_seconds) {
+    return await_on_strand(
+               [&](plugins::StatusHandler handler) { core->subscriber_register(subscriber, contact, channel, expires_seconds, "", std::move(handler)); })
         .ok;
   }
 
-  bool unregister_binding(const std::shared_ptr<types::Account>& account, const std::shared_ptr<types::SIPUri>& contact,
+  bool unregister_binding(const std::shared_ptr<types::Subscriber>& subscriber, const std::shared_ptr<types::SIPUri>& contact,
                           const std::shared_ptr<Channel>& channel) {
-    return await_on_strand([&](plugins::StatusHandler handler) { core->account_unregister(account, contact, channel, std::move(handler)); }).ok;
+    return await_on_strand([&](plugins::StatusHandler handler) { core->subscriber_unregister(subscriber, contact, channel, std::move(handler)); }).ok;
   }
 
   // Core is strand-confined, so tests reach it the same way the rest of the system
@@ -113,18 +114,18 @@ struct Fixture {
     return transaction;
   }
 
-  std::shared_ptr<types::Account> seed_account(uint64_t id, const std::string& uri) {
+  std::shared_ptr<types::Subscriber> seed_subscriber(uint64_t id, const std::string& uri) {
     auto realm = std::make_shared<types::Realm>("example.com");
     realm->id = 1;
     store->realm_create(realm);
 
-    auto account = std::make_shared<types::Account>();
-    account->id = id;
-    account->identity = std::make_shared<types::SIPIdentity>(uri);
-    account->ha1 = "deadbeef";
-    store->account_create(account);
+    auto subscriber = std::make_shared<types::Subscriber>();
+    subscriber->id = id;
+    subscriber->identity = std::make_shared<types::SIPIdentity>(uri);
+    subscriber->ha1 = "deadbeef";
+    store->subscriber_create(subscriber);
 
-    return account;
+    return subscriber;
   }
 };
 
@@ -212,29 +213,29 @@ TEST(CoreTest, ChannelCloseIsIdempotent) {
 
 // RFC 3261 10.3 step 7: a successful REGISTER stores the contact as a binding. Without
 // it the registrar has nothing to route to.
-TEST(CoreTest, AccountRegisterStoresTheContact) {
+TEST(CoreTest, SubscriberRegisterStoresTheContact) {
   Fixture f;
 
-  auto account = f.seed_account(7, "sip:alice@example.com");
+  auto subscriber = f.seed_subscriber(7, "sip:alice@example.com");
   auto contact = std::make_shared<types::SIPUri>("sip:alice@192.0.2.10:5060");
   auto channel = f.make_channel("192.0.2.10");
 
-  ASSERT_TRUE(f.register_binding(account, contact, channel, 3600));
+  ASSERT_TRUE(f.register_binding(subscriber, contact, channel, 3600));
 
   auto locations = f.store->location_list(7);
   ASSERT_EQ(locations.size(), 1u);
   EXPECT_EQ(locations[0].contact->host, "192.0.2.10");
 }
 
-TEST(CoreTest, AccountRegisterIsRepeatable) {
+TEST(CoreTest, SubscriberRegisterIsRepeatable) {
   Fixture f;
 
-  auto account = f.seed_account(7, "sip:alice@example.com");
+  auto subscriber = f.seed_subscriber(7, "sip:alice@example.com");
   auto contact = std::make_shared<types::SIPUri>("sip:alice@192.0.2.10:5060");
   auto channel = f.make_channel("192.0.2.10");
 
-  ASSERT_TRUE(f.register_binding(account, contact, channel, 3600));
-  ASSERT_TRUE(f.register_binding(account, contact, channel, 3600));
+  ASSERT_TRUE(f.register_binding(subscriber, contact, channel, 3600));
+  ASSERT_TRUE(f.register_binding(subscriber, contact, channel, 3600));
 
   EXPECT_EQ(f.store->location_list(7).size(), 1u);
 }
@@ -243,14 +244,14 @@ TEST(CoreTest, AccountRegisterIsRepeatable) {
 // A browser or a NAT'd client has a Contact that resolves to nothing reachable, so the
 // flow is the only way back to it, and a second node cannot ask for a flow without
 // knowing whose it is.
-TEST(CoreTest, AccountRegisterRecordsTheFlowItWasLearnedOver) {
+TEST(CoreTest, SubscriberRegisterRecordsTheFlowItWasLearnedOver) {
   Fixture f;
 
-  auto account = f.seed_account(7, "sip:alice@example.com");
+  auto subscriber = f.seed_subscriber(7, "sip:alice@example.com");
   auto contact = std::make_shared<types::SIPUri>("sip:alice@192.0.2.10:5060");
   auto channel = f.make_channel("192.0.2.10");
 
-  ASSERT_TRUE(f.register_binding(account, contact, channel, 3600));
+  ASSERT_TRUE(f.register_binding(subscriber, contact, channel, 3600));
 
   auto locations = f.store->location_list(7);
   ASSERT_EQ(locations.size(), 1u);
@@ -264,11 +265,11 @@ TEST(CoreTest, AccountRegisterRecordsTheFlowItWasLearnedOver) {
 TEST(CoreTest, TheRecordedFlowIdIsWhatChannelFindAnswersTo) {
   Fixture f;
 
-  auto account = f.seed_account(7, "sip:alice@example.com");
+  auto subscriber = f.seed_subscriber(7, "sip:alice@example.com");
   auto contact = std::make_shared<types::SIPUri>("sip:alice@192.0.2.10:5060");
   auto channel = f.make_channel("192.0.2.10");
 
-  ASSERT_TRUE(f.register_binding(account, contact, channel, 3600));
+  ASSERT_TRUE(f.register_binding(subscriber, contact, channel, 3600));
 
   auto locations = f.store->location_list(7);
   ASSERT_EQ(locations.size(), 1u);
@@ -281,13 +282,13 @@ TEST(CoreTest, TheRecordedFlowIdIsWhatChannelFindAnswersTo) {
 
 // A binding learned over no channel - a provisioned contact, or a REGISTER replayed by
 // another node - records no flow rather than an invented one.
-TEST(CoreTest, AccountRegisterWithoutAChannelRecordsNoFlow) {
+TEST(CoreTest, SubscriberRegisterWithoutAChannelRecordsNoFlow) {
   Fixture f;
 
-  auto account = f.seed_account(7, "sip:alice@example.com");
+  auto subscriber = f.seed_subscriber(7, "sip:alice@example.com");
   auto contact = std::make_shared<types::SIPUri>("sip:alice@192.0.2.10:5060");
 
-  ASSERT_TRUE(f.register_binding(account, contact, nullptr, 3600));
+  ASSERT_TRUE(f.register_binding(subscriber, contact, nullptr, 3600));
 
   auto locations = f.store->location_list(7);
   ASSERT_EQ(locations.size(), 1u);
@@ -296,17 +297,17 @@ TEST(CoreTest, AccountRegisterWithoutAChannelRecordsNoFlow) {
 }
 
 // Unregistering drops the binding, so nothing is left for target determination to find.
-TEST(CoreTest, AccountUnregisterDropsTheBinding) {
+TEST(CoreTest, SubscriberUnregisterDropsTheBinding) {
   Fixture f;
 
-  auto account = f.seed_account(7, "sip:alice@example.com");
+  auto subscriber = f.seed_subscriber(7, "sip:alice@example.com");
   auto contact = std::make_shared<types::SIPUri>("sip:alice@192.0.2.10:5060");
   auto channel = f.make_channel("192.0.2.10");
 
-  ASSERT_TRUE(f.register_binding(account, contact, channel, 3600));
+  ASSERT_TRUE(f.register_binding(subscriber, contact, channel, 3600));
   ASSERT_EQ(f.store->location_list(7).size(), 1u);
 
-  ASSERT_TRUE(f.unregister_binding(account, contact, channel));
+  ASSERT_TRUE(f.unregister_binding(subscriber, contact, channel));
 
   EXPECT_TRUE(f.store->location_list(7).empty());
 }

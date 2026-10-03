@@ -383,7 +383,7 @@ void UsersAPI::_set_password(RouteContext context) {
 
       // Every session the user held, including the one that asked. A password is changed
       // because the old one is no longer trusted, and a session issued against it is
-      // exactly as untrusted; an administrator resetting a compromised account would
+      // exactly as untrusted; an administrator resetting a compromised user would
       // otherwise leave whoever compromised it logged in.
       self->_datastore->session_delete_for_user(self->_executor, user->key(), [self, context](plugins::Status status) mutable {
         if (!status.ok) self->_logger->warn("could not revoke sessions after a password change: " + status.error);

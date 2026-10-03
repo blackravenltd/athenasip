@@ -196,7 +196,7 @@ TEST(AuthApiTest, AWrongPasswordAnUnknownUserAndADisabledUserGiveTheSameAnswer) 
   EXPECT_EQ(disabled.status, 401u);
 
   // Byte for byte the same, because a difference anywhere in it is a way to ask this node
-  // who holds an account here.
+  // who is a user here.
   EXPECT_EQ(wrong.body, unknown.body);
   EXPECT_EQ(wrong.body, disabled.body);
   EXPECT_EQ(wrong.json().at("error").at("code").as_string(), "unauthorized");

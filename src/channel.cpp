@@ -38,10 +38,10 @@
 #include "sip_header.h"
 #include "sip_message.h"
 #include "stun.h"
-#include "types/account.h"
 #include "types/authorization.h"
 #include "types/sip_identity.h"
 #include "types/sip_uri.h"
+#include "types/subscriber.h"
 #include "util.h"
 
 using namespace athenasip::headers;

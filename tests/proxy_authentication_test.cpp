@@ -219,7 +219,7 @@ TEST(ProxyAuthenticationTest, AStrangerCallingALocalUserIsForwarded) {
 }
 
 // And the relay itself: a stranger, calling somewhere that is not here. There is no
-// account to challenge for, so the answer is no.
+// subscriber to challenge for, so the answer is no.
 TEST(ProxyAuthenticationTest, AStrangerCallingOffNodeIsRefused) {
   AuthFixture f;
 

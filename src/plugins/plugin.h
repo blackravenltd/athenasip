@@ -31,15 +31,15 @@ namespace athenasip::plugins {
 // and EventSystem's operations take the contract's Executor and handlers rather than a
 // completion callback of their own shape, so that the contract is one contract.
 //
-// 3 (2026-09-21): types::Subscriber is types::Account and every Datastore operation
+// 3 (2026-09-21): types::Subscriber is types::Subscriber and every Datastore operation
 // named after it follows, because SUBSCRIBE is a SIP method (RFC 6665) and the two
 // would have collided the moment presence arrived. The shape of the calls is unchanged;
 // only the word is. Redis keys changed with them, so a store provisioned under 2 is
 // read as empty under 3 rather than half-read.
 //
-// 4 (2026-09-21): types::Account carries a second credential, ha1_sha256, so an account
+// 4 (2026-09-21): types::Subscriber carries a second credential, ha1_sha256, so a subscriber
 // can answer a Digest challenge with SHA-256 (RFC 8760) as well as MD5. A store that
-// does not carry it leaves accounts able to authenticate with MD5 alone.
+// does not carry it leaves subscribers able to authenticate with MD5 alone.
 // 5 (2026-09-21): MediaEngine gains start_recording and stop_recording, so that the
 // record capability a driver already advertises is one a caller can act on. Both
 // decline by default, as the conference operations do, so a driver that does not record
@@ -57,9 +57,9 @@ namespace athenasip::plugins {
 // default - in place of a MediaPolicy with every field set, so a datastore stores only
 // what a realm chose. MediaEngine gains packets_relayed(), optional with a default, and a
 // query document's `legs` are named in the contract.
-// 9 (2026-10-02): types::Account carries an optional media_profile, the operator's word
-// about what the account's endpoint is. A store that does not carry it loses the setting,
-// and the account's calls fall back to the realm's behaviour.
+// 9 (2026-10-02): types::Subscriber carries an optional media_profile, the operator's word
+// about what the subscriber's endpoint is. A store that does not carry it loses the setting,
+// and the subscriber's calls fall back to the realm's behaviour.
 // 10 (2026-10-02): types::Behaviour carries an optional qualify_interval. A store that does
 // not carry it loses the realm's choice, and the realm takes the server's default.
 // 11 (2026-10-02): types::Behaviour carries an optional rewrite_contact, with the same
@@ -68,7 +68,10 @@ namespace athenasip::plugins {
 // store has to keep for the registrar to tell a re-registered flow from a new one.
 // 13 (2026-10-02): media::Flags carries an address for the leg a description is produced
 // for, set for a leg inside sip.localnet. Empty is what every engine was given before.
-inline constexpr std::uint32_t API_VERSION = 13;
+// 14 (2026-10-03): types::Account is types::Subscriber and the Datastore operations named
+// account_* are subscriber_*, with Location::account_id following. A rename and nothing
+// else, but a driver built against 13 does not override what the server now calls.
+inline constexpr std::uint32_t API_VERSION = 14;
 
 // The kinds AthenaSIP registers today. A kind is a plain string rather than an enum so
 // that a plugin can introduce one the core was not built knowing about.

@@ -219,7 +219,7 @@ TEST(SessionsTest, AnUnknownUserAWrongPasswordAndADisabledUserAreOneAnswer) {
   const auto disabled = fixture.login("sam", kPassword);
 
   // Which of the three it was is not something the caller can tell, because between
-  // them they are a list of who holds an account here.
+  // them they are a list of who is a user here.
   EXPECT_EQ(unknown.outcome, Sessions::Outcome::refused);
   EXPECT_EQ(wrong.outcome, Sessions::Outcome::refused);
   EXPECT_EQ(disabled.outcome, Sessions::Outcome::refused);

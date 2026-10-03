@@ -322,7 +322,7 @@ TEST(ProxyRouteTest, ARequestThatComesBackChangedIsASpiralAndNot482) {
 
   EXPECT_EQ(f.response_with(f.caller_connection, 482), nullptr);
 
-  // It was processed as an ordinary request: nobody@example.com has no account.
+  // It was processed as an ordinary request: nobody@example.com has no subscriber.
   EXPECT_NE(f.response_with(f.caller_connection, 404), nullptr);
 }
 

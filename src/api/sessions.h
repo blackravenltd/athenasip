@@ -59,7 +59,7 @@ class Sessions : public std::enable_shared_from_this<Sessions> {
 
     // No such user, the wrong password, a disabled user, an unknown token, an expired
     // one. Deliberately one answer, because between them the alternatives are a list of
-    // who holds an account on this node.
+    // who is a user on this node.
     refused,
 
     // The store could not be asked, which is not the caller's fault and not a 401.

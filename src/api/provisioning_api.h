@@ -16,17 +16,17 @@
 #include "../datastores/datastore.h"
 #include "../loggers/logger.h"
 #include "../node_directory.h"
-#include "../types/account.h"
 #include "../types/location.h"
 #include "../types/realm.h"
+#include "../types/subscriber.h"
 #include "router.h"
 
 namespace athenasip::api {
 
-// Provisioning: realms, accounts, and a read of what is currently registered.
+// Provisioning: realms, subscribers, and a read of what is currently registered.
 //
 // It goes to the datastore directly, on the API's own executor, and never touches the
-// Core strand. That is what the async plugin contract is for: an admin listing accounts
+// Core strand. That is what the async plugin contract is for: an admin listing subscribers
 // must not be able to hold up a call, and reaching Core for a datastore read would put
 // every admin request on the call path. Only a read of Core's own registries - live
 // calls, live channels - needs the strand, and nothing here does.
@@ -54,12 +54,12 @@ class ProvisioningAPI : public std::enable_shared_from_this<ProvisioningAPI> {
   void _realm_update(RouteContext context);
   void _realm_delete(RouteContext context);
 
-  // Accounts, always inside a realm: an account is only meaningful in one.
-  void _account_list(RouteContext context);
-  void _account_create(RouteContext context);
-  void _account_get(RouteContext context);
-  void _account_update(RouteContext context);
-  void _account_delete(RouteContext context);
+  // Subscribers, always inside a realm: a subscriber is only meaningful in one.
+  void _subscriber_list(RouteContext context);
+  void _subscriber_create(RouteContext context);
+  void _subscriber_get(RouteContext context);
+  void _subscriber_update(RouteContext context);
+  void _subscriber_delete(RouteContext context);
 
   // Registrations, read only. A binding is written by a REGISTER and by nothing else.
   void _registration_list(RouteContext context);
@@ -78,8 +78,8 @@ class ProvisioningAPI : public std::enable_shared_from_this<ProvisioningAPI> {
   // and current when usable_only.
   boost::json::array _nodes_json(bool usable_only) const;
 
-  // The realm a request names, or a 404 that says so. Every account route starts here,
-  // because an account in a realm that does not exist is a typo rather than a 500.
+  // The realm a request names, or a 404 that says so. Every subscriber route starts here,
+  // because a subscriber in a realm that does not exist is a typo rather than a 500.
   void _with_realm(const std::string& realm_name, RouteContext context, std::function<void(std::shared_ptr<types::Realm>, RouteContext)> then);
 
   // What the store said when an operation that returns nothing failed. The contract
@@ -88,7 +88,7 @@ class ProvisioningAPI : public std::enable_shared_from_this<ProvisioningAPI> {
   void _fail(RouteContext context, const plugins::Status& status, std::string code, std::string message, http::status http_status);
 
   boost::json::object _realm_json(const types::Realm& realm) const;
-  static boost::json::object _account_json(const types::Account& account);
+  static boost::json::object _subscriber_json(const types::Subscriber& subscriber);
   static boost::json::object _location_json(const types::Location& location, const std::string& uri);
 
   // Every SIP transport this node has switched on, as a URI a client could use.

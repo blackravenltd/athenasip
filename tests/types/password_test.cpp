@@ -61,7 +61,7 @@ TEST(PasswordTest, ThePasswordItWasMadeFromVerifies) {
 }
 
 // A per-user salt, or the same password twice gives the same hash and one cracked
-// password is every account that shares it.
+// password is every subscriber that shares it.
 TEST(PasswordTest, TheSamePasswordHashesDifferentlyEveryTime) {
   std::set<std::string> seen;
 
@@ -100,7 +100,7 @@ TEST(PasswordTest, AHashMadeAtADifferentCostStillVerifies) {
 }
 
 // An empty password is a decision, not an accident: refused at the point it would be
-// stored, so no account can exist that anything logs into with nothing.
+// stored, so no subscriber can exist that anything logs into with nothing.
 TEST(PasswordTest, AnEmptyPasswordCannotBeStored) {
   EXPECT_TRUE(Password::hash("", kCheap).empty());
   EXPECT_FALSE(Password::verify("", Password::hash("", kCheap)));

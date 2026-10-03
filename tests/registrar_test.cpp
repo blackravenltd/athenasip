@@ -43,7 +43,7 @@ struct Fixture : CoreFixture {
 
   Fixture() {
     seed_realm("example.com");
-    seed_account(7, "sip:alice@example.com", kHa1);
+    seed_subscriber(7, "sip:alice@example.com", kHa1);
     channel = make_channel("192.0.2.10", &connection);
   }
 
@@ -140,9 +140,9 @@ TEST(RegistrarTest, ARegisterForAnUnservedDomainIs404) {
   EXPECT_NE(f.response_with(f.connection, 404), nullptr);
 }
 
-// An account that does not exist inside a realm we do serve is challenged rather than
-// refused, so a REGISTER sweep cannot tell an absent account from a wrong password.
-TEST(RegistrarTest, AnUnknownAccountInAServedRealmIsChallenged) {
+// A subscriber that does not exist inside a realm we do serve is challenged rather than
+// refused, so a REGISTER sweep cannot tell an absent subscriber from a wrong password.
+TEST(RegistrarTest, AnUnknownSubscriberInAServedRealmIsChallenged) {
   Fixture f;
 
   const auto nonce = f.fresh_nonce();
@@ -330,15 +330,15 @@ TEST(RegistrarTest, TheAlgorithmIsSentAsATokenNotAQuotedString) {
   EXPECT_EQ(f.connection->written.find("algorithm=\"SHA-256\""), std::string::npos);
 }
 
-// The point of offering it: an account with a SHA-256 credential authenticates with one.
+// The point of offering it: a subscriber with a SHA-256 credential authenticates with one.
 TEST(RegistrarTest, ASha256ResponseAuthenticates) {
   Fixture f;
 
   // Provisioned from a password, so it has both credentials.
-  auto account = f.store->account_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
-  ASSERT_NE(account, nullptr);
-  account->ha1_sha256 = kHa1Sha256;
-  ASSERT_TRUE(f.store->account_update(account));
+  auto subscriber = f.store->subscriber_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
+  ASSERT_NE(subscriber, nullptr);
+  subscriber->ha1_sha256 = kHa1Sha256;
+  ASSERT_TRUE(f.store->subscriber_update(subscriber));
 
   f.receive(f.channel, f.register_request(f.credentials_sha256(f.fresh_nonce())));
 
@@ -346,10 +346,10 @@ TEST(RegistrarTest, ASha256ResponseAuthenticates) {
   EXPECT_EQ(f.store->location_list(7).size(), 1u);
 }
 
-// An account imported as a bare MD5 hash has no SHA-256 credential. Answering the
+// A subscriber imported as a bare MD5 hash has no SHA-256 credential. Answering the
 // SHA-256 challenge cannot be checked against nothing, so it is challenged again rather
 // than let in or answered 500.
-TEST(RegistrarTest, ASha256ResponseFromAnMd5OnlyAccountIsChallenged) {
+TEST(RegistrarTest, ASha256ResponseFromAnMd5OnlySubscriberIsChallenged) {
   Fixture f;
 
   f.receive(f.channel, f.register_request(f.credentials_sha256(f.fresh_nonce())));
