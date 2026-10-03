@@ -48,7 +48,7 @@ services:
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     networks:
       cluster:
-        ipv4_address: 172.32.0.2
+        ipv4_address: 172.31.0.2
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 1s
@@ -62,7 +62,7 @@ services:
       - ./test/e2e/config-cluster/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
     networks:
       cluster:
-        ipv4_address: 172.32.0.3
+        ipv4_address: 172.31.0.3
     healthcheck:
       test: ["CMD-SHELL", "mosquitto_sub -h 127.0.0.1 -t '$$SYS/#' -C 1 -W 2 >/dev/null 2>&1 || exit 1"]
       interval: 2s
@@ -78,7 +78,7 @@ services:
       - ./test/e2e/generated-cluster:/cluster:ro
     networks:
       cluster:
-        ipv4_address: 172.32.0.10
+        ipv4_address: 172.31.0.10
 
   node-b:
     <<: *node
@@ -88,20 +88,20 @@ services:
       - ./test/e2e/generated-cluster:/cluster:ro
     networks:
       cluster:
-        ipv4_address: 172.32.0.11
+        ipv4_address: 172.31.0.11
 
   # Started by cluster.sh with the scenario as their arguments, never by "compose up".
   sipp-uas:
     <<: *sipp
     networks:
       cluster:
-        ipv4_address: 172.32.0.20
+        ipv4_address: 172.31.0.20
 
   sipp-uac:
     <<: *sipp
     networks:
       cluster:
-        ipv4_address: 172.32.0.21
+        ipv4_address: 172.31.0.21
 
   # A callee that keeps the connection it registered over and is reachable no other way
   # (test/e2e/flow_callee.py): a TCP or WebSocket client, which sipp cannot be. Python's
@@ -114,11 +114,14 @@ services:
       - ./test:/test:ro
     networks:
       cluster:
-        ipv4_address: 172.32.0.22
+        ipv4_address: 172.31.0.22
 
 networks:
   cluster:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.32.0.0/24
+        # The single-node harness's subnet, with node A at its node's address, because the
+        # scenarios the two share check that a description names the relay by that
+        # address. The two harnesses are never up at once.
+        - subnet: 172.31.0.0/24

@@ -11,7 +11,7 @@
 sip:
   node_id: node-b
   event_prefix: athenasip
-  public_address: 172.32.0.11
+  public_address: 172.31.0.11
   allow_unencrypted: true
 
   timers:
@@ -59,7 +59,7 @@ cluster:
   enable: true
   address: 0.0.0.0
   port: 5062
-  advertise: 172.32.0.11
+  advertise: 172.31.0.11
   ca: /cluster/ca.crt
   cert: /cluster/node-b.crt
   key: /cluster/node-b.key
@@ -76,7 +76,7 @@ media:
   url: "builtin://"
   builtin:
     bind_address: 0.0.0.0
-    public_address: 172.32.0.11
+    public_address: 172.31.0.11
     port_min: 22000
     port_max: 23000
 
