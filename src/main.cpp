@@ -228,6 +228,11 @@ int main(int argc, char* argv[]) {
     return -1;
   }
 
+  // The configuration names how the node logs, and it is read by the logger it names, so
+  // the logger changes now. An administrative command keeps its own quieter level.
+  logger->set_format(config->log_format);
+  if (!administering) logger->set_level(config->log_level);
+
   // Answered here rather than earlier, because the whole question is what the file, the
   // search path and the defaults came to between them - which is not known until the file
   // has been read. Nothing is started and no driver is constructed: a node that cannot
@@ -351,7 +356,7 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "memory:// keeps nothing once this process exits, so this node now starts with that user\n" << std::flush;
-    logger->set_level(LogLevel::DEBUG);
+    logger->set_level(config->log_level);
   }
 
   // The will, set while the bus is still closed because that is the only time a broker

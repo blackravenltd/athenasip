@@ -308,6 +308,13 @@ behaviour:
   # about itself (RFC 3261 16.6). WebSocket clients are never rewritten.
   rewrite_contact: false
 
+# How much the node logs, and in what shape: text for a person, or json - one object a
+# line with at, level, scope and message - for a log shipper. The level is debug, info,
+# warn or error.
+log:
+  level: debug
+  format: text
+
 # Call records: one for each call that has ended, in the datastore, listed by
 # GET /api/v1/call-records. Kept for this many seconds - thirty days - and zero keeps them
 # for ever.

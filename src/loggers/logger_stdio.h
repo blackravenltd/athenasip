@@ -19,7 +19,8 @@ namespace athenasip::loggers {
 
 class LoggerStdIO : public Logger {
  public:
-  LoggerStdIO(LogLevel log_level);
+  // To standard output unless told otherwise, which a test is.
+  explicit LoggerStdIO(LogLevel log_level, std::ostream& out = std::cout);
 
   virtual void debug(const std::string& log) override;
   virtual void info(const std::string& log) override;
@@ -29,8 +30,15 @@ class LoggerStdIO : public Logger {
   virtual std::shared_ptr<Logger> base_logger() override;
   virtual void set_level(LogLevel level) override;
 
+  // Changed once the configuration has been read, which names it and is read by this.
+  void set_format(LogFormat format);
+
  private:
+  void _write(const char* text_level, const char* json_level, const std::string& log);
+
   LogLevel _log_level;
+  LogFormat _format = LogFormat::Text;
+  std::ostream& _out;
   std::mutex mtx;
 };
 

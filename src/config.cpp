@@ -13,6 +13,8 @@
 #include <sstream>
 #include <stdexcept>
 
+#include "util.h"
+
 namespace athenasip {
 
 Config::Config(std::shared_ptr<Logger> logger) { _logger = std::make_unique<LoggerScoped>("config", logger); }
@@ -412,6 +414,42 @@ bool Config::load_from_yaml(const std::string& filename) {
     }
   }
 
+  // --- Parse the 'log' section ---
+  if (YAML::Node log = config["log"]) {
+    try {
+      if (log["level"]) {
+        const auto level = Util::to_lower(log["level"].as<std::string>());
+        if (level == "debug") {
+          log_level = loggers::LogLevel::DEBUG;
+        } else if (level == "info") {
+          log_level = loggers::LogLevel::INFO;
+        } else if (level == "warn") {
+          log_level = loggers::LogLevel::WARN;
+        } else if (level == "error") {
+          log_level = loggers::LogLevel::ERROR;
+        } else {
+          _logger->error("Invalid 'log.level': " + level + " - it is debug, info, warn or error");
+          return false;
+        }
+      }
+
+      if (log["format"]) {
+        const auto format = Util::to_lower(log["format"].as<std::string>());
+        if (format == "text") {
+          log_format = loggers::LogFormat::Text;
+        } else if (format == "json") {
+          log_format = loggers::LogFormat::Json;
+        } else {
+          _logger->error("Invalid 'log.format': " + format + " - it is text or json");
+          return false;
+        }
+      }
+    } catch (const std::exception& e) {
+      _logger->error("Invalid 'log' section: " + std::string(e.what()));
+      return false;
+    }
+  }
+
   // --- Parse the 'calls' section ---
   if (YAML::Node calls = config["calls"]) {
     try {
@@ -703,6 +741,12 @@ std::string Config::effective_yaml() const {
   out << YAML::Key << "media_profile" << YAML::Value << types::MediaPolicy::to_string(behaviour.profiles);
   out << YAML::Key << "qualify_interval" << YAML::Value << behaviour_qualify_interval;
   out << YAML::Key << "rewrite_contact" << YAML::Value << behaviour_rewrite_contact;
+  out << YAML::EndMap;
+
+  out << YAML::Key << "log" << YAML::Value << YAML::BeginMap;
+  const char* levels[] = {"debug", "info", "warn", "error"};
+  out << YAML::Key << "level" << YAML::Value << levels[static_cast<int>(log_level)];
+  out << YAML::Key << "format" << YAML::Value << (log_format == loggers::LogFormat::Json ? "json" : "text");
   out << YAML::EndMap;
 
   out << YAML::Key << "calls" << YAML::Value << YAML::BeginMap;

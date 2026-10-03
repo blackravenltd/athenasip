@@ -332,6 +332,11 @@ class Config {
   // A signed-in caller, by session.
   RateLimit http_api_limit_session{60, 300};
 
+  // log.level and log.format: how much the node says and in what shape. The defaults are
+  // what a node did before there was a choice: everything, as text.
+  loggers::LogLevel log_level = loggers::LogLevel::DEBUG;
+  loggers::LogFormat log_format = loggers::LogFormat::Text;
+
   // calls.history_retention: how long the record of a call that has ended is kept, in
   // seconds. Thirty days. Zero keeps every record for ever, which on a busy node is a
   // datastore that only grows.

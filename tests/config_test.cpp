@@ -522,6 +522,29 @@ TEST(ConfigTest, ASecureWebSocketListenerSitsBesideThePlainOne) {
   EXPECT_FALSE(ok);
 }
 
+// How much a node logs and in what shape is the operator's: a level, and text for a person
+// or JSON for a log shipper. The defaults are what a node did before there was a choice.
+TEST(ConfigTest, TheLogSectionSetsTheLevelAndTheFormat) {
+  bool ok = false;
+
+  ConfigFile defaults("sip:\n  node_id: test-node\n");
+  auto config = defaults.load(ok);
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(config->log_level, loggers::LogLevel::DEBUG);
+  EXPECT_EQ(config->log_format, loggers::LogFormat::Text);
+
+  ConfigFile set("sip:\n  node_id: test-node\nlog:\n  level: info\n  format: json\n");
+  config = set.load(ok);
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(config->log_level, loggers::LogLevel::INFO);
+  EXPECT_EQ(config->log_format, loggers::LogFormat::Json);
+
+  ConfigFile wrong("sip:\n  node_id: test-node\nlog:\n  level: chatty\n");
+  ok = true;
+  wrong.load(ok);
+  EXPECT_FALSE(ok);
+}
+
 TEST(ConfigTest, SessionLifetimesAreTakenFromTheApiSection) {
   ConfigFile file(
       "sip:\n  node_id: test-node\n"

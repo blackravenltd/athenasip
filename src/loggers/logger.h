@@ -13,6 +13,10 @@ namespace athenasip::loggers {
 
 enum LogLevel { DEBUG = 0, INFO = 1, WARN = 2, ERROR = 3 };
 
+// Text for a person reading a terminal or the journal; JSON, one object a line, for a log
+// shipper to read without a pattern.
+enum class LogFormat { Text, Json };
+
 class Logger {
  public:
   virtual ~Logger() {}
