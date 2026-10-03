@@ -88,6 +88,21 @@ socket a client registered on lives on one node, which is what `Location.node_id
 `Location.flow_id` record: a node that reads a binding it does not own forwards to the
 node that does.
 
+Forwarding is the request as it arrived, still addressed to the subscriber, sent to the
+other node's inter-node listener: once per node, however many of the subscriber's flows
+that node holds. The node that receives it reads the same bindings and delivers to the
+flows it holds itself, and never sends a peer's request on to a third node - the first
+node already sent to everyone who holds a flow, so doing it again would ring those devices
+twice or pass the request round in a circle. A request from a peer is not challenged: the
+certificate says it is a node, and that node challenged the caller. A node that has said
+it is down, has gone quiet for three status intervals or was never heard from is not
+forwarded to.
+
+The first node holds the media. A call a peer forwarded is not anchored a second time by
+the node that delivers it, for the whole life of the call. Both nodes stay in the dialog
+through Record-Route, and each names its inter-node listener to the other, so the ACK and
+the BYE cross between them the same way the INVITE did.
+
 A client that supports RFC 5626 outbound identifies each flow by its `+sip.instance` and
 `reg-id`, which the binding keeps as `Location.instance` and `Location.reg_id`. The
 registrar treats that pair, not the Contact, as the binding: registering the same pair

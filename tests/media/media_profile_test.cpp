@@ -495,6 +495,22 @@ TEST(MediaProfileTest, NothingIsReofferedWhenTheEngineCouldNotMakeTheFirstOfferA
   EXPECT_TRUE(f.reoffers().empty());
 }
 
+// The first node anchors the media (TODO/ACTIVE.md, Milestone 4). A request a peer node
+// forwarded has been through that node's engine already, and a second pass here would
+// relay a relay - or, with one rtpengine between them, offer the same call to it twice.
+TEST(MediaProfileTest, ACallAPeerNodeForwardedIsNotAnchoredAgain) {
+  ProfileFixture f("tcp", "udp");
+  f.caller_connection->peer = "node-b";
+
+  f.receive(f.caller, f.invite_with_body());
+  ASSERT_FALSE(ProfileFixture::requests_with(f.callee_connection, "INVITE").empty());
+  EXPECT_TRUE(f.engine->calls().empty());
+
+  // Nor is the answer on its way back.
+  f.receive(f.callee, f.response_to_latest(200, "OK", kOffer));
+  EXPECT_TRUE(f.engine->calls().empty());
+}
+
 // Nothing is learned silently: the node says which subscriber needed it and what it took,
 // for the operator to set as that subscriber's profile or not.
 TEST(MediaProfileTest, AReofferThatWorksIsReportedForTheSubscriber) {
