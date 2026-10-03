@@ -503,7 +503,10 @@ it names its own with `cert_pem_filename` and `key_pem_filename`, and it binds `
 unless it has one of its own. A node asked for HTTPS with no certificate to show does not
 start. The plain listener stays for what has no use for a certificate: a healthcheck, a
 provisioning script on the host. The console's softphone needs HTTPS, because a browser
-gives a page that is not a secure context no microphone.
+gives a page that is not a secure context no microphone - and a page served over HTTPS may
+only open a secure WebSocket, so it needs `wss` as well: either `websocket.tls: true`, or
+`websocket.secure_port`, which starts a second, secure WebSocket listener beside the plain
+one with the `websocket` section's certificate or the `tls` section's.
 
 `http.api.rate_limits` sets, for each kind of caller, how many requests are let through at
 once (`burst`) and how many a minute after that (`per_minute`). Zero in either turns that

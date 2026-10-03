@@ -226,6 +226,16 @@ class Config {
   // development. The certificate is the listener's own rather than the tls section's,
   // because the name a browser reaches the node by is rarely the name a SIP peer does.
   bool websocket_tls = false;
+
+  // websocket.secure_port: a second WebSocket listener, wss, beside a plain one. A page
+  // served over HTTPS may only open a secure WebSocket, and a page served from localhost
+  // or by a development client may only have a plain one to hand, so a node can need
+  // both. Zero is none. Not used when the listener above is already secure.
+  std::uint16_t websocket_secure_port = 0;
+
+  // The certificate a secure WebSocket shows: the websocket section's, or the tls section's.
+  std::string websocket_cert() const { return websocket_cert_pem_filename.empty() ? tls_cert_pem_filename : websocket_cert_pem_filename; }
+  std::string websocket_key() const { return websocket_key_pem_filename.empty() ? tls_key_pem_filename : websocket_key_pem_filename; }
   std::string websocket_cert_pem_filename;
   std::string websocket_key_pem_filename;
 

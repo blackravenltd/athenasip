@@ -275,6 +275,20 @@ bool Config::load_from_yaml(const std::string& filename) {
 
     if (websocket["tls"]) websocket_tls = websocket["tls"].as<bool>();
 
+    if (websocket["secure_port"]) {
+      try {
+        websocket_secure_port = websocket["secure_port"].as<std::uint16_t>();
+      } catch (const std::exception& e) {
+        _logger->error("Invalid value for 'websocket.secure_port': " + std::string(e.what()));
+        return false;
+      }
+    }
+
+    if (websocket_secure_port != 0 && websocket_secure_port == websocket_port) {
+      _logger->error("'websocket.secure_port' is the same as 'websocket.port': the secure listener is a second one, on a port of its own");
+      return false;
+    }
+
     if (websocket["cert_pem_filename"]) websocket_cert_pem_filename = websocket["cert_pem_filename"].as<std::string>();
     if (websocket["key_pem_filename"]) websocket_key_pem_filename = websocket["key_pem_filename"].as<std::string>();
 
@@ -643,6 +657,7 @@ std::string Config::effective_yaml() const {
 
   listener("websocket", websocket_enable, websocket_address, websocket_port, websocket_public_port);
   out << YAML::Key << "tls" << YAML::Value << websocket_tls;
+  out << YAML::Key << "secure_port" << YAML::Value << websocket_secure_port;
   out << YAML::Key << "cert_pem_filename" << YAML::Value << websocket_cert_pem_filename;
   out << YAML::Key << "key_pem_filename" << YAML::Value << websocket_key_pem_filename;
   out << YAML::EndMap;
@@ -745,6 +760,12 @@ std::vector<Config::AdvertisedTransport> Config::advertised_transports() const {
   if (tcp_enable) add("tcp", tcp_address, tcp_port, false);
   if (tls_enable) add("tls", tls_address, tls_port, true);
   if (websocket_enable) add(websocket_tls ? "wss" : "ws", websocket_address, websocket_port, websocket_tls);
+
+  // The secure listener beside a plain one. Its port is its own: websocket.public_port is
+  // the plain listener's.
+  if (websocket_enable && !websocket_tls && websocket_secure_port != 0) {
+    out.push_back(AdvertisedTransport{"wss", sip_public_address.empty() ? websocket_address : sip_public_address, websocket_secure_port, true});
+  }
 
   return out;
 }
