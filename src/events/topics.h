@@ -27,7 +27,8 @@ inline std::string node_transaction(const std::string& node_id, const std::strin
   return "nodes/" + node_id + "/transactions/" + transaction_id;
 }
 
-inline std::string account_status(const std::string& uri) { return "account/" + uri + "/status"; }
+// In the plural, like the other trees.
+inline std::string subscriber_status(const std::string& uri) { return "subscribers/" + uri + "/status"; }
 
 inline std::string call_register(const std::string& call_id) { return "calls/" + call_id + "/register"; }
 

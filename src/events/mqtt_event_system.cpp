@@ -158,8 +158,19 @@ void MQTTEventSystem::connect(plugins::Executor on, plugins::StatusHandler handl
     return _complete(std::move(on), std::move(handler), plugins::Status::failure("Failed to start MQTT thread: unknown exception"));
   }
 
-  boost::asio::dispatch(_mqtt_strand, [this, self]() {
-    _client.async_run([this, self](mqtt::error_code ec) {
+  // This run's identity, taken after the previous thread has been joined and before
+  // anything is registered against it.
+  const auto generation = _run_generation.fetch_add(1) + 1;
+
+  boost::asio::dispatch(_mqtt_strand, [this, self, generation]() {
+    _client.async_run([this, self, generation](mqtt::error_code ec) {
+      // A completion from a run that is over, arriving while a new one is starting. Without
+      // this it would pass the _connected check - connect() sets that true before it joins
+      // the old thread - and then tear down the new run's work guard and subscriptions.
+      if (generation != _run_generation.load()) {
+        return;
+      }
+
       if (!_connected.load()) {
         return;
       }
@@ -291,7 +302,7 @@ void MQTTEventSystem::publish(plugins::Executor on, std::string event_name, std:
   publish_event(std::move(event_name), std::move(message), bind_completion(std::move(on), std::move(handler)));
 }
 
-void MQTTEventSystem::publish_event(std::string event_name, std::string message, Completion completion) {
+void MQTTEventSystem::publish_event(std::string event_name, std::string message, Completion completion, bool retain) {
   auto self = shared_from_this();
   const auto topic = prefixed_topic(_prefix, event_name);
 
@@ -309,7 +320,7 @@ void MQTTEventSystem::publish_event(std::string event_name, std::string message,
 
   _logger->debug("Publishing event: " + topic + " with message: " + message);
 
-  boost::asio::dispatch(_mqtt_strand, [this, self, topic, message = std::move(message), completion = std::move(completion)]() mutable {
+  boost::asio::dispatch(_mqtt_strand, [this, self, topic, retain, message = std::move(message), completion = std::move(completion)]() mutable {
     if (!_connected.load()) {
       finish(completion, plugins::Status::failure("Publish rejected while closed: " + topic));
       return;
@@ -325,8 +336,28 @@ void MQTTEventSystem::publish_event(std::string event_name, std::string message,
       finish(completion, plugins::Status::success());
     });
 
-    _client.async_publish<mqtt::qos_e::at_most_once>(topic, std::move(message), mqtt::retain_e::no, mqtt::publish_props{}, std::move(pub_callback));
+    _client.async_publish<mqtt::qos_e::at_most_once>(topic, std::move(message), retain ? mqtt::retain_e::yes : mqtt::retain_e::no, mqtt::publish_props{},
+                                                     std::move(pub_callback));
   });
+}
+
+// Retained: the broker keeps the last one and hands it to whoever subscribes next, so
+// a monitor that connects an hour after the node did still learns what the node is.
+void MQTTEventSystem::publish_state(std::string event_name, std::string message) {
+  publish_event(std::move(event_name), std::move(message), Completion{}, true);
+}
+
+// The will, which only means anything before the session opens. A node that is killed,
+// loses power or loses its network never publishes again, and without this the last
+// retained thing it said would claim it was healthy for as long as the broker keeps it.
+void MQTTEventSystem::will_set(std::string event_name, std::string message) {
+  if (_connected.load()) {
+    _logger->warn("A will can only be set before connecting; ignoring one for " + event_name);
+    return;
+  }
+
+  _will_topic = prefixed_topic(_prefix, event_name);
+  _will_message = std::move(message);
 }
 
 void MQTTEventSystem::subscribe(plugins::Executor on, std::string event_name, Subscription::EventCallbackFn event_callback,
@@ -348,9 +379,9 @@ void MQTTEventSystem::subscribe(plugins::Executor on, std::string event_name, Su
   bool first_local_subscription = false;
   {
     std::scoped_lock lock(_subscriptions_mutex);
-    auto& subscribers = _subscriptions[sub->event_name];
-    first_local_subscription = subscribers.empty();
-    subscribers.insert(sub);
+    auto& consumers = _subscriptions[sub->event_name];
+    first_local_subscription = consumers.empty();
+    consumers.insert(sub);
   }
 
   if (!_connected.load() || !first_local_subscription) {
@@ -386,7 +417,7 @@ void MQTTEventSystem::unsubscribe(plugins::Executor on, std::shared_ptr<Subscrip
 
   // Deliberately do not UNSUBSCRIBE at the broker. Keeping the broker-side
   // subscription avoids races with a new local subscription to the same event.
-  // Messages for events with no local subscribers are simply dropped.
+  // Messages for events with no local consumers are simply dropped.
   _complete(std::move(on), std::move(handler), plugins::Status::success());
 }
 
@@ -560,6 +591,12 @@ void MQTTEventSystem::configure_client() {
   if (!_username.empty()) {
     _client.credentials(_client_id, _username, _password);
   }
+
+  // Retained, like the heartbeat it stands in for: whoever subscribes next has to see
+  // that this node is gone, not an old message saying it was fine.
+  if (!_will_topic.empty()) {
+    _client.will(mqtt::will{_will_topic, _will_message, mqtt::qos_e::at_most_once, mqtt::retain_e::yes});
+  }
 }
 
 void MQTTEventSystem::run_mqtt_io_context() {
@@ -612,8 +649,8 @@ std::vector<std::string> MQTTEventSystem::current_subscription_events() const {
   std::scoped_lock lock(_subscriptions_mutex);
   events.reserve(_subscriptions.size());
 
-  for (const auto& [event_name, subscribers] : _subscriptions) {
-    if (!subscribers.empty()) {
+  for (const auto& [event_name, consumers] : _subscriptions) {
+    if (!consumers.empty()) {
       events.push_back(event_name);
     }
   }
@@ -631,7 +668,7 @@ std::unordered_set<std::shared_ptr<Subscription>> MQTTEventSystem::collect_match
     to_publish.insert(exact->second.begin(), exact->second.end());
   }
 
-  for (const auto& [filter, subscribers] : _subscriptions) {
+  for (const auto& [filter, consumers] : _subscriptions) {
     if (filter == event_name || !TopicFilter::is_filter(filter)) {
       continue;
     }
@@ -640,7 +677,7 @@ std::unordered_set<std::shared_ptr<Subscription>> MQTTEventSystem::collect_match
       continue;
     }
 
-    to_publish.insert(subscribers.begin(), subscribers.end());
+    to_publish.insert(consumers.begin(), consumers.end());
   }
 
   return to_publish;
@@ -793,12 +830,12 @@ void MQTTEventSystem::dispatch_event(std::string event_name, std::string message
   // Which of this client's subscriptions the message arrived for, when the broker says
   // (MQTT 5 section 3.3.2.3.8). It may send one copy per matching subscription, each
   // naming its own, or one copy naming them all; both end up delivering to each
-  // matching subscriber exactly once.
+  // matching consumer exactly once.
   //
   // Matching the topic against every local filter instead is what a client has to do
   // when the broker says nothing, and it is wrong whenever two of this client's filters
   // match: the broker sends a copy for each, and each copy is then fanned out to both
-  // filters' subscribers.
+  // filters' consumers.
   const auto& identifiers = props[mqtt::prop::subscription_identifier];
 
   if (!identifiers.empty()) {
@@ -808,8 +845,8 @@ void MQTTEventSystem::dispatch_event(std::string event_name, std::string message
       const auto found = _events_by_identifier.find(identifier);
       if (found == _events_by_identifier.end()) continue;
 
-      const auto subscribers = subscribers_of(found->second);
-      to_publish.insert(subscribers.begin(), subscribers.end());
+      const auto consumers = consumers_of(found->second);
+      to_publish.insert(consumers.begin(), consumers.end());
     }
 
     deliver_to(to_publish, event_name, message);
@@ -819,7 +856,7 @@ void MQTTEventSystem::dispatch_event(std::string event_name, std::string message
   deliver_to(collect_matching_subscriptions(event_name), event_name, message);
 }
 
-std::unordered_set<std::shared_ptr<Subscription>> MQTTEventSystem::subscribers_of(const std::string& filter) const {
+std::unordered_set<std::shared_ptr<Subscription>> MQTTEventSystem::consumers_of(const std::string& filter) const {
   std::scoped_lock lock(_subscriptions_mutex);
 
   const auto found = _subscriptions.find(filter);
@@ -828,9 +865,9 @@ std::unordered_set<std::shared_ptr<Subscription>> MQTTEventSystem::subscribers_o
   return found->second;
 }
 
-void MQTTEventSystem::deliver_to(const std::unordered_set<std::shared_ptr<Subscription>>& subscribers, const std::string& event_name,
+void MQTTEventSystem::deliver_to(const std::unordered_set<std::shared_ptr<Subscription>>& consumers, const std::string& event_name,
                                  const std::string& message) {
-  for (const auto& sub : subscribers) {
+  for (const auto& sub : consumers) {
     auto self = shared_from_this();
 
     boost::asio::post(_callback_io_context, [this, self, event_name, message, sub]() {

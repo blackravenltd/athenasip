@@ -54,11 +54,13 @@ class BuiltinMediaEngine : public MediaEngine {
 
   // Bridge only. No conference, no recording, no transcoding.
   Capabilities capabilities() const override;
+  bool produces(Profile profile) const override;
 
   void offer(plugins::Executor on, std::shared_ptr<Call> call, std::string sdp, Flags flags, MediaHandler handler) override;
   void answer(plugins::Executor on, std::shared_ptr<Call> call, std::string sdp, Flags flags, MediaHandler handler) override;
   void release(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) override;
   void query(plugins::Executor on, std::shared_ptr<Call> call, plugins::Handler<std::string> handler) override;
+  std::optional<std::uint64_t> packets_relayed() const override;
 
  private:
   // The work itself, synchronous: this engine relays in-process and genuinely has the

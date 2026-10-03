@@ -7,11 +7,14 @@
 #include "proxy.h"
 
 #include <chrono>
+#include <set>
 #include <utility>
 
 #include "call.h"
 #include "channel.h"
 #include "core.h"
+#include "digest.h"
+#include "headers/authorization_header.h"
 #include "headers/cseq_header.h"
 #include "headers/session_expires_header.h"
 #include "headers/sip_identity_header.h"
@@ -19,6 +22,7 @@
 #include "headers/via_header.h"
 #include "loggers/logger_scoped.h"
 #include "media/media_engine.h"
+#include "qualifier.h"
 #include "types/location.h"
 #include "util.h"
 
@@ -183,10 +187,192 @@ void Proxy::on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<tran
   // caller knows what a session timer is.
   if (!_apply_session_timer(request, transaction)) return;
 
-  // RFC 3261 16.4, then 16.5.
+  // RFC 3261 16.4, then who may send this where, then 16.5. Routes first, because a route
+  // set naming somewhere else is a request leaving this node whatever its Request-URI says.
   _preprocess_routes(request);
 
-  _determine_targets(request, transaction, token);
+  auto self = shared_from_this();
+  _authorize(request, transaction, [this, self, request, transaction, token]() { _determine_targets(request, transaction, token); });
+}
+
+// The 2026-10-01 decision in TODO/ACTIVE.md: this node is not an open relay. A caller
+// claiming to be one of this node's subscribers proves it, whoever it is calling; a caller
+// from anywhere else may call into this node's domains and nowhere else.
+void Proxy::_authorize(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
+                       std::function<void()> then) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  // RFC 3261 22.1: a CANCEL cannot be challenged, and nor can the ACK - neither has a
+  // response the caller could resubmit through.
+  const auto& method = request->header->request_method;
+  if (method == "ACK" || method == "CANCEL") return then();
+
+  // From a peer node, which the inter-node listener let in on a certificate the cluster CA
+  // signed (the 2026-09-17 decision). The peer challenged the caller or took the call from
+  // its own subscriber; a second challenge from here would go to a caller with no way to
+  // answer through this node. Trust is the certificate and nothing in the message: a Via
+  // or a Route naming a peer is anybody's to write.
+  if (const auto channel = request->channel.lock(); channel && !channel->peer_node().empty()) return then();
+
+  // Part of a call that was let through when it was made. The dialog table says so, not
+  // the To tag: a tag is anybody's to write, and would otherwise be the way round all of
+  // this.
+  if (!tag_of(request, "To").empty() && request->in_known_dialog) return then();
+
+  auto from = request->header->contains("From") ? request->header->headers_map["From"][0]->as<SIPIdentityHeader>() : nullptr;
+  if (from == nullptr || from->value == nullptr || from->value->uri == nullptr) {
+    _logger->info("Request with no usable From - 400");
+    return _send_status(transaction, request, 400, "Bad Request");
+  }
+
+  auto caller = from->value->uri;
+  auto self = shared_from_this();
+
+  core->realm_get_by_name(Util::to_lower(caller->host), [this, self, request, transaction, caller, then](plugins::Result<std::shared_ptr<types::Realm>> found) {
+    auto core = _core.lock();
+    if (!core) return;
+
+    if (!found.ok) {
+      _logger->error("Could not read the realm of the caller " + caller->to_string() + " - " + found.error);
+      return _send_status(transaction, request, 500, "Server Internal Error");
+    }
+
+    if (found.value) return _authenticate(request, transaction, found.value, caller, then);
+
+    // A stranger. A route set still to follow leads off this node, so that is no.
+    if (request->header->contains("Route")) {
+      _logger->info("Request from " + caller->to_string() + " routed off this node - 403");
+      return _send_status(transaction, request, 403, "Forbidden");
+    }
+
+    core->realm_get_by_name(Util::to_lower(request->header->request_uri->host), [this, self, request, transaction, caller,
+                                                                                 then](plugins::Result<std::shared_ptr<types::Realm>> target) {
+      if (!target.ok) {
+        _logger->error("Could not read the realm for " + request->header->request_uri->to_string() + " - " + target.error);
+        return _send_status(transaction, request, 500, "Server Internal Error");
+      }
+
+      // Receiving a call, which anybody may make.
+      if (target.value) return then();
+
+      _logger->info("Request from " + caller->to_string() + " to " + request->header->request_uri->to_string() + ", neither of them here - 403");
+      _send_status(transaction, request, 403, "Forbidden");
+    });
+  });
+}
+
+// RFC 3261 22.3, for a caller whose From is in a realm this node serves.
+void Proxy::_authenticate(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
+                          const std::shared_ptr<types::Realm>& realm, const std::shared_ptr<SIPUri>& caller, std::function<void()> then) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  // A connection a REGISTER was authenticated over belongs to that subscriber. A UDP
+  // source address does not belong to anybody.
+  auto channel = request->channel.lock();
+  if (channel && channel->_connection && channel->_connection->is_reliable() && channel->is_authenticated_as(caller->to_string())) return then();
+
+  // The credentials for this realm. Others, for proxies further on, are not this node's to
+  // read or to remove (22.3).
+  std::shared_ptr<headers::Header> answered;
+  std::shared_ptr<types::Authorization> credentials;
+
+  if (request->header->contains("Proxy-Authorization")) {
+    for (const auto& value : request->header->headers_map["Proxy-Authorization"]) {
+      auto header = value->as<headers::AuthorizationHeader>();
+      if (header == nullptr || header->value == nullptr || !header->value->contains_field("realm")) continue;
+      if (header->value->fields["realm"] != realm->name) continue;
+
+      answered = value;
+      credentials = header->value;
+      break;
+    }
+  }
+
+  if (!digest::is_complete(credentials) || !credentials->contains_field("username")) {
+    _logger->info("Request from " + caller->to_string() + " with no credentials for " + realm->name + " - challenging");
+    return _send_proxy_challenge(transaction, request, realm);
+  }
+
+  auto self = shared_from_this();
+
+  core->nonce_check(
+      credentials->fields["nonce"], [this, self, request, transaction, realm, caller, credentials, answered, then](plugins::Result<bool> checked) {
+        auto core = _core.lock();
+        if (!core) return;
+
+        if (!checked.ok) {
+          _logger->error("Could not check a nonce - " + checked.error);
+          return _send_status(transaction, request, 500, "Server Internal Error");
+        }
+
+        if (!checked.value) {
+          _logger->info("Request from " + caller->to_string() + " with a nonce that is unknown or expired - challenging");
+          return _send_proxy_challenge(transaction, request, realm);
+        }
+
+        // The credentials prove whoever they name, and that is checked first; whether that is
+        // who the From says comes after, so the two failures get their own answers.
+        auto claimed = std::make_shared<SIPIdentity>("sip:" + credentials->fields["username"] + "@" + realm->name);
+
+        core->subscriber_get(
+            claimed, [this, self, request, transaction, realm, caller, credentials, answered, then](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
+              if (!found.ok) {
+                _logger->error("Could not read a subscriber - " + found.error);
+                return _send_status(transaction, request, 500, "Server Internal Error");
+              }
+
+              // An unknown user is challenged like a wrong password, so this cannot be used to
+              // find out which subscribers exist.
+              if (!found.value) {
+                _logger->info("Request from " + caller->to_string() + " with credentials for no subscriber - challenging");
+                return _send_proxy_challenge(transaction, request, realm);
+              }
+
+              if (const auto why = digest::verify(*found.value, *credentials, request->header->request_method); !why.empty()) {
+                _logger->info("Request from " + caller->to_string() + " with " + why + " - challenging");
+                return _send_proxy_challenge(transaction, request, realm);
+              }
+
+              if (credentials->fields["username"] != caller->user) {
+                _logger->info("Request from " + caller->to_string() + " authenticated as " + credentials->fields["username"] + " - 403");
+                return _send_status(transaction, request, 403, "Forbidden");
+              }
+
+              // Spent. A Digest response is replayable for as long as its nonce lives, and the
+              // callee has no use for it.
+              request->header->remove_value("Proxy-Authorization", [&answered](std::shared_ptr<headers::Header> value) { return value == answered; });
+              request->authenticated = true;
+
+              then();
+            });
+      });
+}
+
+void Proxy::_send_proxy_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
+                                  const std::shared_ptr<types::Realm>& realm) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  auto self = shared_from_this();
+
+  // Minting writes the nonce to the datastore, and one the store never took would fail its
+  // own check when it came back.
+  core->nonce_create(realm, [this, self, transaction, request, realm](plugins::Result<std::string> nonce) {
+    if (!nonce.ok) {
+      _logger->error("Cannot mint a nonce for " + realm->name + " - " + nonce.error);
+      return _send_status(transaction, request, 500, "Server Internal Error");
+    }
+
+    auto response = request->generate_response();
+    response->header->response_code = 407;
+    response->header->response_message = "Proxy Authentication Required";
+    digest::add_challenges(*response->header, "Proxy-Authenticate", realm->name, nonce.value);
+
+    if (auto core = _core.lock()) core->dialogs()->observe_response(request, response);
+    transaction->send(response);
+  });
 }
 
 // RFC 3261 16.6 step 8: "a cryptographic hash of the To tag, From tag, Call-ID header
@@ -293,6 +479,14 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
   // RFC 4028 section 8.1: remembered for the duration of the transaction, and read again
   // in 8.2 when the final response comes back. Taken after _apply_session_timer has had
   // its say, so the interval is the one actually forwarded.
+  // Whether Contacts are rewritten: what the call decided when it was set up, for a request
+  // inside it, and the server's default until a realm says otherwise below.
+  if (auto call = core->call_get(value_of(request, "Call-ID")); call && call->rewrite_contact) {
+    context->rewrite_contact = *call->rewrite_contact;
+  } else {
+    context->rewrite_contact = core->config->behaviour_rewrite_contact;
+  }
+
   context->session_timer_supported = has_option_tag(request, "Supported", "timer");
   if (auto* session = session_field_of(request, "Session-Expires"); session != nullptr) context->session_interval = session->delta_seconds;
 
@@ -330,6 +524,22 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
     return _forward_next(context);
   }
 
+  // A token whose channel has gone. For UDP the flow has not: it is the pair of addresses,
+  // and the far end's NAT still maps it whether or not this node kept a record. The token
+  // says which pair it was, so the request goes there and not to a Contact that names the
+  // inside of somebody's LAN.
+  if (!request->flow_token.empty()) {
+    if (auto hop = _datagram_hop(core->flow_tokens().open(request->flow_token))) {
+      Target target;
+      target.uri = request->header->request_uri;
+      target.next_hop = hop;
+      target.flow = _flow_to(*hop);
+
+      context->targets.push_back(target);
+      return _forward_next(context);
+    }
+  }
+
   const auto host = Util::to_lower(request->header->request_uri->host);
   auto self = shared_from_this();
 
@@ -360,31 +570,36 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
     // The one place a realm is already in hand. Reading it again for every message
     // with a body would be a datastore round trip on the media path, and an in-dialog
     // re-INVITE never looks a realm up at all.
-    context->media_policy = found.value->media;
+    context->media_policy = found.value->behaviour.over(core->config->behaviour);
+    context->rewrite_contact = found.value->behaviour.rewrite_contact.value_or(core->config->behaviour_rewrite_contact);
+
+    // Kept on the call, because a request inside it arrives with no realm to ask.
+    if (auto call = core->call_get(value_of(request, "Call-ID"))) call->rewrite_contact = context->rewrite_contact;
 
     // Ours. The Request-URI names an address of record and the bindings the registrar
     // holds for it are the target set.
     auto identity = std::make_shared<SIPIdentity>(request->header->request_uri->to_string());
 
-    core->account_get(identity, [this, self, context](plugins::Result<std::shared_ptr<types::Account>> found) {
+    core->subscriber_get(identity, [this, self, context](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
       auto core = _core.lock();
       if (!core) return;
 
       const auto& request = context->request;
 
       if (!found.ok) {
-        _logger->error("Could not read the account for " + request->header->request_uri->to_string() + " - " + found.error);
+        _logger->error("Could not read the subscriber for " + request->header->request_uri->to_string() + " - " + found.error);
         return _send_status(context->server, request, 500, "Server Internal Error");
       }
 
       if (!found.value) {
-        _logger->info("No account for " + request->header->request_uri->to_string() + " - 404");
+        _logger->info("No subscriber for " + request->header->request_uri->to_string() + " - 404");
         return _send_status(context->server, request, 404, "Not Found");
       }
 
-      auto account = found.value;
+      auto subscriber = found.value;
+      context->callee_profile = subscriber->media_profile;
 
-      core->location_list(account->id, [this, self, context, account](plugins::Result<std::vector<types::Location>> bindings) {
+      core->location_list(subscriber->id, [this, self, context, subscriber](plugins::Result<std::vector<types::Location>> bindings) {
         auto core = _core.lock();
         if (!core) return;
 
@@ -401,21 +616,62 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
         }
 
         // RFC 5626: each binding goes back down the flow it was registered over, not down
-        // whichever flow the account most recently used. A user registered from a desk
+        // whichever flow the subscriber most recently used. A user registered from a desk
         // phone and a browser has two bindings and two flows, and sending both attempts
         // down one of them reaches one of the two devices twice and the other never.
-        for (const auto& binding : bindings.value) {
-          Target target;
-          target.uri = binding.contact;
-          target.next_hop = binding.contact;
-          target.flow = _flow_for(binding);
+        _add_targets(context, std::move(bindings.value));
 
-          context->targets.push_back(target);
-        }
-
-        _forward_next(context);
+        _read_caller_profile(context, [this, self, context]() { _forward_next(context); });
       });
     });
+  });
+}
+
+// Asterisk's rewrite_contact and Kamailio's fix_nated_contact, where a realm asks for them:
+// each Contact names where the message came from rather than what the endpoint believes its
+// address is, which behind a NAT is an address on somebody else's LAN. The user part and the
+// parameters are the endpoint's and stay. A WebSocket client is left alone: its Contact names
+// nothing reachable on purpose (RFC 7118) and the flow token is how it is reached, so an
+// address and port for its connection would be worse than what it wrote.
+void Proxy::_rewrite_contact(const std::shared_ptr<SIPMessage>& message, const std::shared_ptr<Channel>& from) const {
+  if (!from || !from->_connection || !message->header->contains("Contact")) return;
+
+  const auto transport = Util::to_lower(from->_connection->transport_name());
+  if (transport == "ws" || transport == "wss") return;
+
+  const auto source = from->_connection->remote_endpoint();
+  const auto address = source.address().to_string();
+  const auto port = source.port();
+
+  for (const auto& header : message->header->headers_map["Contact"]) {
+    auto contact = header->as<SIPIdentityHeader>();
+    if (contact == nullptr || contact->value == nullptr || contact->value->uri == nullptr) continue;
+
+    auto& uri = contact->value->uri;
+    if (uri->host == address && uri->port.value_or(5060) == port) continue;
+
+    _logger->debug("Contact " + uri->to_string() + " rewritten to " + address + ":" + std::to_string(port));
+    uri->host = source.address().is_v6() ? "[" + address + "]" : address;
+    uri->port = port;
+  }
+}
+
+// RFC 3264 section 5: an INVITE with no description has the callee make the offer, in its
+// 200, and that offer is produced for the caller - a leg that has not said what it speaks.
+// That is the only case its subscriber is needed, so it is the only INVITE that pays for
+// reading it. One that cannot be read is no different from one that says nothing.
+void Proxy::_read_caller_profile(const std::shared_ptr<Context>& context, std::function<void()> then) {
+  auto core = _core.lock();
+  const auto& request = context->request;
+  if (!core || request->header->request_method != "INVITE" || has_sdp(request) || !request->header->contains("From")) return then();
+
+  auto from = request->header->headers_map["From"][0]->as<SIPIdentityHeader>();
+  if (from == nullptr || from->value == nullptr || from->value->uri == nullptr) return then();
+
+  auto identity = std::make_shared<SIPIdentity>(from->value->uri->to_string());
+  core->subscriber_get(identity, [context, then = std::move(then)](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
+    if (found.ok && found.value) context->caller_profile = found.value->media_profile;
+    then();
   });
 }
 
@@ -430,6 +686,18 @@ void Proxy::_forward_next(const std::shared_ptr<Context>& context) {
   // By value: the continuation below runs after a round trip, and the target set is the
   // context's rather than this frame's.
   const Target target = context->targets[context->next++];
+  context->hops_left.clear();
+  context->hop_target.reset();
+  context->current = target;
+  context->offered.reset();
+
+  // An outbound flow that has gone is that flow failing (RFC 5626 section 5.3), and the
+  // client's next flow takes its place.
+  if (target.dead) {
+    _logger->info("The outbound flow for " + target.uri->to_string() + " has gone - trying the client's next flow");
+    _try_other_flow(context);
+    return _forward_next(context);
+  }
 
   if (auto channel = target.flow.lock(); channel && channel->_connection) return _forward_to(context, target, channel);
 
@@ -437,26 +705,74 @@ void Proxy::_forward_next(const std::shared_ptr<Context>& context) {
   // client is answered on the connection it registered over, so this is the trunk, the
   // peer node, and the client whose connection has since closed.
   const auto hop = _next_hop_of(*target.next_hop);
-  const auto name = target.next_hop->to_string();
+
+  // An address is where to go already. A name is located first (RFC 3263): NAPTR, SRV,
+  // then A and AAAA, giving the places to try in the order to try them (4.3).
+  auto host = hop.host;
+  if (host.size() > 2 && host.front() == '[' && host.back() == ']') host = host.substr(1, host.size() - 2);
+
+  boost::system::error_code literal;
+  boost::asio::ip::make_address(host, literal);
+  if (!literal) return _connect_hops(context, target, {dns::Hop{hop.transport, host, hop.port}}, 0);
 
   auto self = shared_from_this();
 
-  core->channel_connect(hop.transport, hop.host, hop.port, [this, self, context, target, name](plugins::Result<std::shared_ptr<Channel>> opened) {
-    if (!opened.ok || !opened.value || !opened.value->_connection) {
-      // Unreachable is about this target and not about the request, so the rest of the
-      // target set still gets its turn (16.7).
-      _logger->info("No flow to " + name + " - " + opened.error + " - trying the next target");
-
-      auto unavailable = context->request->generate_response();
-      unavailable->header->response_code = 480;
-      unavailable->header->response_message = "Temporarily Unavailable";
-
-      if (!context->best) context->best = unavailable;
-      return _forward_next(context);
+  core->locator()->locate(core->strand(), *target.next_hop, [this, self, context, target](plugins::Result<std::vector<dns::Hop>> located) {
+    if (!located.ok || located.value.empty()) {
+      _logger->info("Nothing to send " + target.next_hop->to_string() + " to - " + (located.ok ? "DNS has no SIP service there" : located.error));
+      return _unreachable(context);
     }
 
-    _forward_to(context, target, opened.value);
+    _connect_hops(context, target, located.value, 0);
   });
+}
+
+// Each place a target can be reached, in turn, until one opens.
+void Proxy::_connect_hops(const std::shared_ptr<Context>& context, const Target& target, std::vector<dns::Hop> hops, std::size_t index) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  if (index >= hops.size()) return _unreachable(context);
+
+  const auto hop = hops[index];
+  auto self = shared_from_this();
+
+  core->channel_connect(hop.transport, hop.address, hop.port,
+                        [this, self, context, target, hops = std::move(hops), index, hop](plugins::Result<std::shared_ptr<Channel>> opened) mutable {
+                          if (!opened.ok || !opened.value || !opened.value->_connection) {
+                            _logger->info("No flow to " + target.next_hop->to_string() + " at " + hop.transport + "://" + hop.address + ":" +
+                                          std::to_string(hop.port) + " - " + opened.error);
+                            return _connect_hops(context, target, std::move(hops), index + 1);
+                          }
+
+                          context->hops_left.assign(hops.begin() + static_cast<std::ptrdiff_t>(index) + 1, hops.end());
+                          context->hop_target = target;
+                          _forward_to(context, target, opened.value);
+                        });
+}
+
+// RFC 3263 4.3, for the branch in flight: the same target at the next place DNS listed,
+// when there is one. False leaves the fork to move on as it would have.
+bool Proxy::_try_next_hop(const std::shared_ptr<Context>& context) {
+  if (context->hops_left.empty() || !context->hop_target || context->cancelled || context->answered) return false;
+
+  auto hops = std::move(context->hops_left);
+  context->hops_left.clear();
+
+  _logger->info("Trying " + context->hop_target->next_hop->to_string() + " at the next place DNS listed");
+  _connect_hops(context, *context->hop_target, std::move(hops), 0);
+  return true;
+}
+
+// Unreachable is about this target and not about the request, so the rest of the target
+// set still gets its turn (16.7).
+void Proxy::_unreachable(const std::shared_ptr<Context>& context) {
+  auto unavailable = context->request->generate_response();
+  unavailable->header->response_code = 480;
+  unavailable->header->response_message = "Temporarily Unavailable";
+
+  if (!context->best) context->best = unavailable;
+  _forward_next(context);
 }
 
 void Proxy::_forward_to(const std::shared_ptr<Context>& context, const Target& target, const std::shared_ptr<Channel>& channel) {
@@ -470,6 +786,8 @@ void Proxy::_forward_to(const std::shared_ptr<Context>& context, const Target& t
     _logger->info("Max-Forwards exhausted - 483");
     return _send_status(context->server, context->request, 483, "Too Many Hops");
   }
+
+  if (context->rewrite_contact) _rewrite_contact(copy, context->request->channel.lock());
 
   // Step 6: the media engine has its say on the body before the copy goes anywhere, and
   // it is a round trip, so the send is the other side of it.
@@ -557,6 +875,8 @@ void Proxy::_write_forward(const std::shared_ptr<Context>& context, const std::s
 
         _timer_c_cancel(context);
         context->forwarded = nullptr;
+        if (_try_next_hop(context)) return;
+        if (!context->current.instance.empty()) _try_other_flow(context);
         _forward_next(context);
       });
 
@@ -584,7 +904,20 @@ void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::sha
 
   // Section 12 is tracked, not routed on: the dialog record is what tells this node a
   // call is up and when it ends, and it is built from what goes past.
-  if (auto core = _core.lock()) core->dialogs()->observe_response(context->request, response);
+  //
+  // A branch failing while the fork goes on is that branch's end and not the call's (16.7):
+  // the attempt is over when this node sends the caller its final response, and _send_best
+  // tells the tracker so then. Once the caller has had its answer - a CANCEL's 487, an
+  // earlier branch's 2xx - what a branch says is only the end of that branch.
+  const bool fork_goes_on = is_final(code) && !is_2xx(code) && code < 600 && !context->answered;
+
+  if (auto core = _core.lock()) {
+    if (fork_goes_on) {
+      core->dialogs()->observe_branch_failure(context->request, response);
+    } else {
+      core->dialogs()->observe_response(context->request, response);
+    }
+  }
 
   if (!is_final(code)) {
     context->provisional = true;
@@ -613,6 +946,19 @@ void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::sha
   // A 2xx ends the search: there is an answer and forking stops (16.7 step 5). A 6xx is
   // a definitive refusal from the user and stops it too.
   if (is_2xx(code) || code >= 600) {
+    if (is_2xx(code)) _report_reoffer(context, true);
+
+    // The call record names the node that holds the callee, which is where the answer
+    // came from when a peer sent it.
+    if (is_2xx(code) && context->request->header->request_method == "INVITE") {
+      const auto answered_over = response->channel.lock();
+      auto core = _core.lock();
+      auto call = core ? core->call_get(value_of(context->request, "Call-ID")) : nullptr;
+
+      if (call && answered_over && !answered_over->peer_node().empty()) {
+        if (const auto callee = call->participant_index(false)) call->participants[*callee].node_id = answered_over->peer_node();
+      }
+    }
     context->best = response;
     context->answered = true;
     _contexts.erase(context->server->id());
@@ -624,7 +970,165 @@ void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::sha
   // which for the codes that reach here is the closest to an answer.
   if (!context->best || code < context->best->header->response_code) context->best = response;
 
+  // RFC 3263 4.3: a 503 is that server failing, and the next server for the same target may
+  // not be. Anything else is an answer, which another server would give as well.
+  if (code == 503 && _try_next_hop(context)) return;
+
+  // RFC 5626 section 5.3: a 408 or a 430 is the flow failing and the client's next flow is
+  // tried; any other answer is the client's, and its other flows are not.
+  if (!context->current.instance.empty()) {
+    if (code == 408 || code == 430) {
+      _try_other_flow(context);
+    } else {
+      context->other_flows.erase(context->current.instance);
+    }
+  }
+
+  if (code == 488) {
+    if (_reoffer(context)) return;
+    _report_reoffer(context, false);
+  }
+
   _forward_next(context);
+}
+
+// The target set for an address of record (RFC 3261 16.5), with RFC 5626 section 5.3's rule
+// for outbound: each client instance's flows are one target, the most recently registered
+// first, and the rest are kept back for when it fails. An ordinary binding is a target of
+// its own, as it always was.
+void Proxy::_add_targets(const std::shared_ptr<Context>& context, std::vector<types::Location> bindings) const {
+  std::stable_sort(bindings.begin(), bindings.end(), [](const types::Location& a, const types::Location& b) {
+    return a.registered_at != b.registered_at ? a.registered_at > b.registered_at : a.reg_id > b.reg_id;
+  });
+
+  auto core = _core.lock();
+
+  // What a peer node sent is for the flows held here. Whoever holds the subscriber's other
+  // flows is that peer's to send to, and sending from here as well would ring those
+  // devices twice or pass the request round in a circle.
+  const auto arrived = context->request->channel.lock();
+  const bool from_peer = arrived && !arrived->peer_node().empty();
+
+  std::set<std::string> forwarded_to;
+
+  for (const auto& binding : bindings) {
+    if (!binding.contact) continue;
+
+    // The 2026-09-20 decision: a binding shares and a flow does not. A flow another node
+    // holds is reached through that node, once, however many of them it holds - it reads
+    // the same bindings and forks to its own.
+    if (core && _held_elsewhere(*core, binding)) {
+      if (from_peer) continue;
+
+      if (auto peer = _peer_target(*core, binding.node_id, context->request)) {
+        if (forwarded_to.insert(binding.node_id).second) context->targets.push_back(std::move(*peer));
+        continue;
+      }
+
+      // A node that is down, quiet or unknown cannot be asked. What is left is what a
+      // single node does with a flow it has no channel for.
+    }
+
+    auto target = _target_for(binding);
+    if (target.instance.empty()) {
+      context->targets.push_back(std::move(target));
+      continue;
+    }
+
+    const bool first_of_instance = context->other_flows.find(target.instance) == context->other_flows.end();
+    auto& others = context->other_flows[target.instance];
+
+    if (first_of_instance) {
+      context->targets.push_back(std::move(target));
+    } else {
+      others.push_back(std::move(target));
+    }
+  }
+}
+
+// A binding whose flow was learned by another node and is not open here.
+bool Proxy::_held_elsewhere(Core& core, const types::Location& binding) const {
+  if (binding.node_id.empty() || binding.node_id == core.config->sip_node_id || binding.flow_id.empty()) return false;
+
+  return core.channel_find(binding.flow_id) == nullptr;
+}
+
+// The peer node as a target: the request as it arrived, address of record and all, sent to
+// the peer's inter-node listener. Nothing when the peer has not said it is up within three
+// of its status intervals, or has not said where its peers reach it.
+std::optional<Proxy::Target> Proxy::_peer_target(Core& core, const std::string& node_id, const std::shared_ptr<SIPMessage>& request) const {
+  const auto interval = core.config->events_status_interval;
+  const auto stale_after = interval == 0 ? std::chrono::seconds::max() : std::chrono::seconds(interval * 3);
+
+  const auto node = core.nodes()->find(node_id, stale_after);
+  if (!node || node->stale || node->status != "ok" || node->cluster_address.empty() || node->cluster_port == 0) return std::nullopt;
+
+  auto hop = std::make_shared<SIPUri>();
+  hop->valid = true;
+  hop->scheme = "sip";
+  hop->host = node->cluster_address;
+  hop->port = node->cluster_port;
+  hop->set_parameter("transport", "tls");
+
+  Target target;
+  target.uri = request->header->request_uri;
+  target.next_hop = hop;
+  target.flow = _flow_to(*hop);
+  return target;
+}
+
+// The failed flow's client is tried down its next flow, next in line, if it has one left.
+bool Proxy::_try_other_flow(const std::shared_ptr<Context>& context) {
+  auto found = context->other_flows.find(context->current.instance);
+  if (found == context->other_flows.end() || found->second.empty()) return false;
+
+  auto next = std::move(found->second.front());
+  found->second.erase(found->second.begin());
+
+  context->targets.insert(context->targets.begin() + static_cast<std::ptrdiff_t>(context->next), std::move(next));
+  return true;
+}
+
+// Kamailio's failure-route pattern, and step 4 of the 2026-10-01 decision. A 488 (RFC 3261
+// 21.4.26) to an offer this node's engine produced for a leg that had not described itself
+// is a refusal of this node's guess rather than of the caller, so the same target is offered
+// the other profile, once. RFC 3264 is untouched: the callee sees two offers on two
+// transactions and refused one of them.
+bool Proxy::_reoffer(const std::shared_ptr<Context>& context) {
+  if (context->current.profile || !context->offered) return false;
+
+  std::optional<media::Profile> other;
+  if (*context->offered == media::Profile::PlainRtp) other = media::Profile::WebRtc;
+  if (*context->offered == media::Profile::WebRtc) other = media::Profile::PlainRtp;
+  if (!other) return false;
+
+  // The other profile from an engine that cannot make it is the refused offer again.
+  auto core = _core.lock();
+  if (!core || !core->media || !core->media->produces(*other)) return false;
+
+  Target again = context->current;
+  again.profile = other;
+  again.rejected = context->offered;
+  context->targets.insert(context->targets.begin() + static_cast<std::ptrdiff_t>(context->next), again);
+
+  _logger->info(context->request->header->request_uri->to_string() + " refused the offer it was made - offering the other profile");
+  _forward_next(context);
+  return true;
+}
+
+// What the re-offer came to, for the operator. Nothing is learned from it: the node says
+// which subscriber needed the other profile and the operator decides whether to set it.
+void Proxy::_report_reoffer(const std::shared_ptr<Context>& context, bool took) {
+  const auto& current = context->current;
+  if (!current.profile || !current.rejected) return;
+
+  auto core = _core.lock();
+  if (!core) return;
+
+  const auto subscriber = context->request->header->request_uri->to_string();
+  core->reoffers().record(subscriber, *current.rejected, took ? current.profile : std::nullopt);
+
+  if (took) _logger->warn(subscriber + " took the other media profile after refusing the first - see /api/v1/media/reoffers");
 }
 
 void Proxy::_send_best(const std::shared_ptr<Context>& context) {
@@ -637,6 +1141,13 @@ void Proxy::_send_best(const std::shared_ptr<Context>& context) {
   // RFC 3261 16.7 step 6: a 503 says the next hop is out of service, which is about the
   // hop and not about the request. Passing it upstream would tell the caller something
   // untrue about this node, so it goes back as a 500.
+  // RFC 5626 section 11: 430 Flow Failed is between proxies, about a flow the caller never
+  // saw. All the caller can be told is that nobody could be reached.
+  if (context->best->header->response_code == 430) {
+    context->answered = true;
+    return _send_status(context->server, context->request, 480, "Temporarily Unavailable");
+  }
+
   if (context->best->header->response_code == 503) {
     context->answered = true;
     return _send_status(context->server, context->request, 500, "Server Internal Error");
@@ -652,6 +1163,8 @@ void Proxy::_send_best(const std::shared_ptr<Context>& context) {
 }
 
 void Proxy::_forward_response(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response) {
+  if (context->rewrite_contact) _rewrite_contact(response, response->channel.lock());
+
   auto self = shared_from_this();
   auto server = context->server;
 
@@ -672,9 +1185,27 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
   // description is the one question the engine has to be told the answer to.
   if (!call || !dialog) return then();
 
+  // A call a peer node forwarded is anchored there, for its whole life: the first node
+  // holds the media, and a second pass here would relay a relay, or offer one rtpengine
+  // the same call twice. Decided by the request that made the call and kept on it,
+  // because the answer and every re-INVITE after come through here too.
+  if (!request->in_known_dialog && tag_of(request, "To").empty()) {
+    const auto arrived = request->channel.lock();
+    if (arrived && !arrived->peer_node().empty()) call->media_elsewhere = true;
+  }
+  if (call->media_elsewhere) return then();
+
   // The policy is the realm's, decided once where the realm was in hand and kept on
   // the call, because a re-INVITE arrives in-dialog with no realm to ask.
   if (context && context->media_policy) call->media_policy = *context->media_policy;
+
+  // Likewise each end's subscriber, kept on its leg.
+  if (context && context->callee_profile) {
+    if (const auto callee = call->participant_index(false)) call->participants[*callee].subscriber_profile = context->callee_profile;
+  }
+  if (context && context->caller_profile) {
+    if (const auto caller = call->participant_index(true)) call->participants[*caller].subscriber_profile = context->caller_profile;
+  }
 
   const auto& policy = call->media_policy;
 
@@ -689,8 +1220,14 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
 
   // A response carries the answering end's description, which is the end the request did
   // not come from.
-  const auto participant = call->participant_index(is_response ? !request_from_caller : request_from_caller);
+  const bool from_caller = is_response ? !request_from_caller : request_from_caller;
+
+  const auto participant = call->participant_index(from_caller);
   if (!participant) return then();
+
+  // And the leg this description is being produced for is the other one, which is the
+  // leg whose profile says what the engine has to make.
+  const auto recipient = call->participant_index(!from_caller);
 
   // RFC 3264 section 5: the INVITE carries the offer and the response to it carries the
   // answer. An INVITE with no description at all inverts that - the response becomes the
@@ -700,16 +1237,73 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
   auto flags = media::Flags::from_sdp(message->body);
   flags.participant = *participant;
 
-  // What the far leg needs, which the description in hand cannot say. The engine knows
-  // neither where this message is going nor over what, and the transport of that flow
-  // is the only thing that distinguishes a browser from a desk phone before the
-  // browser has described itself.
-  flags.target = _profile_under(policy, outgoing && outgoing->_connection ? outgoing->_connection->transport_name() : std::string());
+  // What this leg is, from its own mouth, and it is read before the engine rewrites the
+  // body: an offer or an answer says exactly whether the end that wrote it asked for
+  // ICE, DTLS or SRTP. It outlives the message, because the next description this node
+  // has to produce for that leg is then produced from what it said rather than guessed
+  // at a second time.
+  if (const auto stated = flags.stated()) call->participants[*participant].profile = *stated;
+
+  // What the far leg needs, which the description in hand cannot say. What that leg has
+  // already told this node comes first: a delayed offer, an answer going back to the end
+  // that offered and every re-INVITE after are all a leg this node has heard describe
+  // itself. Then the leg's subscriber, where the operator has said what the endpoint is.
+  // The realm's setting, and where it has none the transport of the outgoing flow,
+  // decide only for the first description produced towards a leg nobody has spoken for.
+  const bool unheard = !(recipient && call->participants[*recipient].profile);
+
+  if (!is_response && context && context->current.profile) {
+    // The re-offer a 488 earned, which is the one thing that outranks the rest.
+    flags.target = *context->current.profile;
+  } else if (!unheard) {
+    flags.target = *call->participants[*recipient].profile;
+  } else if (!is_response && context && context->current.said) {
+    // What the callee said in answer to an OPTIONS, which is its own word too.
+    flags.target = *context->current.said;
+  } else if (recipient && call->participants[*recipient].subscriber_profile) {
+    types::MediaPolicy subscriber;
+    subscriber.profiles = *call->participants[*recipient].subscriber_profile;
+    flags.target = _profile_under(subscriber, outgoing && outgoing->_connection ? outgoing->_connection->transport_name() : std::string());
+  } else {
+    flags.target = _profile_under(policy, outgoing && outgoing->_connection ? outgoing->_connection->transport_name() : std::string());
+  }
+
+  // A leg on this node's own side of the router reaches the relay at the local address
+  // (sip.localnet); everyone else is left to the engine's public one.
+  if (outgoing && outgoing->_connection && !core->config->sip_public_address.empty() &&
+      core->config->in_localnet(outgoing->_connection->remote_endpoint().address())) {
+    flags.address = core->advertised_for(*outgoing).host;
+  }
+
+  // What the offer towards an unheard callee is being made as, so that a refusal of it can
+  // be answered with the other. Mirror is whatever the caller said.
+  std::optional<media::Profile> offered;
+  if (!is_response && is_offer && unheard && context && message->header->request_method == "INVITE") {
+    offered = flags.target == media::Profile::Mirror ? flags.stated() : std::optional<media::Profile>(flags.target);
+
+    // An engine that cannot make what was asked sends what it can, and the operator is
+    // told rather than left to work it out from a 488. Whatever goes out is then not a
+    // guess with an "other" to try next, so nothing is remembered as offered.
+    if (offered && !core->media->produces(*offered)) {
+      _logger->warn("The media engine cannot produce " + std::string(media::setting_name(*offered)) + " for " + message->header->request_uri->to_string() +
+                    " - offering what it can");
+      offered.reset();
+    }
+  }
 
   auto self = shared_from_this();
 
-  auto handler = [this, self, message, then = std::move(then)](media::Result result) {
+  auto handler = [this, self, message, context, offered, then = std::move(then)](media::Result result) {
     if (result.ok) {
+      // Only an offer the engine made counts as this node's; one passed through untouched
+      // is the caller's, and a refusal of it is the caller's to hear.
+      if (context && offered) context->offered = offered;
+
+      // For the call record: which engine carried it.
+      if (auto core = _core.lock(); core && core->media) {
+        if (auto anchored = core->call_get(value_of(message, "Call-ID"))) anchored->media_engine = core->media->describe();
+      }
+
       message->body = std::move(result.sdp);
       message->body_length = static_cast<unsigned int>(message->body.size());
     } else {
@@ -751,7 +1345,6 @@ bool Proxy::_prepare_forward(const std::shared_ptr<SIPMessage>& copy, const std:
     header->add("Max-Forwards", std::make_shared<UIntHeader>(kDefaultMaxForwards));
   }
 
-  const auto local = channel->_connection->local_endpoint();
   const auto transport = Util::to_lower(channel->_connection->transport_name());
 
   // Step 4: Record-Route, on the requests that can start a dialog. It is what brings the
@@ -774,12 +1367,14 @@ bool Proxy::_prepare_forward(const std::shared_ptr<SIPMessage>& copy, const std:
     const bool secure_request = Util::to_lower(header->request_uri->scheme) == "sips";
     auto inbound = copy->channel.lock();
 
-    auto record_route_for = [&](const std::string& interface_transport, const std::string& address, std::uint16_t port, const std::string& token) {
+    // Each value names this node as the end it faces sees it (sip.localnet, public ports).
+    auto record_route_for = [&](const std::string& interface_transport, const Channel& facing, const std::string& token) {
+      const auto advertised = core->advertised_for(facing);
       auto uri = std::make_shared<SIPUri>();
       uri->valid = true;
       uri->scheme = (interface_transport == "tls" || secure_request) ? "sips" : "sip";
-      uri->host = core->advertised_address(address);
-      uri->port = port;
+      uri->host = advertised.host;
+      uri->port = advertised.port;
 
       // RFC 5626 section 5.1: the flow token goes in the user part, where it is opaque
       // to everyone but the node that wrote it.
@@ -799,12 +1394,10 @@ bool Proxy::_prepare_forward(const std::shared_ptr<SIPMessage>& copy, const std:
 
     // Added bottom first, because add_start puts each one in front of the last.
     if (inbound && inbound->_connection) {
-      const auto arrived_on = inbound->_connection->local_endpoint();
-      header->add_start("Record-Route", record_route_for(Util::to_lower(inbound->_connection->transport_name()), arrived_on.address().to_string(),
-                                                         arrived_on.port(), inbound->flow_token()));
+      header->add_start("Record-Route", record_route_for(Util::to_lower(inbound->_connection->transport_name()), *inbound, inbound->flow_token()));
     }
 
-    header->add_start("Record-Route", record_route_for(transport, local.address().to_string(), local.port(), channel->flow_token()));
+    header->add_start("Record-Route", record_route_for(transport, *channel, channel->flow_token()));
   }
 
   // Step 6: a top Route without lr belongs to a strict router, which expects to find
@@ -830,8 +1423,9 @@ bool Proxy::_prepare_forward(const std::shared_ptr<SIPMessage>& copy, const std:
   // transactions while both still say where they have been.
   const auto branch = std::string(kMagicCookie) + loop_token + "." + Util::generate_random_string("", 12);
 
-  auto via = std::make_shared<ViaHeader>("SIP/2.0/" + Util::to_upper(transport) + " " + core->advertised_address(local.address().to_string()) + ":" +
-                                         std::to_string(local.port()) + ";branch=" + branch);
+  const auto advertised = core->advertised_for(*channel);
+  auto via =
+      std::make_shared<ViaHeader>("SIP/2.0/" + Util::to_upper(transport) + " " + advertised.host + ":" + std::to_string(advertised.port) + ";branch=" + branch);
 
   header->add_start("Via", via);
   copy->branch = branch;
@@ -1174,7 +1768,6 @@ void Proxy::_forward_cancel_statelessly(const std::shared_ptr<SIPMessage>& cance
   // as a new one the far end has never seen.
   const auto branch = std::string(kMagicCookie) + _loop_token(cancel);
 
-  const auto local = flow->_connection->local_endpoint();
   const auto transport = Util::to_lower(flow->_connection->transport_name());
 
   if (cancel->header->contains("Max-Forwards")) {
@@ -1192,8 +1785,9 @@ void Proxy::_forward_cancel_statelessly(const std::shared_ptr<SIPMessage>& cance
     cancel->header->add("Max-Forwards", std::make_shared<UIntHeader>(kDefaultMaxForwards));
   }
 
-  auto via = std::make_shared<ViaHeader>("SIP/2.0/" + Util::to_upper(transport) + " " + core->advertised_address(local.address().to_string()) + ":" +
-                                         std::to_string(local.port()) + ";branch=" + branch);
+  const auto advertised = core->advertised_for(*flow);
+  auto via =
+      std::make_shared<ViaHeader>("SIP/2.0/" + Util::to_upper(transport) + " " + advertised.host + ":" + std::to_string(advertised.port) + ";branch=" + branch);
 
   cancel->header->add_start("Via", via);
   cancel->branch = branch;
@@ -1248,16 +1842,31 @@ void Proxy::on_stray_response(std::shared_ptr<SIPMessage> response) {
   if (received != next_via->parameters.end() && !received->second.empty()) host = received->second;
 
   const auto rport = next_via->parameters.find("rport");
-  if (rport != next_via->parameters.end() && !rport->second.empty()) port = static_cast<std::uint16_t>(std::stoul(rport->second));
-
-  auto channel = core->channel_find(transport, host, port);
-
-  if (!channel) {
-    _logger->info("No flow back to " + host + ":" + std::to_string(port) + " for a stray response - dropping");
-    return;
+  if (rport != next_via->parameters.end() && !rport->second.empty()) {
+    try {
+      const auto parsed = std::stoul(rport->second);
+      if (parsed == 0 || parsed > 65535) throw std::out_of_range("rport");
+      port = static_cast<std::uint16_t>(parsed);
+    } catch (const std::exception&) {
+      _logger->debug("Response " + std::to_string(response->header->response_code) + " with an rport that is not a port - dropping");
+      return;
+    }
   }
 
-  channel->send(response);
+  // An address and a port, not a record this node has to be keeping: a UDP flow forgotten
+  // by the idle sweep is reopened from the listener's socket, and for a connection that has
+  // gone 18.2.2 says to open one. Whatever cannot be reached is dropped, as a stateless
+  // proxy would.
+  const auto name = host + ":" + std::to_string(port);
+
+  core->channel_connect(transport, host, port, [this, self = shared_from_this(), response, name](plugins::Result<std::shared_ptr<Channel>> opened) {
+    if (!opened.ok || !opened.value) {
+      _logger->info("No flow back to " + name + " for a stray response - dropping - " + opened.error);
+      return;
+    }
+
+    opened.value->send(response);
+  });
 }
 
 bool Proxy::_names_this_node(const SIPUri& uri) const {
@@ -1288,22 +1897,86 @@ media::Flags::Profile Proxy::_profile_under(const types::MediaPolicy& policy, co
   return media::Flags::profile_for_transport(transport);
 }
 
-std::shared_ptr<Channel> Proxy::_flow_for(const types::Location& binding) const {
+Proxy::Target Proxy::_target_for(const types::Location& binding) const {
+  // RFC 5626 section 5.3: the Request-URI is the Contact the binding registered, whichever
+  // way the request is then sent.
+  Target target;
+  target.uri = binding.contact;
+  target.next_hop = binding.contact;
+
   auto core = _core.lock();
-  if (!core || !binding.contact) return nullptr;
+  if (!core) return target;
+
+  target.instance = binding.reg_id != 0 ? binding.instance : std::string();
 
   // The flow the registration was made over, when it is still open. This is the whole of
   // RFC 5626's routing: a browser's Contact URI has nothing listening behind it and a
   // NAT'd client's names the wrong side of the NAT, so the connection they registered on
   // is the only way back to either.
-  if (auto flow = core->channel_find(binding.flow_id)) return flow;
+  if (auto flow = core->channel_find(binding.flow_id)) {
+    target.flow = flow;
+    target.said = core->qualifier()->said(binding.flow_id);
+    return target;
+  }
 
-  // No flow recorded, or one that has since closed. The Contact is all there is, which is
-  // right for a desk phone with a routable address and hopeless for a browser - and a
-  // binding whose flow has gone is a binding whose client has gone, so the attempt fails
-  // and the fork moves on to the next one. Answering 430 Flow Failed instead is RFC 5626
-  // section 11 and wants the registrar to act on it.
-  return _flow_to(*binding.contact);
+  // A UDP flow this node has forgotten is one it can still send down (section 3.1: the flow
+  // is the pair of addresses). Only from the node that held it, though: from anywhere else
+  // the datagram comes from an address the far end's NAT has never seen.
+  const bool held_here = binding.node_id.empty() || binding.node_id == core->config->sip_node_id;
+
+  if (auto hop = held_here ? _datagram_hop(binding.flow_id) : nullptr) {
+    target.next_hop = hop;
+    target.flow = _flow_to(*hop);
+    return target;
+  }
+
+  // RFC 5626 section 5.3: an outbound binding is reached down its flow, which is what the
+  // client registered to be reached by. Its flow having gone is the target failing.
+  target.instance = binding.reg_id != 0 ? binding.instance : std::string();
+  if (!target.instance.empty()) {
+    target.dead = true;
+    return target;
+  }
+
+  // No flow recorded, or a reliable one that has since closed. The Contact is all there is,
+  // which is right for a desk phone with a routable address and hopeless for a browser - and
+  // a binding whose connection has gone is a binding whose client has gone, so the attempt
+  // fails and the fork moves on to the next one. Answering 430 Flow Failed instead is RFC
+  // 5626 section 11 and wants the registrar to act on it.
+  target.flow = _flow_to(*binding.contact);
+  return target;
+}
+
+// The next hop a UDP flow id names, for sending down a flow this node no longer holds a
+// channel for. Null for anything that is not a UDP flow: a TCP, TLS or WebSocket flow that
+// has closed is gone, and only its client can open another.
+std::shared_ptr<SIPUri> Proxy::_datagram_hop(const std::string& flow_id) {
+  static const std::string kScheme = Core::channel_key("udp", "");
+
+  if (flow_id.rfind(kScheme, 0) != 0) return nullptr;
+
+  // host:port, where the host may be an IPv6 address and so the port is after the last
+  // colon rather than the first.
+  const auto endpoint = flow_id.substr(kScheme.size());
+  const auto colon = endpoint.rfind(':');
+  if (colon == std::string::npos || colon == 0) return nullptr;
+
+  std::uint16_t port = 0;
+  try {
+    const auto parsed = std::stoul(endpoint.substr(colon + 1));
+    if (parsed == 0 || parsed > 65535) return nullptr;
+    port = static_cast<std::uint16_t>(parsed);
+  } catch (const std::exception&) {
+    return nullptr;
+  }
+
+  auto hop = std::make_shared<SIPUri>();
+  hop->scheme = "sip";
+  hop->host = endpoint.substr(0, colon);
+  hop->port = port;
+  hop->set_parameter("transport", "udp");
+
+  return hop;
 }
 
 std::shared_ptr<Channel> Proxy::_flow_to(const SIPUri& uri) const {

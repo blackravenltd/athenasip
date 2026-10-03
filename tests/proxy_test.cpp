@@ -184,8 +184,12 @@ TEST(ProxyTest, ARetransmittedInviteIsNotForwardedTwice) {
   auto caller = f.make_channel("192.0.2.11", &caller_connection);
   caller_connection->reliable = false;
 
-  f.receive(caller, f.invite("z9hG4bK-twice"));
-  f.receive(caller, f.invite("z9hG4bK-twice"));
+  // On UDP Alice answers a challenge rather than leaning on a connection, and the
+  // retransmission is the same datagram again, credentials and all.
+  const auto invite = f.with_credentials(f.invite("z9hG4bK-twice"), "alice", "alice-ha1");
+
+  f.receive(caller, invite);
+  f.receive(caller, invite);
 
   int forwarded = 0;
   for (const auto& message : f.written(f.callee_connection)) {

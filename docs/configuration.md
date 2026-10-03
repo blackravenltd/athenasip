@@ -1,9 +1,55 @@
 # AthenaSIP - Configuration
 
-AthenaSIP uses a YAML configuration file. The server will search, in order:
+AthenaSIP uses a YAML configuration file. With no `--config`, the first of these that
+exists is read:
 
-1. ~/.athenasip/config.yaml
-2. /usr/etc/athenasip/config.yaml
+1. `$ATHENASIP_CONFIG`
+2. `/etc/athenasip/config.yaml`
+3. `~/.athenasip/config.yaml`
+
+In that order on purpose: what the command line was told beats the environment, the
+environment beats the system path a package installs to, and a home directory is last
+because it is a person's checkout rather than a service.
+
+## What this node is actually running on
+
+Most of what decides a node's behaviour is a default nobody wrote down, so reading the
+file answers a different question from reading the node:
+
+```
+athenasip --print-config
+```
+
+That prints the effective values - the file, the search path and the defaults all
+resolved - as YAML, says which file it came from, and exits without starting a listener or
+constructing a driver. A plugin's own section is copied through rather than interpreted,
+since only the plugin knows what it means. There are no API tokens to show: a file that
+still sets `http.api.tokens` is refused, and administrators are users made with
+`athenasip --add-user`.
+
+## Whether this node can reach what it needs
+
+```sh
+athenasip --check
+```
+
+Tries everything the node would connect to, one at a time, and says which answered: the
+datastore, the event bus, the media engine, every certificate a listener will ask for,
+and, in a cluster, a mutual-TLS handshake with each other node that has said it is up.
+
+```
+ok    configuration        /etc/athenasip/config.yaml
+ok    datastore            redis 0.0.1 at redis://:***@127.0.0.1:6379/3
+ok    events               mqtt 0.0.1 at mqtt://10.35.1.10:1883
+ok    media                builtin 0.0.1 at builtin://
+ok    tls certificate      /etc/athenasip/tls/node.cer
+FAIL  peer node-b          10.0.0.2:5062 - Connection refused
+```
+
+It exits 0 when everything passed and 1 when anything did not. Nothing is started and
+nothing is changed, so it is safe to run beside a node that is serving: it is the first
+thing to run when a node will not start, and before starting one for the first time. A
+password in a URL is not printed.
 
 ## Configuration
 
@@ -53,6 +99,39 @@ them, so without this those fields say `0.0.0.0` and nothing can route back. Lea
 unset on a single-homed host, where the address of the flow itself is right; set it in a
 container, behind a load balancer, or on a NAT'd public IP.
 
+#### `localnet`
+
+```yaml
+sip:
+  public_address: 203.0.113.5
+  localnet: ["192.168.0.0/16", "10.0.0.0/8"]
+```
+
+The prefixes on this node's side of the router, which is Asterisk's `localnet`. A peer
+whose address is inside one is given the node's local address and port, in every `Via`,
+`Record-Route`, `Service-Route` and request the node writes to it. Everyone else is given
+`public_address`. Without this a phone on the same LAN is handed the public address, which
+reaches the node only if the router hairpins, and plenty of routers do not. A bare address
+is a prefix of one. A listener bound to `0.0.0.0` gives the address the host would use to
+reach that peer.
+
+The builtin media relay follows the same rule: a leg inside `localnet` is told to send its
+media to that local address rather than `media.builtin.public_address`, which works when
+the relay is bound to `0.0.0.0` or to that address. rtpengine chooses its addresses from
+its own interface configuration and is not affected.
+
+#### `public_port`, on each listener
+
+```yaml
+udp:
+  port: 5060
+  public_port: 5080
+```
+
+The port a router forwards to this listener, when it is not the one the listener is bound
+to. It is what peers outside `localnet` are given and what the node list says. Leave it out
+when the ports are the same.
+
 Realms and their nonce secrets are not configured here. They are provisioned over the
 admin API - `POST /api/v1/realms` - because a cluster shares them and a file on one node
 does not.
@@ -63,6 +142,40 @@ If `true`, the server will reject SIP `INVITE` requests that do not describe enc
 This setting can be `true` even if the TCP server is enabled - in which case the SIP flow will
 be unencrypted, but the server will still reject attempts to initate unencrypted calls.
 
+
+#### `files.spa`
+
+Single-page application mode. Defaults to `true`.
+
+A path with nothing behind it - `/sip/realms`, `/diagnostics/softphone` - is answered
+with `index.html` from the document root, so a client-side route survives a reload or a
+pasted link. Three things are never answered this way:
+
+- anything under `/api/`, so an unknown API path still 404s rather than returning a web
+  page and telling a script that its request succeeded;
+- any path whose last segment names a file extension, so a missing asset stays missing
+  instead of hiding behind a 200 with HTML in it;
+- anything but `GET` and `HEAD`, because a write to a path that does not exist is not a
+  page view.
+
+Set `false` for an ordinary document root.
+
+#### `log_messages`
+
+If `true`, every message in and out is logged in full rather than by its first line.
+Defaults to `false`.
+
+The first line is the readable trace and is always logged. This adds the headers and
+the body, and the body is the reason to want it: a session description is the one thing
+a node is better placed to show than either end of a call, and reading it off both
+endpoints instead is what the interop runbook otherwise has to tell you to do. It is
+also most of the bytes, which is why it is asked for rather than assumed.
+
+`Authorization`, `Proxy-Authorization`, `WWW-Authenticate` and `Proxy-Authenticate` are
+logged as `<redacted>`. A Digest response is a hash rather than the password, but it is
+replayable for as long as its nonce lives, and a challenge carries the nonce the next
+response is computed over. The line itself is kept, because knowing that a request
+carried credentials is part of reading the exchange.
 
 #### `media_timeout`
 
@@ -264,6 +377,16 @@ RFC 3261 requires this to be larger than 3 minutes. A smaller value is refused, 
 error in the log, and the default kept - a shorter timer would hang up on calls that are
 only still ringing.
 
+#### Finding a host by name
+
+There is nothing to configure. When a request has to go to a URI that names a host - a
+trunk, `sip:+15551234567@sip.provider.example` - the node looks it up the way RFC 3263
+says: NAPTR for which transports the domain offers, SRV for the servers and ports, then
+their addresses, and it tries each in turn until one answers. It asks the nameservers in
+`/etc/resolv.conf`, five seconds a try and twice round, and keeps each answer for as long as
+its TTL says. A URI with an address, or with a port, skips the lookups it makes unnecessary.
+A provider that publishes only an A record still works: that is the last step.
+
 ### `tcp` Section
 
 This section configures TCP listener for the server. TCP is one possible transport
@@ -301,7 +424,7 @@ The filename for the PEM format server key.
 
 ### `datastore` Section
 
-Where realms, accounts, registrations, nonces and call records live. One of the three
+Where realms, subscribers, registrations, nonces and call records live. One of the three
 plugin kinds: the URL's scheme picks the driver, and a section named after that driver
 carries anything the URL cannot express.
 
@@ -314,7 +437,7 @@ The URL of the datastore. AthenaSIP ships with two:
 | In memory                  | `memory` | `memory://`              |
 |[Redis](https://redis.io/)  | `redis`  | `redis://127.0.0.1:6379` |
 
-`memory://` keeps realms, accounts, registrations, nonces and calls in the server
+`memory://` keeps realms, subscribers, registrations, nonces and calls in the server
 process. It needs no external service and nothing survives a restart, which makes it
 the right choice for a single node you are trying out, and for the tests.
 
@@ -376,23 +499,135 @@ gives a transaction, which a fork with several bindings has to share.
 addresses to put in the SDP it hands back. Leave it unset and let rtpengine's own
 interface configuration decide.
 
-#### What is not configured here
+#### Whether media is anchored, and how
 
-Whether a node anchors a realm's media, and how it decides what each leg of a call
-needs, belong to the realm rather than to the node: a cluster shares its realms and a
-file on one node does not. Both are provisioned over the admin API as `media_anchor`
-and `media_profiles` on a realm, and
-[`docs/api/openapi.yaml`](api/openapi.yaml) has the values.
+That is behaviour rather than media configuration, and lives in the `behaviour` section
+below, where a realm can override it.
 
-The short version. `media_anchor` off leaves every session description untouched and
-lets the media go end to end, which is what a node with no engine does and is right
-for two endpoints that can reach each other. `media_profiles` decides what the engine
-is asked to produce for a leg: `transport`, the default, reads it from the flow, so
-`ws` and `wss` are WebRTC and everything else is plain RTP. That is right wherever a
-WebSocket means a browser. It is wrong for a realm whose WebSocket clients are SIP
-phones, because RFC 7118 is SIP over WebSocket and requires no WebRTC at all, and
-`rtp` is the answer there. `webrtc` makes every leg WebRTC. `srtp` makes every leg SRTP
-with the keys in the description (RFC 4568), which is a desk phone that wants
-encryption and has never heard of DTLS, and no transport tells that apart from plain
-RTP so it can only be asked for. `mirror` says nothing and leaves the engine keeping
-whatever it was handed.
+### `calls` Section
+
+```yaml
+calls:
+  history_retention: 2592000
+```
+
+Every call that got as far as ringing leaves a record when it ends: who called whom, when
+it was made, answered and ended, which nodes carried it and which media engine.
+`GET /api/v1/call-records` lists them, newest first, from the datastore, so every node of
+a cluster gives the same list. `history_retention` is how long a record is kept, in
+seconds: thirty days by default, and zero keeps them for ever. With `memory://` the
+records go when the node stops.
+
+### `http` Section
+
+The admin API and the console.
+
+```yaml
+http:
+  address: 0.0.0.0
+  port: 8080
+  tls:
+    enable: true
+    port: 8443
+  api:
+    enable: true
+    rate_limits:
+      session: { burst: 60, per_minute: 300 }
+```
+
+`http.tls` adds an HTTPS listener beside the plain one; both serve the same API and the
+same console. It uses the certificate and key of the [`tls` section](#tls-section) unless
+it names its own with `cert_pem_filename` and `key_pem_filename`, and it binds `address`
+unless it has one of its own. A node asked for HTTPS with no certificate to show does not
+start. The plain listener stays for what has no use for a certificate: a healthcheck, a
+provisioning script on the host. The console's softphone needs HTTPS, because a browser
+gives a page that is not a secure context no microphone - and a page served over HTTPS may
+only open a secure WebSocket, so it needs `wss` as well: either `websocket.tls: true`, or
+`websocket.secure_port`, which starts a second, secure WebSocket listener beside the plain
+one with the `websocket` section's certificate or the `tls` section's.
+
+`http.api.rate_limits` sets, for each kind of caller, how many requests are let through at
+once (`burst`) and how many a minute after that (`per_minute`). Zero in either turns that
+limit off. A refusal is `429` with `Retry-After`.
+
+| Limit | Applies to | Keyed by | Default |
+|---|---|---|---|
+| `open` | no credential, an unknown endpoint, a token that is not one | source address | 30, then 30 a minute |
+| `login_source` | the login, on top of `open` | source address | 10, then 5 a minute |
+| `login_user` | the login, on top of `open` | username, counting every attempt | 5, then 1 a minute |
+| `session` | a signed-in caller | session | 60, then 300 a minute |
+
+The limits are per node and held in memory. The source address is the peer of the
+connection, so a node behind a reverse proxy sees every caller as the proxy: turn `open`
+and `login_source` off there and limit at the proxy.
+
+### behaviour
+
+```yaml
+behaviour:
+  media_anchor: true
+  media_profile: mirror
+  qualify_interval: 0
+  rewrite_contact: false
+```
+
+[Behaviour](behaviour.md) is the whole of it, with how to set it to match the server you
+are moving from. Where the standards leave a choice, this section makes it. Leave it out and the node
+behaves as the standards say, with one deliberate deviation: it anchors media when an
+engine is configured, which is what most servers in front of rtpengine do and what a
+call through NAT needs.
+
+Every realm has the same section, provisioned over the admin API as `behaviour` on the
+realm (see [`docs/api/openapi.yaml`](api/openapi.yaml)). A realm overrides only what it
+sets and takes the rest from here, so changing this file changes every realm that has
+not chosen otherwise. A realm that sets a value to `null` goes back to inheriting it.
+The API returns what a realm chose (`behaviour`), what that comes to on the node
+answering (`behaviour_effective`), and that node's default on its own
+(`behaviour_default`).
+
+`media_anchor` off leaves every session description untouched and lets the media go
+end to end, as RFC 3261 16.6 has a proxy do. That is right for two endpoints that can
+reach each other and wrong for anything behind a NAT.
+
+`media_profile` decides what the engine is asked to produce for a leg that has not yet
+said what it speaks. A leg that has is always answered in kind.
+
+| Value | What a callee is offered | Behaves like |
+|---|---|---|
+| `mirror` (default) | What the caller offered | A proxy that imposes nothing |
+| `transport` | WebRTC over `ws`/`wss`, plain RTP otherwise | Kamailio's usual WebSocket routing |
+| `rtp` | Plain RTP | A realm whose WebSocket clients are SIP phones (RFC 7118 requires no WebRTC) |
+| `webrtc` | WebRTC | A browser-only realm |
+| `srtp` | SRTP with keys in the description (RFC 4568) | Desk phones that want encryption and do not do DTLS |
+
+A subscriber can say what its endpoint is with the same `media_profile` in its own
+`behaviour` section, which is Asterisk's `webrtc=yes`: AthenaPhone signals over TCP and
+its media is WebRTC, which neither the realm nor the transport can tell. Precedence, for
+the first description produced towards a leg, is what that leg has itself said in an
+offer or answer or in answer to an OPTIONS, then its subscriber, then its realm, then this
+section.
+
+`qualify_interval` is how often, in seconds, each registered client is sent an OPTIONS
+down the flow it registered on, which is Asterisk's `qualify` and Kamailio's nathelper
+ping. 0, the default, sends none, because RFC 3261 does not ask a registrar to; otherwise
+it is 5 to 86400. The probe keeps a NAT's mapping for the client open, and a client that
+answers with a session description (RFC 3261 11.2) has said what media it takes, which
+then counts as the client's own word: it decides the first offer towards it ahead of the
+subscriber, the realm and this section. `GET /api/v1/qualify` lists the clients being probed,
+when each last answered and what it said.
+
+`rewrite_contact`, off by default, rewrites the Contact in what this node forwards to the
+address and port the message came from, as Asterisk's `rewrite_contact` does; see
+[Behaviour](behaviour.md#rewrite_contact).
+
+When a callee answers an offer the engine produced for it with 488 Not Acceptable Here,
+the node offers it the other profile once, WebRTC for plain RTP or the reverse, as a
+Kamailio failure route would. Under `mirror` the other profile is the other of what the
+caller offered, which is what lets a browser call a desk phone. Nothing is learned from
+it: `GET /api/v1/media/reoffers` lists the subscribers that needed it and the
+`media_profile` that would save them the round trip, and setting it is the operator's
+call.
+
+An unknown setting or value is an error at startup and a 400 from the API, never a
+guess.
+

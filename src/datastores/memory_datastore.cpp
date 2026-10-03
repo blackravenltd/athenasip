@@ -7,8 +7,10 @@
 #include "memory_datastore.h"
 
 #include <boost/asio/post.hpp>
+#include <set>
 #include <utility>
 
+#include "../config.h"
 #include "../util.h"
 
 namespace athenasip::datastores {
@@ -84,7 +86,26 @@ bool MemoryDatastore::_realm_update(std::shared_ptr<types::Realm> realm) {
 
 bool MemoryDatastore::_realm_delete(const std::string& realm_name) {
   std::lock_guard<std::mutex> lock(_mutex);
-  return _realms.erase(realm_name) > 0;
+
+  if (_realms.erase(realm_name) == 0) return false;
+
+  // Everything in it goes too: its subscribers, and their bindings with them.
+  std::set<std::uint64_t> gone;
+  for (auto it = _subscribers.begin(); it != _subscribers.end();) {
+    const auto& subscriber = it->second;
+    if (subscriber->identity && subscriber->identity->uri && subscriber->identity->uri->host == realm_name) {
+      gone.insert(subscriber->id);
+      it = _subscribers.erase(it);
+    } else {
+      ++it;
+    }
+  }
+
+  for (auto it = _locations.begin(); it != _locations.end();) {
+    it = gone.count(it->second.subscriber_id) ? _locations.erase(it) : std::next(it);
+  }
+
+  return true;
 }
 
 std::vector<std::shared_ptr<types::Realm>> MemoryDatastore::_realm_list() {
@@ -97,26 +118,156 @@ std::vector<std::shared_ptr<types::Realm>> MemoryDatastore::_realm_list() {
   return realms;
 }
 
-std::shared_ptr<types::Account> MemoryDatastore::_account_get(std::shared_ptr<types::SIPIdentity> identity) {
+// A copy, not the record. A driver that goes to the network hands back what it
+// deserialised and can do nothing else; this one must behave the same way, or a caller
+// that changes a user it read without writing it back would change the roles on this
+// node and not on a node running Redis. The user record is what authorises every
+// request, and that is the worst place for two drivers to differ.
+std::shared_ptr<types::User> MemoryDatastore::_user_get(const std::string& username) {
+  std::lock_guard<std::mutex> lock(_mutex);
+
+  auto it = _users.find(types::User::normalise(username));
+  return it == _users.end() ? nullptr : std::make_shared<types::User>(*it->second);
+}
+
+bool MemoryDatastore::_user_create(std::shared_ptr<types::User> user) {
+  if (!user || user->username.empty()) return false;
+
+  const auto key = user->key();
+
+  std::lock_guard<std::mutex> lock(_mutex);
+
+  // create is not update, and the key is case-folded, so "Tom" and "tom" are the same
+  // conflict rather than two users nobody can tell apart at a login prompt.
+  if (_users.find(key) != _users.end()) return false;
+
+  _users[key] = std::make_shared<types::User>(*user);
+  return true;
+}
+
+bool MemoryDatastore::_user_update(std::shared_ptr<types::User> user) {
+  if (!user || user->username.empty()) return false;
+
+  const auto key = user->key();
+
+  std::lock_guard<std::mutex> lock(_mutex);
+
+  if (_users.find(key) == _users.end()) return false;
+
+  _users[key] = std::make_shared<types::User>(*user);
+  return true;
+}
+
+bool MemoryDatastore::_user_delete(const std::string& username) {
+  const auto key = types::User::normalise(username);
+
+  std::lock_guard<std::mutex> lock(_mutex);
+
+  if (_users.erase(key) == 0) return false;
+
+  // A live token against a user that no longer exists is a session nobody can revoke.
+  _session_erase_for_user(key);
+  return true;
+}
+
+std::vector<std::shared_ptr<types::User>> MemoryDatastore::_user_list() {
+  std::lock_guard<std::mutex> lock(_mutex);
+
+  std::vector<std::shared_ptr<types::User>> users;
+  users.reserve(_users.size());
+  for (const auto& [key, user] : _users) users.push_back(std::make_shared<types::User>(*user));
+
+  return users;
+}
+
+// Writing a hash that is already held replaces it, which is how a session's last_seen_at
+// moves: there is no session_update on the contract because a token hash is 32 bytes
+// from a CSPRNG and does not collide by accident.
+bool MemoryDatastore::_session_create(types::Session session) {
+  if (session.token_hash.empty() || session.username.empty()) return false;
+
+  // Issuing a session that is already dead is a caller bug, refused here for the same
+  // reason nonce_create refuses an expired nonce - and Redis could not store it at all,
+  // because SETEX has no non-positive expiry to give it.
+  if (session.expires_at <= std::time(nullptr)) {
+    _logger->warn("session_create: refusing to create already-expired session");
+    return false;
+  }
+
+  // Filed under the same key the user is, so revoking by username finds them whatever
+  // case the login was typed in.
+  session.username = types::User::normalise(session.username);
+
+  const auto key = session.token_hash;
+
+  std::lock_guard<std::mutex> lock(_mutex);
+  _sessions[key] = std::move(session);
+  return true;
+}
+
+std::shared_ptr<types::Session> MemoryDatastore::_session_get(const std::string& token_hash) {
+  if (token_hash.empty()) return nullptr;
+
+  std::lock_guard<std::mutex> lock(_mutex);
+  _prune_expired();
+
+  auto it = _sessions.find(token_hash);
+  return it == _sessions.end() ? nullptr : std::make_shared<types::Session>(it->second);
+}
+
+// Gone either way, as the contract says: a hash that was not held is not a failure,
+// because reporting the difference tells whoever asked whether the token they presented
+// was a real one.
+bool MemoryDatastore::_session_delete(const std::string& token_hash) {
+  std::lock_guard<std::mutex> lock(_mutex);
+  _sessions.erase(token_hash);
+  return true;
+}
+
+// Nothing to revoke is not a failure: the caller asked for this user to hold no
+// sessions, and it holds none.
+bool MemoryDatastore::_session_delete_for_user(const std::string& username) {
+  std::lock_guard<std::mutex> lock(_mutex);
+
+  _session_erase_for_user(types::User::normalise(username));
+  return true;
+}
+
+std::size_t MemoryDatastore::_session_erase_for_user(const std::string& key) {
+  std::size_t erased = 0;
+
+  for (auto it = _sessions.begin(); it != _sessions.end();) {
+    if (it->second.username == key) {
+      it = _sessions.erase(it);
+      ++erased;
+    } else {
+      it = std::next(it);
+    }
+  }
+
+  return erased;
+}
+
+std::shared_ptr<types::Subscriber> MemoryDatastore::_subscriber_get(std::shared_ptr<types::SIPIdentity> identity) {
   if (!identity || !identity->uri) return nullptr;
 
   std::lock_guard<std::mutex> lock(_mutex);
 
-  auto it = _accounts.find(_account_key(identity->uri->host, identity->uri->user));
-  if (it == _accounts.end()) return nullptr;
+  auto it = _subscribers.find(_subscriber_key(identity->uri->host, identity->uri->user));
+  if (it == _subscribers.end()) return nullptr;
 
   // Hand back the identity the caller asked with, as the Redis driver does, so the
-  // returned account carries the tags of this request.
-  // Every field the stored account has, not a chosen few: a copy that forgets one is a
+  // returned subscriber carries the tags of this request.
+  // Every field the stored subscriber has, not a chosen few: a copy that forgets one is a
   // credential that silently does not exist, which is exactly what happened to
   // ha1_sha256 the moment it was added.
-  auto account = std::make_shared<types::Account>(*it->second);
-  account->identity = std::move(identity);
-  return account;
+  auto subscriber = std::make_shared<types::Subscriber>(*it->second);
+  subscriber->identity = std::move(identity);
+  return subscriber;
 }
 
-bool MemoryDatastore::_account_register(const std::shared_ptr<types::Account>& account, types::Location binding, std::uint32_t expires_seconds) {
-  if (!account || !binding.contact) return false;
+bool MemoryDatastore::_subscriber_register(const std::shared_ptr<types::Subscriber>& subscriber, types::Location binding, std::uint32_t expires_seconds) {
+  if (!subscriber || !binding.contact) return false;
 
   std::lock_guard<std::mutex> lock(_mutex);
   _prune_expired();
@@ -133,31 +284,31 @@ bool MemoryDatastore::_account_register(const std::shared_ptr<types::Account>& a
 
   // The lifetime and the identity are the store's to settle; everything else on the
   // binding is what the caller knew and is kept as it was given.
-  binding.account_id = account->id;
+  binding.subscriber_id = subscriber->id;
   binding.registered_at = now;
   binding.expires_at = now + ttl;
   binding.nat = Util::is_ipv4(contact->host) && Util::is_ipv4_private(contact->host);
 
-  _locations[_location_key(account->id, contact->user, contact->host, port)] = std::move(binding);
+  _locations[_location_key(subscriber->id, contact->user, contact->host, port)] = std::move(binding);
   return true;
 }
 
-bool MemoryDatastore::_account_unregister(std::shared_ptr<types::Account> account, std::shared_ptr<types::SIPUri> contact) {
-  if (!account || !contact) return false;
+bool MemoryDatastore::_subscriber_unregister(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact) {
+  if (!subscriber || !contact) return false;
 
   std::lock_guard<std::mutex> lock(_mutex);
 
   const std::uint16_t port = contact->port.value_or(0);
-  return _locations.erase(_location_key(account->id, contact->user, contact->host, port)) > 0;
+  return _locations.erase(_location_key(subscriber->id, contact->user, contact->host, port)) > 0;
 }
 
-std::vector<types::Location> MemoryDatastore::_location_list(std::uint64_t account_id) {
+std::vector<types::Location> MemoryDatastore::_location_list(std::uint64_t subscriber_id) {
   std::lock_guard<std::mutex> lock(_mutex);
   _prune_expired();
 
   std::vector<types::Location> locations;
   for (const auto& [key, location] : _locations) {
-    if (location.account_id == account_id) locations.push_back(location);
+    if (location.subscriber_id == subscriber_id) locations.push_back(location);
   }
 
   return locations;
@@ -183,10 +334,29 @@ bool MemoryDatastore::_nonce_check(std::string nonce) {
   return _nonces.find(nonce) != _nonces.end();
 }
 
+bool MemoryDatastore::configure(const YAML::Node& own_root, const Config& system) {
+  (void)own_root;
+  _call_retention = system.calls_history_retention;
+  return true;
+}
+
+// The records of calls that ended longer ago than they are kept for. Called with the lock
+// held, when a call is added: that is when the map grows.
+void MemoryDatastore::_call_prune(std::time_t now) {
+  if (_call_retention == 0) return;
+
+  for (auto it = _calls.begin(); it != _calls.end();) {
+    const auto& call = it->second;
+    const bool expired = call->state == Call::State::Closed && call->ended_at != 0 && now - call->ended_at > static_cast<std::time_t>(_call_retention);
+    it = expired ? _calls.erase(it) : std::next(it);
+  }
+}
+
 bool MemoryDatastore::_call_create(std::shared_ptr<Call> call) {
   if (!call || call->id.empty()) return false;
 
   std::lock_guard<std::mutex> lock(_mutex);
+  _call_prune(std::time(nullptr));
   _calls[call->id] = std::move(call);
   return true;
 }
@@ -219,64 +389,64 @@ std::vector<std::shared_ptr<Call>> MemoryDatastore::_call_list() {
   return calls;
 }
 
-bool MemoryDatastore::_account_create(std::shared_ptr<types::Account> account) {
-  if (!account || !account->identity || !account->identity->uri) return false;
+bool MemoryDatastore::_subscriber_create(std::shared_ptr<types::Subscriber> subscriber) {
+  if (!subscriber || !subscriber->identity || !subscriber->identity->uri) return false;
 
-  const auto key = _account_key(account->identity->uri->host, account->identity->uri->user);
-
-  std::lock_guard<std::mutex> lock(_mutex);
-
-  if (_accounts.find(key) != _accounts.end()) return false;
-
-  _accounts[key] = std::move(account);
-  return true;
-}
-
-bool MemoryDatastore::_account_update(std::shared_ptr<types::Account> account) {
-  if (!account || !account->identity || !account->identity->uri) return false;
-
-  const auto key = _account_key(account->identity->uri->host, account->identity->uri->user);
+  const auto key = _subscriber_key(subscriber->identity->uri->host, subscriber->identity->uri->user);
 
   std::lock_guard<std::mutex> lock(_mutex);
 
-  if (_accounts.find(key) == _accounts.end()) return false;
+  if (_subscribers.find(key) != _subscribers.end()) return false;
 
-  _accounts[key] = std::move(account);
+  _subscribers[key] = std::move(subscriber);
   return true;
 }
 
-bool MemoryDatastore::_account_delete(std::shared_ptr<types::SIPIdentity> identity) {
+bool MemoryDatastore::_subscriber_update(std::shared_ptr<types::Subscriber> subscriber) {
+  if (!subscriber || !subscriber->identity || !subscriber->identity->uri) return false;
+
+  const auto key = _subscriber_key(subscriber->identity->uri->host, subscriber->identity->uri->user);
+
+  std::lock_guard<std::mutex> lock(_mutex);
+
+  if (_subscribers.find(key) == _subscribers.end()) return false;
+
+  _subscribers[key] = std::move(subscriber);
+  return true;
+}
+
+bool MemoryDatastore::_subscriber_delete(std::shared_ptr<types::SIPIdentity> identity) {
   if (!identity || !identity->uri) return false;
 
-  const auto key = _account_key(identity->uri->host, identity->uri->user);
+  const auto key = _subscriber_key(identity->uri->host, identity->uri->user);
 
   std::lock_guard<std::mutex> lock(_mutex);
 
-  auto account = _accounts.find(key);
-  if (account == _accounts.end()) return false;
+  auto subscriber = _subscribers.find(key);
+  if (subscriber == _subscribers.end()) return false;
 
-  const auto account_id = account->second->id;
-  _accounts.erase(account);
+  const auto subscriber_id = subscriber->second->id;
+  _subscribers.erase(subscriber);
 
-  // A deleted account keeps no bindings.
+  // A deleted subscriber keeps no bindings.
   for (auto it = _locations.begin(); it != _locations.end();) {
-    it = (it->second.account_id == account_id) ? _locations.erase(it) : std::next(it);
+    it = (it->second.subscriber_id == subscriber_id) ? _locations.erase(it) : std::next(it);
   }
 
   return true;
 }
 
-std::vector<std::shared_ptr<types::Account>> MemoryDatastore::_account_list(const std::string& realm_name) {
+std::vector<std::shared_ptr<types::Subscriber>> MemoryDatastore::_subscriber_list(const std::string& realm_name) {
   std::lock_guard<std::mutex> lock(_mutex);
 
-  std::vector<std::shared_ptr<types::Account>> accounts;
-  for (const auto& [key, account] : _accounts) {
-    if (realm_name.empty() || (account->identity && account->identity->uri && account->identity->uri->host == realm_name)) {
-      accounts.push_back(account);
+  std::vector<std::shared_ptr<types::Subscriber>> subscribers;
+  for (const auto& [key, subscriber] : _subscribers) {
+    if (realm_name.empty() || (subscriber->identity && subscriber->identity->uri && subscriber->identity->uri->host == realm_name)) {
+      subscribers.push_back(subscriber);
     }
   }
 
-  return accounts;
+  return subscribers;
 }
 
 // Every operation above answers at once; the contract is about where the handler runs,
@@ -303,39 +473,75 @@ void MemoryDatastore::realm_list(plugins::Executor on, plugins::Handler<std::vec
   _complete(std::move(on), std::move(handler), plugins::Result<std::vector<std::shared_ptr<types::Realm>>>::success(_realm_list()));
 }
 
-void MemoryDatastore::account_get(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity,
-                                  plugins::Handler<std::shared_ptr<types::Account>> handler) {
-  _complete(std::move(on), std::move(handler), plugins::Result<std::shared_ptr<types::Account>>::success(_account_get(std::move(identity))));
+void MemoryDatastore::user_get(plugins::Executor on, std::string username, plugins::Handler<std::shared_ptr<types::User>> handler) {
+  _complete(std::move(on), std::move(handler), plugins::Result<std::shared_ptr<types::User>>::success(_user_get(username)));
 }
 
-void MemoryDatastore::account_create(plugins::Executor on, std::shared_ptr<types::Account> account, plugins::StatusHandler handler) {
-  _complete(std::move(on), std::move(handler), _status(_account_create(std::move(account)), "account_create"));
+void MemoryDatastore::user_create(plugins::Executor on, std::shared_ptr<types::User> user, plugins::StatusHandler handler) {
+  _complete(std::move(on), std::move(handler), _status(_user_create(std::move(user)), "user_create"));
 }
 
-void MemoryDatastore::account_update(plugins::Executor on, std::shared_ptr<types::Account> account, plugins::StatusHandler handler) {
-  _complete(std::move(on), std::move(handler), _status(_account_update(std::move(account)), "account_update"));
+void MemoryDatastore::user_update(plugins::Executor on, std::shared_ptr<types::User> user, plugins::StatusHandler handler) {
+  _complete(std::move(on), std::move(handler), _status(_user_update(std::move(user)), "user_update"));
 }
 
-void MemoryDatastore::account_delete(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity, plugins::StatusHandler handler) {
-  _complete(std::move(on), std::move(handler), _status(_account_delete(std::move(identity)), "account_delete"));
+void MemoryDatastore::user_delete(plugins::Executor on, std::string username, plugins::StatusHandler handler) {
+  _complete(std::move(on), std::move(handler), _status(_user_delete(username), "user_delete"));
 }
 
-void MemoryDatastore::account_list(plugins::Executor on, std::string realm_name, plugins::Handler<std::vector<std::shared_ptr<types::Account>>> handler) {
-  _complete(std::move(on), std::move(handler), plugins::Result<std::vector<std::shared_ptr<types::Account>>>::success(_account_list(realm_name)));
+void MemoryDatastore::user_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::User>>> handler) {
+  _complete(std::move(on), std::move(handler), plugins::Result<std::vector<std::shared_ptr<types::User>>>::success(_user_list()));
 }
 
-void MemoryDatastore::account_register(plugins::Executor on, std::shared_ptr<types::Account> account, types::Location binding, std::uint32_t expires_seconds,
-                                       plugins::StatusHandler handler) {
-  _complete(std::move(on), std::move(handler), _status(_account_register(account, std::move(binding), expires_seconds), "account_register"));
+void MemoryDatastore::session_create(plugins::Executor on, types::Session session, plugins::StatusHandler handler) {
+  _complete(std::move(on), std::move(handler), _status(_session_create(std::move(session)), "session_create"));
 }
 
-void MemoryDatastore::account_unregister(plugins::Executor on, std::shared_ptr<types::Account> account, std::shared_ptr<types::SIPUri> contact,
-                                         plugins::StatusHandler handler) {
-  _complete(std::move(on), std::move(handler), _status(_account_unregister(std::move(account), std::move(contact)), "account_unregister"));
+void MemoryDatastore::session_get(plugins::Executor on, std::string token_hash, plugins::Handler<std::shared_ptr<types::Session>> handler) {
+  _complete(std::move(on), std::move(handler), plugins::Result<std::shared_ptr<types::Session>>::success(_session_get(token_hash)));
 }
 
-void MemoryDatastore::location_list(plugins::Executor on, std::uint64_t account_id, plugins::Handler<std::vector<types::Location>> handler) {
-  _complete(std::move(on), std::move(handler), plugins::Result<std::vector<types::Location>>::success(_location_list(account_id)));
+void MemoryDatastore::session_delete(plugins::Executor on, std::string token_hash, plugins::StatusHandler handler) {
+  _complete(std::move(on), std::move(handler), _status(_session_delete(token_hash), "session_delete"));
+}
+
+void MemoryDatastore::session_delete_for_user(plugins::Executor on, std::string username, plugins::StatusHandler handler) {
+  _complete(std::move(on), std::move(handler), _status(_session_delete_for_user(username), "session_delete_for_user"));
+}
+
+void MemoryDatastore::subscriber_get(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity,
+                                     plugins::Handler<std::shared_ptr<types::Subscriber>> handler) {
+  _complete(std::move(on), std::move(handler), plugins::Result<std::shared_ptr<types::Subscriber>>::success(_subscriber_get(std::move(identity))));
+}
+
+void MemoryDatastore::subscriber_create(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, plugins::StatusHandler handler) {
+  _complete(std::move(on), std::move(handler), _status(_subscriber_create(std::move(subscriber)), "subscriber_create"));
+}
+
+void MemoryDatastore::subscriber_update(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, plugins::StatusHandler handler) {
+  _complete(std::move(on), std::move(handler), _status(_subscriber_update(std::move(subscriber)), "subscriber_update"));
+}
+
+void MemoryDatastore::subscriber_delete(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity, plugins::StatusHandler handler) {
+  _complete(std::move(on), std::move(handler), _status(_subscriber_delete(std::move(identity)), "subscriber_delete"));
+}
+
+void MemoryDatastore::subscriber_list(plugins::Executor on, std::string realm_name, plugins::Handler<std::vector<std::shared_ptr<types::Subscriber>>> handler) {
+  _complete(std::move(on), std::move(handler), plugins::Result<std::vector<std::shared_ptr<types::Subscriber>>>::success(_subscriber_list(realm_name)));
+}
+
+void MemoryDatastore::subscriber_register(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, types::Location binding,
+                                          std::uint32_t expires_seconds, plugins::StatusHandler handler) {
+  _complete(std::move(on), std::move(handler), _status(_subscriber_register(subscriber, std::move(binding), expires_seconds), "subscriber_register"));
+}
+
+void MemoryDatastore::subscriber_unregister(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact,
+                                            plugins::StatusHandler handler) {
+  _complete(std::move(on), std::move(handler), _status(_subscriber_unregister(std::move(subscriber), std::move(contact)), "subscriber_unregister"));
+}
+
+void MemoryDatastore::location_list(plugins::Executor on, std::uint64_t subscriber_id, plugins::Handler<std::vector<types::Location>> handler) {
+  _complete(std::move(on), std::move(handler), plugins::Result<std::vector<types::Location>>::success(_location_list(subscriber_id)));
 }
 
 void MemoryDatastore::nonce_create(plugins::Executor on, std::string nonce, std::time_t expires_at, plugins::StatusHandler handler) {
@@ -362,10 +568,10 @@ void MemoryDatastore::call_list(plugins::Executor on, plugins::Handler<std::vect
   _complete(std::move(on), std::move(handler), plugins::Result<std::vector<std::shared_ptr<Call>>>::success(_call_list()));
 }
 
-std::string MemoryDatastore::_account_key(const std::string& realm_name, const std::string& user) { return realm_name + ":" + user; }
+std::string MemoryDatastore::_subscriber_key(const std::string& realm_name, const std::string& user) { return realm_name + ":" + user; }
 
-std::string MemoryDatastore::_location_key(std::uint64_t account_id, const std::string& user, const std::string& host, std::uint16_t port) {
-  return std::to_string(account_id) + ":" + user + ":" + host + ":" + std::to_string(port);
+std::string MemoryDatastore::_location_key(std::uint64_t subscriber_id, const std::string& user, const std::string& host, std::uint16_t port) {
+  return std::to_string(subscriber_id) + ":" + user + ":" + host + ":" + std::to_string(port);
 }
 
 void MemoryDatastore::_prune_expired() {
@@ -377,6 +583,13 @@ void MemoryDatastore::_prune_expired() {
 
   for (auto it = _nonces.begin(); it != _nonces.end();) {
     it = (it->second <= now) ? _nonces.erase(it) : std::next(it);
+  }
+
+  // A session's absolute expiry is written on the record and needs nothing else to
+  // read, so the store keeps it. Idle expiry is not here: how long a session survives
+  // unused is configuration the caller holds, and it asks Session::has_expired.
+  for (auto it = _sessions.begin(); it != _sessions.end();) {
+    it = (it->second.expires_at != 0 && it->second.expires_at <= now) ? _sessions.erase(it) : std::next(it);
   }
 }
 

@@ -15,9 +15,9 @@
 #include "sip_message.h"
 #include "transaction_user.h"
 #include "transactions/transaction_base.h"
-#include "types/account.h"
 #include "types/authorization.h"
 #include "types/realm.h"
+#include "types/subscriber.h"
 
 namespace athenasip {
 
@@ -25,7 +25,7 @@ class Core;
 
 // RFC 3261 section 10: the registrar, and the transaction user for REGISTER.
 //
-// It authenticates with Digest against the account's HA1, writes or removes the
+// It authenticates with Digest against the subscriber's HA1, writes or removes the
 // bindings the request asks for, and answers 200 OK listing every binding it now holds
 // with the expiry it granted. RFC 3327 Path is recorded on the binding so a later hop
 // knows how to reach the contact.
@@ -43,20 +43,33 @@ class Registrar : public TransactionUser {
                  std::shared_ptr<types::Realm> realm);
   void _on_nonce_checked(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
                          std::shared_ptr<types::SIPIdentity> aor, std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Authorization> auth);
-  void _on_account(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::shared_ptr<types::SIPIdentity> aor,
-                   std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Authorization> auth, std::shared_ptr<types::Account> account);
+  void _on_subscriber(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::shared_ptr<types::SIPIdentity> aor,
+                      std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Authorization> auth, std::shared_ptr<types::Subscriber> subscriber);
   void _apply_bindings(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::shared_ptr<types::Realm> realm,
-                       std::shared_ptr<types::Account> account);
+                       std::shared_ptr<types::Subscriber> subscriber);
 
   // One binding at a time, because each write is a round trip and the response cannot
   // be sent until the last of them has landed.
   struct Binding {
     std::shared_ptr<types::SIPUri> contact;
     std::uint32_t expires = 0;
+
+    // Seconds between OPTIONS to it, from the realm's behaviour; zero for none.
+    std::uint32_t qualify = 0;
+
+    // RFC 5626 outbound's identity for it, when the client asked for outbound.
+    std::string instance;
+    std::uint32_t reg_id = 0;
   };
 
-  void _write_bindings(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::shared_ptr<types::Account> account,
-                       std::shared_ptr<std::vector<Binding>> bindings, std::size_t index, std::uint32_t expires_seconds);
+  void _write_bindings(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
+                       std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<std::vector<Binding>> bindings, std::size_t index,
+                       std::uint32_t expires_seconds);
+  void _store_binding(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
+                      std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<std::vector<Binding>> bindings, std::size_t index,
+                      std::uint32_t expires_seconds, Binding binding, std::shared_ptr<Channel> channel);
+  void _remove_then(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<Channel> channel, std::vector<std::shared_ptr<types::SIPUri>> contacts,
+                    std::size_t index, std::function<void()> then);
 
   // The lifetime the client asked for, from the Contact's expires parameter, then the
   // Expires header, then the realm default (RFC 3261 10.3 step 7). Absent everywhere
@@ -80,7 +93,7 @@ class Registrar : public TransactionUser {
   // 200 OK carrying a Contact for every live binding with its remaining lifetime, and an
   // Expires header (RFC 3261 10.3 step 8).
   void _send_ok(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
-                const std::shared_ptr<types::Account>& account, std::uint32_t expires_seconds);
+                const std::shared_ptr<types::Subscriber>& subscriber, std::uint32_t expires_seconds);
 
   void _send_status(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request, std::uint16_t code,
                     const std::string& reason);

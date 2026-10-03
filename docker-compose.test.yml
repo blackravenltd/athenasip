@@ -18,6 +18,18 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: athenasip-e2e
+    # The harness's administrator, made as the node starts. memory:// keeps nothing once a
+    # process exits, so --add-user on it creates the user in the node's own datastore and
+    # carries on serving. The password goes in on stdin, from a file, never on a command line.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        printf '%s\n' "$$ATHENA_E2E_ADMIN_PASSWORD" > /tmp/admin-password &&
+        exec /usr/local/bin/athenasip --add-user e2e-admin
+        --role manage-realms --role manage-realm-subscribers --role view-cluster-status
+        < /tmp/admin-password
+    environment:
+      ATHENA_E2E_ADMIN_PASSWORD: e2e-admin-password
     volumes:
       - ./test/e2e/config:/root/.athenasip:ro
     networks:

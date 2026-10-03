@@ -1,0 +1,65 @@
+#
+# AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
+#
+# Copyright (C) 2026 Tom Cully <mail@tomcully.com>
+# Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
+#
+# A node for a real SIP client to be pointed at.
+#
+#   test/interop/up.sh
+#
+# brings it up and provisions it. Unlike the end-to-end harness this one publishes its
+# ports to the host, because the client under test runs there rather than in a
+# container of its own - and on the host's own network rather than on loopback where
+# the client is a phone on a device (see ATHENA_INTEROP_BIND in up.sh).
+#
+# The container binds the same port number the host publishes, never a translation: a
+# node writes its own local port into Via and Record-Route, so a mapping that moved the
+# port would tell a client to come back to one nothing is listening on.
+
+services:
+  athenasip:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: athenasip-interop
+    container_name: ${ATHENA_INTEROP_NAME:-athenasip-interop}
+    # The fixture's user, made as the node starts: memory:// keeps nothing once a process
+    # exits, so --add-user on it creates the user in the node's own datastore and carries
+    # on serving. up.sh chooses the password; it goes in on stdin, never on a command line.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        printf '%s\n' "$$ATHENA_INTEROP_API_PASSWORD" > /tmp/api-password &&
+        exec /usr/local/bin/athenasip --add-user "$$ATHENA_INTEROP_API_USER"
+        --role manage-admin-users --role manage-realms --role manage-realm-subscribers --role view-cluster-status
+        < /tmp/api-password
+    environment:
+      ATHENA_INTEROP_API_USER: ${ATHENA_INTEROP_API_USER:-interop}
+      ATHENA_INTEROP_API_PASSWORD: ${ATHENA_INTEROP_API_PASSWORD:?up.sh sets this}
+    volumes:
+      - ./generated:/root/.athenasip:ro
+      - ${ATHENA_INTEROP_TLS_DIR:-../../tls}:/tls:ro
+
+      # The admin client's build output, when there is one. up.sh points this at a
+      # directory it has checked, and at the fixture's own generated/ when there is
+      # nothing to serve, so the mount is always satisfiable.
+      - ${ATHENA_INTEROP_ADMIN_DIR:-./generated}:/admin:ro
+    ports:
+      - "${ATHENA_INTEROP_BIND:-127.0.0.1}:${ATHENA_INTEROP_SIP_PORT:-5060}:${ATHENA_INTEROP_SIP_PORT:-5060}/udp"
+      - "${ATHENA_INTEROP_BIND:-127.0.0.1}:${ATHENA_INTEROP_SIP_PORT:-5060}:${ATHENA_INTEROP_SIP_PORT:-5060}/tcp"
+      - "${ATHENA_INTEROP_BIND:-127.0.0.1}:${ATHENA_INTEROP_TLS_PORT:-5061}:${ATHENA_INTEROP_TLS_PORT:-5061}/tcp"
+      - "${ATHENA_INTEROP_BIND:-127.0.0.1}:${ATHENA_INTEROP_WS_PORT:-8088}:${ATHENA_INTEROP_WS_PORT:-8088}/tcp"
+      - "${ATHENA_INTEROP_BIND:-127.0.0.1}:${ATHENA_INTEROP_API_PORT:-8080}:${ATHENA_INTEROP_API_PORT:-8080}/tcp"
+
+      # The relay's range, kept small: Docker Desktop publishes a wide UDP range slowly,
+      # and a signalling fixture needs very few.
+      - "${ATHENA_INTEROP_BIND:-127.0.0.1}:${ATHENA_INTEROP_RTP_MIN:-22000}-${ATHENA_INTEROP_RTP_MAX:-22100}:${ATHENA_INTEROP_RTP_MIN:-22000}-${ATHENA_INTEROP_RTP_MAX:-22100}/udp"
+    healthcheck:
+      # The API's own answer, which is 503 until the datastore is connected, so nothing
+      # points a client at a node that is not serving yet.
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:${ATHENA_INTEROP_API_PORT:-8080}/api/v1/health"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+      start_period: 2s

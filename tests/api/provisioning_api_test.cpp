@@ -16,12 +16,14 @@
 #include <memory>
 #include <string>
 
+#include "../helpers/signed_in_users_helper.h"
 #include "../helpers/sync_datastore_helper.h"
 #include "../mocks/logger_mock.h"
 #include "api/admin_api.h"
 #include "api/router.h"
 #include "config.h"
 #include "datastores/memory_datastore.h"
+#include "node_directory.h"
 #include "types/url.h"
 
 using namespace athenasip;
@@ -50,6 +52,8 @@ struct ApiFixture {
   std::shared_ptr<SyncDatastore> store;
   std::shared_ptr<api::AdminAPI> admin;
   std::shared_ptr<api::Router> router;
+  SignedInUsers signed_in;
+  std::shared_ptr<api::Sessions> sessions;
   std::shared_ptr<api::ProvisioningAPI> provisioning;
 
   ApiFixture() {
@@ -64,18 +68,17 @@ struct ApiFixture {
     store = std::make_shared<SyncDatastore>(datastore);
     store->connect();
 
-    config->http_api_tokens = {
-        Config::ApiToken{"admin-token", {"admin"}},
-        Config::ApiToken{"client-token", {"client"}},
-    };
-
     admin = std::make_shared<api::AdminAPI>(logger, "127.0.0.1", 0);
-    router = std::make_shared<api::Router>(std::make_shared<api::BearerAuth>(config->http_api_tokens));
+    auto bearer = std::make_shared<api::BearerAuth>();
+    sessions = std::make_shared<api::Sessions>(logger, datastore, admin->executor(), api::Sessions::Lifetimes{3600, 600});
+    bearer->sessions_register(sessions);
+    router = std::make_shared<api::Router>(bearer);
     provisioning = std::make_shared<api::ProvisioningAPI>(logger, datastore, admin->executor(), config, "0.0.0-test");
     provisioning->register_routes(*router);
 
     admin->middlewares.push_back(router->middleware("/api/"));
     admin->start();
+    signed_in = SignedInUsers(sessions, *store);
   }
 
   ~ApiFixture() { admin->stop(); }
@@ -90,7 +93,7 @@ struct ApiFixture {
 
     http::request<http::string_body> request{method, target, 11};
     request.set(http::field::host, "127.0.0.1");
-    if (!token.empty()) request.set(http::field::authorization, "Bearer " + token);
+    if (!token.empty()) request.set(http::field::authorization, "Bearer " + signed_in.presented(token));
     if (!body.empty()) {
       request.set(http::field::content_type, "application/json");
       request.body() = body;
@@ -217,42 +220,120 @@ TEST(ProvisioningApiTest, TheRegistrationBoundsAreProvisionedAndReturned) {
   EXPECT_EQ(f.get("/api/v1/realms/example.com").json().at("registration_minimum").as_int64(), 120);
 }
 
-// The two media questions a realm answers. Both have defaults that match what a node
-// did before it could be asked, so a realm provisioned without them is unchanged.
-TEST(ProvisioningApiTest, TheMediaPolicyIsProvisionedAndReturned) {
+// A realm's behaviour section: what it does differently from the server's default. A realm
+// created without one chooses nothing, and what it comes to is the server's default.
+TEST(ProvisioningApiTest, ARealmChoosesNoBehaviourUntilItSays) {
   ApiFixture f;
 
   auto created = f.post("/api/v1/realms", R"({"name":"example.com"})");
   ASSERT_EQ(created.status, 201u);
 
-  EXPECT_TRUE(created.json().at("media_anchor").as_bool());
-  EXPECT_EQ(created.json().at("media_profiles").as_string(), "transport");
+  const auto json = created.json();
+  EXPECT_TRUE(json.at("behaviour").at("media_anchor").is_null());
+  EXPECT_TRUE(json.at("behaviour").at("media_profile").is_null());
 
-  auto updated = f.put("/api/v1/realms/example.com", R"({"media_anchor":false,"media_profiles":"rtp"})");
-  ASSERT_EQ(updated.status, 200u);
-
-  EXPECT_FALSE(updated.json().at("media_anchor").as_bool());
-  EXPECT_EQ(updated.json().at("media_profiles").as_string(), "rtp");
-
-  auto read_back = f.get("/api/v1/realms/example.com");
-  EXPECT_FALSE(read_back.json().at("media_anchor").as_bool());
-  EXPECT_EQ(read_back.json().at("media_profiles").as_string(), "rtp");
-
-  // A PUT naming only one of them leaves the other where it was.
-  auto one = f.put("/api/v1/realms/example.com", R"({"media_profiles":"webrtc"})");
-  EXPECT_FALSE(one.json().at("media_anchor").as_bool());
-  EXPECT_EQ(one.json().at("media_profiles").as_string(), "webrtc");
+  // The shipped default, because the fixture's server says nothing either.
+  EXPECT_TRUE(json.at("behaviour_effective").at("media_anchor").as_bool());
+  EXPECT_EQ(json.at("behaviour_effective").at("media_profile").as_string(), "mirror");
 }
 
-// A word nobody recognises must not quietly change what a node does to media.
-TEST(ProvisioningApiTest, AnUnreadableMediaProfileLeavesTheRealmAlone) {
+TEST(ProvisioningApiTest, ARealmOverridesOneSettingAndInheritsTheOther) {
   ApiFixture f;
+  f.config->behaviour.anchor = false;
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
 
-  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com","media_profiles":"webrtc"})").status, 201u);
+  auto updated = f.put("/api/v1/realms/example.com", R"({"behaviour":{"media_profile":"webrtc"}})");
+  ASSERT_EQ(updated.status, 200u) << updated.body;
 
-  auto updated = f.put("/api/v1/realms/example.com", R"({"media_profiles":"web-rtc"})");
+  const auto json = f.get("/api/v1/realms/example.com").json();
+  EXPECT_EQ(json.at("behaviour").at("media_profile").as_string(), "webrtc");
+  EXPECT_TRUE(json.at("behaviour").at("media_anchor").is_null());
+
+  EXPECT_EQ(json.at("behaviour_effective").at("media_profile").as_string(), "webrtc");
+  EXPECT_FALSE(json.at("behaviour_effective").at("media_anchor").as_bool()) << "the server's, inherited";
+
+  // What inheriting would come to, for the setting the realm did choose.
+  EXPECT_EQ(json.at("behaviour_default").at("media_profile").as_string(), "mirror");
+  EXPECT_FALSE(json.at("behaviour_default").at("media_anchor").as_bool());
+}
+
+// Null is how a realm goes back to inheriting, which is a different thing from setting the
+// value the server happens to have today.
+TEST(ProvisioningApiTest, NullPutsASettingBackToTheServerDefault) {
+  ApiFixture f;
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com","behaviour":{"media_profile":"rtp","media_anchor":false}})").status, 201u);
+
+  auto updated = f.put("/api/v1/realms/example.com", R"({"behaviour":{"media_profile":null}})");
   ASSERT_EQ(updated.status, 200u);
-  EXPECT_EQ(updated.json().at("media_profiles").as_string(), "webrtc");
+
+  const auto json = updated.json();
+  EXPECT_TRUE(json.at("behaviour").at("media_profile").is_null());
+  EXPECT_FALSE(json.at("behaviour").at("media_anchor").as_bool()) << "left alone because it was not named";
+}
+
+// A setting nobody recognises, or a value that is not one of its choices, is refused and
+// changes nothing: a realm behaving other than its operator thinks is the failure.
+TEST(ProvisioningApiTest, ARealmSetsHowOftenItsClientsAreQualified) {
+  ApiFixture f;
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+
+  auto json = f.get("/api/v1/realms/example.com").json();
+  EXPECT_TRUE(json.at("behaviour").at("qualify_interval").is_null());
+  EXPECT_EQ(json.at("behaviour_effective").at("qualify_interval").as_int64(), 0) << "off, as shipped";
+  EXPECT_EQ(json.at("behaviour_default").at("qualify_interval").as_int64(), 0);
+
+  auto updated = f.put("/api/v1/realms/example.com", R"({"behaviour":{"qualify_interval":60}})");
+  ASSERT_EQ(updated.status, 200u) << updated.body;
+  EXPECT_EQ(updated.json().at("behaviour").at("qualify_interval").as_int64(), 60);
+  EXPECT_EQ(updated.json().at("behaviour_effective").at("qualify_interval").as_int64(), 60);
+
+  EXPECT_EQ(f.put("/api/v1/realms/example.com", R"({"behaviour":{"qualify_interval":2}})").status, 400u);
+  EXPECT_EQ(f.put("/api/v1/realms/example.com", R"({"behaviour":{"qualify_interval":-60}})").status, 400u);
+  EXPECT_EQ(f.put("/api/v1/realms/example.com", R"({"behaviour":{"qualify_interval":"60"}})").status, 400u);
+  EXPECT_EQ(f.get("/api/v1/realms/example.com").json().at("behaviour").at("qualify_interval").as_int64(), 60);
+
+  ASSERT_EQ(f.put("/api/v1/realms/example.com", R"({"behaviour":{"qualify_interval":null}})").status, 200u);
+  EXPECT_TRUE(f.get("/api/v1/realms/example.com").json().at("behaviour").at("qualify_interval").is_null());
+}
+
+TEST(ProvisioningApiTest, ARealmSetsWhetherContactsAreRewritten) {
+  ApiFixture f;
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+
+  auto json = f.get("/api/v1/realms/example.com").json();
+  EXPECT_TRUE(json.at("behaviour").at("rewrite_contact").is_null());
+  EXPECT_FALSE(json.at("behaviour_effective").at("rewrite_contact").as_bool());
+  EXPECT_FALSE(json.at("behaviour_default").at("rewrite_contact").as_bool());
+
+  auto updated = f.put("/api/v1/realms/example.com", R"({"behaviour":{"rewrite_contact":true}})");
+  ASSERT_EQ(updated.status, 200u) << updated.body;
+  EXPECT_TRUE(updated.json().at("behaviour_effective").at("rewrite_contact").as_bool());
+
+  EXPECT_EQ(f.put("/api/v1/realms/example.com", R"({"behaviour":{"rewrite_contact":"yes"}})").status, 400u);
+  EXPECT_TRUE(f.get("/api/v1/realms/example.com").json().at("behaviour").at("rewrite_contact").as_bool());
+}
+
+TEST(ProvisioningApiTest, AnUnreadableBehaviourIsRefusedAndChangesNothing) {
+  ApiFixture f;
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com","behaviour":{"media_profile":"webrtc"}})").status, 201u);
+
+  EXPECT_EQ(f.put("/api/v1/realms/example.com", R"({"behaviour":{"media_profile":"web-rtc"}})").status, 400u);
+  EXPECT_EQ(f.put("/api/v1/realms/example.com", R"({"behaviour":{"media_anchor":"yes"}})").status, 400u);
+  EXPECT_EQ(f.put("/api/v1/realms/example.com", R"({"behaviour":{"anchor_media":true}})").status, 400u);
+  EXPECT_EQ(f.put("/api/v1/realms/example.com", R"({"behaviour":"webrtc"})").status, 400u);
+
+  EXPECT_EQ(f.get("/api/v1/realms/example.com").json().at("behaviour").at("media_profile").as_string(), "webrtc");
+}
+
+// The fields a realm had before the section existed are refused with where they went,
+// rather than ignored: a client still sending them would otherwise see nothing change.
+TEST(ProvisioningApiTest, TheOldMediaFieldsAreRefusedWithWhereTheyWent) {
+  ApiFixture f;
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+
+  auto refused = f.put("/api/v1/realms/example.com", R"({"media_profiles":"webrtc"})");
+  EXPECT_EQ(refused.status, 400u);
+  EXPECT_NE(refused.body.find("behaviour"), std::string::npos) << refused.body;
 }
 
 TEST(ProvisioningApiTest, AnUnknownRealmIs404) {
@@ -265,12 +346,12 @@ TEST(ProvisioningApiTest, AnUnknownRealmIs404) {
 
 // RFC 2617: the server holds HA1 and never the password. The API takes a password
 // because an operator has one, and turns it into HA1 on the way in.
-TEST(ProvisioningApiTest, AnAccountIsCreatedWithItsHa1ComputedHere) {
+TEST(ProvisioningApiTest, AnSubscriberIsCreatedWithItsHa1ComputedHere) {
   ApiFixture f;
 
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
 
-  auto created = f.post("/api/v1/realms/example.com/accounts", R"({"user":"alice","password":"secret"})");
+  auto created = f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice","password":"secret"})");
   ASSERT_EQ(created.status, 201u);
   EXPECT_EQ(created.json().at("uri").as_string(), "sip:alice@example.com");
 
@@ -280,9 +361,50 @@ TEST(ProvisioningApiTest, AnAccountIsCreatedWithItsHa1ComputedHere) {
 
   // What the store holds is the HA1 of user, realm and password, which is what the
   // registrar will check a Digest response against.
-  auto account = f.store->account_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
-  ASSERT_NE(account, nullptr);
-  EXPECT_EQ(account->ha1, Util::to_lower(Util::md5("alice:example.com:secret")));
+  auto subscriber = f.store->subscriber_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
+  ASSERT_NE(subscriber, nullptr);
+  EXPECT_EQ(subscriber->ha1, Util::to_lower(Util::md5("alice:example.com:secret")));
+}
+
+// A subscriber's behaviour section has the one setting that is about an endpoint rather
+// than a realm: what the endpoint is. It starts empty, which takes the realm's.
+TEST(ProvisioningApiTest, AnSubscriberSaysWhatItsEndpointIs) {
+  ApiFixture f;
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+
+  auto created = f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice","password":"secret"})");
+  ASSERT_EQ(created.status, 201u);
+  EXPECT_TRUE(created.json().at("behaviour").at("media_profile").is_null());
+
+  auto updated = f.put("/api/v1/realms/example.com/subscribers/alice", R"({"behaviour":{"media_profile":"webrtc"}})");
+  ASSERT_EQ(updated.status, 200u) << updated.body;
+  EXPECT_EQ(updated.json().at("behaviour").at("media_profile").as_string(), "webrtc");
+
+  auto stored = f.store->subscriber_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
+  ASSERT_NE(stored, nullptr);
+  EXPECT_EQ(stored->media_profile, types::MediaPolicy::Profiles::WebRtc);
+
+  ASSERT_EQ(f.put("/api/v1/realms/example.com/subscribers/alice", R"({"behaviour":{"media_profile":null}})").status, 200u);
+  stored = f.store->subscriber_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
+  EXPECT_FALSE(stored->media_profile.has_value());
+}
+
+// Anchoring is a realm's question, and a profile nobody recognises is a mistake. Both are
+// refused and neither changes the subscriber, password included.
+TEST(ProvisioningApiTest, AnUnreadableSubscriberBehaviourChangesNothing) {
+  ApiFixture f;
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+  ASSERT_EQ(f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice","password":"secret","behaviour":{"media_profile":"rtp"}})").status, 201u);
+
+  EXPECT_EQ(f.put("/api/v1/realms/example.com/subscribers/alice", R"({"password":"other","behaviour":{"media_anchor":false}})").status, 400u);
+  EXPECT_EQ(f.put("/api/v1/realms/example.com/subscribers/alice", R"({"behaviour":{"media_profile":"web-rtc"}})").status, 400u);
+  EXPECT_EQ(f.post("/api/v1/realms/example.com/subscribers", R"({"user":"bob","password":"secret","behaviour":{"media_profile":7}})").status, 400u);
+
+  auto stored = f.store->subscriber_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
+  ASSERT_NE(stored, nullptr);
+  EXPECT_EQ(stored->media_profile, types::MediaPolicy::Profiles::PlainRtp);
+  EXPECT_EQ(stored->ha1, Util::to_lower(Util::md5("alice:example.com:secret")));
+  EXPECT_EQ(f.store->subscriber_get(std::make_shared<types::SIPIdentity>("sip:bob@example.com")), nullptr);
 }
 
 // The realm in the path reaches the handler. This is not as obvious as it looks: the
@@ -295,21 +417,21 @@ TEST(ProvisioningApiTest, ThePathParameterReachesTheHandler) {
 
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
 
-  auto response = f.post("/api/v1/realms/example.com/accounts", R"({"user":"alice","password":"secret"})");
+  auto response = f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice","password":"secret"})");
   ASSERT_EQ(response.status, 201u);
 
-  auto listed = f.get("/api/v1/realms/example.com/accounts");
+  auto listed = f.get("/api/v1/realms/example.com/subscribers");
   ASSERT_EQ(listed.status, 200u);
 
-  const auto accounts = listed.json();
-  ASSERT_EQ(accounts.as_array().size(), 1u);
-  EXPECT_EQ(accounts.as_array()[0].at("realm").as_string(), "example.com");
+  const auto subscribers = listed.json();
+  ASSERT_EQ(subscribers.as_array().size(), 1u);
+  EXPECT_EQ(subscribers.as_array()[0].at("realm").as_string(), "example.com");
 }
 
-TEST(ProvisioningApiTest, AnAccountInARealmThatDoesNotExistIs404) {
+TEST(ProvisioningApiTest, AnSubscriberInARealmThatDoesNotExistIs404) {
   ApiFixture f;
 
-  auto response = f.post("/api/v1/realms/nowhere.example/accounts", R"({"user":"alice","password":"secret"})");
+  auto response = f.post("/api/v1/realms/nowhere.example/subscribers", R"({"user":"alice","password":"secret"})");
   EXPECT_EQ(response.status, 404u);
 
   // Naming it is what distinguishes "that realm is not here" from "the path parameter
@@ -317,37 +439,58 @@ TEST(ProvisioningApiTest, AnAccountInARealmThatDoesNotExistIs404) {
   EXPECT_NE(response.body.find("nowhere.example"), std::string::npos);
 }
 
-TEST(ProvisioningApiTest, AnAccountWithNoCredentialIsRefused) {
+TEST(ProvisioningApiTest, AnSubscriberWithNoCredentialIsRefused) {
   ApiFixture f;
 
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
 
-  auto response = f.post("/api/v1/realms/example.com/accounts", R"({"user":"alice"})");
+  auto response = f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice"})");
   EXPECT_EQ(response.status, 400u);
   EXPECT_EQ(response.json().at("error").at("code").as_string(), "invalid_request");
 }
 
-TEST(ProvisioningApiTest, AnAccountIsDeleted) {
+TEST(ProvisioningApiTest, ASubscriberIsDeleted) {
   ApiFixture f;
 
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
-  ASSERT_EQ(f.post("/api/v1/realms/example.com/accounts", R"({"user":"alice","password":"secret"})").status, 201u);
+  ASSERT_EQ(f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice","password":"secret"})").status, 201u);
 
-  EXPECT_EQ(f.request(http::verb::delete_, "/api/v1/realms/example.com/accounts/alice").status, 204u);
-  EXPECT_EQ(f.get("/api/v1/realms/example.com/accounts/alice").status, 404u);
+  EXPECT_EQ(f.request(http::verb::delete_, "/api/v1/realms/example.com/subscribers/alice").status, 204u);
+  EXPECT_EQ(f.get("/api/v1/realms/example.com/subscribers/alice").status, 404u);
 
   // Deleting what is not there is a 404, not a 500 and not a success.
-  EXPECT_EQ(f.request(http::verb::delete_, "/api/v1/realms/example.com/accounts/alice").status, 404u);
+  EXPECT_EQ(f.request(http::verb::delete_, "/api/v1/realms/example.com/subscribers/alice").status, 404u);
+}
+
+// Deleting a realm deletes what is in it (Tom, 2026-10-03): its subscribers, and the
+// registrations that would otherwise go on routing calls into a domain nobody serves.
+TEST(ProvisioningApiTest, DeletingARealmDeletesItsSubscribersAndRegistrations) {
+  ApiFixture f;
+
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+  ASSERT_EQ(f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice","password":"secret"})").status, 201u);
+
+  auto subscriber = f.store->subscriber_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
+  ASSERT_NE(subscriber, nullptr);
+  ASSERT_TRUE(f.store->subscriber_register(subscriber, std::make_shared<types::SIPUri>("sip:alice@192.0.2.10:5060"), 3600, ""));
+
+  EXPECT_EQ(f.request(http::verb::delete_, "/api/v1/realms/example.com").status, 204u);
+  EXPECT_EQ(f.get("/api/v1/registrations", "client-token").json().as_array().size(), 0u);
+
+  // A realm made again under the same name starts empty rather than inheriting them.
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+  EXPECT_EQ(f.get("/api/v1/realms/example.com/subscribers").json().as_array().size(), 0u);
+  EXPECT_EQ(f.get("/api/v1/realms/example.com/subscribers/alice").status, 404u);
 }
 
 // The id is derived from the URI rather than counted, so every node that provisions the
-// same account agrees about which account a binding belongs to.
-TEST(ProvisioningApiTest, AnAccountIdIsDerivedFromItsUri) {
+// same subscriber agrees about which subscriber a binding belongs to.
+TEST(ProvisioningApiTest, AnSubscriberIdIsDerivedFromItsUri) {
   ApiFixture f;
 
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
 
-  auto created = f.post("/api/v1/realms/example.com/accounts", R"({"user":"alice","password":"secret"})");
+  auto created = f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice","password":"secret"})");
   ASSERT_EQ(created.status, 201u);
 
   // Parsing normalises a number that fits in an int64 to one, so the comparison asks
@@ -361,7 +504,7 @@ TEST(ProvisioningApiTest, RegistrationsAreListedForTheClientScope) {
   ApiFixture f;
 
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
-  ASSERT_EQ(f.post("/api/v1/realms/example.com/accounts", R"({"user":"alice","password":"secret"})").status, 201u);
+  ASSERT_EQ(f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice","password":"secret"})").status, 201u);
 
   auto response = f.get("/api/v1/registrations", "client-token");
   ASSERT_EQ(response.status, 200u);
@@ -370,21 +513,21 @@ TEST(ProvisioningApiTest, RegistrationsAreListedForTheClientScope) {
 
   // A binding written the way the registrar writes one comes back with the flow it was
   // learned over.
-  auto account = f.store->account_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
-  ASSERT_NE(account, nullptr);
+  auto subscriber = f.store->subscriber_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
+  ASSERT_NE(subscriber, nullptr);
 
   types::Location binding;
   binding.contact = std::make_shared<types::SIPUri>("sip:alice@192.0.2.10:5060");
   binding.flow_id = "tcp://192.0.2.10:5060";
   binding.node_id = "test-node";
-  ASSERT_TRUE(f.store->account_register(account, binding, 3600));
+  ASSERT_TRUE(f.store->subscriber_register(subscriber, binding, 3600));
 
   auto after = f.get("/api/v1/registrations", "client-token");
   ASSERT_EQ(after.status, 200u);
 
   const auto registrations = after.json();
   ASSERT_EQ(registrations.as_array().size(), 1u);
-  EXPECT_EQ(registrations.as_array()[0].at("account").as_string(), "sip:alice@example.com");
+  EXPECT_EQ(registrations.as_array()[0].at("subscriber").as_string(), "sip:alice@example.com");
   EXPECT_EQ(registrations.as_array()[0].at("flow_id").as_string(), "tcp://192.0.2.10:5060");
 }
 
@@ -413,6 +556,73 @@ TEST(ProvisioningApiTest, TheNodeListDescribesThisNode) {
   EXPECT_EQ(transport.at("address").as_string(), "203.0.113.5");
 }
 
+// And the other nodes, from what each has said on the event bus: where they listen, what
+// they said of themselves, and whether that is current. A client reading this from any
+// node gets the same cluster.
+TEST(ProvisioningApiTest, TheNodeListIncludesWhatTheOtherNodesSaid) {
+  ApiFixture f;
+  auto directory = std::make_shared<NodeDirectory>();
+  f.provisioning->nodes_register(directory, std::chrono::seconds(30));
+
+  directory->observe(
+      "nodes/node-b/status",
+      R"({"status":"ok","node":"node-b","version":"1.2.3","at":"2026-10-02T10:00:00Z","transports":[{"transport":"tls","address":"198.51.100.7","port":5061,"uri":"sips:198.51.100.7:5061;transport=tls"}]})");
+  directory->observe("nodes/test-node/status", R"({"status":"ok","node":"test-node","version":"0.0.0-test","transports":[]})");
+
+  auto response = f.get("/api/v1/nodes", "client-token");
+  ASSERT_EQ(response.status, 200u);
+
+  const auto body = response.json();
+  const auto& nodes = body.as_array();
+  ASSERT_EQ(nodes.size(), 2u) << "this node once, from its own config, and node-b";
+
+  EXPECT_EQ(nodes[0].at("id").as_string(), "test-node");
+  EXPECT_TRUE(nodes[0].at("self").as_bool());
+  EXPECT_EQ(nodes[0].at("status").as_string(), "ok");
+
+  const auto& other = nodes[1];
+  EXPECT_EQ(other.at("id").as_string(), "node-b");
+  EXPECT_FALSE(other.at("self").as_bool());
+  EXPECT_EQ(other.at("status").as_string(), "ok");
+  EXPECT_FALSE(other.at("stale").as_bool());
+  EXPECT_EQ(other.at("version").as_string(), "1.2.3");
+  EXPECT_EQ(other.at("transports").as_array()[0].at("uri").as_string(), "sips:198.51.100.7:5061;transport=tls");
+}
+
+// The bootstrap a browser fetches carries where else it can go: this node first, then the
+// others that are up, and their secure WebSocket URIs in that order. A node that is down,
+// or has gone quiet, is not somewhere to send a client (the 2026-09-21 decision).
+TEST(ProvisioningApiTest, ClientConfigListsTheNodesAClientCanUse) {
+  ApiFixture f;
+  f.config->websocket_enable = true;
+  f.config->websocket_tls = true;
+  f.config->websocket_address = "0.0.0.0";
+  f.config->websocket_port = 8089;
+
+  auto directory = std::make_shared<NodeDirectory>();
+  f.provisioning->nodes_register(directory, std::chrono::seconds(30));
+
+  const auto wss = [](const std::string& address) {
+    return R"([{"transport":"wss","address":")" + address + R"(","port":8089,"uri":"sips:)" + address + R"(:8089;transport=wss"}])";
+  };
+  directory->observe("nodes/node-b/status", R"({"status":"ok","node":"node-b","transports":)" + wss("198.51.100.7") + "}");
+  directory->observe("nodes/node-c/status", R"({"status":"down","node":"node-c","transports":)" + wss("198.51.100.8") + "}");
+
+  auto response = f.get("/api/v1/client/config", "client-token");
+  ASSERT_EQ(response.status, 200u) << response.body;
+  const auto body = response.json();
+
+  const auto& nodes = body.at("nodes").as_array();
+  ASSERT_EQ(nodes.size(), 2u);
+  EXPECT_EQ(nodes[0].at("id").as_string(), "test-node");
+  EXPECT_EQ(nodes[1].at("id").as_string(), "node-b");
+
+  const auto& uris = body.at("websocket_uris").as_array();
+  ASSERT_EQ(uris.size(), 2u);
+  EXPECT_EQ(uris[0].as_string(), "wss://203.0.113.5:8089");
+  EXPECT_EQ(uris[1].as_string(), "wss://198.51.100.7:8089");
+}
+
 TEST(ProvisioningApiTest, AnUnknownEndpointIs404AndAWrongMethodIs405) {
   ApiFixture f;
 
@@ -426,4 +636,100 @@ TEST(ProvisioningApiTest, ABodyThatIsNotJsonIsRefused) {
   auto response = f.post("/api/v1/realms", "not json at all");
   EXPECT_EQ(response.status, 400u);
   EXPECT_EQ(response.json().at("error").at("code").as_string(), "invalid_json");
+}
+
+// --- GET /client/config ---
+
+// A browser cannot be configured by hand and reads no YAML file, so everything it needs
+// to place a call has to be fetchable over the API it is already speaking.
+TEST(ProvisioningApiTest, ClientConfigSaysWhereToSignalAndWhatToUseForIce) {
+  ApiFixture f;
+  f.config->websocket_enable = true;
+  f.config->websocket_address = "0.0.0.0";
+  f.config->websocket_port = 9443;
+  f.config->websocket_tls = true;
+  f.config->ice_servers = {{"stun:stun.example.com:3478"}, {"turn:turn.example.com:3478"}};
+  f.config->turn_shared_secret = "a shared secret";
+  f.config->turn_credential_ttl = 600;
+
+  auto response = f.get("/api/v1/client/config", "client-token");
+  ASSERT_EQ(response.status, 200u);
+
+  const auto body = response.json();
+
+  // Pulled out so a client does not have to know that "wss" is the answer.
+  EXPECT_EQ(body.at("websocket_uri").as_string(), "wss://203.0.113.5:9443");
+
+  const auto ice = body.at("ice_servers").as_array();
+  ASSERT_EQ(ice.size(), 2u);
+
+  // STUN has nothing to authenticate to, so it is given nothing.
+  EXPECT_EQ(ice.at(0).at("urls").as_string(), "stun:stun.example.com:3478");
+  EXPECT_EQ(ice.at(0).as_object().find("username"), ice.at(0).as_object().end());
+
+  // TURN gets a credential that expires on its own.
+  EXPECT_EQ(ice.at(1).at("urls").as_string(), "turn:turn.example.com:3478");
+  EXPECT_FALSE(ice.at(1).at("username").as_string().empty());
+  EXPECT_FALSE(ice.at(1).at("credential").as_string().empty());
+  EXPECT_GT(ice.at(1).at("expires_at").as_int64(), std::time(nullptr));
+}
+
+TEST(ProvisioningApiTest, ClientConfigMintsAFreshCredentialEachTime) {
+  ApiFixture f;
+  f.config->ice_servers = {{"turn:turn.example.com:3478"}};
+  f.config->turn_shared_secret = "a shared secret";
+  f.config->turn_credential_ttl = 600;
+
+  const auto first = f.get("/api/v1/client/config", "client-token").json();
+
+  // The expiry is what the username is, so each request gives a credential good from when
+  // it was asked for rather than from when the node started.
+  //
+  // The name after the colon is the signed-in user's, and has to be protocol-safe: coturn refuses a username containing a space, which it reports as 401
+  // "wrong username" and then 400 Bad Request - indistinguishable from a bad secret at the
+  // client. An earlier version of this put our own log prose in there and no browser could
+  // allocate a relay.
+  const auto username = std::string(first.at("ice_servers").at(0).at("username").as_string());
+  EXPECT_EQ(username, std::to_string(first.at("ice_servers").at(0).at("expires_at").as_int64()) + ":test-status");
+  EXPECT_EQ(username.find(' '), std::string::npos);
+}
+
+TEST(ProvisioningApiTest, ClientConfigWithNoTurnSecretHandsOutNoCredential) {
+  ApiFixture f;
+  f.config->ice_servers = {{"turn:turn.example.com:3478"}};
+
+  auto response = f.get("/api/v1/client/config", "client-token");
+  ASSERT_EQ(response.status, 200u);
+
+  // The URL is still reported, because it is what the operator configured and hiding it
+  // would be lying about the deployment. A credential that could not work is not.
+  const auto server = response.json().at("ice_servers").at(0).as_object();
+  EXPECT_EQ(server.at("urls").as_string(), "turn:turn.example.com:3478");
+  EXPECT_EQ(server.find("username"), server.end());
+}
+
+TEST(ProvisioningApiTest, ClientConfigOffersNoWebsocketUriWhenThereIsNoSecureListener) {
+  ApiFixture f;
+  f.config->websocket_enable = true;
+  f.config->websocket_address = "0.0.0.0";
+  f.config->websocket_port = 9500;
+  f.config->websocket_tls = false;
+
+  auto response = f.get("/api/v1/client/config", "client-token");
+  ASSERT_EQ(response.status, 200u);
+
+  // A page served over https cannot open ws://, so a browser handed one would fail later
+  // and further away than being told there is nothing.
+  const auto body = response.json().as_object();
+  EXPECT_EQ(body.find("websocket_uri"), body.end());
+
+  // The listener is still in the transport list, because something that is not a browser
+  // may want it.
+  EXPECT_EQ(body.at("transports").as_array().at(0).at("transport").as_string(), "udp");
+}
+
+TEST(ProvisioningApiTest, ClientConfigNeedsACredentialLikeEverythingElse) {
+  ApiFixture f;
+
+  EXPECT_EQ(f.get("/api/v1/client/config", "").status, 401u);
 }

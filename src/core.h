@@ -10,6 +10,7 @@
 #include <openssl/rand.h>
 
 #include <boost/asio/post.hpp>
+#include <boost/asio/ssl.hpp>
 #include <boost/asio/strand.hpp>
 #include <future>
 #include <iostream>
@@ -25,12 +26,16 @@
 #include "config.h"
 #include "datastores/datastore.h"
 #include "dialogs.h"
+#include "dns/sip_locator.h"
 #include "events/event_system.h"
 #include "expiry_set.h"
+#include "flow_tokens.h"
 #include "global_io_context.h"
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
 #include "media/media_engine.h"
+#include "media/reoffers.h"
+#include "node_directory.h"
 #include "plugins/plugin.h"
 #include "rtp/rtp_relay_set.h"
 #include "servers/server.h"
@@ -49,6 +54,7 @@ using namespace athenasip::api;
 namespace athenasip {
 
 class Proxy;
+class Qualifier;
 class Registrar;
 
 // Core runs on a single strand. Every registry it owns - channels, transactions, dialogs
@@ -98,18 +104,22 @@ class Core : public std::enable_shared_from_this<Core> {
   void server_start_all();
   void server_stop_all();
 
-  // Realms, accounts and nonces all live in the datastore, which is async by
+  // Realms, subscribers and nonces all live in the datastore, which is async by
   // contract, so these are too: the handler runs back on the strand once the datastore
   // answers. Nothing here blocks, because blocking here would stop every call on the
   // node rather than only the one that asked.
   void realm_get_by_name(std::string realm, plugins::Handler<std::shared_ptr<Realm>> handler);
 
-  // Accounts
-  void account_get(std::shared_ptr<SIPIdentity> identity, plugins::Handler<std::shared_ptr<Account>> handler);
-  void account_register(std::shared_ptr<Account> account, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel, std::uint32_t expires_seconds,
-                        std::string path, plugins::StatusHandler handler);
-  void account_unregister(std::shared_ptr<Account> account, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel, plugins::StatusHandler handler);
-  void location_list(std::uint64_t account_id, plugins::Handler<std::vector<types::Location>> handler);
+  // Subscribers
+  void subscriber_get(std::shared_ptr<SIPIdentity> identity, plugins::Handler<std::shared_ptr<Subscriber>> handler);
+  // instance and reg_id are RFC 5626 outbound's identity for the binding, empty and zero
+  // for an ordinary one.
+  void subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel,
+                           std::uint32_t expires_seconds, std::string path, plugins::StatusHandler handler, std::string instance = "",
+                           std::uint32_t reg_id = 0);
+  void subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel,
+                             plugins::StatusHandler handler);
+  void location_list(std::uint64_t subscriber_id, plugins::Handler<std::vector<types::Location>> handler);
 
   // Channels
 
@@ -137,6 +147,19 @@ class Core : public std::enable_shared_from_this<Core> {
   // reaches an endpoint whose Contact resolves to nothing - a browser's always does.
   std::shared_ptr<Channel> channel_for_token(const std::string& token);
 
+  // What every channel's token is sealed with, and what opens one whose channel this node
+  // no longer holds. See FlowTokens.
+  const FlowTokens& flow_tokens() const { return _flow_tokens; }
+
+  // The subscribers this node has had to offer the other media profile, for the operator.
+  media::Reoffers& reoffers() { return _reoffers; }
+
+  // RFC 3263: where a request for a SIP URI naming a host goes. Made on first use from the
+  // system's nameservers (/etc/resolv.conf); a test, or a composition root that knows
+  // better, sets its own.
+  std::shared_ptr<dns::SipLocator> locator();
+  void locator_set(std::shared_ptr<dns::SipLocator> locator) { _locator = std::move(locator); }
+
   // The flow to a next hop, opening one when this node has none.
   //
   // A registered client is reached on the connection this node accepted, which
@@ -148,6 +171,12 @@ class Core : public std::enable_shared_from_this<Core> {
   // Async because it is a DNS lookup and a TCP handshake, and bounded by
   // Config::sip_connect_timeout_ms because the operating system's own bound is far
   // longer than the transaction has. The handler runs on the strand.
+  //
+  // UDP is opened through a listener's socket rather than dialled, and only TLS is refused.
+  // The cluster's certificates, for the TLS flows this node opens to its peers. Without them
+  // channel_connect refuses tls. False when they could not be loaded.
+  bool cluster_tls_set(const std::string& ca, const std::string& cert, const std::string& key);
+
   void channel_connect(std::string transport, std::string host, std::uint16_t port, plugins::Handler<std::shared_ptr<Channel>> handler);
 
   // A second name for a channel already registered: the name it was dialled by, when
@@ -171,6 +200,18 @@ class Core : public std::enable_shared_from_this<Core> {
   std::string advertised_address(const std::string& local_address) const {
     return config->sip_public_address.empty() ? local_address : config->sip_public_address;
   }
+
+  // What this node calls itself on a flow, which depends on who is at the other end of it:
+  // a far end inside sip.localnet, or any far end when no public address is configured, is
+  // given the local address and port, and everyone else the public address and the port
+  // forwarded to this listener. A listener bound to the wildcard has no local address of
+  // its own, so the address it would send to that far end from is the one given. Via,
+  // Record-Route, Service-Route and the node's own requests all use this.
+  struct Advertised {
+    std::string host;
+    std::uint16_t port = 0;
+  };
+  Advertised advertised_for(const Channel& channel) const;
 
   // Nonce
   void nonce_create(std::shared_ptr<Realm> realm, plugins::Handler<std::string> handler);
@@ -197,6 +238,11 @@ class Core : public std::enable_shared_from_this<Core> {
   // Tests drive the section 17 timers from a ManualTimerSource rather than a real clock.
   void timer_source_set(std::shared_ptr<TimerSource> source) { _timer_source = std::move(source); }
 
+  // The node's sense of time, which is the timer source's. Anything comparing two moments
+  // has to read it here rather than from steady_clock, or the two are the same in
+  // production and drift apart the moment a test advances one of them.
+  std::chrono::steady_clock::time_point now() const { return _timer_source->now(); }
+
   // For the transaction users that keep timers of their own: timer C is the proxy's
   // (RFC 3261 16.6 step 11), not the transaction layer's. Read at schedule time rather
   // than held, so a source a test swaps in afterwards is the one that gets used.
@@ -207,10 +253,20 @@ class Core : public std::enable_shared_from_this<Core> {
   // knows when a call has ended. Nothing routes on this.
   std::shared_ptr<Dialogs> dialogs();
 
+  // OPTIONS to registered clients, where their realm asks for it. See Qualifier.
+  std::shared_ptr<Qualifier> qualifier();
+
   // Calls
   bool call_register(std::shared_ptr<Call> call);
   bool call_unregister(std::string callId);
   std::shared_ptr<Call> call_get(std::string callId);
+
+  // On the strand, for the admin API and /metrics: what is live, by snapshot.
+  std::vector<std::shared_ptr<Call>> call_list() const;
+  std::size_t call_count() const { return _calls.size(); }
+
+  // Open flows by transport, each counted once however many names it is filed under.
+  std::map<std::string, std::size_t> channel_counts() const;
 
   // Admin API
   void admin_register(std::shared_ptr<api::AdminAPI> adminAPI);
@@ -223,6 +279,44 @@ class Core : public std::enable_shared_from_this<Core> {
   std::shared_ptr<Config> config;
   std::shared_ptr<datastores::Datastore> datastore;
   std::shared_ptr<events::EventSystem> events;
+
+  // What this node reports itself as. Set by main from the build version, because Core
+  // is the composition root and the thing that announces the node, but the version is
+  // the binary's fact rather than the composition's.
+  void version_set(std::string version) { _version = std::move(version); }
+
+  // Start saying, on an interval, that this node is alive and what it is.
+  //
+  // Called once, after the datastore and the bus are up, because the first thing it
+  // publishes is a health report and a report written before the datastore connected
+  // would say degraded about a node that is fine.
+  // Starts forgetting connectionless flows that have gone quiet. Separate from the
+  // constructor because it schedules against weak_from_this, which a constructor has not
+  // got yet.
+  void flow_sweep_start();
+
+  void node_status_start();
+
+  // The same report the HTTP health endpoint gives, as JSON. A monitor reading one and
+  // a monitor reading the other should not disagree about the node.
+  std::string node_status_json(const std::string& status) const;
+
+  // The same report, built from parts rather than from this node's state.
+  //
+  // Static because the will has to be built before a Core exists: a broker takes a will
+  // when the session opens, and the bus is connected before the composition root that
+  // would otherwise own this is built. Setting it afterwards is silently too late,
+  // which is exactly the bug this shape exists to make impossible.
+  static std::string node_status_json(const std::string& status, const std::string& node_id, const std::string& version, const std::string& datastore,
+                                      std::int64_t uptime, std::uint32_t status_interval, const std::vector<Config::AdvertisedTransport>& transports = {},
+                                      const std::optional<Config::AdvertisedTransport>& cluster = std::nullopt);
+
+  // Every node's status as heard on the bus, this one's included, from node_status_start.
+  std::shared_ptr<NodeDirectory> nodes() const { return _nodes; }
+
+  // The last thing a node says on the way out, so the retained message does not claim
+  // for ever that a node which stopped cleanly is still up.
+  void node_status_stop();
   std::shared_ptr<media::MediaEngine> media;
 
  private:
@@ -248,6 +342,9 @@ class Core : public std::enable_shared_from_this<Core> {
   std::unordered_map<std::string, std::shared_ptr<Channel>> _channels_by_token;
   std::set<std::string> _local_addresses;
 
+  FlowTokens _flow_tokens;
+  media::Reoffers _reoffers;
+
   std::vector<std::shared_ptr<Server>> _servers;
 
   std::shared_ptr<api::AdminAPI> _adminAPI;
@@ -259,6 +356,8 @@ class Core : public std::enable_shared_from_this<Core> {
 
   std::shared_ptr<Registrar> _registrar;
   std::shared_ptr<Proxy> _proxy;
+  std::shared_ptr<Qualifier> _qualifier;
+  std::shared_ptr<dns::SipLocator> _locator;
   std::shared_ptr<Dialogs> _dialogs;
 
   // Keeps the Call record in step with the dialog it is a leg of.
@@ -276,9 +375,30 @@ class Core : public std::enable_shared_from_this<Core> {
   // end; how long the call has been up reaches every call and cannot tell a live one from
   // a dead one.
   std::shared_ptr<Timer> _call_sweep_timer;
+  std::shared_ptr<Timer> _flow_sweep_timer;
+
+  std::shared_ptr<Timer> _node_status_timer;
+  std::shared_ptr<NodeDirectory> _nodes = std::make_shared<NodeDirectory>();
+  std::string _version;
+  std::time_t _started_at = 0;
+
+  void _node_status_schedule();
+  void _node_status_publish();
 
   void _call_sweep_schedule();
   void _call_sweep();
+
+  // Forgetting a connectionless flow that has gone quiet. See sip.flow_idle_timeout.
+  // channel_connect's UDP half. See there.
+  void _secure_flow(std::shared_ptr<boost::asio::ip::tcp::socket> socket, std::shared_ptr<boost::asio::ssl::context> context, const std::string& host,
+                    const std::string& key, std::function<void(plugins::Result<std::shared_ptr<Channel>>)> answer);
+  std::shared_ptr<boost::asio::ssl::context> _cluster_tls;
+
+  void _connect_datagram(std::string host, std::uint16_t port, plugins::Handler<std::shared_ptr<Channel>> handler);
+  void _open_datagram(std::vector<boost::asio::ip::udp::endpoint> candidates, std::string key, plugins::Handler<std::shared_ptr<Channel>> handler);
+
+  void _flow_sweep_schedule();
+  void _flow_sweep();
 
   // RFC 4028 section 8.3, which is the only thing a proxy may do about a call it has
   // decided is over: "the proxy MAY remove associated call state, and MAY free any

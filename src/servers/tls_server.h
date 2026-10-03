@@ -6,6 +6,7 @@
 //
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 
 #include "server.h"
@@ -28,6 +29,10 @@ class TLSServer : public Server {
 
   bool set_certificates(std::string cert, std::string key);
 
+  // Make this the inter-node listener: a peer has to show a certificate the cluster CA
+  // signed (see tls_context.h).
+  bool require_peer_certificates(const std::string& ca);
+
  protected:
   void _handle_accept(const boost::system::error_code& error, std::shared_ptr<boost::asio::ip::tcp::socket> new_connection);
   void start_accept();
@@ -37,6 +42,9 @@ class TLSServer : public Server {
   uint16_t _port;
   std::shared_ptr<std::thread> _thread;
   boost::asio::ssl::context ctx;
+
+  // How long a connection has to finish its handshake before it is closed.
+  static constexpr std::chrono::seconds kHandshakeDeadline{10};
 };
 
 }  // namespace athenasip::servers

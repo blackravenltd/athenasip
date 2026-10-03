@@ -48,4 +48,25 @@ inline bool load_tls_certificates(const std::shared_ptr<loggers::Logger>& logger
   return true;
 }
 
+// Mutual TLS for the inter-node listener and the flows a node opens to its peers: the far end
+// has to show a certificate signed by the cluster CA, or the handshake fails. What the CA
+// signed is what a node is; nothing else is trusted on these connections.
+inline bool require_peer_certificates(const std::shared_ptr<loggers::Logger>& logger, boost::asio::ssl::context& context, const std::string& ca) {
+  if (ca.empty()) {
+    logger->error("Mutual TLS needs the cluster CA certificate");
+    return false;
+  }
+
+  try {
+    context.load_verify_file(ca);
+    context.set_verify_mode(boost::asio::ssl::verify_peer | boost::asio::ssl::verify_fail_if_no_peer_cert);
+    logger->info("Requiring peers signed by: " + ca);
+  } catch (const std::exception& e) {
+    logger->error("Cannot load the cluster CA " + ca + " - " + e.what());
+    return false;
+  }
+
+  return true;
+}
+
 }  // namespace athenasip::servers

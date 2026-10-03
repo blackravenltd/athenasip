@@ -91,20 +91,42 @@ void URL::parse(const std::string& url) {
     }
   }
 
-  const auto colon = rest.find(':');
-  if (colon == std::string::npos) {
-    host = rest;
-    port = _default_port(scheme);
-    _valid = true;
-    return;
-  }
+  // 3986 3.2.2: an IPv6 literal is in brackets, and its own colons are why. The host is
+  // kept without them, because it is what a driver connects to; to_string puts them back.
+  std::string after_host;
 
-  host = rest.substr(0, colon);
+  if (!rest.empty() && rest.front() == '[') {
+    const auto close = rest.find(']');
+    if (close == std::string::npos || close == 1) return;
+
+    host = rest.substr(1, close - 1);
+    after_host = rest.substr(close + 1);
+
+    if (after_host.empty()) {
+      port = _default_port(scheme);
+      _valid = true;
+      return;
+    }
+
+    if (after_host.front() != ':') return;
+  } else {
+    const auto colon = rest.find(':');
+    if (colon == std::string::npos) {
+      host = rest;
+      port = _default_port(scheme);
+      _valid = true;
+      return;
+    }
+
+    host = rest.substr(0, colon);
+    after_host = rest.substr(colon);
+  }
 
   // 3986 3.2.3: port = *DIGIT. Anything else after the colon is a configuration mistake
   // worth refusing, rather than something to read as part of a hostname and then fail
-  // to connect to much later.
-  const auto digits = rest.substr(colon + 1);
+  // to connect to much later. An unbracketed IPv6 literal ends up here too, with colons
+  // in what should be digits, and is refused rather than guessed at.
+  const auto digits = after_host.substr(1);
   if (digits.empty() || digits.find_first_not_of("0123456789") != std::string::npos) return;
   if (digits.size() > 5) return;
 
@@ -129,7 +151,7 @@ std::string URL::to_string() const {
     }
     url += "@";
   }
-  url += host;
+  url += host.find(':') == std::string::npos ? host : "[" + host + "]";
 
   // The port is left off only when it is the one the scheme implies anyway. A scheme
   // with no well-known port has to carry it, or the port is lost.

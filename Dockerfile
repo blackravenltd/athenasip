@@ -39,6 +39,13 @@ WORKDIR /src
 COPY CMakeLists.txt ./
 COPY src ./src
 
+# The install rules need both: the unit is generated from packaging/ at configure time,
+# and the default configuration comes from config/. The image itself copies the binary
+# out rather than installing, but a build stage that cannot run "cmake --install" is a
+# build stage that cannot produce a package.
+COPY packaging ./packaging
+COPY config ./config
+
 RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"$(nproc)"
 
 FROM debian:trixie-slim AS runtime

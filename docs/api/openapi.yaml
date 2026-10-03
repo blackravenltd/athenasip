@@ -13,14 +13,37 @@ info:
     Provisioning and read-only status for one AthenaSIP node.
 
     Everything here goes straight to the datastore on the API's own executor. The API is
-    not on the Core strand and must not be: an operator listing accounts cannot be
+    not on the Core strand and must not be: an operator listing subscribers cannot be
     allowed to hold up a call.
 
-    Authentication is a bearer token from the `http.api.tokens` section of the node
-    configuration, with one of two scopes. `admin` provisions realms and accounts;
-    `client` reads what a client may see - the node list and who is registered. A
-    request with no matching token is refused, so an API enabled with no tokens is one
-    nobody can call.
+    Every route names the roles that admit it, and any of them does. The one credential is
+    a **session token**, held by a user who logged in through `POST /auth/login`. Its
+    roles are the user's, read on every request, so a role taken away takes effect on the
+    next one rather than at the next login.
+
+    There are no configured tokens. The first administrator is made on the node's host
+    with `athenasip --add-user`, which is also the way back in when every password has
+    been lost; everything after that is a user.
+
+    The three refusals are distinct and a client should treat them differently. `401` is
+    a credential that is absent or no longer good - an unknown token, an expired session,
+    a disabled user - and is the one that means sign in again. `403` is a real credential
+    that does not hold the role. `503` is the node being unable to tell, because its
+    datastore did not answer; it is a retry, not a bad password.
+
+    Every route is rate limited, and `429` is the fourth answer: wait the seconds in
+    `Retry-After` and try again. It is never a reason to sign out. The limits are per node:
+
+    | Who | Keyed by | Burst | Then |
+    | --- | --- | --- | --- |
+    | Open routes, unknown endpoints, and any credential that does not resolve | source address | 30 | 30 a minute |
+    | `POST /auth/login`, on top of that | source address | 10 | 5 a minute |
+    | `POST /auth/login`, on top of that | username | 5 | 1 a minute |
+    | A signed-in caller | session | 60 | 300 a minute |
+
+    These are the defaults; an operator sets them under `http.api.rate_limits`. The login
+    limits count every attempt, not only failures. The source address is the
+    peer of the connection; a node behind a reverse proxy sees every caller as the proxy.
   license:
     name: GPL-3.0-or-later
     url: https://www.gnu.org/licenses/gpl-3.0.html
@@ -38,18 +61,27 @@ security:
   - bearerAuth: []
 
 tags:
+  - name: auth
+    description: Logging in, logging out, and asking who you are
+  - name: users
+    description: The users that administer this node, which are not subscribers
   - name: status
     description: What this node is and whether it is serving
   - name: realms
     description: The SIP domains this node serves
-  - name: accounts
-    description: The accounts within a realm
+  - name: subscribers
+    description: The subscribers within a realm
   - name: registrations
-    description: Where accounts are currently reachable
+    description: Where subscribers are currently reachable
+  - name: calls
+    description: What the node is carrying now, and what its media engine relayed for it
+  - name: media
+    description: The media engine and the node's counters
 
 paths:
   /health:
     get:
+      operationId: getHealth
       tags: [status]
       summary: Whether this node is serving
       description: |
@@ -58,7 +90,7 @@ paths:
         nothing about who is on it.
 
         `503` when the datastore is not connected, because a node that cannot read its
-        own accounts cannot serve a REGISTER.
+        own subscribers cannot serve a REGISTER.
       security: []
       responses:
         "200":
@@ -74,8 +106,104 @@ paths:
               schema:
                 $ref: "#/components/schemas/Health"
 
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Exchange a username and password for a session token
+      description: |
+        Open, with no credential: this is how a credential is obtained.
+
+        The token is given out once here and is never retrievable again. The node stores
+        only its SHA-256, so a dump of the datastore does not hand over live sessions.
+
+        A user that does not exist, a password that does not verify and a user that has
+        been disabled are all one answer, byte for byte, because between them the
+        alternatives are a list of who is a subscriber on this node. An empty password is
+        that same `401` rather than a `400`, so probing with one learns nothing a wrong
+        password would not; a *missing* field is a `400`, because that is the caller's own
+        mistake and says nothing about anybody.
+
+        A user holding no roles may log in and is told it holds none, so a console can say
+        "ask an administrator" rather than failing to load.
+
+        There is no rate limiting yet. See `docs/authentication.md`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Logged in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: The username or password is not right, or the user is disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: End the presented session
+      description: |
+        `204` whether or not the token named a live session: the state the caller asked
+        for is that it is gone, and it is. A `404` here would be a way to ask this node
+        whether a token is real, one guess at a time, on a route anybody can reach.
+
+        Only the session presented ends. Every other session that user holds keeps
+        working; `DELETE /users/{user}/sessions` is what ends all of them.
+      security: []
+      responses:
+        "204":
+          description: Gone
+        "401":
+          description: No bearer token was presented, so there was nothing to end
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /session:
+    get:
+      operationId: getSession
+      tags: [auth]
+      summary: Who this credential is and what roles it holds
+      description: |
+        Any signed-in user, holding any roles or none: its `username`, `display_name` and
+        the `expires_at` of the session presented. `kind` is always `user`.
+
+        The roles are resolved on this request rather than at login, so this is also how a
+        client notices that its permissions have changed.
+      responses:
+        "200":
+          description: Who you are
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
   /nodes:
     get:
+      operationId: listNodes
       tags: [status]
       summary: The cluster as this node knows it
       description: |
@@ -83,8 +211,13 @@ paths:
         this to learn where else the realm is served from, over the HTTP it is already
         speaking, which is what lets a browser fail over without DNS SRV it cannot use.
 
-        One entry today: nothing discovers the other nodes yet, and the entry for this
-        node is marked `self`.
+        This node first, marked `self` and described from its own configuration. Then
+        every other node as it last described itself on the event bus (its retained
+        `nodes/<id>/status` message), with the status it gave. A node whose report has
+        not been repeated within three status intervals is `stale`: listed, so a node
+        that went quiet can be told from one never heard of, and marked, so nothing
+        routes to it on the strength of an old `ok`. A node the broker reported `down`
+        is listed as down.
 
         The address is `sip.public_address` when it is set. A node bound to `0.0.0.0`
         answers on every address it has and can name none of them to a client, so a node
@@ -104,8 +237,46 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /client/config:
+    get:
+      tags: [status]
+      operationId: getClientConfig
+      summary: Everything a web client needs that it cannot be told by hand
+      description: |
+        A browser reads no configuration file and cannot be given one, so what it needs to
+        place a call is fetched over the API it is already speaking: where to signal, and
+        what to use for ICE.
+
+        `websocket_uri` is the secure WebSocket listener, pulled out of `transports` so a
+        client does not have to know that `wss` is the answer. It is **absent** when this
+        node has no secure WebSocket listener, because a page served over https cannot open
+        `ws://` and a browser handed one would fail later and further away.
+
+        `ice_servers` is shaped as `RTCIceServer`, so it can be handed to
+        `RTCPeerConnection` unchanged. A `turn:` entry carries a credential minted for this
+        request under the coturn shared-secret scheme, which expires on its own; a `stun:`
+        entry carries none, because STUN has nothing to authenticate to. A `turn:` entry
+        appears without a credential when the node has no shared secret configured - the
+        URL is still reported, because it is what the operator configured, but a credential
+        that could not work is not invented.
+
+        The same role as `/nodes`, and for the same reason: it is what a client reads to
+        learn how to reach the realm, and it says nothing about who is on it.
+      responses:
+        "200":
+          description: What to use
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientConfig"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /realms:
     get:
+      operationId: listRealms
       tags: [realms]
       summary: Every realm this node serves
       responses:
@@ -122,6 +293,7 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
     post:
+      operationId: createRealm
       tags: [realms]
       summary: Create a realm
       description: |
@@ -157,6 +329,7 @@ paths:
     parameters:
       - $ref: "#/components/parameters/Realm"
     get:
+      operationId: getRealm
       tags: [realms]
       summary: One realm
       responses:
@@ -169,6 +342,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
     put:
+      operationId: updateRealm
       tags: [realms]
       summary: Update a realm
       description: |
@@ -193,6 +367,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
     delete:
+      operationId: deleteRealm
       tags: [realms]
       summary: Delete a realm
       responses:
@@ -201,50 +376,52 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
-  /realms/{realm}/accounts:
+  /realms/{realm}/subscribers:
     parameters:
       - $ref: "#/components/parameters/Realm"
     get:
-      tags: [accounts]
-      summary: Every account in a realm
+      operationId: listSubscribers
+      tags: [subscribers]
+      summary: Every subscriber in a realm
       responses:
         "200":
-          description: The accounts
+          description: The subscribers
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/Account"
+                  $ref: "#/components/schemas/Subscriber"
         "404":
           $ref: "#/components/responses/NotFound"
     post:
-      tags: [accounts]
-      summary: Create an account
+      operationId: createSubscriber
+      tags: [subscribers]
+      summary: Create a subscriber
       description: |
         Give a `password` and the server computes HA1 from it (RFC 2617: the hash of
         user, realm and password). That hash is the only form of the password this
         server ever holds, and no endpoint returns it.
 
-        `ha1` is accepted instead, for importing accounts from somewhere that already
+        `ha1` is accepted instead, for importing subscribers from somewhere that already
         holds one.
 
-        The account id is derived from its URI rather than counted, so every node that
-        provisions the same account agrees about which account a registration belongs to
+        The subscriber id is derived from its URI rather than counted, so every node that
+        provisions the same subscriber agrees about which subscriber a registration belongs to
         without a shared sequence.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AccountCreate"
+              $ref: "#/components/schemas/SubscriberCreate"
       responses:
         "201":
           description: Created
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Account"
+                $ref: "#/components/schemas/Subscriber"
         "400":
           $ref: "#/components/responses/BadRequest"
         "404":
@@ -252,45 +429,48 @@ paths:
         "409":
           $ref: "#/components/responses/Conflict"
 
-  /realms/{realm}/accounts/{user}:
+  /realms/{realm}/subscribers/{user}:
     parameters:
       - $ref: "#/components/parameters/Realm"
       - $ref: "#/components/parameters/User"
     get:
-      tags: [accounts]
-      summary: One account
+      operationId: getSubscriber
+      tags: [subscribers]
+      summary: One subscriber
       responses:
         "200":
-          description: The account
+          description: The subscriber
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Account"
+                $ref: "#/components/schemas/Subscriber"
         "404":
           $ref: "#/components/responses/NotFound"
     put:
-      tags: [accounts]
-      summary: Change an account's credential
+      operationId: updateSubscriber
+      tags: [subscribers]
+      summary: Change a subscriber's credential
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AccountUpdate"
+              $ref: "#/components/schemas/SubscriberUpdate"
       responses:
         "200":
           description: Updated
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Account"
+                $ref: "#/components/schemas/Subscriber"
         "400":
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
     delete:
-      tags: [accounts]
-      summary: Delete an account
+      operationId: deleteSubscriber
+      tags: [subscribers]
+      summary: Delete a subscriber
       description: Its registrations go with it.
       responses:
         "204":
@@ -300,8 +480,9 @@ paths:
 
   /registrations:
     get:
+      operationId: listRegistrations
       tags: [registrations]
-      summary: Where accounts are currently reachable
+      summary: Where subscribers are currently reachable
       description: |
         Read only. A binding is written by a REGISTER and by nothing else.
 
@@ -329,12 +510,479 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /calls:
+    get:
+      operationId: listCalls
+      tags: [calls]
+      summary: The calls this node is carrying now
+      description: |
+        Live calls only. A call that has ended is gone from this list and is on
+        `/call-records`.
+
+        `media` is null for a call nothing anchors - the realm does not anchor, or the
+        node has no media engine. Otherwise it is what the engine reports, cumulative
+        since the call began. Each leg is one end of one stream as the engine sees it,
+        counted at the engine in both directions: `_in` is what arrived from that end and
+        `_out` what the engine sent it, so one-way audio is one of the two standing still.
+        A direction the engine does not report is absent, never zero. `participant` is
+        null: a relay knows an end by the address its packets come from, which behind a
+        NAT is not one any participant described.
+      responses:
+        "200":
+          description: The live calls
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Call"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /call-records:
+    get:
+      operationId: listCallRecords
+      tags: [calls]
+      summary: The calls that have ended
+      description: |
+        One record per call, newest first, read from the datastore, so every node of a
+        cluster gives the same list. The node the caller reached writes the record; a node
+        a peer forwarded the call to does not, and is named in `nodes`. A call that never
+        got as far as a dialog - refused before anybody rang - has no record.
+
+        Records are kept for `calls.history_retention` seconds, thirty days unless the
+        operator says otherwise.
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+      responses:
+        "200":
+          description: The records
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CallRecord"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /calls/{call}:
+    parameters:
+      - name: call
+        in: path
+        required: true
+        schema:
+          type: string
+        description: |
+          The Call-ID, percent-encoded. RFC 3261 lets a Call-ID hold `@` and `/`, and an
+          encoded `/` (`%2F`) is one path segment, not two.
+        example: a84b4c76e66710%40pc33.atlanta.com
+    get:
+      operationId: getCall
+      tags: [calls]
+      summary: One live call
+      responses:
+        "200":
+          description: The call
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Call"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /media:
+    get:
+      operationId: getMediaEngine
+      tags: [media]
+      summary: The media engine and what it can do
+      description: Its name and capabilities, never its URL, which can carry an address and credentials.
+      responses:
+        "200":
+          description: The engine, or null fields when the node has none
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaEngine"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /media/reoffers:
+    get:
+      operationId: listMediaReoffers
+      tags: [media]
+      summary: Subscribers that refused the media profile they were offered
+      description: |
+        When a callee answers an offer this node's engine produced with 488 Not Acceptable
+        Here, the node offers it the other profile once (WebRTC for plain RTP and back).
+        This lists each subscriber that needed that, on this node and since it started, most
+        recent first. The node suggests and the operator decides: `suggested_media_profile`
+        is the value the subscriber's `behaviour.media_profile` would be set to, and nothing
+        sets it.
+      responses:
+        "200":
+          description: The re-offers, most recent first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MediaReoffer"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /qualify:
+    get:
+      operationId: listQualifiedClients
+      tags: [media]
+      summary: Registered clients this node is probing with OPTIONS
+      description: |
+        Per node: only the node holding a client's flow can probe it. Each entry says how
+        often the client is probed, when it last answered, how many probes in a row went
+        unanswered, and what media it said it takes if its answer carried a session
+        description (RFC 3261 11.2), in the words `behaviour.media_profile` uses.
+      responses:
+        "200":
+          description: The probed clients
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [subscriber, contact, interval, answered_at, unanswered, said_media_profile]
+                  properties:
+                    subscriber:
+                      type: string
+                    contact:
+                      type: string
+                    interval:
+                      type: integer
+                    answered_at:
+                      type: string
+                      format: date-time
+                      nullable: true
+                    unanswered:
+                      type: integer
+                    said_media_profile:
+                      type: string
+                      nullable: true
+                      enum: [rtp, webrtc, srtp, null]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /metrics:
+    servers:
+      - url: http://{host}:{port}
+        variables:
+          host:
+            default: localhost
+          port:
+            default: "8080"
+    get:
+      operationId: getMetrics
+      tags: [media]
+      summary: Counters for a monitoring system
+      description: |
+        Prometheus text exposition format 0.0.4, on the admin port and outside `/api/v1`.
+
+        - `athenasip_calls_active` (gauge)
+        - `athenasip_dialogs_active` (gauge)
+        - `athenasip_channels_open{transport}` (gauge), each flow counted once
+        - `athenasip_transactions_active` (gauge)
+        - `athenasip_media_packets_relayed_total` (counter), only when the media engine
+          can count; absent rather than zero when it cannot
+      responses:
+        "200":
+          description: The counters
+          content:
+            text/plain; version=0.0.4:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /users:
+    get:
+      operationId: listUsers
+      tags: [users]
+      summary: Every user that can administer this node
+      description: Needs `manage-admin-users`. A password never appears in any of these answers.
+      responses:
+        "200":
+          description: The users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    post:
+      operationId: createUser
+      tags: [users]
+      summary: Create a user
+      description: |
+        Needs `manage-admin-users`. On a fresh node there are no users, so the first one
+        is made on the host with `athenasip --add-user`, and that user can create the rest.
+
+        `409` when the username is taken rather than overwriting somebody. Usernames are
+        one case-folded namespace: `Tom` and `tom` cannot both exist, either spelling logs
+        in, and the spelling given is kept for display.
+
+        `400 unknown_role` for a role this build does not have. The datastore carries a
+        role it does not recognise rather than dropping it - so that an older node
+        rewriting a user cannot silently strip a role a newer one granted - which leaves
+        this as the only place a typo can be caught.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserCreate"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /users/{user}:
+    parameters:
+      - $ref: "#/components/parameters/Username"
+    get:
+      operationId: getUser
+      tags: [users]
+      summary: One user
+      description: Needs `manage-admin-users`.
+      responses:
+        "200":
+          description: The user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    put:
+      operationId: updateUser
+      tags: [users]
+      summary: Change a user
+      description: |
+        Needs `manage-admin-users`. The username cannot be changed, because it is the key
+        the user is filed under; the password has its own endpoint.
+
+        A field not given is left alone. `roles` given as `[]` takes them all away, which
+        is why "not given" and "given as empty" are different answers.
+
+        `409 would_lock_out` when a user tries to disable itself or take
+        `manage-admin-users` away from itself. The rule is about *self*, not about the
+        role: somebody else holding it may still be disabled and demoted, and a node with
+        no administrators left is recovered with `athenasip --add-user` on the host.
+
+        Disabling a user revokes every session it held, so it stops working immediately
+        rather than when each token happens to expire.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserUpdate"
+      responses:
+        "200":
+          description: Changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The change would lock the caller out of its own user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    delete:
+      operationId: deleteUser
+      tags: [users]
+      summary: Delete a user
+      description: |
+        Needs `manage-admin-users`. `204` with no body, `404` when there is no such user.
+
+        Deleting a user revokes its sessions: a live token against a user that no longer
+        exists is a session nobody can revoke.
+
+        `409 would_lock_out` when a user tries to delete itself, for the same reason it
+        cannot disable itself - it is locked out exactly as thoroughly either way.
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: A user cannot delete itself
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /users/{user}/password:
+    parameters:
+      - $ref: "#/components/parameters/Username"
+    post:
+      operationId: setPassword
+      tags: [users]
+      summary: Set a password
+      description: |
+        Any authenticated caller, because "this is my own user" is not something a role
+        can express.
+
+        `old_password` is required when, and only when, the caller does **not** hold
+        `manage-admin-users`. Holding that role sets anyone's password without the old
+        one - including the holder's own - because the case it exists for is somebody who
+        has lost theirs. So a user with no roles changing their own password must present
+        it, and an administrator changing theirs need not.
+
+        That is deliberate rather than an oversight: requiring it of a holder of
+        `manage-admin-users` would not protect them, since anyone holding that role can
+        already set any other administrator's password or create a new one.
+
+        **This ends every session that user held, including the one that asked.** A
+        password is changed because the old one is no longer trusted, and a session issued
+        against it is exactly as untrusted; an administrator resetting a compromised
+        user would otherwise leave whoever compromised it logged in. A client changing
+        its own password should expect to sign in again.
+
+        A wrong or missing `old_password` is `403 wrong_password`, not `401`. The bearer
+        presented is still perfectly good - it is a field in the body that is wrong - so a
+        client must not treat it as the session ending.
+
+        Somebody else's password without the role is `403` before the datastore is asked,
+        so this cannot be walked to find out who exists. With the role it is `404`,
+        because by then the caller is allowed to know.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordChange"
+      responses:
+        "204":
+          description: Changed, and every session that user held is gone
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: |
+            Either the caller does not hold `manage-admin-users` and the `old_password`
+            for its own user was wrong or missing (`wrong_password`), or this is
+            somebody else's password and the caller does not hold the role (`forbidden`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /users/{user}/sessions:
+    parameters:
+      - $ref: "#/components/parameters/Username"
+    delete:
+      operationId: revokeSessions
+      tags: [users]
+      summary: Sign a user out everywhere
+      description: |
+        Needs `manage-admin-users`. Revokes every session that user holds, leaving the
+        user alone so they can log in again.
+
+        `204` for a user that holds none, because holding none is the state the caller
+        asked for; `404` only when there is no such user.
+      responses:
+        "204":
+          description: Every session that user held is gone
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
-      description: A token from `http.api.tokens`, with the `admin` or `client` scope.
+      description: |
+        A session token from `POST /auth/login`, which resolves to the signed-in user's roles.
+
+        A session token is 32 bytes from a CSPRNG, rendered as 64 hex characters. It is
+        given out once and is never retrievable again: the node stores only its SHA-256.
 
   parameters:
     Realm:
@@ -345,6 +993,16 @@ components:
         type: string
       description: The realm name, which is the SIP domain.
       example: example.com
+    Username:
+      name: user
+      in: path
+      required: true
+      schema:
+        type: string
+      description: |
+        An administrator's username, matched case-insensitively. Not a subscriber: see the
+        `users` tag.
+      example: tom
     User:
       name: user
       in: path
@@ -352,7 +1010,7 @@ components:
       schema:
         type: string
       description: |
-        The user part of the account's SIP URI, percent-encoded. A user containing an `@`
+        The user part of the subscriber's SIP URI, percent-encoded. A user containing an `@`
         or a `/` is one path segment, not two.
       example: alice
 
@@ -369,14 +1027,27 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    TooManyRequests:
+      description: Rate limited. Wait the seconds in Retry-After; the credential, if any, is still good.
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+          description: Seconds until a request would be let through
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
     Forbidden:
-      description: A known token, without the scope this endpoint needs
+      description: |
+        A real credential that does not hold a role this endpoint admits. Not a reason to
+        sign the user out: the credential is good, it is the permission that is missing.
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
     NotFound:
-      description: No such realm or account
+      description: No such realm or subscriber
       content:
         application/json:
           schema:
@@ -387,8 +1058,221 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    Unavailable:
+      description: |
+        The datastore could not be asked, so the node cannot tell whether the credential
+        is good. A retry rather than a bad password, and never a reason to sign a user out.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
 
   schemas:
+    ClientConfig:
+      type: object
+      required: [transports, ice_servers]
+      properties:
+        websocket_uri:
+          type: string
+          description: |
+            The secure WebSocket to signal over. Absent when this node has no `wss`
+            listener, which a browser must treat as "there is nothing here for me".
+          example: wss://203.0.113.5:9443
+        transports:
+          type: array
+          description: Every SIP transport this node serves, the same list `/nodes` gives.
+          items:
+            $ref: "#/components/schemas/NodeTransport"
+        ice_servers:
+          type: array
+          description: Shaped as `RTCIceServer`, to be handed to `RTCPeerConnection` unchanged.
+          items:
+            type: object
+            required: [urls]
+            properties:
+              urls:
+                type: string
+                example: turn:turn.example.com:3478
+              username:
+                type: string
+                description: |
+                  Present for a `turn:` entry when a shared secret is configured. It is the
+                  credential's own expiry in Unix seconds, optionally followed by a name -
+                  that is the scheme, not a coincidence.
+              credential:
+                type: string
+                description: Present with `username`. base64 of HMAC-SHA1 over it.
+              expires_at:
+                type: integer
+                format: int64
+                description: Unix seconds. The credential stops working by itself.
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          description: Matched case-insensitively
+        password:
+          type: string
+          format: password
+      example:
+        username: tom
+        password: a long enough password
+
+    LoginResponse:
+      type: object
+      required: [token, expires_at, roles]
+      properties:
+        token:
+          type: string
+          description: |
+            64 hex characters, being 32 bytes from a CSPRNG. Given out here once and never
+            retrievable again; the node stores only its SHA-256.
+        expires_at:
+          type: integer
+          format: int64
+          description: |
+            Unix seconds, from `http.api.session_lifetime`. The session also ends after
+            `http.api.session_idle` seconds without being used, which is not reported here
+            because using the session moves it.
+        roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Role"
+          description: Empty for a user that holds none, which is an answer rather than an error
+      example:
+        token: 3f9a1c7e2b8d4056a1c3e5f70981b2d4c6e8fa0b1d3f5a7e9920c4e6a8b0d2f41
+        expires_at: 1790506751
+        roles: [manage-realms]
+
+    Session:
+      type: object
+      required: [kind, roles]
+      description: |
+        Who a credential is: always a user. `kind` is kept so a client that reads it keeps
+        working, and has the one value.
+      properties:
+        kind:
+          type: string
+          enum: [user]
+        roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Role"
+        username:
+          type: string
+          description: In the spelling the user was created with
+        display_name:
+          type: string
+          description: May be empty
+        expires_at:
+          type: integer
+          format: int64
+          description: Unix seconds
+      example:
+        kind: user
+        username: Tom
+        display_name: Tom Cully
+        roles: [manage-realms, view-cluster-status]
+        expires_at: 1790506751
+
+    Role:
+      type: string
+      description: |
+        A permission rather than a rank. Nothing here implies anything else: somebody who
+        needs to read cluster status and manage realms is given both, and there is
+        deliberately no role that covers everything.
+      enum:
+        - view-cluster-status
+        - manage-admin-users
+        - manage-realms
+        - manage-realm-subscribers
+        - manage-cluster
+
+    User:
+      type: object
+      description: |
+        A user administers this node. It is not a subscriber: a subscriber is registered
+        on a realm to make and receive calls and authenticates with Digest, and neither
+        credential works as the other.
+      properties:
+        username:
+          type: string
+          description: As it was given, not the case-folded key it is filed under
+        display_name:
+          type: string
+        roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Role"
+        disabled:
+          type: boolean
+          description: A disabled user cannot log in and holds no sessions
+        created_at:
+          type: integer
+          format: int64
+          description: Unix seconds
+        last_login_at:
+          type: integer
+          format: int64
+          description: Unix seconds, `0` for a user that has never logged in
+      example:
+        username: Tom
+        display_name: Tom Cully
+        roles: [manage-admin-users]
+        disabled: false
+        created_at: 1790522442
+        last_login_at: 0
+
+    UserCreate:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+        display_name:
+          type: string
+        roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Role"
+          description: Absent means none, which is a user that may log in and do nothing
+
+    UserUpdate:
+      type: object
+      description: |
+        Every field is optional and one that is not given is left alone. `roles` given as
+        `[]` takes them all away.
+      properties:
+        display_name:
+          type: string
+        roles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Role"
+        disabled:
+          type: boolean
+
+    PasswordChange:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+          format: password
+        old_password:
+          type: string
+          format: password
+          description: |
+            Required when changing your own password *and* you do not hold
+            `manage-admin-users`. Ignored when you do, because that role can set any
+            password already, so asking would protect nothing.
+
     Error:
       type: object
       required: [error]
@@ -411,6 +1295,10 @@ components:
                 - method_not_allowed
                 - conflict
                 - datastore_error
+                - unavailable
+                - unknown_role
+                - would_lock_out
+                - wrong_password
             message:
               type: string
       example:
@@ -446,10 +1334,32 @@ components:
         self:
           type: boolean
           description: Whether this is the node that answered
+        status:
+          type: string
+          enum: [ok, degraded, stopped, down]
+        stale:
+          type: boolean
+          description: Absent for this node; true when the node's report is more than three status intervals old
+        version:
+          type: string
+        at:
+          type: string
+          description: When the node composed its report; absent for this node
         transports:
           type: array
           items:
             $ref: "#/components/schemas/NodeTransport"
+        cluster:
+          type: object
+          description: |
+            Where a peer node reaches this one's inter-node listener. Absent for this node,
+            for a node that is not in a cluster, and in the list `/client/config` gives a
+            client.
+          properties:
+            address:
+              type: string
+            port:
+              type: integer
       example:
         id: sip-0001
         self: true
@@ -493,27 +1403,70 @@ components:
             The shortest registration this realm accepts, in seconds. Zero, the default,
             accepts any. A shorter one is refused with 423 Interval Too Brief carrying
             this value in Min-Expires (RFC 3261 10.3).
+        behaviour:
+          $ref: '#/components/schemas/Behaviour'
+        behaviour_effective:
+          $ref: '#/components/schemas/BehaviourEffective'
+        behaviour_default:
+          $ref: '#/components/schemas/BehaviourEffective'
+
+    Behaviour:
+      type: object
+      description: >-
+        What a realm does differently from the server's behaviour section. A setting
+        that is null, or absent, is inherited from the server; null in an update puts
+        a setting back to inheriting. An unknown setting or value is a 400 and changes
+        nothing.
+      additionalProperties: false
+      properties:
         media_anchor:
           type: boolean
-          default: true
+          nullable: true
           description: >-
             Whether this node puts itself in the media path when a media engine is
             configured. False leaves every session description untouched and the media
-            goes end to end, which is right for two endpoints that can reach each other
-            and wrong for anything behind a NAT.
-        media_profiles:
+            goes end to end (RFC 3261 16.6), which is right for two endpoints that can
+            reach each other and wrong for anything behind a NAT.
+        media_profile:
           type: string
-          enum: [transport, mirror, rtp, webrtc, srtp]
-          default: transport
+          nullable: true
+          enum: [mirror, transport, rtp, webrtc, srtp, null]
           description: >-
-            How each leg's media profile is decided. transport reads it from the flow -
-            ws and wss are WebRTC and everything else is plain RTP - which is right
-            wherever a WebSocket means a browser. rtp is for a realm whose WebSocket
-            clients are SIP phones, since RFC 7118 requires no WebRTC. webrtc makes
-            every leg WebRTC, and srtp makes every leg SRTP with the keys in the
-            description (RFC 4568), for a desk phone that wants encryption and has
-            never heard of DTLS. mirror says nothing and lets the engine keep what it
-            was handed.
+            What the engine is asked to produce for a leg that has not said what it
+            speaks; a leg that has is answered in kind. mirror offers a callee what the
+            caller offered. transport makes ws and wss WebRTC and everything else plain
+            RTP. rtp, webrtc and srtp (RFC 4568 keys in the description) make every leg
+            that.
+        qualify_interval:
+          type: integer
+          nullable: true
+          description: >-
+            Seconds between OPTIONS to each client registered in this realm, down the flow
+            it registered on; 0 for never, otherwise 5 to 86400. A client that answers with
+            a session description (RFC 3261 11.2) has said what media it takes.
+        rewrite_contact:
+          type: boolean
+          nullable: true
+          description: >-
+            Rewrite the Contact in each request and response this node forwards to the
+            address and port the message came from (Asterisk's rewrite_contact). WebSocket
+            clients are never rewritten.
+
+    BehaviourEffective:
+      type: object
+      description: >-
+        A complete behaviour: in behaviour_effective, what the realm's comes to on the node
+        that answered; in behaviour_default, that node's server default on its own.
+      properties:
+        media_anchor:
+          type: boolean
+        media_profile:
+          type: string
+          enum: [mirror, transport, rtp, webrtc, srtp]
+        qualify_interval:
+          type: integer
+        rewrite_contact:
+          type: boolean
 
     RealmCreate:
       type: object
@@ -530,11 +1483,8 @@ components:
           type: integer
         registration_minimum:
           type: integer
-        media_anchor:
-          type: boolean
-        media_profiles:
-          type: string
-          enum: [transport, mirror, rtp, webrtc, srtp]
+        behaviour:
+          $ref: '#/components/schemas/Behaviour'
 
     RealmUpdate:
       type: object
@@ -547,13 +1497,46 @@ components:
           type: integer
         registration_minimum:
           type: integer
-        media_anchor:
-          type: boolean
-        media_profiles:
-          type: string
-          enum: [transport, mirror, rtp, webrtc, srtp]
+        behaviour:
+          $ref: '#/components/schemas/Behaviour'
 
-    Account:
+    CallRecord:
+      type: object
+      required: [id, created_at, answered_at, ended_at, duration, caller, callee, nodes, media_engine]
+      properties:
+        id:
+          type: string
+          description: The Call-ID
+        created_at:
+          type: string
+          nullable: true
+        answered_at:
+          type: string
+          nullable: true
+          description: Null for a call nobody answered
+        ended_at:
+          type: string
+          nullable: true
+        duration:
+          type: integer
+          description: Seconds between the answer and the end; zero for a call nobody answered
+        caller:
+          type: string
+          nullable: true
+        callee:
+          type: string
+          nullable: true
+        nodes:
+          type: array
+          description: The nodes that carried the call, the caller's first
+          items:
+            type: string
+        media_engine:
+          type: string
+          nullable: true
+          description: The engine that anchored the media; null when nothing did
+
+    Subscriber:
       type: object
       properties:
         id:
@@ -566,13 +1549,59 @@ components:
           type: string
         realm:
           type: string
+        behaviour:
+          $ref: '#/components/schemas/SubscriberBehaviour'
       example:
         id: 11400714819323198485
         uri: sip:alice@example.com
         user: alice
         realm: example.com
+        behaviour:
+          media_profile: null
 
-    AccountCreate:
+    MediaReoffer:
+      type: object
+      required: [subscriber, rejected, took, count, last_at, suggested_media_profile]
+      properties:
+        subscriber:
+          type: string
+          description: The Request-URI the call was for, which is the subscriber's address of record
+        rejected:
+          type: string
+          enum: [rtp, webrtc]
+        took:
+          type: string
+          nullable: true
+          enum: [rtp, webrtc, null]
+          description: Null when the other profile was refused as well
+        count:
+          type: integer
+        last_at:
+          type: string
+          format: date-time
+        suggested_media_profile:
+          type: string
+          nullable: true
+          enum: [rtp, webrtc, null]
+
+    SubscriberBehaviour:
+      type: object
+      description: >-
+        The one behaviour setting that is about an endpoint rather than a realm. Null, or
+        absent, takes the realm's; null in an update goes back to it. Any other setting, or
+        an unknown value, is a 400 and changes nothing.
+      additionalProperties: false
+      properties:
+        media_profile:
+          type: string
+          nullable: true
+          enum: [mirror, transport, rtp, webrtc, srtp, null]
+          description: >-
+            What this subscriber's endpoint is, as Asterisk's webrtc=yes says. It decides the
+            first description produced towards the endpoint, above the realm's behaviour
+            and below what the endpoint has itself said in an offer or answer.
+
+    SubscriberCreate:
       type: object
       required: [user]
       description: One of `password` or `ha1` is required.
@@ -584,24 +1613,119 @@ components:
           description: Turned into HA1 here and not stored
         ha1:
           type: string
-          description: For importing an account that already has one
+          description: For importing a subscriber that already has one
+        behaviour:
+          $ref: '#/components/schemas/SubscriberBehaviour'
 
-    AccountUpdate:
+    SubscriberUpdate:
       type: object
-      description: One of `password` or `ha1`.
+      description: Any of `password` or `ha1`, and `behaviour`.
       properties:
         password:
           type: string
         ha1:
           type: string
+        behaviour:
+          $ref: '#/components/schemas/SubscriberBehaviour'
+
+    Call:
+      type: object
+      required: [id, state, created_at, answered_at, participants, media]
+      properties:
+        id:
+          type: string
+          description: The Call-ID
+        state:
+          type: string
+          enum: [Initial, Trying, Ringing, Connected, Closing, Closed]
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+        answered_at:
+          type: string
+          format: date-time
+          nullable: true
+        participants:
+          type: array
+          items:
+            $ref: "#/components/schemas/CallParticipant"
+        media:
+          allOf:
+            - $ref: "#/components/schemas/CallMedia"
+          nullable: true
+
+    CallParticipant:
+      type: object
+      required: [identity, originator, profile]
+      properties:
+        identity:
+          type: string
+          description: The participant's SIP URI
+        originator:
+          type: boolean
+        profile:
+          type: string
+          enum: [webrtc, plain-rtp, srtp-sdes]
+          nullable: true
+          description: What the leg's own session description said it is, null until it has said
+
+    CallMedia:
+      type: object
+      required: [engine, idle_seconds, legs]
+      properties:
+        engine:
+          type: string
+          example: rtpengine
+        idle_seconds:
+          type: integer
+          nullable: true
+          description: How long all of the call's media has been silent
+        legs:
+          type: array
+          items:
+            $ref: "#/components/schemas/CallLeg"
+
+    CallLeg:
+      type: object
+      required: [participant]
+      properties:
+        participant:
+          type: integer
+          nullable: true
+          description: Always null today; see listCalls
+        packets_in:
+          type: integer
+        bytes_in:
+          type: integer
+        packets_out:
+          type: integer
+        bytes_out:
+          type: integer
+
+    MediaEngine:
+      type: object
+      required: [engine, connected, capabilities]
+      properties:
+        engine:
+          type: string
+          nullable: true
+          example: builtin
+        connected:
+          type: boolean
+        capabilities:
+          type: array
+          items:
+            type: string
+            enum: [bridge, conference, record, transcode]
 
     Registration:
       type: object
       properties:
-        account:
+        subscriber:
           type: string
-          description: The account's URI
-        account_id:
+          description: The subscriber's URI
+        subscriber_id:
           type: integer
           format: int64
         contact:

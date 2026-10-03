@@ -99,16 +99,22 @@ struct PolicyFixture : ProxyFixture {
     core->media_register(engine);
     settle();
 
+    // Set on the realm, so it overrides whatever the server's default is.
     auto realm = store->realm_get_by_name("example.com");
-    realm->media = policy;
+    realm->behaviour.media_anchor = policy.anchor;
+    realm->behaviour.media_profile = policy.profiles;
     store->realm_update(realm);
 
     callee = make_channel("192.0.2.20", &callee_connection, callee_transport);
     register_binding(bob, std::make_shared<types::SIPUri>("sip:bob@192.0.2.20:5060"), callee, 3600);
   }
 
-  std::string invite_with_body(const std::string& branch = "z9hG4bK-invite") {
-    auto raw = invite(branch);
+  std::string invite_with_body(const std::string& branch = "z9hG4bK-invite") { return with_body(invite(branch)); }
+
+  std::string ok_with_body() { return with_body(response_from_callee(200, "OK")); }
+
+  static std::string with_body(std::string raw) {
+    if (raw.empty()) return raw;
     raw.insert(raw.size() - 2, "Content-Type: application/sdp\r\nContent-Length: " + std::to_string(kOffer.size()) + "\r\n");
     return raw + kOffer;
   }
@@ -122,13 +128,43 @@ MediaPolicy with_profiles(MediaPolicy::Profiles profiles) {
 
 }  // namespace
 
-// The default is what a node did before a realm could say anything: anchor, and read
-// each leg from its transport.
-TEST(MediaPolicyTest, TheDefaultIsToAnchorAndReadTheLegFromItsTransport) {
-  const MediaPolicy fresh;
+// A realm that has said nothing about behaviour follows the server's default (Config
+// behaviour), and the shipped one passes the caller's profile through: a browser calling
+// over a WebSocket is offered on as WebRTC whatever the callee's transport, which is what
+// let a browser reach an AthenaPhone on TCP once the realm was told so by hand.
+struct DefaultFixture : ProxyFixture {
+  std::shared_ptr<RecordingMediaEngine> engine = std::make_shared<RecordingMediaEngine>();
 
-  EXPECT_TRUE(fresh.anchor);
-  EXPECT_EQ(fresh.profiles, MediaPolicy::Profiles::FromTransport);
+  explicit DefaultFixture(const std::string& callee_transport) {
+    engine->connect(core->strand(), [](plugins::Status) {});
+    core->media_register(engine);
+    settle();
+
+    callee = make_channel("192.0.2.20", &callee_connection, callee_transport);
+    register_binding(bob, std::make_shared<types::SIPUri>("sip:bob@192.0.2.20:5060"), callee, 3600);
+  }
+};
+
+TEST(MediaPolicyTest, ARealmThatSaysNothingPassesTheProfileThroughByDefault) {
+  DefaultFixture f("tcp");
+
+  f.receive(f.caller, PolicyFixture::with_body(f.invite()));
+
+  const auto seen = f.engine->seen();
+  ASSERT_FALSE(seen.empty());
+  EXPECT_EQ(seen[0].target, Flags::Profile::Mirror);
+}
+
+// And a server default of reading the leg from its transport applies to it instead.
+TEST(MediaPolicyTest, ARealmThatSaysNothingFollowsAConfiguredServerDefault) {
+  DefaultFixture f("wss");
+  f.config->behaviour.profiles = MediaPolicy::Profiles::FromTransport;
+
+  f.receive(f.caller, PolicyFixture::with_body(f.invite()));
+
+  const auto seen = f.engine->seen();
+  ASSERT_FALSE(seen.empty());
+  EXPECT_EQ(seen[0].target, Flags::Profile::WebRtc);
 }
 
 // A realm with a typo in its policy keeps doing what it was doing. Changing what a
@@ -222,6 +258,23 @@ TEST(MediaPolicyTest, ARealmThatAnchorsHandsOnWhatTheEngineProduced) {
   EXPECT_NE(forwarded->body.find("o=anchored"), std::string::npos) << forwarded->body;
 }
 
+// A realm says what to do about a leg this node has never heard describe itself. It is
+// not a licence to contradict one that has: an answer goes back to the end that made the
+// offer, and telling a plain-RTP caller under `media_profiles: webrtc` that its answer is
+// WebRTC is worse than the transport guess it replaced.
+TEST(MediaPolicyTest, ARealmPolicyDoesNotContradictWhatALegHasSaid) {
+  PolicyFixture f(with_profiles(MediaPolicy::Profiles::WebRtc), "udp");
+
+  f.receive(f.caller, f.invite_with_body());
+  f.receive(f.callee, f.ok_with_body());
+
+  const auto seen = f.engine->seen();
+  ASSERT_GE(seen.size(), 2u);
+
+  // Alice offered plain RTP, so plain RTP is what her answer is produced as.
+  EXPECT_EQ(seen.back().target, Flags::Profile::PlainRtp);
+}
+
 // A re-INVITE travels in-dialog on its route set and never looks a realm up, so a
 // policy read afresh for each message would have hold and resume behave differently
 // from the INVITE that started the call. It is decided once and kept on the call.
@@ -230,27 +283,9 @@ TEST(MediaPolicyTest, TheCallKeepsThePolicyForTheRequestsThatFollow) {
 
   f.receive(f.caller, f.invite_with_body());
 
-  auto forwarded = ProxyFixture::request_with(f.callee_connection, "INVITE");
-  ASSERT_NE(forwarded, nullptr);
+  auto call = f.call();
+  ASSERT_NE(call, nullptr);
 
-  std::string ok = "SIP/2.0 200 OK\r\n";
-  for (const auto& via : forwarded->header->headers_map["Via"]) ok += "Via: " + via->to_string() + "\r\n";
-  ok += "From: <sip:alice@example.com>;tag=alice\r\n";
-  ok += "To: <sip:bob@example.com>;tag=bob\r\n";
-  ok += "Call-ID: call-proxy\r\n";
-  ok += "CSeq: 1 INVITE\r\n";
-  ok += "Contact: <sip:bob@192.0.2.20:5060>\r\n";
-  ok += "Content-Type: application/sdp\r\n";
-  ok += "Content-Length: " + std::to_string(kOffer.size()) + "\r\n";
-  ok += "\r\n";
-  ok += kOffer;
-
-  f.receive(f.callee, ok);
-  f.settle();
-
-  const auto before = f.engine->seen().size();
-  ASSERT_GE(before, 2u);
-
-  // The answer went back to a udp leg, and the realm still says WebRTC.
-  EXPECT_EQ(f.engine->seen().back().target, Flags::Profile::WebRtc);
+  EXPECT_TRUE(call->media_policy.anchor);
+  EXPECT_EQ(call->media_policy.profiles, MediaPolicy::Profiles::WebRtc);
 }

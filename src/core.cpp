@@ -11,6 +11,7 @@
 #include <atomic>
 #include <boost/asio/connect.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/ip/udp.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/json.hpp>
 #include <chrono>
@@ -21,14 +22,18 @@
 #include "events/topics.h"
 #include "expiry_set.h"
 #include "proxy.h"
+#include "qualifier.h"
 #include "registrar.h"
 #include "rtp/rtp_relay.h"
 #include "servers/tcp_connection.h"
+#include "servers/tls_connection.h"
+#include "servers/tls_context.h"
 #include "transactions/invite_client_transaction.h"
 #include "transactions/invite_server_transaction.h"
 #include "transactions/non_invite_client_transaction.h"
 #include "transactions/non_invite_server_transaction.h"
 #include "types/sip_uri.h"
+#include "util.h"
 
 using namespace athenasip::servers;
 using namespace athenasip::datastores;
@@ -87,19 +92,19 @@ void Core::realm_get_by_name(std::string realm_name, plugins::Handler<std::share
   datastore->realm_get_by_name(_strand, std::move(realm_name), std::move(handler));
 }
 
-// Accounts
-void Core::account_get(std::shared_ptr<SIPIdentity> identity, plugins::Handler<std::shared_ptr<Account>> handler) {
-  datastore->account_get(_strand, std::move(identity), std::move(handler));
+// Subscribers
+void Core::subscriber_get(std::shared_ptr<SIPIdentity> identity, plugins::Handler<std::shared_ptr<Subscriber>> handler) {
+  datastore->subscriber_get(_strand, std::move(identity), std::move(handler));
 }
 
-void Core::location_list(std::uint64_t account_id, plugins::Handler<std::vector<types::Location>> handler) {
-  datastore->location_list(_strand, account_id, std::move(handler));
+void Core::location_list(std::uint64_t subscriber_id, plugins::Handler<std::vector<types::Location>> handler) {
+  datastore->location_list(_strand, subscriber_id, std::move(handler));
 }
 
-void Core::account_register(std::shared_ptr<Account> account, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel, std::uint32_t expires_seconds,
-                            std::string path, plugins::StatusHandler handler) {
+void Core::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel,
+                               std::uint32_t expires_seconds, std::string path, plugins::StatusHandler handler, std::string instance, std::uint32_t reg_id) {
   // RFC 3261 10.3 step 7: the binding is written on every successful REGISTER. This
-  // used to be skipped whenever the account record already existed, which is always,
+  // used to be skipped whenever the subscriber record already existed, which is always,
   // so no contact was ever stored and the registrar had nothing to route to.
   //
   // What the node knows and the Contact does not: the flow the REGISTER arrived over and
@@ -110,34 +115,36 @@ void Core::account_register(std::shared_ptr<Account> account, std::shared_ptr<SI
   binding.contact = contact;
   binding.path = std::move(path);
   binding.node_id = config->sip_node_id;
+  binding.instance = std::move(instance);
+  binding.reg_id = reg_id;
   if (channel) binding.flow_id = channel->flow_id();
 
   // The channel index and the event both wait for the write: a binding nobody stored is
   // not one to announce.
-  datastore->account_register(
-      _strand, account, std::move(binding), expires_seconds, [this, account, contact, channel, handler](plugins::Status status) mutable {
+  datastore->subscriber_register(
+      _strand, subscriber, std::move(binding), expires_seconds, [this, subscriber, contact, channel, handler](plugins::Status status) mutable {
         if (!status.ok) {
-          _logger->error("Cannot register account identity " + account->identity->to_string() + " - " + status.error);
+          _logger->error("Cannot register subscriber " + subscriber->identity->to_string() + " - " + status.error);
           if (handler) handler(status);
           return;
         }
 
         events->publish(
-            events::topics::account_status(account->identity->uri->to_string()),
+            events::topics::subscriber_status(subscriber->identity->uri->to_string()),
             "{\"contact\":\"" + contact->to_string() + "\",\"node\":\"" + config->sip_node_id + "\",\"registered\":\"" + Util::get_zulu_time() + "\"}");
 
         if (handler) handler(status);
       });
 }
 
-void Core::account_unregister(std::shared_ptr<Account> account, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel,
-                              plugins::StatusHandler handler) {
+void Core::subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel,
+                                 plugins::StatusHandler handler) {
   (void)channel;
 
   auto self = shared_from_this();
 
-  datastore->account_unregister(_strand, account, contact, [this, self, account, handler](plugins::Status status) mutable {
-    if (!status.ok) _logger->error("Cannot unregister account identity " + account->identity->to_string() + " - " + status.error);
+  datastore->subscriber_unregister(_strand, subscriber, contact, [this, self, subscriber, handler](plugins::Status status) mutable {
+    if (!status.ok) _logger->error("Cannot unregister subscriber " + subscriber->identity->to_string() + " - " + status.error);
     if (handler) handler(status);
   });
 }
@@ -164,9 +171,14 @@ bool Core::channel_register(std::string endpoint, std::shared_ptr<Channel> chann
     // the node does not know itself in its own route set, and it forwards the request
     // to itself - a loop, caught by 16.3.4 as a 482 instead of routing the BYE.
     const auto local = channel->_connection->local_endpoint();
-    const auto advertised = advertised_address(local.address().to_string());
+    const auto advertised = advertised_for(*channel);
+    local_address_add(advertised.host + ":" + std::to_string(advertised.port));
 
-    if (advertised != local.address().to_string()) local_address_add(advertised + ":" + std::to_string(local.port()));
+    // And the public name, which a Route from outside will carry whatever this flow is.
+    if (!config->sip_public_address.empty()) {
+      const auto public_port = config->public_port_for(Util::to_lower(channel->_connection->transport_name()));
+      local_address_add(config->sip_public_address + ":" + std::to_string(public_port != 0 ? public_port : local.port()));
+    }
   }
 
   events->publish(events::topics::node_channel(config->sip_node_id, channel->_connection->transport_name(), channel->_connection->remote_endpoint_name()),
@@ -228,13 +240,20 @@ void Core::channel_connect(std::string transport, std::string host, std::uint16_
 
   if (auto existing = channel_find(transport, host, port)) return handler(ChannelResult::success(existing));
 
-  // UDP has no connection to open. A datagram to a host this node has never heard from
-  // has to leave by the listener's own socket so that the source port is the one the far
-  // end will answer to, and that socket belongs to the UDP server rather than to this
-  // registry. TLS outbound waits for the trust configuration the cluster CA brings.
-  if (transport != "tcp") {
+  if (transport == "udp") return _connect_datagram(host, port, std::move(handler));
+
+  // TLS outbound is to another node of the cluster, with the cluster's certificates, and
+  // to nothing else: what a node trusts beyond its own cluster is not a guess to make here.
+  if (transport == "tls" && !_cluster_tls) {
+    return handler(ChannelResult::failure("cannot open an outbound tls flow without the cluster's certificates"));
+  }
+
+  if (transport != "tcp" && transport != "tls") {
     return handler(ChannelResult::failure("cannot open an outbound " + transport + " flow"));
   }
+
+  const bool secure = transport == "tls";
+  auto cluster_tls = _cluster_tls;
 
   auto& io_context = detail::get_global_io_context();
 
@@ -274,30 +293,170 @@ void Core::channel_connect(std::string transport, std::string host, std::uint16_
   // Not RFC 3263: no NAPTR and no SRV, only the A and AAAA records for the host the URI
   // named. The service records are a step of their own, and what a cluster and a trunk
   // both need.
-  resolver->async_resolve(host, std::to_string(port), [weak_self, resolver, socket, answer, key](const boost::system::error_code& ec, auto results) {
-    if (ec) return answer(ChannelResult::failure("cannot resolve " + key + " - " + ec.message()));
+  resolver->async_resolve(
+      host, std::to_string(port), [weak_self, resolver, socket, answer, key, secure, cluster_tls, host](const boost::system::error_code& ec, auto results) {
+        if (ec) return answer(ChannelResult::failure("cannot resolve " + key + " - " + ec.message()));
 
-    boost::asio::async_connect(*socket, results, [weak_self, socket, answer, key](const boost::system::error_code& ec, auto) {
-      if (ec) return answer(ChannelResult::failure("cannot reach " + key + " - " + ec.message()));
+        boost::asio::async_connect(*socket, results, [weak_self, socket, answer, key, secure, cluster_tls, host](const boost::system::error_code& ec, auto) {
+          if (ec) return answer(ChannelResult::failure("cannot reach " + key + " - " + ec.message()));
 
-      auto self = weak_self.lock();
-      if (!self) return;
+          auto self = weak_self.lock();
+          if (!self) return;
 
-      std::shared_ptr<servers::Connection> connection = std::make_shared<servers::TCPConnection>(socket);
-      if (!connection->start()) return answer(ChannelResult::failure("cannot start the flow to " + key));
+          if (secure) return self->_secure_flow(socket, cluster_tls, host, key, answer);
 
-      auto channel = std::make_shared<Channel>(self->_logger->base_logger(), self, connection);
+          std::shared_ptr<servers::Connection> connection = std::make_shared<servers::TCPConnection>(socket);
+          if (!connection->start()) return answer(ChannelResult::failure("cannot start the flow to " + key));
 
-      // start() dispatches onto the strand and files the channel under the address it
-      // reached, which is not the name it was asked for when that name was a hostname.
-      channel->start();
+          auto channel = std::make_shared<Channel>(self->_logger->base_logger(), self, connection);
 
-      boost::asio::post(self->_strand, [self, channel, key]() { self->channel_alias(key, channel); });
+          // start() dispatches onto the strand and files the channel under the address it
+          // reached, which is not the name it was asked for when that name was a hostname.
+          channel->start();
 
-      self->_logger->info("Opened flow to " + key + " as " + connection->remote_endpoint_name());
-      answer(ChannelResult::success(channel));
+          boost::asio::post(self->_strand, [self, channel, key]() { self->channel_alias(key, channel); });
+
+          self->_logger->info("Opened flow to " + key + " as " + connection->remote_endpoint_name());
+          answer(ChannelResult::success(channel));
+        });
+      });
+}
+
+bool Core::cluster_tls_set(const std::string& ca, const std::string& cert, const std::string& key) {
+  auto context = std::make_shared<boost::asio::ssl::context>(boost::asio::ssl::context::tls_client);
+  if (!servers::load_tls_certificates(_logger, *context, cert, key) || !servers::require_peer_certificates(_logger, *context, ca)) return false;
+
+  _cluster_tls = std::move(context);
+  return true;
+}
+
+// The client half of the cluster's mutual TLS: this node's certificate shown, the peer's
+// checked against the cluster CA and against the address or name that was dialled, so a
+// member of the cluster cannot answer for another one.
+void Core::_secure_flow(std::shared_ptr<boost::asio::ip::tcp::socket> socket, std::shared_ptr<boost::asio::ssl::context> context, const std::string& host,
+                        const std::string& key, std::function<void(plugins::Result<std::shared_ptr<Channel>>)> answer) {
+  using ChannelResult = plugins::Result<std::shared_ptr<Channel>>;
+
+  auto stream = std::make_shared<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>>(std::move(*socket), *context);
+  stream->set_verify_callback(boost::asio::ssl::host_name_verification(host));
+
+  std::weak_ptr<Core> weak_self = weak_from_this();
+  stream->async_handshake(boost::asio::ssl::stream_base::client, [weak_self, stream, key, answer](const boost::system::error_code& ec) {
+    if (ec) {
+      boost::system::error_code ignored;
+      stream->lowest_layer().close(ignored);
+      return answer(ChannelResult::failure("TLS to " + key + " failed - " + ec.message()));
+    }
+
+    auto self = weak_self.lock();
+    if (!self) return;
+
+    auto connection = std::make_shared<servers::TLSConnection>(stream, true);
+    auto channel = std::make_shared<Channel>(self->_logger->base_logger(), self, connection);
+    channel->start();
+
+    boost::asio::post(self->_strand, [self, channel, key]() { self->channel_alias(key, channel); });
+
+    self->_logger->info("Opened TLS flow to " + key + ", node " + connection->peer_identity());
+    answer(ChannelResult::success(channel));
+  });
+}
+
+// UDP has no connection to open. A datagram to a host this node has never heard from has to
+// leave by a listener's own socket, so that the source port is the one the far end answers
+// to and the one a NAT in front of it already has a mapping for (RFC 3261 18.1.1, RFC 3581).
+// The listener makes the connection; the channel over it is made here, as for TCP.
+void Core::_connect_datagram(std::string host, std::uint16_t port, plugins::Handler<std::shared_ptr<Channel>> handler) {
+  using ChannelResult = plugins::Result<std::shared_ptr<Channel>>;
+
+  const auto key = channel_key("udp", host, port);
+
+  // A literal address, which is every flow this node is reopening and most Contacts, needs
+  // no resolver and no trip off the strand.
+  boost::system::error_code literal;
+  const auto address = boost::asio::ip::make_address(host, literal);
+  if (!literal) return _open_datagram({boost::asio::ip::udp::endpoint(address, port)}, key, std::move(handler));
+
+  auto& io_context = detail::get_global_io_context();
+  auto resolver = std::make_shared<boost::asio::ip::udp::resolver>(io_context);
+  auto deadline = std::make_shared<boost::asio::steady_timer>(io_context);
+
+  // Bounded as the TCP dial is: a name can hang for as long as the system resolver likes,
+  // and nothing else is timing this request yet. Whichever answers first is the answer, and
+  // it is given on the strand.
+  auto answered = std::make_shared<std::atomic<bool>>(false);
+  auto answer = [answered, deadline, handler](ChannelResult result) {
+    if (answered->exchange(true)) return;
+
+    deadline->cancel();
+    handler(std::move(result));
+  };
+
+  std::weak_ptr<Core> weak_self = weak_from_this();
+
+  deadline->expires_after(std::chrono::milliseconds(config->sip_connect_timeout_ms));
+  deadline->async_wait([weak_self, answer, key](const boost::system::error_code& ec) {
+    if (ec == boost::asio::error::operation_aborted) return;
+    if (auto self = weak_self.lock()) boost::asio::post(self->_strand, [answer, key]() { answer(ChannelResult::failure("timed out resolving " + key)); });
+  });
+
+  resolver->async_resolve(host, std::to_string(port), [weak_self, resolver, answer, key](const boost::system::error_code& ec, auto results) {
+    auto self = weak_self.lock();
+    if (!self) return;
+
+    std::vector<boost::asio::ip::udp::endpoint> candidates;
+    if (!ec) {
+      for (const auto& entry : results) candidates.push_back(entry.endpoint());
+    }
+
+    boost::asio::post(self->_strand, [self, candidates, answer, key, ec]() {
+      if (candidates.empty()) return answer(ChannelResult::failure("cannot resolve " + key + (ec ? " - " + ec.message() : "")));
+      self->_open_datagram(candidates, key, answer);
     });
   });
+}
+
+// On the strand, which is where the server list is read.
+void Core::_open_datagram(std::vector<boost::asio::ip::udp::endpoint> candidates, std::string key, plugins::Handler<std::shared_ptr<Channel>> handler) {
+  using ChannelResult = plugins::Result<std::shared_ptr<Channel>>;
+
+  auto self = shared_from_this();
+
+  for (const auto& remote : candidates) {
+    for (const auto& server : _servers) {
+      const bool asked = server->open_datagram_flow(remote, [self, remote, key, handler](std::shared_ptr<servers::Connection> connection) {
+        if (!connection) {
+          // A datagram from the peer made its flow first. That flow's channel is the one, if
+          // it has registered by now; if not, this attempt fails and the next request finds it.
+          if (auto existing = self->channel_find("udp", remote.address().to_string(), remote.port())) return handler(ChannelResult::success(existing));
+          return handler(ChannelResult::failure("a flow to " + key + " was being made by a datagram from it"));
+        }
+
+        auto channel = std::make_shared<Channel>(self->_logger->base_logger(), self, connection);
+
+        // On the strand already, so this registers before the answer goes back.
+        channel->start();
+        if (channel->flow_id() != key) self->channel_alias(key, channel);
+
+        self->_logger->info("Opened flow to " + key + " as " + connection->remote_endpoint_name());
+        handler(ChannelResult::success(channel));
+      });
+
+      if (asked) return;
+    }
+  }
+
+  handler(ChannelResult::failure("no UDP listener can send to " + key));
+}
+
+std::shared_ptr<dns::SipLocator> Core::locator() {
+  if (!_locator) {
+    auto servers = dns::UdpResolver::servers_from("/etc/resolv.conf");
+    if (servers.empty()) _logger->warn("No nameservers in /etc/resolv.conf - SIP URIs naming a host will not resolve");
+
+    _locator = std::make_shared<dns::SipLocator>(std::make_shared<dns::UdpResolver>(_logger->base_logger(), std::move(servers)));
+  }
+  return _locator;
 }
 
 void Core::local_address_add(std::string host_port) { _local_addresses.insert(std::move(host_port)); }
@@ -441,12 +600,63 @@ std::shared_ptr<Dialogs> Core::dialogs() {
   return _dialogs;
 }
 
+Core::Advertised Core::advertised_for(const Channel& channel) const {
+  Advertised out;
+  if (!channel._connection) return out;
+
+  const auto local = channel._connection->local_endpoint();
+  const auto remote = channel._connection->remote_endpoint();
+  const auto transport = Util::to_lower(channel._connection->transport_name());
+
+  // A peer node reaches this one at its inter-node listener, whichever of the two opened
+  // the connection between them: the local end of a connection this node opened is a port
+  // nothing listens on.
+  if (!channel.peer_node().empty()) {
+    if (const auto cluster = config->advertised_cluster()) {
+      out.host = cluster->address;
+      out.port = cluster->port;
+      return out;
+    }
+  }
+
+  if (!config->sip_public_address.empty() && !config->in_localnet(remote.address())) {
+    const auto public_port = config->public_port_for(transport);
+    out.host = config->sip_public_address;
+    out.port = public_port != 0 ? public_port : local.port();
+    return out;
+  }
+
+  out.host = local.address().to_string();
+  out.port = local.port();
+
+  // The kernel's answer to "which of my addresses would reach that peer": a connected UDP
+  // socket sends nothing, but has a local address once connected.
+  if (local.address().is_unspecified()) {
+    boost::system::error_code error;
+    boost::asio::ip::udp::socket probe(detail::get_global_io_context());
+    probe.open(remote.address().is_v4() ? boost::asio::ip::udp::v4() : boost::asio::ip::udp::v6(), error);
+    if (!error) probe.connect(boost::asio::ip::udp::endpoint(remote.address(), remote.port() != 0 ? remote.port() : 9), error);
+    if (!error) {
+      const auto chosen = probe.local_endpoint(error);
+      if (!error) out.host = chosen.address().to_string();
+    }
+  }
+
+  return out;
+}
+
+std::shared_ptr<Qualifier> Core::qualifier() {
+  if (!_qualifier) _qualifier = std::make_shared<Qualifier>(_logger->base_logger(), weak_from_this());
+  return _qualifier;
+}
+
 void Core::_deliver_to_tu(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction) {
   _ensure_transaction_users();
 
   // Here rather than in process_message, because this is where a request has been
   // de-duplicated: a retransmission is absorbed by its transaction and never arrives
   // (17.2.1), so what the tracker sees is each request once.
+  request->in_known_dialog = !request->header->contains("To") ? false : _dialogs->find(request) != nullptr;
   _dialogs->observe_request(request);
 
   const auto& method = request->header->request_method;
@@ -608,11 +818,16 @@ void Core::transaction_end_all() { _matcher.terminate_all(); }
 bool Core::call_register(std::shared_ptr<Call> call) {
   _calls[call->id] = call;
 
+  if (call->node.empty()) call->node = config->sip_node_id;
+
   // The call record is for the admin API and the cluster, not for this call's
-  // signalling, so nothing waits on it.
-  datastore->call_create(_strand, call, [this, self = shared_from_this(), call](plugins::Status status) {
-    if (!status.ok) _logger->error("Cannot store call " + call->id + " - " + status.error);
-  });
+  // signalling, so nothing waits on it. The node the caller reached writes it; a node a
+  // peer forwarded the call to does not.
+  if (call->from_node.empty()) {
+    datastore->call_create(_strand, call, [this, self = shared_from_this(), call](plugins::Status status) {
+      if (!status.ok) _logger->error("Cannot store call " + call->id + " - " + status.error);
+    });
+  }
 
   events->publish(events::topics::call_register(call->id), call->id);
 
@@ -647,6 +862,10 @@ void Core::_on_dialog_change(const std::shared_ptr<types::Dialog>& dialog) {
       participant.node_id = config->sip_node_id;
     }
 
+    // Forwarded here by a peer: the caller is that node's, and so is the record.
+    call->from_node = dialog->from_node;
+    if (!call->from_node.empty()) call->participants.front().node_id = call->from_node;
+
     call_register(call);
   }
 
@@ -676,9 +895,11 @@ void Core::_on_dialog_change(const std::shared_ptr<types::Dialog>& dialog) {
 
   // The record is for the admin API and the cluster, not for this call's signalling, so
   // nothing waits on it.
-  datastore->call_update(_strand, call, [this, self = shared_from_this(), call](plugins::Status status) {
-    if (!status.ok) _logger->error("Cannot update call " + call->id + " - " + status.error);
-  });
+  if (call->from_node.empty()) {
+    datastore->call_update(_strand, call, [this, self = shared_from_this(), call](plugins::Status status) {
+      if (!status.ok) _logger->error("Cannot update call " + call->id + " - " + status.error);
+    });
+  }
 
   if (call->state != Call::State::Closed) return;
 
@@ -704,6 +925,27 @@ bool Core::call_unregister(std::string callId) {
   return true;
 }
 
+std::vector<std::shared_ptr<Call>> Core::call_list() const {
+  std::vector<std::shared_ptr<Call>> calls;
+  calls.reserve(_calls.size());
+  for (const auto& [id, call] : _calls) {
+    if (call) calls.push_back(call);
+  }
+  return calls;
+}
+
+std::map<std::string, std::size_t> Core::channel_counts() const {
+  std::set<const Channel*> seen;
+  std::map<std::string, std::size_t> counts;
+
+  for (const auto& [name, channel] : _channels) {
+    if (!channel || !channel->_connection || !seen.insert(channel.get()).second) continue;
+    counts[Util::to_lower(channel->_connection->transport_name())]++;
+  }
+
+  return counts;
+}
+
 std::shared_ptr<Call> Core::call_get(std::string callId) {
   auto search = _calls.find(callId);
   if (search == _calls.end()) return nullptr;
@@ -718,6 +960,181 @@ void Core::media_register(std::shared_ptr<media::MediaEngine> engine) {
   // Nothing to ask an engine until there is one, and the media half of the sweep is the
   // half that needs it.
   _call_sweep_schedule();
+}
+
+// A node saying it is alive, on an interval, retained, with the broker primed to say
+// otherwise if it vanishes. Those three together are what makes this answerable by a
+// monitor: the interval proves it is still running, retention means a monitor that
+// arrives late still learns the answer, and the will covers the case where the node
+// never gets to speak again.
+void Core::node_status_start() {
+  _started_at = std::time(nullptr);
+
+  // Every node's status, so that this one knows the cluster. Retained, so a node that
+  // starts late hears the others at once rather than an interval later.
+  std::weak_ptr<NodeDirectory> weak_nodes = _nodes;
+  events->subscribe(
+      _strand, "nodes/+/status",
+      [weak_nodes](std::string topic, std::string message) {
+        if (auto nodes = weak_nodes.lock()) nodes->observe(topic, message);
+      },
+      [this, self = shared_from_this()](plugins::Result<std::shared_ptr<events::Subscription>> subscribed) {
+        if (!subscribed.ok) _logger->warn("Cannot listen for the other nodes - " + subscribed.error);
+      });
+
+  _node_status_publish();
+}
+
+void Core::node_status_stop() {
+  if (_node_status_timer) {
+    _node_status_timer->cancel();
+    _node_status_timer.reset();
+  }
+
+  events->publish_state(events::topics::node_status(config->sip_node_id), node_status_json("stopped"));
+}
+
+std::string Core::node_status_json(const std::string& status, const std::string& node_id, const std::string& version, const std::string& datastore,
+                                   std::int64_t uptime, std::uint32_t status_interval, const std::vector<Config::AdvertisedTransport>& transports,
+                                   const std::optional<Config::AdvertisedTransport>& cluster) {
+  boost::json::object report;
+
+  report["status"] = status;
+  report["node"] = node_id;
+  report["version"] = version;
+  report["datastore"] = datastore;
+  report["at"] = Util::get_zulu_time();
+  report["uptime"] = uptime;
+
+  // The promise of when it will be said again, so a monitor derives its staleness from the
+  // node rather than from a constant that agrees with it by coincidence. Zero is a node that
+  // does not repeat itself.
+  report["status_interval"] = status_interval;
+
+  // Where it listens, which is what makes the status a directory entry and not only a
+  // heartbeat.
+  boost::json::array listening;
+  for (const auto& transport : transports) {
+    boost::json::object entry;
+    entry["transport"] = transport.transport;
+    entry["address"] = transport.address;
+    entry["port"] = transport.port;
+    entry["uri"] = transport.uri();
+    listening.push_back(std::move(entry));
+  }
+  report["transports"] = std::move(listening);
+
+  // Where a peer node reaches this one, which is a different listener from any a client
+  // uses. Absent on a node that is not in a cluster, and in a will.
+  if (cluster) {
+    boost::json::object peer;
+    peer["address"] = cluster->address;
+    peer["port"] = cluster->port;
+    report["cluster"] = std::move(peer);
+  }
+
+  return boost::json::serialize(report);
+}
+
+std::string Core::node_status_json(const std::string& status) const {
+  const auto uptime = _started_at == 0 ? 0 : static_cast<std::int64_t>(std::time(nullptr) - _started_at);
+
+  return node_status_json(status, config->sip_node_id, _version, datastore ? datastore->describe() : "none", uptime, config->events_status_interval,
+                          config->advertised_transports(), config->advertised_cluster());
+}
+
+void Core::_node_status_publish() {
+  // Degraded rather than ok where the datastore is not there: a node that cannot read a
+  // registration is running but is not serving, and a health report that called that ok
+  // would be the most misleading thing this node says.
+  const auto status = (datastore && datastore->is_connected()) ? "ok" : "degraded";
+
+  events->publish_state(events::topics::node_status(config->sip_node_id), node_status_json(status));
+
+  _node_status_schedule();
+}
+
+void Core::_node_status_schedule() {
+  if (_node_status_timer) {
+    _node_status_timer->cancel();
+    _node_status_timer.reset();
+  }
+
+  if (config->events_status_interval == 0) return;
+
+  std::weak_ptr<Core> weak_self = weak_from_this();
+
+  _node_status_timer = _timer_source->schedule(std::chrono::seconds(config->events_status_interval), [weak_self]() {
+    if (auto self = weak_self.lock()) self->_node_status_publish();
+  });
+}
+
+// A UDP flow is made by the first datagram from an address and has nothing to end it: no
+// socket, no close, no error on the read. Without this the channel registry and the
+// server's own map grow for the life of the process, no `closed` is ever published for a
+// UDP flow, and anything counting channels counts wrongly and forever - and the map is
+// keyed by a remote address a datagram can claim to be from, so on a public listener it is
+// a way to grow a node's memory from off the network.
+//
+// Only unreliable flows are swept. A TCP, TLS or WebSocket flow ends when its socket does,
+// and sweeping one that is merely quiet would close a registration's path home.
+void Core::flow_sweep_start() { _flow_sweep_schedule(); }
+
+void Core::_flow_sweep_schedule() {
+  if (_flow_sweep_timer) {
+    _flow_sweep_timer->cancel();
+    _flow_sweep_timer.reset();
+  }
+
+  const auto timeout = config->sip_flow_idle_timeout;
+  if (timeout == 0) return;
+
+  // A quarter of the timeout, never more often than every fifteen seconds: a pass is a walk
+  // over every live channel, and being a quarter late to forget one costs nothing.
+  const auto interval = std::max<std::uint32_t>(timeout / 4, 15);
+
+  std::weak_ptr<Core> weak_self = weak_from_this();
+
+  _flow_sweep_timer = _timer_source->schedule(std::chrono::seconds(interval), [weak_self]() {
+    if (auto self = weak_self.lock()) self->_flow_sweep();
+  });
+}
+
+void Core::_flow_sweep() {
+  _flow_sweep_timer.reset();
+
+  const auto timeout = config->sip_flow_idle_timeout;
+
+  if (timeout > 0) {
+    // The injectable clock, as the call sweep uses: an idle timeout measured against the
+    // real one is five minutes of waiting per test case. In production it is
+    // steady_clock::now(), which is exactly what Channel::touch stamps.
+    const auto now = _timer_source->now();
+
+    // Collected before anything is closed: closing a channel unregisters it, which erases
+    // from the map being walked.
+    std::vector<std::shared_ptr<Channel>> idle;
+
+    for (const auto& [endpoint, channel] : _channels) {
+      if (!channel || !channel->_connection) continue;
+
+      // A reliable transport has a socket to tell us, and its silence means nothing.
+      if (channel->_connection->is_reliable()) continue;
+
+      const auto quiet_for = std::chrono::duration_cast<std::chrono::seconds>(now - channel->last_activity()).count();
+      if (quiet_for < static_cast<std::int64_t>(timeout)) continue;
+
+      // One channel can be filed under several names. Closing it once is enough.
+      if (std::find(idle.begin(), idle.end(), channel) == idle.end()) idle.push_back(channel);
+    }
+
+    for (const auto& channel : idle) {
+      _logger->debug("Forgetting idle flow " + channel->flow_id());
+      channel->close();
+    }
+  }
+
+  _flow_sweep_schedule();
 }
 
 void Core::_call_sweep_schedule() {

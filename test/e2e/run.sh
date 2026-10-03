@@ -5,11 +5,12 @@
 # Copyright (C) 2026 Tom Cully <mail@tomcully.com>
 # Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 #
-# The end-to-end harness. Brings up one node, provisions a realm and three accounts
+# The end-to-end harness. Brings up one node, provisions a realm and three subscribers
 # over the admin API, and runs each sipp scenario against it.
 #
 #   test/e2e/run.sh              every scenario
 #   test/e2e/run.sh register     only the ones whose name contains "register"
+#   test/e2e/run.sh --rtpengine  the same, with rtpengine on the media path
 #
 # Principle 2 says compliance is proven rather than asserted, and this is where that
 # happens: the unit tests say the code does what the RFC says, and this says a real
@@ -20,9 +21,24 @@ set -eu
 cd "$(dirname "$0")/../.."
 
 COMPOSE="docker compose -f docker-compose.test.yml"
+ENGINE="builtin"
+
+# The media engine is an overlay rather than a second harness: the scenarios, the
+# provisioning and the node are the same, so a scenario that passes against one engine
+# and fails against the other has found something in the engine.
+if [ "${1:-}" = "--rtpengine" ]; then
+  COMPOSE="${COMPOSE} -f docker-compose.rtpengine.yml"
+  ENGINE="rtpengine"
+  shift
+fi
+
 NODE="172.31.0.10"
 API="http://${NODE}:8080/api/v1"
-ADMIN_TOKEN="e2e-admin"
+# The administrator the node creates as it starts (docker-compose.test.yml). Signed in
+# once below; the session token is what every API call presents.
+ADMIN_USER="e2e-admin"
+ADMIN_PASSWORD="e2e-admin-password"
+ADMIN_TOKEN=""
 FILTER="${1:-}"
 
 RESULTS="test/e2e/results"
@@ -51,6 +67,14 @@ cleanup() {
   # sipp traces and a guess about what the node in the middle made of them.
   docker logs athenasip-e2e >"${RESULTS}/node.log" 2>&1 || true
 
+  # And the engine's, when there is one of its own. A media scenario passes whether the
+  # engine anchored the call or declined it - a declined description travels on
+  # untouched and the two ends reach each other directly - so the only thing that says
+  # which happened is what the engine has to say for itself.
+  if [ "${ENGINE}" = "rtpengine" ]; then
+    docker logs athenasip-e2e-rtpengine >"${RESULTS}/rtpengine.log" 2>&1 || true
+  fi
+
   ${COMPOSE} --profile e2e down --remove-orphans >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -63,6 +87,7 @@ api() {
 }
 
 echo "Building and starting the node..."
+echo "Media engine: ${ENGINE}"
 ${COMPOSE} up -d --build athenasip
 
 echo "Waiting for it to serve..."
@@ -77,11 +102,21 @@ until ${COMPOSE} run --rm --no-deps --entrypoint curl sipp-uac -fsS "${API}/heal
   sleep 1
 done
 
+echo "Signing in..."
+ADMIN_TOKEN=$(${COMPOSE} run --rm --no-deps --entrypoint curl sipp-uac -fsS -H "Content-Type: application/json" \
+  -d "{\"username\":\"${ADMIN_USER}\",\"password\":\"${ADMIN_PASSWORD}\"}" "${API}/auth/login" |
+  sed -n 's/.*"token":"\([0-9a-f]*\)".*/\1/p')
+
+if [ -z "${ADMIN_TOKEN}" ]; then
+  echo "Could not sign in as ${ADMIN_USER}."
+  exit 1
+fi
+
 echo "Provisioning..."
 api -X POST "${API}/realms" -d '{"name":"example.com"}' >/dev/null
-api -X POST "${API}/realms/example.com/accounts" -d '{"user":"alice","password":"alice-secret"}' >/dev/null
-api -X POST "${API}/realms/example.com/accounts" -d '{"user":"bob","password":"bob-secret"}' >/dev/null
-api -X POST "${API}/realms/example.com/accounts" -d '{"user":"carol","password":"carol-secret"}' >/dev/null
+api -X POST "${API}/realms/example.com/subscribers" -d '{"user":"alice","password":"alice-secret"}' >/dev/null
+api -X POST "${API}/realms/example.com/subscribers" -d '{"user":"bob","password":"bob-secret"}' >/dev/null
+api -X POST "${API}/realms/example.com/subscribers" -d '{"user":"carol","password":"carol-secret"}' >/dev/null
 
 # One end only: a scenario that registers and asserts on what came back.
 #
@@ -146,7 +181,7 @@ run_pair() {
   uac_port="${next_port}"
 
   # A port of its own for the deregistration. It shares nothing with the UAS run but the
-  # account, and sharing the port would make them the same transaction: sipp derives its
+  # subscriber, and sharing the port would make them the same transaction: sipp derives its
   # branch from the call number and message index, so two runs in a row send
   # z9hG4bK-1-1-0, and branch plus sent-by plus method is exactly what RFC 3261 17.2.3
   # matches on. The second REGISTER came back answered with the first one's response.
@@ -213,16 +248,83 @@ run_pair() {
   docker rm -f "e2e-uas-${name}" >/dev/null 2>&1 || true
 }
 
+# A media scenario passes whether the engine relayed the call or declined it: a
+# declined description travels on untouched and the two sipp containers reach each
+# other directly, so the call completes and nothing says the engine did anything. The
+# engine's own counters are the only thing that does.
+#
+# rtpengine's counters are in its log; the builtin relay's total is on /metrics.
+# The builtin relay's running total, from /metrics. Empty when the node does not say.
+relayed_total() {
+  ${COMPOSE} run --rm --no-deps --entrypoint curl sipp-uac -fsS -H "Authorization: Bearer ${ADMIN_TOKEN}" "http://${NODE}:8080/metrics" 2>/dev/null |
+    awk '/^athenasip_media_packets_relayed_total /{print $2}'
+}
+
+assert_media_relayed() {
+  case "media" in
+    *${FILTER}*) ;;
+    *) return 0 ;;
+  esac
+
+  # The builtin relay counts what it sends on, and /metrics carries the total: the same
+  # question rtpengine's counters answer below, asked of the relay that has no log to read.
+  if [ "${ENGINE}" = "builtin" ]; then
+    after=$(relayed_total)
+    relayed=$(( ${after:-0} - ${relayed_before:-0} ))
+
+    echo "  media-relayed (${relayed} packets through the builtin relay)"
+
+    if [ -z "${after}" ] || [ "${relayed}" -le 0 ]; then
+      failed=$((failed + 1))
+      failures="${failures} media-relayed"
+      echo "    failed - the builtin relay sent nothing on, so the call did not go through it"
+      return 0
+    fi
+
+    passed=$((passed + 1))
+    return 0
+  fi
+
+  stats=$(docker logs athenasip-e2e-rtpengine 2>&1 | grep -E '^\[.*Port .*<>.*[0-9]+ p,' || true)
+
+  relayed=$(echo "${stats}" | awk -F'SSRC [^,]*, ' '{print $2}' | awk -F' p,' '{s+=$1} END {print s+0}')
+  errors=$(echo "${stats}" | awk -F'b, ' '{print $2}' | awk -F' e,' '{s+=$1} END {print s+0}')
+
+  echo "  media-relayed (${relayed} packets, ${errors} errors)"
+
+  if [ "${relayed}" -eq 0 ]; then
+    failed=$((failed + 1))
+    failures="${failures} media-relayed"
+    echo "    failed - rtpengine relayed nothing, so the call did not go through it"
+    return 0
+  fi
+
+  if [ "${errors}" -ne 0 ]; then
+    failed=$((failed + 1))
+    failures="${failures} media-relayed"
+    echo "    failed - rtpengine rejected ${errors} packet(s); the offer and what was sent disagree"
+    return 0
+  fi
+
+  passed=$((passed + 1))
+}
+
 echo "Running scenarios..."
 
 run_one register                register.xml              alice.csv alice alice-secret       20s
 run_one register-wrong-password register_unauthorised.xml alice.csv alice not-the-password  20s
 run_one register-retransmit     register_retransmit.xml   alice.csv alice alice-secret      20s
+run_one relay-refused           invite_relay_refused.xml  alice.csv alice alice-secret      20s
 
 run_pair invite-bye     uas.xml         bob.csv   bob   invite_bye.xml       alice.csv          alice 30s
 run_pair cancel-ringing uas_ringing.xml bob.csv   bob   cancel_after_180.xml alice.csv          alice 30s
 run_pair busy           uas_busy.xml    bob.csv   bob   invite_busy.xml      alice.csv          alice 30s
+relayed_before=$(relayed_total)
 run_pair media          uas_media.xml   bob.csv   bob   invite_media.xml     alice.csv          alice 40s
+assert_media_relayed
+
+run_pair delayed-offer  uas_delayed_offer.xml bob.csv bob invite_delayed_offer.xml alice.csv alice 30s
+run_pair hold-resume    uas_hold.xml          bob.csv bob invite_hold.xml          alice.csv alice 30s
 
 # Last, because timer B is 64*T1 and this one waits it out.
 run_pair invite-timeout uas_silent.xml  carol.csv carol invite_timeout.xml   alice-to-carol.csv alice 60s

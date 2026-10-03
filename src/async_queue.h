@@ -45,8 +45,34 @@ class AsyncQueue {
   void on_item_once(CallbackFn callback) {
     std::lock_guard<std::mutex> lock(_mutex);
 
+    // Nothing more will arrive, so a reader would wait for ever and hold whatever it
+    // captured for just as long.
+    if (_closed) return;
+
     _callbacks.push(std::move(callback));
     _pair_up();
+  }
+
+  // No more items, and let go of the readers waiting for them.
+  //
+  // A pending callback owns what it captured, which on the UDP path is a shared_ptr to the
+  // channel that registered the read. Nothing completes that read - a UDP connection has no
+  // socket to error out - so without this the channel outlives its own close for as long as
+  // the process runs, whatever else has let go of it.
+  void close() {
+    std::queue<CallbackFn> callbacks;
+    std::queue<T> items;
+
+    {
+      std::lock_guard<std::mutex> lock(_mutex);
+
+      _closed = true;
+
+      // Swapped out under the lock and destroyed outside it: a callback's destructor can
+      // run arbitrary code, and running it here would do so with the lock held.
+      callbacks.swap(_callbacks);
+      items.swap(_items);
+    }
   }
 
  protected:
@@ -68,6 +94,7 @@ class AsyncQueue {
   std::mutex _mutex;
   std::queue<CallbackFn> _callbacks;
   std::queue<T> _items;
+  bool _closed = false;
 };
 
 }  // namespace athenasip

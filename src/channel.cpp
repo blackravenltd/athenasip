@@ -21,6 +21,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "call.h"
 #include "delayed_task.h"
@@ -36,10 +37,11 @@
 #include "servers/connection.h"
 #include "sip_header.h"
 #include "sip_message.h"
-#include "types/account.h"
+#include "stun.h"
 #include "types/authorization.h"
 #include "types/sip_identity.h"
 #include "types/sip_uri.h"
+#include "types/subscriber.h"
 #include "util.h"
 
 using namespace athenasip::headers;
@@ -49,9 +51,56 @@ using namespace athenasip::servers;
 
 namespace athenasip {
 
+namespace {
+
+// The whole message as it went on the wire, with credentials taken out of it.
+//
+// A Digest response is a hash rather than the password, but it is replayable for as
+// long as its nonce lives, and a challenge carries the nonce the next response is
+// computed over. A log is a file somebody else can read, so neither goes in one. The
+// line is kept rather than dropped, because knowing that a request carried credentials
+// is part of reading the exchange.
+std::string for_logging(const std::shared_ptr<SIPMessage>& message) {
+  static const std::vector<std::string> secret = {"authorization:", "proxy-authorization:", "www-authenticate:", "proxy-authenticate:"};
+
+  const auto wire = message->to_string();
+
+  std::string out;
+  out.reserve(wire.size());
+
+  std::size_t at = 0;
+  while (at < wire.size()) {
+    auto end = wire.find("\r\n", at);
+    if (end == std::string::npos) end = wire.size();
+
+    const auto line = wire.substr(at, end - at);
+    const auto lowered = Util::to_lower(line);
+
+    bool redacted = false;
+    for (const auto& name : secret) {
+      if (lowered.rfind(name, 0) == 0) {
+        out += line.substr(0, name.size() - 1) + ": <redacted>";
+        redacted = true;
+        break;
+      }
+    }
+
+    if (!redacted) out += line;
+
+    if (end == wire.size()) break;
+
+    out += "\r\n";
+    at = end + 2;
+  }
+
+  return out;
+}
+
+}  // namespace
+
 Channel::Channel(std::shared_ptr<Logger> logger, std::shared_ptr<Core> core, std::shared_ptr<Connection> connection) : _connection(connection), _core(core) {
   _flow_id = Core::channel_key(_connection->transport_name(), _connection->remote_endpoint_name());
-  _flow_token = Util::generate_random_string("f", 20);
+  _flow_token = _core->flow_tokens().seal(_flow_id);
   _logger = std::make_unique<LoggerScoped>("channel " + _flow_id, logger);
 }
 
@@ -147,6 +196,7 @@ void Channel::_send_on_strand(std::shared_ptr<SIPMessage> message) {
   message->header->add("Content-Length", std::make_shared<UIntHeader>(message->body.size()));
 
   _logger->info("< " + message->header->summary());
+  if (_core->config->sip_log_messages) _logger->debug("< " + for_logging(message));
 
   _schedule_async_write(message->to_string());
 }
@@ -154,6 +204,7 @@ void Channel::_send_on_strand(std::shared_ptr<SIPMessage> message) {
 // Called from the read handler, which already runs on the Core strand.
 void Channel::receive(std::shared_ptr<SIPMessage> message) {
   _logger->info("> " + message->header->summary());
+  if (_core->config->sip_log_messages) _logger->debug("> " + for_logging(message));
 
   message->channel = shared_from_this();
 
@@ -192,6 +243,10 @@ void Channel::_stamp_via(const std::shared_ptr<SIPMessage>& message) {
 
 void Channel::_schedule_async_write(std::string message) {
   if (!_connection) return;
+
+  // Sending counts as much as receiving. A node answering a retransmission, or forwarding
+  // into a flow, is using it even if the far end has gone quiet.
+  touch();
 
   // The buffer has to outlive the write, so the queue owns it.
   _write_queue.push_back(std::make_shared<std::string>(std::move(message)));
@@ -267,8 +322,30 @@ void Channel::_schedule_async_read() {
   });
 }
 
+void Channel::touch() { _last_activity = _core->now(); }
+
+namespace {
+
+// An address of record compared the way RFC 3261 19.1.4 compares URIs where it matters
+// here: the user part exactly and the host without regard to case. Parameters are not
+// part of who somebody is.
+std::string subscriber_key(const std::string& aor) {
+  const SIPUri uri(aor);
+  return uri.user + "@" + Util::to_lower(uri.host);
+}
+
+}  // namespace
+
+void Channel::authenticated_as(const std::string& aor) { _authenticated.insert(subscriber_key(aor)); }
+
+bool Channel::is_authenticated_as(const std::string& aor) const { return _authenticated.count(subscriber_key(aor)) > 0; }
+
 void Channel::_on_read(boost::system::error_code ec, std::size_t length) {
   auto self(shared_from_this());
+
+  // Before anything is decided about the bytes: a flow that carried something is a flow
+  // in use, whatever the something turns out to be.
+  if (!ec && length > 0) touch();
 
   {
     if (ec) {
@@ -328,7 +405,7 @@ void Channel::_frame_stream() {
   }
 
   // A CRLF between messages is a keep-alive, not a message (RFC 5626 section 4.4.1).
-  while (_buffer.size() >= 2 && _buffer.compare(0, 2, "\r\n") == 0) _buffer.erase(0, 2);
+  _take_keep_alives();
 
   // As many whole messages as the buffer holds. A stream may deliver several in one
   // read and half of one in the next, and both have to come out right.
@@ -351,13 +428,31 @@ void Channel::_frame_stream() {
     }
 
     _incoming_message = message;
+    _crlf_run = 0;
 
     if (!_append_body()) return;
 
     receive(_incoming_message);
     _incoming_message = nullptr;
 
-    while (_buffer.size() >= 2 && _buffer.compare(0, 2, "\r\n") == 0) _buffer.erase(0, 2);
+    _take_keep_alives();
+  }
+}
+
+// RFC 5626 section 4.4.1: a double CRLF is the client's "ping" and a single CRLF back is the
+// "pong" it waits for; without one it decides the flow has failed. The ping may straddle two
+// reads, so the CRLFs are counted across them, and a message arriving resets the count.
+void Channel::_take_keep_alives() {
+  while (_buffer.size() >= 2 && _buffer.compare(0, 2, "\r\n") == 0) {
+    _buffer.erase(0, 2);
+
+    if (++_crlf_run == 2) {
+      _crlf_run = 0;
+
+      // TCP and TLS only: a WebSocket has ping frames of its own (RFC 6455, RFC 7118).
+      const auto transport = _connection ? Util::to_lower(_connection->transport_name()) : std::string();
+      if (transport != "ws" && transport != "wss") _schedule_async_write("\r\n");
+    }
   }
 }
 
@@ -369,6 +464,16 @@ void Channel::_frame_datagram() {
   std::string datagram;
   datagram.swap(_buffer);
   _incoming_message = nullptr;
+
+  // RFC 5626 section 4.4.2: the UDP keep-alive is a STUN Binding request to the SIP port,
+  // answered with where it came from, which is also how the client learns its NAT mapping
+  // has moved. Told from SIP by its first byte; never handed to the SIP parser.
+  if (stun::is_stun(datagram)) {
+    if (!_connection) return;
+    const auto from = _connection->remote_endpoint();
+    if (auto response = stun::binding_response(datagram, from.address(), from.port())) _schedule_async_write(std::move(*response));
+    return;
+  }
 
   // A datagram of CRLFs is a keep-alive, not a message (RFC 5626 section 4.4.1).
   std::size_t at = 0;

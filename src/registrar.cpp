@@ -8,14 +8,19 @@
 
 #include <algorithm>
 #include <ctime>
+#include <optional>
+#include <sstream>
 #include <utility>
 
 #include "channel.h"
 #include "core.h"
+#include "digest.h"
 #include "headers/authorization_header.h"
 #include "headers/sip_identity_header.h"
+#include "headers/string_header.h"
 #include "headers/uint_header.h"
 #include "loggers/logger_scoped.h"
+#include "qualifier.h"
 #include "util.h"
 
 namespace athenasip {
@@ -37,6 +42,61 @@ bool is_star_contact(const std::shared_ptr<SIPHeader>& header) {
   if (contact == nullptr || contact->value == nullptr) return false;
 
   return contact->value->star;
+}
+
+// RFC 3261 20.37 and 19.2: whether an option tag is in a Supported header field.
+bool supports(const std::shared_ptr<SIPHeader>& header, const std::string& tag) {
+  if (!header->contains("Supported")) return false;
+
+  for (const auto& value : header->headers_map["Supported"]) {
+    std::stringstream tags(value->to_string());
+    std::string one;
+    while (std::getline(tags, one, ',')) {
+      one.erase(0, one.find_first_not_of(" \t"));
+      one.erase(one.find_last_not_of(" \t") + 1);
+      if (Util::to_lower(one) == tag) return true;
+    }
+  }
+  return false;
+}
+
+// RFC 5626 section 6: a client has asked for outbound on a contact when it says it supports
+// outbound and the contact carries both an instance and a reg-id. Anything less is an
+// ordinary binding. The instance is held without the quotes the parameter carries it in.
+// Zero for the reg-id means not outbound; a reg-id that is not a number is the caller's
+// to refuse.
+std::optional<std::pair<std::string, std::uint32_t>> outbound_of(const std::shared_ptr<SIPMessage>& request, const SIPIdentity& contact, bool& malformed) {
+  malformed = false;
+  if (!supports(request->header, "outbound")) return std::nullopt;
+
+  const auto instance = contact.tags.find("+sip.instance");
+  const auto reg_id = contact.tags.find("reg-id");
+  if (instance == contact.tags.end() || reg_id == contact.tags.end()) return std::nullopt;
+
+  std::string value = instance->second;
+  if (value.size() >= 2 && value.front() == '"' && value.back() == '"') value = value.substr(1, value.size() - 2);
+
+  try {
+    const auto id = std::stoul(reg_id->second);
+    if (id == 0 || id > 0x7FFFFFFFul) throw std::out_of_range("reg-id");
+    return std::make_pair(value, static_cast<std::uint32_t>(id));
+  } catch (const std::exception&) {
+    malformed = true;
+    return std::nullopt;
+  }
+}
+
+// RFC 5626 section 6: through an edge proxy, outbound only works when that first hop keeps
+// the flow, which it says with "ob" on the URI it put in Path.
+bool first_hop_supports_outbound(const std::shared_ptr<SIPMessage>& request) {
+  if (!request->header->contains("Path")) return true;
+
+  auto first = request->header->headers_map["Path"][0]->to_string();
+  const auto end = first.find('>');
+  if (end != std::string::npos) first = first.substr(0, end);
+
+  const auto at = first.find(";ob");
+  return at != std::string::npos && (at + 3 == first.size() || first[at + 3] == ';' || first[at + 3] == '>');
 }
 
 // RFC 3261 10.3 step 7 draws the line itself: an interval of an hour or more is never
@@ -90,8 +150,8 @@ void Registrar::_on_realm(std::shared_ptr<SIPMessage> request, std::shared_ptr<t
   if (!core) return;
 
   // RFC 3261 10.3 step 5: an address of record this registrar does not serve is a 404.
-  // An account that does not exist inside a realm we do serve is challenged instead,
-  // so a REGISTER sweep cannot enumerate accounts.
+  // A subscriber that does not exist inside a realm we do serve is challenged instead,
+  // so a REGISTER sweep cannot enumerate subscribers.
   if (!realm) {
     _logger->info("REGISTER for unserved domain " + aor->uri->host + " - 404");
     return _send_status(transaction, request, 404, "Not Found");
@@ -105,8 +165,7 @@ void Registrar::_on_realm(std::shared_ptr<SIPMessage> request, std::shared_ptr<t
   auto auth_header = request->header->headers_map["Authorization"][0]->as<AuthorizationHeader>();
   auto auth = auth_header != nullptr ? auth_header->value : nullptr;
 
-  if (!auth || auth->type != "Digest" || !auth->contains_field("realm") || !auth->contains_field("nonce") || !auth->contains_field("response") ||
-      !auth->contains_field("uri")) {
+  if (!digest::is_complete(auth)) {
     _logger->info("REGISTER with incomplete Digest credentials - challenging");
     return _send_challenge(transaction, request, realm);
   }
@@ -133,61 +192,41 @@ void Registrar::_on_nonce_checked(std::shared_ptr<SIPMessage> request, std::shar
   if (!core) return;
 
   auto self = shared_from_this();
-  core->account_get(aor, [this, self, request, transaction, aor, realm, auth](plugins::Result<std::shared_ptr<types::Account>> found) {
+  core->subscriber_get(aor, [this, self, request, transaction, aor, realm, auth](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
     if (!found.ok) {
-      _logger->error("REGISTER could not read the account - " + found.error);
+      _logger->error("REGISTER could not read the subscriber - " + found.error);
       return _send_status(transaction, request, 500, "Server Internal Error");
     }
 
-    _on_account(request, transaction, aor, realm, auth, found.value);
+    _on_subscriber(request, transaction, aor, realm, auth, found.value);
   });
 }
 
-void Registrar::_on_account(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
-                            std::shared_ptr<types::SIPIdentity> aor, std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Authorization> auth,
-                            std::shared_ptr<types::Account> account) {
-  if (!account) {
-    _logger->info("REGISTER for unknown account " + aor->to_string() + " - challenging");
+void Registrar::_on_subscriber(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
+                               std::shared_ptr<types::SIPIdentity> aor, std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Authorization> auth,
+                               std::shared_ptr<types::Subscriber> subscriber) {
+  if (!subscriber) {
+    _logger->info("REGISTER for unknown subscriber " + aor->to_string() + " - challenging");
     return _send_challenge(transaction, request, realm);
   }
 
-  // RFC 8760: the client answered one of the challenges, and which one it answered says
-  // which hash to check with. Absent means MD5, which is what RFC 2617 3.2.1 says and
-  // what every client that has never heard of anything else sends.
-  const auto algorithm = Util::to_upper(auth->contains_field("algorithm") ? auth->fields["algorithm"] : "MD5");
-
-  if (algorithm != "MD5" && algorithm != "SHA-256") {
-    _logger->info("REGISTER with an unsupported Digest algorithm " + algorithm + " - challenging");
-    return _send_challenge(transaction, request, realm);
-  }
-
-  const auto& stored = algorithm == "SHA-256" ? account->ha1_sha256 : account->ha1;
-
-  // An account with no credential for the algorithm it answered with cannot be checked.
-  // Challenging again is the honest answer: the next challenge carries both algorithms
-  // and the client can come back with the other one.
-  if (stored.empty()) {
-    _logger->info("REGISTER answered with " + algorithm + " but " + aor->to_string() + " has no credential for it - challenging");
-    return _send_challenge(transaction, request, realm);
-  }
-
-  // RFC 2617: HA1 is stored, so the check is HA1:nonce:HA2 with HA2 over method and URI.
-  const auto hash = [&algorithm](const std::string& input) { return algorithm == "SHA-256" ? Util::sha256(input) : Util::md5(input); };
-
-  const auto expected = Util::to_lower(hash(stored + ":" + auth->fields["nonce"] + ":" + hash(request->header->request_method + ":" + auth->fields["uri"])));
-
-  if (expected != Util::to_lower(auth->fields["response"])) {
-    _logger->info("REGISTER Digest response mismatch for " + aor->to_string() + " - challenging");
+  if (const auto why = digest::verify(*subscriber, *auth, request->header->request_method); !why.empty()) {
+    _logger->info("REGISTER for " + aor->to_string() + " with " + why + " - challenging");
     return _send_challenge(transaction, request, realm);
   }
 
   request->authenticated = true;
 
-  _apply_bindings(request, transaction, realm, account);
+  // The connection this arrived on now belongs to the subscriber who proved it. The proxy
+  // takes a request as that subscriber on it without a second challenge, if the
+  // connection is one a source address cannot be forged onto; see Channel::authenticated_as.
+  if (auto channel = request->channel.lock()) channel->authenticated_as(aor->uri->to_string());
+
+  _apply_bindings(request, transaction, realm, subscriber);
 }
 
 void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
-                                std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Account> account) {
+                                std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Subscriber> subscriber) {
   auto core = _core.lock();
   if (!core) return;
 
@@ -198,7 +237,7 @@ void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared
   // Step 6 skips to the last step for one of those, so step 7 never runs and there is
   // no interval to find too brief.
   if (!request->header->contains("Contact")) {
-    return _send_ok(transaction, request, account, expires);
+    return _send_ok(transaction, request, subscriber, expires);
   }
 
   auto self = shared_from_this();
@@ -211,7 +250,7 @@ void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared
 
     // Every binding goes, which means reading them first and then removing them one at
     // a time: each removal is its own round trip.
-    return core->location_list(account->id, [this, self, request, transaction, account](plugins::Result<std::vector<types::Location>> found) {
+    return core->location_list(subscriber->id, [this, self, request, transaction, subscriber](plugins::Result<std::vector<types::Location>> found) {
       if (!found.ok) {
         _logger->error("REGISTER could not list the bindings - " + found.error);
         return _send_status(transaction, request, 500, "Server Internal Error");
@@ -222,11 +261,12 @@ void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared
         if (location.contact) bindings->push_back(Binding{location.contact, 0});
       }
 
-      _write_bindings(request, transaction, account, bindings, 0, 0);
+      _write_bindings(request, transaction, subscriber, bindings, 0, 0);
     });
   }
 
   auto bindings = std::make_shared<std::vector<Binding>>();
+  const auto qualify = realm ? realm->behaviour.qualify_over(core->config->behaviour_qualify_interval) : core->config->behaviour_qualify_interval;
 
   for (const auto& header : request->header->headers_map["Contact"]) {
     auto contact = header->as<SIPIdentityHeader>();
@@ -250,45 +290,120 @@ void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared
       return _send_interval_too_brief(transaction, request, realm);
     }
 
-    bindings->push_back(Binding{contact->value->uri, _granted_expiry(contact_requested, realm)});
+    Binding binding{contact->value->uri, _granted_expiry(contact_requested, realm), qualify};
+
+    bool malformed = false;
+    if (const auto outbound = outbound_of(request, *contact->value, malformed)) {
+      if (!first_hop_supports_outbound(request)) {
+        _logger->info("REGISTER asked for outbound through a first hop that does not support it - 439");
+        return _send_status(transaction, request, 439, "First Hop Lacks Outbound Support");
+      }
+      binding.instance = outbound->first;
+      binding.reg_id = outbound->second;
+    } else if (malformed) {
+      return _send_status(transaction, request, 400, "Bad Request");
+    }
+
+    bindings->push_back(std::move(binding));
   }
 
-  _write_bindings(request, transaction, account, bindings, 0, expires);
+  _write_bindings(request, transaction, subscriber, bindings, 0, expires);
 }
 
 void Registrar::_write_bindings(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
-                                std::shared_ptr<types::Account> account, std::shared_ptr<std::vector<Binding>> bindings, std::size_t index,
+                                std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<std::vector<Binding>> bindings, std::size_t index,
                                 std::uint32_t expires_seconds) {
   auto core = _core.lock();
   if (!core) return;
 
   if (index >= bindings->size()) {
-    return _send_ok(transaction, request, account, expires_seconds);
+    return _send_ok(transaction, request, subscriber, expires_seconds);
   }
 
   const auto binding = (*bindings)[index];
   auto channel = request->channel.lock();
   auto self = shared_from_this();
 
-  auto next = [this, self, request, transaction, account, bindings, index, expires_seconds]() {
-    _write_bindings(request, transaction, account, bindings, index + 1, expires_seconds);
+  // RFC 5626 section 6: an outbound binding is its instance and reg-id, not its contact. One
+  // already held under the same pair with another contact is the same flow from before -
+  // a reconnect, a new port - and goes first, so the write below replaces it rather than
+  // leaving a dead binding beside it. A removal goes by the pair as well.
+  if (binding.reg_id != 0) {
+    return core->location_list(subscriber->id, [this, self, request, transaction, subscriber, bindings, index, expires_seconds, binding,
+                                                channel](plugins::Result<std::vector<types::Location>> found) {
+      auto core = _core.lock();
+      if (!core) return;
+
+      std::vector<std::shared_ptr<types::SIPUri>> stale;
+      if (found.ok) {
+        for (const auto& location : found.value) {
+          if (location.instance == binding.instance && location.reg_id == binding.reg_id && location.contact &&
+              (binding.expires == 0 || location.contact->to_string() != binding.contact->to_string())) {
+            stale.push_back(location.contact);
+          }
+        }
+      }
+
+      _remove_then(subscriber, channel, std::move(stale), 0,
+                   [this, self, request, transaction, subscriber, bindings, index, expires_seconds, binding, channel]() {
+                     _store_binding(request, transaction, subscriber, bindings, index, expires_seconds, binding, channel);
+                   });
+    });
+  }
+
+  _store_binding(request, transaction, subscriber, bindings, index, expires_seconds, binding, channel);
+}
+
+// Removes each contact in turn, then carries on whatever came of it: the client asked for
+// all of them and a partial answer is better than none.
+void Registrar::_remove_then(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<Channel> channel,
+                             std::vector<std::shared_ptr<types::SIPUri>> contacts, std::size_t index, std::function<void()> then) {
+  auto core = _core.lock();
+  if (!core) return;
+  if (index >= contacts.size()) return then();
+
+  core->qualifier()->forget(subscriber->identity->uri->to_string(), contacts[index]);
+
+  auto self = shared_from_this();
+  core->subscriber_unregister(subscriber, contacts[index], channel, [this, self, subscriber, channel, contacts, index, then](plugins::Status) mutable {
+    _remove_then(subscriber, channel, std::move(contacts), index + 1, std::move(then));
+  });
+}
+
+void Registrar::_store_binding(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
+                               std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<std::vector<Binding>> bindings, std::size_t index,
+                               std::uint32_t expires_seconds, Binding binding, std::shared_ptr<Channel> channel) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  auto self = shared_from_this();
+
+  auto next = [this, self, request, transaction, subscriber, bindings, index, expires_seconds]() {
+    _write_bindings(request, transaction, subscriber, bindings, index + 1, expires_seconds);
   };
 
   if (binding.expires == 0) {
     // A removal that fails is logged and the rest still go: the client asked for all of
     // them and a partial answer is better than none.
-    return core->account_unregister(account, binding.contact, channel, [next](plugins::Status) { next(); });
+    core->qualifier()->forget(subscriber->identity->uri->to_string(), binding.contact);
+    return core->subscriber_unregister(subscriber, binding.contact, channel, [next](plugins::Status) { next(); });
   }
 
-  core->account_register(account, binding.contact, channel, binding.expires, _path_of(request),
-                         [this, self, request, transaction, account, next](plugins::Status status) {
-                           if (!status.ok) {
-                             _logger->error("REGISTER could not store the binding for " + account->identity->to_string() + " - " + status.error);
-                             return _send_status(transaction, request, 500, "Server Internal Error");
-                           }
+  core->subscriber_register(
+      subscriber, binding.contact, channel, binding.expires, _path_of(request),
+      [this, self, request, transaction, subscriber, binding, channel, next](plugins::Status status) {
+        if (!status.ok) {
+          _logger->error("REGISTER could not store the binding for " + subscriber->identity->to_string() + " - " + status.error);
+          return _send_status(transaction, request, 500, "Server Internal Error");
+        }
 
-                           next();
-                         });
+        if (auto core = _core.lock(); core && channel) {
+          core->qualifier()->watch(subscriber->identity->uri->to_string(), binding.contact, channel->flow_id(), binding.qualify, binding.expires);
+        }
+
+        next();
+      },
+      binding.instance, binding.reg_id);
 }
 
 std::uint32_t Registrar::_requested_expiry(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<types::Realm>& realm) const {
@@ -348,7 +463,6 @@ std::shared_ptr<headers::Header> Registrar::_service_route(const std::shared_ptr
   auto channel = request->channel.lock();
   if (!core || !channel || !channel->_connection) return nullptr;
 
-  const auto local = channel->_connection->local_endpoint();
   const auto transport = Util::to_lower(channel->_connection->transport_name());
 
   auto route = std::make_shared<types::SIPUri>();
@@ -359,8 +473,9 @@ std::shared_ptr<headers::Header> Registrar::_service_route(const std::shared_ptr
   // bound to the wildcard, so its local endpoint is 0.0.0.0 - and a Service-Route
   // pointing at 0.0.0.0 is a route the client cannot use, which is worse than sending
   // none at all. The same rule now decides the Via and the Record-Route.
-  route->host = core->advertised_address(local.address().to_string());
-  route->port = local.port();
+  const auto advertised = core->advertised_for(*channel);
+  route->host = advertised.host;
+  route->port = advertised.port;
 
   // 19.1.1 again: loose routing, so the next hop does not rewrite the Request-URI.
   route->set_parameter("lr", "");
@@ -374,7 +489,7 @@ std::shared_ptr<headers::Header> Registrar::_service_route(const std::shared_ptr
 }
 
 void Registrar::_send_ok(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
-                         const std::shared_ptr<types::Account>& account, std::uint32_t expires_seconds) {
+                         const std::shared_ptr<types::Subscriber>& subscriber, std::uint32_t expires_seconds) {
   auto core = _core.lock();
   if (!core) return;
 
@@ -383,7 +498,7 @@ void Registrar::_send_ok(const std::shared_ptr<transactions::TransactionBase>& t
   // RFC 3261 10.3 step 8: list every binding that is now current, each with the time it
   // has left, so a client that lost track can resynchronise from the response alone.
   // Reading them is a round trip, so the response is built in the handler.
-  core->location_list(account->id, [this, self, transaction, request, expires_seconds](plugins::Result<std::vector<types::Location>> found) {
+  core->location_list(subscriber->id, [this, self, transaction, request, expires_seconds](plugins::Result<std::vector<types::Location>> found) {
     auto response = request->generate_response();
     response->header->response_code = 200;
     response->header->response_message = "OK";
@@ -408,10 +523,28 @@ void Registrar::_send_ok(const std::shared_ptr<transactions::TransactionBase>& t
       const auto remaining = location.expires_at > now ? static_cast<std::uint32_t>(location.expires_at - now) : 0u;
       contact->tags["expires"] = std::to_string(remaining);
 
+      // RFC 5626 section 6: an outbound binding is listed with what identifies it.
+      if (location.reg_id != 0) {
+        contact->tags["+sip.instance"] = "\"" + location.instance + "\"";
+        contact->tags["reg-id"] = std::to_string(location.reg_id);
+      }
+
       response->header->add("Contact", std::make_shared<SIPIdentityHeader>(contact));
     }
 
     response->header->add("Expires", std::make_shared<UIntHeader>(expires_seconds));
+
+    // RFC 5626 section 6: a registrar that honoured outbound for a contact in the request
+    // says so. No Flow-Timer: it is optional, and the one value this node could give - how
+    // long it keeps an idle UDP flow - is longer than most NATs keep theirs, so the client's
+    // own default keep-alive interval is the better one.
+    bool honoured = false;
+    for (const auto& header : request->header->headers_map["Contact"]) {
+      auto contact = header->as<SIPIdentityHeader>();
+      bool malformed = false;
+      if (contact != nullptr && contact->value != nullptr && outbound_of(request, *contact->value, malformed)) honoured = true;
+    }
+    if (honoured) response->header->add("Require", std::make_shared<headers::StringHeader>("outbound"));
 
     // RFC 3608: where everything after this registration should go. The client reached
     // this node over a flow this node holds, and its own Contact is often unroutable -
@@ -473,23 +606,7 @@ void Registrar::_send_challenge(const std::shared_ptr<transactions::TransactionB
       return _send_status(transaction, request, 500, "Server Internal Error");
     }
 
-    // RFC 8760 section 2.1: one challenge per algorithm, most preferred first, and the
-    // client answers the first one it supports. SHA-256 leads because a client that can
-    // do better than MD5 should, and MD5 follows because nearly every SIP client can do
-    // nothing else (RFC 3261 22.4 knows only MD5).
-    //
-    // A challenge is sent before this node knows which account is answering, so both go
-    // out every time. An account with no SHA-256 credential - one imported as a bare MD5
-    // hash - is re-challenged for MD5 alone when it answers with SHA-256.
-    for (const auto& algorithm : {std::string("SHA-256"), std::string("MD5")}) {
-      types::Authorization challenge;
-      challenge.type = "Digest";
-      challenge.fields["realm"] = realm->name;
-      challenge.fields["nonce"] = nonce.value;
-      challenge.fields["algorithm"] = algorithm;
-
-      response->header->add("WWW-Authenticate", challenge.to_string());
-    }
+    digest::add_challenges(*response->header, "WWW-Authenticate", realm->name, nonce.value);
 
     transaction->send(response);
   });

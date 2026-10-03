@@ -66,51 +66,91 @@ class SyncDatastore {
         [this](auto on, auto handler) { _store->realm_list(std::move(on), std::move(handler)); });
   }
 
-  std::shared_ptr<athenasip::types::Account> account_get(std::shared_ptr<athenasip::types::SIPIdentity> identity) {
-    return _value<std::shared_ptr<athenasip::types::Account>>(
-        [this, identity](auto on, auto handler) { _store->account_get(std::move(on), identity, std::move(handler)); });
+  std::shared_ptr<athenasip::types::User> user_get(const std::string& username) {
+    return _value<std::shared_ptr<athenasip::types::User>>(
+        [this, username](auto on, auto handler) { _store->user_get(std::move(on), username, std::move(handler)); });
   }
 
-  bool account_create(std::shared_ptr<athenasip::types::Account> account) {
-    return _status([this, account](auto on, auto handler) { _store->account_create(std::move(on), account, std::move(handler)); });
+  bool user_create(std::shared_ptr<athenasip::types::User> user) {
+    return _status([this, user](auto on, auto handler) { _store->user_create(std::move(on), user, std::move(handler)); });
   }
 
-  bool account_update(std::shared_ptr<athenasip::types::Account> account) {
-    return _status([this, account](auto on, auto handler) { _store->account_update(std::move(on), account, std::move(handler)); });
+  bool user_update(std::shared_ptr<athenasip::types::User> user) {
+    return _status([this, user](auto on, auto handler) { _store->user_update(std::move(on), user, std::move(handler)); });
   }
 
-  bool account_delete(std::shared_ptr<athenasip::types::SIPIdentity> identity) {
-    return _status([this, identity](auto on, auto handler) { _store->account_delete(std::move(on), identity, std::move(handler)); });
+  bool user_delete(const std::string& username) {
+    return _status([this, username](auto on, auto handler) { _store->user_delete(std::move(on), username, std::move(handler)); });
   }
 
-  std::vector<std::shared_ptr<athenasip::types::Account>> account_list(const std::string& realm_name) {
-    return _value<std::vector<std::shared_ptr<athenasip::types::Account>>>(
-        [this, realm_name](auto on, auto handler) { _store->account_list(std::move(on), realm_name, std::move(handler)); });
+  std::vector<std::shared_ptr<athenasip::types::User>> user_list() {
+    return _value<std::vector<std::shared_ptr<athenasip::types::User>>>(
+        [this](auto on, auto handler) { _store->user_list(std::move(on), std::move(handler)); });
   }
 
-  bool account_register(std::shared_ptr<athenasip::types::Account> account, athenasip::types::Location binding, std::uint32_t expires_seconds) {
-    return _status([this, account, binding, expires_seconds](auto on, auto handler) {
-      _store->account_register(std::move(on), account, binding, expires_seconds, std::move(handler));
+  bool session_create(athenasip::types::Session session) {
+    return _status([this, session](auto on, auto handler) { _store->session_create(std::move(on), session, std::move(handler)); });
+  }
+
+  std::shared_ptr<athenasip::types::Session> session_get(const std::string& token_hash) {
+    return _value<std::shared_ptr<athenasip::types::Session>>(
+        [this, token_hash](auto on, auto handler) { _store->session_get(std::move(on), token_hash, std::move(handler)); });
+  }
+
+  bool session_delete(const std::string& token_hash) {
+    return _status([this, token_hash](auto on, auto handler) { _store->session_delete(std::move(on), token_hash, std::move(handler)); });
+  }
+
+  bool session_delete_for_user(const std::string& username) {
+    return _status([this, username](auto on, auto handler) { _store->session_delete_for_user(std::move(on), username, std::move(handler)); });
+  }
+
+  std::shared_ptr<athenasip::types::Subscriber> subscriber_get(std::shared_ptr<athenasip::types::SIPIdentity> identity) {
+    return _value<std::shared_ptr<athenasip::types::Subscriber>>(
+        [this, identity](auto on, auto handler) { _store->subscriber_get(std::move(on), identity, std::move(handler)); });
+  }
+
+  bool subscriber_create(std::shared_ptr<athenasip::types::Subscriber> subscriber) {
+    return _status([this, subscriber](auto on, auto handler) { _store->subscriber_create(std::move(on), subscriber, std::move(handler)); });
+  }
+
+  bool subscriber_update(std::shared_ptr<athenasip::types::Subscriber> subscriber) {
+    return _status([this, subscriber](auto on, auto handler) { _store->subscriber_update(std::move(on), subscriber, std::move(handler)); });
+  }
+
+  bool subscriber_delete(std::shared_ptr<athenasip::types::SIPIdentity> identity) {
+    return _status([this, identity](auto on, auto handler) { _store->subscriber_delete(std::move(on), identity, std::move(handler)); });
+  }
+
+  std::vector<std::shared_ptr<athenasip::types::Subscriber>> subscriber_list(const std::string& realm_name) {
+    return _value<std::vector<std::shared_ptr<athenasip::types::Subscriber>>>(
+        [this, realm_name](auto on, auto handler) { _store->subscriber_list(std::move(on), realm_name, std::move(handler)); });
+  }
+
+  bool subscriber_register(std::shared_ptr<athenasip::types::Subscriber> subscriber, athenasip::types::Location binding, std::uint32_t expires_seconds) {
+    return _status([this, subscriber, binding, expires_seconds](auto on, auto handler) {
+      _store->subscriber_register(std::move(on), subscriber, binding, expires_seconds, std::move(handler));
     });
   }
 
   // The single-node case: a contact and a path, with no flow and no node holding one.
-  bool account_register(std::shared_ptr<athenasip::types::Account> account, std::shared_ptr<athenasip::types::SIPUri> contact, std::uint32_t expires_seconds,
-                        const std::string& path) {
+  bool subscriber_register(std::shared_ptr<athenasip::types::Subscriber> subscriber, std::shared_ptr<athenasip::types::SIPUri> contact,
+                           std::uint32_t expires_seconds, const std::string& path) {
     athenasip::types::Location binding;
     binding.contact = std::move(contact);
     binding.path = path;
 
-    return account_register(std::move(account), std::move(binding), expires_seconds);
+    return subscriber_register(std::move(subscriber), std::move(binding), expires_seconds);
   }
 
-  bool account_unregister(std::shared_ptr<athenasip::types::Account> account, std::shared_ptr<athenasip::types::SIPUri> contact) {
-    return _status([this, account, contact](auto on, auto handler) { _store->account_unregister(std::move(on), account, contact, std::move(handler)); });
+  bool subscriber_unregister(std::shared_ptr<athenasip::types::Subscriber> subscriber, std::shared_ptr<athenasip::types::SIPUri> contact) {
+    return _status(
+        [this, subscriber, contact](auto on, auto handler) { _store->subscriber_unregister(std::move(on), subscriber, contact, std::move(handler)); });
   }
 
-  std::vector<athenasip::types::Location> location_list(std::uint64_t account_id) {
+  std::vector<athenasip::types::Location> location_list(std::uint64_t subscriber_id) {
     return _value<std::vector<athenasip::types::Location>>(
-        [this, account_id](auto on, auto handler) { _store->location_list(std::move(on), account_id, std::move(handler)); });
+        [this, subscriber_id](auto on, auto handler) { _store->location_list(std::move(on), subscriber_id, std::move(handler)); });
   }
 
   bool nonce_create(const std::string& nonce, std::time_t expires_at) {

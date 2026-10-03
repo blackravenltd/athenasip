@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "headers/header.h"
+#include "media/media_profile.h"
 #include "media_stream.h"
 #include "types/dialog.h"
 #include "types/realm.h"
@@ -75,6 +76,19 @@ class Call {
     // Media for this leg, keyed by the SDP media identifier.
     std::unordered_map<int64_t, std::shared_ptr<MediaStream>> streams;
 
+    // What this leg has said its media is, from the last description that arrived from
+    // it. A leg's own offer or answer says exactly whether it asked for ICE, DTLS or
+    // SRTP, and that is a better answer than the transport it signals over: AthenaPhone
+    // is WebRTC on UDP, and RFC 7118 allows a plain phone on a WebSocket. Empty until
+    // this node has heard the leg describe itself, which is the only case where the
+    // realm and the transport have to decide.
+    std::optional<media::Profile> profile;
+
+    // What the leg's subscriber says it is, where it says anything. Only for a leg that has
+    // not described itself: the operator's word about an endpoint is a better guess than
+    // its transport and a worse one than the endpoint's own.
+    std::optional<MediaPolicy::Profiles> subscriber_profile;
+
     // The party that started the call.
     bool originator = false;
   };
@@ -91,6 +105,22 @@ class Call {
   // for each message would have hold and resume behave differently from the INVITE
   // that started the call. It is decided once, where the realm is already in hand.
   MediaPolicy media_policy;
+
+  // Whether Contacts in this call are rewritten to where messages came from, decided with
+  // the media policy and for the same reason.
+  std::optional<bool> rewrite_contact;
+
+  // A peer node forwarded this call here, so that node's engine holds the media and this
+  // one leaves every description in the call alone. The first node anchors.
+  bool media_elsewhere = false;
+
+  // The call record (CDR). One node writes it: the node the caller reached, which is
+  // `node`. A node a peer forwarded the call to has that peer in `from_node` and writes
+  // nothing, or two nodes would be taking turns to overwrite one record with half of it
+  // each. `media_engine` is the engine that anchored the media, empty when none did.
+  std::string node;
+  std::string from_node;
+  std::string media_engine;
 
   std::vector<Participant> participants;
 
