@@ -7,6 +7,7 @@
 #pragma once
 
 #include <boost/asio.hpp>
+#include <boost/asio/ssl.hpp>
 #include <boost/beast.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/json.hpp>
@@ -49,6 +50,13 @@ class AdminAPI {
   AdminAPI(std::shared_ptr<athenasip::loggers::Logger> logger, const std::string& bind_address, unsigned short port);
   ~AdminAPI();
 
+  // A second listener, speaking HTTPS, beside the plain one and serving the same chain.
+  // Called before start(). The plain listener stays: a healthcheck on loopback and a
+  // provisioning script on the host have no use for a certificate, and a browser has no
+  // use for a page that is not a secure context - it gives one no microphone. False when
+  // the certificate or the port could not be had, and then there is no HTTPS listener.
+  bool tls_enable(const std::string& bind_address, unsigned short port, const std::string& cert, const std::string& key);
+
   // Start and stop the server.
   void start();
   void stop();
@@ -57,6 +65,9 @@ class AdminAPI {
   // zero and the operating system chose. A test binds without picking a number that
   // something else on the machine may already hold.
   std::uint16_t port() const;
+
+  // The same for the HTTPS listener, zero when there is none.
+  std::uint16_t tls_port() const;
 
   // The executor the API runs on. Provisioning hands this to the datastore so answers
   // come back on the API's own thread: the admin API is not on the Core strand and must
@@ -80,37 +91,19 @@ class AdminAPI {
   tcp::acceptor _acceptor;
   std::shared_ptr<std::thread> _thread;
 
+  std::shared_ptr<net::ssl::context> _tls_context;
+  tcp::acceptor _tls_acceptor;
+  std::string _tls_bind_address;
+
+  static bool _listen(tcp::acceptor& acceptor, const std::string& bind_address, unsigned short port, athenasip::loggers::Logger& logger);
+
   // Initiates an asynchronous accept operation.
   void _do_accept();
+  void _do_accept_tls();
 
-  // Allow HttpSession to access the server's logger
+  // The sessions read the middleware chain and the logger.
+  template <typename Stream>
   friend class HttpSession;
-};
-
-class HttpSession : public std::enable_shared_from_this<HttpSession> {
- public:
-  // HttpSession now receives a reference to the server so it can access the middleware chain.
-  HttpSession(tcp::socket socket, AdminAPI& server);
-  void start();
-
- private:
-  std::shared_ptr<athenasip::loggers::Logger> _logger;
-
-  tcp::socket _socket;
-  beast::flat_buffer _buffer;
-  AdminAPI& _server;
-  http::request<http::string_body> _req;
-  std::string _remote;
-
-  // Reads the incoming HTTP request.
-  void do_read();
-
-  // Recursively process the middleware chain.
-  // If next(false) is called at any middleware, the chain stops and the response is sent.
-  void process_middleware_chain(std::size_t index, std::shared_ptr<http::response<http::string_body>> res);
-
-  // Write the final response to the client.
-  void do_write(std::shared_ptr<http::response<http::string_body>> res);
 };
 
 }  // namespace athenasip::api

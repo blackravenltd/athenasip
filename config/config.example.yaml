@@ -308,8 +308,30 @@ http:
   address: 0.0.0.0
   port: 8080
 
+  # HTTPS, beside the plain listener above and serving the same thing. A browser gives a
+  # page that is not HTTPS (or localhost) no microphone, so the admin console's softphone
+  # needs this to place a call. The certificate is the tls section's unless
+  # cert_pem_filename and key_pem_filename are set here.
+  tls:
+    enable: false
+    port: 8443
+
   api:
     enable: true
+
+    # How many requests a caller may make at once (burst), and how many a minute after
+    # that. Zero in either turns that limit off. A refused request is answered 429 with
+    # Retry-After.
+    #   open          no credential, an unknown endpoint, or a token that is not one: by
+    #                 source address
+    #   login_source  the login, on top of that: by source address
+    #   login_user    the login, on top of that: by username, counting every attempt
+    #   session       a signed-in caller: by session
+    rate_limits:
+      open: { burst: 30, per_minute: 30 }
+      login_source: { burst: 10, per_minute: 5 }
+      login_user: { burst: 5, per_minute: 1 }
+      session: { burst: 60, per_minute: 300 }
 
     # Who can use this API: users, signed in with POST /api/v1/auth/login. There are no
     # tokens to configure here. The first administrator is made on this host with

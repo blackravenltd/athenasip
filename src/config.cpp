@@ -418,6 +418,27 @@ bool Config::load_from_yaml(const std::string& filename) {
       return false;
     }
 
+    if (YAML::Node http_tls = http["tls"]) {
+      try {
+        if (http_tls["enable"]) http_tls_enable = http_tls["enable"].as<bool>();
+        if (http_tls["address"]) http_tls_address = http_tls["address"].as<std::string>();
+        if (http_tls["port"]) http_tls_port = http_tls["port"].as<std::uint16_t>();
+        if (http_tls["cert_pem_filename"]) http_tls_cert_pem_filename = http_tls["cert_pem_filename"].as<std::string>();
+        if (http_tls["key_pem_filename"]) http_tls_key_pem_filename = http_tls["key_pem_filename"].as<std::string>();
+      } catch (const std::exception& e) {
+        _logger->error("Invalid 'http.tls' section: " + std::string(e.what()));
+        return false;
+      }
+    }
+
+    if (http_tls_address.empty()) http_tls_address = http_address;
+
+    // HTTPS with nothing to show would be a listener that fails every handshake.
+    if (http_tls_enable && (http_tls_cert().empty() || http_tls_key().empty())) {
+      _logger->error("'http.tls' needs a certificate and a key: cert_pem_filename and key_pem_filename here, or in the 'tls' section");
+      return false;
+    }
+
     YAML::Node http_api = http["api"];
     if (http_api) {
       if (http_api["enable"])
@@ -442,6 +463,26 @@ bool Config::load_from_yaml(const std::string& filename) {
       } catch (const std::exception& e) {
         _logger->error("Invalid value for 'http.api.session_lifetime' or 'http.api.session_idle': " + std::string(e.what()));
         return false;
+      }
+
+      if (YAML::Node limits = http_api["rate_limits"]) {
+        const auto read = [&limits](const char* name, RateLimit& into) {
+          YAML::Node limit = limits[name];
+          if (!limit) return;
+          if (limit["burst"]) into.burst = limit["burst"].as<std::uint32_t>();
+          if (limit["per_minute"]) into.per_minute = limit["per_minute"].as<std::uint32_t>();
+        };
+
+        try {
+          read("open", http_api_limit_open);
+          read("login_source", http_api_limit_login_source);
+          read("login_user", http_api_limit_login_user);
+          read("session", http_api_limit_session);
+        } catch (const std::exception& e) {
+          _logger->error("Invalid 'http.api.rate_limits': each of open, login_source, login_user and session takes burst and per_minute - " +
+                         std::string(e.what()));
+          return false;
+        }
       }
 
       if (http_api_session_lifetime == 0) {
@@ -643,10 +684,31 @@ std::string Config::effective_yaml() const {
   out << YAML::Key << "address" << YAML::Value << http_address;
   out << YAML::Key << "port" << YAML::Value << http_port;
 
+  out << YAML::Key << "tls" << YAML::Value << YAML::BeginMap;
+  out << YAML::Key << "enable" << YAML::Value << http_tls_enable;
+  out << YAML::Key << "address" << YAML::Value << http_tls_address;
+  out << YAML::Key << "port" << YAML::Value << http_tls_port;
+  out << YAML::Key << "cert_pem_filename" << YAML::Value << http_tls_cert();
+  out << YAML::Key << "key_pem_filename" << YAML::Value << http_tls_key();
+  out << YAML::EndMap;
+
   out << YAML::Key << "api" << YAML::Value << YAML::BeginMap;
   out << YAML::Key << "enable" << YAML::Value << http_api_enable;
   out << YAML::Key << "session_lifetime" << YAML::Value << http_api_session_lifetime;
   out << YAML::Key << "session_idle" << YAML::Value << http_api_session_idle;
+
+  out << YAML::Key << "rate_limits" << YAML::Value << YAML::BeginMap;
+  const auto emit_limit = [&out](const char* name, const RateLimit& limit) {
+    out << YAML::Key << name << YAML::Value << YAML::BeginMap;
+    out << YAML::Key << "burst" << YAML::Value << limit.burst;
+    out << YAML::Key << "per_minute" << YAML::Value << limit.per_minute;
+    out << YAML::EndMap;
+  };
+  emit_limit("open", http_api_limit_open);
+  emit_limit("login_source", http_api_limit_login_source);
+  emit_limit("login_user", http_api_limit_login_user);
+  emit_limit("session", http_api_limit_session);
+  out << YAML::EndMap;
 
   out << YAML::EndMap;
 
