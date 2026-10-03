@@ -142,6 +142,15 @@ class MediaEngine : public plugins::Plugin {
   // What this driver can do is local knowledge and needs no round trip.
   virtual Capabilities capabilities() const = 0;
 
+  // Whether this driver can produce a description in that profile, whatever it was handed.
+  // Local knowledge like capabilities(). The node asks before it promises a leg something:
+  // a re-offer in a profile the engine cannot make would be the refused offer over again.
+  // Defaulted to yes, which is what a driver written before this was assumed to be.
+  virtual bool produces(Profile profile) const {
+    (void)profile;
+    return true;
+  }
+
   // Two-way media setup. offer() takes the offer from one participant and answers with
   // the SDP to send on; answer() takes the answer coming back.
   virtual void offer(plugins::Executor on, std::shared_ptr<Call> call, std::string sdp, Flags flags, MediaHandler handler) = 0;

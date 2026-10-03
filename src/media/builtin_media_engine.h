@@ -54,6 +54,7 @@ class BuiltinMediaEngine : public MediaEngine {
 
   // Bridge only. No conference, no recording, no transcoding.
   Capabilities capabilities() const override;
+  bool produces(Profile profile) const override;
 
   void offer(plugins::Executor on, std::shared_ptr<Call> call, std::string sdp, Flags flags, MediaHandler handler) override;
   void answer(plugins::Executor on, std::shared_ptr<Call> call, std::string sdp, Flags flags, MediaHandler handler) override;

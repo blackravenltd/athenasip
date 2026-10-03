@@ -43,17 +43,7 @@ boost::json::value profile_json(const std::optional<media::Profile>& profile) {
 boost::json::value setting_json(const std::optional<media::Profile>& profile) {
   if (!profile) return nullptr;
 
-  switch (*profile) {
-    case media::Profile::WebRtc:
-      return "webrtc";
-    case media::Profile::PlainRtp:
-      return "rtp";
-    case media::Profile::SrtpSdes:
-      return "srtp";
-    case media::Profile::Mirror:
-      return "mirror";
-  }
-  return nullptr;
+  return media::setting_name(*profile);
 }
 
 boost::json::value time_json(std::time_t when) {
