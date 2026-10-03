@@ -103,6 +103,19 @@ services:
       cluster:
         ipv4_address: 172.32.0.21
 
+  # A callee that keeps the connection it registered over and is reachable no other way
+  # (test/e2e/flow_callee.py): a TCP or WebSocket client, which sipp cannot be. Python's
+  # standard library and nothing else.
+  flow-callee:
+    image: python:3-alpine
+    profiles: [e2e]
+    entrypoint: ["python3", "/test/e2e/flow_callee.py"]
+    volumes:
+      - ./test:/test:ro
+    networks:
+      cluster:
+        ipv4_address: 172.32.0.22
+
 networks:
   cluster:
     driver: bridge

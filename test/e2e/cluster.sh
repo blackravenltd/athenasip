@@ -208,6 +208,75 @@ run_pair() {
   docker rm -f "cluster-uas-${name}" >/dev/null 2>&1 || true
 }
 
+# The callee holds a connection to one node and is reachable only down it; the caller calls
+# through another. This is what forwarding is for: a UDP callee's Contact is an address any
+# node could send to, and a connection is not.
+run_flow() {
+  name="$1"
+  transport="$2"
+  callee_node="$3"
+  caller_node="$4"
+
+  case "${name}" in
+    *${FILTER}*) ;;
+    *) return 0 ;;
+  esac
+
+  echo "  ${name}"
+
+  allocate_port
+  uac_port="${next_port}"
+  allocate_port
+  dereg_port="${next_port}"
+
+  ${COMPOSE} run --rm sipp-uas \
+    -sf /e2e/scenarios/deregister.xml -inf /e2e/bob.csv -au bob -ap bob-secret \
+    -p "${dereg_port}" -cid_str "${name}-uas-dereg-%u-%p@%s" \
+    -m 1 -r 1 -timeout 20s -timeout_error \
+    -nostdin "${callee_node}:5060" >"${RESULTS}/cluster-${name}-uas-deregister.log" 2>&1 || true
+
+  docker rm -f "cluster-callee-${name}" >/dev/null 2>&1 || true
+  ${COMPOSE} run -d --name "cluster-callee-${name}" flow-callee \
+    --host "${callee_node}" --transport "${transport}" --user bob --password bob-secret >/dev/null 2>&1
+
+  # Registered, as the node the caller will ask sees it: the binding is in the shared store.
+  attempt=0
+  until api "http://${caller_node}:8080/api/v1/registrations" 2>/dev/null | grep -q "\"flow_id\":\"${transport}://172.32.0.22"; do
+    attempt=$((attempt + 1))
+    if [ "${attempt}" -ge 15 ]; then
+      failed=$((failed + 1))
+      failures="${failures} ${name}"
+      echo "    failed - the callee never registered over ${transport}"
+      docker logs "cluster-callee-${name}" >"${RESULTS}/cluster-${name}-callee.log" 2>&1 || true
+      docker rm -f "cluster-callee-${name}" >/dev/null 2>&1 || true
+      return 0
+    fi
+    sleep 1
+  done
+
+  caller_ok=0
+  ${COMPOSE} run --rm sipp-uac \
+    -sf /e2e/scenarios/invite_bye.xml -inf /e2e/alice.csv -au alice -ap alice-secret \
+    -p "${uac_port}" -cid_str "${name}-%u-%p@%s" \
+    -m 1 -r 1 -timeout 30s -timeout_error \
+    -trace_err -error_file "/results/cluster-${name}.err" \
+    -nostdin "${caller_node}:5060" >"${RESULTS}/cluster-${name}.log" 2>&1 || caller_ok=1
+
+  # The callee exits when it has seen the BYE, or when thirty seconds pass with nothing
+  # arriving on its connection, and says whether it saw the whole call.
+  callee_status=$(docker wait "cluster-callee-${name}" 2>/dev/null || echo 1)
+  docker logs "cluster-callee-${name}" >"${RESULTS}/cluster-${name}-callee.log" 2>&1 || true
+  docker rm -f "cluster-callee-${name}" >/dev/null 2>&1 || true
+
+  if [ "${caller_ok}" -eq 0 ] && [ "${callee_status}" = "0" ]; then
+    passed=$((passed + 1))
+  else
+    failed=$((failed + 1))
+    failures="${failures} ${name}"
+    echo "    failed - see ${RESULTS}/cluster-${name}.log and cluster-${name}-callee.log"
+  fi
+}
+
 relayed_total() {
   api "http://$1:8080/metrics" 2>/dev/null | awk '/^athenasip_media_packets_relayed_total /{print $2}'
 }
@@ -246,6 +315,13 @@ case "across-media" in
     fi
     ;;
 esac
+
+# A callee on a connection. First on the caller's own node, as the control, then held by
+# the other node, for each of the two transports that are a connection.
+run_flow one-node-tcp-flow  tcp "${NODE_A}" "${NODE_A}"
+run_flow across-tcp-flow    tcp "${NODE_B}" "${NODE_A}"
+run_flow one-node-ws-flow   ws  "${NODE_A}" "${NODE_A}"
+run_flow across-ws-flow     ws  "${NODE_B}" "${NODE_A}"
 
 echo
 echo "${passed} passed, ${failed} failed"
