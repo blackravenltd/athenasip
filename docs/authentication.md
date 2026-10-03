@@ -52,8 +52,7 @@ arithmetic for both the registrar and the proxy is in `src/digest.h`.
 This is standard, it works, and it is not what the rest of this document is about.
 
 The resource is `/realms/{realm}/subscribers` (Tom, 2026-10-03), and the API says
-subscriber wherever it means one. The type is still called `Account` in the code, for the
-reason in question 5 below.
+subscriber wherever it means one. So does the code: the type is `Subscriber`.
 
 ## Admin authentication, which was a config file
 
@@ -398,6 +397,5 @@ away with a 401 that tells the caller it was not real.
 5. ~~`Account` versus `subscriber`.~~ Renamed in the API (Tom, 2026-10-03): the resource is
    `/realms/{realm}/subscribers`, and the fields that named a subscriber `account` are
    `subscriber` and `subscriber_id`. A subscriber belongs to a realm; an admin interface
-   user is a user. The C++ type stays `Account`, because `Subscriber` collides with
-   SUBSCRIBE (RFC 6665) in the code, and that collision was the reason for the 2026-09-21
-   rename.
+   user is a user. The C++ type followed the same day and is `Subscriber`; account names
+   nothing. `docs/glossary.md` has the terms.

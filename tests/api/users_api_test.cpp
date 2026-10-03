@@ -291,7 +291,7 @@ TEST(UsersApiTest, DisablingAUserRevokesWhatItAlreadyHeld) {
 
   ASSERT_EQ(f.put("/api/v1/users/tom", R"({"disabled":true})", f.login("boss")).status, 200u);
 
-  // Immediate rather than eventual: the sessions go with the account, so a disabled user
+  // Immediate rather than eventual: the sessions go with the user, so a disabled user
   // does not keep working until each token happens to expire.
   EXPECT_EQ(f.get("/api/v1/session", token).status, 401u);
   EXPECT_EQ(f.store->session_get(api::Sessions::token_hash(token)), nullptr);
@@ -363,7 +363,7 @@ TEST(UsersApiTest, DeletingAUserAnswers204AndTakesItsSessions) {
   EXPECT_EQ(f.get("/api/v1/session", token).status, 401u);
 }
 
-TEST(UsersApiTest, RevokingSessionsSignsOutEverywhereAndLeavesTheAccount) {
+TEST(UsersApiTest, RevokingSessionsSignsOutEverywhereAndLeavesTheUser) {
   UsersFixture f;
   f.add_user("tom", {});
 
@@ -375,7 +375,7 @@ TEST(UsersApiTest, RevokingSessionsSignsOutEverywhereAndLeavesTheAccount) {
   EXPECT_EQ(f.get("/api/v1/session", first).status, 401u);
   EXPECT_EQ(f.get("/api/v1/session", second).status, 401u);
 
-  // The account is still there and can be logged into again, which is what makes this
+  // The user is still there and can be logged into again, which is what makes this
   // "sign out everywhere" rather than a delete.
   EXPECT_NE(f.store->user_get("tom"), nullptr);
   EXPECT_EQ(f.login("tom").size(), 64u);
@@ -458,7 +458,7 @@ TEST(UsersApiTest, ChangingAPasswordEndsEverySessionThatUsedTheOldOne) {
 
   ASSERT_EQ(f.post("/api/v1/users/tom/password", R"({"password":"a reset password"})", f.login("boss")).status, 204u);
 
-  // Resetting a compromised account would be pointless if it left whoever compromised it
+  // Resetting a compromised user would be pointless if it left whoever compromised it
   // logged in.
   EXPECT_EQ(f.get("/api/v1/session", stolen).status, 401u);
 }

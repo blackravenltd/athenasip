@@ -45,7 +45,7 @@ struct Fixture : CoreFixture {
     realm->behaviour.qualify_interval = realm_interval;
     store->realm_update(realm);
 
-    seed_account(7, "sip:alice@example.com", kHa1);
+    seed_subscriber(7, "sip:alice@example.com", kHa1);
     channel = make_channel("192.0.2.10", &connection);
   }
 

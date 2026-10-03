@@ -259,10 +259,10 @@ TEST(CallsApiTest, NoMediaEngineIsSaidPlainly) {
   EXPECT_FALSE(response.json().as_object().at("connected").as_bool());
 }
 
-// What the node had to re-offer, for the operator to act on: which account, what it
+// What the node had to re-offer, for the operator to act on: which subscriber, what it
 // refused, what it took and so what its profile would be set to. In the setting's own
-// words, so the suggestion is a value the account API takes.
-TEST(CallsApiTest, ReoffersSayWhichAccountsNeededTheOtherProfile) {
+// words, so the suggestion is a value the subscriber API takes.
+TEST(CallsApiTest, ReoffersSayWhichSubscribersNeededTheOtherProfile) {
   CallsFixture f;
   f.on_strand([&]() {
     f.core->reoffers().record("sip:phone@example.com", media::Profile::PlainRtp, media::Profile::WebRtc, 1000);

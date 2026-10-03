@@ -12,8 +12,8 @@
 #include <string>
 
 #include "sip_header.h"
-#include "types/account.h"
 #include "types/sip_uri.h"
+#include "types/subscriber.h"
 #include "util.h"
 
 using namespace athenasip::types;
@@ -42,7 +42,7 @@ class SIPMessage {
   // route set is spent and the Contact left over resolves to nothing.
   std::string flow_token;
   std::weak_ptr<Call> call;
-  std::weak_ptr<Account> account;
+  std::weak_ptr<Subscriber> subscriber;
   std::shared_ptr<SIPUri> contact;
   bool authenticated = false;
 

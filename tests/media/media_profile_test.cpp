@@ -383,14 +383,14 @@ TEST(MediaProfileTest, ADelayedOfferIsAnsweredForTheEndThatOffered) {
   EXPECT_EQ(calls.back().flags.target, Flags::Profile::WebRtc);
 }
 
-// Step 3 of the 2026-10-01 decision: an account can say what its endpoint is, as an
+// Step 3 of the 2026-10-01 decision: a subscriber can say what its endpoint is, as an
 // Asterisk endpoint's webrtc=yes does. It is for the leg nothing else can read -
 // AthenaPhone signals over TCP and its media is WebRTC - and it decides the first offer
 // towards that leg where the realm and the transport would have guessed.
-TEST(MediaProfileTest, AnAccountsProfileDecidesTheFirstOfferTowardsIt) {
+TEST(MediaProfileTest, AnSubscribersProfileDecidesTheFirstOfferTowardsIt) {
   ProfileFixture f("tcp", "udp");
   f.bob->media_profile = types::MediaPolicy::Profiles::WebRtc;
-  ASSERT_TRUE(f.store->account_update(f.bob));
+  ASSERT_TRUE(f.store->subscriber_update(f.bob));
 
   f.receive(f.caller, f.invite_with_body());
 
@@ -400,12 +400,12 @@ TEST(MediaProfileTest, AnAccountsProfileDecidesTheFirstOfferTowardsIt) {
 }
 
 // And it is the operator's word about an endpoint, not the endpoint's: once the leg has
-// described itself, what it said is what it gets. An account that says plain RTP for a
+// described itself, what it said is what it gets. A subscriber that says plain RTP for a
 // phone that has since been replaced by a browser is answered as a browser.
-TEST(MediaProfileTest, WhatALegSaidOutranksItsAccount) {
+TEST(MediaProfileTest, WhatALegSaidOutranksItsSubscriber) {
   ProfileFixture f("udp", "udp");
   f.bob->media_profile = types::MediaPolicy::Profiles::PlainRtp;
-  ASSERT_TRUE(f.store->account_update(f.bob));
+  ASSERT_TRUE(f.store->subscriber_update(f.bob));
 
   f.receive(f.caller, f.invite());
   f.receive(f.callee, f.ok_with(kWebRtcOffer));
@@ -417,12 +417,12 @@ TEST(MediaProfileTest, WhatALegSaidOutranksItsAccount) {
   EXPECT_EQ(calls.back().flags.target, Flags::Profile::WebRtc);
 }
 
-// An account's setting takes the realm's values, transport and mirror included, so an
-// account can opt one endpoint out of a realm's rule.
-TEST(MediaProfileTest, AnAccountCanTakeItsLegOutOfTheTransportRule) {
+// A subscriber's setting takes the realm's values, transport and mirror included, so an
+// subscriber can opt one endpoint out of a realm's rule.
+TEST(MediaProfileTest, AnSubscriberCanTakeItsLegOutOfTheTransportRule) {
   ProfileFixture f("wss", "udp");
   f.bob->media_profile = types::MediaPolicy::Profiles::Mirror;
-  ASSERT_TRUE(f.store->account_update(f.bob));
+  ASSERT_TRUE(f.store->subscriber_update(f.bob));
 
   f.receive(f.caller, f.invite_with_body());
 
@@ -456,9 +456,9 @@ TEST(MediaProfileTest, A488ToAGuessIsReofferedWithTheOtherProfile) {
   EXPECT_NE(f.response_with(f.caller_connection, 200), nullptr);
 }
 
-// Nothing is learned silently: the node says which account needed it and what it took,
-// for the operator to set as that account's profile or not.
-TEST(MediaProfileTest, AReofferThatWorksIsReportedForTheAccount) {
+// Nothing is learned silently: the node says which subscriber needed it and what it took,
+// for the operator to set as that subscriber's profile or not.
+TEST(MediaProfileTest, AReofferThatWorksIsReportedForTheSubscriber) {
   ProfileFixture f("tcp", "udp");
 
   f.receive(f.caller, f.invite_with_body());
@@ -467,7 +467,7 @@ TEST(MediaProfileTest, AReofferThatWorksIsReportedForTheAccount) {
 
   const auto reported = f.reoffers();
   ASSERT_EQ(reported.size(), 1u);
-  EXPECT_EQ(reported[0].account, "sip:bob@example.com");
+  EXPECT_EQ(reported[0].subscriber, "sip:bob@example.com");
   EXPECT_EQ(reported[0].rejected, Flags::Profile::PlainRtp);
   ASSERT_TRUE(reported[0].took.has_value());
   EXPECT_EQ(*reported[0].took, Flags::Profile::WebRtc);
@@ -589,12 +589,12 @@ TEST(MediaProfileTest, TheAttemptEndsWithTheLastBranch) {
 }
 
 // Step 5: what a callee said in answer to an OPTIONS is its own word, and decides the
-// first offer towards it ahead of the account, the realm and the transport.
+// first offer towards it ahead of the subscriber, the realm and the transport.
 // AthenaPhone answers OPTIONS with a WebRTC description whatever it signals over.
 TEST(MediaProfileTest, WhatAQualifiedClientSaidDecidesTheFirstOfferTowardsIt) {
   ProfileFixture f("tcp", "udp");
   f.bob->media_profile = types::MediaPolicy::Profiles::PlainRtp;
-  ASSERT_TRUE(f.store->account_update(f.bob));
+  ASSERT_TRUE(f.store->subscriber_update(f.bob));
 
   f.on_strand(
       [&f]() { f.core->qualifier()->watch("sip:bob@example.com", std::make_shared<types::SIPUri>("sip:bob@192.0.2.20:5060"), f.callee->flow_id(), 30, 3600); });
@@ -622,11 +622,11 @@ TEST(MediaProfileTest, WhatAQualifiedClientSaidDecidesTheFirstOfferTowardsIt) {
 
 // RFC 3264 section 5: an INVITE with no description has the callee make the offer, in its
 // 200, and that offer is produced for the caller - a leg that has said nothing yet. Its
-// account is then the operator's word on it, as the callee's is for an ordinary offer.
-TEST(MediaProfileTest, ADelayedOfferIsProducedForTheCallersAccount) {
+// subscriber is then the operator's word on it, as the callee's is for an ordinary offer.
+TEST(MediaProfileTest, ADelayedOfferIsProducedForTheCallersSubscriber) {
   ProfileFixture f("udp", "udp");
   f.alice->media_profile = types::MediaPolicy::Profiles::WebRtc;
-  ASSERT_TRUE(f.store->account_update(f.alice));
+  ASSERT_TRUE(f.store->subscriber_update(f.alice));
 
   f.receive(f.caller, f.invite());
   f.receive(f.callee, f.ok_with(kOffer));

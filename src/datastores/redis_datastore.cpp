@@ -86,7 +86,7 @@ types::Location parse_location(const std::string& value) {
   const auto& obj = parsed.as_object();
 
   types::Location location;
-  location.account_id = json_uint64(obj, "account_id");
+  location.subscriber_id = json_uint64(obj, "subscriber_id");
   location.contact = std::make_shared<types::SIPUri>(json_string(obj, "contact"));
   location.registered_at = static_cast<std::time_t>(json_uint64(obj, "registered_at"));
   location.expires_at = static_cast<std::time_t>(json_uint64(obj, "expires_at"));
@@ -284,11 +284,11 @@ void RedisDatastore::realm_update(plugins::Executor on, std::shared_ptr<types::R
   });
 }
 
-// Its subscribers first, each through account_delete so their bindings go with them, and
+// Its subscribers first, each through subscriber_delete so their bindings go with them, and
 // the realm last: a delete that fails part way leaves a realm that can be deleted again,
 // never subscribers whose realm is gone and whom the API can therefore no longer reach.
 void RedisDatastore::realm_delete(plugins::Executor on, std::string realm_name, plugins::StatusHandler handler) {
-  _async_smembers(_account_index_key(realm_name), [this, on, handler, realm_name](RedisError error, std::vector<std::string> users) mutable {
+  _async_smembers(_subscriber_index_key(realm_name), [this, on, handler, realm_name](RedisError error, std::vector<std::string> users) mutable {
     if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
 
     auto failed = std::make_shared<std::string>();
@@ -300,10 +300,10 @@ void RedisDatastore::realm_delete(plugins::Executor on, std::string realm_name, 
 
           auto identity = std::make_shared<types::SIPIdentity>("sip:" + user + "@" + realm_name);
 
-          account_delete(on, std::move(identity), [failed, next](plugins::Status status) mutable {
+          subscriber_delete(on, std::move(identity), [failed, next](plugins::Status status) mutable {
             // Already gone is not a failure here: the index can name a user whose record a
             // concurrent delete has just taken.
-            if (!status.ok && status.error != "account_delete failed") *failed = status.error;
+            if (!status.ok && status.error != "subscriber_delete failed") *failed = status.error;
             next();
           });
         },
@@ -573,52 +573,54 @@ void RedisDatastore::_session_delete_all_for(std::string key, std::function<void
   });
 }
 
-void RedisDatastore::account_get(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity,
-                                 plugins::Handler<std::shared_ptr<types::Account>> handler) {
-  using Answer = plugins::Result<std::shared_ptr<types::Account>>;
+void RedisDatastore::subscriber_get(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity,
+                                    plugins::Handler<std::shared_ptr<types::Subscriber>> handler) {
+  using Answer = plugins::Result<std::shared_ptr<types::Subscriber>>;
 
-  if (!identity || !identity->uri) return _complete(on, handler, Answer::failure("account_get: no identity"));
+  if (!identity || !identity->uri) return _complete(on, handler, Answer::failure("subscriber_get: no identity"));
 
-  _async_get(_account_key(identity->uri->host, identity->uri->user), [this, on, handler, identity](RedisError error, std::optional<std::string> value) mutable {
-    if (error) return _complete(on, handler, Answer::failure(error.message()));
-    if (!value) return _complete(on, handler, Answer::success(nullptr));
+  _async_get(_subscriber_key(identity->uri->host, identity->uri->user),
+             [this, on, handler, identity](RedisError error, std::optional<std::string> value) mutable {
+               if (error) return _complete(on, handler, Answer::failure(error.message()));
+               if (!value) return _complete(on, handler, Answer::success(nullptr));
 
-    try {
-      const auto parsed = boost::json::parse(*value);
-      const auto& obj = parsed.as_object();
+               try {
+                 const auto parsed = boost::json::parse(*value);
+                 const auto& obj = parsed.as_object();
 
-      auto account = std::make_shared<types::Account>();
-      account->id = json_uint64(obj, "id");
-      account->identity = std::move(identity);
-      account->ha1 = json_string(obj, "ha1");
+                 auto subscriber = std::make_shared<types::Subscriber>();
+                 subscriber->id = json_uint64(obj, "id");
+                 subscriber->identity = std::move(identity);
+                 subscriber->ha1 = json_string(obj, "ha1");
 
-      // Optional: an account imported as a bare MD5 hash has no SHA-256 credential, and
-      // a missing field is that rather than a broken row.
-      if (obj.if_contains("ha1_sha256")) account->ha1_sha256 = json_string(obj, "ha1_sha256");
-      if (obj.contains("media_profile")) account->media_profile = types::MediaPolicy::parse_profiles(json_string(obj, "media_profile"));
-      _complete(on, handler, Answer::success(std::move(account)));
-    } catch (const std::exception& ex) {
-      _logger->error("account_get: " + std::string(ex.what()));
-      _complete(on, handler, Answer::failure(ex.what()));
-    }
-  });
+                 // Optional: a subscriber imported as a bare MD5 hash has no SHA-256 credential, and
+                 // a missing field is that rather than a broken row.
+                 if (obj.if_contains("ha1_sha256")) subscriber->ha1_sha256 = json_string(obj, "ha1_sha256");
+                 if (obj.contains("media_profile")) subscriber->media_profile = types::MediaPolicy::parse_profiles(json_string(obj, "media_profile"));
+                 _complete(on, handler, Answer::success(std::move(subscriber)));
+               } catch (const std::exception& ex) {
+                 _logger->error("subscriber_get: " + std::string(ex.what()));
+                 _complete(on, handler, Answer::failure(ex.what()));
+               }
+             });
 }
 
-void RedisDatastore::account_create(plugins::Executor on, std::shared_ptr<types::Account> account, plugins::StatusHandler handler) {
-  if (!account || !account->identity || !account->identity->uri) return _complete(on, handler, plugins::Status::failure("account_create: no account"));
+void RedisDatastore::subscriber_create(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, plugins::StatusHandler handler) {
+  if (!subscriber || !subscriber->identity || !subscriber->identity->uri)
+    return _complete(on, handler, plugins::Status::failure("subscriber_create: no subscriber"));
 
-  const auto& uri = account->identity->uri;
-  const auto key = _account_key(uri->host, uri->user);
-  const auto index = _account_index_key(uri->host);
+  const auto& uri = subscriber->identity->uri;
+  const auto key = _subscriber_key(uri->host, uri->user);
+  const auto index = _subscriber_index_key(uri->host);
   const auto user = uri->user;
-  const auto body = _serialise_account(account);
+  const auto body = _serialise_subscriber(subscriber);
 
   _async_exists(key, [this, on, handler, key, index, user, body](RedisError error, bool exists) mutable {
     if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
-    if (exists) return _complete(on, handler, plugins::Status::failure("account_create: " + user + " already exists"));
+    if (exists) return _complete(on, handler, plugins::Status::failure("subscriber_create: " + user + " already exists"));
 
     _async_set(key, body, [this, on, handler, index, user](RedisError error, bool ok) mutable {
-      if (error || !ok) return _complete(on, handler, plugins::Status::failure(error ? error.message() : "account_create: SET failed"));
+      if (error || !ok) return _complete(on, handler, plugins::Status::failure(error ? error.message() : "subscriber_create: SET failed"));
 
       _async_sadd(index, user, [this, on, handler](RedisError error, bool) mutable {
         _complete(on, handler, error ? plugins::Status::failure(error.message()) : plugins::Status::success());
@@ -627,47 +629,48 @@ void RedisDatastore::account_create(plugins::Executor on, std::shared_ptr<types:
   });
 }
 
-void RedisDatastore::account_update(plugins::Executor on, std::shared_ptr<types::Account> account, plugins::StatusHandler handler) {
-  if (!account || !account->identity || !account->identity->uri) return _complete(on, handler, plugins::Status::failure("account_update: no account"));
+void RedisDatastore::subscriber_update(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, plugins::StatusHandler handler) {
+  if (!subscriber || !subscriber->identity || !subscriber->identity->uri)
+    return _complete(on, handler, plugins::Status::failure("subscriber_update: no subscriber"));
 
-  const auto& uri = account->identity->uri;
-  const auto key = _account_key(uri->host, uri->user);
+  const auto& uri = subscriber->identity->uri;
+  const auto key = _subscriber_key(uri->host, uri->user);
   const auto user = uri->user;
-  const auto body = _serialise_account(account);
+  const auto body = _serialise_subscriber(subscriber);
 
   _async_exists(key, [this, on, handler, key, user, body](RedisError error, bool exists) mutable {
     if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
-    if (!exists) return _complete(on, handler, plugins::Status::failure("account_update: " + user + " does not exist"));
+    if (!exists) return _complete(on, handler, plugins::Status::failure("subscriber_update: " + user + " does not exist"));
 
     _async_set(key, body, [this, on, handler](RedisError error, bool ok) mutable {
-      _complete(on, handler, !error && ok ? plugins::Status::success() : plugins::Status::failure(error ? error.message() : "account_update: SET failed"));
+      _complete(on, handler, !error && ok ? plugins::Status::success() : plugins::Status::failure(error ? error.message() : "subscriber_update: SET failed"));
     });
   });
 }
 
-void RedisDatastore::account_delete(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity, plugins::StatusHandler handler) {
-  if (!identity || !identity->uri) return _complete(on, handler, plugins::Status::failure("account_delete: no identity"));
+void RedisDatastore::subscriber_delete(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity, plugins::StatusHandler handler) {
+  if (!identity || !identity->uri) return _complete(on, handler, plugins::Status::failure("subscriber_delete: no identity"));
 
   const auto realm_name = identity->uri->host;
   const auto user = identity->uri->user;
 
-  // The bindings go with the account, so the record has to be read before it is
-  // deleted: the location index is keyed on the account id.
-  account_get(on, identity, [this, on, handler, realm_name, user](plugins::Result<std::shared_ptr<types::Account>> found) mutable {
+  // The bindings go with the subscriber, so the record has to be read before it is
+  // deleted: the location index is keyed on the subscriber id.
+  subscriber_get(on, identity, [this, on, handler, realm_name, user](plugins::Result<std::shared_ptr<types::Subscriber>> found) mutable {
     if (!found.ok) return _complete(on, handler, plugins::Status::failure(found.error));
 
-    auto account = found.value;
+    auto subscriber = found.value;
 
-    _async_del(_account_key(realm_name, user), [this, on, handler, realm_name, user, account](RedisError error, std::int64_t removed) mutable {
+    _async_del(_subscriber_key(realm_name, user), [this, on, handler, realm_name, user, subscriber](RedisError error, std::int64_t removed) mutable {
       if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
 
-      _async_srem(_account_index_key(realm_name), user, [this, on, handler, account, removed](RedisError error, bool) mutable {
+      _async_srem(_subscriber_index_key(realm_name), user, [this, on, handler, subscriber, removed](RedisError error, bool) mutable {
         if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
 
-        if (!account) return _complete(on, handler, _status(removed > 0, "account_delete"));
+        if (!subscriber) return _complete(on, handler, _status(removed > 0, "subscriber_delete"));
 
-        // A deleted account keeps no bindings.
-        const auto index = _location_index_key(account->id);
+        // A deleted subscriber keeps no bindings.
+        const auto index = _location_index_key(subscriber->id);
 
         _async_smembers(index, [this, on, handler, index, removed](RedisError error, std::vector<std::string> keys) mutable {
           if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
@@ -677,7 +680,7 @@ void RedisDatastore::account_delete(plugins::Executor on, std::shared_ptr<types:
               [this, on, handler, index, removed]() {
                 _async_del(index, [this, on, handler, removed](RedisError error, std::int64_t) mutable {
                   if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
-                  _complete(on, handler, _status(removed > 0, "account_delete"));
+                  _complete(on, handler, _status(removed > 0, "subscriber_delete"));
                 });
               });
         });
@@ -686,31 +689,31 @@ void RedisDatastore::account_delete(plugins::Executor on, std::shared_ptr<types:
   });
 }
 
-void RedisDatastore::account_list(plugins::Executor on, std::string realm_name, plugins::Handler<std::vector<std::shared_ptr<types::Account>>> handler) {
-  using Answer = plugins::Result<std::vector<std::shared_ptr<types::Account>>>;
+void RedisDatastore::subscriber_list(plugins::Executor on, std::string realm_name, plugins::Handler<std::vector<std::shared_ptr<types::Subscriber>>> handler) {
+  using Answer = plugins::Result<std::vector<std::shared_ptr<types::Subscriber>>>;
 
-  _async_smembers(_account_index_key(realm_name), [this, on, handler, realm_name](RedisError error, std::vector<std::string> users) mutable {
+  _async_smembers(_subscriber_index_key(realm_name), [this, on, handler, realm_name](RedisError error, std::vector<std::string> users) mutable {
     if (error) return _complete(on, handler, Answer::failure(error.message()));
 
-    auto accounts = std::make_shared<std::vector<std::shared_ptr<types::Account>>>();
+    auto subscribers = std::make_shared<std::vector<std::shared_ptr<types::Subscriber>>>();
 
     run_sequence(
         std::move(users),
-        [this, on, accounts, realm_name](std::string user, std::function<void()> next) {
+        [this, on, subscribers, realm_name](std::string user, std::function<void()> next) {
           auto identity = std::make_shared<types::SIPIdentity>("sip:" + user + "@" + realm_name);
 
-          account_get(on, std::move(identity), [accounts, next](plugins::Result<std::shared_ptr<types::Account>> found) mutable {
-            if (found.ok && found.value) accounts->push_back(found.value);
+          subscriber_get(on, std::move(identity), [subscribers, next](plugins::Result<std::shared_ptr<types::Subscriber>> found) mutable {
+            if (found.ok && found.value) subscribers->push_back(found.value);
             next();
           });
         },
-        [this, on, handler, accounts]() { _complete(on, handler, Answer::success(std::move(*accounts))); });
+        [this, on, handler, subscribers]() { _complete(on, handler, Answer::success(std::move(*subscribers))); });
   });
 }
 
-void RedisDatastore::account_register(plugins::Executor on, std::shared_ptr<types::Account> account, types::Location binding, std::uint32_t expires_seconds,
-                                      plugins::StatusHandler handler) {
-  if (!account || !binding.contact) return _complete(on, handler, plugins::Status::failure("account_register: no account or contact"));
+void RedisDatastore::subscriber_register(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, types::Location binding,
+                                         std::uint32_t expires_seconds, plugins::StatusHandler handler) {
+  if (!subscriber || !binding.contact) return _complete(on, handler, plugins::Status::failure("subscriber_register: no subscriber or contact"));
 
   const auto contact = binding.contact;
   const std::uint16_t port = contact->port.value_or(0);
@@ -724,7 +727,7 @@ void RedisDatastore::account_register(plugins::Executor on, std::shared_ptr<type
   const std::int64_t ttl = expires_seconds > 0 ? static_cast<std::int64_t>(expires_seconds) : kDefaultRegistrationSeconds;
 
   boost::json::object location;
-  location["account_id"] = account->id;
+  location["subscriber_id"] = subscriber->id;
   location["contact"] = contact->to_string();
   location["user"] = contact->user;
   location["host"] = contact->host;
@@ -741,11 +744,11 @@ void RedisDatastore::account_register(plugins::Executor on, std::shared_ptr<type
   if (!binding.instance.empty()) location["instance"] = binding.instance;
   if (binding.reg_id != 0) location["reg_id"] = binding.reg_id;
 
-  const auto key = _location_key(account->id, contact->user, contact->host, port);
-  const auto index = _location_index_key(account->id);
+  const auto key = _location_key(subscriber->id, contact->user, contact->host, port);
+  const auto index = _location_index_key(subscriber->id);
 
   _async_set_ex(key, boost::json::serialize(location), std::chrono::seconds(ttl), [this, on, handler, key, index](RedisError error, bool ok) mutable {
-    if (error || !ok) return _complete(on, handler, plugins::Status::failure(error ? error.message() : "account_register: SETEX failed"));
+    if (error || !ok) return _complete(on, handler, plugins::Status::failure(error ? error.message() : "subscriber_register: SETEX failed"));
 
     // The index is what location_list reads, so listing never needs KEYS.
     _async_sadd(index, key, [this, on, handler](RedisError error, bool) mutable {
@@ -754,28 +757,28 @@ void RedisDatastore::account_register(plugins::Executor on, std::shared_ptr<type
   });
 }
 
-void RedisDatastore::account_unregister(plugins::Executor on, std::shared_ptr<types::Account> account, std::shared_ptr<types::SIPUri> contact,
-                                        plugins::StatusHandler handler) {
-  if (!account || !contact) return _complete(on, handler, plugins::Status::failure("account_unregister: no account or contact"));
+void RedisDatastore::subscriber_unregister(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact,
+                                           plugins::StatusHandler handler) {
+  if (!subscriber || !contact) return _complete(on, handler, plugins::Status::failure("subscriber_unregister: no subscriber or contact"));
 
   const std::uint16_t port = contact->port.value_or(0);
-  const auto key = _location_key(account->id, contact->user, contact->host, port);
-  const auto index = _location_index_key(account->id);
+  const auto key = _location_key(subscriber->id, contact->user, contact->host, port);
+  const auto index = _location_index_key(subscriber->id);
 
   _async_del(key, [this, on, handler, key, index](RedisError error, std::int64_t removed) mutable {
     if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
 
     _async_srem(index, key, [this, on, handler, removed](RedisError error, bool) mutable {
       if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
-      _complete(on, handler, _status(removed > 0, "account_unregister"));
+      _complete(on, handler, _status(removed > 0, "subscriber_unregister"));
     });
   });
 }
 
-void RedisDatastore::location_list(plugins::Executor on, std::uint64_t account_id, plugins::Handler<std::vector<types::Location>> handler) {
+void RedisDatastore::location_list(plugins::Executor on, std::uint64_t subscriber_id, plugins::Handler<std::vector<types::Location>> handler) {
   using Answer = plugins::Result<std::vector<types::Location>>;
 
-  const auto index = _location_index_key(account_id);
+  const auto index = _location_index_key(subscriber_id);
 
   _async_smembers(index, [this, on, handler, index](RedisError error, std::vector<std::string> keys) mutable {
     if (error) return _complete(on, handler, Answer::failure(error.message()));
@@ -1040,18 +1043,18 @@ std::shared_ptr<types::Session> RedisDatastore::_parse_session(const std::string
   return session;
 }
 
-std::string RedisDatastore::_serialise_account(const std::shared_ptr<types::Account>& account) {
+std::string RedisDatastore::_serialise_subscriber(const std::shared_ptr<types::Subscriber>& subscriber) {
   boost::json::object obj;
-  obj["id"] = account->id;
-  obj["ha1"] = account->ha1;
+  obj["id"] = subscriber->id;
+  obj["ha1"] = subscriber->ha1;
 
-  // Only when there is one: an account imported as a bare MD5 HA1 has no SHA-256
+  // Only when there is one: a subscriber imported as a bare MD5 HA1 has no SHA-256
   // credential, and writing an empty one would make it look like a hash of nothing.
-  if (!account->ha1_sha256.empty()) obj["ha1_sha256"] = account->ha1_sha256;
+  if (!subscriber->ha1_sha256.empty()) obj["ha1_sha256"] = subscriber->ha1_sha256;
 
-  // And only when the account chose one; absent is taking the realm's.
-  if (account->media_profile) obj["media_profile"] = types::MediaPolicy::to_string(*account->media_profile);
-  obj["uri"] = account->identity->uri->to_string();
+  // And only when the subscriber chose one; absent is taking the realm's.
+  if (subscriber->media_profile) obj["media_profile"] = types::MediaPolicy::to_string(*subscriber->media_profile);
+  obj["uri"] = subscriber->identity->uri->to_string();
   return boost::json::serialize(obj);
 }
 
@@ -1430,16 +1433,16 @@ std::string RedisDatastore::_call_key(const std::string& call_id) { return "athe
 
 std::string RedisDatastore::_realm_index_key() { return "athena:index:realms"; }
 
-std::string RedisDatastore::_account_index_key(const std::string& realm_name) { return "athena:index:accounts:" + realm_name; }
+std::string RedisDatastore::_subscriber_index_key(const std::string& realm_name) { return "athena:index:subscribers:" + realm_name; }
 
-std::string RedisDatastore::_location_index_key(std::uint64_t account_id) { return "athena:index:locations:" + std::to_string(account_id); }
+std::string RedisDatastore::_location_index_key(std::uint64_t subscriber_id) { return "athena:index:locations:" + std::to_string(subscriber_id); }
 
 std::string RedisDatastore::_call_index_key() { return "athena:index:calls"; }
 
-std::string RedisDatastore::_account_key(const std::string& realm_name, const std::string& user) { return "athena:account:" + realm_name + ":" + user; }
+std::string RedisDatastore::_subscriber_key(const std::string& realm_name, const std::string& user) { return "athena:subscriber:" + realm_name + ":" + user; }
 
-std::string RedisDatastore::_location_key(std::uint64_t account_id, const std::string& user, const std::string& host, std::uint16_t port) {
-  return "athena:location:" + std::to_string(account_id) + ":" + user + ":" + host + ":" + std::to_string(port);
+std::string RedisDatastore::_location_key(std::uint64_t subscriber_id, const std::string& user, const std::string& host, std::uint16_t port) {
+  return "athena:location:" + std::to_string(subscriber_id) + ":" + user + ":" + host + ":" + std::to_string(port);
 }
 
 std::string RedisDatastore::_nonce_key(const std::string& nonce) { return "athena:nonce:" + nonce; }

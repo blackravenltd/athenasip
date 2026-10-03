@@ -11,7 +11,7 @@ it:
 - **The mixed-transport call.** A browser called AthenaPhone on a real device through this
   node and rtpengine on 2026-09-30 and was heard both ways (`test/interop/UAT.md`).
 - **Behaviour profiles (2026-10-01/02).** One `behaviour` section, server-wide in the
-  config and per realm in the API, with a per-account media profile: anchoring, the media
+  config and per realm in the API, with a per-subscriber media profile: anchoring, the media
   profile (`mirror` by default), one re-offer on 488 reported to the operator, OPTIONS
   qualifying, Contact rewriting. `docs/behaviour.md` says how to set it to behave like
   Asterisk, Kamailio/OpenSIPS or FreeSWITCH.
@@ -50,7 +50,7 @@ answered on 2026-10-03; the answers are under Decisions.
 
 2. **AthenaPhone registering on `corvus-fi-1`, and the console's go-ahead.** Both need
    approval given in the session that asked, and Tom is taking them up with those sessions
-   directly. AthenaPhone registers as `sip:athenaphone@10.35.1.20` (account made,
+   directly. AthenaPhone registers as `sip:athenaphone@10.35.1.20` (subscriber made,
    `media_profile: webrtc`) once Tom enters its password on the phone - it is in
    `/root/.athenasip-athenaphone-password` on `corvus-fi-1` - with the snakeoil CA
    `tls/ca/snakeca.crt` for TLS.
@@ -168,21 +168,21 @@ Dated, and not reopened without asking.
   Service-Route and `GET /api/v1/nodes` (both done), the node list fed from discovery,
   RFC 5626 outbound with two flows to two nodes, RFC 3263, and last the
   `AthenaSIP-Alternate-Server` header. The M4 items carry the detail.
-- (2026-09-21) `Subscriber` is `Account` **in the code**, because it would have collided
-  with SUBSCRIBE (RFC 6665) the moment presence arrived. See the 2026-09-25 vocabulary
-  decision, which this now sits under rather than over.
+- (2026-09-21, reversed 2026-10-03) The type for a subscriber was renamed `Account` in the
+  code, because `Subscriber` would have collided with SUBSCRIBE (RFC 6665) the moment
+  presence arrived. It is `Subscriber` again: see the 2026-10-03 decisions.
 - (2026-09-25) The vocabulary, which every document, endpoint and role name follows: a
   **user** is a thing that can use the API, and the admin interface is only a client of
   the API; a **subscriber** is a thing registered on a realm to make and receive calls.
   Neither is created from the other in either direction and neither credential works as
-  the other. The resource became `/realms/{realm}/subscribers` on 2026-10-03; the type
-  is still `Account`.
+  the other. The resource became `/realms/{realm}/subscribers` on 2026-10-03, and the
+  type `Subscriber`.
 - (2026-10-03) Tom's answers to the questions that were waiting on him:
   - The API says **subscriber** for a subscriber, everywhere and in one go:
     `/realms/{realm}/subscribers`, and `subscriber` / `subscriber_id` where a response
     said `account` / `account_id`. A subscriber belongs to a realm; a person who uses the
-    admin interface is a user. No alias for the old path. The C++ type stays `Account`
-    (the SUBSCRIBE collision above). The console followed in the same deploy.
+    admin interface is a user. No alias for the old path. The console followed in the
+    same deploy.
   - **Deleting a realm deletes everything in it**: its subscribers and their
     registrations. It is in the `Datastore::realm_delete` contract, so every driver does
     it, not only the two in-tree.
@@ -203,13 +203,14 @@ Dated, and not reopened without asking.
     scripts say subscriber. Nothing consumed the bus topic when it changed.
   - **Internal names match external names.** A **user** may sign in and observe and manage
     the cluster; a **subscriber** belongs to a realm and can REGISTER and make and receive
-    calls. **Account is not anything**: the C++ type, the datastore operations and the
-    Redis keys that say account are renamed to subscriber, which replaces the 2026-09-21
-    rule that the type stays `Account`. The Redis schema is renamed and recreated to
-    match rather than migrated.
+    calls. **Account is not anything**: the C++ type is `Subscriber`, the datastore
+    operations are `subscriber_*` (contract version 14) and the Redis keys are
+    `athena:subscriber:*`, which reverses the 2026-09-21 rule that the type is `Account`.
+    The Redis schema is renamed and a store is recreated to match, not migrated. What
+    reads the event bus is a consumer, so that subscriber means one thing.
 - (2026-09-25) There is no superuser role, and no role implies another.
 - (2026-09-29) `Datastore::session_delete` succeeds whether or not that hash was held, and
-  the realm and account deletes still report when there was nothing there. A session is
+  the realm and subscriber deletes still report when there was nothing there. A session is
   named by a secret the caller presented, so an answer distinguishing "that was live" from
   "that was never live" is a way to ask this node whether a token is real, one guess at a
   time, on a route anybody can reach. A realm name is not a secret. `API_VERSION` did not
@@ -227,12 +228,12 @@ Dated, and not reopened without asking.
   servers are the reference for least astonishment, for migrating operators and for their
   clients. AthenaSIP is built for every RFC-compliant client, never tuned to AthenaPhone
   or JsSIP, and where it adds value it does so visibly and never by silent learning. The
-  first use is what a callee is offered (Milestone 3): transport default, a per-account
+  first use is what a callee is offered (Milestone 3): transport default, a per-subscriber
   profile, one re-offer on 488 reported to the operator, then OPTIONS-advertised SDP.
 - (2026-10-01) The proxy is not an open relay. A request out of dialog whose From is in a
   domain this node serves is authenticated as that subscriber, whoever it is calling: RFC
   3261 22.3, a 407 with Proxy-Authenticate, answered with Proxy-Authorization for that
-  same account, or a reliable connection that carried an authenticated REGISTER for it. A
+  same subscriber, or a reliable connection that carried an authenticated REGISTER for it. A
   From elsewhere may call into this node's domains and nowhere else (403). Requests in a
   dialog this node is on, ACK and CANCEL are not challenged. Found because the proxy had
   no 407 at all and forwarded a stranger's INVITE anywhere. What a client needs to do
@@ -259,7 +260,7 @@ Dated, and not reopened without asking.
   the cost is that the harness mounts a build from `../athenasip-admin` rather than
   serving something checked in, which is preferred to a copied bundle going stale. The
   Playwright spec lives beside the page in that repository and this side brings the
-  node, rtpengine and the accounts up for it.
+  node, rtpengine and the subscribers up for it.
 
 ## Architecture
 
@@ -368,16 +369,9 @@ The trunk scenario waits on trunks existing.
       second INVITE (same Call-ID, From tag and CSeq, new branch) with 482. Two questions
       for this side: whether builtin, which cannot produce SAVPF, re-offered RTP/AVP 8
       again, in which case `_reoffer` in `src/proxy.cpp` should not fire when the engine
-      cannot make the other profile; and why an account set `media_profile: webrtc` was
+      cannot make the other profile; and why a subscriber set `media_profile: webrtc` was
       offered a guess at all. The 180 and the 482 are AthenaPhone's to look at, and its
       session has them.
-
-- [ ] The subscriber rename in the code (Tom, 2026-10-03): `Account` to `Subscriber`,
-      `account_*` to `subscriber_*` in the datastore contract, which changes shape so
-      `API_VERSION` moves, and the Redis keys `athena:account:*` to `athena:subscriber:*`.
-      `User` stays as it is. `Subscriber` as a type sits beside the SUBSCRIBE method once
-      presence arrives, which is why it was renamed away on 2026-09-21; the event package
-      code will have to be named with that in mind.
 
 ## Milestone 4 - Cluster
 
@@ -488,7 +482,7 @@ authentication from session issue to the OpenAPI document, and the one-command s
       `/api/v1/media` and `/metrics` landed on 2026-10-01. Left: hanging up a call
       (`DELETE /api/v1/calls/{call}`), which needs the node to send BYEs itself and so waits
       for the local UA in M6; call history, which is M4's CDRs; and `/api/v1/events`, an SSE
-      stream bridging `nodes/#`, `account/#` and `calls/#`.
+      stream bridging `nodes/#`, `subscribers/#` and `calls/#`.
 - [ ] athenasip-admin: replace the empty `src/lib/API.js` with a client generated from
       the OpenAPI document; pages for realms, subscribers, registrations, live calls,
       nodes, media engines, and the JsSIP test phone pointed at the server's own WSS.

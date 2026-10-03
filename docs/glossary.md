@@ -140,6 +140,12 @@ ever waits on it.
 
 **Topic.** The name an event is published under, such as `nodes/<id>/status`.
 
+**Consumer.** Something that reads the event bus: a monitor, the console, another node.
+Not called a subscriber, though the bus's own verb is subscribe: that word is taken.
+
+**Listener.** A socket the node accepts connections on: the SIP listeners, the inter-node
+listener, the admin listener.
+
 **Admin API.** The HTTP API a user provisions and observes a node through, at `/api/v1`.
 
 **Console.** The web admin interface, served by the node. A client of the admin API and
@@ -147,9 +153,3 @@ nothing more.
 
 **Core, strand.** The node's composition root and the single thread of execution that all
 signalling runs on. Nothing on it ever blocks.
-
-## Where the code does not say this yet
-
-Settled on 2026-10-03 and not yet carried through. The C++ type `Account`, the datastore
-operations `account_*` and the Redis keys `athena:account:*` mean a subscriber. This
-section is deleted when the rename lands.

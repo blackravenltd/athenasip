@@ -185,7 +185,7 @@ std::uint64_t Util::stable_id(const std::string& name) {
   }
 
   // Never zero: zero is what an id nobody set looks like, and a binding pointing at
-  // account zero would be indistinguishable from a binding pointing at nothing.
+  // subscriber zero would be indistinguishable from a binding pointing at nothing.
   return hash == 0 ? 1 : hash;
 }
 

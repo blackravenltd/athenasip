@@ -378,7 +378,7 @@ int main(int argc, char* argv[]) {
 
     if (config->http_api_enable) {
       // The API talks to the datastore on its own executor. It is not on the Core
-      // strand and must not be: an admin listing accounts cannot be allowed to hold up
+      // strand and must not be: an admin listing subscribers cannot be allowed to hold up
       // a call, which is what the async plugin contract is for.
       auto bearer = std::make_shared<api::BearerAuth>();
 

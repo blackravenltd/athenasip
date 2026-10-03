@@ -93,12 +93,12 @@ struct DatagramFixture : CoreFixture {
   std::shared_ptr<MockConnection> callee_connection;
   std::shared_ptr<athenasip::Channel> callee;
 
-  std::shared_ptr<athenasip::types::Account> bob;
+  std::shared_ptr<athenasip::types::Subscriber> bob;
 
   explicit DatagramFixture(std::uint16_t callee_port) {
     seed_realm("example.com");
-    seed_account(1, "sip:alice@example.com", "alice-ha1");
-    bob = seed_account(2, "sip:bob@example.com", "bob-ha1");
+    seed_subscriber(1, "sip:alice@example.com", "alice-ha1");
+    bob = seed_subscriber(2, "sip:bob@example.com", "bob-ha1");
 
     caller = make_channel("127.0.0.1", &caller_connection, "udp", 5070);
     callee = make_channel("127.0.0.1", &callee_connection, "udp", callee_port);

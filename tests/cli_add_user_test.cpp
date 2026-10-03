@@ -96,8 +96,8 @@ TEST(CliAddUserTest, AnExistingUserIsNotOverwritten) {
 
   const auto again = f.add("TOM", {}, "a different password");
 
-  // Case-folded, as everywhere else. Overwriting would be a way to take somebody's
-  // account by knowing their username and having shell access - which, granted, is most
+  // Case-folded, as everywhere else. Overwriting would be a way to take over
+  // a user by knowing their username and having shell access - which, granted, is most
   // of the way to owning the node anyway, but the tool should not be the easy path.
   EXPECT_EQ(again.outcome, Outcome::taken);
 

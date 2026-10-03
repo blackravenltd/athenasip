@@ -43,12 +43,12 @@ std::shared_ptr<types::Realm> make_realm(const std::string& name, uint32_t regis
   return realm;
 }
 
-std::shared_ptr<types::Account> make_account(uint64_t id, const std::string& uri) {
-  auto account = std::make_shared<types::Account>();
-  account->id = id;
-  account->identity = std::make_shared<types::SIPIdentity>(uri);
-  account->ha1 = "deadbeef";
-  return account;
+std::shared_ptr<types::Subscriber> make_subscriber(uint64_t id, const std::string& uri) {
+  auto subscriber = std::make_shared<types::Subscriber>();
+  subscriber->id = id;
+  subscriber->identity = std::make_shared<types::SIPIdentity>(uri);
+  subscriber->ha1 = "deadbeef";
+  return subscriber;
 }
 
 std::shared_ptr<types::User> make_user(const std::string& username, std::vector<std::string> roles) {
@@ -97,12 +97,12 @@ TEST(MemoryDatastoreTest, RealmRoundTrips) {
   EXPECT_EQ(datastore->realm_get_by_name("nowhere.example"), nullptr);
 }
 
-TEST(MemoryDatastoreTest, AccountLookupByIdentity) {
+TEST(MemoryDatastoreTest, SubscriberLookupByIdentity) {
   auto datastore = make_datastore();
-  datastore->account_create(make_account(42, "sip:alice@example.com"));
+  datastore->subscriber_create(make_subscriber(42, "sip:alice@example.com"));
 
   auto identity = std::make_shared<types::SIPIdentity>("sip:alice@example.com");
-  auto found = datastore->account_get(identity);
+  auto found = datastore->subscriber_get(identity);
 
   ASSERT_NE(found, nullptr);
   EXPECT_EQ(found->id, 42u);
@@ -110,21 +110,21 @@ TEST(MemoryDatastoreTest, AccountLookupByIdentity) {
   EXPECT_EQ(found->identity, identity);
 }
 
-TEST(MemoryDatastoreTest, UnknownAccountIsNull) {
+TEST(MemoryDatastoreTest, UnknownSubscriberIsNull) {
   auto datastore = make_datastore();
 
-  EXPECT_EQ(datastore->account_get(std::make_shared<types::SIPIdentity>("sip:nobody@example.com")), nullptr);
-  EXPECT_EQ(datastore->account_get(nullptr), nullptr);
+  EXPECT_EQ(datastore->subscriber_get(std::make_shared<types::SIPIdentity>("sip:nobody@example.com")), nullptr);
+  EXPECT_EQ(datastore->subscriber_get(nullptr), nullptr);
 }
 
 TEST(MemoryDatastoreTest, RegistrationStoresAContactThatCanBeLookedUp) {
   auto datastore = make_datastore();
   datastore->realm_create(make_realm("example.com"));
 
-  auto account = make_account(7, "sip:bob@example.com");
+  auto subscriber = make_subscriber(7, "sip:bob@example.com");
   auto contact = std::make_shared<types::SIPUri>("sip:bob@192.168.1.50:5060");
 
-  ASSERT_TRUE(datastore->account_register(account, contact, 3600, ""));
+  ASSERT_TRUE(datastore->subscriber_register(subscriber, contact, 3600, ""));
 
   auto locations = datastore->location_list(7);
   ASSERT_EQ(locations.size(), 1u);
@@ -137,7 +137,7 @@ TEST(MemoryDatastoreTest, RegistrationStoresAContactThatCanBeLookedUp) {
 // learned over (RFC 5626) and the node holding it, which is what a second node needs.
 TEST(MemoryDatastoreTest, RegistrationKeepsTheFlowAndTheNodeItWasGiven) {
   auto datastore = make_datastore();
-  auto account = make_account(7, "sip:bob@example.com");
+  auto subscriber = make_subscriber(7, "sip:bob@example.com");
 
   types::Location binding;
   binding.contact = std::make_shared<types::SIPUri>("sip:bob@192.168.1.50:5060");
@@ -145,7 +145,7 @@ TEST(MemoryDatastoreTest, RegistrationKeepsTheFlowAndTheNodeItWasGiven) {
   binding.flow_id = "tcp://192.168.1.50:5060";
   binding.node_id = "node-a";
 
-  ASSERT_TRUE(datastore->account_register(account, binding, 3600));
+  ASSERT_TRUE(datastore->subscriber_register(subscriber, binding, 3600));
 
   auto locations = datastore->location_list(7);
   ASSERT_EQ(locations.size(), 1u);
@@ -154,64 +154,64 @@ TEST(MemoryDatastoreTest, RegistrationKeepsTheFlowAndTheNodeItWasGiven) {
   EXPECT_EQ(locations[0].node_id, "node-a");
 
   // The store's own fields, whatever the caller put there.
-  EXPECT_EQ(locations[0].account_id, 7u);
+  EXPECT_EQ(locations[0].subscriber_id, 7u);
   EXPECT_GT(locations[0].expires_at, locations[0].registered_at);
 }
 
-// RFC 8760: an account can hold a credential per algorithm, and a read that returns
+// RFC 8760: a subscriber can hold a credential per algorithm, and a read that returns
 // only some of them is a credential that silently does not exist. This is the bug that
-// made a SHA-256 registration fail against an account that had the hash for it.
+// made a SHA-256 registration fail against a subscriber that had the hash for it.
 TEST(MemoryDatastoreTest, EveryCredentialSurvivesARead) {
   auto datastore = make_datastore();
 
-  auto account = make_account(7, "sip:bob@example.com");
-  account->ha1 = "md5-hash";
-  account->ha1_sha256 = "sha256-hash";
-  ASSERT_TRUE(datastore->account_create(account));
+  auto subscriber = make_subscriber(7, "sip:bob@example.com");
+  subscriber->ha1 = "md5-hash";
+  subscriber->ha1_sha256 = "sha256-hash";
+  ASSERT_TRUE(datastore->subscriber_create(subscriber));
 
-  auto found = datastore->account_get(std::make_shared<types::SIPIdentity>("sip:bob@example.com"));
+  auto found = datastore->subscriber_get(std::make_shared<types::SIPIdentity>("sip:bob@example.com"));
   ASSERT_NE(found, nullptr);
   EXPECT_EQ(found->ha1, "md5-hash");
   EXPECT_EQ(found->ha1_sha256, "sha256-hash");
 }
 
-// RFC 3261 10.2.1: an account may register more than one contact, and all of them
+// RFC 3261 10.2.1: a subscriber may register more than one contact, and all of them
 // are targets.
-TEST(MemoryDatastoreTest, MultipleContactsForOneAccountAreKept) {
+TEST(MemoryDatastoreTest, MultipleContactsForOneSubscriberAreKept) {
   auto datastore = make_datastore();
-  auto account = make_account(7, "sip:bob@example.com");
+  auto subscriber = make_subscriber(7, "sip:bob@example.com");
 
-  ASSERT_TRUE(datastore->account_register(account, std::make_shared<types::SIPUri>("sip:bob@192.168.1.50:5060"), 3600, ""));
-  ASSERT_TRUE(datastore->account_register(account, std::make_shared<types::SIPUri>("sip:bob@192.168.1.51:5060"), 3600, ""));
+  ASSERT_TRUE(datastore->subscriber_register(subscriber, std::make_shared<types::SIPUri>("sip:bob@192.168.1.50:5060"), 3600, ""));
+  ASSERT_TRUE(datastore->subscriber_register(subscriber, std::make_shared<types::SIPUri>("sip:bob@192.168.1.51:5060"), 3600, ""));
 
   EXPECT_EQ(datastore->location_list(7).size(), 2u);
 }
 
 TEST(MemoryDatastoreTest, ReregisteringTheSameContactDoesNotDuplicateIt) {
   auto datastore = make_datastore();
-  auto account = make_account(7, "sip:bob@example.com");
+  auto subscriber = make_subscriber(7, "sip:bob@example.com");
   auto contact = std::make_shared<types::SIPUri>("sip:bob@192.168.1.50:5060");
 
-  ASSERT_TRUE(datastore->account_register(account, contact, 3600, ""));
-  ASSERT_TRUE(datastore->account_register(account, contact, 3600, ""));
+  ASSERT_TRUE(datastore->subscriber_register(subscriber, contact, 3600, ""));
+  ASSERT_TRUE(datastore->subscriber_register(subscriber, contact, 3600, ""));
 
   EXPECT_EQ(datastore->location_list(7).size(), 1u);
 }
 
 TEST(MemoryDatastoreTest, UnregisterRemovesOnlyThatContact) {
   auto datastore = make_datastore();
-  auto account = make_account(7, "sip:bob@example.com");
+  auto subscriber = make_subscriber(7, "sip:bob@example.com");
   auto first = std::make_shared<types::SIPUri>("sip:bob@192.168.1.50:5060");
   auto second = std::make_shared<types::SIPUri>("sip:bob@192.168.1.51:5060");
 
-  datastore->account_register(account, first, 3600, "");
-  datastore->account_register(account, second, 3600, "");
+  datastore->subscriber_register(subscriber, first, 3600, "");
+  datastore->subscriber_register(subscriber, second, 3600, "");
 
-  ASSERT_TRUE(datastore->account_unregister(account, first));
+  ASSERT_TRUE(datastore->subscriber_unregister(subscriber, first));
   EXPECT_EQ(datastore->location_list(7).size(), 1u);
 
   // Removing something that is not there is not a success.
-  EXPECT_FALSE(datastore->account_unregister(account, first));
+  EXPECT_FALSE(datastore->subscriber_unregister(subscriber, first));
 }
 
 TEST(MemoryDatastoreTest, ExpiredRegistrationsAreNotReturned) {
@@ -220,10 +220,10 @@ TEST(MemoryDatastoreTest, ExpiredRegistrationsAreNotReturned) {
   // A realm whose registrations last no time at all.
   datastore->realm_create(make_realm("192.168.1.50", 0));
 
-  auto account = make_account(7, "sip:bob@example.com");
+  auto subscriber = make_subscriber(7, "sip:bob@example.com");
   auto contact = std::make_shared<types::SIPUri>("sip:bob@192.168.1.50:5060");
 
-  ASSERT_TRUE(datastore->account_register(account, contact, 3600, ""));
+  ASSERT_TRUE(datastore->subscriber_register(subscriber, contact, 3600, ""));
 
   // registration_timeout of 0 falls back to the default, so this contact is live.
   EXPECT_EQ(datastore->location_list(7).size(), 1u);
@@ -322,84 +322,84 @@ TEST(MemoryDatastoreTest, RealmDeleteTakesItsSubscribersAndTheirRegistrations) {
   datastore->realm_create(make_realm("one.example"));
   datastore->realm_create(make_realm("two.example"));
 
-  auto alice = make_account(1, "sip:alice@one.example");
-  auto carol = make_account(3, "sip:carol@two.example");
-  ASSERT_TRUE(datastore->account_create(alice));
-  ASSERT_TRUE(datastore->account_create(make_account(2, "sip:bob@one.example")));
-  ASSERT_TRUE(datastore->account_create(carol));
-  ASSERT_TRUE(datastore->account_register(alice, std::make_shared<types::SIPUri>("sip:alice@192.0.2.1:5060"), 3600, ""));
-  ASSERT_TRUE(datastore->account_register(carol, std::make_shared<types::SIPUri>("sip:carol@192.0.2.3:5060"), 3600, ""));
+  auto alice = make_subscriber(1, "sip:alice@one.example");
+  auto carol = make_subscriber(3, "sip:carol@two.example");
+  ASSERT_TRUE(datastore->subscriber_create(alice));
+  ASSERT_TRUE(datastore->subscriber_create(make_subscriber(2, "sip:bob@one.example")));
+  ASSERT_TRUE(datastore->subscriber_create(carol));
+  ASSERT_TRUE(datastore->subscriber_register(alice, std::make_shared<types::SIPUri>("sip:alice@192.0.2.1:5060"), 3600, ""));
+  ASSERT_TRUE(datastore->subscriber_register(carol, std::make_shared<types::SIPUri>("sip:carol@192.0.2.3:5060"), 3600, ""));
 
   ASSERT_TRUE(datastore->realm_delete("one.example"));
 
-  EXPECT_EQ(datastore->account_list("one.example").size(), 0u);
-  EXPECT_EQ(datastore->account_get(std::make_shared<types::SIPIdentity>("sip:alice@one.example")), nullptr);
+  EXPECT_EQ(datastore->subscriber_list("one.example").size(), 0u);
+  EXPECT_EQ(datastore->subscriber_get(std::make_shared<types::SIPIdentity>("sip:alice@one.example")), nullptr);
   EXPECT_EQ(datastore->location_list(1).size(), 0u);
 
   // And nothing of anybody else's.
-  EXPECT_EQ(datastore->account_list("two.example").size(), 1u);
+  EXPECT_EQ(datastore->subscriber_list("two.example").size(), 1u);
   EXPECT_EQ(datastore->location_list(3).size(), 1u);
 }
 
-TEST(MemoryDatastoreTest, AccountCreateRefusesADuplicate) {
+TEST(MemoryDatastoreTest, SubscriberCreateRefusesADuplicate) {
   auto datastore = make_datastore();
 
-  EXPECT_TRUE(datastore->account_create(make_account(1, "sip:alice@example.com")));
-  EXPECT_FALSE(datastore->account_create(make_account(1, "sip:alice@example.com")));
+  EXPECT_TRUE(datastore->subscriber_create(make_subscriber(1, "sip:alice@example.com")));
+  EXPECT_FALSE(datastore->subscriber_create(make_subscriber(1, "sip:alice@example.com")));
 }
 
-TEST(MemoryDatastoreTest, AccountUpdateRequiresAnExistingAccount) {
+TEST(MemoryDatastoreTest, SubscriberUpdateRequiresAnExistingSubscriber) {
   auto datastore = make_datastore();
 
-  EXPECT_FALSE(datastore->account_update(make_account(1, "sip:alice@example.com")));
+  EXPECT_FALSE(datastore->subscriber_update(make_subscriber(1, "sip:alice@example.com")));
 
-  ASSERT_TRUE(datastore->account_create(make_account(1, "sip:alice@example.com")));
+  ASSERT_TRUE(datastore->subscriber_create(make_subscriber(1, "sip:alice@example.com")));
 
-  auto changed = make_account(1, "sip:alice@example.com");
+  auto changed = make_subscriber(1, "sip:alice@example.com");
   changed->ha1 = "newhash";
-  EXPECT_TRUE(datastore->account_update(changed));
+  EXPECT_TRUE(datastore->subscriber_update(changed));
 
-  auto found = datastore->account_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
+  auto found = datastore->subscriber_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
   ASSERT_NE(found, nullptr);
   EXPECT_EQ(found->ha1, "newhash");
 }
 
-TEST(MemoryDatastoreTest, AccountListIsScopedToTheRealm) {
+TEST(MemoryDatastoreTest, SubscriberListIsScopedToTheRealm) {
   auto datastore = make_datastore();
 
-  datastore->account_create(make_account(1, "sip:alice@one.example"));
-  datastore->account_create(make_account(2, "sip:bob@one.example"));
-  datastore->account_create(make_account(3, "sip:carol@two.example"));
+  datastore->subscriber_create(make_subscriber(1, "sip:alice@one.example"));
+  datastore->subscriber_create(make_subscriber(2, "sip:bob@one.example"));
+  datastore->subscriber_create(make_subscriber(3, "sip:carol@two.example"));
 
-  EXPECT_EQ(datastore->account_list("one.example").size(), 2u);
-  EXPECT_EQ(datastore->account_list("two.example").size(), 1u);
-  EXPECT_EQ(datastore->account_list("nowhere.example").size(), 0u);
+  EXPECT_EQ(datastore->subscriber_list("one.example").size(), 2u);
+  EXPECT_EQ(datastore->subscriber_list("two.example").size(), 1u);
+  EXPECT_EQ(datastore->subscriber_list("nowhere.example").size(), 0u);
 }
 
-// A deleted account keeps no bindings: leaving them would route calls to someone
+// A deleted subscriber keeps no bindings: leaving them would route calls to someone
 // who no longer exists.
-TEST(MemoryDatastoreTest, AccountDeleteDropsTheirRegistrations) {
+TEST(MemoryDatastoreTest, SubscriberDeleteDropsTheirRegistrations) {
   auto datastore = make_datastore();
 
-  auto account = make_account(9, "sip:dave@example.com");
-  ASSERT_TRUE(datastore->account_create(account));
-  ASSERT_TRUE(datastore->account_register(account, std::make_shared<types::SIPUri>("sip:dave@192.0.2.9:5060"), 3600, ""));
+  auto subscriber = make_subscriber(9, "sip:dave@example.com");
+  ASSERT_TRUE(datastore->subscriber_create(subscriber));
+  ASSERT_TRUE(datastore->subscriber_register(subscriber, std::make_shared<types::SIPUri>("sip:dave@192.0.2.9:5060"), 3600, ""));
   ASSERT_EQ(datastore->location_list(9).size(), 1u);
 
-  EXPECT_TRUE(datastore->account_delete(account->identity));
+  EXPECT_TRUE(datastore->subscriber_delete(subscriber->identity));
   EXPECT_TRUE(datastore->location_list(9).empty());
-  EXPECT_FALSE(datastore->account_delete(account->identity));
+  EXPECT_FALSE(datastore->subscriber_delete(subscriber->identity));
 }
 
 TEST(MemoryDatastoreTest, LocationCarriesTheBindingNotJustTheContact) {
   auto datastore = make_datastore();
 
-  auto account = make_account(11, "sip:erin@example.com");
-  ASSERT_TRUE(datastore->account_register(account, std::make_shared<types::SIPUri>("sip:erin@10.0.0.7:5060"), 3600, ""));
+  auto subscriber = make_subscriber(11, "sip:erin@example.com");
+  ASSERT_TRUE(datastore->subscriber_register(subscriber, std::make_shared<types::SIPUri>("sip:erin@10.0.0.7:5060"), 3600, ""));
 
   auto locations = datastore->location_list(11);
   ASSERT_EQ(locations.size(), 1u);
-  EXPECT_EQ(locations[0].account_id, 11u);
+  EXPECT_EQ(locations[0].subscriber_id, 11u);
   EXPECT_GT(locations[0].expires_at, locations[0].registered_at);
 
   // 10.0.0.0/8 is private, so the binding is marked as behind NAT.
@@ -424,7 +424,7 @@ TEST(MemoryDatastoreTest, CallUpdateRequiresAnExistingCallAndListReturnsThem) {
 }
 
 // Users and the sessions they hold. These are statements out of docs/authentication.md:
-// a user is a record beside realms and accounts, usernames are one namespace matched
+// a user is a record beside realms and subscribers, usernames are one namespace matched
 // without regard to case, and a session is held by the hash of its token and never by
 // the token.
 
@@ -545,7 +545,7 @@ TEST(MemoryDatastoreTest, UserDeleteRemovesThemOnceAndSaysSoTheSecondTime) {
 }
 
 // A live token against a user that no longer exists is a session nobody can revoke, so
-// deleting a user takes their sessions with it, the way deleting an account takes its
+// deleting a user takes their sessions with it, the way deleting a subscriber takes its
 // registrations.
 TEST(MemoryDatastoreTest, UserDeleteRevokesTheirSessions) {
   auto datastore = make_datastore();
@@ -635,7 +635,7 @@ TEST(MemoryDatastoreTest, SessionDeleteEndsThatOneSession) {
 
   // Twice is success twice. A session is named by a secret the caller holds, so an answer
   // that tells a live token from one that was never real is an oracle a logout hands to
-  // anybody; the realm and account deletes still say when there was nothing there,
+  // anybody; the realm and subscriber deletes still say when there was nothing there,
   // because a realm name is not a secret.
   EXPECT_TRUE(datastore->session_delete("hash-a"));
   EXPECT_TRUE(datastore->session_delete("never-existed"));

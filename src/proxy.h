@@ -143,7 +143,7 @@ class Proxy : public TransactionUser {
     // from. An in-dialog request has none, and takes the one the call remembers.
     std::optional<types::MediaPolicy> media_policy;
 
-    // The callee's account's media profile, read where the account was in hand.
+    // The callee's subscriber's media profile, read where the subscriber was in hand.
     std::optional<types::MediaPolicy::Profiles> callee_profile;
 
     // Whether Contacts are rewritten to where messages came from (types::Behaviour).

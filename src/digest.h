@@ -10,8 +10,8 @@
 #include <string>
 
 #include "sip_header.h"
-#include "types/account.h"
 #include "types/authorization.h"
+#include "types/subscriber.h"
 
 namespace athenasip::digest {
 
@@ -22,9 +22,9 @@ namespace athenasip::digest {
 // fresh challenge rather than a refusal: the client may simply not have been asked yet.
 bool is_complete(const std::shared_ptr<types::Authorization>& credentials);
 
-// Empty when the credentials verify against the account's stored HA1 for the request
+// Empty when the credentials verify against the subscriber's stored HA1 for the request
 // method, or why they did not. The nonce is the caller's to have checked first.
-std::string verify(const types::Account& account, types::Authorization& credentials, const std::string& method);
+std::string verify(const types::Subscriber& subscriber, types::Authorization& credentials, const std::string& method);
 
 // RFC 8760 section 2.1: one challenge per algorithm, most preferred first, into `field`.
 void add_challenges(SIPHeader& header, const std::string& field, const std::string& realm, const std::string& nonce);

@@ -19,10 +19,10 @@
 
 namespace athenasip::media {
 
-// An account whose endpoint refused the profile this node offered it and was offered the
+// A subscriber whose endpoint refused the profile this node offered it and was offered the
 // other. took is what it then accepted, or empty when it refused that as well.
 struct Reoffer {
-  std::string account;
+  std::string subscriber;
   Profile rejected = Profile::PlainRtp;
   std::optional<Profile> took;
   std::uint64_t count = 0;
@@ -30,16 +30,16 @@ struct Reoffer {
 };
 
 // What this node has had to re-offer, kept for the operator rather than acted on: the node
-// suggests an account's profile and the operator decides. Nothing here changes how a later
+// suggests a subscriber's profile and the operator decides. Nothing here changes how a later
 // call is routed. Per node and in memory, like the live calls, and bounded so a run of
 // unknown callees cannot grow it without limit.
 class Reoffers {
  public:
   static constexpr std::size_t kLimit = 1024;
 
-  void record(const std::string& account, Profile rejected, std::optional<Profile> took, std::time_t now = std::time(nullptr)) {
-    auto& entry = _entries[{account, rejected}];
-    entry.account = account;
+  void record(const std::string& subscriber, Profile rejected, std::optional<Profile> took, std::time_t now = std::time(nullptr)) {
+    auto& entry = _entries[{subscriber, rejected}];
+    entry.subscriber = subscriber;
     entry.rejected = rejected;
     entry.took = took;
     entry.count++;

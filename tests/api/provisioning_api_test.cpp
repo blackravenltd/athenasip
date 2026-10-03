@@ -346,7 +346,7 @@ TEST(ProvisioningApiTest, AnUnknownRealmIs404) {
 
 // RFC 2617: the server holds HA1 and never the password. The API takes a password
 // because an operator has one, and turns it into HA1 on the way in.
-TEST(ProvisioningApiTest, AnAccountIsCreatedWithItsHa1ComputedHere) {
+TEST(ProvisioningApiTest, AnSubscriberIsCreatedWithItsHa1ComputedHere) {
   ApiFixture f;
 
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
@@ -361,14 +361,14 @@ TEST(ProvisioningApiTest, AnAccountIsCreatedWithItsHa1ComputedHere) {
 
   // What the store holds is the HA1 of user, realm and password, which is what the
   // registrar will check a Digest response against.
-  auto account = f.store->account_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
-  ASSERT_NE(account, nullptr);
-  EXPECT_EQ(account->ha1, Util::to_lower(Util::md5("alice:example.com:secret")));
+  auto subscriber = f.store->subscriber_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
+  ASSERT_NE(subscriber, nullptr);
+  EXPECT_EQ(subscriber->ha1, Util::to_lower(Util::md5("alice:example.com:secret")));
 }
 
-// An account's behaviour section has the one setting that is about an endpoint rather
+// A subscriber's behaviour section has the one setting that is about an endpoint rather
 // than a realm: what the endpoint is. It starts empty, which takes the realm's.
-TEST(ProvisioningApiTest, AnAccountSaysWhatItsEndpointIs) {
+TEST(ProvisioningApiTest, AnSubscriberSaysWhatItsEndpointIs) {
   ApiFixture f;
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
 
@@ -380,18 +380,18 @@ TEST(ProvisioningApiTest, AnAccountSaysWhatItsEndpointIs) {
   ASSERT_EQ(updated.status, 200u) << updated.body;
   EXPECT_EQ(updated.json().at("behaviour").at("media_profile").as_string(), "webrtc");
 
-  auto stored = f.store->account_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
+  auto stored = f.store->subscriber_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
   ASSERT_NE(stored, nullptr);
   EXPECT_EQ(stored->media_profile, types::MediaPolicy::Profiles::WebRtc);
 
   ASSERT_EQ(f.put("/api/v1/realms/example.com/subscribers/alice", R"({"behaviour":{"media_profile":null}})").status, 200u);
-  stored = f.store->account_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
+  stored = f.store->subscriber_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
   EXPECT_FALSE(stored->media_profile.has_value());
 }
 
 // Anchoring is a realm's question, and a profile nobody recognises is a mistake. Both are
-// refused and neither changes the account, password included.
-TEST(ProvisioningApiTest, AnUnreadableAccountBehaviourChangesNothing) {
+// refused and neither changes the subscriber, password included.
+TEST(ProvisioningApiTest, AnUnreadableSubscriberBehaviourChangesNothing) {
   ApiFixture f;
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
   ASSERT_EQ(f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice","password":"secret","behaviour":{"media_profile":"rtp"}})").status, 201u);
@@ -400,11 +400,11 @@ TEST(ProvisioningApiTest, AnUnreadableAccountBehaviourChangesNothing) {
   EXPECT_EQ(f.put("/api/v1/realms/example.com/subscribers/alice", R"({"behaviour":{"media_profile":"web-rtc"}})").status, 400u);
   EXPECT_EQ(f.post("/api/v1/realms/example.com/subscribers", R"({"user":"bob","password":"secret","behaviour":{"media_profile":7}})").status, 400u);
 
-  auto stored = f.store->account_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
+  auto stored = f.store->subscriber_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
   ASSERT_NE(stored, nullptr);
   EXPECT_EQ(stored->media_profile, types::MediaPolicy::Profiles::PlainRtp);
   EXPECT_EQ(stored->ha1, Util::to_lower(Util::md5("alice:example.com:secret")));
-  EXPECT_EQ(f.store->account_get(std::make_shared<types::SIPIdentity>("sip:bob@example.com")), nullptr);
+  EXPECT_EQ(f.store->subscriber_get(std::make_shared<types::SIPIdentity>("sip:bob@example.com")), nullptr);
 }
 
 // The realm in the path reaches the handler. This is not as obvious as it looks: the
@@ -423,12 +423,12 @@ TEST(ProvisioningApiTest, ThePathParameterReachesTheHandler) {
   auto listed = f.get("/api/v1/realms/example.com/subscribers");
   ASSERT_EQ(listed.status, 200u);
 
-  const auto accounts = listed.json();
-  ASSERT_EQ(accounts.as_array().size(), 1u);
-  EXPECT_EQ(accounts.as_array()[0].at("realm").as_string(), "example.com");
+  const auto subscribers = listed.json();
+  ASSERT_EQ(subscribers.as_array().size(), 1u);
+  EXPECT_EQ(subscribers.as_array()[0].at("realm").as_string(), "example.com");
 }
 
-TEST(ProvisioningApiTest, AnAccountInARealmThatDoesNotExistIs404) {
+TEST(ProvisioningApiTest, AnSubscriberInARealmThatDoesNotExistIs404) {
   ApiFixture f;
 
   auto response = f.post("/api/v1/realms/nowhere.example/subscribers", R"({"user":"alice","password":"secret"})");
@@ -439,7 +439,7 @@ TEST(ProvisioningApiTest, AnAccountInARealmThatDoesNotExistIs404) {
   EXPECT_NE(response.body.find("nowhere.example"), std::string::npos);
 }
 
-TEST(ProvisioningApiTest, AnAccountWithNoCredentialIsRefused) {
+TEST(ProvisioningApiTest, AnSubscriberWithNoCredentialIsRefused) {
   ApiFixture f;
 
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
@@ -470,9 +470,9 @@ TEST(ProvisioningApiTest, DeletingARealmDeletesItsSubscribersAndRegistrations) {
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
   ASSERT_EQ(f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice","password":"secret"})").status, 201u);
 
-  auto account = f.store->account_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
-  ASSERT_NE(account, nullptr);
-  ASSERT_TRUE(f.store->account_register(account, std::make_shared<types::SIPUri>("sip:alice@192.0.2.10:5060"), 3600, ""));
+  auto subscriber = f.store->subscriber_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
+  ASSERT_NE(subscriber, nullptr);
+  ASSERT_TRUE(f.store->subscriber_register(subscriber, std::make_shared<types::SIPUri>("sip:alice@192.0.2.10:5060"), 3600, ""));
 
   EXPECT_EQ(f.request(http::verb::delete_, "/api/v1/realms/example.com").status, 204u);
   EXPECT_EQ(f.get("/api/v1/registrations", "client-token").json().as_array().size(), 0u);
@@ -484,8 +484,8 @@ TEST(ProvisioningApiTest, DeletingARealmDeletesItsSubscribersAndRegistrations) {
 }
 
 // The id is derived from the URI rather than counted, so every node that provisions the
-// same account agrees about which account a binding belongs to.
-TEST(ProvisioningApiTest, AnAccountIdIsDerivedFromItsUri) {
+// same subscriber agrees about which subscriber a binding belongs to.
+TEST(ProvisioningApiTest, AnSubscriberIdIsDerivedFromItsUri) {
   ApiFixture f;
 
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
@@ -513,14 +513,14 @@ TEST(ProvisioningApiTest, RegistrationsAreListedForTheClientScope) {
 
   // A binding written the way the registrar writes one comes back with the flow it was
   // learned over.
-  auto account = f.store->account_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
-  ASSERT_NE(account, nullptr);
+  auto subscriber = f.store->subscriber_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
+  ASSERT_NE(subscriber, nullptr);
 
   types::Location binding;
   binding.contact = std::make_shared<types::SIPUri>("sip:alice@192.0.2.10:5060");
   binding.flow_id = "tcp://192.0.2.10:5060";
   binding.node_id = "test-node";
-  ASSERT_TRUE(f.store->account_register(account, binding, 3600));
+  ASSERT_TRUE(f.store->subscriber_register(subscriber, binding, 3600));
 
   auto after = f.get("/api/v1/registrations", "client-token");
   ASSERT_EQ(after.status, 200u);

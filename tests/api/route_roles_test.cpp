@@ -207,7 +207,7 @@ TEST(RouteRolesTest, ReadingRealmsAdmitsEitherRoleAndChangingThemDoesNot) {
 
   const auto token = f.login("placer");
 
-  // Somebody who places accounts has to be able to discover which realms exist, which is
+  // Somebody who places subscribers has to be able to discover which realms exist, which is
   // what was agreed with the console.
   EXPECT_EQ(f.get("/api/v1/realms", token).status, 200u);
 

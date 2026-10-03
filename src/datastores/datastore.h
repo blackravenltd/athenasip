@@ -17,12 +17,12 @@
 #include "../loggers/logger.h"
 #include "../plugins/plugin.h"
 #include "../plugins/plugin_registry.h"
-#include "../types/account.h"
 #include "../types/location.h"
 #include "../types/realm.h"
 #include "../types/session.h"
 #include "../types/sip_identity.h"
 #include "../types/sip_uri.h"
+#include "../types/subscriber.h"
 #include "../types/url.h"
 #include "../types/user.h"
 
@@ -37,7 +37,7 @@ namespace athenasip::datastores {
 // plugin contract, so it cannot be made async later without breaking every plugin
 // written against it.
 //
-// A read that finds nothing succeeds with an empty value. "No such account" and
+// A read that finds nothing succeeds with an empty value. "No such subscriber" and
 // "the datastore is unreachable" are different answers and callers act on them
 // differently: one is a 404, the other a 500.
 class Datastore : public plugins::Plugin {
@@ -72,7 +72,7 @@ class Datastore : public plugins::Plugin {
   virtual void realm_create(plugins::Executor on, std::shared_ptr<types::Realm> realm, plugins::StatusHandler handler) = 0;
   virtual void realm_update(plugins::Executor on, std::shared_ptr<types::Realm> realm, plugins::StatusHandler handler) = 0;
 
-  // A realm is deleted with everything in it: every account in it and their bindings. A
+  // A realm is deleted with everything in it: every subscriber in it and their bindings. A
   // driver that left them would keep subscribers the API can no longer reach, because it
   // finds them through their realm, and bindings that go on routing calls into a domain
   // the node no longer serves. Fails, and keeps the realm, if any of that could not be done.
@@ -123,7 +123,7 @@ class Datastore : public plugins::Plugin {
   }
 
   // Succeeds whether or not that hash was held, which is not the rule the realm and
-  // account deletes follow and is deliberate. A session is named by a secret the caller
+  // subscriber deletes follow and is deliberate. A session is named by a secret the caller
   // is holding, so an answer that distinguishes "that was a session and now it is not"
   // from "that was never a session" is a way to ask this node whether a token is real,
   // one guess at a time - and a logout is reachable by anybody. A realm name is not a
@@ -143,12 +143,13 @@ class Datastore : public plugins::Plugin {
     _unsupported(std::move(on), std::move(handler), "session_delete_for_user");
   }
 
-  // Accounts.
-  virtual void account_get(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity, plugins::Handler<std::shared_ptr<types::Account>> handler) = 0;
-  virtual void account_create(plugins::Executor on, std::shared_ptr<types::Account> account, plugins::StatusHandler handler) = 0;
-  virtual void account_update(plugins::Executor on, std::shared_ptr<types::Account> account, plugins::StatusHandler handler) = 0;
-  virtual void account_delete(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity, plugins::StatusHandler handler) = 0;
-  virtual void account_list(plugins::Executor on, std::string realm_name, plugins::Handler<std::vector<std::shared_ptr<types::Account>>> handler) = 0;
+  // Subscribers.
+  virtual void subscriber_get(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity,
+                              plugins::Handler<std::shared_ptr<types::Subscriber>> handler) = 0;
+  virtual void subscriber_create(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, plugins::StatusHandler handler) = 0;
+  virtual void subscriber_update(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, plugins::StatusHandler handler) = 0;
+  virtual void subscriber_delete(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity, plugins::StatusHandler handler) = 0;
+  virtual void subscriber_list(plugins::Executor on, std::string realm_name, plugins::Handler<std::vector<std::shared_ptr<types::Subscriber>>> handler) = 0;
 
   // Registrations (RFC 3261 section 10 bindings). The binding carries what the node knows
   // about it that the Contact URI does not say: the RFC 3327 Path recorded at
@@ -158,14 +159,14 @@ class Datastore : public plugins::Plugin {
   //
   // A struct rather than a growing parameter list: the binding is one thing, and the
   // fields a cluster needs are exactly the ones a single node leaves empty.
-  virtual void account_register(plugins::Executor on, std::shared_ptr<types::Account> account, types::Location binding, std::uint32_t expires_seconds,
-                                plugins::StatusHandler handler) = 0;
-  virtual void account_unregister(plugins::Executor on, std::shared_ptr<types::Account> account, std::shared_ptr<types::SIPUri> contact,
-                                  plugins::StatusHandler handler) = 0;
+  virtual void subscriber_register(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, types::Location binding, std::uint32_t expires_seconds,
+                                   plugins::StatusHandler handler) = 0;
+  virtual void subscriber_unregister(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact,
+                                     plugins::StatusHandler handler) = 0;
 
-  // Every live binding for an account. Target determination needs all of them
+  // Every live binding for a subscriber. Target determination needs all of them
   // (RFC 3261 16.5). Expired bindings are not returned.
-  virtual void location_list(plugins::Executor on, std::uint64_t account_id, plugins::Handler<std::vector<types::Location>> handler) = 0;
+  virtual void location_list(plugins::Executor on, std::uint64_t subscriber_id, plugins::Handler<std::vector<types::Location>> handler) = 0;
 
   virtual void nonce_create(plugins::Executor on, std::string nonce, std::time_t expires_at, plugins::StatusHandler handler) = 0;
   virtual void nonce_check(plugins::Executor on, std::string nonce, plugins::Handler<bool> handler) = 0;

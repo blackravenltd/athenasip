@@ -268,8 +268,8 @@ void CallsAPI::_media(RouteContext context) {
   });
 }
 
-// The accounts this node offered the other profile after a 488, and what came of it. The node
-// suggests and the operator decides: the suggestion is the value the account's behaviour
+// The subscribers this node offered the other profile after a 488, and what came of it. The node
+// suggests and the operator decides: the suggestion is the value the subscriber's behaviour
 // would take, and nothing sets it.
 void CallsAPI::_reoffers(RouteContext context) {
   auto core = _core.lock();
@@ -284,7 +284,7 @@ void CallsAPI::_reoffers(RouteContext context) {
 
     for (const auto& reoffer : core->reoffers().list()) {
       boost::json::object entry;
-      entry["subscriber"] = reoffer.account;
+      entry["subscriber"] = reoffer.subscriber;
       entry["rejected"] = setting_json(reoffer.rejected);
       entry["took"] = setting_json(reoffer.took);
       entry["count"] = reoffer.count;

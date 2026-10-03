@@ -79,25 +79,27 @@ struct CoreFixture {
     return future.get();
   }
 
-  bool register_binding(const std::shared_ptr<athenasip::types::Account>& account, const std::shared_ptr<athenasip::types::SIPUri>& contact,
+  bool register_binding(const std::shared_ptr<athenasip::types::Subscriber>& subscriber, const std::shared_ptr<athenasip::types::SIPUri>& contact,
                         const std::shared_ptr<athenasip::Channel>& channel, std::uint32_t expires_seconds, const std::string& path = "") {
-    return await_on_strand(
-               [&](athenasip::plugins::StatusHandler handler) { core->account_register(account, contact, channel, expires_seconds, path, std::move(handler)); })
-        .ok;
-  }
-
-  // An RFC 5626 outbound binding: the same, with the client's instance and this flow's reg-id.
-  bool register_outbound(const std::shared_ptr<athenasip::types::Account>& account, const std::shared_ptr<athenasip::types::SIPUri>& contact,
-                         const std::shared_ptr<athenasip::Channel>& channel, const std::string& instance, std::uint32_t reg_id) {
     return await_on_strand([&](athenasip::plugins::StatusHandler handler) {
-             core->account_register(account, contact, channel, 3600, "", std::move(handler), instance, reg_id);
+             core->subscriber_register(subscriber, contact, channel, expires_seconds, path, std::move(handler));
            })
         .ok;
   }
 
-  bool unregister_binding(const std::shared_ptr<athenasip::types::Account>& account, const std::shared_ptr<athenasip::types::SIPUri>& contact,
+  // An RFC 5626 outbound binding: the same, with the client's instance and this flow's reg-id.
+  bool register_outbound(const std::shared_ptr<athenasip::types::Subscriber>& subscriber, const std::shared_ptr<athenasip::types::SIPUri>& contact,
+                         const std::shared_ptr<athenasip::Channel>& channel, const std::string& instance, std::uint32_t reg_id) {
+    return await_on_strand([&](athenasip::plugins::StatusHandler handler) {
+             core->subscriber_register(subscriber, contact, channel, 3600, "", std::move(handler), instance, reg_id);
+           })
+        .ok;
+  }
+
+  bool unregister_binding(const std::shared_ptr<athenasip::types::Subscriber>& subscriber, const std::shared_ptr<athenasip::types::SIPUri>& contact,
                           const std::shared_ptr<athenasip::Channel>& channel) {
-    return await_on_strand([&](athenasip::plugins::StatusHandler handler) { core->account_unregister(account, contact, channel, std::move(handler)); }).ok;
+    return await_on_strand([&](athenasip::plugins::StatusHandler handler) { core->subscriber_unregister(subscriber, contact, channel, std::move(handler)); })
+        .ok;
   }
 
   std::string mint_nonce(const std::shared_ptr<athenasip::types::Realm>& realm) {
@@ -130,17 +132,17 @@ struct CoreFixture {
     return realm;
   }
 
-  // ha1_sha256 is empty by default, which is an account that can only answer an MD5
-  // challenge - exactly what an account imported as a bare MD5 hash looks like.
-  std::shared_ptr<athenasip::types::Account> seed_account(std::uint64_t id, const std::string& uri, const std::string& ha1,
-                                                          const std::string& ha1_sha256 = "") {
-    auto account = std::make_shared<athenasip::types::Account>();
-    account->id = id;
-    account->identity = std::make_shared<athenasip::types::SIPIdentity>(uri);
-    account->ha1 = ha1;
-    account->ha1_sha256 = ha1_sha256;
-    store->account_create(account);
-    return account;
+  // ha1_sha256 is empty by default, which is a subscriber that can only answer an MD5
+  // challenge - exactly what a subscriber imported as a bare MD5 hash looks like.
+  std::shared_ptr<athenasip::types::Subscriber> seed_subscriber(std::uint64_t id, const std::string& uri, const std::string& ha1,
+                                                                const std::string& ha1_sha256 = "") {
+    auto subscriber = std::make_shared<athenasip::types::Subscriber>();
+    subscriber->id = id;
+    subscriber->identity = std::make_shared<athenasip::types::SIPIdentity>(uri);
+    subscriber->ha1 = ha1;
+    subscriber->ha1_sha256 = ha1_sha256;
+    store->subscriber_create(subscriber);
+    return subscriber;
   }
 
   // Raw SIP in, exactly as the read loop hands it over.

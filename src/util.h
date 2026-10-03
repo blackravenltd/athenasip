@@ -47,9 +47,9 @@ class Util {
   static std::size_t hash_combine(std::size_t seed, std::size_t hash_value);
 
   // A 64-bit id derived from a name, the same on every node that computes it. A binding
-  // records the id of the account it belongs to, so the id has to be a fact about the
-  // account rather than about the node that happened to provision it: a per-node
-  // sequence would give the same account a different id on each node, and a cluster
+  // records the id of the subscriber it belongs to, so the id has to be a fact about the
+  // subscriber rather than about the node that happened to provision it: a per-node
+  // sequence would give the same subscriber a different id on each node, and a cluster
   // would stop agreeing about whose registration is whose. FNV-1a, because the
   // requirement is that it is stable and spread out, not that it is unguessable.
   static std::uint64_t stable_id(const std::string& name);

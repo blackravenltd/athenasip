@@ -46,9 +46,9 @@ void AuthAPI::register_routes(Router& router) {
 }
 
 void AuthAPI::_refuse(RouteContext& context) {
-  // One body for all of them. Which of "no such user", "wrong password" and "that account
+  // One body for all of them. Which of "no such user", "wrong password" and "that user
   // is disabled" it was is the thing not to say, because between them the answers are a
-  // list of who holds an account on this node.
+  // list of who is a user on this node.
   context.response->set(http::field::www_authenticate, "Bearer realm=\"athenasip\"");
   write_error(context.response, http::status::unauthorized, "unauthorized", "the username or password is not right");
 }
