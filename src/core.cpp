@@ -1039,8 +1039,37 @@ std::string Core::node_status_json(const std::string& status, const std::string&
 std::string Core::node_status_json(const std::string& status) const {
   const auto uptime = _started_at == 0 ? 0 : static_cast<std::int64_t>(std::time(nullptr) - _started_at);
 
-  return node_status_json(status, config->sip_node_id, _version, datastore ? datastore->describe() : "none", uptime, config->events_status_interval,
-                          config->advertised_transports(), config->advertised_cluster());
+  auto report = boost::json::parse(node_status_json(status, config->sip_node_id, _version, datastore ? datastore->describe() : "none", uptime,
+                                                    config->events_status_interval, config->advertised_transports(), config->advertised_cluster()))
+                    .as_object();
+
+  // What it can do with media: a monitor and the console can tell a node with rtpengine
+  // from one with the builtin relay, and a peer can tell where a call can be anchored.
+  // Null for a node with no engine, which is an answer, rather than absent, which is not.
+  if (media) {
+    boost::json::object engine;
+    engine["engine"] = media->describe();
+
+    const auto capabilities = media->capabilities();
+    boost::json::array can;
+    if (capabilities.bridge) can.push_back("bridge");
+    if (capabilities.conference) can.push_back("conference");
+    if (capabilities.record) can.push_back("record");
+    if (capabilities.transcode) can.push_back("transcode");
+    engine["capabilities"] = std::move(can);
+
+    boost::json::array produces;
+    for (const auto profile : {media::Profile::PlainRtp, media::Profile::WebRtc, media::Profile::SrtpSdes}) {
+      if (media->produces(profile)) produces.push_back(boost::json::string(media::setting_name(profile)));
+    }
+    engine["produces"] = std::move(produces);
+
+    report["media"] = std::move(engine);
+  } else {
+    report["media"] = nullptr;
+  }
+
+  return boost::json::serialize(report);
 }
 
 void Core::_node_status_publish() {

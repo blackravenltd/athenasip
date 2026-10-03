@@ -2566,3 +2566,5 @@ Tom's answers to the questions that were waiting on him, and what they led to.
 - [x] **`athenasip --reset-password NAME`**: a new password for a user that exists, from
       the host, and every session it held ended. On 2026-10-03 the only way to reset an
       administrator's password was to edit Redis by hand.
+- [x] **The node's media in its status**: the engine, its capabilities and the profiles
+      it can produce, `null` with none. The last of discovery.
