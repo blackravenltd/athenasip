@@ -32,6 +32,7 @@ class MemoryDatastore : public Datastore {
   ~MemoryDatastore() override;
 
   std::string name() const override;
+  bool configure(const YAML::Node& own_root, const Config& system) override;
   std::string version() const override;
 
   void connect(plugins::Executor on, plugins::StatusHandler handler) override;
@@ -114,6 +115,7 @@ class MemoryDatastore : public Datastore {
   bool _nonce_check(std::string nonce);
 
   bool _call_create(std::shared_ptr<Call> call);
+  void _call_prune(std::time_t now);
   bool _call_update(std::shared_ptr<Call> call);
   std::shared_ptr<Call> _call_get(const std::string& id);
   std::vector<std::shared_ptr<Call>> _call_list();
@@ -137,6 +139,9 @@ class MemoryDatastore : public Datastore {
   std::unordered_map<std::string, types::Location> _locations;
   std::unordered_map<std::string, std::time_t> _nonces;
   std::unordered_map<std::string, std::shared_ptr<Call>> _calls;
+
+  // How long the record of an ended call is kept, in seconds; zero for ever.
+  std::uint32_t _call_retention = 30 * 24 * 60 * 60;
 };
 
 }  // namespace athenasip::datastores

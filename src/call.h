@@ -114,6 +114,14 @@ class Call {
   // one leaves every description in the call alone. The first node anchors.
   bool media_elsewhere = false;
 
+  // The call record (CDR). One node writes it: the node the caller reached, which is
+  // `node`. A node a peer forwarded the call to has that peer in `from_node` and writes
+  // nothing, or two nodes would be taking turns to overwrite one record with half of it
+  // each. `media_engine` is the engine that anchored the media, empty when none did.
+  std::string node;
+  std::string from_node;
+  std::string media_engine;
+
   std::vector<Participant> participants;
 
   std::time_t created_at = 0;

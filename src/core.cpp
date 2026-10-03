@@ -818,11 +818,16 @@ void Core::transaction_end_all() { _matcher.terminate_all(); }
 bool Core::call_register(std::shared_ptr<Call> call) {
   _calls[call->id] = call;
 
+  if (call->node.empty()) call->node = config->sip_node_id;
+
   // The call record is for the admin API and the cluster, not for this call's
-  // signalling, so nothing waits on it.
-  datastore->call_create(_strand, call, [this, self = shared_from_this(), call](plugins::Status status) {
-    if (!status.ok) _logger->error("Cannot store call " + call->id + " - " + status.error);
-  });
+  // signalling, so nothing waits on it. The node the caller reached writes it; a node a
+  // peer forwarded the call to does not.
+  if (call->from_node.empty()) {
+    datastore->call_create(_strand, call, [this, self = shared_from_this(), call](plugins::Status status) {
+      if (!status.ok) _logger->error("Cannot store call " + call->id + " - " + status.error);
+    });
+  }
 
   events->publish(events::topics::call_register(call->id), call->id);
 
@@ -857,6 +862,10 @@ void Core::_on_dialog_change(const std::shared_ptr<types::Dialog>& dialog) {
       participant.node_id = config->sip_node_id;
     }
 
+    // Forwarded here by a peer: the caller is that node's, and so is the record.
+    call->from_node = dialog->from_node;
+    if (!call->from_node.empty()) call->participants.front().node_id = call->from_node;
+
     call_register(call);
   }
 
@@ -886,9 +895,11 @@ void Core::_on_dialog_change(const std::shared_ptr<types::Dialog>& dialog) {
 
   // The record is for the admin API and the cluster, not for this call's signalling, so
   // nothing waits on it.
-  datastore->call_update(_strand, call, [this, self = shared_from_this(), call](plugins::Status status) {
-    if (!status.ok) _logger->error("Cannot update call " + call->id + " - " + status.error);
-  });
+  if (call->from_node.empty()) {
+    datastore->call_update(_strand, call, [this, self = shared_from_this(), call](plugins::Status status) {
+      if (!status.ok) _logger->error("Cannot update call " + call->id + " - " + status.error);
+    });
+  }
 
   if (call->state != Call::State::Closed) return;
 

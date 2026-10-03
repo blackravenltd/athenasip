@@ -332,6 +332,11 @@ class Config {
   // A signed-in caller, by session.
   RateLimit http_api_limit_session{60, 300};
 
+  // calls.history_retention: how long the record of a call that has ended is kept, in
+  // seconds. Thirty days. Zero keeps every record for ever, which on a busy node is a
+  // datastore that only grows.
+  std::uint32_t calls_history_retention = 30 * 24 * 60 * 60;
+
   // http.tls: an HTTPS listener beside the plain one, serving the same thing. A browser
   // gives a page that is not a secure context no microphone, so the console's softphone
   // needs it. The certificate is the tls section's unless this section names its own.

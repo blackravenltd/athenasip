@@ -226,6 +226,51 @@ TEST(CallsApiTest, WithNoEngineThereIsNoMedia) {
 
 // What is on a call is status, not provisioning: the same role as registrations, and
 // nothing without a credential.
+// Call records (Milestone 4): the calls that are over, from the datastore, newest first,
+// each saying who called whom, for how long, and which nodes and engine carried it.
+TEST(CallsApiTest, CallRecordsListTheCallsThatHaveEndedNewestFirst) {
+  CallsFixture f;
+
+  auto first = f.add_call("first-call");
+  auto second = f.add_call("second-call");
+  f.add_call("still-up");
+
+  f.on_strand([&]() {
+    first->state = Call::State::Closed;
+    first->ended_at = 1790000065;
+    first->media_engine = "stub 0.0.1";
+
+    second->state = Call::State::Closed;
+    second->answered_at = 0;
+    second->ended_at = 1790000900;
+    second->participants.back().node_id = "node-b";
+  });
+
+  const auto response = f.get("/api/v1/call-records");
+  ASSERT_EQ(response.status, 200u);
+
+  const auto records = response.json().as_array();
+  ASSERT_EQ(records.size(), 2u) << "a call still up is not a record";
+
+  EXPECT_EQ(records[0].at("id").as_string(), "second-call");
+  EXPECT_EQ(records[0].at("duration").as_int64(), 0) << "nobody answered";
+  EXPECT_TRUE(records[0].at("answered_at").is_null());
+  ASSERT_EQ(records[0].at("nodes").as_array().size(), 2u);
+  EXPECT_EQ(records[0].at("nodes").as_array()[0].as_string(), "test-node");
+  EXPECT_EQ(records[0].at("nodes").as_array()[1].as_string(), "node-b");
+  EXPECT_TRUE(records[0].at("media_engine").is_null());
+
+  EXPECT_EQ(records[1].at("id").as_string(), "first-call");
+  EXPECT_EQ(records[1].at("caller").as_string(), "sip:alice@example.com");
+  EXPECT_EQ(records[1].at("callee").as_string(), "sip:bob@example.com");
+  EXPECT_EQ(records[1].at("duration").as_int64(), 60);
+  EXPECT_EQ(records[1].at("media_engine").as_string(), "stub 0.0.1");
+
+  EXPECT_EQ(f.get("/api/v1/call-records?limit=1").json().as_array().size(), 1u);
+  EXPECT_EQ(f.get("/api/v1/call-records?limit=lots").status, 400u);
+  EXPECT_EQ(f.get("/api/v1/call-records", "").status, 401u);
+}
+
 TEST(CallsApiTest, ReadingCallsTakesACredential) {
   CallsFixture f;
 

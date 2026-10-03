@@ -19,6 +19,8 @@
 #include <tuple>
 #include <utility>
 
+#include "../config.h"
+
 namespace athenasip::datastores {
 namespace {
 
@@ -850,15 +852,28 @@ void RedisDatastore::call_update(plugins::Executor on, std::shared_ptr<Call> cal
   const auto key = _call_key(call->id);
   const auto id = call->id;
   const auto body = _serialise_call(call);
+  const bool ended = call->state == Call::State::Closed;
 
-  _async_exists(key, [this, on, handler, key, id, body](RedisError error, bool exists) mutable {
+  _async_exists(key, [this, on, handler, key, id, body, ended](RedisError error, bool exists) mutable {
     if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
     if (!exists) return _complete(on, handler, plugins::Status::failure("call_update: " + id + " does not exist"));
 
-    _async_set(key, body, [this, on, handler](RedisError error, bool ok) mutable {
+    auto written = [this, on, handler](RedisError error, bool ok) mutable {
       _complete(on, handler, !error && ok ? plugins::Status::success() : plugins::Status::failure(error ? error.message() : "call_update: SET failed"));
-    });
+    };
+
+    // A call that is over is a record, and a record is kept for as long as the operator
+    // said and no longer. call_list takes its id out of the index when it has gone.
+    if (ended && _call_retention != 0) return _async_set_ex(key, body, std::chrono::seconds(_call_retention), std::move(written));
+
+    _async_set(key, body, std::move(written));
   });
+}
+
+bool RedisDatastore::configure(const YAML::Node& own_root, const Config& system) {
+  (void)own_root;
+  _call_retention = system.calls_history_retention;
+  return true;
 }
 
 void RedisDatastore::call_get(plugins::Executor on, std::string id, plugins::Handler<std::shared_ptr<Call>> handler) {
@@ -1066,6 +1081,8 @@ std::string RedisDatastore::_serialise_call(const std::shared_ptr<Call>& call) {
   obj["answered_at"] = static_cast<std::uint64_t>(call->answered_at);
   obj["ended_at"] = static_cast<std::uint64_t>(call->ended_at);
   obj["focus"] = call->focus ? call->focus->to_string() : "";
+  obj["node"] = call->node;
+  obj["media_engine"] = call->media_engine;
 
   // Participants are persisted; their media streams are not. A relay set belongs to
   // the node that allocated it and cannot be handed to another one.
@@ -1109,6 +1126,9 @@ std::shared_ptr<Call> RedisDatastore::_parse_call(const std::string& value) cons
 
   const auto focus = json_string(obj, "focus");
   if (!focus.empty()) call->focus = std::make_shared<types::SIPUri>(focus);
+
+  if (obj.contains("node")) call->node = json_string(obj, "node");
+  if (obj.contains("media_engine")) call->media_engine = json_string(obj, "media_engine");
 
   if (const auto* participants = obj.if_contains("participants"); participants != nullptr && participants->is_array()) {
     for (const auto& entry : participants->as_array()) {

@@ -504,6 +504,20 @@ interface configuration decide.
 That is behaviour rather than media configuration, and lives in the `behaviour` section
 below, where a realm can override it.
 
+### `calls` Section
+
+```yaml
+calls:
+  history_retention: 2592000
+```
+
+Every call that got as far as ringing leaves a record when it ends: who called whom, when
+it was made, answered and ended, which nodes carried it and which media engine.
+`GET /api/v1/call-records` lists them, newest first, from the datastore, so every node of
+a cluster gives the same list. `history_retention` is how long a record is kept, in
+seconds: thirty days by default, and zero keeps them for ever. With `memory://` the
+records go when the node stops.
+
 ### `http` Section
 
 The admin API and the console.
