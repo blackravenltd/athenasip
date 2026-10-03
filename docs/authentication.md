@@ -343,6 +343,12 @@ password, because a command line is readable by every other process on the host.
 
 It is not a way past authentication: it writes a normal user that logs in normally.
 
+A user who has lost a password, rather than a node that has lost every user, is
+**`athenasip --reset-password NAME`**, on the host in the same way: a new password, read
+the same way, for a user that exists, and every session that user held ended, because a
+password is reset when the old one is lost or known to somebody else. It changes nothing
+else about the user and makes nobody: a name that is not there is said so, and exits 3.
+
 The PBKDF2 iteration count is a constructor parameter rather than configuration. The count
 is stored with each hash so it can be raised later without invalidating anybody, nothing
 has asked to tune it, and a setting whose wrong value is invisible until somebody steals

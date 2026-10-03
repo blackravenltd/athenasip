@@ -17,6 +17,7 @@
 #include "helpers/sync_datastore_helper.h"
 #include "mocks/logger_mock.h"
 #include "types/password.h"
+#include "types/session.h"
 #include "types/url.h"
 #include "types/user.h"
 
@@ -147,4 +148,58 @@ TEST(CliAddUserTest, AStoreThatCannotHoldUsersSaysSoInItsOwnWords) {
 
   EXPECT_EQ(result.outcome, Outcome::refused);
   EXPECT_NE(result.message.find("does not support"), std::string::npos);
+}
+
+// The way back in for somebody who has lost a password, without editing the datastore by
+// hand: a new password for a user that exists, from the host, as --add-user makes one.
+TEST(CliResetPasswordTest, AUsersPasswordIsReplaced) {
+  Fixture f;
+  ASSERT_TRUE(f.add("tom", {types::roles::manage_realms}, "the old password").ok());
+
+  const auto result = cli::reset_password(f.driver, detail::get_global_io_context().get_executor(), "tom", "the new password", Fixture::kIterations);
+  ASSERT_TRUE(result.ok()) << result.message;
+
+  auto user = f.store->user_get("tom");
+  ASSERT_NE(user, nullptr);
+  EXPECT_TRUE(types::Password::verify("the new password", user->password_hash));
+  EXPECT_FALSE(types::Password::verify("the old password", user->password_hash));
+
+  // Nothing else about the user changes.
+  ASSERT_EQ(user->roles.size(), 1u);
+  EXPECT_EQ(user->roles[0], types::roles::manage_realms);
+}
+
+// A password is reset because the old one is lost or known to somebody else, and whoever
+// holds it may be signed in with it. Every session the user holds ends.
+TEST(CliResetPasswordTest, EverySessionTheUserHeldEnds) {
+  Fixture f;
+  ASSERT_TRUE(f.add("tom").ok());
+
+  types::Session session;
+  session.token_hash = "a-session-hash";
+  session.username = "tom";
+  session.created_at = std::time(nullptr);
+  session.expires_at = std::time(nullptr) + 3600;
+  ASSERT_TRUE(f.store->session_create(session));
+  ASSERT_NE(f.store->session_get("a-session-hash"), nullptr);
+
+  ASSERT_TRUE(cli::reset_password(f.driver, detail::get_global_io_context().get_executor(), "tom", "the new password", Fixture::kIterations).ok());
+
+  EXPECT_EQ(f.store->session_get("a-session-hash"), nullptr);
+}
+
+// The names are case-folded as everywhere else, and a user that is not there is said so
+// rather than made: making users is --add-user's, with the roles it asks for.
+TEST(CliResetPasswordTest, AUserThatIsNotThereIsNotMade) {
+  Fixture f;
+  ASSERT_TRUE(f.add("tom").ok());
+
+  EXPECT_TRUE(cli::reset_password(f.driver, detail::get_global_io_context().get_executor(), "TOM", "the new password", Fixture::kIterations).ok());
+
+  const auto missing = cli::reset_password(f.driver, detail::get_global_io_context().get_executor(), "nobody", "a password", Fixture::kIterations);
+  EXPECT_EQ(missing.outcome, cli::ResetPasswordResult::Outcome::missing);
+  EXPECT_EQ(f.store->user_get("nobody"), nullptr);
+
+  const auto empty = cli::reset_password(f.driver, detail::get_global_io_context().get_executor(), "tom", "", Fixture::kIterations);
+  EXPECT_EQ(empty.outcome, cli::ResetPasswordResult::Outcome::invalid);
 }
