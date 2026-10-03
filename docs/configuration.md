@@ -504,6 +504,26 @@ interface configuration decide.
 That is behaviour rather than media configuration, and lives in the `behaviour` section
 below, where a realm can override it.
 
+### `log` Section
+
+```yaml
+log:
+  level: info
+  format: json
+```
+
+`level` is `debug`, `info`, `warn` or `error`; the default is `debug`, which is everything.
+`format` is `text`, the line a person reads in a terminal or the journal, or `json`, one
+object a line for a log shipper:
+
+```json
+{"at":"2026-10-03T19:44:20Z","level":"info","scope":"channel tls://10.35.1.164:33083","message":"Connected"}
+```
+
+`scope` is the part of the node that wrote the line, nested scopes joined with `/`, and is
+absent for a line with none. An administrative command (`--add-user`, `--check`) keeps its
+own quieter level whatever this says.
+
 ### `calls` Section
 
 ```yaml

@@ -2568,3 +2568,6 @@ Tom's answers to the questions that were waiting on him, and what they led to.
       administrator's password was to edit Redis by hand.
 - [x] **The node's media in its status**: the engine, its capabilities and the profiles
       it can produce, `null` with none. The last of discovery.
+- [x] **`log.level` and `log.format`.** JSON lines with `at`, `level`, `scope` and
+      `message`, the scope taken off the front of the message where a scoped logger put
+      it. The node logged everything as text, always, with no way to say otherwise.
