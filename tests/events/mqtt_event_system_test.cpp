@@ -62,7 +62,7 @@ std::string unique_topic(const std::string& leaf) {
   return "athenatest/" + std::to_string(::getpid()) + "-" + std::to_string(counter.fetch_add(1)) + "/" + leaf;
 }
 
-// What a subscriber saw, under a lock: the callback arrives on the bus's own thread.
+// What a consumer saw, under a lock: the callback arrives on the bus's own thread.
 struct Received {
   std::mutex mutex;
   std::vector<std::pair<std::string, std::string>> messages;
@@ -137,7 +137,7 @@ TEST(MqttEventSystemTest, ConnectsAndReportsConnected) {
   EXPECT_FALSE(bus->is_connected());
 }
 
-TEST(MqttEventSystemTest, APublishedMessageReachesASubscriberOnTheSameTopic) {
+TEST(MqttEventSystemTest, APublishedMessageReachesAConsumerOnTheSameTopic) {
   auto bus = connect_to();
   SKIP_WITHOUT_BROKER(bus);
 
@@ -163,16 +163,16 @@ TEST(MqttEventSystemTest, APublishedMessageReachesASubscriberOnTheSameTopic) {
 // in Milestone 4, and it is the one thing an in-process bus cannot do.
 TEST(MqttEventSystemTest, OneClientHearsWhatAnotherPublishes) {
   auto publisher = connect_to();
-  auto subscriber = connect_to();
+  auto consumer = connect_to();
 
   SKIP_WITHOUT_BROKER(publisher);
-  SKIP_WITHOUT_BROKER(subscriber);
+  SKIP_WITHOUT_BROKER(consumer);
 
   const auto topic = unique_topic("nodes/sip-0002/status");
   Received received;
 
-  auto subscription = subscriber->subscribe(topic, [&received](const std::string& name, const std::string& payload) { received.add(name, payload); });
-  ASSERT_NE(subscription, nullptr) << subscriber->last_error();
+  auto subscription = consumer->subscribe(topic, [&received](const std::string& name, const std::string& payload) { received.add(name, payload); });
+  ASSERT_NE(subscription, nullptr) << consumer->last_error();
 
   EXPECT_TRUE(publisher->publish(topic, "{\"started\":\"2026-09-22T00:00:00Z\"}"));
 
@@ -180,7 +180,7 @@ TEST(MqttEventSystemTest, OneClientHearsWhatAnotherPublishes) {
   EXPECT_EQ(received.all()[0].second, "{\"started\":\"2026-09-22T00:00:00Z\"}");
 
   publisher->close();
-  subscriber->close();
+  consumer->close();
 }
 
 // MQTT's own wildcard rules, which docs/events.md tells a consumer to rely on: + is
@@ -259,7 +259,7 @@ TEST(MqttEventSystemTest, UnsubscribeAllLeavesNothingListening) {
 }
 
 // The prefix is what keeps two clusters on one broker from hearing each other. It goes
-// on in front of what this node publishes and comes off again before a subscriber sees
+// on in front of what this node publishes and comes off again before a consumer sees
 // the topic, so nothing above the driver has to know it is there.
 TEST(MqttEventSystemTest, ThePrefixIsAppliedOnTheWireAndStrippedOnTheWayBack) {
   // Deliberately without a trailing separator: a prefix is a topic level and the
@@ -285,7 +285,7 @@ TEST(MqttEventSystemTest, ThePrefixIsAppliedOnTheWireAndStrippedOnTheWayBack) {
   ASSERT_TRUE(eventually(inside, 1));
   ASSERT_TRUE(eventually(outside, 1));
 
-  // The subscriber inside the prefix sees the topic it asked for, not the wire topic.
+  // The consumer inside the prefix sees the topic it asked for, not the wire topic.
   EXPECT_EQ(inside.all()[0].first, topic);
 
   // And on the wire the prefix really is there, which is what separates two clusters.
@@ -321,7 +321,7 @@ TEST(MqttEventSystemTest, APrefixedClientDoesNotHearAnUnprefixedPublish) {
 
 // The fire-and-forget publish stays on the contract because the bus is observability
 // and is never on the call setup path. It answers nothing, so what proves it worked is
-// what the subscriber saw.
+// what the consumer saw.
 TEST(MqttEventSystemTest, TheFireAndForgetPublishStillDelivers) {
   auto bus = connect_to();
   SKIP_WITHOUT_BROKER(bus);
