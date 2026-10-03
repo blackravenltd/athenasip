@@ -379,9 +379,9 @@ void MQTTEventSystem::subscribe(plugins::Executor on, std::string event_name, Su
   bool first_local_subscription = false;
   {
     std::scoped_lock lock(_subscriptions_mutex);
-    auto& subscribers = _subscriptions[sub->event_name];
-    first_local_subscription = subscribers.empty();
-    subscribers.insert(sub);
+    auto& consumers = _subscriptions[sub->event_name];
+    first_local_subscription = consumers.empty();
+    consumers.insert(sub);
   }
 
   if (!_connected.load() || !first_local_subscription) {
@@ -417,7 +417,7 @@ void MQTTEventSystem::unsubscribe(plugins::Executor on, std::shared_ptr<Subscrip
 
   // Deliberately do not UNSUBSCRIBE at the broker. Keeping the broker-side
   // subscription avoids races with a new local subscription to the same event.
-  // Messages for events with no local subscribers are simply dropped.
+  // Messages for events with no local consumers are simply dropped.
   _complete(std::move(on), std::move(handler), plugins::Status::success());
 }
 
@@ -649,8 +649,8 @@ std::vector<std::string> MQTTEventSystem::current_subscription_events() const {
   std::scoped_lock lock(_subscriptions_mutex);
   events.reserve(_subscriptions.size());
 
-  for (const auto& [event_name, subscribers] : _subscriptions) {
-    if (!subscribers.empty()) {
+  for (const auto& [event_name, consumers] : _subscriptions) {
+    if (!consumers.empty()) {
       events.push_back(event_name);
     }
   }
@@ -668,7 +668,7 @@ std::unordered_set<std::shared_ptr<Subscription>> MQTTEventSystem::collect_match
     to_publish.insert(exact->second.begin(), exact->second.end());
   }
 
-  for (const auto& [filter, subscribers] : _subscriptions) {
+  for (const auto& [filter, consumers] : _subscriptions) {
     if (filter == event_name || !TopicFilter::is_filter(filter)) {
       continue;
     }
@@ -677,7 +677,7 @@ std::unordered_set<std::shared_ptr<Subscription>> MQTTEventSystem::collect_match
       continue;
     }
 
-    to_publish.insert(subscribers.begin(), subscribers.end());
+    to_publish.insert(consumers.begin(), consumers.end());
   }
 
   return to_publish;
@@ -830,12 +830,12 @@ void MQTTEventSystem::dispatch_event(std::string event_name, std::string message
   // Which of this client's subscriptions the message arrived for, when the broker says
   // (MQTT 5 section 3.3.2.3.8). It may send one copy per matching subscription, each
   // naming its own, or one copy naming them all; both end up delivering to each
-  // matching subscriber exactly once.
+  // matching consumer exactly once.
   //
   // Matching the topic against every local filter instead is what a client has to do
   // when the broker says nothing, and it is wrong whenever two of this client's filters
   // match: the broker sends a copy for each, and each copy is then fanned out to both
-  // filters' subscribers.
+  // filters' consumers.
   const auto& identifiers = props[mqtt::prop::subscription_identifier];
 
   if (!identifiers.empty()) {
@@ -845,8 +845,8 @@ void MQTTEventSystem::dispatch_event(std::string event_name, std::string message
       const auto found = _events_by_identifier.find(identifier);
       if (found == _events_by_identifier.end()) continue;
 
-      const auto subscribers = subscribers_of(found->second);
-      to_publish.insert(subscribers.begin(), subscribers.end());
+      const auto consumers = consumers_of(found->second);
+      to_publish.insert(consumers.begin(), consumers.end());
     }
 
     deliver_to(to_publish, event_name, message);
@@ -856,7 +856,7 @@ void MQTTEventSystem::dispatch_event(std::string event_name, std::string message
   deliver_to(collect_matching_subscriptions(event_name), event_name, message);
 }
 
-std::unordered_set<std::shared_ptr<Subscription>> MQTTEventSystem::subscribers_of(const std::string& filter) const {
+std::unordered_set<std::shared_ptr<Subscription>> MQTTEventSystem::consumers_of(const std::string& filter) const {
   std::scoped_lock lock(_subscriptions_mutex);
 
   const auto found = _subscriptions.find(filter);
@@ -865,9 +865,9 @@ std::unordered_set<std::shared_ptr<Subscription>> MQTTEventSystem::subscribers_o
   return found->second;
 }
 
-void MQTTEventSystem::deliver_to(const std::unordered_set<std::shared_ptr<Subscription>>& subscribers, const std::string& event_name,
+void MQTTEventSystem::deliver_to(const std::unordered_set<std::shared_ptr<Subscription>>& consumers, const std::string& event_name,
                                  const std::string& message) {
-  for (const auto& sub : subscribers) {
+  for (const auto& sub : consumers) {
     auto self = shared_from_this();
 
     boost::asio::post(_callback_io_context, [this, self, event_name, message, sub]() {

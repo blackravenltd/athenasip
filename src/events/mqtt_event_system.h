@@ -136,7 +136,7 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
   // MQTT 5 subscription identifiers, which are how a client knows which of its own
   // subscriptions a message arrived for. Without them a message matching two of this
   // client's filters is delivered once per filter and fanned out to every matching
-  // subscriber, so each one sees it twice.
+  // consumer, so each one sees it twice.
   std::unordered_map<std::int32_t, std::string> _events_by_identifier;
   std::int32_t _next_subscription_identifier = 1;
 
@@ -157,13 +157,13 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
 
   [[nodiscard]] std::vector<std::string> current_subscription_events() const;
   [[nodiscard]] std::unordered_set<std::shared_ptr<Subscription>> collect_matching_subscriptions(std::string event_name) const;
-  [[nodiscard]] std::unordered_set<std::shared_ptr<Subscription>> subscribers_of(const std::string& filter) const;
+  [[nodiscard]] std::unordered_set<std::shared_ptr<Subscription>> consumers_of(const std::string& filter) const;
 
   void subscribe_events_on_mqtt(std::vector<std::string> event_names, Completion completion);
   void ensure_receive_loop();
   void receive_next();
   void dispatch_event(std::string event_name, std::string message, const mqtt::publish_props& props);
-  void deliver_to(const std::unordered_set<std::shared_ptr<Subscription>>& subscribers, const std::string& event_name, const std::string& message);
+  void deliver_to(const std::unordered_set<std::shared_ptr<Subscription>>& consumers, const std::string& event_name, const std::string& message);
 };
 
 }  // namespace athenasip::events
