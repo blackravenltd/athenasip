@@ -2594,3 +2594,5 @@ The maintainer's answers to the questions that were waiting on him, and what the
       host - was dropped. Found through node-b.example.com on 2026-10-04.
 - [x] **Removing a binding that is not there is not logged as an error** (RFC 3261 10.3
       step 7). The store still says there was nothing to remove; Core logs it at debug.
+- [x] **A TLS peer closing without close_notify is logged as a disconnect**, not an ERROR.
+      Every browser hang-up through node-b's secure WebSocket logged one.
