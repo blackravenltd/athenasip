@@ -2460,3 +2460,13 @@ Tom's answers to the questions that were waiting on him, and what they led to.
       address, or `sip.public_address` where the listener is bound to every address.
       `NodeDirectory::find` reads it back, and `GET /api/v1/nodes` lists it for an
       administrator and not for a client.
+- [x] **A call for a flow another node holds goes to that node.** `Proxy::_add_targets`
+      turns a binding whose flow is held elsewhere into one target per peer: the request as
+      it arrived, address of record and all, to the peer's inter-node listener. No Route
+      header, which the plan first named: the next hop is this node's to choose and the
+      Request-URI is already what the peer has to look up. The receiving node delivers to
+      its own flows and never forwards a peer's request on. A peer that is down, stale or
+      unknown is not forwarded to, and the binding is treated as a single node treats a
+      flow it has no channel for. `Call::media_elsewhere` keeps the second node's engine
+      out of a call the first anchored, and `Core::advertised_for` names the inter-node
+      listener to a peer. Unit-tested only; two real nodes are the next item.

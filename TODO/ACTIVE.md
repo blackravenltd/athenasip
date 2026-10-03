@@ -27,12 +27,10 @@ it:
   terminating the node, CRLF keep-alives never answered, a UDP/TLS/RTP/SAVPF description
   read as SDES.
 
-1000 tests and the sipp harness, 12 of 12, at `8e3ba0e`.
+1014 tests on 2026-10-03; the sipp harness, 12 of 12, at `2e7ae4d`.
 
-**Next:** the second node, in Milestone 4 - Route and Path trust for cluster peers, then
-forwarding to the node that holds a flow, then `docker-compose.cluster.yml` and the harness
-across it. All of it needs Docker, which was paused at the end of 2026-10-02 (see Waiting
-on Tom).
+**Next:** the second node, in Milestone 4 - `docker-compose.cluster.yml` and the harness
+across two nodes, which is what proves the forwarding that landed on 2026-10-03.
 
 **Once things are stable, video calling is a primary feature** (Tom, 2026-10-03), not a
 later extra: principle 6 already says so, and this is the reminder that it is next in line
@@ -51,17 +49,13 @@ stopped against it. They are here rather than scattered through the milestones b
 session that has lost its context needs to see them first. The rest of the list was
 answered on 2026-10-03; the answers are under Decisions.
 
-1. **Docker.** It was paused at the end of 2026-10-02 and was not running on 2026-10-03; Tom
-   is starting it. The sipp harness and every Milestone 4 item from here need it.
+1. **The WebRTC call to AthenaPhone on `corvus-fi-1`.** The phone registers there as
+   `sip:athenaphone@10.35.1.20` and refuses a plain RTP offer cleanly (checked with sipp on
+   2026-10-03: 100 then 488, no ring). What is left is a call it can answer, which needs a
+   WebRTC caller: Tom, from the console softphone as subscriber 1001. corvus-fi-1 runs the
+   builtin relay, which cannot convert, so the caller has to be WebRTC too.
 
-2. **AthenaPhone registering on `corvus-fi-1`, and the console's go-ahead.** Both need
-   approval given in the session that asked, and Tom is taking them up with those sessions
-   directly. AthenaPhone registers as `sip:athenaphone@10.35.1.20` (subscriber made,
-   `media_profile: webrtc`) once Tom enters its password on the phone - it is in
-   `/root/.athenasip-athenaphone-password` on `corvus-fi-1` - with the snakeoil CA
-   `tls/ca/snakeca.crt` for TLS.
-
-3. **How a browser that is only a SIP subscriber gets its configuration.** Decided that it
+2. **How a browser that is only a SIP subscriber gets its configuration.** Decided that it
    does not use HTTP at all (see Decisions); what it uses instead is still open. The
    standard candidate is RFC 6080, the SIP UA configuration framework: SUBSCRIBE to the
    `ua-profile` event, authenticated by the subscriber's own Digest credentials, with the
@@ -198,7 +192,7 @@ Dated, and not reopened without asking.
     case it is done to get it out of the way.
   - **A browser that is only a subscriber reaches no HTTP endpoint**, `/client/config`
     included. If it needs configuration, that comes a SIP-idiomatic, standards way, or is
-    talked about first (Waiting on Tom, 3).
+    talked about first (Waiting on Tom, 2).
   - **No role is defined before it has routes to permit.** `manage-cluster` waits for M4
     and M5.
   - **`status_interval`** is in the node status payload, for monitors such as T.O.M.S to
@@ -380,7 +374,7 @@ milestone is the second node.
 
 - [ ] What the realm expects of a client, in `GET /api/v1/client/config` beside the node
       list it now carries. For an admin user's softphone only: a subscriber-only browser
-      reaches no HTTP endpoint (2026-10-03), so its equivalent waits on Waiting on Tom, 3.
+      reaches no HTTP endpoint (2026-10-03), so its equivalent waits on Waiting on Tom, 2.
 - [ ] RFC 5626 outbound, what is left of it: a flow token in the Path a node writes when
       it is the edge for another registrar, which is the cluster case. (No 430 for a gone
       in-dialog flow, by choice: see Known deviations.)
@@ -440,11 +434,16 @@ milestone is the second node.
 - [ ] The rest of discovery: the node's capabilities in its status. The SIP addresses, the
       roster from MQTT, staleness and the inter-node address (`cluster.advertise`,
       `NodeDirectory::find`) are in.
-- [ ] Forwarding: lookup returns owning node; INVITE routed to the peer with `Route`;
-      peer delivers on the local flow; responses follow Via; Record-Route keeps both
-      nodes in the dialog.
-- [ ] Media ownership: the first node anchors media in rtpengine; the engine id travels
-      in the call record so BYE from either node releases it.
+- [ ] Forwarding, proved across two real nodes. The proxy does it and the unit tests say
+      so (`tests/proxy_cluster_forwarding_test.cpp`): one request per peer that holds a
+      flow, delivered only to local flows by the node that receives it, not anchored a
+      second time, Record-Route naming the inter-node listener. What it has never done is
+      run between two processes: the outbound TLS flow to a peer, the peer's certificate
+      naming it, the ACK and BYE crossing back. That is the cluster compose below, and it
+      is where this is expected to break.
+- [ ] Media ownership, the rest of it: the engine id in the call record so a BYE reaching
+      either node releases the media. The first node anchoring and the second leaving the
+      call alone is in.
 - [ ] Call records (CDR) in the datastore: start, answer, end, participants, media
       engine, nodes. `GET /api/v1/calls`.
 - [ ] `athenasip check` that validates config and connectivity to Redis, MQTT, rtpengine
@@ -520,7 +519,7 @@ authentication from session issue to the OpenAPI document, and the one-command s
 - [ ] Push (RFC 8599) parameters on REGISTER and a push gateway hook for AthenaPhone.
 - [ ] Web client repository: video calling and conferencing, JsSIP over WSS, served by
       AthenaSIP. Not provisioned from `/api/v1/client/config`: a subscriber-only browser
-      reaches no HTTP endpoint (2026-10-03), so how it is configured is Waiting on Tom, 3.
+      reaches no HTTP endpoint (2026-10-03), so how it is configured is Waiting on Tom, 2.
 - [ ] The local UA, the fourth transaction user in the Architecture diagram. Its first
       use is tearing a lapsed call down towards both ends: on expiry this node discards
       its state, which is what RFC 4028 section 8 asks of a proxy, and a node that
