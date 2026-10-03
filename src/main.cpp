@@ -28,6 +28,7 @@
 #include "build_version.h"
 #include "cli.h"
 #include "cli_add_user.h"
+#include "cli_check.h"
 #include "cluster_ca.h"
 #include "config.h"
 #include "core.h"
@@ -181,7 +182,7 @@ int main(int argc, char* argv[]) {
   // An administrative command is a person asking a question at a prompt, often in the
   // middle of an incident, and the answer is the whole output. A node starting up is a
   // service whose log is the record of what it did, so it stays at DEBUG.
-  const auto administering = !options.add_user.empty() || options.print_config;
+  const auto administering = !options.add_user.empty() || options.print_config || options.check;
 
   auto logger = std::make_shared<loggers::LoggerStdIO>(administering ? LogLevel::WARN : LogLevel::DEBUG);
 
@@ -238,6 +239,16 @@ int main(int argc, char* argv[]) {
     std::cout << "# What this node would run on.\n";
     std::cout << config->effective_yaml() << "\n";
     return 0;
+  }
+
+  // What this node needs, tried one at a time, and out. Its own drivers, made and closed
+  // again: nothing here is shared with a node that goes on to start.
+  if (options.check) {
+    const auto lines = cli::check(logger, config, connect_and_wait);
+
+    std::cout << "ok    configuration  " << config_path.string() << "\n";
+    std::cout << cli::report(lines);
+    return cli::passed(lines) ? 0 : 1;
   }
 
   // Create Datastore

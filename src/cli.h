@@ -25,6 +25,10 @@ struct Options {
   // nobody wrote down.
   bool print_config = false;
 
+  // Try everything this node would connect to - datastore, event bus, media engine, the
+  // other nodes of its cluster - and say which of them answered. Nothing is started.
+  bool check = false;
+
   // Create an administrator and exit, without starting a single listener. This is the
   // way back in when the API cannot be reached or every admin password has been lost,
   // so it goes to the datastore and nothing else.
@@ -92,6 +96,8 @@ inline Options parse(int argc, char* argv[]) {
       options.help = true;
     } else if (argument == "--print-config") {
       options.print_config = true;
+    } else if (argument == "--check") {
+      options.check = true;
     } else if (takes("--config", "a path", options.config) || takes("-c", "a path", options.config)) {
       // Handled, and any error is already recorded.
     } else if (takes("--add-user", "a username", options.add_user)) {
@@ -126,6 +132,9 @@ inline std::string usage() {
          "\n"
          "Administration, which starts no listeners and exits when it is done:\n"
          "\n"
+         "  --check               try the datastore, the event bus, the media engine, the\n"
+         "                        certificates and the cluster's other nodes, say which\n"
+         "                        of them answered, and exit; nothing is started\n"
          "  --add-user NAME       create an administrator in the configured datastore and\n"
          "                        exit; with memory://, which keeps nothing once this\n"
          "                        process exits, create it and carry on as the node\n"
