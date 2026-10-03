@@ -527,6 +527,47 @@ TEST(MediaProfileTest, ACallAPeerNodeForwardedIsStillReleasedHereWhenItEnds) {
   EXPECT_EQ(f.engine->releases(), 1);
 }
 
+// The warning that an engine cannot make a profile is for an offer the node would have had
+// to convert. A WebRTC offer to a WebRTC subscriber needs nothing made: it goes through as
+// it came, and saying "cannot produce webrtc - offering what it can" about it, as
+// corvus-fi-1 did on every browser call to AthenaPhone, sends an operator looking for a
+// fault that is not there.
+TEST(MediaProfileTest, NoWarningWhenTheOfferIsAlreadyWhatTheCalleeTakes) {
+  ProfileFixture f("tcp", "udp");
+  f.engine->plain_rtp_only_set();
+
+  f.bob->media_profile = types::MediaPolicy::Profiles::WebRtc;
+  ASSERT_TRUE(f.store->subscriber_update(f.bob));
+
+  f.receive(f.caller, f.invite_with_body(kWebRtcOffer));
+  ASSERT_FALSE(ProfileFixture::requests_with(f.callee_connection, "INVITE").empty());
+
+  for (const auto& line : f.logger->lines(loggers::LogLevel::WARN)) {
+    EXPECT_EQ(line.find("cannot produce"), std::string::npos) << line;
+  }
+}
+
+// And when it does have to say so, it names the subscriber, which is what an operator can
+// act on, and not the Contact of whichever device the call happened to be sent to.
+TEST(MediaProfileTest, TheWarningNamesTheSubscriberTheEngineCouldNotServe) {
+  ProfileFixture f("tcp", "udp");
+  f.engine->plain_rtp_only_set();
+
+  f.bob->media_profile = types::MediaPolicy::Profiles::WebRtc;
+  ASSERT_TRUE(f.store->subscriber_update(f.bob));
+
+  f.receive(f.caller, f.invite_with_body());
+  ASSERT_FALSE(ProfileFixture::requests_with(f.callee_connection, "INVITE").empty());
+
+  bool warned = false;
+  for (const auto& line : f.logger->lines(loggers::LogLevel::WARN)) {
+    if (line.find("cannot produce") == std::string::npos) continue;
+    warned = true;
+    EXPECT_NE(line.find("sip:bob@example.com"), std::string::npos) << line;
+  }
+  EXPECT_TRUE(warned);
+}
+
 // Nothing is learned silently: the node says which subscriber needed it and what it took,
 // for the operator to set as that subscriber's profile or not.
 TEST(MediaProfileTest, AReofferThatWorksIsReportedForTheSubscriber) {

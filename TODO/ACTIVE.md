@@ -447,9 +447,6 @@ configuration search path, the heartbeat and its will, SPA mode as a choice, the
 `corvus-fi-1`, both datastores holding users and sessions, the whole of admin
 authentication from session issue to the OpenAPI document, and the one-command stack.
 
-- [ ] The "cannot produce webrtc - offering what it can" warning fires for an offer that
-      is already WebRTC and passes through untouched. It should fire only when the node
-      would have had to convert, and it names the Contact rather than the subscriber.
 - [ ] Admin API, part 2, what is left of it. `/api/v1/calls`, `/api/v1/calls/{call}`,
       `/api/v1/media` and `/metrics` landed on 2026-10-01. Left: hanging up a call
       (`DELETE /api/v1/calls/{call}`), which needs the node to send BYEs itself and so waits

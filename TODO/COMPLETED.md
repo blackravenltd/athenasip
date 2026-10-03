@@ -2557,3 +2557,9 @@ Tom's answers to the questions that were waiting on him, and what they led to.
       VP8 and opus, bundled, direct on the LAN, 464 frames decoded in forty seconds, and a
       call record written. `test/interop/UAT.md`. Through the builtin relay's pass-through
       only: video through rtpengine, and plain-RTP video end to end, have not been run.
+
+### After 0.8.0 (2026-10-03)
+
+- [x] **The "cannot produce" warning only when something had to be made**, and naming the
+      subscriber rather than the Contact the copy went to. Every browser call to
+      AthenaPhone on `corvus-fi-1` logged it for an offer that was already WebRTC.

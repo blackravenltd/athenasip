@@ -1284,9 +1284,16 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
     // An engine that cannot make what was asked sends what it can, and the operator is
     // told rather than left to work it out from a 488. Whatever goes out is then not a
     // guess with an "other" to try next, so nothing is remembered as offered.
+    //
+    // Only when something would have had to be made: an offer that is already the profile
+    // asked for goes through as it came, and there is nothing to warn about. The warning
+    // names the subscriber, as the request arrived, which is what an operator can act on;
+    // the Request-URI of the copy is the Contact of one device.
     if (offered && !core->media->produces(*offered)) {
-      _logger->warn("The media engine cannot produce " + std::string(media::setting_name(*offered)) + " for " + message->header->request_uri->to_string() +
-                    " - offering what it can");
+      if (flags.stated() != offered) {
+        _logger->warn("The media engine cannot produce " + std::string(media::setting_name(*offered)) + " for " +
+                      context->request->header->request_uri->to_string() + " - offering what it can");
+      }
       offered.reset();
     }
   }
