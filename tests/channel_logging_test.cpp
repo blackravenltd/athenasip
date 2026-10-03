@@ -6,6 +6,7 @@
 //
 #include <gtest/gtest.h>
 
+#include <boost/asio/ssl/error.hpp>
 #include <string>
 
 #include "helpers/proxy_fixture_helper.h"
@@ -110,4 +111,29 @@ TEST(ChannelLoggingTest, CredentialsAreRedactedFromWhatIsLogged) {
   // The challenge this node sent back is redacted too: it carries the nonce the next
   // response is computed over.
   EXPECT_EQ(text.find("WWW-Authenticate: Digest realm"), std::string::npos) << text;
+}
+
+// A peer that closes a TLS connection without sending close_notify - which is what a browser
+// does with a secure WebSocket when its page hangs up, and what plenty of phones do - has
+// closed the connection. RFC 8446 6.1 has the receiver treat that as the end of the data,
+// and here there is no message it could have truncated. It is a disconnect, not a fault,
+// and logging it as an error on every call hides the errors that are.
+TEST(ChannelLoggingTest, APeerClosingTlsWithoutCloseNotifyIsADisconnectNotAnError) {
+  LoggingFixture f(false);
+
+  std::shared_ptr<MockConnection> connection;
+  auto channel = f.make_channel("198.51.100.90", &connection, "wss", 50000);
+  ASSERT_TRUE(static_cast<bool>(connection->pending_read)) << "the channel is reading";
+
+  auto read = connection->pending_read;
+  f.on_strand([&read]() { read(boost::asio::ssl::error::stream_truncated, 0); });
+  f.settle();
+
+  for (const auto& line : f.logger->lines(athenasip::loggers::LogLevel::ERROR)) ADD_FAILURE() << line;
+
+  bool disconnected = false;
+  for (const auto& line : f.logger->lines(athenasip::loggers::LogLevel::INFO)) {
+    if (line.find("Remote Disconnected") != std::string::npos) disconnected = true;
+  }
+  EXPECT_TRUE(disconnected);
 }

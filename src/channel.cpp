@@ -10,6 +10,7 @@
 #include <array>
 #include <atomic>
 #include <boost/asio.hpp>
+#include <boost/asio/ssl/error.hpp>
 #include <boost/bind/bind.hpp>
 #include <cstdint>
 #include <ctime>
@@ -351,7 +352,10 @@ void Channel::_on_read(boost::system::error_code ec, std::size_t length) {
     if (ec) {
       if (ec == boost::asio::error::operation_aborted) {
         // Normal (We closed the connection)
-      } else if (ec == boost::asio::error::eof) {
+      } else if (ec == boost::asio::error::eof || ec == boost::asio::ssl::error::stream_truncated) {
+        // A TLS peer closing without close_notify - a browser's secure WebSocket when its
+        // page hangs up, and plenty of phones - has closed the connection (RFC 8446 6.1),
+        // between messages and with nothing truncated, and is not a fault.
         _logger->info("Remote Disconnected");
       } else {
         _logger->error("Read Error (" + ec.what() + ")");
