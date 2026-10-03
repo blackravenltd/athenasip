@@ -947,6 +947,18 @@ void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::sha
   // a definitive refusal from the user and stops it too.
   if (is_2xx(code) || code >= 600) {
     if (is_2xx(code)) _report_reoffer(context, true);
+
+    // The call record names the node that holds the callee, which is where the answer
+    // came from when a peer sent it.
+    if (is_2xx(code) && context->request->header->request_method == "INVITE") {
+      const auto answered_over = response->channel.lock();
+      auto core = _core.lock();
+      auto call = core ? core->call_get(value_of(context->request, "Call-ID")) : nullptr;
+
+      if (call && answered_over && !answered_over->peer_node().empty()) {
+        if (const auto callee = call->participant_index(false)) call->participants[*callee].node_id = answered_over->peer_node();
+      }
+    }
     context->best = response;
     context->answered = true;
     _contexts.erase(context->server->id());
@@ -1286,6 +1298,12 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
       // Only an offer the engine made counts as this node's; one passed through untouched
       // is the caller's, and a refusal of it is the caller's to hear.
       if (context && offered) context->offered = offered;
+
+      // For the call record: which engine carried it.
+      if (auto core = _core.lock(); core && core->media) {
+        if (auto anchored = core->call_get(value_of(message, "Call-ID"))) anchored->media_engine = core->media->describe();
+      }
+
       message->body = std::move(result.sdp);
       message->body_length = static_cast<unsigned int>(message->body.size());
     } else {

@@ -412,6 +412,16 @@ bool Config::load_from_yaml(const std::string& filename) {
     }
   }
 
+  // --- Parse the 'calls' section ---
+  if (YAML::Node calls = config["calls"]) {
+    try {
+      if (calls["history_retention"]) calls_history_retention = calls["history_retention"].as<std::uint32_t>();
+    } catch (const std::exception& e) {
+      _logger->error("Invalid value for 'calls.history_retention': " + std::string(e.what()));
+      return false;
+    }
+  }
+
   // --- Parse the 'http' section ---
   YAML::Node http = config["http"];
   if (http) {
@@ -693,6 +703,10 @@ std::string Config::effective_yaml() const {
   out << YAML::Key << "media_profile" << YAML::Value << types::MediaPolicy::to_string(behaviour.profiles);
   out << YAML::Key << "qualify_interval" << YAML::Value << behaviour_qualify_interval;
   out << YAML::Key << "rewrite_contact" << YAML::Value << behaviour_rewrite_contact;
+  out << YAML::EndMap;
+
+  out << YAML::Key << "calls" << YAML::Value << YAML::BeginMap;
+  out << YAML::Key << "history_retention" << YAML::Value << calls_history_retention;
   out << YAML::EndMap;
 
   out << YAML::Key << "http" << YAML::Value << YAML::BeginMap;

@@ -308,6 +308,12 @@ behaviour:
   # about itself (RFC 3261 16.6). WebSocket clients are never rewritten.
   rewrite_contact: false
 
+# Call records: one for each call that has ended, in the datastore, listed by
+# GET /api/v1/call-records. Kept for this many seconds - thirty days - and zero keeps them
+# for ever.
+calls:
+  history_retention: 2592000
+
 http:
   address: 0.0.0.0
   port: 8080

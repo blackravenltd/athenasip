@@ -62,6 +62,7 @@ class RedisDatastore : public Datastore {
   ~RedisDatastore() override;
 
   std::string name() const override;
+  bool configure(const YAML::Node& own_root, const Config& system) override;
   std::string version() const override;
 
   void connect(plugins::Executor on, plugins::StatusHandler handler) override;
@@ -113,6 +114,9 @@ class RedisDatastore : public Datastore {
   using StringsCallback = std::function<void(RedisError error, std::vector<std::string> value)>;
 
   void _apply_url(std::shared_ptr<types::URL> url);
+
+  // How long the record of an ended call is kept, in seconds; zero for ever.
+  std::uint32_t _call_retention = 30 * 24 * 60 * 60;
   void _realm_delete_record(plugins::Executor on, plugins::StatusHandler handler, std::string realm_name);
   boost::redis::config _make_config() const;
 

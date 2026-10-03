@@ -15,6 +15,8 @@
 
 #include "../helpers/sync_datastore_helper.h"
 #include "../mocks/logger_mock.h"
+#include "call.h"
+#include "config.h"
 #include "types/password.h"
 #include "types/session.h"
 #include "types/url.h"
@@ -687,4 +689,39 @@ TEST(MemoryDatastoreTest, ChangingWhatAReadHandedBackDoesNotChangeTheStore) {
   ASSERT_TRUE(datastore->session_create(session));
   datastore->session_get("hash-mallory")->username = "somebody-else";
   EXPECT_EQ(datastore->session_get("hash-mallory")->username, "mallory");
+}
+
+// A call record is kept for as long as the operator said and no longer, or a store that is
+// only ever added to is what a busy node ends up with.
+TEST(MemoryDatastoreTest, EndedCallsAreForgottenAfterTheRetention) {
+  auto logger = std::make_shared<MockLogger>();
+  auto driver = std::make_shared<MemoryDatastore>(logger, std::make_shared<types::URL>("memory://"));
+
+  Config config(logger);
+  config.calls_history_retention = 3600;
+  ASSERT_TRUE(driver->configure(YAML::Node(), config));
+
+  SyncDatastore datastore(driver);
+
+  auto old = std::make_shared<Call>();
+  old->id = "long-ago";
+  old->state = Call::State::Closed;
+  old->ended_at = std::time(nullptr) - 7200;
+
+  auto recent = std::make_shared<Call>();
+  recent->id = "just-now";
+  recent->state = Call::State::Closed;
+  recent->ended_at = std::time(nullptr) - 60;
+
+  auto live = std::make_shared<Call>();
+  live->id = "still-up";
+  live->state = Call::State::Connected;
+
+  ASSERT_TRUE(datastore.call_create(old));
+  ASSERT_TRUE(datastore.call_create(recent));
+  ASSERT_TRUE(datastore.call_create(live));
+
+  EXPECT_EQ(datastore.call_get("long-ago"), nullptr);
+  EXPECT_NE(datastore.call_get("just-now"), nullptr);
+  EXPECT_NE(datastore.call_get("still-up"), nullptr);
 }

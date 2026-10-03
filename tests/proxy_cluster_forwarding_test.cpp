@@ -167,3 +167,35 @@ TEST(ProxyClusterForwardingTest, TheRecordRouteTowardsAPeerNamesTheInterNodeList
   EXPECT_NE(facing_peer.find("@10.0.0.1:5062"), std::string::npos) << facing_peer;
   EXPECT_NE(facing_peer.find("transport=tls"), std::string::npos) << facing_peer;
 }
+
+// One node writes a call's record: the one the caller reached. A node a peer forwarded the
+// call to carries it and records nothing, or two nodes would take turns to overwrite one
+// record with half of it each.
+TEST(ProxyClusterForwardingTest, ACallAPeerForwardedIsNotRecordedHere) {
+  ClusterFixture f;
+  f.bind_bob();
+
+  f.receive(f.peer, f.invite());
+  ASSERT_NE(ProxyFixture::request_with(f.callee_connection, "INVITE"), nullptr);
+  f.receive(f.callee, ClusterFixture::response_to_latest_on(f.callee_connection, 180, "Ringing"));
+
+  EXPECT_NE(f.call(), nullptr) << "the node still carries the call";
+  EXPECT_TRUE(f.store->call_list().empty());
+}
+
+// And the record the first node writes says which node held the callee, which is where
+// the answer came from.
+TEST(ProxyClusterForwardingTest, TheRecordNamesTheNodeThatHeldTheCallee) {
+  ClusterFixture f;
+  f.bind_bob_on("node-b");
+
+  f.receive(f.caller, f.invite());
+  f.receive(f.peer, ClusterFixture::response_to_latest_on(f.peer_connection, 200, "OK"));
+
+  const auto records = f.store->call_list();
+  ASSERT_EQ(records.size(), 1u);
+  EXPECT_EQ(records[0]->node, "test-node");
+  ASSERT_EQ(records[0]->participants.size(), 2u);
+  EXPECT_EQ(records[0]->participants[0].node_id, "test-node");
+  EXPECT_EQ(records[0]->participants[1].node_id, "node-b");
+}

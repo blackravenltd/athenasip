@@ -131,6 +131,7 @@ void Dialogs::observe_request(const std::shared_ptr<SIPMessage>& request) {
     dialog->caller_cseq = cseq_of(request);
     dialog->secure = is_secure(request);
     dialog->created_at = std::time(nullptr);
+    if (const auto channel = request->channel.lock()) dialog->from_node = channel->peer_node();
 
     branches.push_back(dialog);
 

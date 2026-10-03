@@ -6,6 +6,7 @@
 //
 #include "calls_api.h"
 
+#include <algorithm>
 #include <boost/asio/post.hpp>
 #include <mutex>
 #include <utility>
@@ -70,6 +71,7 @@ void CallsAPI::register_routes(Router& router) {
   // something being provisioned.
   router.add(http::verb::get, "/api/v1/calls", {view_cluster_status}, [self](RouteContext c) { self->_list(std::move(c)); });
   router.add(http::verb::get, "/api/v1/calls/{call}", {view_cluster_status}, [self](RouteContext c) { self->_get(std::move(c)); });
+  router.add(http::verb::get, "/api/v1/call-records", {view_cluster_status}, [self](RouteContext c) { self->_records(std::move(c)); });
   router.add(http::verb::get, "/api/v1/media", {view_cluster_status}, [self](RouteContext c) { self->_media(std::move(c)); });
   router.add(http::verb::get, "/api/v1/media/reoffers", {view_cluster_status}, [self](RouteContext c) { self->_reoffers(std::move(c)); });
   router.add(http::verb::get, "/api/v1/qualify", {view_cluster_status}, [self](RouteContext c) { self->_qualify(std::move(c)); });
@@ -93,6 +95,82 @@ void CallsAPI::_list(RouteContext context) {
       context.done();
     });
   });
+}
+
+// The calls that are over, from the datastore, so any node of a cluster gives the same
+// list: newest first, as many as were asked for. A call still up is on /calls, on the node
+// carrying it.
+void CallsAPI::_records(RouteContext context) {
+  auto core = _core.lock();
+  if (!core || !core->datastore) {
+    write_error(context.response, http::status::service_unavailable, "unavailable", "the node is shutting down");
+    return context.done();
+  }
+
+  std::size_t limit = 100;
+  if (const auto asked = context.query.find("limit"); asked != context.query.end()) {
+    try {
+      limit = std::clamp<std::size_t>(std::stoul(asked->second), 1, 1000);
+    } catch (const std::exception&) {
+      write_error(context.response, http::status::bad_request, "invalid_request", "limit is a number from 1 to 1000");
+      return context.done();
+    }
+  }
+
+  core->datastore->call_list(_executor, [context, limit](plugins::Result<std::vector<std::shared_ptr<Call>>> found) mutable {
+    if (!found.ok) {
+      write_error(context.response, http::status::internal_server_error, "datastore_error", found.error);
+      return context.done();
+    }
+
+    auto& calls = found.value;
+    calls.erase(std::remove_if(calls.begin(), calls.end(), [](const std::shared_ptr<Call>& call) { return !call || call->state != Call::State::Closed; }),
+                calls.end());
+    std::sort(calls.begin(), calls.end(), [](const std::shared_ptr<Call>& a, const std::shared_ptr<Call>& b) { return a->ended_at > b->ended_at; });
+    if (calls.size() > limit) calls.resize(limit);
+
+    boost::json::array out;
+    for (const auto& call : calls) out.push_back(_record_json(*call));
+
+    write_json(context.response, http::status::ok, out);
+    context.done();
+  });
+}
+
+// One call record: who called whom, when, for how long, through which nodes and engine.
+boost::json::object CallsAPI::_record_json(const Call& call) {
+  boost::json::object out;
+  out["id"] = call.id;
+  out["created_at"] = time_json(call.created_at);
+  out["answered_at"] = time_json(call.answered_at);
+  out["ended_at"] = time_json(call.ended_at);
+
+  // Seconds in conversation, which is nothing for a call nobody answered.
+  out["duration"] = call.answered_at != 0 && call.ended_at >= call.answered_at ? static_cast<std::int64_t>(call.ended_at - call.answered_at) : 0;
+
+  out["caller"] = nullptr;
+  out["callee"] = nullptr;
+
+  // The nodes that carried it, the caller's first, each once.
+  boost::json::array nodes;
+  const auto add_node = [&nodes](const std::string& id) {
+    if (id.empty()) return;
+    for (const auto& seen : nodes) {
+      if (seen.as_string() == id) return;
+    }
+    nodes.push_back(boost::json::string(id));
+  };
+
+  add_node(call.node);
+  for (const auto& participant : call.participants) {
+    const auto uri = participant.identity && participant.identity->uri ? participant.identity->uri->to_string() : std::string();
+    out[participant.originator ? "caller" : "callee"] = uri;
+    add_node(participant.node_id);
+  }
+  out["nodes"] = std::move(nodes);
+
+  out["media_engine"] = call.media_engine.empty() ? boost::json::value(nullptr) : boost::json::value(call.media_engine);
+  return out;
 }
 
 void CallsAPI::_get(RouteContext context) {

@@ -34,6 +34,7 @@ class CallsAPI : public std::enable_shared_from_this<CallsAPI> {
 
  private:
   void _list(RouteContext context);
+  void _records(RouteContext context);
   void _get(RouteContext context);
   void _media(RouteContext context);
   void _reoffers(RouteContext context);
@@ -44,6 +45,7 @@ class CallsAPI : public std::enable_shared_from_this<CallsAPI> {
   // Runs on the strand and answers on the executor.
   void _describe(std::vector<std::shared_ptr<Call>> calls, std::function<void(boost::json::array)> then);
 
+  static boost::json::object _record_json(const Call& call);
   static boost::json::object _call_json(const Call& call);
   static boost::json::value _media_json(const std::string& document, const std::string& engine);
 

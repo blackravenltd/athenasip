@@ -516,8 +516,8 @@ paths:
       tags: [calls]
       summary: The calls this node is carrying now
       description: |
-        Live calls only. A call that has ended is gone from this list; call records are
-        Milestone 4.
+        Live calls only. A call that has ended is gone from this list and is on
+        `/call-records`.
 
         `media` is null for a call nothing anchors - the realm does not anchor, or the
         node has no media engine. Otherwise it is what the engine reports, cumulative
@@ -536,6 +536,43 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Call"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /call-records:
+    get:
+      operationId: listCallRecords
+      tags: [calls]
+      summary: The calls that have ended
+      description: |
+        One record per call, newest first, read from the datastore, so every node of a
+        cluster gives the same list. The node the caller reached writes the record; a node
+        a peer forwarded the call to does not, and is named in `nodes`. A call that never
+        got as far as a dialog - refused before anybody rang - has no record.
+
+        Records are kept for `calls.history_retention` seconds, thirty days unless the
+        operator says otherwise.
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+      responses:
+        "200":
+          description: The records
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CallRecord"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1462,6 +1499,42 @@ components:
           type: integer
         behaviour:
           $ref: '#/components/schemas/Behaviour'
+
+    CallRecord:
+      type: object
+      required: [id, created_at, answered_at, ended_at, duration, caller, callee, nodes, media_engine]
+      properties:
+        id:
+          type: string
+          description: The Call-ID
+        created_at:
+          type: string
+          nullable: true
+        answered_at:
+          type: string
+          nullable: true
+          description: Null for a call nobody answered
+        ended_at:
+          type: string
+          nullable: true
+        duration:
+          type: integer
+          description: Seconds between the answer and the end; zero for a call nobody answered
+        caller:
+          type: string
+          nullable: true
+        callee:
+          type: string
+          nullable: true
+        nodes:
+          type: array
+          description: The nodes that carried the call, the caller's first
+          items:
+            type: string
+        media_engine:
+          type: string
+          nullable: true
+          description: The engine that anchored the media; null when nothing did
 
     Subscriber:
       type: object

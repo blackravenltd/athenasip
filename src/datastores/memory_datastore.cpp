@@ -10,6 +10,7 @@
 #include <set>
 #include <utility>
 
+#include "../config.h"
 #include "../util.h"
 
 namespace athenasip::datastores {
@@ -333,10 +334,29 @@ bool MemoryDatastore::_nonce_check(std::string nonce) {
   return _nonces.find(nonce) != _nonces.end();
 }
 
+bool MemoryDatastore::configure(const YAML::Node& own_root, const Config& system) {
+  (void)own_root;
+  _call_retention = system.calls_history_retention;
+  return true;
+}
+
+// The records of calls that ended longer ago than they are kept for. Called with the lock
+// held, when a call is added: that is when the map grows.
+void MemoryDatastore::_call_prune(std::time_t now) {
+  if (_call_retention == 0) return;
+
+  for (auto it = _calls.begin(); it != _calls.end();) {
+    const auto& call = it->second;
+    const bool expired = call->state == Call::State::Closed && call->ended_at != 0 && now - call->ended_at > static_cast<std::time_t>(_call_retention);
+    it = expired ? _calls.erase(it) : std::next(it);
+  }
+}
+
 bool MemoryDatastore::_call_create(std::shared_ptr<Call> call) {
   if (!call || call->id.empty()) return false;
 
   std::lock_guard<std::mutex> lock(_mutex);
+  _call_prune(std::time(nullptr));
   _calls[call->id] = std::move(call);
   return true;
 }

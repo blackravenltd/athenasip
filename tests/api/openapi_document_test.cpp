@@ -44,6 +44,7 @@ TEST(OpenApiDocumentTest, DescribesTheLiveStateRoutes) {
 
   EXPECT_EQ(doc["paths"]["/calls"]["get"]["operationId"].as<std::string>(), "listCalls");
   EXPECT_EQ(doc["paths"]["/calls/{call}"]["get"]["operationId"].as<std::string>(), "getCall");
+  EXPECT_EQ(doc["paths"]["/call-records"]["get"]["operationId"].as<std::string>(), "listCallRecords");
   EXPECT_EQ(doc["paths"]["/media"]["get"]["operationId"].as<std::string>(), "getMediaEngine");
   EXPECT_EQ(doc["paths"]["/metrics"]["get"]["operationId"].as<std::string>(), "getMetrics");
 
