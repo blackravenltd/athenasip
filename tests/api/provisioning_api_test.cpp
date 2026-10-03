@@ -459,7 +459,28 @@ TEST(ProvisioningApiTest, ASubscriberIsDeleted) {
   EXPECT_EQ(f.get("/api/v1/realms/example.com/subscribers/alice").status, 404u);
 
   // Deleting what is not there is a 404, not a 500 and not a success.
-  EXPECT_EQ(f.request(http::verb::delete_, "/api/v1/realms/example.com/accounts/alice").status, 404u);
+  EXPECT_EQ(f.request(http::verb::delete_, "/api/v1/realms/example.com/subscribers/alice").status, 404u);
+}
+
+// Deleting a realm deletes what is in it (Tom, 2026-10-03): its subscribers, and the
+// registrations that would otherwise go on routing calls into a domain nobody serves.
+TEST(ProvisioningApiTest, DeletingARealmDeletesItsSubscribersAndRegistrations) {
+  ApiFixture f;
+
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+  ASSERT_EQ(f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice","password":"secret"})").status, 201u);
+
+  auto account = f.store->account_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
+  ASSERT_NE(account, nullptr);
+  ASSERT_TRUE(f.store->account_register(account, std::make_shared<types::SIPUri>("sip:alice@192.0.2.10:5060"), 3600, ""));
+
+  EXPECT_EQ(f.request(http::verb::delete_, "/api/v1/realms/example.com").status, 204u);
+  EXPECT_EQ(f.get("/api/v1/registrations", "client-token").json().as_array().size(), 0u);
+
+  // A realm made again under the same name starts empty rather than inheriting them.
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+  EXPECT_EQ(f.get("/api/v1/realms/example.com/subscribers").json().as_array().size(), 0u);
+  EXPECT_EQ(f.get("/api/v1/realms/example.com/subscribers/alice").status, 404u);
 }
 
 // The id is derived from the URI rather than counted, so every node that provisions the
