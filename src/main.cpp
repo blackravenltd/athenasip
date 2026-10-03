@@ -496,6 +496,20 @@ int main(int argc, char* argv[]) {
     }
 
     core->server_register(websocketServer);
+
+    // And a secure one beside it, when asked for: a page served over HTTPS may open no
+    // other kind.
+    if (!config->websocket_tls && config->websocket_secure_port != 0) {
+      auto secureServer = std::make_shared<servers::WebsocketServer>(logger, core, config->websocket_address, config->websocket_secure_port);
+
+      if (!secureServer->set_certificates(config->websocket_cert(), config->websocket_key())) {
+        logger->error("Cannot load the certificates for 'websocket.secure_port': set them in the websocket section or the tls section");
+        datastore->close();
+        return -4;
+      }
+
+      core->server_register(secureServer);
+    }
   }
 
   // Start all configured servers

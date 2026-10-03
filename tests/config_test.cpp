@@ -492,6 +492,36 @@ TEST(ConfigTest, TheAdminListenerOffersHttpsWhenAsked) {
   EXPECT_FALSE(ok);
 }
 
+// A page served over HTTPS may only open a secure WebSocket, so a node that serves its
+// console over HTTPS needs wss; a plain one beside it is still what a local page or a test
+// client uses. Both, on a port each, and both advertised.
+TEST(ConfigTest, ASecureWebSocketListenerSitsBesideThePlainOne) {
+  bool ok = false;
+
+  ConfigFile both(
+      "sip:\n  node_id: test-node\n  public_address: 203.0.113.5\n"
+      "tls:\n  enable: false\n  cert_pem_filename: /tls/node.cer\n  key_pem_filename: /tls/node.key\n"
+      "websocket:\n  enable: true\n  port: 8088\n  secure_port: 8089\n");
+  auto config = both.load(ok);
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(config->websocket_secure_port, 8089);
+  EXPECT_EQ(config->websocket_cert(), "/tls/node.cer");
+
+  bool ws = false;
+  bool wss = false;
+  for (const auto& transport : config->advertised_transports()) {
+    if (transport.transport == "ws" && transport.port == 8088) ws = true;
+    if (transport.transport == "wss" && transport.port == 8089 && transport.secure) wss = true;
+  }
+  EXPECT_TRUE(ws);
+  EXPECT_TRUE(wss);
+
+  ConfigFile same("sip:\n  node_id: test-node\nwebsocket:\n  enable: true\n  port: 8088\n  secure_port: 8088\n");
+  ok = true;
+  same.load(ok);
+  EXPECT_FALSE(ok);
+}
+
 TEST(ConfigTest, SessionLifetimesAreTakenFromTheApiSection) {
   ConfigFile file(
       "sip:\n  node_id: test-node\n"

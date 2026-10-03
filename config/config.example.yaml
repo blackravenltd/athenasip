@@ -202,6 +202,10 @@ websocket:
   # cert_pem_filename: "../tls/snakeoil.cer"
   # key_pem_filename: "../tls/snakeoil.key"
 
+  # Or both: a second, secure listener on a port of its own, beside the plain one above.
+  # It shows the certificate named here, or the tls section's. Zero is none.
+  # secure_port: 9443
+
 # The three plugin kinds. Each is a URL whose scheme picks the driver, plus an optional
 # section named after that driver for what the URL cannot express. The URL on its own is
 # a working configuration.

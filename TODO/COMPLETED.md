@@ -2502,3 +2502,6 @@ Tom's answers to the questions that were waiting on him, and what they led to.
 - [x] **`http.api.rate_limits`**: `open`, `login_source`, `login_user` and `session`, each
       with `burst` and `per_minute`, zero for off. The defaults are what shipped on
       2026-10-03.
+- [x] **`websocket.secure_port`**: a wss listener beside a plain ws one, advertised with
+      it. HTTPS on the console was not enough on its own: a page served over HTTPS may open
+      no insecure WebSocket, and `corvus-fi-1` had only ws.
