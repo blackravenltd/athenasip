@@ -486,7 +486,7 @@ has to be forwarded to the host as a contiguous block.
 | --- | --- | --- |
 | `timeout_ms` | `500` | How long to wait for one answer before asking again |
 | `attempts` | `3` | How many times to ask in all |
-| `media_address` | unset | The address rtpengine should advertise, when it should not choose |
+| `media_address` | unset | The address rtpengine should advertise, when it should not choose. May be a name, resolved at start and every minute, as the builtin relay's `public_address` is. A leg inside `sip.localnet` is given the node's local address instead |
 
 The ng protocol runs over UDP, so a request can be lost. rtpengine caches its answer
 against the request's cookie, which makes asking again a request for the same answer

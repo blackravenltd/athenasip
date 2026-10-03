@@ -2575,3 +2575,8 @@ Tom's answers to the questions that were waiting on him, and what they led to.
       minute after, the address written into descriptions. A node behind NAT on a dynamic
       address (corvus-gbni-1, as `macnessa.athenasip.org`, kept current by manannan) has
       its media follow the name. A name that resolves to nothing is declined, never written.
+- [x] **rtpengine's advertised address follows sip.localnet and may be a name.** A leg inside
+      `sip.localnet` is given the local address and every other leg `media_address`, resolved
+      at start and every minute if it is a name (`src/media/public_address.h`, shared with the
+      builtin relay). It had told every leg one fixed address, which a LAN phone reaches only
+      through a hairpinning router and which goes stale on a dynamic site address.

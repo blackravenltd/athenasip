@@ -6,7 +6,6 @@
 //
 #pragma once
 
-#include <boost/asio/steady_timer.hpp>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -20,6 +19,7 @@
 #include "../rtp/rtp_relay.h"
 #include "../types/url.h"
 #include "media_engine.h"
+#include "public_address.h"
 
 namespace athenasip::media {
 
@@ -92,22 +92,8 @@ class BuiltinMediaEngine : public MediaEngine {
   std::string _bind_address{"0.0.0.0"};
   std::string _public_address{"0.0.0.0"};
 
-  // public_address may be a name: a node behind NAT on a dynamic address advertises the
-  // name a dynamic DNS updater keeps pointing at the site. What goes into a description is
-  // the address it resolves to, looked up when the engine connects and again every minute
-  // off the call path, so media follows the name when the address changes. Empty while a
-  // name resolves to nothing, and then the engine declines rather than write the name.
-  struct PublicName {
-    std::mutex mutex;
-    std::string name;
-    std::string address;
-  };
-  std::shared_ptr<PublicName> _public = std::make_shared<PublicName>();
-  std::shared_ptr<boost::asio::steady_timer> _public_refresh;
-  std::shared_ptr<std::function<void()>> _public_tick;
-
-  std::string _public_for_media() const;
-  void _public_refresh_schedule();
+  // May be a name, followed as it moves (public_address.h).
+  PublicAddress _public;
   std::uint16_t _port_min{22000};
   std::uint16_t _port_max{23000};
 

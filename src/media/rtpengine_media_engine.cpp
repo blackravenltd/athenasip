@@ -86,7 +86,8 @@ RtpengineMediaEngine::RtpengineMediaEngine(std::shared_ptr<loggers::Logger> logg
     : _logger(std::make_shared<loggers::LoggerScoped>("rtpengine", std::move(logger))),
       _url(std::move(url)),
       _strand(boost::asio::make_strand(detail::get_global_io_context())),
-      _receive_buffer(kMaxDatagram) {
+      _receive_buffer(kMaxDatagram),
+      _public(_logger) {
   if (_url) {
     _host = _url->host;
     if (_url->port) _port = *_url->port;
@@ -129,6 +130,10 @@ bool RtpengineMediaEngine::is_connected() const { return _connected.load(std::me
 
 void RtpengineMediaEngine::connect(plugins::Executor on, plugins::StatusHandler handler) {
   if (is_connected()) return _complete(std::move(on), std::move(handler), plugins::Status::success());
+
+  // A name is looked up before the node serves anything, then kept current.
+  _public.set(_media_address);
+  _public.start();
 
   if (_host.empty()) {
     return _complete(std::move(on), std::move(handler), plugins::Status::failure("no rtpengine host configured"));
@@ -200,8 +205,11 @@ void RtpengineMediaEngine::connect(plugins::Executor on, plugins::StatusHandler 
   });
 }
 
+std::string RtpengineMediaEngine::_advertise_for(const Flags& flags) const { return flags.address.empty() ? _public.current() : flags.address; }
+
 void RtpengineMediaEngine::close() {
   _connected.store(false, std::memory_order_relaxed);
+  _public.stop();
 
   std::shared_ptr<boost::asio::ip::udp::socket> socket;
 
@@ -461,7 +469,7 @@ void RtpengineMediaEngine::offer(plugins::Executor on, std::shared_ptr<Call> cal
 
   apply_profile(command, flags.target, flags.rtcp_mux, false);
 
-  if (!_media_address.empty()) command.set("media-address", Bencode(_media_address));
+  if (const auto advertise = _advertise_for(flags); !advertise.empty()) command.set("media-address", Bencode(advertise));
 
   auto self = shared_from_this();
 
@@ -489,7 +497,7 @@ void RtpengineMediaEngine::answer(plugins::Executor on, std::shared_ptr<Call> ca
   command.set("replace", Bencode::list({Bencode(std::string("origin")), Bencode(std::string("session-connection")), Bencode(std::string("sdp-version"))}));
 
   apply_profile(command, flags.target, flags.rtcp_mux, true);
-  if (!_media_address.empty()) command.set("media-address", Bencode(_media_address));
+  if (const auto advertise = _advertise_for(flags); !advertise.empty()) command.set("media-address", Bencode(advertise));
 
   auto self = shared_from_this();
 

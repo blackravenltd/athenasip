@@ -24,6 +24,7 @@
 #include "../types/url.h"
 #include "bencode.h"
 #include "media_engine.h"
+#include "public_address.h"
 
 namespace athenasip::media {
 
@@ -123,6 +124,13 @@ class RtpengineMediaEngine : public MediaEngine, public std::enable_shared_from_
   std::string _host;
   std::uint16_t _port = kDefaultPort;
   std::string _media_address;
+
+  // media_address, followed if it is a name (public_address.h).
+  PublicAddress _public;
+
+  // What rtpengine is told to advertise to the leg a description is for: the local address
+  // the proxy gave a leg inside sip.localnet, otherwise media_address as it resolves now.
+  std::string _advertise_for(const Flags& flags) const;
 
   // Per attempt, not for the whole operation. rtpengine answers in microseconds when it
   // is there at all, so this is a bound on silence rather than on work; three attempts

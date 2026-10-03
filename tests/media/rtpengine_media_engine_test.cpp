@@ -635,3 +635,51 @@ TEST(RtpengineMediaEngineTest, AUrlWithNoHostIsRefusedAtConfigureTime) {
 
   EXPECT_FALSE(engine->configure(YAML::Node(), Config(logger)));
 }
+
+// What rtpengine advertises to a leg follows the same rule as the builtin relay's address.
+// A leg on this node's side of the router (sip.localnet, which the proxy turns into
+// Flags::address) is told the local address; every other leg the configured media_address.
+// One address for everybody either sends a LAN phone out to the router and back, which
+// works only if it hairpins, or sends an outside phone to an address it cannot reach.
+TEST(RtpengineMediaEngineTest, ALegInsideTheLocalNetworkIsGivenTheLocalAddress) {
+  FakeRtpengine fake;
+  fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
+  fake.answer("offer", ok_with_sdp(kOffer));
+
+  auto engine = make_engine(fake, "timeout_ms: 100\nattempts: 3\nmedia_address: 203.0.113.5");
+  ASSERT_TRUE(engine->connect());
+  auto call = make_call();
+
+  Flags outside;
+  outside.participant = 0;
+  ASSERT_TRUE(engine->offer(call, kOffer, outside).ok);
+  EXPECT_EQ(fake.last("offer")->string_at("media-address"), "203.0.113.5");
+
+  Flags inside;
+  inside.participant = 0;
+  inside.address = "10.44.1.50";
+  ASSERT_TRUE(engine->offer(call, kOffer, inside).ok);
+  EXPECT_EQ(fake.last("offer")->string_at("media-address"), "10.44.1.50");
+
+  engine->close();
+}
+
+// And media_address may be a name, the one a dynamic DNS updater keeps pointing at a site:
+// rtpengine is given the address it resolves to, because it writes what it is given into
+// the description and phones do not resolve a name there.
+TEST(RtpengineMediaEngineTest, AMediaAddressThatIsANameIsGivenAsTheAddressItResolvesTo) {
+  FakeRtpengine fake;
+  fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
+  fake.answer("offer", ok_with_sdp(kOffer));
+
+  auto engine = make_engine(fake, "timeout_ms: 100\nattempts: 3\nmedia_address: localhost");
+  ASSERT_TRUE(engine->connect());
+  auto call = make_call();
+
+  Flags flags;
+  flags.participant = 0;
+  ASSERT_TRUE(engine->offer(call, kOffer, flags).ok);
+  EXPECT_EQ(fake.last("offer")->string_at("media-address"), "127.0.0.1");
+
+  engine->close();
+}
