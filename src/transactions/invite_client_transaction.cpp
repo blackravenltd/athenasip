@@ -60,10 +60,12 @@ void InviteClientTransaction::receive(std::shared_ptr<SIPMessage> message) {
       _cancel(_timer_b);
 
       if (is_2xx(code)) {
-        // RFC 3261 17.1.1: a 2xx goes straight up and ends the transaction. Its ACK is
-        // the TU's job, as a separate transaction that may take a different route.
+        // RFC 6026 section 7.2: a 2xx goes straight up and the transaction moves to
+        // Accepted, where the 2xx retransmissions still match it. Its ACK is the TU's
+        // job, as a separate transaction that may take a different route.
         _deliver_to_tu(message);
-        _set_state(State::Terminated);
+        _set_state(State::Accepted);
+        _start_timer_m();
         return;
       }
 
@@ -80,6 +82,12 @@ void InviteClientTransaction::receive(std::shared_ptr<SIPMessage> message) {
     case State::Completed:
       // A retransmitted final response gets the ACK again and the TU hears nothing.
       if (is_final(code) && !is_2xx(code) && _ack) _transport_send(_ack);
+      return;
+
+    case State::Accepted:
+      // Every 2xx goes up, retransmissions included: the TU is what acknowledges a 2xx,
+      // and a proxy has to send each one on. Anything else is too late to matter.
+      if (is_2xx(code)) _deliver_to_tu(message);
       return;
 
     default:
@@ -164,10 +172,18 @@ void InviteClientTransaction::_start_timer_d() {
   _timer_d = _start_timer(delay, [self]() { self->_set_state(State::Terminated); });
 }
 
+// Timer M ends Accepted, on any transport: the 2xx retransmissions it waits out come from
+// the UAS's timer, not this transport's.
+void InviteClientTransaction::_start_timer_m() {
+  auto self = std::static_pointer_cast<InviteClientTransaction>(shared_from_this());
+  _timer_m = _start_timer(_timers.m, [self]() { self->_set_state(State::Terminated); });
+}
+
 void InviteClientTransaction::_cancel_all_timers() {
   _cancel(_timer_a);
   _cancel(_timer_b);
   _cancel(_timer_d);
+  _cancel(_timer_m);
 }
 
 }  // namespace athenasip::transactions

@@ -66,6 +66,12 @@ void InviteServerTransaction::receive(std::shared_ptr<SIPMessage> message) {
       // Absorbing ACK retransmissions is the whole purpose of this state.
       return;
 
+    case State::Accepted:
+      // RFC 6026 section 7.1: a retransmitted INVITE is absorbed - the TU has answered it -
+      // and an ACK that matches goes to the TU, whose business a 2xx's ACK is.
+      if (is_ack) _deliver_to_tu(message);
+      return;
+
     default:
       return;
   }
@@ -73,9 +79,17 @@ void InviteServerTransaction::receive(std::shared_ptr<SIPMessage> message) {
 
 void InviteServerTransaction::send(std::shared_ptr<SIPMessage> message) {
   if (!message || !message->header) return;
-  if (_state != State::Proceeding && _state != State::Completed) return;
 
   const int code = message->header->response_code;
+
+  // In Accepted the TU's 2xx retransmissions go out through the transaction, on the
+  // connection the INVITE arrived on, and nothing else does.
+  if (_state == State::Accepted) {
+    if (is_2xx(code)) _transport_send(message);
+    return;
+  }
+
+  if (_state != State::Proceeding && _state != State::Completed) return;
 
   _last_response = message;
   _cancel(_timer_100);
@@ -90,9 +104,11 @@ void InviteServerTransaction::send(std::shared_ptr<SIPMessage> message) {
   _transport_send(message);
 
   if (is_2xx(code)) {
-    // RFC 3261 17.2.1: a 2xx leaves the transaction immediately. The 2xx and its ACK
-    // are end to end, retransmitted by the TU, and not this transaction's business.
-    _set_state(State::Terminated);
+    // RFC 6026 section 7.1: a 2xx moves the transaction to Accepted. The 2xx and its ACK
+    // are end to end and retransmitted by the TU, not by this transaction, but they still
+    // pass through it for Timer L.
+    _set_state(State::Accepted);
+    _start_timer_l();
     return;
   }
 
@@ -156,11 +172,17 @@ void InviteServerTransaction::_start_timer_i() {
   _timer_i = _start_timer(delay, [self]() { self->_set_state(State::Terminated); });
 }
 
+void InviteServerTransaction::_start_timer_l() {
+  auto self = std::static_pointer_cast<InviteServerTransaction>(shared_from_this());
+  _timer_l = _start_timer(_timers.l, [self]() { self->_set_state(State::Terminated); });
+}
+
 void InviteServerTransaction::_cancel_all_timers() {
   _cancel(_timer_100);
   _cancel(_timer_g);
   _cancel(_timer_h);
   _cancel(_timer_i);
+  _cancel(_timer_l);
 }
 
 }  // namespace athenasip::transactions

@@ -940,8 +940,13 @@ void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::sha
   context->client = nullptr;
 
   // The caller already has its final response - a 487 for a CANCEL, or the answer from
-  // an earlier branch. What this branch says now is only the end of its own transaction.
-  if (context->answered) return;
+  // an earlier branch. What this branch says now is only the end of its own transaction,
+  // with one exception: the callee retransmits its 2xx until the caller's ACK reaches it,
+  // and every one of them goes to the caller (RFC 6026 8.4), as it was sent the first time.
+  if (context->answered) {
+    if (is_2xx(code) && context->answer_sent) context->server->send(context->answer_sent);
+    return;
+  }
 
   // A 2xx ends the search: there is an answer and forking stops (16.7 step 5). A 6xx is
   // a definitive refusal from the user and stops it too.
@@ -1170,7 +1175,10 @@ void Proxy::_forward_response(const std::shared_ptr<Context>& context, const std
 
   // A response goes back down the flow the request came in on, so that flow is the one
   // whose transport says what the far leg of this direction is.
-  _anchor_media(context->request, response, context->request->channel.lock(), context, [self, server, response]() { server->send(response); });
+  _anchor_media(context->request, response, context->request->channel.lock(), context, [self, context, server, response]() {
+    if (response->header->response_code >= 200 && response->header->response_code < 300) context->answer_sent = response;
+    server->send(response);
+  });
 }
 
 void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<SIPMessage>& message, const std::shared_ptr<Channel>& outgoing,
