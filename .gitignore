@@ -56,3 +56,4 @@ docker/generated/
 # Python bytecode, from the dependency-free tools under test/
 __pycache__/
 *.pyc
+test/e2e/generated-cluster/

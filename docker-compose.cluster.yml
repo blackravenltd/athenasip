@@ -1,0 +1,111 @@
+#
+# AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
+#
+# Copyright (C) 2026 Tom Cully <mail@tomcully.com>
+# Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
+#
+# The two-node harness: two nodes, one Redis, one broker, and sipp, on a network of their
+# own.
+#
+#   test/e2e/cluster.sh
+#
+# runs it. Milestone 4's goal in one file: a subscriber on node A calls a subscriber on
+# node B. The single-node harness (docker-compose.test.yml) proves RFC 3261 behaviour on
+# memory:// and local://; this one proves what only two processes can - that a node reads a
+# binding another node holds, forwards over mutual TLS, and the dialog crosses back.
+
+x-node: &node
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: athenasip-e2e-cluster-node
+  depends_on:
+    redis:
+      condition: service_healthy
+    mosquitto:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/v1/health"]
+    interval: 1s
+    timeout: 2s
+    retries: 30
+    start_period: 2s
+
+x-sipp: &sipp
+  build:
+    context: ./test/e2e
+    dockerfile: Dockerfile.sipp
+  profiles: [e2e]
+  volumes:
+    - ./test/e2e:/e2e:ro
+    - ./test/e2e/results:/results
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: athenasip-cluster-redis
+    # Nothing kept: every run starts from an empty store.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    networks:
+      cluster:
+        ipv4_address: 172.32.0.2
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: athenasip-cluster-mosquitto
+    volumes:
+      - ./test/e2e/config-cluster/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    networks:
+      cluster:
+        ipv4_address: 172.32.0.3
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -h 127.0.0.1 -t '$$SYS/#' -C 1 -W 2 >/dev/null 2>&1 || exit 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 2s
+
+  node-a:
+    <<: *node
+    container_name: athenasip-cluster-node-a
+    volumes:
+      - ./test/e2e/config-cluster/node-a:/root/.athenasip:ro
+      - ./test/e2e/generated-cluster:/cluster:ro
+    networks:
+      cluster:
+        ipv4_address: 172.32.0.10
+
+  node-b:
+    <<: *node
+    container_name: athenasip-cluster-node-b
+    volumes:
+      - ./test/e2e/config-cluster/node-b:/root/.athenasip:ro
+      - ./test/e2e/generated-cluster:/cluster:ro
+    networks:
+      cluster:
+        ipv4_address: 172.32.0.11
+
+  # Started by cluster.sh with the scenario as their arguments, never by "compose up".
+  sipp-uas:
+    <<: *sipp
+    networks:
+      cluster:
+        ipv4_address: 172.32.0.20
+
+  sipp-uac:
+    <<: *sipp
+    networks:
+      cluster:
+        ipv4_address: 172.32.0.21
+
+networks:
+  cluster:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.32.0.0/24
