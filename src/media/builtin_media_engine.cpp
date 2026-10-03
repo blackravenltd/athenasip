@@ -6,11 +6,15 @@
 //
 #include "builtin_media_engine.h"
 
+#include <boost/asio/ip/address.hpp>
+#include <boost/asio/ip/udp.hpp>
+#include <chrono>
 #include <cstdint>
 #include <sstream>
 #include <utility>
 
 #include "../config.h"
+#include "../global_io_context.h"
 #include "../sdp.h"
 
 namespace athenasip::media {
@@ -108,8 +112,90 @@ void BuiltinMediaEngine::connect(plugins::Executor on, plugins::StatusHandler ha
   _relay->start();
   _connected = true;
 
+  // A name is looked up now, before the node serves anything, so the first call has an
+  // address; and then kept up to date in the background.
+  boost::system::error_code literal;
+  boost::asio::ip::make_address(_public_address, literal);
+  if (literal) {
+    {
+      std::lock_guard<std::mutex> lock(_public->mutex);
+      _public->name = _public_address;
+    }
+
+    boost::asio::io_context io;
+    boost::asio::ip::udp::resolver resolver(io);
+    boost::system::error_code failed;
+    const auto found = resolver.resolve(boost::asio::ip::udp::v4(), _public_address, "", failed);
+
+    if (!failed && !found.empty()) {
+      std::lock_guard<std::mutex> lock(_public->mutex);
+      _public->address = found.begin()->endpoint().address().to_string();
+      _logger->info("Public address " + _public_address + " is " + _public->address);
+    } else {
+      _logger->error("Public address " + _public_address + " does not resolve - media will not be anchored until it does");
+    }
+
+    _public_refresh_schedule();
+  }
+
   _logger->info("Connected, relaying on " + _bind_address + " as " + _public_address);
   _complete(std::move(on), std::move(handler), plugins::Status::success());
+}
+
+std::string BuiltinMediaEngine::_public_for_media() const {
+  std::lock_guard<std::mutex> lock(_public->mutex);
+  return _public->name.empty() ? _public_address : _public->address;
+}
+
+// Every minute, on the process's own io_context and never on the Core strand: a lookup
+// is a network round trip. A change is logged, because it is the site's address moving.
+void BuiltinMediaEngine::_public_refresh_schedule() {
+  auto timer = std::make_shared<boost::asio::steady_timer>(detail::get_global_io_context());
+  _public_refresh = timer;
+
+  std::weak_ptr<PublicName> weak_public = _public;
+  std::weak_ptr<boost::asio::steady_timer> weak_timer = timer;
+  auto logger = _logger;
+
+  // The engine owns the loop; each step holds it weakly, so closing the engine ends it.
+  auto tick = std::make_shared<std::function<void()>>();
+  _public_tick = tick;
+  std::weak_ptr<std::function<void()>> weak_tick = tick;
+
+  *tick = [weak_public, weak_timer, logger, weak_tick]() {
+    auto timer = weak_timer.lock();
+    if (!timer) return;
+
+    timer->expires_after(std::chrono::seconds(60));
+    timer->async_wait([weak_public, weak_timer, logger, weak_tick](boost::system::error_code ec) {
+      if (ec) return;
+      auto state = weak_public.lock();
+      if (!state) return;
+
+      std::string name;
+      {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        name = state->name;
+      }
+
+      auto resolver = std::make_shared<boost::asio::ip::udp::resolver>(detail::get_global_io_context());
+      resolver->async_resolve(
+          boost::asio::ip::udp::v4(), name, "",
+          [resolver, weak_public, logger, name, weak_tick](boost::system::error_code failed, boost::asio::ip::udp::resolver::results_type found) {
+            if (auto state = weak_public.lock(); state && !failed && !found.empty()) {
+              const auto address = found.begin()->endpoint().address().to_string();
+              std::lock_guard<std::mutex> lock(state->mutex);
+              if (address != state->address) {
+                logger->info("Public address " + name + " is now " + address + (state->address.empty() ? "" : ", was " + state->address));
+                state->address = address;
+              }
+            }
+            if (auto next = weak_tick.lock()) (*next)();
+          });
+    });
+  };
+
+  (*tick)();
 }
 
 void BuiltinMediaEngine::close() {
@@ -120,6 +206,10 @@ void BuiltinMediaEngine::close() {
     _allocated.clear();
     _emitted.clear();
   }
+
+  if (_public_refresh) _public_refresh->cancel();
+  _public_refresh.reset();
+  _public_tick.reset();
 
   if (_relay) _relay->stop();
   _relay.reset();
@@ -191,7 +281,11 @@ Result BuiltinMediaEngine::_map_media(std::shared_ptr<Call> call, const std::str
   ConnectionInfo relay;
   relay.nettype = "IN";
   relay.addrtype = "IP4";
-  relay.address = flags.address.empty() ? _public_address : flags.address;
+  relay.address = flags.address.empty() ? _public_for_media() : flags.address;
+
+  // A name that resolves to nothing would send the far end's media nowhere if it were
+  // written; declined, the description travels on as it came.
+  if (relay.address.empty()) return Result::failure("the public address " + _public_address + " does not resolve to an address");
 
   sdp->set_connection(relay);
 

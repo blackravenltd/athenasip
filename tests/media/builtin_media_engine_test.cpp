@@ -913,3 +913,50 @@ TEST(BuiltinMediaEngineTest, APacketArrivingIsWhatSaysTheCallIsAlive) {
 
   engine->release(call);
 }
+
+// A node behind NAT on a dynamic address advertises a name - the name a dynamic DNS updater
+// keeps pointing at the site - and its media has to follow that name too. But the address in
+// a description's c= line is where a phone sends its media, and phones do not resolve a name
+// there, so the engine resolves it and writes the address (RFC 8866 5.7 allows a name; RFC
+// 3264 endpoints in practice want an address).
+TEST(BuiltinMediaEngineTest, APublicAddressThatIsANameIsWrittenAsTheAddressItResolvesTo) {
+  auto logger = std::make_shared<MockLogger>();
+  auto url = std::make_shared<types::URL>("builtin://?bind_address=127.0.0.1&public_address=localhost&port_min=26100&port_max=26120");
+  auto engine = std::make_shared<SyncMediaEngine>(std::make_shared<BuiltinMediaEngine>(logger, url));
+  engine->connect();
+
+  auto call = make_call();
+  Flags flags;
+  flags.participant = 0;
+
+  const auto offered = engine->offer(call, kOffer, flags);
+  ASSERT_TRUE(offered.ok) << offered.error;
+
+  SDP sdp;
+  ASSERT_TRUE(sdp.parse(offered.sdp));
+  EXPECT_EQ(sdp.connection().address, "127.0.0.1") << offered.sdp;
+  EXPECT_EQ(offered.sdp.find("localhost"), std::string::npos) << offered.sdp;
+
+  engine->release(call);
+  engine->close();
+}
+
+// A name that resolves to nothing is not written into a description, where it would send
+// the far end's media nowhere. The engine declines, and the description travels on as it
+// came, which is what any engine's refusal means to the proxy.
+TEST(BuiltinMediaEngineTest, APublicNameThatDoesNotResolveIsDeclinedRatherThanWritten) {
+  auto logger = std::make_shared<MockLogger>();
+  auto url = std::make_shared<types::URL>("builtin://?bind_address=127.0.0.1&public_address=nowhere.invalid&port_min=26130&port_max=26150");
+  auto engine = std::make_shared<SyncMediaEngine>(std::make_shared<BuiltinMediaEngine>(logger, url));
+  engine->connect();
+
+  auto call = make_call();
+  Flags flags;
+  flags.participant = 0;
+
+  const auto offered = engine->offer(call, kOffer, flags);
+  EXPECT_FALSE(offered.ok);
+  EXPECT_NE(offered.error.find("nowhere.invalid"), std::string::npos) << offered.error;
+
+  engine->close();
+}
