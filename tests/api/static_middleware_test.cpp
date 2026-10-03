@@ -82,7 +82,7 @@ Served serve(boost::beast::http::verb method, const std::string& target, const D
 
   Served served;
 
-  middleware(request, response, [&served, response](bool next) {
+  middleware(request, "127.0.0.1", response, [&served, response](bool next) {
     served.passed_on = next;
 
     if (!next) {

@@ -7,6 +7,7 @@
 #pragma once
 
 #include <boost/beast/http.hpp>
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <string>
@@ -17,6 +18,8 @@
 #include "admin_api.h"
 #include "api_json.h"
 #include "bearer_auth.h"
+#include "rate_limiter.h"
+#include "sessions.h"
 
 namespace athenasip::api {
 
@@ -42,6 +45,9 @@ struct RouteContext {
   // nobody asked.
   BearerAuth::Caller caller;
 
+  // The address the request came from, which is what an open route is limited by.
+  std::string remote;
+
   std::shared_ptr<http::response<http::string_body>> response;
 
   // Sends what the handler has put in the response. Exactly once, on whatever thread
@@ -64,7 +70,21 @@ class Router {
  public:
   using Handler = std::function<void(RouteContext)>;
 
-  explicit Router(std::shared_ptr<BearerAuth> auth) : _auth(std::move(auth)) {}
+  explicit Router(std::shared_ptr<BearerAuth> auth, std::shared_ptr<Throttle> throttle = std::make_shared<Throttle>())
+      : _auth(std::move(auth)), _throttle(std::move(throttle)) {}
+
+  // Every route is limited (Tom, 2026-10-03): an open one, and anything presenting a
+  // credential that did not resolve, by source address; a signed-in caller by session.
+  // Routes that can limit on more than that, the login by username, take it from here.
+  std::shared_ptr<Throttle> throttle() const { return _throttle; }
+
+  // 429 with how long to wait, in the header a client is meant to read it from (RFC 6585,
+  // RFC 9110 10.2.3) and in the message for a person.
+  static void write_too_many(const std::shared_ptr<http::response<http::string_body>>& response, std::chrono::seconds wait) {
+    write_error(response, http::status::too_many_requests, "rate_limited",
+                "too many requests; try again in " + std::to_string(wait.count()) + (wait.count() == 1 ? " second" : " seconds"));
+    response->set(http::field::retry_after, std::to_string(wait.count()));
+  }
 
   // Any of `roles` admits. An empty set means any authenticated caller, which is the safe
   // thing for it to mean: a route declared without naming roles demands a credential and
@@ -81,8 +101,9 @@ class Router {
   // The middleware for the chain. It answers anything under its own prefix and passes
   // everything else along, so static files and the API can share a port.
   HttpMiddleware middleware(std::string prefix) {
-    return [this, prefix](const http::request<http::string_body>& request, std::shared_ptr<http::response<http::string_body>> response,
-                          std::function<void(bool)> next) { _handle(prefix, request, std::move(response), std::move(next)); };
+    return
+        [this, prefix](const http::request<http::string_body>& request, const std::string& remote, std::shared_ptr<http::response<http::string_body>> response,
+                       std::function<void(bool)> next) { _handle(prefix, request, remote, std::move(response), std::move(next)); };
   }
 
  private:
@@ -94,8 +115,8 @@ class Router {
     Handler handler;
   };
 
-  void _handle(const std::string& prefix, const http::request<http::string_body>& request, std::shared_ptr<http::response<http::string_body>> response,
-               std::function<void(bool)> next) {
+  void _handle(const std::string& prefix, const http::request<http::string_body>& request, const std::string& remote,
+               std::shared_ptr<http::response<http::string_body>> response, std::function<void(bool)> next) {
     const std::string target(request.target());
     if (target.rfind(prefix, 0) != 0) return next(true);
 
@@ -122,10 +143,18 @@ class Router {
       context.query = _parse_query(question == std::string::npos ? std::string() : target.substr(question + 1));
       context.body = request.body();
       context.bearer = BearerAuth::presented_token(request);
+      context.remote = remote;
       context.response = response;
       context.done = [next]() { next(false); };
 
-      if (route.open) return route.handler(std::move(context));
+      if (route.open) {
+        if (const auto wait = _throttle->take(_source_key(remote), _throttle->limits().open)) {
+          write_too_many(response, *wait);
+          return next(false);
+        }
+
+        return route.handler(std::move(context));
+      }
 
       if (!_auth) {
         write_error(response, http::status::unauthorized, "unauthorized", "no credentials are configured, so nothing may be called");
@@ -134,15 +163,29 @@ class Router {
 
       const auto presented = context.bearer;
 
-      _auth->resolve(presented, [context, roles = route.roles, handler = route.handler](BearerAuth::Caller caller) mutable {
+      _auth->resolve(presented, [throttle = _throttle, context, roles = route.roles, handler = route.handler](BearerAuth::Caller caller) mutable {
         if (caller.unavailable) {
           write_error(context.response, http::status::service_unavailable, "unavailable", "the server cannot check credentials at the moment");
           return context.done();
         }
 
+        // A credential that did not resolve is somebody this node does not know, and is
+        // limited as an open route is, by where it came from.
         if (!caller.authenticated()) {
+          if (const auto wait = throttle->take(_source_key(context.remote), throttle->limits().open)) {
+            write_too_many(context.response, *wait);
+            return context.done();
+          }
+
           context.response->set(http::field::www_authenticate, "Bearer realm=\"athenasip\"");
           write_error(context.response, http::status::unauthorized, "unauthorized", "a bearer token is required");
+          return context.done();
+        }
+
+        // By session, held by its hash as everything else here holds one, and before
+        // the roles: a refusal is a request like any other.
+        if (const auto wait = throttle->take("session:" + Sessions::token_hash(context.bearer), throttle->limits().session)) {
+          write_too_many(context.response, *wait);
           return context.done();
         }
 
@@ -161,6 +204,13 @@ class Router {
       return;
     }
 
+    // An endpoint that is not there is still a request from somebody, and a scan for one
+    // is exactly what an open route is limited against.
+    if (const auto wait = _throttle->take(_source_key(remote), _throttle->limits().open)) {
+      write_too_many(response, *wait);
+      return next(false);
+    }
+
     if (path_matched) {
       write_error(response, http::status::method_not_allowed, "method_not_allowed", "that path does not take this method");
       return next(false);
@@ -169,6 +219,8 @@ class Router {
     write_error(response, http::status::not_found, "not_found", "no such endpoint");
     next(false);
   }
+
+  static std::string _source_key(const std::string& remote) { return "source:" + remote; }
 
   // What a 403 says it was missing. The role names are the API's own vocabulary and are
   // safe to name: knowing that a route wants manage-realms tells a caller nothing it could
@@ -267,6 +319,7 @@ class Router {
 
  private:
   std::shared_ptr<BearerAuth> _auth;
+  std::shared_ptr<Throttle> _throttle;
   std::vector<Route> _routes;
 };
 

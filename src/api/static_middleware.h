@@ -71,7 +71,8 @@ class StaticMiddleware {
   // It returns a HttpMiddleware function that serves static files from disk.
   static HttpMiddleware add(const std::string& base_path, const StaticOptions& opts = StaticOptions()) {
     return
-        [base_path, opts](const http::request<http::string_body>& req, std::shared_ptr<http::response<http::string_body>> res, std::function<void(bool)> next) {
+        [base_path, opts](const http::request<http::string_body>& req, const std::string&, std::shared_ptr<http::response<http::string_body>> res,
+                         std::function<void(bool)> next) {
           // The target is a URI reference, not a path. A query and a fragment are
           // separate components of it (RFC 3986 sections 3.4 and 3.5) and neither is
           // part of the file being asked for, so "bundle.js?v=2" is a request for

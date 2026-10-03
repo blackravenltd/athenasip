@@ -363,8 +363,13 @@ away with a 401 that tells the caller it was not real.
   than a companion to it, and it is not in the config schema yet. On the deployed node
   at `corvus-fi-1` the listener is bound to the LAN address, which limits but does not
   remove this.
-- **Rate limiting.** A login endpoint without one is a password oracle. Per-username and
-  per-source backoff has to land with it, not after it.
+- ~~**Rate limiting.**~~ Every route is limited (Tom, 2026-10-03), in
+  `src/api/rate_limiter.h`: open routes and unresolved credentials by source address,
+  30 at once and then 30 a minute; the login on top of that by source address (10, then 5
+  a minute) and by username (5, then 1 a minute); a signed-in caller by session (60, then
+  300 a minute). A refusal is `429` with `Retry-After`. The username limit means somebody
+  guessing at a user's password also keeps that user out for as long as they keep
+  guessing, which is the usual price and is recovered from by waiting a minute.
 - **Audit.** Identity is only worth having if what each identity did is written down.
   The event bus already carries provisioning events; they need to carry who did it.
 - **Inter-node authentication** is mutual TLS from the cluster CA (decision of

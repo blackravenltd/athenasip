@@ -32,7 +32,11 @@ using tcp = net::ip::tcp;
 // - A shared pointer to the HTTP response to be modified.
 // - A "next" callback: if called with true, processing continues; if called with false,
 //   the chain stops and the current response is sent.
-typedef std::function<void(const http::request<http::string_body>&, std::shared_ptr<http::response<http::string_body>>, std::function<void(bool)>)>
+// The request, the address it came from, the response to fill and what to call next.
+// The address is the peer of the connection: there is no X-Forwarded-For, because a
+// header anybody can set is not something to limit or log a caller by.
+typedef std::function<void(const http::request<http::string_body>&, const std::string&, std::shared_ptr<http::response<http::string_body>>,
+                           std::function<void(bool)>)>
     HttpMiddleware;
 
 class AdminAPI {
@@ -96,6 +100,7 @@ class HttpSession : public std::enable_shared_from_this<HttpSession> {
   beast::flat_buffer _buffer;
   AdminAPI& _server;
   http::request<http::string_body> _req;
+  std::string _remote;
 
   // Reads the incoming HTTP request.
   void do_read();

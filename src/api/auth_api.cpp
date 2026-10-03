@@ -29,6 +29,7 @@ AuthAPI::AuthAPI(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<Sessio
 
 void AuthAPI::register_routes(Router& router) {
   auto self = shared_from_this();
+  _throttle = router.throttle();
 
   // Open, because it is how a credential is obtained.
   router.add_open(http::verb::post, "/api/v1/auth/login", [self](RouteContext c) { self->_login(std::move(c)); });
@@ -73,6 +74,21 @@ void AuthAPI::_login(RouteContext context) {
   if (!username || !password) {
     write_error(context.response, http::status::bad_request, "invalid_request", "username and password are required");
     return context.done();
+  }
+
+  // A login without a limit is a password oracle. Per source address, and per username
+  // whoever is asking, so guesses spread across many addresses still meet a limit. Every
+  // attempt counts, not only the failures: the handler cannot know which an attempt is
+  // without doing the work that is being limited.
+  if (_throttle) {
+    auto wait = _throttle->take("login-source:" + context.remote, _throttle->limits().login_source);
+    if (!wait) wait = _throttle->take("login-user:" + types::User::normalise(*username), _throttle->limits().login_user);
+
+    if (wait) {
+      _logger->warn("a login for " + *username + " from " + context.remote + " was rate limited");
+      Router::write_too_many(context.response, *wait);
+      return context.done();
+    }
   }
 
   auto self = shared_from_this();
