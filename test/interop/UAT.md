@@ -404,6 +404,37 @@ Two things it needed that the audio call did not: the camera permission granted 
 on the phone, without which it answers a video call with 486 and no fallback to audio; and
 the console served from a secure context for the camera, as for the microphone.
 
+### An automated video call to AthenaPhone through macnessa.athenasip.org (2026-10-04)
+
+The first call through a node addressed by name, behind a NAT, with native rtpengine
+anchoring. corvus-gbni-1 at 10.44.1.50, reached as `macnessa.athenasip.org`; a headless
+Chromium with a fake camera, the console's `e2e/phone-call.spec.ts` served from loopback on
+the Mac at the other site, registered as 1002 over `wss://macnessa.athenasip.org:8089`;
+AthenaPhone on the A85 as 1003 over TLS to the same name, answered by hand.
+
+| | Run 2, 01:03 EEST - passed |
+|---|---|
+| Signalling | INVITE over wss from 37.136.120.85, to the phone over TLS, 100, 180, 200, ACK; the browser's BYE, 200 |
+| Anchoring | rtpengine created the call and re-keyed each side: AES_CM_128 to the browser, AEAD_AES_256_GCM to the phone |
+| Browser's leg | ICE pair to `78.149.248.154:22100`, the public address and a forwarded media port; peer confirmed at 37.136.120.85 |
+| Phone's leg | peer confirmed at 10.35.1.164 - over the link between the two sites, not the internet |
+| Browser | audio 979 sent, 934 received, 2 lost, inbound level 0.22; video VP8 307 sent, 500 received, 167 frames decoded |
+| Phone | the fake camera's pattern full screen, its frame counter moving, at 0:11 and 0:17 |
+| Bundling | the browser bundled, rtpengine offered the phone separate audio and video, both accepted |
+
+Run 1 (01:01) connected the same way and failed the spec only because the call was ended
+from the phone as the spec went to read its counters.
+
+What it proved: DNS, the forwarded signalling and media ports, rtpengine behind NAT
+advertising the site's public address resolved from the name, and video both ways. What it
+did not: the phone's media crossing the internet, because the two sites route to each other
+and ICE preferred that. A phone on mobile data is the test for that.
+
+Found: the phone retransmitted its 200 once (the ACK took 674 ms through the public path)
+and the node dropped the copy - "No flow back to 37.136.120.85:5060 for a stray response -
+cannot open an outbound wss flow" - instead of sending it down the browser's open WebSocket.
+Harmless this time; a 2xx retransmission has to reach the caller (RFC 3261 13.3.1.4).
+
 ## If it fails
 
 - **Registration fails but `smoke.py` passes.** The difference is in the client. Get its

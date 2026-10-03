@@ -2580,3 +2580,8 @@ Tom's answers to the questions that were waiting on him, and what they led to.
       at start and every minute if it is a name (`src/media/public_address.h`, shared with the
       builtin relay). It had told every leg one fixed address, which a LAN phone reaches only
       through a hairpinning router and which goes stale on a dynamic site address.
+- [x] **Video through rtpengine, automated, through a named endpoint behind NAT.**
+      corvus-gbni-1 as `macnessa.athenasip.org`, native rtpengine: a headless browser with a
+      fake camera called AthenaPhone, 167 frames decoded in the browser and the pattern
+      moving on the phone, the browser's media through the public address and a forwarded
+      port. `test/interop/UAT.md`.
