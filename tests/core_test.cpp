@@ -583,3 +583,18 @@ TEST(CoreTest, ChannelReceiveDoesNotAddRportWhenItWasNotAskedFor) {
   ASSERT_NE(via, nullptr);
   EXPECT_FALSE(via->parameters.contains("rport"));
 }
+
+// RFC 3261 10.3 step 7: a REGISTER may ask to remove a binding the registrar does not hold -
+// a client clearing a Contact from before it restarted, the binding long expired - and that
+// is not an error. The store says there was nothing to remove; the node does not log it as a
+// failure, which on a node a phone re-registers with every few minutes is noise that hides
+// the real ones.
+TEST(CoreTest, RemovingABindingThatIsNotThereIsNotAnError) {
+  Fixture f;
+  auto subscriber = f.seed_subscriber(7, "sip:bob@example.com");
+  auto channel = f.make_channel("192.0.2.30");
+
+  f.unregister_binding(subscriber, std::make_shared<types::SIPUri>("sip:bob@192.0.2.30:5060"), channel);
+
+  for (const auto& line : f.logger->lines(loggers::LogLevel::ERROR)) ADD_FAILURE() << line;
+}

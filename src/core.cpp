@@ -144,7 +144,14 @@ void Core::subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::sh
   auto self = shared_from_this();
 
   datastore->subscriber_unregister(_strand, subscriber, contact, [this, self, subscriber, handler](plugins::Status status) mutable {
-    if (!status.ok) _logger->error("Cannot unregister subscriber " + subscriber->identity->to_string() + " - " + status.error);
+    // A binding that was not there is not a failure (RFC 3261 10.3 step 7): the store says
+    // so in those words, because its deletes report when there was nothing to delete.
+    // Anything else is the store failing, and is one.
+    if (!status.ok && status.error == "subscriber_unregister failed") {
+      _logger->debug("No binding to remove for " + subscriber->identity->to_string());
+    } else if (!status.ok) {
+      _logger->error("Cannot unregister subscriber " + subscriber->identity->to_string() + " - " + status.error);
+    }
     if (handler) handler(status);
   });
 }
