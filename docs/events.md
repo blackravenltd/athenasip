@@ -48,7 +48,7 @@ consumer that was not subscribed at the time has missed it.
 ### The node status payload
 
 ```json
-{"status":"ok","node":"corvus-fi-1","version":"0.7.0","datastore":"redis 0.0.1","at":"2026-09-27T09:58:59Z","uptime":188790,
+{"status":"ok","node":"corvus-fi-1","version":"0.7.0","datastore":"redis 0.0.1","at":"2026-09-27T09:58:59Z","uptime":188790,"status_interval":30,
  "transports":[{"transport":"tls","address":"10.35.1.20","port":5061,"uri":"sips:10.35.1.20:5061;transport=tls"}]}
 ```
 
@@ -60,6 +60,7 @@ consumer that was not subscribed at the time has missed it.
 | `datastore` | the driver and its version, or `none` |
 | `at` | when the node composed the message, not when it arrived |
 | `uptime` | seconds since this process started serving, `0` in a will |
+| `status_interval` | `events.status_interval`: seconds until this node says it again, `0` if it never repeats; present in a will too |
 | `transports` | where the node listens, one entry per enabled SIP transport, at `sip.public_address` when set; empty in a will |
 
 `degraded` is a node that is running with a datastore it cannot reach: it cannot read a
@@ -70,7 +71,9 @@ is the time the *will was composed*, at startup, and a consumer must date it by 
 
 Every node subscribes to `nodes/+/status`, so each knows the cluster as the others
 describe themselves, and `GET /api/v1/nodes` lists it. A report not repeated within three
-status intervals is listed as stale.
+status intervals is listed as stale. A monitor elsewhere should do the same with the
+`status_interval` the node carries, rather than a threshold of its own that agrees with it
+only by coincidence.
 
 A consumer should ignore fields it does not know: the inter-node TLS address and the
 node's capabilities are still to come in this payload, and the live registries

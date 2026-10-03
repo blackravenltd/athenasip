@@ -973,7 +973,7 @@ void Core::node_status_stop() {
 }
 
 std::string Core::node_status_json(const std::string& status, const std::string& node_id, const std::string& version, const std::string& datastore,
-                                   std::int64_t uptime, const std::vector<Config::AdvertisedTransport>& transports) {
+                                   std::int64_t uptime, std::uint32_t status_interval, const std::vector<Config::AdvertisedTransport>& transports) {
   boost::json::object report;
 
   report["status"] = status;
@@ -982,6 +982,11 @@ std::string Core::node_status_json(const std::string& status, const std::string&
   report["datastore"] = datastore;
   report["at"] = Util::get_zulu_time();
   report["uptime"] = uptime;
+
+  // The promise of when it will be said again, so a monitor derives its staleness from the
+  // node rather than from a constant that agrees with it by coincidence. Zero is a node that
+  // does not repeat itself.
+  report["status_interval"] = status_interval;
 
   // Where it listens, which is what makes the status a directory entry and not only a
   // heartbeat.
@@ -1002,7 +1007,8 @@ std::string Core::node_status_json(const std::string& status, const std::string&
 std::string Core::node_status_json(const std::string& status) const {
   const auto uptime = _started_at == 0 ? 0 : static_cast<std::int64_t>(std::time(nullptr) - _started_at);
 
-  return node_status_json(status, config->sip_node_id, _version, datastore ? datastore->describe() : "none", uptime, config->advertised_transports());
+  return node_status_json(status, config->sip_node_id, _version, datastore ? datastore->describe() : "none", uptime, config->events_status_interval,
+                          config->advertised_transports());
 }
 
 void Core::_node_status_publish() {

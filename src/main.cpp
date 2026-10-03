@@ -326,7 +326,7 @@ int main(int argc, char* argv[]) {
   // to publish again, and without this the last retained thing it said would go on
   // claiming it was healthy.
   events->will_set(events::topics::node_status(config->sip_node_id),
-                   Core::node_status_json("down", config->sip_node_id, version->to_string(), datastore->describe(), 0));
+                   Core::node_status_json("down", config->sip_node_id, version->to_string(), datastore->describe(), 0, config->events_status_interval));
 
   // Attempt Events connection
   const auto events_connected =

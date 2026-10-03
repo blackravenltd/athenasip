@@ -37,7 +37,7 @@ struct HeartbeatFixture : CoreFixture {
     // The order a node starts in, and the order main starts it in: the will goes in
     // while the bus is still closed, because that is the only time a broker takes one,
     // and the heartbeat starts once the bus is up.
-    bus_record->will_set(events::topics::node_status("test-node"), Core::node_status_json("down", "test-node", "9.9.9", "memory 0.0.1", 0));
+    bus_record->will_set(events::topics::node_status("test-node"), Core::node_status_json("down", "test-node", "9.9.9", "memory 0.0.1", 0, interval_seconds));
     bus_record->connect(core->strand(), [](plugins::Status) {});
 
     on_strand([this]() { core->node_status_start(); });
@@ -170,4 +170,14 @@ TEST(NodeHeartbeatTest, TheStatusSaysWhereTheNodeListens) {
     EXPECT_FALSE(transport.at("uri").as_string().empty());
     EXPECT_NE(transport.at("address").as_string(), "0.0.0.0");
   }
+}
+
+// How often the node promises to repeat itself, so a monitor can derive its own staleness
+// threshold rather than hardcoding one that happens to match this node's configuration.
+TEST(NodeHeartbeatTest, TheStatusSaysHowOftenItWillBeRepeated) {
+  HeartbeatFixture f(45);
+
+  const auto status = f.latest_status();
+  ASSERT_TRUE(status.contains("status_interval")) << boost::json::serialize(status);
+  EXPECT_EQ(status.at("status_interval").as_int64(), 45);
 }
