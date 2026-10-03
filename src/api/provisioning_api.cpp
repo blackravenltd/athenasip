@@ -109,7 +109,7 @@ std::string read_behaviour(const boost::json::object& body, types::Account& acco
   if (!section->is_object()) return "behaviour is an object";
 
   for (const auto& [key, value] : section->as_object()) {
-    if (key != "media_profile") return "an account's behaviour has no setting called " + std::string(key);
+    if (key != "media_profile") return "a subscriber's behaviour has no setting called " + std::string(key);
 
     if (value.is_null()) {
       account.media_profile.reset();
@@ -158,13 +158,14 @@ void ProvisioningAPI::register_routes(Router& router) {
   router.add(http::verb::put, "/api/v1/realms/{realm}", {manage_realms}, [self](RouteContext c) { self->_realm_update(std::move(c)); });
   router.add(http::verb::delete_, "/api/v1/realms/{realm}", {manage_realms}, [self](RouteContext c) { self->_realm_delete(std::move(c)); });
 
-  router.add(http::verb::get, "/api/v1/realms/{realm}/accounts", {manage_realm_subscribers}, [self](RouteContext c) { self->_account_list(std::move(c)); });
-  router.add(http::verb::post, "/api/v1/realms/{realm}/accounts", {manage_realm_subscribers}, [self](RouteContext c) { self->_account_create(std::move(c)); });
-  router.add(http::verb::get, "/api/v1/realms/{realm}/accounts/{user}", {manage_realm_subscribers},
+  router.add(http::verb::get, "/api/v1/realms/{realm}/subscribers", {manage_realm_subscribers}, [self](RouteContext c) { self->_account_list(std::move(c)); });
+  router.add(http::verb::post, "/api/v1/realms/{realm}/subscribers", {manage_realm_subscribers},
+             [self](RouteContext c) { self->_account_create(std::move(c)); });
+  router.add(http::verb::get, "/api/v1/realms/{realm}/subscribers/{user}", {manage_realm_subscribers},
              [self](RouteContext c) { self->_account_get(std::move(c)); });
-  router.add(http::verb::put, "/api/v1/realms/{realm}/accounts/{user}", {manage_realm_subscribers},
+  router.add(http::verb::put, "/api/v1/realms/{realm}/subscribers/{user}", {manage_realm_subscribers},
              [self](RouteContext c) { self->_account_update(std::move(c)); });
-  router.add(http::verb::delete_, "/api/v1/realms/{realm}/accounts/{user}", {manage_realm_subscribers},
+  router.add(http::verb::delete_, "/api/v1/realms/{realm}/subscribers/{user}", {manage_realm_subscribers},
              [self](RouteContext c) { self->_account_delete(std::move(c)); });
 
   // Where a subscriber is registered is what a client needs to show a presence list, and
@@ -372,7 +373,7 @@ void ProvisioningAPI::_account_create(RouteContext context) {
 
     self->_datastore->account_create(self->_executor, account, [self, context, account](plugins::Status status) mutable {
       if (!status.ok) {
-        return self->_fail(std::move(context), status, "conflict", "that account already exists", http::status::conflict);
+        return self->_fail(std::move(context), status, "conflict", "that subscriber already exists", http::status::conflict);
       }
 
       write_json(context.response, http::status::created, _account_json(*account));
@@ -392,7 +393,7 @@ void ProvisioningAPI::_account_get(RouteContext context) {
     }
 
     if (!result.value) {
-      write_error(context.response, http::status::not_found, "not_found", "no such account");
+      write_error(context.response, http::status::not_found, "not_found", "no such subscriber");
       return context.done();
     }
 
@@ -420,7 +421,7 @@ void ProvisioningAPI::_account_update(RouteContext context) {
                             }
 
                             if (!result.value) {
-                              write_error(context.response, http::status::not_found, "not_found", "no such account");
+                              write_error(context.response, http::status::not_found, "not_found", "no such subscriber");
                               return context.done();
                             }
 
@@ -468,7 +469,7 @@ void ProvisioningAPI::_account_delete(RouteContext context) {
     }
 
     if (!result.value) {
-      write_error(context.response, http::status::not_found, "not_found", "no such account");
+      write_error(context.response, http::status::not_found, "not_found", "no such subscriber");
       return context.done();
     }
 
@@ -811,8 +812,8 @@ boost::json::object ProvisioningAPI::_account_json(const types::Account& account
 
 boost::json::object ProvisioningAPI::_location_json(const types::Location& location, const std::string& uri) {
   boost::json::object object;
-  object["account"] = uri;
-  object["account_id"] = location.account_id;
+  object["subscriber"] = uri;
+  object["subscriber_id"] = location.account_id;
   object["contact"] = location.contact ? location.contact->to_string() : "";
   object["registered_at"] = static_cast<std::int64_t>(location.registered_at);
   object["expires_at"] = static_cast<std::int64_t>(location.expires_at);

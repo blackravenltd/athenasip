@@ -19,7 +19,7 @@ There are three levels, and each one overrides only what it sets:
 2. **A realm**: `behaviour` on the realm in the admin API. A setting that is `null` takes
    the server's, so changing the server's default changes every realm that has not
    chosen otherwise.
-3. **An account**: `behaviour` on the account, which has one setting, `media_profile`.
+3. **A subscriber**: `behaviour` on the subscriber, which has one setting, `media_profile`.
    That is the one setting that is about an endpoint rather than a realm.
 
 ```yaml
@@ -43,7 +43,7 @@ curl -X PUT http://127.0.0.1:8080/api/v1/realms/example.com \
   -d '{"behaviour":{"qualify_interval":null}}'
 
 # An endpoint the operator knows is WebRTC
-curl -X PUT http://127.0.0.1:8080/api/v1/realms/example.com/accounts/1001 \
+curl -X PUT http://127.0.0.1:8080/api/v1/realms/example.com/subscribers/1001 \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"behaviour":{"media_profile":"webrtc"}}'
 ```
@@ -84,7 +84,7 @@ decides:
 1. What the leg said in an offer or answer during this call.
 2. What it said in a session description in answer to an OPTIONS (see
    `qualify_interval`).
-3. Its account's `media_profile`.
+3. Its subscriber's `media_profile`.
 4. Its realm's `media_profile`.
 5. The server's `media_profile`.
 
@@ -92,7 +92,7 @@ When a callee refuses the offer the engine made for it with 488 Not Acceptable H
 node offers it the other profile once: WebRTC for plain RTP, or the reverse. Under
 `mirror` "the other" means the other of what the caller offered, which is what lets a
 browser call a desk phone. The node does not learn from this. `GET /api/v1/media/reoffers`
-lists the accounts that needed the second offer and the `media_profile` that would save
+lists the subscribers that needed the second offer and the `media_profile` that would save
 them the round trip. Setting it is the operator's decision.
 
 ### qualify_interval
@@ -164,7 +164,7 @@ on a 488. Nothing needs configuring for it.
 ### Asterisk (res_pjsip)
 
 Asterisk terminates the media itself, so leave anchoring on. WebRTC is decided per
-endpoint with `webrtc=yes`, which is an account's `media_profile`. Qualifying is the
+endpoint with `webrtc=yes`, which is a subscriber's `media_profile`. Qualifying is the
 AOR's `qualify_frequency`, which is `0` (off) unless set.
 
 ```yaml
@@ -175,10 +175,10 @@ behaviour:
   rewrite_contact: false   # true where endpoints had rewrite_contact=yes
 ```
 
-Then, for each account whose endpoint had `webrtc=yes`:
+Then, for each subscriber whose endpoint had `webrtc=yes`:
 
 ```sh
-curl -X PUT .../api/v1/realms/example.com/accounts/1001 \
+curl -X PUT .../api/v1/realms/example.com/subscribers/1001 \
   -d '{"behaviour":{"media_profile":"webrtc"}}' ...
 ```
 

@@ -99,12 +99,12 @@ Record-Route, so one that advertises the wrong one is a node whose replies go no
 
 - `sip.public_address` - what clients reach this node on.
 - There are no API tokens to set. Make the first administrator with `athenasip --add-user`
-  on this host; the admin API, which provisions realms and accounts, is signed in to as
+  on this host; the admin API, which provisions realms and subscribers, is signed in to as
   that user.
 - `datastore.url` and `events.url` - `memory://` and `local://` for a single node;
   `redis://` and `mqtt://` for a cluster.
 
-Realms and accounts are not configured here. They are provisioned over the admin API,
+Realms and subscribers are not configured here. They are provisioned over the admin API,
 because a cluster shares them and a file on one node does not:
 
 ```bash

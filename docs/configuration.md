@@ -400,7 +400,7 @@ The filename for the PEM format server key.
 
 ### `datastore` Section
 
-Where realms, accounts, registrations, nonces and call records live. One of the three
+Where realms, subscribers, registrations, nonces and call records live. One of the three
 plugin kinds: the URL's scheme picks the driver, and a section named after that driver
 carries anything the URL cannot express.
 
@@ -413,7 +413,7 @@ The URL of the datastore. AthenaSIP ships with two:
 | In memory                  | `memory` | `memory://`              |
 |[Redis](https://redis.io/)  | `redis`  | `redis://127.0.0.1:6379` |
 
-`memory://` keeps realms, accounts, registrations, nonces and calls in the server
+`memory://` keeps realms, subscribers, registrations, nonces and calls in the server
 process. It needs no external service and nothing survives a restart, which makes it
 the right choice for a single node you are trying out, and for the tests.
 
@@ -519,11 +519,11 @@ said what it speaks. A leg that has is always answered in kind.
 | `webrtc` | WebRTC | A browser-only realm |
 | `srtp` | SRTP with keys in the description (RFC 4568) | Desk phones that want encryption and do not do DTLS |
 
-An account can say what its endpoint is with the same `media_profile` in its own
+A subscriber can say what its endpoint is with the same `media_profile` in its own
 `behaviour` section, which is Asterisk's `webrtc=yes`: AthenaPhone signals over TCP and
 its media is WebRTC, which neither the realm nor the transport can tell. Precedence, for
 the first description produced towards a leg, is what that leg has itself said in an
-offer or answer or in answer to an OPTIONS, then its account, then its realm, then this
+offer or answer or in answer to an OPTIONS, then its subscriber, then its realm, then this
 section.
 
 `qualify_interval` is how often, in seconds, each registered client is sent an OPTIONS
@@ -532,7 +532,7 @@ ping. 0, the default, sends none, because RFC 3261 does not ask a registrar to; 
 it is 5 to 86400. The probe keeps a NAT's mapping for the client open, and a client that
 answers with a session description (RFC 3261 11.2) has said what media it takes, which
 then counts as the client's own word: it decides the first offer towards it ahead of the
-account, the realm and this section. `GET /api/v1/qualify` lists the clients being probed,
+subscriber, the realm and this section. `GET /api/v1/qualify` lists the clients being probed,
 when each last answered and what it said.
 
 `rewrite_contact`, off by default, rewrites the Contact in what this node forwards to the
@@ -543,7 +543,7 @@ When a callee answers an offer the engine produced for it with 488 Not Acceptabl
 the node offers it the other profile once, WebRTC for plain RTP or the reverse, as a
 Kamailio failure route would. Under `mirror` the other profile is the other of what the
 caller offered, which is what lets a browser call a desk phone. Nothing is learned from
-it: `GET /api/v1/media/reoffers` lists the accounts that needed it and the
+it: `GET /api/v1/media/reoffers` lists the subscribers that needed it and the
 `media_profile` that would save them the round trip, and setting it is the operator's
 call.
 

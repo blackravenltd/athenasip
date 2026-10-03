@@ -279,12 +279,12 @@ curl -fsS -X POST "$API/realms" \
 while IFS=, read -r username password; do
   [[ "$username" == "username" || -z "$username" ]] && continue
 
-  echo "  account ${username}@${REALM}"
-  curl -fsS -X POST "$API/realms/${REALM}/accounts" \
+  echo "  subscriber ${username}@${REALM}"
+  curl -fsS -X POST "$API/realms/${REALM}/subscribers" \
     -H "Authorization: Bearer $ADMIN_TOKEN" \
     -H "Content-Type: application/json" \
     -d "{\"user\":\"${username}\",\"password\":\"${password}\"}" > /dev/null
-done < "$HERE/accounts.csv"
+done < "$HERE/subscribers.csv"
 
 # What the fixture actually turned out to be, for anything that has to talk to it and
 # did not choose these values itself. The addresses are worked out here - the LAN one is
@@ -330,7 +330,7 @@ Ready. The node is listening on ${PUBLIC_ADDRESS}:
 Media is ${ENGINE}, on ${PUBLIC_ADDRESS}:${ATHENA_INTEROP_RTP_MIN}-${ATHENA_INTEROP_RTP_MAX}.
 ${ADMIN_NOTE}
 
-Accounts are 1001, 1002 and 1003 in realm ${REALM}, password athenaphone.
+Subscribers are 1001, 1002 and 1003 in realm ${REALM}, password athenaphone.
 
   test/interop/smoke.py --host ${PUBLIC_ADDRESS}   prove it before blaming a client
   docker logs -f ${ATHENA_INTEROP_NAME}     every message in and out, bodies included

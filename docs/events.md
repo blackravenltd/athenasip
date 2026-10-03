@@ -34,7 +34,7 @@ should assemble a topic from string literals at the call site.
 | `nodes/<node_id>/status` | Every `events.status_interval` seconds, on stop, and by the broker if the node dies | yes | see below |
 | `nodes/<node_id>/channels/<transport>/<endpoint>` | A channel opens or closes | no | `{"status":"registered","at":"<zulu>"}` or `{"status":"closed","at":"<zulu>"}` |
 | `nodes/<node_id>/transactions/<transaction_id>` | A transaction is registered or unregistered | no | `registered` or `unregistered` |
-| `account/<uri>/status` | An account registers | no | `{"contact":"<uri>","node":"<node_id>","registered":"<zulu>"}` |
+| `subscribers/<uri>/status` | A subscriber registers | no | `{"contact":"<uri>","node":"<node_id>","registered":"<zulu>"}` |
 | `calls/<call_id>/register` | A call is created | no | The call id |
 | `calls/<call_id>/unregister` | A call ends | no | The call id |
 | `calls/<call_id>/state` | A dialog changes state | no | The state |
@@ -90,7 +90,7 @@ entered in the node's channel registry. Nothing about it says anybody authentica
 So counting them is not counting endpoints, in either direction:
 
 - A flow appears as soon as something connects or sends a packet, whether or not it ever
-  sends a REGISTER, gets past a Digest challenge, or belongs to an account this node has
+  sends a REGISTER, gets past a Digest challenge, or belongs to a subscriber this node has
   heard of. A port scanner makes them.
 - One flow can carry several registrations, and a registration outlives its flow: a
   binding lives in the datastore with its own expiry, so a UDP phone has a registration
@@ -104,7 +104,7 @@ So counting them is not counting endpoints, in either direction:
   publishes "registered" again.
 
 What answers "who is registered here" is `GET /api/v1/registrations`, which reads the
-bindings, or the `account/+/status` events as they happen.
+bindings, or the `subscribers/+/status` events as they happen.
 
 ## Subscribing
 
@@ -117,7 +117,7 @@ must be the last level.
 | `nodes/+/status` | Node up and down events, for discovery |
 | `nodes/sip-0001/#` | Everything one node publishes |
 | `calls/+/unregister` | Every call ending, for CDR |
-| `account/+/status` | Every registration, for presence |
+| `subscribers/+/status` | Every registration, for presence |
 
 Subscribe to the narrowest filter that does the job. A trailing `#` under a prefix also
 matches that prefix's other topics, so a consumer expecting one payload shape will be

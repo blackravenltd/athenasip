@@ -311,14 +311,14 @@ void Proxy::_authenticate(const std::shared_ptr<SIPMessage>& request, const std:
         core->account_get(
             claimed, [this, self, request, transaction, realm, caller, credentials, answered, then](plugins::Result<std::shared_ptr<types::Account>> found) {
               if (!found.ok) {
-                _logger->error("Could not read an account - " + found.error);
+                _logger->error("Could not read a subscriber - " + found.error);
                 return _send_status(transaction, request, 500, "Server Internal Error");
               }
 
               // An unknown user is challenged like a wrong password, so this cannot be used to
               // find out which accounts exist.
               if (!found.value) {
-                _logger->info("Request from " + caller->to_string() + " with credentials for no account - challenging");
+                _logger->info("Request from " + caller->to_string() + " with credentials for no subscriber - challenging");
                 return _send_proxy_challenge(transaction, request, realm);
               }
 
@@ -579,12 +579,12 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
       const auto& request = context->request;
 
       if (!found.ok) {
-        _logger->error("Could not read the account for " + request->header->request_uri->to_string() + " - " + found.error);
+        _logger->error("Could not read the subscriber for " + request->header->request_uri->to_string() + " - " + found.error);
         return _send_status(context->server, request, 500, "Server Internal Error");
       }
 
       if (!found.value) {
-        _logger->info("No account for " + request->header->request_uri->to_string() + " - 404");
+        _logger->info("No subscriber for " + request->header->request_uri->to_string() + " - 404");
         return _send_status(context->server, request, 404, "Not Found");
       }
 

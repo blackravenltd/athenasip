@@ -70,7 +70,7 @@ void UsersAPI::register_routes(Router& router) {
   router.add(http::verb::delete_, "/api/v1/users/{user}", manage, [self](RouteContext c) { self->_delete(std::move(c)); });
   router.add(http::verb::delete_, "/api/v1/users/{user}/sessions", manage, [self](RouteContext c) { self->_revoke_sessions(std::move(c)); });
 
-  // Any authenticated caller, because "this is my own account" is not something a role can
+  // Any authenticated caller, because "this is my own user" is not something a role can
   // express. The handler admits somebody changing their own password with the old one, and
   // anybody holding manage-admin-users changing anyone's without it.
   router.add(http::verb::post, "/api/v1/users/{user}/password", {}, [self](RouteContext c) { self->_set_password(std::move(c)); });

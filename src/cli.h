@@ -131,7 +131,7 @@ inline std::string usage() {
          "                        process exits, create it and carry on as the node\n"
          "  --display-name NAME   what to call them, for the console\n"
          "  --role ROLE           may be given more than once; without it the new user\n"
-         "                        holds manage-admin-users, because a recovery account\n"
+         "                        holds manage-admin-users, because a recovery user\n"
          "                        that cannot administer anybody is not a way back in\n"
          "\n"
          "  --ca-init             make the cluster's certificate authority\n"

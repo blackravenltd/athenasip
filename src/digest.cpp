@@ -28,7 +28,7 @@ std::string verify(const types::Account& account, types::Authorization& credenti
   // An account with no credential for the algorithm it answered with cannot be checked.
   // Challenging again is the honest answer: the next challenge carries both algorithms
   // and the client can come back with the other one.
-  if (stored.empty()) return "no " + algorithm + " credential for the account";
+  if (stored.empty()) return "no " + algorithm + " credential for the subscriber";
 
   // RFC 2617: HA1 is stored, so the check is HA1:nonce:HA2 with HA2 over method and URI.
   const auto hash = [&algorithm](const std::string& input) { return algorithm == "SHA-256" ? Util::sha256(input) : Util::md5(input); };

@@ -194,7 +194,7 @@ void Registrar::_on_nonce_checked(std::shared_ptr<SIPMessage> request, std::shar
   auto self = shared_from_this();
   core->account_get(aor, [this, self, request, transaction, aor, realm, auth](plugins::Result<std::shared_ptr<types::Account>> found) {
     if (!found.ok) {
-      _logger->error("REGISTER could not read the account - " + found.error);
+      _logger->error("REGISTER could not read the subscriber - " + found.error);
       return _send_status(transaction, request, 500, "Server Internal Error");
     }
 
@@ -206,7 +206,7 @@ void Registrar::_on_account(std::shared_ptr<SIPMessage> request, std::shared_ptr
                             std::shared_ptr<types::SIPIdentity> aor, std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Authorization> auth,
                             std::shared_ptr<types::Account> account) {
   if (!account) {
-    _logger->info("REGISTER for unknown account " + aor->to_string() + " - challenging");
+    _logger->info("REGISTER for unknown subscriber " + aor->to_string() + " - challenging");
     return _send_challenge(transaction, request, realm);
   }
 

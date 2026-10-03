@@ -5,7 +5,7 @@
 # Copyright (C) 2026 Tom Cully <mail@tomcully.com>
 # Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 #
-# The end-to-end harness. Brings up one node, provisions a realm and three accounts
+# The end-to-end harness. Brings up one node, provisions a realm and three subscribers
 # over the admin API, and runs each sipp scenario against it.
 #
 #   test/e2e/run.sh              every scenario
@@ -114,9 +114,9 @@ fi
 
 echo "Provisioning..."
 api -X POST "${API}/realms" -d '{"name":"example.com"}' >/dev/null
-api -X POST "${API}/realms/example.com/accounts" -d '{"user":"alice","password":"alice-secret"}' >/dev/null
-api -X POST "${API}/realms/example.com/accounts" -d '{"user":"bob","password":"bob-secret"}' >/dev/null
-api -X POST "${API}/realms/example.com/accounts" -d '{"user":"carol","password":"carol-secret"}' >/dev/null
+api -X POST "${API}/realms/example.com/subscribers" -d '{"user":"alice","password":"alice-secret"}' >/dev/null
+api -X POST "${API}/realms/example.com/subscribers" -d '{"user":"bob","password":"bob-secret"}' >/dev/null
+api -X POST "${API}/realms/example.com/subscribers" -d '{"user":"carol","password":"carol-secret"}' >/dev/null
 
 # One end only: a scenario that registers and asserts on what came back.
 #
@@ -181,7 +181,7 @@ run_pair() {
   uac_port="${next_port}"
 
   # A port of its own for the deregistration. It shares nothing with the UAS run but the
-  # account, and sharing the port would make them the same transaction: sipp derives its
+  # subscriber, and sharing the port would make them the same transaction: sipp derives its
   # branch from the call number and message index, so two runs in a row send
   # z9hG4bK-1-1-0, and branch plus sent-by plus method is exactly what RFC 3261 17.2.3
   # matches on. The second REGISTER came back answered with the first one's response.

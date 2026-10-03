@@ -124,13 +124,13 @@ void Core::account_register(std::shared_ptr<Account> account, std::shared_ptr<SI
   datastore->account_register(
       _strand, account, std::move(binding), expires_seconds, [this, account, contact, channel, handler](plugins::Status status) mutable {
         if (!status.ok) {
-          _logger->error("Cannot register account identity " + account->identity->to_string() + " - " + status.error);
+          _logger->error("Cannot register subscriber " + account->identity->to_string() + " - " + status.error);
           if (handler) handler(status);
           return;
         }
 
         events->publish(
-            events::topics::account_status(account->identity->uri->to_string()),
+            events::topics::subscriber_status(account->identity->uri->to_string()),
             "{\"contact\":\"" + contact->to_string() + "\",\"node\":\"" + config->sip_node_id + "\",\"registered\":\"" + Util::get_zulu_time() + "\"}");
 
         if (handler) handler(status);
@@ -144,7 +144,7 @@ void Core::account_unregister(std::shared_ptr<Account> account, std::shared_ptr<
   auto self = shared_from_this();
 
   datastore->account_unregister(_strand, account, contact, [this, self, account, handler](plugins::Status status) mutable {
-    if (!status.ok) _logger->error("Cannot unregister account identity " + account->identity->to_string() + " - " + status.error);
+    if (!status.ok) _logger->error("Cannot unregister subscriber " + account->identity->to_string() + " - " + status.error);
     if (handler) handler(status);
   });
 }

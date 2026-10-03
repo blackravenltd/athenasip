@@ -146,7 +146,7 @@ The default ports are 5060, 5061, 8088 and 8080, which are the ones AthenaPhone'
 Asterisk fixture uses on purpose so that one client can be pointed at either. Only one
 of the two can hold them, so stop the other or move this one - every port is an
 environment variable, and `test/interop/README.md` has the incantation, along with the
-accounts.
+subscribers.
 
 ## The browser call
 

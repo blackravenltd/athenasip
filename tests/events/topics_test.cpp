@@ -22,7 +22,7 @@ std::vector<std::string> every_topic() {
       topics::node_status("sip-0001"),
       topics::node_channel("sip-0001", "tcp", "192.0.2.10:5060"),
       topics::node_transaction("sip-0001", "z9hG4bK-abc|host|INVITE"),
-      topics::account_status("sip:alice@example.com"),
+      topics::subscriber_status("sip:alice@example.com"),
       topics::call_register("call-1234"),
       topics::call_unregister("call-1234"),
   };
@@ -53,14 +53,14 @@ TEST(TopicsTest, CallTopicsSitUnderTheCallFilter) {
   EXPECT_TRUE(TopicFilter::matches("calls/+/unregister", topics::call_unregister("call-1234")));
 }
 
-// Account topics are observability. A "account/#" filter must not reach anything
+// Account topics are observability. A "subscribers/#" filter must not reach anything
 // on the call setup path, and since the INVITE topic is gone there is nothing there to
 // reach.
 TEST(TopicsTest, AccountTopicsAreStatusOnly) {
   const auto uri = std::string("sip:alice@example.com");
 
-  EXPECT_EQ(topics::account_status(uri), "account/" + uri + "/status");
-  EXPECT_TRUE(TopicFilter::matches("account/#", topics::account_status(uri)));
+  EXPECT_EQ(topics::subscriber_status(uri), "subscribers/" + uri + "/status");
+  EXPECT_TRUE(TopicFilter::matches("subscribers/#", topics::subscriber_status(uri)));
 }
 
 TEST(TopicsTest, TopicsAreHierarchicalNotDotSeparated) {

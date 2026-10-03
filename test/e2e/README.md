@@ -33,7 +33,7 @@ The node uses the in-process datastore and event system on purpose. Nothing here
 testing Redis or a broker, and a harness that needs them is a harness that fails for
 reasons that have nothing to do with SIP.
 
-`run.sh` provisions the realm and three accounts over the admin API before it makes a
+`run.sh` provisions the realm and three subscribers over the admin API before it makes a
 call, which is the same path an operator uses and a second check that the API works.
 
 ## The scenarios
@@ -59,7 +59,7 @@ last for that reason.
 
 A scenario is a pair when it needs a callee: a `uas_*.xml` that registers and then
 answers in a particular way, and a caller that asserts on what comes back. Both take the
-realm, user and password from a CSV in this directory, so an account is added by adding
+realm, user and password from a CSV in this directory, so a subscriber is added by adding
 a row and a line in `run.sh`'s provisioning.
 
 Assert on what the RFC requires, not on what the node currently does. An `ereg` with
