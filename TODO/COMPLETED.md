@@ -2505,3 +2505,47 @@ Tom's answers to the questions that were waiting on him, and what they led to.
 - [x] **`websocket.secure_port`**: a wss listener beside a plain ws one, advertised with
       it. HTTPS on the console was not enough on its own: a page served over HTTPS may open
       no insecure WebSocket, and `corvus-fi-1` had only ws.
+
+### Call records, and the rest of the scenarios across two nodes (2026-10-03)
+
+- [x] **Call records.** One per call, written by the node the caller reached
+      (`Call::node`); a node a peer forwarded the call to (`Call::from_node`, from
+      `Dialog::from_node`) carries it and writes nothing, so two nodes never overwrite one
+      record with half of it each. The record names the node that held the callee, from
+      the channel the answer arrived on, and the engine that anchored the media.
+      `GET /api/v1/call-records`, newest first, read from the datastore. Kept for
+      `calls.history_retention`, thirty days: Redis expires an ended record, the memory
+      driver prunes when it adds one. The record is complete when the call ends; while it
+      is up the callee's node and the engine may lag the state by one write.
+- [x] **Cancel, busy and the timeout across two nodes**, in `cluster.sh`, with the TCP and
+      WebSocket callees: 9 of 11. Delayed offer and hold are in the script and failed, on
+      the scenarios' own check of the relay's address against the single-node harness's
+      subnet; the two-node harness now uses that subnet, and the re-run is in the plan.
+- [x] **`athenasip --check`** (`src/cli_check.cpp`): the datastore, the event bus, the
+      media engine, each certificate a listener asks for, and a mutual-TLS handshake with
+      every peer that says it is up, tried one at a time and reported one line each. Exit
+      0 or 1. A flag rather than the subcommand the plan first named, as the CA commands
+      are. Nothing is started, so it is safe beside a serving node.
+- [x] **The end of a call reaching either node releases the media.** Already true and now
+      tested: every node a call passed through calls `MediaEngine::release` when its dialog
+      ends, anchoring node or not, so with one rtpengine between the nodes whichever sees
+      the BYE first gives the ports back, and the call record carries the engine. With the
+      builtin relay the media is in the anchoring node's own process, and Record-Route
+      keeps that node on the path of every BYE. What is not built is more than one engine:
+      a pool, and knowing which instance holds a call, is the item under Milestone 3.
+
+### Video through the builtin relay (2026-10-03)
+
+- [x] **A declined stream stays declined.** The builtin relay gave every m-line a relay
+      port, including one answered with port zero, so a caller offering audio and video to
+      a phone that declined the video was told the video had been accepted. RFC 3264
+      sections 5.1, 6 and 8.2: a port of zero keeps its place and gets nothing, and what
+      the stream held goes back. Found by writing the video tests from the RFC
+      (`tests/media/builtin_media_video_test.cpp`); the other three passed as they were:
+      each stream gets a relay port of its own, video crosses both ways beside the audio
+      without leaking into it, and adding video to a call leaves its audio port alone.
+- [x] **A video call, browser to AthenaPhone, seen and heard both ways.** The console
+      softphone at `https://10.35.1.20:8443` over `wss`, no tunnel, to the phone on TLS:
+      VP8 and opus, bundled, direct on the LAN, 464 frames decoded in forty seconds, and a
+      call record written. `test/interop/UAT.md`. Through the builtin relay's pass-through
+      only: video through rtpengine, and plain-RTP video end to end, have not been run.
