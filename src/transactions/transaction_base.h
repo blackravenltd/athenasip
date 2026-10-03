@@ -22,7 +22,9 @@ namespace athenasip::transactions {
 // The RFC 3261 section 17 states. Not every machine uses every one: a client INVITE
 // starts in Calling, a non-INVITE starts in Trying, and only the INVITE server
 // transaction has Confirmed.
-enum class State { Calling, Trying, Proceeding, Completed, Confirmed, Terminated };
+// Accepted is RFC 6026's: an INVITE transaction that has seen a 2xx, kept for 64*T1 so the
+// 2xx retransmissions a UAS sends until its ACK arrives still have a transaction to match.
+enum class State { Calling, Trying, Proceeding, Completed, Confirmed, Accepted, Terminated };
 
 inline std::string state_to_string(State state) {
   switch (state) {
@@ -36,6 +38,8 @@ inline std::string state_to_string(State state) {
       return "Completed";
     case State::Confirmed:
       return "Confirmed";
+    case State::Accepted:
+      return "Accepted";
     case State::Terminated:
       return "Terminated";
   }
@@ -60,6 +64,8 @@ struct Timers {
   std::chrono::milliseconds i{5000};   // INVITE server wait for ACK retransmits
   std::chrono::milliseconds j{32000};  // non-INVITE server wait for request retransmits
   std::chrono::milliseconds k{5000};   // non-INVITE client wait for response retransmits
+  std::chrono::milliseconds l{32000};  // INVITE server Accepted, 64*T1 (RFC 6026)
+  std::chrono::milliseconds m{32000};  // INVITE client Accepted, 64*T1 (RFC 6026)
 
   static Timers from_config(const Config& config) {
     Timers timers;
@@ -77,6 +83,8 @@ struct Timers {
     timers.i = timers.t4 * config.sip_timer_i_server_invite_duration;
     timers.j = timers.t1 * config.sip_timer_j_server_non_invite_duration;
     timers.k = timers.t4 * config.sip_timer_k_non_invite_duration;
+    timers.l = timers.t1 * 64;
+    timers.m = timers.t1 * 64;
 
     return timers;
   }

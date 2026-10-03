@@ -11,11 +11,10 @@
 #include <string>
 #include <vector>
 
+#include "../mocks/logger_mock.h"
 #include "headers/cseq_header.h"
 #include "transactions/invite_client_transaction.h"
 #include "transactions/non_invite_client_transaction.h"
-
-#include "../mocks/logger_mock.h"
 
 using namespace athenasip;
 using namespace athenasip::transactions;
@@ -160,9 +159,10 @@ TEST(InviteClientTransactionTest, TimesOutWithNoResponse) {
   EXPECT_EQ(h.timeouts, 1);
 }
 
-// A 2xx ends the transaction at once and is not acknowledged here: the ACK for a 2xx
-// is the TU's, as a separate transaction that may take a different route.
-TEST(InviteClientTransactionTest, TwoHundredTerminatesAndIsNotAcknowledgedHere) {
+// RFC 6026 section 7.2, which replaces RFC 3261 17.1.1.2 here: a 2xx moves the
+// transaction to Accepted rather than ending it, and is not acknowledged by it - the ACK
+// for a 2xx is the TU's, a separate transaction that may take a different route.
+TEST(InviteClientTransactionTest, TwoHundredGoesToAcceptedAndIsNotAcknowledgedHere) {
   Harness h;
   auto invite = request("INVITE");
   auto transaction = make_ict(h, false);
@@ -170,9 +170,47 @@ TEST(InviteClientTransactionTest, TwoHundredTerminatesAndIsNotAcknowledgedHere) 
 
   transaction->receive(response_to(invite, 200, "OK"));
 
-  EXPECT_EQ(transaction->state(), State::Terminated);
+  EXPECT_EQ(transaction->state(), State::Accepted);
   ASSERT_EQ(h.to_tu.size(), 1u);
   EXPECT_EQ(h.sent_method("ACK"), 0) << "the transaction must not ACK a 2xx";
+}
+
+// The reason for Accepted: a retransmitted 2xx - the UAS resends it until its ACK arrives
+// - still matches this transaction and is passed to the TU every time, so a proxy can send
+// it on to the caller. Ended at once, the retransmission had no transaction to match and
+// arrived as a stray, which a proxy can only route by Via; a WebSocket caller's Via names
+// nothing (RFC 7118), and the 2xx was lost.
+TEST(InviteClientTransactionTest, ARetransmittedTwoHundredIsPassedToTheTuEachTime) {
+  Harness h;
+  auto invite = request("INVITE");
+  auto transaction = make_ict(h, true);
+  transaction->start(invite);
+
+  transaction->receive(response_to(invite, 200, "OK"));
+  transaction->receive(response_to(invite, 200, "OK"));
+
+  EXPECT_EQ(h.to_tu.size(), 2u);
+  EXPECT_EQ(transaction->state(), State::Accepted);
+
+  // And a non-2xx in Accepted is nothing: the call was answered.
+  transaction->receive(response_to(invite, 486, "Busy Here"));
+  EXPECT_EQ(h.to_tu.size(), 2u);
+}
+
+// Timer M, 64*T1, ends Accepted, on any transport: 2xx retransmissions come from the UAS's
+// own timer, not this transport's.
+TEST(InviteClientTransactionTest, TimerMEndsAccepted) {
+  Harness h;
+  auto invite = request("INVITE");
+  auto transaction = make_ict(h, true);
+  transaction->start(invite);
+  transaction->receive(response_to(invite, 200, "OK"));
+
+  h.timers->advance(h.values().m - 1ms);
+  EXPECT_EQ(transaction->state(), State::Accepted);
+
+  h.timers->advance(1ms);
+  EXPECT_EQ(transaction->state(), State::Terminated);
 }
 
 // A non-2xx is acknowledged by the transaction itself.

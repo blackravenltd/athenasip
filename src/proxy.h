@@ -103,6 +103,10 @@ class Proxy : public TransactionUser {
     // it arrived so that every branch of the fork carries the same one.
     std::string loop_token;
 
+    // The 2xx as it went to the caller, media and all, for sending again when the callee
+    // retransmits it (RFC 6026 8.4): a retransmission is the same answer, not a new one.
+    std::shared_ptr<SIPMessage> answer_sent;
+
     std::vector<Target> targets;
     std::size_t next = 0;
 

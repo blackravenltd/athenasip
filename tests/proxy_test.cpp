@@ -397,3 +397,27 @@ TEST(ProxyTest, TheAdvertisedAddressIsRecognisedAsThisNode) {
   const auto port = record_route->value->uri->port.value_or(5060);
   EXPECT_TRUE(f.core->is_local_address("203.0.113.5", port));
 }
+
+// RFC 6026 section 8.4 and RFC 3261 16.7 step 5: every 2xx a proxy receives for an INVITE
+// is forwarded, retransmissions included, because the callee resends its 2xx until the ACK
+// reaches it and the caller is the one that sends the ACK. Found through
+// macnessa.athenasip.org on 2026-10-04: AthenaPhone resent its 200 while the browser's ACK
+// was still crossing the internet, and the node dropped the copy, unable to route it by a
+// WebSocket caller's Via. It goes down the connection the INVITE arrived on.
+TEST(ProxyTest, ARetransmittedTwoHundredReachesTheCallerToo) {
+  ProxyFixture f;
+  f.bind_bob();
+
+  f.receive(f.caller, f.invite());
+  ASSERT_NE(ProxyFixture::request_with(f.callee_connection, "INVITE"), nullptr);
+
+  const auto ok = f.response_from_callee(200, "OK");
+  f.receive(f.callee, ok);
+  f.receive(f.callee, ok);
+
+  int forwarded = 0;
+  for (const auto& message : CoreFixture::written(f.caller_connection)) {
+    if (message->header->type == athenasip::SIPHeader::Type::Response && message->header->response_code == 200) forwarded++;
+  }
+  EXPECT_EQ(forwarded, 2);
+}

@@ -40,6 +40,7 @@ class InviteClientTransaction : public TransactionBase {
   void _start_timer_a();
   void _start_timer_b();
   void _start_timer_d();
+  void _start_timer_m();
 
   // RFC 3261 17.1.1.3: the ACK reuses the request's Call-ID, From, Request-URI and top
   // Via, takes the To from the response being acknowledged, and keeps the request's
@@ -52,6 +53,7 @@ class InviteClientTransaction : public TransactionBase {
   std::shared_ptr<Timer> _timer_a;
   std::shared_ptr<Timer> _timer_b;
   std::shared_ptr<Timer> _timer_d;
+  std::shared_ptr<Timer> _timer_m;
 
   std::chrono::milliseconds _a_interval{0};
 };
