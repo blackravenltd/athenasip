@@ -73,11 +73,10 @@ cmake --preset asan && cmake --build build-asan -j8 && ./build-asan/athenasip_te
 cmake --preset tsan && cmake --build build-tsan -j8 && ./build-tsan/athenasip_tests
 ```
 
-**Not a routine step.** Tom's instruction of 2026-09-30: they are for tracing a fault that
-cannot be pinned down otherwise. Reaching for one in place of understanding the code is the
-habit being avoided, not the tool. `CLAUDE.md` still carries the older rule - run them
-before touching the transaction, channel or media paths - and the two do not agree; this is
-the live one until that is changed to match.
+**Not a routine step.** Tom, 2026-09-30 and again directly on 2026-10-03: they have a place
+before a release, or to hunt a bug that cannot be pinned down otherwise, and running them on
+every change is a waste of time. Reaching for one in place of understanding the code is the
+habit being avoided, not the tool. `CLAUDE.md` says the same.
 
 What does the work instead is reasoning about lifetimes and threading directly, and
 exercising a change against a running node. Nearly every bug in the work since 0.7.0 was

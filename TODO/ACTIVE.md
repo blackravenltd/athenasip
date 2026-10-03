@@ -27,7 +27,7 @@ it:
   terminating the node, CRLF keep-alives never answered, a UDP/TLS/RTP/SAVPF description
   read as SDES.
 
-983 tests at `2686313`; the sipp harness last passed in full at `cc90599`.
+1000 tests on 2026-10-03, uncommitted; the sipp harness last passed in full at `cc90599`.
 
 **Next:** the second node, in Milestone 4 - Route and Path trust for cluster peers, then
 forwarding to the node that holds a flow, then `docker-compose.cluster.yml` and the harness
@@ -42,48 +42,26 @@ they land, with a note on what shipped.
 
 Nothing below can move until these are settled, and each one has somebody or something
 stopped against it. They are here rather than scattered through the milestones because a
-session that has lost its context needs to see them first.
+session that has lost its context needs to see them first. The rest of the list was
+answered on 2026-10-03; the answers are under Decisions.
 
-1. **Docker Desktop is paused** (found 2026-10-02, and left paused because pausing it is a
-   choice). The sipp harness and every Milestone 4 item from here need it.
+1. **Docker.** It was paused at the end of 2026-10-02 and was not running on 2026-10-03; Tom
+   is starting it. The sipp harness and every Milestone 4 item from here need it.
 
-2. **Two approvals that have to be given in the session that asked.** The admin console
-   build for the behaviour section, qualify, re-offers, nodes and `rewrite_contact` is ready
-   and waits on Tom's go-ahead given to the athenasip-admin session itself; a go-ahead relayed
-   through this session is not one it accepts. And AthenaPhone registering as
-   `sip:athenaphone@10.35.1.20` (account made, `media_profile: webrtc`) waits on Tom
-   entering its password on the phone - it is in `/root/.athenasip-athenaphone-password`
-   on `corvus-fi-1` - with the snakeoil CA `tls/ca/snakeca.crt` for TLS. The AthenaPhone
-   session will then check the first INVITE towards it is WebRTC with no 488 before it.
+2. **AthenaPhone registering on `corvus-fi-1`, and the console's go-ahead.** Both need
+   approval given in the session that asked, and Tom is taking them up with those sessions
+   directly. AthenaPhone registers as `sip:athenaphone@10.35.1.20` (account made,
+   `media_profile: webrtc`) once Tom enters its password on the phone - it is in
+   `/root/.athenasip-athenaphone-password` on `corvus-fi-1` - with the snakeoil CA
+   `tls/ca/snakeca.crt` for TLS.
 
-3. **`status_interval` in the heartbeat payload.** T.O.M.S has its Comms card live on
-   FI-1 and hardcodes a 90-second staleness threshold, which is three intervals by
-   coincidence rather than by contract. Adding the interval to the retained
-   `nodes/<id>/status` message lets the card derive its own. The field would be
-   `status_interval`, in seconds, matching the config key it comes from. T.O.M.S is
-   holding for a yes or no and will use three times it, falling back to its configured
-   value for nodes that do not carry it. See `docs/events.md`.
-
-4. **`/accounts` versus `/subscribers`.** The 2026-09-25 vocabulary decision says
-   subscriber; the type is `Account` and the resource is `/realms/{realm}/accounts`.
-   Renaming is a breaking API change the console and the OpenAPI document follow, so it
-   wants doing deliberately and in one go, or not at all. The console is building against
-   `/accounts` until told otherwise. Question 5 in `docs/authentication.md`.
-
-5. **Whether deleting a realm cascades to its subscribers.** The console asked; it builds
-   against no cascade until told.
-
-6. **Rate limiting on `POST /api/v1/auth/login`.** Recorded as unsolved in
-   `docs/authentication.md` since before the endpoint existed, and the endpoint is now
-   reachable on `corvus-fi-1`'s LAN. Not scheduled into any milestone, which is the thing
-   to fix.
-
-7. **How a browser that is only a SIP subscriber reaches `/client/config`.** It needs
-   `view-cluster-status`, which only an admin user holds now that configured tokens are
-   gone. The console's softphone signs in as an admin and is unaffected. A public web
-   client for subscribers would need another way in. The proposal is HTTP Digest (RFC 7616)
-   with the subscriber's own SIP credentials, which reuses the stored HA1 and adds no new
-   secret. It is a product question, and nothing is blocked on it today.
+3. **How a browser that is only a SIP subscriber gets its configuration.** Decided that it
+   does not use HTTP at all (see Decisions); what it uses instead is still open. The
+   standard candidate is RFC 6080, the SIP UA configuration framework: SUBSCRIBE to the
+   `ua-profile` event, authenticated by the subscriber's own Digest credentials, with the
+   profile in the NOTIFY. TURN can authenticate with the same credentials, since a TURN
+   long-term key (RFC 8489) is MD5(username:realm:password), the HA1 already stored. Needs
+   a conversation before anything is built.
 
 ## How to prove it
 
@@ -100,11 +78,9 @@ test/interop/UAT.md              the call a person has to make
 
 All of them pass before anything is tagged.
 
-**The sanitizers are not on that list.** Tom's instruction of 2026-09-30: they are for
-tracing a fault that cannot be pinned down otherwise, not for routine verification.
-`CLAUDE.md` still carries the older, narrower rule - run them before touching the
-transaction, channel or media paths - and the two do not agree; this is the live one until
-`CLAUDE.md` is changed to match.
+**The sanitizers are not on that list.** Tom, 2026-09-30, and directly again on
+2026-10-03: they have a place before a release, or to hunt an especially intractable bug,
+and running them on every change is a waste of time. `CLAUDE.md` now says the same.
 
 What replaces them is the thing they were standing in for: reason about lifetimes and
 threading directly, and exercise the change against a running node. Nearly every bug found
@@ -199,9 +175,38 @@ Dated, and not reopened without asking.
   **user** is a thing that can use the API, and the admin interface is only a client of
   the API; a **subscriber** is a thing registered on a realm to make and receive calls.
   Neither is created from the other in either direction and neither credential works as
-  the other. The type is still `Account` and the resource is still
-  `/realms/{realm}/accounts`; whether to rename them to match is question 5 in
-  `docs/authentication.md` and is a breaking change to make deliberately or not at all.
+  the other. The resource became `/realms/{realm}/subscribers` on 2026-10-03; the type
+  is still `Account`.
+- (2026-10-03) Tom's answers to the questions that were waiting on him:
+  - The API says **subscriber** for a subscriber, everywhere and in one go:
+    `/realms/{realm}/subscribers`, and `subscriber` / `subscriber_id` where a response
+    said `account` / `account_id`. A subscriber belongs to a realm; a person who uses the
+    admin interface is a user. No alias for the old path. The C++ type stays `Account`
+    (the SUBSCRIBE collision above). The console followed in the same deploy.
+  - **Deleting a realm deletes everything in it**: its subscribers and their
+    registrations. It is in the `Datastore::realm_delete` contract, so every driver does
+    it, not only the two in-tree.
+  - **Every route is rate limited.** Public routes aggressively, authenticated routes
+    appropriately.
+  - **The admin interface does not need HTTPS yet**, unless it is really easy, in which
+    case it is done to get it out of the way.
+  - **A browser that is only a subscriber reaches no HTTP endpoint**, `/client/config`
+    included. If it needs configuration, that comes a SIP-idiomatic, standards way, or is
+    talked about first (Waiting on Tom, 3).
+  - **No role is defined before it has routes to permit.** `manage-cluster` waits for M4
+    and M5.
+  - **`status_interval`** is in the node status payload, for monitors such as T.O.M.S to
+    derive staleness from.
+  - **Sanitizers are not routine** (see How to prove it).
+  - **Terms are consistent everywhere, and `docs/glossary.md` is where they are defined.**
+    The event topic is `subscribers/<uri>/status`, and logs, API messages, docs and
+    scripts say subscriber. Nothing consumed the bus topic when it changed.
+  - **Internal names match external names.** A **user** may sign in and observe and manage
+    the cluster; a **subscriber** belongs to a realm and can REGISTER and make and receive
+    calls. **Account is not anything**: the C++ type, the datastore operations and the
+    Redis keys that say account are renamed to subscriber, which replaces the 2026-09-21
+    rule that the type stays `Account`. The Redis schema is renamed and recreated to
+    match rather than migrated.
 - (2026-09-25) There is no superuser role, and no role implies another.
 - (2026-09-29) `Datastore::session_delete` succeeds whether or not that hash was held, and
   the realm and account deletes still report when there was nothing there. A session is
@@ -355,6 +360,25 @@ The trunk scenario waits on trunks existing.
 
 ---
 
+## Found on 2026-10-03, not yet looked at
+
+- [ ] A 488 re-offer through the builtin engine. sipp as 1001 (RTP/AVP 8) to AthenaPhone on
+      `corvus-fi-1`: the phone answered 180 then 488, the node logged "refused the offer it
+      was made - offering the other profile" and re-sent, and the phone answered the
+      second INVITE (same Call-ID, From tag and CSeq, new branch) with 482. Two questions
+      for this side: whether builtin, which cannot produce SAVPF, re-offered RTP/AVP 8
+      again, in which case `_reoffer` in `src/proxy.cpp` should not fire when the engine
+      cannot make the other profile; and why an account set `media_profile: webrtc` was
+      offered a guess at all. The 180 and the 482 are AthenaPhone's to look at, and its
+      session has them.
+
+- [ ] The subscriber rename in the code (Tom, 2026-10-03): `Account` to `Subscriber`,
+      `account_*` to `subscriber_*` in the datastore contract, which changes shape so
+      `API_VERSION` moves, and the Redis keys `athena:account:*` to `athena:subscriber:*`.
+      `User` stays as it is. `Subscriber` as a type sits beside the SUBSCRIBE method once
+      presence arrives, which is why it was renamed away on 2026-09-21; the event package
+      code will have to be named with that in mind.
+
 ## Milestone 4 - Cluster
 
 Goal: two nodes, one Redis, one Mosquitto, one rtpengine; a subscriber on node A calls
@@ -367,7 +391,8 @@ milestone is the second node.
 ### Client failover, in the order decided on 2026-09-21
 
 - [ ] What the realm expects of a client, in `GET /api/v1/client/config` beside the node
-      list it now carries.
+      list it now carries. For an admin user's softphone only: a subscriber-only browser
+      reaches no HTTP endpoint (2026-10-03), so its equivalent waits on Waiting on Tom, 3.
 - [ ] RFC 5626 outbound, what is left of it: a flow token in the Path a node writes when
       it is the edge for another registrar, which is the cluster case. (No 430 for a gone
       in-dialog flow, by choice: see Known deviations.)
@@ -458,13 +483,14 @@ configuration search path, the heartbeat and its will, SPA mode as a choice, the
 `corvus-fi-1`, both datastores holding users and sessions, the whole of admin
 authentication from session issue to the OpenAPI document, and the one-command stack.
 
+- [ ] HTTPS on the admin listener, if it is really easy (Tom, 2026-10-03); otherwise later.
 - [ ] Admin API, part 2, what is left of it. `/api/v1/calls`, `/api/v1/calls/{call}`,
       `/api/v1/media` and `/metrics` landed on 2026-10-01. Left: hanging up a call
       (`DELETE /api/v1/calls/{call}`), which needs the node to send BYEs itself and so waits
       for the local UA in M6; call history, which is M4's CDRs; and `/api/v1/events`, an SSE
       stream bridging `nodes/#`, `account/#` and `calls/#`.
 - [ ] athenasip-admin: replace the empty `src/lib/API.js` with a client generated from
-      the OpenAPI document; pages for realms, accounts, registrations, live calls,
+      the OpenAPI document; pages for realms, subscribers, registrations, live calls,
       nodes, media engines, and the JsSIP test phone pointed at the server's own WSS.
       Mostly that session's work rather than this one's, and well under way: the client is
       hand-written and speaks the whole documented API, with a contract test against
@@ -505,8 +531,9 @@ authentication from session issue to the OpenAPI document, and the one-command s
       for BLF, `message-summary` for MWI, backed by MQTT fan-out.
 - [ ] SIP MESSAGE relay.
 - [ ] Push (RFC 8599) parameters on REGISTER and a push gateway hook for AthenaPhone.
-- [ ] Web client repository: video calling and conferencing, JsSIP over WSS, provisioned
-      from `/api/v1/client/config`, served by AthenaSIP.
+- [ ] Web client repository: video calling and conferencing, JsSIP over WSS, served by
+      AthenaSIP. Not provisioned from `/api/v1/client/config`: a subscriber-only browser
+      reaches no HTTP endpoint (2026-10-03), so how it is configured is Waiting on Tom, 3.
 - [ ] The local UA, the fourth transaction user in the Architecture diagram. Its first
       use is tearing a lapsed call down towards both ends: on expiry this node discards
       its state, which is what RFC 4028 section 8 asks of a proxy, and a node that

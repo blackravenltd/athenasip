@@ -377,8 +377,9 @@ away with a 401 that tells the caller it was not real.
 
 ## Open questions
 
-1. `manage-cluster` has no routes yet - node membership and configuration are M4 and M5.
-   Is it worth defining now, or added when there is something for it to permit?
+1. ~~Is `manage-cluster` worth defining before it has routes?~~ No (Tom, 2026-10-03): a role
+   cannot be defined before there are routes for it to permit. It is defined when node
+   membership and configuration (M4, M5) give it some.
 2. ~~Session lifetime: what absolute and idle expiries suit a console left open on a NOC
    screen?~~ Answered by making it configuration, with defaults that suit that console:
    twelve hours absolute, so a working day does not ask for the password twice, and an
@@ -390,12 +391,13 @@ away with a 401 that tells the caller it was not real.
    kinder and tells an attacker slightly more.~~ Allowed, which is what was agreed with
    the console and is what `api::Sessions` does: a login answers with the roles the user
    holds, and none is an answer. It tells an attacker who already has a valid password
-   that the account is real, which they could learn from any other route anyway.
-4. Does TLS on the admin listener block this work, or land beside it?
-5. **`Account` versus `subscriber`.** The vocabulary above says subscriber; the type is
-   `Account` and the resource is `/realms/{realm}/accounts`. `Subscriber` was renamed
-   `Account` on 2026-09-21 because it collided with SUBSCRIBE (RFC 6665) once presence
-   arrived - that collision is about the C++ type name, not about the word in an API or
-   in a sentence. Renaming the resource back is a breaking API change that the console
-   and the OpenAPI document follow, so it wants doing deliberately and in one go, or
-   not at all.
+   that the user is real, which they could learn from any other route anyway.
+4. ~~Does TLS on the admin listener block this work, or land beside it?~~ Neither (Tom,
+   2026-10-03): the admin interface does not need to offer HTTPS yet, unless it is really
+   easy, in which case it is done to get it out of the way.
+5. ~~`Account` versus `subscriber`.~~ Renamed in the API (Tom, 2026-10-03): the resource is
+   `/realms/{realm}/subscribers`, and the fields that named a subscriber `account` are
+   `subscriber` and `subscriber_id`. A subscriber belongs to a realm; an admin interface
+   user is a user. The C++ type stays `Account`, because `Subscriber` collides with
+   SUBSCRIBE (RFC 6665) in the code, and that collision was the reason for the 2026-09-21
+   rename.
