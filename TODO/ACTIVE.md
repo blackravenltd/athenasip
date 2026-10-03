@@ -34,6 +34,12 @@ forwarding to the node that holds a flow, then `docker-compose.cluster.yml` and 
 across it. All of it needs Docker, which was paused at the end of 2026-10-02 (see Waiting
 on Tom).
 
+**Once things are stable, video calling is a primary feature** (Tom, 2026-10-03), not a
+later extra: principle 6 already says so, and this is the reminder that it is next in line
+behind stability rather than behind everything else. The work is the video items under
+Milestone 3 (verify video against AthenaPhone) and Milestone 6 (the web client), and
+nothing built before then may assume a call is audio only.
+
 Milestones are in priority order and so are the items inside each one: work top to
 bottom, and say why when something is taken out of turn. Move items to `COMPLETED.md` as
 they land, with a note on what shipped.
