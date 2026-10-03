@@ -27,7 +27,7 @@ it:
   terminating the node, CRLF keep-alives never answered, a UDP/TLS/RTP/SAVPF description
   read as SDES.
 
-1000 tests on 2026-10-03, uncommitted; the sipp harness last passed in full at `cc90599`.
+1000 tests and the sipp harness, 12 of 12, at `8e3ba0e`.
 
 **Next:** the second node, in Milestone 4 - Route and Path trust for cluster peers, then
 forwarding to the node that holds a flow, then `docker-compose.cluster.yml` and the harness
