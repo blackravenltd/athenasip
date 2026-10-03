@@ -2585,3 +2585,12 @@ Tom's answers to the questions that were waiting on him, and what they led to.
       fake camera called AthenaPhone, 167 frames decoded in the browser and the pattern
       moving on the phone, the browser's media through the public address and a forwarded
       port. `test/interop/UAT.md`.
+- [x] **RFC 6026: the INVITE transactions' Accepted state.** A 2xx moves both INVITE
+      transactions to Accepted for 64*T1 rather than ending them, so a callee's 2xx
+      retransmissions still match: the client transaction passes each to the proxy, which
+      sends the caller the answer it already sent, through the server transaction, on the
+      connection the INVITE came in on. Before, a retransmitted 2xx arrived as a stray, was
+      routed by the caller's Via, and for a WebSocket caller - whose Via names a `.invalid`
+      host - was dropped. Found through macnessa.athenasip.org on 2026-10-04.
+- [x] **Removing a binding that is not there is not logged as an error** (RFC 3261 10.3
+      step 7). The store still says there was nothing to remove; Core logs it at debug.

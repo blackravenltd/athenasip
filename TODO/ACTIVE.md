@@ -339,10 +339,6 @@ The trunk scenario waits on trunks existing.
       release it; support a pool of engines with health checks. The driver is proven
       against rtpengine 9.4.0, so this is the cluster's question and not the
       protocol's; it belongs with M4 as much as here.
-- [ ] A 2xx retransmission from a callee reaches a WebSocket caller. The node treats the
-      copy as a stray response, routes it by the top Via - a WebSocket client's `.invalid`
-      host - and drops it, rather than sending it down the caller's open flow. Found on
-      2026-10-04 through macnessa.athenasip.org (`test/interop/UAT.md`).
 - [ ] The phone's media across the internet: AthenaPhone on mobile data to
       macnessa.athenasip.org. The 2026-10-04 run's phone leg went over the link between
       the two sites.
