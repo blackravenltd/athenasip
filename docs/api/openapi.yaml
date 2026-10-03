@@ -1311,6 +1311,17 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/NodeTransport"
+        cluster:
+          type: object
+          description: |
+            Where a peer node reaches this one's inter-node listener. Absent for this node,
+            for a node that is not in a cluster, and in the list `/client/config` gives a
+            client.
+          properties:
+            address:
+              type: string
+            port:
+              type: integer
       example:
         id: sip-0001
         self: true

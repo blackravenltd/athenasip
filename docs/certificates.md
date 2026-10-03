@@ -38,6 +38,7 @@ cluster:
   enable: true
   address: 0.0.0.0
   port: 5062
+  advertise: node-a.internal
   ca: /etc/athenasip/cluster/ca.crt
   cert: /etc/athenasip/cluster/node-a.crt
   key: /etc/athenasip/cluster/node-a.key
@@ -49,6 +50,11 @@ for the TLS connections this node opens to its peers, where the peer's certifica
 be signed by the cluster CA and name the address that was dialled. A `cluster` section
 enabled without all three files stops the node at start-up, because a cluster listener
 that cannot tell a node from anybody else would be open to anyone.
+
+`advertise` is what this node tells its peers to dial, in its status on the event bus. It
+has to be a name or an address the node's certificate carries (`--san`), because a peer
+checks the certificate against what it dialled. Left out, it is `address`, and where that
+is `0.0.0.0`, `sip.public_address`.
 
 ## What it makes
 

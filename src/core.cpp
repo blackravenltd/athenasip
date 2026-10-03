@@ -973,7 +973,8 @@ void Core::node_status_stop() {
 }
 
 std::string Core::node_status_json(const std::string& status, const std::string& node_id, const std::string& version, const std::string& datastore,
-                                   std::int64_t uptime, std::uint32_t status_interval, const std::vector<Config::AdvertisedTransport>& transports) {
+                                   std::int64_t uptime, std::uint32_t status_interval, const std::vector<Config::AdvertisedTransport>& transports,
+                                   const std::optional<Config::AdvertisedTransport>& cluster) {
   boost::json::object report;
 
   report["status"] = status;
@@ -1001,6 +1002,15 @@ std::string Core::node_status_json(const std::string& status, const std::string&
   }
   report["transports"] = std::move(listening);
 
+  // Where a peer node reaches this one, which is a different listener from any a client
+  // uses. Absent on a node that is not in a cluster, and in a will.
+  if (cluster) {
+    boost::json::object peer;
+    peer["address"] = cluster->address;
+    peer["port"] = cluster->port;
+    report["cluster"] = std::move(peer);
+  }
+
   return boost::json::serialize(report);
 }
 
@@ -1008,7 +1018,7 @@ std::string Core::node_status_json(const std::string& status) const {
   const auto uptime = _started_at == 0 ? 0 : static_cast<std::int64_t>(std::time(nullptr) - _started_at);
 
   return node_status_json(status, config->sip_node_id, _version, datastore ? datastore->describe() : "none", uptime, config->events_status_interval,
-                          config->advertised_transports());
+                          config->advertised_transports(), config->advertised_cluster());
 }
 
 void Core::_node_status_publish() {
