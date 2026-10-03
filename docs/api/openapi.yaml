@@ -41,7 +41,8 @@ info:
     | `POST /auth/login`, on top of that | username | 5 | 1 a minute |
     | A signed-in caller | session | 60 | 300 a minute |
 
-    The login limits count every attempt, not only failures. The source address is the
+    These are the defaults; an operator sets them under `http.api.rate_limits`. The login
+    limits count every attempt, not only failures. The source address is the
     peer of the connection; a node behind a reverse proxy sees every caller as the proxy.
   license:
     name: GPL-3.0-or-later

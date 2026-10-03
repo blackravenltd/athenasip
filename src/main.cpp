@@ -376,13 +376,28 @@ int main(int argc, char* argv[]) {
   if (config->http_api_enable || config->http_files_enable) {
     auto adminAPI = std::make_shared<api::AdminAPI>(logger, config->http_address, config->http_port);
 
+    // HTTPS beside it, when asked for. A certificate that will not load stops the node:
+    // an operator who asked for HTTPS and got only HTTP would find out from a browser.
+    if (config->http_tls_enable && !adminAPI->tls_enable(config->http_tls_address, config->http_tls_port, config->http_tls_cert(), config->http_tls_key())) {
+      logger->error("Could not start the HTTPS listener on " + config->http_tls_address + ":" + std::to_string(config->http_tls_port));
+      return 1;
+    }
+
     if (config->http_api_enable) {
       // The API talks to the datastore on its own executor. It is not on the Core
       // strand and must not be: an admin listing subscribers cannot be allowed to hold up
       // a call, which is what the async plugin contract is for.
       auto bearer = std::make_shared<api::BearerAuth>();
 
-      api_router = std::make_shared<api::Router>(bearer);
+      const auto limit = [](const Config::RateLimit& from) { return api::RateLimiter::Policy{from.burst, from.per_minute}; };
+
+      api::RateLimits limits;
+      limits.open = limit(config->http_api_limit_open);
+      limits.login_source = limit(config->http_api_limit_login_source);
+      limits.login_user = limit(config->http_api_limit_login_user);
+      limits.session = limit(config->http_api_limit_session);
+
+      api_router = std::make_shared<api::Router>(bearer, std::make_shared<api::Throttle>(limits));
       provisioning = std::make_shared<api::ProvisioningAPI>(logger, datastore, adminAPI->executor(), config, version->to_string());
       provisioning->register_routes(*api_router);
       provisioning->nodes_register(core->nodes(), std::chrono::seconds(config->events_status_interval));

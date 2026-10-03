@@ -466,11 +466,6 @@ configuration search path, the heartbeat and its will, SPA mode as a choice, the
 `corvus-fi-1`, both datastores holding users and sessions, the whole of admin
 authentication from session issue to the OpenAPI document, and the one-command stack.
 
-- [ ] HTTPS on the admin listener. No longer "if it is really easy": the console's softphone
-      cannot place a call from `http://10.35.1.20:8080`, because a page that is not a
-      secure context is given no microphone (found on 2026-10-03, when the browser call to
-      AthenaPhone had to be made through an SSH tunnel to localhost). Browser calling from
-      the console needs it.
 - [ ] The "cannot produce webrtc - offering what it can" warning fires for an offer that
       is already WebRTC and passes through untouched. It should fire only when the node
       would have had to convert, and it names the Contact rather than the subscriber.

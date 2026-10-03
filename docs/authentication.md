@@ -356,12 +356,9 @@ away with a 401 that tells the caller it was not real.
 
 ## What this does not solve
 
-- **The admin listener is plain HTTP today.** A bearer token on an unencrypted LAN
-  listener is readable by anything on that LAN, and a login would put a password there
-  too. TLS on the admin listener is arguably a prerequisite for building this rather
-  than a companion to it, and it is not in the config schema yet. On the deployed node
-  at `corvus-fi-1` the listener is bound to the LAN address, which limits but does not
-  remove this.
+- ~~**The admin listener is plain HTTP.**~~ `http.tls` adds an HTTPS listener beside it
+  (2026-10-03). The plain one stays, for a healthcheck and for scripts on the host, so a
+  password can still be sent in the clear by a client that chooses to: sign in over HTTPS.
 - ~~**Rate limiting.**~~ Every route is limited (Tom, 2026-10-03), in
   `src/api/rate_limiter.h`: open routes and unresolved credentials by source address,
   30 at once and then 30 a minute; the login on top of that by source address (10, then 5

@@ -304,6 +304,37 @@ class Config {
   std::uint32_t http_api_session_lifetime = 12 * 60 * 60;
   std::uint32_t http_api_session_idle = 60 * 60;
 
+  // http.api.rate_limits: how many requests a caller is let make at once, and how many a
+  // minute after that. Zero in either turns that limit off, which is what an operator who
+  // fronts the API with something that limits already sets. The defaults are chosen for
+  // the callers there are: a person at a login prompt, a monitor polling health, and the
+  // console, which polls every two seconds and makes several requests when it does.
+  struct RateLimit {
+    std::uint32_t burst = 0;
+    std::uint32_t per_minute = 0;
+  };
+
+  // Open routes, unknown endpoints and credentials that do not resolve, by source address.
+  RateLimit http_api_limit_open{30, 30};
+  // The login on top of that, by source address and by username.
+  RateLimit http_api_limit_login_source{10, 5};
+  RateLimit http_api_limit_login_user{5, 1};
+  // A signed-in caller, by session.
+  RateLimit http_api_limit_session{60, 300};
+
+  // http.tls: an HTTPS listener beside the plain one, serving the same thing. A browser
+  // gives a page that is not a secure context no microphone, so the console's softphone
+  // needs it. The certificate is the tls section's unless this section names its own.
+  bool http_tls_enable = false;
+  std::string http_tls_address;
+  std::uint16_t http_tls_port = 8443;
+  std::string http_tls_cert_pem_filename;
+  std::string http_tls_key_pem_filename;
+
+  // The certificate and key the HTTPS listener uses: its own, or the tls section's.
+  std::string http_tls_cert() const { return http_tls_cert_pem_filename.empty() ? tls_cert_pem_filename : http_tls_cert_pem_filename; }
+  std::string http_tls_key() const { return http_tls_key_pem_filename.empty() ? tls_key_pem_filename : http_tls_key_pem_filename; }
+
   // What a web client is told to use for ICE, served by `GET /api/v1/client/config`.
   //
   // A browser cannot be configured by hand and cannot read a YAML file, so everything it

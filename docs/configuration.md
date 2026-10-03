@@ -480,6 +480,46 @@ interface configuration decide.
 That is behaviour rather than media configuration, and lives in the `behaviour` section
 below, where a realm can override it.
 
+### `http` Section
+
+The admin API and the console.
+
+```yaml
+http:
+  address: 0.0.0.0
+  port: 8080
+  tls:
+    enable: true
+    port: 8443
+  api:
+    enable: true
+    rate_limits:
+      session: { burst: 60, per_minute: 300 }
+```
+
+`http.tls` adds an HTTPS listener beside the plain one; both serve the same API and the
+same console. It uses the certificate and key of the [`tls` section](#tls-section) unless
+it names its own with `cert_pem_filename` and `key_pem_filename`, and it binds `address`
+unless it has one of its own. A node asked for HTTPS with no certificate to show does not
+start. The plain listener stays for what has no use for a certificate: a healthcheck, a
+provisioning script on the host. The console's softphone needs HTTPS, because a browser
+gives a page that is not a secure context no microphone.
+
+`http.api.rate_limits` sets, for each kind of caller, how many requests are let through at
+once (`burst`) and how many a minute after that (`per_minute`). Zero in either turns that
+limit off. A refusal is `429` with `Retry-After`.
+
+| Limit | Applies to | Keyed by | Default |
+|---|---|---|---|
+| `open` | no credential, an unknown endpoint, a token that is not one | source address | 30, then 30 a minute |
+| `login_source` | the login, on top of `open` | source address | 10, then 5 a minute |
+| `login_user` | the login, on top of `open` | username, counting every attempt | 5, then 1 a minute |
+| `session` | a signed-in caller | session | 60, then 300 a minute |
+
+The limits are per node and held in memory. The source address is the peer of the
+connection, so a node behind a reverse proxy sees every caller as the proxy: turn `open`
+and `login_source` off there and limit at the proxy.
+
 ### behaviour
 
 ```yaml

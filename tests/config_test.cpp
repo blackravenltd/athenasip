@@ -423,6 +423,75 @@ TEST(ConfigTest, TheClusterAddressAPeerDialsIsSaidOrWorkedOut) {
   EXPECT_EQ(found->address, "203.0.113.5");
 }
 
+// The rate limits are the operator's to set (Tom, 2026-10-03), each one separately, and
+// what is not set keeps its default. Zero turns a limit off.
+TEST(ConfigTest, TheRateLimitsAreConfigurable) {
+  bool ok = false;
+
+  ConfigFile defaults("sip:\n  node_id: test-node\nhttp:\n  port: 8080\n  api:\n    enable: true\n");
+  auto config = defaults.load(ok);
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(config->http_api_limit_open.burst, 30u);
+  EXPECT_EQ(config->http_api_limit_open.per_minute, 30u);
+  EXPECT_EQ(config->http_api_limit_login_source.burst, 10u);
+  EXPECT_EQ(config->http_api_limit_login_user.per_minute, 1u);
+  EXPECT_EQ(config->http_api_limit_session.burst, 60u);
+  EXPECT_EQ(config->http_api_limit_session.per_minute, 300u);
+
+  ConfigFile set(
+      "sip:\n  node_id: test-node\nhttp:\n  port: 8080\n  api:\n    enable: true\n"
+      "    rate_limits:\n      session:\n        burst: 200\n        per_minute: 1200\n      login_user:\n        per_minute: 0\n");
+  config = set.load(ok);
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(config->http_api_limit_session.burst, 200u);
+  EXPECT_EQ(config->http_api_limit_session.per_minute, 1200u);
+  EXPECT_EQ(config->http_api_limit_login_user.burst, 5u);
+  EXPECT_EQ(config->http_api_limit_login_user.per_minute, 0u);
+  EXPECT_EQ(config->http_api_limit_open.burst, 30u);
+
+  ConfigFile wrong("sip:\n  node_id: test-node\nhttp:\n  port: 8080\n  api:\n    enable: true\n    rate_limits:\n      open:\n        burst: lots\n");
+  ok = true;
+  wrong.load(ok);
+  EXPECT_FALSE(ok);
+}
+
+// HTTPS on the admin listener is off unless asked for, sits beside plain HTTP on a port of
+// its own, and uses the tls section's certificate unless it names another.
+TEST(ConfigTest, TheAdminListenerOffersHttpsWhenAsked) {
+  bool ok = false;
+
+  ConfigFile off("sip:\n  node_id: test-node\nhttp:\n  port: 8080\n");
+  auto config = off.load(ok);
+  ASSERT_TRUE(ok);
+  EXPECT_FALSE(config->http_tls_enable);
+
+  ConfigFile shared(
+      "sip:\n  node_id: test-node\ntls:\n  enable: false\n  cert_pem_filename: /tls/node.cer\n  key_pem_filename: /tls/node.key\n"
+      "http:\n  address: 10.0.0.1\n  port: 8080\n  tls:\n    enable: true\n");
+  config = shared.load(ok);
+  ASSERT_TRUE(ok);
+  EXPECT_TRUE(config->http_tls_enable);
+  EXPECT_EQ(config->http_tls_port, 8443);
+  EXPECT_EQ(config->http_tls_address, "10.0.0.1");
+  EXPECT_EQ(config->http_tls_cert(), "/tls/node.cer");
+  EXPECT_EQ(config->http_tls_key(), "/tls/node.key");
+  EXPECT_EQ(config->http_port, 8080);
+
+  ConfigFile own(
+      "sip:\n  node_id: test-node\nhttp:\n  port: 8080\n  tls:\n    enable: true\n    port: 9443\n"
+      "    cert_pem_filename: /admin/admin.cer\n    key_pem_filename: /admin/admin.key\n");
+  config = own.load(ok);
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(config->http_tls_port, 9443);
+  EXPECT_EQ(config->http_tls_cert(), "/admin/admin.cer");
+
+  // Asked for with nothing to show is refused at start rather than found out by a browser.
+  ConfigFile bare("sip:\n  node_id: test-node\nhttp:\n  port: 8080\n  tls:\n    enable: true\n");
+  ok = true;
+  bare.load(ok);
+  EXPECT_FALSE(ok);
+}
+
 TEST(ConfigTest, SessionLifetimesAreTakenFromTheApiSection) {
   ConfigFile file(
       "sip:\n  node_id: test-node\n"

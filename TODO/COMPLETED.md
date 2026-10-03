@@ -2492,3 +2492,13 @@ Tom's answers to the questions that were waiting on him, and what they led to.
       `UDP/TLS/RTP/SAVPF` offer, no 488, ICE and DTLS up, media direct on the LAN, 0 lost.
       The first call was silent one way because the Mac's default microphone was a
       loopback device. `test/interop/UAT.md` has both calls and what it took to make them.
+
+### HTTPS on the admin listener and configurable rate limits (2026-10-03)
+
+- [x] **`http.tls`**: an HTTPS listener beside the plain one, serving the same chain, with
+      the `tls` section's certificate unless it names its own (`AdminAPI::tls_enable`).
+      The handshake is asynchronous with a ten-second deadline, as the SIP TLS listener's
+      is. Plain HTTP stays (Tom). A node asked for HTTPS with no certificate does not start.
+- [x] **`http.api.rate_limits`**: `open`, `login_source`, `login_user` and `session`, each
+      with `burst` and `per_minute`, zero for off. The defaults are what shipped on
+      2026-10-03.
