@@ -51,9 +51,9 @@ arithmetic for both the registrar and the proxy is in `src/digest.h`.
 
 This is standard, it works, and it is not what the rest of this document is about.
 
-The type is still called `Account` in the code and the resource is still
-`/realms/{realm}/accounts`. That disagrees with the vocabulary above and is noted at
-the end as a thing to settle.
+The resource is `/realms/{realm}/subscribers` (Tom, 2026-10-03), and the API says
+subscriber wherever it means one. The type is still called `Account` in the code, for the
+reason in question 5 below.
 
 ## Admin authentication, which was a config file
 
@@ -97,7 +97,7 @@ token table would replace".
 
 ### Users
 
-A record in the datastore, beside realms and accounts, so a cluster shares one set:
+A record in the datastore, beside realms and subscribers, so a cluster shares one set:
 
 | Field | |
 |---|---|
@@ -114,7 +114,7 @@ Not a realm, not a scope list, not a subscriber. A user belongs to the node.
 
 **There is no superuser role.** Nothing implies anything else. A user holds the roles
 they were given and no others, and a user with no roles can log in and do nothing -
-which is a useful state for an account that is being set up or wound down, and is the
+which is a useful state for a user that is being set up or wound down, and is the
 default for a newly created one.
 
 | Role | What it permits |
@@ -144,7 +144,7 @@ own rather than bundled into another.
 | `GET /nodes`, `GET /registrations` | `view-cluster-status` | done |
 | `GET /realms`, `GET /realms/{realm}` | `manage-realms` or `manage-realm-subscribers` | done |
 | `POST/PUT/DELETE /realms[/{realm}]` | `manage-realms` | done |
-| `GET/POST/PUT/DELETE /realms/{r}/accounts[/{u}]` | `manage-realm-subscribers` | done |
+| `GET/POST/PUT/DELETE /realms/{r}/subscribers[/{u}]` | `manage-realm-subscribers` | done |
 | `GET/POST/PUT/DELETE /users[/{u}]`, `DELETE /users/{u}/sessions` | `manage-admin-users` | done |
 | `POST /users/{u}/password` | any authenticated caller; the handler decides | done |
 | `/calls`, `/media`, `/events` (M5) | `view-cluster-status`; ending a call needs `manage-cluster` | |
@@ -153,7 +153,7 @@ own rather than bundled into another.
 Reading realms admits either role because anyone placing a subscriber has to discover
 which realms exist; changing one is `manage-realms` alone. That was agreed with the
 console, which needs exactly this to show a realm picker to somebody who only manages
-accounts.
+subscribers.
 
 `Router::add` takes a set of roles, any of which admits, rather than one scope string, and
 **an empty set means any authenticated caller rather than a public route**. That is the
@@ -273,7 +273,7 @@ Three things about those answers are load-bearing rather than incidental:
 
 - **A refused login is one body, byte for byte**, for an unknown user, a wrong password
   and a disabled user alike. The three alternatives are between them a list of who holds
-  an account on this node. An empty password is a 401 rather than a 400 for the same
+  a user on this node. An empty password is a 401 rather than a 400 for the same
   reason - probing with one should learn nothing a wrong password would not - while a
   *missing* field is a 400, because that is the caller's own mistake and says nothing
   about anybody.
@@ -309,7 +309,7 @@ Four rules here are worth knowing before reading the code:
   administrators left is recovered with `athenasip --add-user` on the host.
 - **Changing a password ends every session that user held**, including the one that asked.
   A password is changed because the old one is no longer trusted, and a session issued
-  against it is exactly as untrusted; an administrator resetting a compromised account
+  against it is exactly as untrusted; an administrator resetting a compromised user
   would otherwise leave whoever compromised it logged in. The cost is that changing your
   own password logs you out, which is the right way round.
 - **An unknown role is refused on the way in**, 400 `unknown_role`. The datastore carries
@@ -337,7 +337,7 @@ that does the same over the network.
   `memory://` starts its node this way.
 
 `--role` may be given more than once; without it the new user holds `manage-admin-users`,
-because a recovery account that cannot administer anybody is not a way back in. The
+because a recovery user that cannot administer anybody is not a way back in. The
 password is read from the terminal with the echo off, or from standard input when that is
 not a terminal so a script can pipe one in. There is deliberately no option that takes a
 password, because a command line is readable by every other process on the host.

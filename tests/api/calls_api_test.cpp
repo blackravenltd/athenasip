@@ -278,7 +278,7 @@ TEST(CallsApiTest, ReoffersSayWhichAccountsNeededTheOtherProfile) {
   ASSERT_EQ(list.size(), 2u);
 
   const auto& phone = list[0].as_object();
-  EXPECT_EQ(phone.at("account").as_string(), "sip:phone@example.com");
+  EXPECT_EQ(phone.at("subscriber").as_string(), "sip:phone@example.com");
   EXPECT_EQ(phone.at("rejected").as_string(), "rtp");
   EXPECT_EQ(phone.at("took").as_string(), "webrtc");
   EXPECT_EQ(phone.at("count").as_int64(), 2);
@@ -310,7 +310,7 @@ TEST(CallsApiTest, QualifyListsTheProbedClients) {
   const auto json = response.json();
   const auto& list = json.as_array();
   ASSERT_EQ(list.size(), 1u);
-  EXPECT_EQ(list[0].at("account").as_string(), "sip:phone@example.com");
+  EXPECT_EQ(list[0].at("subscriber").as_string(), "sip:phone@example.com");
   EXPECT_EQ(list[0].at("interval").as_int64(), 30);
   EXPECT_TRUE(list[0].at("said_media_profile").is_null());
   EXPECT_TRUE(list[0].at("answered_at").is_null());

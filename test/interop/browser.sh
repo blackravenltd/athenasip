@@ -20,7 +20,7 @@
 # The page and the Playwright spec live in ../athenasip-admin, because the page is the
 # admin client's own softphone (decision of 2026-09-23 in TODO/ACTIVE.md) and a test
 # belongs beside what it tests. This script owns the other half: the node, the engine,
-# the accounts, and the environment that tells the spec where they are. The spec never
+# the subscribers, and the environment that tells the spec where they are. The spec never
 # brings the fixture up, so what is under test is this node rather than a harness's
 # arrangement of it.
 #

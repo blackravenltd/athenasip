@@ -22,7 +22,7 @@ contract.
   and the in-tree drivers use exactly the contract an external one would.
 * **Browser-ready.** SIP over WebSocket and secure WebSocket (RFC 7118) are here now,
   because a browser is a first-class client rather than a later port.
-* **API-driven.** Realms, accounts, registrations and the administrators themselves are
+* **API-driven.** Realms, subscribers, registrations and the administrators themselves are
   provisioned over a JSON API described by [an OpenAPI document](docs/api/openapi.yaml).
   Administrators log in for a session token and hold roles. There are no configured tokens:
   the first administrator, and the way back in, is `athenasip --add-user` on the host. The React admin client is
@@ -34,7 +34,7 @@ contract.
 docker/up.sh
 ```
 
-AthenaSIP with Redis, Mosquitto, rtpengine and coturn, a realm, two accounts and an
+AthenaSIP with Redis, Mosquitto, rtpengine and coturn, a realm, two subscribers and an
 administrator, in one command. [Quick Start](docs/quick_start.md) says what it gives you
 and how to do the same thing by hand on one process with nothing external.
 
@@ -53,7 +53,7 @@ claim the shipped configuration does not support.
 
 ## Documentation
 
-* [Quick Start](docs/quick_start.md) - two accounts calling each other, from nothing
+* [Quick Start](docs/quick_start.md) - two subscribers calling each other, from nothing
 * [Installation](docs/installation.md)
 * [Compiling](docs/compiling.md)
 * [Configuration](docs/configuration.md)

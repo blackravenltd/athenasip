@@ -15,7 +15,7 @@
 # It renders docker/config.yaml from the template, because the node has to be told an
 # address a client can come back to and a container's own address is not one; brings the
 # stack up and waits for the node to report healthy; then creates the first administrator
-# with `athenasip --add-user`, signs in as it and provisions a realm and two accounts over
+# with `athenasip --add-user`, signs in as it and provisions a realm and two subscribers over
 # the admin API, which is the same path an operator uses and a second check that the API
 # works.
 #
@@ -140,7 +140,7 @@ SERVE_CONSOLE_YAML="false"
 
 # Anything left from a previous run goes first, so that bringing the stack up twice works
 # and the check below does not find this stack's own ports. The volumes stay, so the
-# realm, the accounts and the administrator survive; --reset is how you start over.
+# realm, the subscribers and the administrator survive; --reset is how you start over.
 compose down --remove-orphans >/dev/null 2>&1 || true
 
 taken=()
@@ -249,7 +249,7 @@ case "$added" in
 esac
 
 # Provisioning signs in as that administrator. On a second run with a password nobody
-# gave, there is nothing to sign in with - and the realm and accounts are already in Redis
+# gave, there is nothing to sign in with - and the realm and subscribers are already in Redis
 # from the first, so they are left as they are.
 ADMIN_TOKEN=""
 if [[ "$GENERATED_PASSWORD" != "kept" ]]; then
@@ -258,7 +258,7 @@ if [[ "$GENERATED_PASSWORD" != "kept" ]]; then
 fi
 
 # Provisioning is idempotent, because the data outlives the containers: a second run
-# finds the realm and the accounts already there and that is the right answer rather than
+# finds the realm and the subscribers already there and that is the right answer rather than
 # a failure. 409 is what the API says to "it already exists", and the only other
 # acceptable answer is the one that created it.
 provision() {
@@ -287,11 +287,11 @@ if [[ -n "$ADMIN_TOKEN" ]]; then
   while IFS=, read -r username password; do
     [[ "$username" == "username" || -z "$username" ]] && continue
 
-    provision "account ${username}@${REALM}" "/realms/${REALM}/accounts" \
+    provision "subscriber ${username}@${REALM}" "/realms/${REALM}/subscribers" \
       "{\"user\":\"${username}\",\"password\":\"${password}\"}"
-  done < "$HERE/accounts.csv"
+  done < "$HERE/subscribers.csv"
 elif [[ "$GENERATED_PASSWORD" == "kept" ]]; then
-  echo "Realm and accounts left as an earlier run made them. To assert them again, run with"
+  echo "Realm and subscribers left as an earlier run made them. To assert them again, run with"
   echo "ATHENA_ADMIN_PASSWORD set to ${ADMIN_USER}'s password."
 else
   echo "Could not sign in as ${ADMIN_USER} to provision the realm" >&2
@@ -310,8 +310,8 @@ AthenaSIP is up, on ${PUBLIC_ADDRESS}.
   Admin API  http://127.0.0.1:${ATHENA_API_PORT}/api/v1
   TURN       ${PUBLIC_ADDRESS}:3478, secret change-me-turn-secret
 
-  Realm      ${REALM}
-  Accounts   $(cut -d, -f1 "$HERE/accounts.csv" | tail -n +2 | tr '\n' ' ')
+  Realm       ${REALM}
+  Subscribers $(cut -d, -f1 "$HERE/subscribers.csv" | tail -n +2 | tr '\n' ' ')
 
 MSG
 

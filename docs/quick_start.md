@@ -1,6 +1,6 @@
 # AthenaSIP - Quick Start
 
-Two accounts calling each other on one node, from nothing, without a telecoms
+Two subscribers calling each other on one node, from nothing, without a telecoms
 background.
 
 There are two ways in. The first is one command and gives you what a real deployment
@@ -15,7 +15,7 @@ docker/up.sh
 
 That brings up AthenaSIP with the canonical backends - Redis for the datastore, Mosquitto
 for the event bus, rtpengine on the media path, coturn for a browser that needs a relay -
-then provisions a realm, two accounts and an administrator, and prints what to do next.
+then provisions a realm, two subscribers and an administrator, and prints what to do next.
 
 | | |
 |---|---|
@@ -143,9 +143,9 @@ reset by somebody holding `manage-admin-users`, or by `athenasip --add-user` on 
 if the API cannot be reached at all. [authentication.md](authentication.md) is the whole
 of it.
 
-## 3. Create a realm and two accounts
+## 3. Create a realm and two subscribers
 
-A realm is the SIP domain accounts live in. Use the domain your clients will register to.
+A realm is the SIP domain subscribers live in. Use the domain your clients will register to.
 
 ```
 curl -X POST "$ATHENA_API/realms" \
@@ -153,19 +153,19 @@ curl -X POST "$ATHENA_API/realms" \
   -H "Content-Type: application/json" \
   -d '{"name":"example.com"}'
 
-curl -X POST "$ATHENA_API/realms/example.com/accounts" \
+curl -X POST "$ATHENA_API/realms/example.com/subscribers" \
   -H "Authorization: Bearer $ATHENA_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"user":"alice","password":"alice-secret"}'
 
-curl -X POST "$ATHENA_API/realms/example.com/accounts" \
+curl -X POST "$ATHENA_API/realms/example.com/subscribers" \
   -H "Authorization: Bearer $ATHENA_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"user":"bob","password":"bob-secret"}'
 ```
 
 The password is turned into an HA1 hash on the way in and is not stored. Nothing gives
-it back, so an account whose password is lost is an account whose password is reset.
+it back, so a subscriber whose password is lost is a subscriber whose password is reset.
 
 [`docs/api/openapi.yaml`](api/openapi.yaml) is the whole API.
 
@@ -190,7 +190,7 @@ Check that both registered:
 curl "$ATHENA_API/registrations" -H "Authorization: Bearer change-me-client"
 ```
 
-Each entry is one binding: the account, the contact it registered, and when it expires.
+Each entry is one binding: the subscriber, the contact it registered, and when it expires.
 
 ## 5. Call
 

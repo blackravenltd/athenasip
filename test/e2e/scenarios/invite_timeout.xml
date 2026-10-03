@@ -2,7 +2,7 @@
 <!DOCTYPE scenario SYSTEM "sipp.dtd">
 
 <!--
-  RFC 3261 17.1.1.2: timer B is 64*T1. An INVITE to a account with a binding that nothing
+  RFC 3261 17.1.1.2: timer B is 64*T1. An INVITE to a subscriber with a binding that nothing
   answers is retransmitted by the node until timer B fires, and the caller is then told
   408 rather than left waiting.
 

@@ -13,7 +13,7 @@ info:
     Provisioning and read-only status for one AthenaSIP node.
 
     Everything here goes straight to the datastore on the API's own executor. The API is
-    not on the Core strand and must not be: an operator listing accounts cannot be
+    not on the Core strand and must not be: an operator listing subscribers cannot be
     allowed to hold up a call.
 
     Every route names the roles that admit it, and any of them does. The one credential is
@@ -68,10 +68,10 @@ tags:
     description: What this node is and whether it is serving
   - name: realms
     description: The SIP domains this node serves
-  - name: accounts
-    description: The accounts within a realm
+  - name: subscribers
+    description: The subscribers within a realm
   - name: registrations
-    description: Where accounts are currently reachable
+    description: Where subscribers are currently reachable
   - name: calls
     description: What the node is carrying now, and what its media engine relayed for it
   - name: media
@@ -89,7 +89,7 @@ paths:
         nothing about who is on it.
 
         `503` when the datastore is not connected, because a node that cannot read its
-        own accounts cannot serve a REGISTER.
+        own subscribers cannot serve a REGISTER.
       security: []
       responses:
         "200":
@@ -118,7 +118,7 @@ paths:
 
         A user that does not exist, a password that does not verify and a user that has
         been disabled are all one answer, byte for byte, because between them the
-        alternatives are a list of who holds an account on this node. An empty password is
+        alternatives are a list of who is a subscriber on this node. An empty password is
         that same `401` rather than a `400`, so probing with one learns nothing a wrong
         password would not; a *missing* field is a `400`, because that is the caller's own
         mistake and says nothing about anybody.
@@ -375,52 +375,52 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
-  /realms/{realm}/accounts:
+  /realms/{realm}/subscribers:
     parameters:
       - $ref: "#/components/parameters/Realm"
     get:
-      operationId: listAccounts
-      tags: [accounts]
-      summary: Every account in a realm
+      operationId: listSubscribers
+      tags: [subscribers]
+      summary: Every subscriber in a realm
       responses:
         "200":
-          description: The accounts
+          description: The subscribers
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/Account"
+                  $ref: "#/components/schemas/Subscriber"
         "404":
           $ref: "#/components/responses/NotFound"
     post:
-      operationId: createAccount
-      tags: [accounts]
-      summary: Create an account
+      operationId: createSubscriber
+      tags: [subscribers]
+      summary: Create a subscriber
       description: |
         Give a `password` and the server computes HA1 from it (RFC 2617: the hash of
         user, realm and password). That hash is the only form of the password this
         server ever holds, and no endpoint returns it.
 
-        `ha1` is accepted instead, for importing accounts from somewhere that already
+        `ha1` is accepted instead, for importing subscribers from somewhere that already
         holds one.
 
-        The account id is derived from its URI rather than counted, so every node that
-        provisions the same account agrees about which account a registration belongs to
+        The subscriber id is derived from its URI rather than counted, so every node that
+        provisions the same subscriber agrees about which subscriber a registration belongs to
         without a shared sequence.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AccountCreate"
+              $ref: "#/components/schemas/SubscriberCreate"
       responses:
         "201":
           description: Created
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Account"
+                $ref: "#/components/schemas/Subscriber"
         "400":
           $ref: "#/components/responses/BadRequest"
         "404":
@@ -428,48 +428,48 @@ paths:
         "409":
           $ref: "#/components/responses/Conflict"
 
-  /realms/{realm}/accounts/{user}:
+  /realms/{realm}/subscribers/{user}:
     parameters:
       - $ref: "#/components/parameters/Realm"
       - $ref: "#/components/parameters/User"
     get:
-      operationId: getAccount
-      tags: [accounts]
-      summary: One account
+      operationId: getSubscriber
+      tags: [subscribers]
+      summary: One subscriber
       responses:
         "200":
-          description: The account
+          description: The subscriber
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Account"
+                $ref: "#/components/schemas/Subscriber"
         "404":
           $ref: "#/components/responses/NotFound"
     put:
-      operationId: updateAccount
-      tags: [accounts]
-      summary: Change an account's credential
+      operationId: updateSubscriber
+      tags: [subscribers]
+      summary: Change a subscriber's credential
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AccountUpdate"
+              $ref: "#/components/schemas/SubscriberUpdate"
       responses:
         "200":
           description: Updated
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Account"
+                $ref: "#/components/schemas/Subscriber"
         "400":
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
     delete:
-      operationId: deleteAccount
-      tags: [accounts]
-      summary: Delete an account
+      operationId: deleteSubscriber
+      tags: [subscribers]
+      summary: Delete a subscriber
       description: Its registrations go with it.
       responses:
         "204":
@@ -481,7 +481,7 @@ paths:
     get:
       operationId: listRegistrations
       tags: [registrations]
-      summary: Where accounts are currently reachable
+      summary: Where subscribers are currently reachable
       description: |
         Read only. A binding is written by a REGISTER and by nothing else.
 
@@ -591,13 +591,13 @@ paths:
     get:
       operationId: listMediaReoffers
       tags: [media]
-      summary: Accounts that refused the media profile they were offered
+      summary: Subscribers that refused the media profile they were offered
       description: |
         When a callee answers an offer this node's engine produced with 488 Not Acceptable
         Here, the node offers it the other profile once (WebRTC for plain RTP and back).
-        This lists each account that needed that, on this node and since it started, most
+        This lists each subscriber that needed that, on this node and since it started, most
         recent first. The node suggests and the operator decides: `suggested_media_profile`
-        is the value the account's `behaviour.media_profile` would be set to, and nothing
+        is the value the subscriber's `behaviour.media_profile` would be set to, and nothing
         sets it.
       responses:
         "200":
@@ -632,9 +632,9 @@ paths:
                 type: array
                 items:
                   type: object
-                  required: [account, contact, interval, answered_at, unanswered, said_media_profile]
+                  required: [subscriber, contact, interval, answered_at, unanswered, said_media_profile]
                   properties:
-                    account:
+                    subscriber:
                       type: string
                     contact:
                       type: string
@@ -812,7 +812,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
-          description: The change would lock the caller out of its own account
+          description: The change would lock the caller out of its own user
           content:
             application/json:
               schema:
@@ -857,7 +857,7 @@ paths:
       tags: [users]
       summary: Set a password
       description: |
-        Any authenticated caller, because "this is my own account" is not something a role
+        Any authenticated caller, because "this is my own user" is not something a role
         can express.
 
         `old_password` is required when, and only when, the caller does **not** hold
@@ -873,7 +873,7 @@ paths:
         **This ends every session that user held, including the one that asked.** A
         password is changed because the old one is no longer trusted, and a session issued
         against it is exactly as untrusted; an administrator resetting a compromised
-        account would otherwise leave whoever compromised it logged in. A client changing
+        user would otherwise leave whoever compromised it logged in. A client changing
         its own password should expect to sign in again.
 
         A wrong or missing `old_password` is `403 wrong_password`, not `401`. The bearer
@@ -899,7 +899,7 @@ paths:
         "403":
           description: |
             Either the caller does not hold `manage-admin-users` and the `old_password`
-            for its own account was wrong or missing (`wrong_password`), or this is
+            for its own user was wrong or missing (`wrong_password`), or this is
             somebody else's password and the caller does not hold the role (`forbidden`).
           content:
             application/json:
@@ -919,7 +919,7 @@ paths:
       summary: Sign a user out everywhere
       description: |
         Needs `manage-admin-users`. Revokes every session that user holds, leaving the
-        account alone so they can log in again.
+        user alone so they can log in again.
 
         `204` for a user that holds none, because holding none is the state the caller
         asked for; `404` only when there is no such user.
@@ -972,7 +972,7 @@ components:
       schema:
         type: string
       description: |
-        The user part of the account's SIP URI, percent-encoded. A user containing an `@`
+        The user part of the subscriber's SIP URI, percent-encoded. A user containing an `@`
         or a `/` is one path segment, not two.
       example: alice
 
@@ -1009,7 +1009,7 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     NotFound:
-      description: No such realm or account
+      description: No such realm or subscriber
       content:
         application/json:
           schema:
@@ -1125,7 +1125,7 @@ components:
             $ref: "#/components/schemas/Role"
         username:
           type: string
-          description: In the spelling the account was created with
+          description: In the spelling the user was created with
         display_name:
           type: string
           description: May be empty
@@ -1451,7 +1451,7 @@ components:
         behaviour:
           $ref: '#/components/schemas/Behaviour'
 
-    Account:
+    Subscriber:
       type: object
       properties:
         id:
@@ -1465,7 +1465,7 @@ components:
         realm:
           type: string
         behaviour:
-          $ref: '#/components/schemas/AccountBehaviour'
+          $ref: '#/components/schemas/SubscriberBehaviour'
       example:
         id: 11400714819323198485
         uri: sip:alice@example.com
@@ -1476,11 +1476,11 @@ components:
 
     MediaReoffer:
       type: object
-      required: [account, rejected, took, count, last_at, suggested_media_profile]
+      required: [subscriber, rejected, took, count, last_at, suggested_media_profile]
       properties:
-        account:
+        subscriber:
           type: string
-          description: The Request-URI the call was for, which is the account's address of record
+          description: The Request-URI the call was for, which is the subscriber's address of record
         rejected:
           type: string
           enum: [rtp, webrtc]
@@ -1499,7 +1499,7 @@ components:
           nullable: true
           enum: [rtp, webrtc, null]
 
-    AccountBehaviour:
+    SubscriberBehaviour:
       type: object
       description: >-
         The one behaviour setting that is about an endpoint rather than a realm. Null, or
@@ -1512,11 +1512,11 @@ components:
           nullable: true
           enum: [mirror, transport, rtp, webrtc, srtp, null]
           description: >-
-            What this account's endpoint is, as Asterisk's webrtc=yes says. It decides the
+            What this subscriber's endpoint is, as Asterisk's webrtc=yes says. It decides the
             first description produced towards the endpoint, above the realm's behaviour
             and below what the endpoint has itself said in an offer or answer.
 
-    AccountCreate:
+    SubscriberCreate:
       type: object
       required: [user]
       description: One of `password` or `ha1` is required.
@@ -1528,11 +1528,11 @@ components:
           description: Turned into HA1 here and not stored
         ha1:
           type: string
-          description: For importing an account that already has one
+          description: For importing a subscriber that already has one
         behaviour:
-          $ref: '#/components/schemas/AccountBehaviour'
+          $ref: '#/components/schemas/SubscriberBehaviour'
 
-    AccountUpdate:
+    SubscriberUpdate:
       type: object
       description: Any of `password` or `ha1`, and `behaviour`.
       properties:
@@ -1541,7 +1541,7 @@ components:
         ha1:
           type: string
         behaviour:
-          $ref: '#/components/schemas/AccountBehaviour'
+          $ref: '#/components/schemas/SubscriberBehaviour'
 
     Call:
       type: object
@@ -1637,10 +1637,10 @@ components:
     Registration:
       type: object
       properties:
-        account:
+        subscriber:
           type: string
-          description: The account's URI
-        account_id:
+          description: The subscriber's URI
+        subscriber_id:
           type: integer
           format: int64
         contact:

@@ -284,7 +284,7 @@ void CallsAPI::_reoffers(RouteContext context) {
 
     for (const auto& reoffer : core->reoffers().list()) {
       boost::json::object entry;
-      entry["account"] = reoffer.account;
+      entry["subscriber"] = reoffer.account;
       entry["rejected"] = setting_json(reoffer.rejected);
       entry["took"] = setting_json(reoffer.took);
       entry["count"] = reoffer.count;
@@ -315,7 +315,7 @@ void CallsAPI::_qualify(RouteContext context) {
 
     for (const auto& probe : core->qualifier()->list()) {
       boost::json::object entry;
-      entry["account"] = probe.aor;
+      entry["subscriber"] = probe.aor;
       entry["contact"] = probe.contact ? boost::json::value(probe.contact->to_string()) : boost::json::value(nullptr);
       entry["interval"] = probe.interval;
       entry["answered_at"] = time_json(probe.answered_at);

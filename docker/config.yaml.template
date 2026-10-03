@@ -56,7 +56,7 @@ websocket:
   key_pem_filename: "/tls/snakeoil.key"
 
 datastore:
-  # Registrations, realms, accounts, admin users and sessions. Survives a restart of the
+  # Registrations, realms, subscribers, admin users and sessions. Survives a restart of the
   # node, which memory:// does not.
   url: "redis://redis:6379"
 

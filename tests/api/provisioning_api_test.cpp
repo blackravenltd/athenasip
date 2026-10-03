@@ -351,7 +351,7 @@ TEST(ProvisioningApiTest, AnAccountIsCreatedWithItsHa1ComputedHere) {
 
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
 
-  auto created = f.post("/api/v1/realms/example.com/accounts", R"({"user":"alice","password":"secret"})");
+  auto created = f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice","password":"secret"})");
   ASSERT_EQ(created.status, 201u);
   EXPECT_EQ(created.json().at("uri").as_string(), "sip:alice@example.com");
 
@@ -372,11 +372,11 @@ TEST(ProvisioningApiTest, AnAccountSaysWhatItsEndpointIs) {
   ApiFixture f;
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
 
-  auto created = f.post("/api/v1/realms/example.com/accounts", R"({"user":"alice","password":"secret"})");
+  auto created = f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice","password":"secret"})");
   ASSERT_EQ(created.status, 201u);
   EXPECT_TRUE(created.json().at("behaviour").at("media_profile").is_null());
 
-  auto updated = f.put("/api/v1/realms/example.com/accounts/alice", R"({"behaviour":{"media_profile":"webrtc"}})");
+  auto updated = f.put("/api/v1/realms/example.com/subscribers/alice", R"({"behaviour":{"media_profile":"webrtc"}})");
   ASSERT_EQ(updated.status, 200u) << updated.body;
   EXPECT_EQ(updated.json().at("behaviour").at("media_profile").as_string(), "webrtc");
 
@@ -384,7 +384,7 @@ TEST(ProvisioningApiTest, AnAccountSaysWhatItsEndpointIs) {
   ASSERT_NE(stored, nullptr);
   EXPECT_EQ(stored->media_profile, types::MediaPolicy::Profiles::WebRtc);
 
-  ASSERT_EQ(f.put("/api/v1/realms/example.com/accounts/alice", R"({"behaviour":{"media_profile":null}})").status, 200u);
+  ASSERT_EQ(f.put("/api/v1/realms/example.com/subscribers/alice", R"({"behaviour":{"media_profile":null}})").status, 200u);
   stored = f.store->account_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
   EXPECT_FALSE(stored->media_profile.has_value());
 }
@@ -394,11 +394,11 @@ TEST(ProvisioningApiTest, AnAccountSaysWhatItsEndpointIs) {
 TEST(ProvisioningApiTest, AnUnreadableAccountBehaviourChangesNothing) {
   ApiFixture f;
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
-  ASSERT_EQ(f.post("/api/v1/realms/example.com/accounts", R"({"user":"alice","password":"secret","behaviour":{"media_profile":"rtp"}})").status, 201u);
+  ASSERT_EQ(f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice","password":"secret","behaviour":{"media_profile":"rtp"}})").status, 201u);
 
-  EXPECT_EQ(f.put("/api/v1/realms/example.com/accounts/alice", R"({"password":"other","behaviour":{"media_anchor":false}})").status, 400u);
-  EXPECT_EQ(f.put("/api/v1/realms/example.com/accounts/alice", R"({"behaviour":{"media_profile":"web-rtc"}})").status, 400u);
-  EXPECT_EQ(f.post("/api/v1/realms/example.com/accounts", R"({"user":"bob","password":"secret","behaviour":{"media_profile":7}})").status, 400u);
+  EXPECT_EQ(f.put("/api/v1/realms/example.com/subscribers/alice", R"({"password":"other","behaviour":{"media_anchor":false}})").status, 400u);
+  EXPECT_EQ(f.put("/api/v1/realms/example.com/subscribers/alice", R"({"behaviour":{"media_profile":"web-rtc"}})").status, 400u);
+  EXPECT_EQ(f.post("/api/v1/realms/example.com/subscribers", R"({"user":"bob","password":"secret","behaviour":{"media_profile":7}})").status, 400u);
 
   auto stored = f.store->account_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
   ASSERT_NE(stored, nullptr);
@@ -417,10 +417,10 @@ TEST(ProvisioningApiTest, ThePathParameterReachesTheHandler) {
 
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
 
-  auto response = f.post("/api/v1/realms/example.com/accounts", R"({"user":"alice","password":"secret"})");
+  auto response = f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice","password":"secret"})");
   ASSERT_EQ(response.status, 201u);
 
-  auto listed = f.get("/api/v1/realms/example.com/accounts");
+  auto listed = f.get("/api/v1/realms/example.com/subscribers");
   ASSERT_EQ(listed.status, 200u);
 
   const auto accounts = listed.json();
@@ -431,7 +431,7 @@ TEST(ProvisioningApiTest, ThePathParameterReachesTheHandler) {
 TEST(ProvisioningApiTest, AnAccountInARealmThatDoesNotExistIs404) {
   ApiFixture f;
 
-  auto response = f.post("/api/v1/realms/nowhere.example/accounts", R"({"user":"alice","password":"secret"})");
+  auto response = f.post("/api/v1/realms/nowhere.example/subscribers", R"({"user":"alice","password":"secret"})");
   EXPECT_EQ(response.status, 404u);
 
   // Naming it is what distinguishes "that realm is not here" from "the path parameter
@@ -444,19 +444,19 @@ TEST(ProvisioningApiTest, AnAccountWithNoCredentialIsRefused) {
 
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
 
-  auto response = f.post("/api/v1/realms/example.com/accounts", R"({"user":"alice"})");
+  auto response = f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice"})");
   EXPECT_EQ(response.status, 400u);
   EXPECT_EQ(response.json().at("error").at("code").as_string(), "invalid_request");
 }
 
-TEST(ProvisioningApiTest, AnAccountIsDeleted) {
+TEST(ProvisioningApiTest, ASubscriberIsDeleted) {
   ApiFixture f;
 
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
-  ASSERT_EQ(f.post("/api/v1/realms/example.com/accounts", R"({"user":"alice","password":"secret"})").status, 201u);
+  ASSERT_EQ(f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice","password":"secret"})").status, 201u);
 
-  EXPECT_EQ(f.request(http::verb::delete_, "/api/v1/realms/example.com/accounts/alice").status, 204u);
-  EXPECT_EQ(f.get("/api/v1/realms/example.com/accounts/alice").status, 404u);
+  EXPECT_EQ(f.request(http::verb::delete_, "/api/v1/realms/example.com/subscribers/alice").status, 204u);
+  EXPECT_EQ(f.get("/api/v1/realms/example.com/subscribers/alice").status, 404u);
 
   // Deleting what is not there is a 404, not a 500 and not a success.
   EXPECT_EQ(f.request(http::verb::delete_, "/api/v1/realms/example.com/accounts/alice").status, 404u);
@@ -469,7 +469,7 @@ TEST(ProvisioningApiTest, AnAccountIdIsDerivedFromItsUri) {
 
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
 
-  auto created = f.post("/api/v1/realms/example.com/accounts", R"({"user":"alice","password":"secret"})");
+  auto created = f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice","password":"secret"})");
   ASSERT_EQ(created.status, 201u);
 
   // Parsing normalises a number that fits in an int64 to one, so the comparison asks
@@ -483,7 +483,7 @@ TEST(ProvisioningApiTest, RegistrationsAreListedForTheClientScope) {
   ApiFixture f;
 
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
-  ASSERT_EQ(f.post("/api/v1/realms/example.com/accounts", R"({"user":"alice","password":"secret"})").status, 201u);
+  ASSERT_EQ(f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice","password":"secret"})").status, 201u);
 
   auto response = f.get("/api/v1/registrations", "client-token");
   ASSERT_EQ(response.status, 200u);
@@ -506,7 +506,7 @@ TEST(ProvisioningApiTest, RegistrationsAreListedForTheClientScope) {
 
   const auto registrations = after.json();
   ASSERT_EQ(registrations.as_array().size(), 1u);
-  EXPECT_EQ(registrations.as_array()[0].at("account").as_string(), "sip:alice@example.com");
+  EXPECT_EQ(registrations.as_array()[0].at("subscriber").as_string(), "sip:alice@example.com");
   EXPECT_EQ(registrations.as_array()[0].at("flow_id").as_string(), "tcp://192.0.2.10:5060");
 }
 

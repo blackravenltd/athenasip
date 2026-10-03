@@ -1,6 +1,6 @@
 # AthenaSIP - Architecture
 
-AthenaSIP is a multi-master, clusterable SIP server. Any node serves any account;
+AthenaSIP is a multi-master, clusterable SIP server. Any node serves any subscriber;
 registrations survive a node dying, and in-flight dialogs on a dead node do not.
 
 The layering follows RFC 3261's own, because the RFC's own division of labour is the one

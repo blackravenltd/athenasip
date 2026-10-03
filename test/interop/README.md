@@ -46,7 +46,7 @@ fixture that needs them fails for reasons that have nothing to do with SIP.
 | WS | 8088 | Any path. `/ws` is what most clients ask for |
 | Admin API | 8080 | Sign in as `ATHENA_INTEROP_API_USER` with `ATHENA_INTEROP_API_PASSWORD`, from `generated/fixture.env` |
 
-Accounts `1001`, `1002` and `1003` live in realm `127.0.0.1` with the password
+Subscribers `1001`, `1002` and `1003` live in realm `127.0.0.1` with the password
 `athenaphone`. The realm is named for the domain a client puts in its From and To,
 which on loopback is the address it dialled: a realm named anything else is one the
 registrar will not find (RFC 3261 10.3).
@@ -102,7 +102,7 @@ change with it, both of them about addresses rather than about SIP:
   `127.0.0.1`, because a phone reaching the fixture from a device is not on loopback.
   `ATHENA_INTEROP_PUBLIC_ADDRESS` overrides the address and `ATHENA_INTEROP_BIND` the
   interface it is published on, and the realm is named after the address, so with
-  rtpengine the accounts live in a realm named for the LAN address rather than
+  rtpengine the subscribers live in a realm named for the LAN address rather than
   `127.0.0.1`.
 
 Each leg is profiled from what it has said rather than from the transport it signals
@@ -156,7 +156,7 @@ Two headless Chromium contexts open the softphone, register, call each other thr
 rtpengine and read their own media counters back, while the engine's counters say the
 same thing from the other side. The page and the Playwright spec live in
 `../athenasip-admin`, because the page is the admin client's own softphone and a test
-belongs beside what it tests; this script owns the node, the engine, the accounts and
+belongs beside what it tests; this script owns the node, the engine, the subscribers and
 the environment that tells the spec where they are. The spec never brings the fixture
 up - what is under test is the node, not a harness's arrangement of it.
 

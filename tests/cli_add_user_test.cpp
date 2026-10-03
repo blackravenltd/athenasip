@@ -85,7 +85,7 @@ TEST(CliAddUserTest, WithNoRolesGivenItCanAdministerUsers) {
   auto user = f.store->user_get("tom");
   ASSERT_NE(user, nullptr);
 
-  // A recovery account that cannot administer anybody is not a way back in, which is the
+  // A recovery user that cannot administer anybody is not a way back in, which is the
   // only reason this tool exists.
   EXPECT_TRUE(user->has_role(types::roles::manage_admin_users));
 }
