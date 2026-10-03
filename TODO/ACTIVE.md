@@ -29,8 +29,9 @@ it:
 
 1014 tests on 2026-10-03; the sipp harness, 12 of 12, at `2e7ae4d`.
 
-**Next:** the second node, in Milestone 4 - `docker-compose.cluster.yml` and the harness
-across two nodes, which is what proves the forwarding that landed on 2026-10-03.
+**Next:** in Milestone 4, the rest of the scenarios and the connection-oriented transports
+across two nodes, then the chaos test. A call crosses two nodes as of 2026-10-03
+(`test/e2e/cluster.sh`, 5 of 5).
 
 **Once things are stable, video calling is a primary feature** (Tom, 2026-10-03), not a
 later extra: principle 6 already says so, and this is the reminder that it is next in line
@@ -71,6 +72,7 @@ before it cannot, and the exact commands. The short version, cheapest first:
 ```
 ./build-tests/athenasip_tests    the unit suite, with Redis and MQTT set or they skip
 test/e2e/run.sh [--rtpengine]    the sipp scenarios, the second with a real engine
+test/e2e/cluster.sh              the same call across two nodes of a cluster
 test/interop/up.sh --rtpengine   a node to point a real client at
 test/interop/browser.sh          two browsers calling, direct then relayed through coturn
 test/interop/UAT.md              the call a person has to make
@@ -440,13 +442,6 @@ milestone is the second node.
 - [ ] The rest of discovery: the node's capabilities in its status. The SIP addresses, the
       roster from MQTT, staleness and the inter-node address (`cluster.advertise`,
       `NodeDirectory::find`) are in.
-- [ ] Forwarding, proved across two real nodes. The proxy does it and the unit tests say
-      so (`tests/proxy_cluster_forwarding_test.cpp`): one request per peer that holds a
-      flow, delivered only to local flows by the node that receives it, not anchored a
-      second time, Record-Route naming the inter-node listener. What it has never done is
-      run between two processes: the outbound TLS flow to a peer, the peer's certificate
-      naming it, the ACK and BYE crossing back. That is the cluster compose below, and it
-      is where this is expected to break.
 - [ ] Media ownership, the rest of it: the engine id in the call record so a BYE reaching
       either node releases the media. The first node anchoring and the second leaving the
       call alone is in.
@@ -454,7 +449,11 @@ milestone is the second node.
       engine, nodes. `GET /api/v1/calls`.
 - [ ] `athenasip check` that validates config and connectivity to Redis, MQTT, rtpengine
       and peers. The CA half of this item is in: `--ca-init` and `--ca-node`.
-- [ ] `docker-compose.cluster.yml` with two nodes, and the sipp harness run across them.
+- [ ] The rest of the sipp scenarios across the two nodes. `test/e2e/cluster.sh` runs a
+      call, the same call the other way, and a media call; CANCEL, busy, delayed offer,
+      hold and the timeout have only ever run on one node.
+- [ ] TCP and WebSocket flows across the two nodes. The harness registers over UDP, and a
+      flow that is a connection is the case forwarding exists for.
 - [ ] Chaos test: kill node A mid-registration-cycle, assert re-REGISTER on node B and
       a new call completes within one registration interval.
 

@@ -2470,3 +2470,14 @@ Tom's answers to the questions that were waiting on him, and what they led to.
       flow it has no channel for. `Call::media_elsewhere` keeps the second node's engine
       out of a call the first anchored, and `Core::advertised_for` names the inter-node
       listener to a peer. Unit-tested only; two real nodes are the next item.
+- [x] **A call crosses two real nodes.** `docker-compose.cluster.yml` and
+      `test/e2e/cluster.sh`: two nodes on one Redis and one Mosquitto, certificates from
+      the node's own `--ca-init` and `--ca-node`, the administrator from `--add-user`. A
+      control call with both ends on node A, then Bob held by node B called through node
+      A, the same the other way, and a media call: 5 of 5 on the first run. The node logs
+      say what the result cannot: each node opened a mutual-TLS flow to the other and
+      named it from its certificate, the INVITE reached node B still addressed to
+      `sip:bob@example.com` and was delivered to Bob's Contact, the ACK and the BYE
+      crossed the same way, node B challenged nothing a peer sent, and 101 packets went
+      through node A's relay and none through node B's. Over UDP only, and only these
+      scenarios.
