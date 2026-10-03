@@ -335,6 +335,7 @@ bool Config::load_from_yaml(const std::string& filename) {
       if (cluster["enable"]) cluster_enable = cluster["enable"].as<bool>();
       if (cluster["address"]) cluster_address = cluster["address"].as<std::string>();
       if (cluster["port"]) cluster_port = cluster["port"].as<std::uint16_t>();
+      if (cluster["advertise"]) cluster_advertise = cluster["advertise"].as<std::string>();
       if (cluster["ca"]) cluster_ca = cluster["ca"].as<std::string>();
       if (cluster["cert"]) cluster_cert = cluster["cert"].as<std::string>();
       if (cluster["key"]) cluster_key = cluster["key"].as<std::string>();
@@ -625,6 +626,7 @@ std::string Config::effective_yaml() const {
   out << YAML::Key << "enable" << YAML::Value << cluster_enable;
   out << YAML::Key << "address" << YAML::Value << cluster_address;
   out << YAML::Key << "port" << YAML::Value << cluster_port;
+  out << YAML::Key << "advertise" << YAML::Value << cluster_advertise;
   out << YAML::Key << "ca" << YAML::Value << cluster_ca;
   out << YAML::Key << "cert" << YAML::Value << cluster_cert;
   out << YAML::Key << "key" << YAML::Value << cluster_key;
@@ -683,6 +685,17 @@ std::vector<Config::AdvertisedTransport> Config::advertised_transports() const {
   if (websocket_enable) add(websocket_tls ? "wss" : "ws", websocket_address, websocket_port, websocket_tls);
 
   return out;
+}
+
+std::optional<Config::AdvertisedTransport> Config::advertised_cluster() const {
+  if (!cluster_enable) return std::nullopt;
+
+  const bool everywhere = cluster_address.empty() || cluster_address == "0.0.0.0" || cluster_address == "::";
+
+  std::string address = cluster_advertise;
+  if (address.empty()) address = everywhere && !sip_public_address.empty() ? sip_public_address : cluster_address;
+
+  return AdvertisedTransport{"tls", address, cluster_port, true};
 }
 
 // Each entry a prefix, or a bare address that is a prefix of one. A prefix with host bits set

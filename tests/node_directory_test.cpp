@@ -94,3 +94,28 @@ TEST(NodeDirectoryTest, ANodeListensForTheOthers) {
   for (const auto& node : nodes) found = found || node.id == "node-b";
   EXPECT_TRUE(found);
 }
+
+// Where a peer is reached for inter-node SIP, which is not where a client reaches it: the
+// mutual-TLS listener, as the node itself gives it. It is what a node forwards to when a
+// binding's flow is held elsewhere.
+TEST(NodeDirectoryTest, ANodeSaysWhereItsPeersReachIt) {
+  NodeDirectory directory;
+
+  const std::string with_cluster = R"({"status":"ok","node":"node-b","version":"1.2.3","at":"2026-10-03T10:00:00Z","transports":[],)"
+                                   R"("cluster":{"address":"10.0.0.2","port":5062}})";
+  ASSERT_TRUE(directory.observe(events::topics::node_status("node-b"), with_cluster));
+  ASSERT_TRUE(directory.observe(events::topics::node_status("node-c"), status("node-c", "ok")));
+
+  const auto b = directory.find("node-b", std::chrono::seconds(90));
+  ASSERT_TRUE(b.has_value());
+  EXPECT_EQ(b->cluster_address, "10.0.0.2");
+  EXPECT_EQ(b->cluster_port, 5062);
+
+  // A node that is not in a cluster says nothing, and is not a peer anybody can forward to.
+  const auto c = directory.find("node-c", std::chrono::seconds(90));
+  ASSERT_TRUE(c.has_value());
+  EXPECT_TRUE(c->cluster_address.empty());
+  EXPECT_EQ(c->cluster_port, 0);
+
+  EXPECT_FALSE(directory.find("node-z", std::chrono::seconds(90)).has_value());
+}

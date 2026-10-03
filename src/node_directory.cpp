@@ -53,9 +53,30 @@ bool NodeDirectory::observe(const std::string& topic, const std::string& message
 
   if (const auto* transports = report.if_contains("transports"); transports != nullptr && transports->is_array()) node.transports = transports->as_array();
 
+  if (const auto* cluster = report.if_contains("cluster"); cluster != nullptr && cluster->is_object()) {
+    const auto& peer = cluster->as_object();
+    const auto* port = peer.if_contains("port");
+
+    node.cluster_address = string_of(peer, "address");
+    if (port != nullptr && port->is_int64() && port->as_int64() > 0 && port->as_int64() <= 65535)
+      node.cluster_port = static_cast<std::uint16_t>(port->as_int64());
+  }
+
   std::lock_guard<std::mutex> lock(_mutex);
   _nodes[id] = std::move(node);
   return true;
+}
+
+std::optional<NodeDirectory::Node> NodeDirectory::find(const std::string& id, std::chrono::seconds stale_after,
+                                                       std::chrono::steady_clock::time_point now) const {
+  std::lock_guard<std::mutex> lock(_mutex);
+
+  const auto found = _nodes.find(id);
+  if (found == _nodes.end()) return std::nullopt;
+
+  auto node = found->second;
+  node.stale = now - node.heard > stale_after;
+  return node;
 }
 
 std::vector<NodeDirectory::Node> NodeDirectory::list(std::chrono::seconds stale_after, std::chrono::steady_clock::time_point now) const {

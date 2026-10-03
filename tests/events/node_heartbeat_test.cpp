@@ -181,3 +181,22 @@ TEST(NodeHeartbeatTest, TheStatusSaysHowOftenItWillBeRepeated) {
   ASSERT_TRUE(status.contains("status_interval")) << boost::json::serialize(status);
   EXPECT_EQ(status.at("status_interval").as_int64(), 45);
 }
+
+// A node in a cluster says where its peers reach it, and one that is not says nothing.
+TEST(NodeHeartbeatTest, TheStatusSaysWhereAPeerDialsWhenTheNodeIsInACluster) {
+  HeartbeatFixture alone(30);
+  EXPECT_FALSE(alone.latest_status().contains("cluster"));
+
+  HeartbeatFixture f(30);
+  f.on_strand([&f]() {
+    f.config->cluster_enable = true;
+    f.config->cluster_advertise = "10.0.0.1";
+    f.config->cluster_port = 5062;
+  });
+  f.advance(std::chrono::seconds(30));
+
+  const auto status = f.latest_status();
+  ASSERT_TRUE(status.contains("cluster")) << boost::json::serialize(status);
+  EXPECT_EQ(status.at("cluster").at("address").as_string(), "10.0.0.1");
+  EXPECT_EQ(status.at("cluster").at("port").as_int64(), 5062);
+}

@@ -10,6 +10,7 @@
 #include <chrono>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,11 @@ class NodeDirectory {
     std::string at;
     boost::json::array transports;
 
+    // Where its peers reach it for inter-node SIP. Empty and zero for a node that is not
+    // in a cluster, which is then not one to forward to.
+    std::string cluster_address;
+    std::uint16_t cluster_port = 0;
+
     std::chrono::steady_clock::time_point heard{};
 
     // Set by list(): not repeated within the window, so not to be believed.
@@ -45,6 +51,10 @@ class NodeDirectory {
   // Every node heard from, ordered by id, marked stale when its last report is older than
   // stale_after.
   std::vector<Node> list(std::chrono::seconds stale_after, std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now()) const;
+
+  // One node, as it last described itself, or nothing for a node never heard from.
+  std::optional<Node> find(const std::string& id, std::chrono::seconds stale_after,
+                           std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now()) const;
 
  private:
   mutable std::mutex _mutex;

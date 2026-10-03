@@ -62,6 +62,7 @@ consumer that was not subscribed at the time has missed it.
 | `uptime` | seconds since this process started serving, `0` in a will |
 | `status_interval` | `events.status_interval`: seconds until this node says it again, `0` if it never repeats; present in a will too |
 | `transports` | where the node listens, one entry per enabled SIP transport, at `sip.public_address` when set; empty in a will |
+| `cluster` | `{"address":..,"port":..}`: where a peer node reaches this one's inter-node listener (`cluster.advertise`); absent on a node not in a cluster, and in a will |
 
 `degraded` is a node that is running with a datastore it cannot reach: it cannot read a
 registration, so calling that `ok` would be the most misleading thing this node says.
@@ -75,8 +76,8 @@ status intervals is listed as stale. A monitor elsewhere should do the same with
 `status_interval` the node carries, rather than a threshold of its own that agrees with it
 only by coincidence.
 
-A consumer should ignore fields it does not know: the inter-node TLS address and the
-node's capabilities are still to come in this payload, and the live registries
+A consumer should ignore fields it does not know: the node's capabilities are still to
+come in this payload, and the live registries
 (Milestone 5) may add counts. Nothing already here is planned to change meaning or go
 away.
 

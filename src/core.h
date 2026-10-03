@@ -308,7 +308,8 @@ class Core : public std::enable_shared_from_this<Core> {
   // would otherwise own this is built. Setting it afterwards is silently too late,
   // which is exactly the bug this shape exists to make impossible.
   static std::string node_status_json(const std::string& status, const std::string& node_id, const std::string& version, const std::string& datastore,
-                                      std::int64_t uptime, std::uint32_t status_interval, const std::vector<Config::AdvertisedTransport>& transports = {});
+                                      std::int64_t uptime, std::uint32_t status_interval, const std::vector<Config::AdvertisedTransport>& transports = {},
+                                      const std::optional<Config::AdvertisedTransport>& cluster = std::nullopt);
 
   // Every node's status as heard on the bus, this one's included, from node_status_start.
   std::shared_ptr<NodeDirectory> nodes() const { return _nodes; }

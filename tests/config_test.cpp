@@ -395,6 +395,34 @@ TEST(ConfigTest, TheClusterListenerNeedsItsCertificates) {
   EXPECT_FALSE(ok);
 }
 
+// What a node tells its peers to dial. The certificate a peer checks has to name it, so an
+// operator can say; left unsaid it is the address the listener is bound to, and where that
+// is every address, the one the node is told the world reaches it at.
+TEST(ConfigTest, TheClusterAddressAPeerDialsIsSaidOrWorkedOut) {
+  const std::string certificates = "  ca: /ca/ca.crt\n  cert: /ca/node-a.crt\n  key: /ca/node-a.key\n";
+  bool ok = false;
+
+  ConfigFile off("sip:\n  node_id: test-node\n");
+  EXPECT_FALSE(off.load(ok)->advertised_cluster().has_value());
+
+  ConfigFile said("sip:\n  node_id: test-node\n  public_address: 203.0.113.5\ncluster:\n  enable: true\n  advertise: node-a.internal\n" + certificates);
+  auto found = said.load(ok)->advertised_cluster();
+  ASSERT_TRUE(found.has_value());
+  EXPECT_EQ(found->address, "node-a.internal");
+  EXPECT_EQ(found->port, 5062);
+
+  ConfigFile bound("sip:\n  node_id: test-node\n  public_address: 203.0.113.5\ncluster:\n  enable: true\n  address: 10.0.0.1\n  port: 5070\n" + certificates);
+  found = bound.load(ok)->advertised_cluster();
+  ASSERT_TRUE(found.has_value());
+  EXPECT_EQ(found->address, "10.0.0.1");
+  EXPECT_EQ(found->port, 5070);
+
+  ConfigFile wildcard("sip:\n  node_id: test-node\n  public_address: 203.0.113.5\ncluster:\n  enable: true\n" + certificates);
+  found = wildcard.load(ok)->advertised_cluster();
+  ASSERT_TRUE(found.has_value());
+  EXPECT_EQ(found->address, "203.0.113.5");
+}
+
 TEST(ConfigTest, SessionLifetimesAreTakenFromTheApiSection) {
   ConfigFile file(
       "sip:\n  node_id: test-node\n"

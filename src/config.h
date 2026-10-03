@@ -75,6 +75,11 @@ class Config {
   };
   std::vector<AdvertisedTransport> advertised_transports() const;
 
+  // Where a peer node reaches the inter-node listener, or nothing when this node is not in
+  // a cluster. cluster.advertise when it is said; otherwise the address the listener is
+  // bound to, and where that is every address, sip.public_address.
+  std::optional<AdvertisedTransport> advertised_cluster() const;
+
   // RFC 4028 section 8.1: the session interval this node puts on a call that asked for
   // none, in seconds. Zero leaves such a call without one.
   //
@@ -264,6 +269,10 @@ class Config {
   bool cluster_enable = false;
   std::string cluster_address = "0.0.0.0";
   std::uint16_t cluster_port = 5062;
+
+  // What this node tells its peers to dial: a name or an address its certificate names,
+  // since a peer checks the certificate against what it dialled. Empty works it out.
+  std::string cluster_advertise;
   std::string cluster_ca;
   std::string cluster_cert;
   std::string cluster_key;

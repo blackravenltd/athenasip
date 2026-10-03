@@ -703,6 +703,14 @@ boost::json::array ProvisioningAPI::_nodes_json(bool usable_only) const {
       entry["version"] = other.version;
       entry["at"] = other.at;
       entry["transports"] = other.transports;
+
+      // For whoever administers the cluster; a client has no use for the inter-node listener.
+      if (!usable_only && !other.cluster_address.empty()) {
+        boost::json::object peer;
+        peer["address"] = other.cluster_address;
+        peer["port"] = other.cluster_port;
+        entry["cluster"] = std::move(peer);
+      }
       nodes.push_back(std::move(entry));
     }
   }
