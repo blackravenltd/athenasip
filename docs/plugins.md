@@ -194,8 +194,10 @@ allowed to report can matter as much as what it is called. `session_delete` is t
 in the tree - it succeeds whether or not that hash was held, because a session is named by
 a secret the caller presented and an answer that distinguishes the two is a way to ask
 whether a token is real. A driver that reported the difference would compile, load and
-pass the version check, and would turn a logout into a guessing game. Read the comment on
-the operation, not only its signature; where behaviour like that is load-bearing it is
+pass the version check, and would turn a logout into a guessing game. `realm_delete` is the
+other: it takes the realm's subscribers and their bindings with it, and a driver that deleted
+only the realm record would pass every check and leave subscribers nobody can reach. Read
+the comment on the operation, not only its signature; where behaviour like that is load-bearing it is
 written at the declaration.
 
 ## Testing a plugin

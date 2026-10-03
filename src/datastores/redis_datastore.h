@@ -112,6 +112,7 @@ class RedisDatastore : public Datastore {
   using StringsCallback = std::function<void(RedisError error, std::vector<std::string> value)>;
 
   void _apply_url(std::shared_ptr<types::URL> url);
+  void _realm_delete_record(plugins::Executor on, plugins::StatusHandler handler, std::string realm_name);
   boost::redis::config _make_config() const;
 
   void _async_ping(BoolCallback callback);

@@ -71,6 +71,11 @@ class Datastore : public plugins::Plugin {
   virtual void realm_get_by_name(plugins::Executor on, std::string realm_name, plugins::Handler<std::shared_ptr<types::Realm>> handler) = 0;
   virtual void realm_create(plugins::Executor on, std::shared_ptr<types::Realm> realm, plugins::StatusHandler handler) = 0;
   virtual void realm_update(plugins::Executor on, std::shared_ptr<types::Realm> realm, plugins::StatusHandler handler) = 0;
+
+  // A realm is deleted with everything in it: every account in it and their bindings. A
+  // driver that left them would keep subscribers the API can no longer reach, because it
+  // finds them through their realm, and bindings that go on routing calls into a domain
+  // the node no longer serves. Fails, and keeps the realm, if any of that could not be done.
   virtual void realm_delete(plugins::Executor on, std::string realm_name, plugins::StatusHandler handler) = 0;
   virtual void realm_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::Realm>>> handler) = 0;
 
