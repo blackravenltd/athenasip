@@ -208,6 +208,12 @@ Dated, and not reopened without asking.
     `athena:subscriber:*`, which reverses the 2026-09-21 rule that the type is `Account`.
     The Redis schema is renamed and a store is recreated to match, not migrated. What
     reads the event bus is a consumer, so that subscriber means one thing.
+- (2026-10-03) A cluster is a full mesh: every node reaches every other node's inter-node
+  listener directly (Tom). A node forwards to the node that holds a flow in one hop, with
+  no Route between them, and discovery carries no notion of which node can reach which.
+  Nodes that cannot reach each other are not a cluster with a hole in it; they are two
+  servers. A client only ever talks to the node it is connected to: the inter-node
+  addresses are in the route set, and only a node dials them.
 - (2026-09-25) There is no superuser role, and no role implies another.
 - (2026-09-29) `Datastore::session_delete` succeeds whether or not that hash was held, and
   the realm and subscriber deletes still report when there was nothing there. A session is
