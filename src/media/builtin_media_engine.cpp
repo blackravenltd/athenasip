@@ -214,6 +214,25 @@ Result BuiltinMediaEngine::_map_media(std::shared_ptr<Call> call, const std::str
   for (auto& media : sdp->media()) {
     const auto id = media.unique_id();
 
+    // RFC 3264 sections 5.1, 6 and 8.2: a stream with port zero is one that is not offered,
+    // was declined, or has been taken away. It keeps its place in the description and gets
+    // nothing else: no relay, and above all no relay port, which would tell the other end
+    // that a stream its peer refused had been accepted. A phone with no camera answering a
+    // video call is the usual one. What the stream held, if anything, goes back.
+    if (media.description.port == 0) {
+      std::lock_guard<std::mutex> lock(_mutex);
+      auto& streams = _allocated[call->id];
+
+      if (auto declined = streams.find(id); declined != streams.end()) {
+        _relay->release_relay_set(declined->second.rtp);
+        _relay->release_relay_set(declined->second.rtcp);
+        streams.erase(declined);
+      }
+
+      participant.streams.erase(id);
+      continue;
+    }
+
     StreamRelays relays;
 
     {
