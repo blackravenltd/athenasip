@@ -437,10 +437,9 @@ milestone is the second node.
 
 ### The second node
 
-- [ ] Requests from cluster-CA peers trusted for Route/Path. The listener is in: the
-      `cluster` section, mutual TLS, `Channel::peer_node` naming the peer.
-- [ ] The rest of discovery: the inter-node TLS address and the node's capabilities in its
-      status. The SIP addresses, the roster from MQTT and staleness are in.
+- [ ] The rest of discovery: the node's capabilities in its status. The SIP addresses, the
+      roster from MQTT, staleness and the inter-node address (`cluster.advertise`,
+      `NodeDirectory::find`) are in.
 - [ ] Forwarding: lookup returns owning node; INVITE routed to the peer with `Route`;
       peer delivers on the local flow; responses follow Via; Record-Route keeps both
       nodes in the dialog.
