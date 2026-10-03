@@ -116,6 +116,12 @@ holds a TCP connection, and one that holds a WebSocket, to the other node
 (`test/e2e/flow_callee.py`): reachable only down that connection, which is the case
 forwarding between nodes exists for.
 
+The console repository's `e2e/phone-call.spec.ts` is the same browser calling a real phone
+instead of a second browser, with video, through whatever node it is pointed at: it was
+run against `macnessa.athenasip.org` on 2026-10-04 (`test/interop/UAT.md`), with the page
+served from loopback so it is a secure context. It needs somebody to answer the phone, and
+`docs/softphone.md` in that repository has its environment.
+
 `invite-timeout` takes 32 seconds by design and runs last. Logs land in
 `test/e2e/results/`, one per end, plus the node's own.
 

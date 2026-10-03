@@ -7,14 +7,27 @@ Milestones 1, 2 and 3 are complete apart from the items left under Milestone 3 b
 `0.8.0` (2026-10-03) carried a good part of Milestone 4 and most of Milestone 5:
 `COMPLETED.md` has every item with what shipped.
 
-1036 unit tests at `0.8.0`. **The sipp harnesses were not run on the tagged tree**: Docker
-was paused when Tom asked for the tag. The single-node harness last passed, 12 of 12, at
-`2e7ae4d`, and the two-node harness 9 of 11 a few commits before the tag, with the two
-failures the scenarios' own. Running both is the first thing to do with Docker back, and
-what they find goes into a 0.8.1.
+Since `0.8.0`, on `develop` and deployed to both nodes: RFC 6026's Accepted state (a
+callee's retransmitted 2xx now reaches the caller), media addresses that may be names and
+follow `sip.localnet` for rtpengine too, `--reset-password`, `--check`, `log.level` and
+`log.format`, the node's media in its status, and two log lines that were errors and are
+not. 1057 unit tests at `b11c53f`.
 
-**Next:** the two harnesses on the tagged tree, then in Milestone 4 the chaos test, and
-video through rtpengine.
+**Two live nodes**, neither production:
+- `corvus-fi-1` (10.35.1.20): builtin relay, AthenaPhone's usual home.
+- `corvus-gbni-1` (10.44.1.50) as `macnessa.athenasip.org`, behind the other site's NAT:
+  native rtpengine, the domain as `sip.public_address` and as the media address, DNS kept
+  current by manannan, the signalling and media ports forwarded and checked from outside.
+  A headless browser called AthenaPhone with video through it on 2026-10-04 and the
+  console's `e2e/phone-call.spec.ts` passed (`test/interop/UAT.md`).
+
+**The sipp harnesses have not run since before `0.8.0`** - Docker has been paused since. The
+single-node harness last passed 12 of 12 at `2e7ae4d`; the two-node harness 9 of 11 just
+before the tag, the two failures the scenarios' own. Both now cover RFC 6026, which is on
+the transaction path. Running them is the first thing to do with Docker back, and what they
+find goes into a 0.8.1.
+
+**Next:** the harnesses, then Milestone 4's chaos test.
 
 **Once things are stable, video calling is a primary feature** (Tom, 2026-10-03), not a
 later extra: principle 6 already says so, and this is the reminder that it is next in line
@@ -30,16 +43,26 @@ they land, with a note on what shipped.
 
 Nothing below can move until these are settled, and each one has somebody or something
 stopped against it. They are here rather than scattered through the milestones because a
-session that has lost its context needs to see them first. The rest of the list was
-answered on 2026-10-03; the answers are under Decisions.
+session that has lost its context needs to see them first.
 
-1. **How a browser that is only a SIP subscriber gets its configuration.** Decided that it
-   does not use HTTP at all (see Decisions); what it uses instead is still open. The
-   standard candidate is RFC 6080, the SIP UA configuration framework: SUBSCRIBE to the
-   `ua-profile` event, authenticated by the subscriber's own Digest credentials, with the
-   profile in the NOTIFY. TURN can authenticate with the same credentials, since a TURN
+1. **Docker is paused.** Every sipp harness run, video through rtpengine in the harness,
+   and the chaos test wait on it.
+
+2. **How a browser that is only a SIP subscriber gets its configuration.** Decided that it
+   uses no HTTP at all (see Decisions). RFC 6080 (SUBSCRIBE to `ua-profile`) is the
+   standard, but it is little implemented and leans on HTTPS for the profile itself. The
+   suggestion on the table: the web client ships its configuration statically with the
+   page, and TURN authenticates with the subscriber's own Digest credentials, since a TURN
    long-term key (RFC 8489) is MD5(username:realm:password), the HA1 already stored. Needs
-   a conversation before anything is built.
+   Tom's word before anything is built.
+
+3. **Push, RFC 8599** (Milestone 6). Tom asked on 2026-10-04 that a call can wake a
+   registered client by push; the plan below is the two steps proposed, waiting on his
+   go-ahead, and the APNs and FCM providers need his Apple and Google credentials.
+
+4. **Tom's admin user on `corvus-gbni-1`.** Only the `provisioner` user exists there;
+   `athenasip --add-user tom ...` has to be run by him in a real terminal, because the
+   password is typed.
 
 ## How to prove it
 
@@ -52,6 +75,8 @@ test/e2e/run.sh [--rtpengine]    the sipp scenarios, the second with a real engi
 test/e2e/cluster.sh              the same call across two nodes of a cluster
 test/interop/up.sh --rtpengine   a node to point a real client at
 test/interop/browser.sh          two browsers calling, direct then relayed through coturn
+e2e/phone-call.spec.ts           (../athenasip-admin) a headless browser calls a real phone
+                                 through a named node, with video; somebody answers it
 test/interop/UAT.md              the call a person has to make
 ```
 
@@ -171,7 +196,7 @@ Dated, and not reopened without asking.
     case it is done to get it out of the way.
   - **A browser that is only a subscriber reaches no HTTP endpoint**, `/client/config`
     included. If it needs configuration, that comes a SIP-idiomatic, standards way, or is
-    talked about first (Waiting on Tom, 1).
+    talked about first (Waiting on Tom, 2).
   - **No role is defined before it has routes to permit.** `manage-cluster` waits for M4
     and M5.
   - **`status_interval`** is in the node status payload, for monitors such as T.O.M.S to
@@ -362,7 +387,7 @@ milestone is the second node.
 
 - [ ] What the realm expects of a client, in `GET /api/v1/client/config` beside the node
       list it now carries. For an admin user's softphone only: a subscriber-only browser
-      reaches no HTTP endpoint (2026-10-03), so its equivalent waits on Waiting on Tom, 1.
+      reaches no HTTP endpoint (2026-10-03), so its equivalent waits on Waiting on Tom, 2.
 - [ ] RFC 5626 outbound, what is left of it: a flow token in the Path a node writes when
       it is the edge for another registrar, which is the cluster case. (No 430 for a gone
       in-dialog flow, by choice: see Known deviations.)
@@ -447,8 +472,8 @@ authentication from session issue to the OpenAPI document, and the one-command s
 - [ ] Admin API, part 2, what is left of it. `/api/v1/calls`, `/api/v1/calls/{call}`,
       `/api/v1/media` and `/metrics` landed on 2026-10-01. Left: hanging up a call
       (`DELETE /api/v1/calls/{call}`), which needs the node to send BYEs itself and so waits
-      for the local UA in M6; call history, which is M4's CDRs; and `/api/v1/events`, an SSE
-      stream bridging `nodes/#`, `subscribers/#` and `calls/#`.
+      for the local UA in M6; and `/api/v1/events`, an SSE stream bridging `nodes/#`,
+      `subscribers/#` and `calls/#`. Call history is in (`/api/v1/call-records`).
 - [ ] athenasip-admin: replace the empty `src/lib/API.js` with a client generated from
       the OpenAPI document; pages for realms, subscribers, registrations, live calls,
       nodes, media engines, and the JsSIP test phone pointed at the server's own WSS.
@@ -489,10 +514,24 @@ authentication from session issue to the OpenAPI document, and the one-command s
 - [ ] Presence: SUBSCRIBE/NOTIFY (RFC 6665), `presence` (RFC 3856) and `dialog` packages
       for BLF, `message-summary` for MWI, backed by MQTT fan-out.
 - [ ] SIP MESSAGE relay.
-- [ ] Push (RFC 8599) parameters on REGISTER and a push gateway hook for AthenaPhone.
+- [ ] Push, RFC 8599 (Tom, 2026-10-04; Waiting on Tom, 3): a call to a client that is
+      asleep wakes it. The client registers with `pn-provider`, `pn-prid` and `pn-param`
+      on its Contact and `+sip.pns` in Feature-Caps; when a request routes to such a
+      binding the proxy sends a push and holds the transaction (Kamailio's `tsilo`
+      pattern), and resumes it down the flow the client re-registers on, or gives up and
+      moves to the next target. Two steps:
+      1. The node: keep the push parameters on the binding (so any node of a cluster can
+         push), hold and resume the transaction, the 555 a registrar without push owes.
+         Proved with a fake provider.
+      2. Push providers as a plugin kind keyed by scheme - `apns://` (PushKit VoIP pushes,
+         which iOS requires to put up the call screen at once), `fcm://` (high-priority
+         data messages), `webpush://` (RFC 8030) - with their credentials in their own
+         config sections.
+      It also covers what the 2026-10-04 run found: a phone whose connection silently
+      died still gets the call. The client side is AthenaPhone's.
 - [ ] Web client repository: video calling and conferencing, JsSIP over WSS, served by
       AthenaSIP. Not provisioned from `/api/v1/client/config`: a subscriber-only browser
-      reaches no HTTP endpoint (2026-10-03), so how it is configured is Waiting on Tom, 1.
+      reaches no HTTP endpoint (2026-10-03), so how it is configured is Waiting on Tom, 2.
 - [ ] The local UA, the fourth transaction user in the Architecture diagram. Its first
       use is tearing a lapsed call down towards both ends: on expiry this node discards
       its state, which is what RFC 4028 section 8 asks of a proxy, and a node that
