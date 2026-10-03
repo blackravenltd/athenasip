@@ -207,6 +207,13 @@ void Proxy::_authorize(const std::shared_ptr<SIPMessage>& request, const std::sh
   const auto& method = request->header->request_method;
   if (method == "ACK" || method == "CANCEL") return then();
 
+  // From a peer node, which the inter-node listener let in on a certificate the cluster CA
+  // signed (the 2026-09-17 decision). The peer challenged the caller or took the call from
+  // its own subscriber; a second challenge from here would go to a caller with no way to
+  // answer through this node. Trust is the certificate and nothing in the message: a Via
+  // or a Route naming a peer is anybody's to write.
+  if (const auto channel = request->channel.lock(); channel && !channel->peer_node().empty()) return then();
+
   // Part of a call that was let through when it was made. The dialog table says so, not
   // the To tag: a tag is anybody's to write, and would otherwise be the way round all of
   // this.
@@ -1026,6 +1033,10 @@ bool Proxy::_reoffer(const std::shared_ptr<Context>& context) {
   if (*context->offered == media::Profile::WebRtc) other = media::Profile::PlainRtp;
   if (!other) return false;
 
+  // The other profile from an engine that cannot make it is the refused offer again.
+  auto core = _core.lock();
+  if (!core || !core->media || !core->media->produces(*other)) return false;
+
   Target again = context->current;
   again.profile = other;
   again.rejected = context->offered;
@@ -1033,10 +1044,6 @@ bool Proxy::_reoffer(const std::shared_ptr<Context>& context) {
 
   _logger->info(context->request->header->request_uri->to_string() + " refused the offer it was made - offering the other profile");
   _forward_next(context);
-  // The other profile from an engine that cannot make it is the refused offer again.
-  auto core = _core.lock();
-  if (!core || !core->media || !core->media->produces(*other)) return false;
-
   return true;
 }
 
@@ -1194,13 +1201,6 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
   std::optional<media::Profile> offered;
   if (!is_response && is_offer && unheard && context && message->header->request_method == "INVITE") {
     offered = flags.target == media::Profile::Mirror ? flags.stated() : std::optional<media::Profile>(flags.target);
-  }
-
-  auto self = shared_from_this();
-
-  auto handler = [this, self, message, context, offered, then = std::move(then)](media::Result result) {
-    if (result.ok) {
-      // Only an offer the engine made counts as this node's; one passed through untouched
 
     // An engine that cannot make what was asked sends what it can, and the operator is
     // told rather than left to work it out from a 488. Whatever goes out is then not a
@@ -1210,6 +1210,13 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
                     " - offering what it can");
       offered.reset();
     }
+  }
+
+  auto self = shared_from_this();
+
+  auto handler = [this, self, message, context, offered, then = std::move(then)](media::Result result) {
+    if (result.ok) {
+      // Only an offer the engine made counts as this node's; one passed through untouched
       // is the caller's, and a refusal of it is the caller's to hear.
       if (context && offered) context->offered = offered;
       message->body = std::move(result.sdp);
