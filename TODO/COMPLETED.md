@@ -2487,3 +2487,8 @@ Tom's answers to the questions that were waiting on him, and what they led to.
       held by the other node, for both transports: 4 of 4. The WebSocket callee's Contact
       is a `.invalid` name, so the INVITE, the ACK and the BYE can only have arrived down
       the flow node B holds. The image for it is `python:3-alpine`, standard library only.
+- [x] **A browser called AthenaPhone on `corvus-fi-1` and was heard both ways.** The
+      console softphone as 1001 to the A85 over TLS: one INVITE, the browser's own
+      `UDP/TLS/RTP/SAVPF` offer, no 488, ICE and DTLS up, media direct on the LAN, 0 lost.
+      The first call was silent one way because the Mac's default microphone was a
+      loopback device. `test/interop/UAT.md` has both calls and what it took to make them.

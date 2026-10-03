@@ -50,13 +50,7 @@ stopped against it. They are here rather than scattered through the milestones b
 session that has lost its context needs to see them first. The rest of the list was
 answered on 2026-10-03; the answers are under Decisions.
 
-1. **The WebRTC call to AthenaPhone on `corvus-fi-1`.** The phone registers there as
-   `sip:athenaphone@10.35.1.20` and refuses a plain RTP offer cleanly (checked with sipp on
-   2026-10-03: 100 then 488, no ring). What is left is a call it can answer, which needs a
-   WebRTC caller: Tom, from the console softphone as subscriber 1001. corvus-fi-1 runs the
-   builtin relay, which cannot convert, so the caller has to be WebRTC too.
-
-2. **How a browser that is only a SIP subscriber gets its configuration.** Decided that it
+1. **How a browser that is only a SIP subscriber gets its configuration.** Decided that it
    does not use HTTP at all (see Decisions); what it uses instead is still open. The
    standard candidate is RFC 6080, the SIP UA configuration framework: SUBSCRIBE to the
    `ua-profile` event, authenticated by the subscriber's own Digest credentials, with the
@@ -194,7 +188,7 @@ Dated, and not reopened without asking.
     case it is done to get it out of the way.
   - **A browser that is only a subscriber reaches no HTTP endpoint**, `/client/config`
     included. If it needs configuration, that comes a SIP-idiomatic, standards way, or is
-    talked about first (Waiting on Tom, 2).
+    talked about first (Waiting on Tom, 1).
   - **No role is defined before it has routes to permit.** `manage-cluster` waits for M4
     and M5.
   - **`status_interval`** is in the node status payload, for monitors such as T.O.M.S to
@@ -382,7 +376,7 @@ milestone is the second node.
 
 - [ ] What the realm expects of a client, in `GET /api/v1/client/config` beside the node
       list it now carries. For an admin user's softphone only: a subscriber-only browser
-      reaches no HTTP endpoint (2026-10-03), so its equivalent waits on Waiting on Tom, 2.
+      reaches no HTTP endpoint (2026-10-03), so its equivalent waits on Waiting on Tom, 1.
 - [ ] RFC 5626 outbound, what is left of it: a flow token in the Path a node writes when
       it is the edge for another registrar, which is the cluster case. (No 430 for a gone
       in-dialog flow, by choice: see Known deviations.)
@@ -472,7 +466,14 @@ configuration search path, the heartbeat and its will, SPA mode as a choice, the
 `corvus-fi-1`, both datastores holding users and sessions, the whole of admin
 authentication from session issue to the OpenAPI document, and the one-command stack.
 
-- [ ] HTTPS on the admin listener, if it is really easy (Tom, 2026-10-03); otherwise later.
+- [ ] HTTPS on the admin listener. No longer "if it is really easy": the console's softphone
+      cannot place a call from `http://10.35.1.20:8080`, because a page that is not a
+      secure context is given no microphone (found on 2026-10-03, when the browser call to
+      AthenaPhone had to be made through an SSH tunnel to localhost). Browser calling from
+      the console needs it.
+- [ ] The "cannot produce webrtc - offering what it can" warning fires for an offer that
+      is already WebRTC and passes through untouched. It should fire only when the node
+      would have had to convert, and it names the Contact rather than the subscriber.
 - [ ] Admin API, part 2, what is left of it. `/api/v1/calls`, `/api/v1/calls/{call}`,
       `/api/v1/media` and `/metrics` landed on 2026-10-01. Left: hanging up a call
       (`DELETE /api/v1/calls/{call}`), which needs the node to send BYEs itself and so waits
@@ -522,7 +523,7 @@ authentication from session issue to the OpenAPI document, and the one-command s
 - [ ] Push (RFC 8599) parameters on REGISTER and a push gateway hook for AthenaPhone.
 - [ ] Web client repository: video calling and conferencing, JsSIP over WSS, served by
       AthenaSIP. Not provisioned from `/api/v1/client/config`: a subscriber-only browser
-      reaches no HTTP endpoint (2026-10-03), so how it is configured is Waiting on Tom, 2.
+      reaches no HTTP endpoint (2026-10-03), so how it is configured is Waiting on Tom, 1.
 - [ ] The local UA, the fourth transaction user in the Architecture diagram. Its first
       use is tearing a lapsed call down towards both ends: on expiry this node discards
       its state, which is what RFC 4028 section 8 asks of a proxy, and a node that

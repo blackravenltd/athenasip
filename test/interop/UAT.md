@@ -342,6 +342,40 @@ Environmental, and worth keeping:
   RN 0.87 bridgeless kills the process rather than showing the red screen, which looks
   exactly like a native crash on launch.
 
+### The browser calls AthenaPhone on corvus-fi-1 (2026-10-03)
+
+The console softphone as subscriber 1001, in Chrome on a Mac, calling
+`sip:athenaphone@10.35.1.20` on the A85 registered over TLS. The node on `corvus-fi-1` runs
+the builtin relay, which does plain RTP only, so both descriptions passed through untouched
+and the media went directly between the Mac and the phone.
+
+| | First call, 21:02 | Second call, 21:09 |
+|---|---|---|
+| Signalling | INVITE, 100, 180, 200, ACK, BYE, 200. One INVITE, no 488, no re-offer | the same |
+| Offer the phone received | `UDP/TLS/RTP/SAVPF`, the browser's own | the same |
+| ICE, DTLS | connected, connected | connected, connected |
+| Candidate pair | host to host on the LAN | host to host on the LAN |
+| Browser packets | 1310 sent, 1278 received, 0 lost | 1821 sent, 1727 received, 0 lost |
+| Audio | phone to Mac sent; Mac to phone was encoded silence | heard both ways (Tom) |
+
+The silence on the first call was the Mac, not the call: its default input device was a
+virtual loopback device, so Chrome captured nothing and sent it faithfully. The phone
+measured an inbound level of exactly 0.000 with packets arriving at the normal rate. A USB
+microphone fixed it.
+
+What it took to make the call at all, each of which is a defect or a gap:
+
+- The console at `http://10.35.1.20:8080` is not a secure context, so the browser gives the
+  softphone no microphone and no call can start. The test ran through an SSH tunnel to
+  `localhost`. Browser calling from the console's own address needs HTTPS on the admin
+  listener.
+- Before the first call the AthenaPhone app would not start: a debug build loads its
+  JavaScript through `adb reverse`, the phone had dropped off Wi-Fi, and the forward was
+  gone. The note above about `adb reverse` is the same thing.
+- The node logged "The media engine cannot produce webrtc ... - offering what it can" for an
+  offer that was already WebRTC and went through untouched. The warning is for an offer
+  the node would have had to convert, and here it is wrong.
+
 ## If it fails
 
 - **Registration fails but `smoke.py` passes.** The difference is in the client. Get its
