@@ -244,9 +244,10 @@ int main(int argc, char* argv[]) {
   // What this node needs, tried one at a time, and out. Its own drivers, made and closed
   // again: nothing here is shared with a node that goes on to start.
   if (options.check) {
-    const auto lines = cli::check(logger, config, connect_and_wait);
+    auto lines = cli::check(logger, config, connect_and_wait);
 
-    std::cout << "ok    configuration  " << config_path.string() << "\n";
+    // It loaded, or this would not have been reached; said first, and in the same table.
+    lines.insert(lines.begin(), cli::CheckLine{true, "configuration", config_path.string()});
     std::cout << cli::report(lines);
     return cli::passed(lines) ? 0 : 1;
   }
