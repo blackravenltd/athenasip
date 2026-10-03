@@ -2563,3 +2563,6 @@ The maintainer's answers to the questions that were waiting on him, and what the
 - [x] **The "cannot produce" warning only when something had to be made**, and naming the
       subscriber rather than the Contact the copy went to. Every browser call to
       AthenaPhone on `node-a` logged it for an offer that was already WebRTC.
+- [x] **`athenasip --reset-password NAME`**: a new password for a user that exists, from
+      the host, and every session it held ended. On 2026-10-03 the only way to reset an
+      administrator's password was to edit Redis by hand.

@@ -33,6 +33,10 @@ struct Options {
   // way back in when the API cannot be reached or every admin password has been lost,
   // so it goes to the datastore and nothing else.
   std::string add_user;
+
+  // A new password for a user that exists, and every session it held ended. Read the way
+  // --add-user reads one.
+  std::string reset_password;
   std::string display_name;
   std::vector<std::string> roles;
 
@@ -100,6 +104,7 @@ inline Options parse(int argc, char* argv[]) {
       options.check = true;
     } else if (takes("--config", "a path", options.config) || takes("-c", "a path", options.config)) {
       // Handled, and any error is already recorded.
+    } else if (takes("--reset-password", "a username", options.reset_password)) {
     } else if (takes("--add-user", "a username", options.add_user)) {
     } else if (takes("--display-name", "a name", options.display_name)) {
     } else if (takes("--role", "a role", role)) {
@@ -139,6 +144,8 @@ inline std::string usage() {
          "                        exit; with memory://, which keeps nothing once this\n"
          "                        process exits, create it and carry on as the node\n"
          "  --display-name NAME   what to call them, for the console\n"
+         "  --reset-password NAME give a user a new password, end every session it held,\n"
+         "                        and exit\n"
          "  --role ROLE           may be given more than once; without it the new user\n"
          "                        holds manage-admin-users, because a recovery user\n"
          "                        that cannot administer anybody is not a way back in\n"

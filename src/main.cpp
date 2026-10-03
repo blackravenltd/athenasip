@@ -182,7 +182,7 @@ int main(int argc, char* argv[]) {
   // An administrative command is a person asking a question at a prompt, often in the
   // middle of an incident, and the answer is the whole output. A node starting up is a
   // service whose log is the record of what it did, so it stays at DEBUG.
-  const auto administering = !options.add_user.empty() || options.print_config || options.check;
+  const auto administering = !options.add_user.empty() || !options.reset_password.empty() || options.print_config || options.check;
 
   auto logger = std::make_shared<loggers::LoggerStdIO>(administering ? LogLevel::WARN : LogLevel::DEBUG);
 
@@ -299,6 +299,27 @@ int main(int argc, char* argv[]) {
   // node's memory - so there the same command creates the user in the datastore this
   // process is about to serve from, and carries on starting the node.
   const bool keeps_nothing = Util::to_lower(types::URL(config->db_url).scheme) == "memory";
+
+  if (!options.reset_password.empty()) {
+    const auto password = read_password("New password for " + options.reset_password + ": ", ::isatty(STDIN_FILENO));
+
+    if (password.empty()) {
+      std::cerr << "athenasip: no password given, so nothing was changed\n";
+      datastore->close();
+      return 2;
+    }
+
+    const auto result = cli::reset_password(datastore, athenasip::detail::get_global_io_context().get_executor(), options.reset_password, password);
+    datastore->close();
+
+    if (!result.ok()) {
+      std::cerr << "athenasip: " << result.message << "\n";
+      return result.outcome == cli::ResetPasswordResult::Outcome::missing ? 3 : 1;
+    }
+
+    std::cout << "New password set for " << result.message << ", and every session it held ended\n";
+    return 0;
+  }
 
   if (!options.add_user.empty()) {
     const auto password = read_password("Password for " + options.add_user + ": ", ::isatty(STDIN_FILENO));
