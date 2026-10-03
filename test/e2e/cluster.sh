@@ -24,8 +24,8 @@ cd "$(dirname "$0")/../.."
 COMPOSE="docker compose -f docker-compose.cluster.yml"
 IMAGE="athenasip-e2e-cluster-node"
 
-NODE_A="172.32.0.10"
-NODE_B="172.32.0.11"
+NODE_A="172.31.0.10"
+NODE_B="172.31.0.11"
 ADMIN_USER="e2e-admin"
 ADMIN_PASSWORD="e2e-admin-password"
 ADMIN_TOKEN=""
@@ -139,6 +139,7 @@ API="http://${NODE_A}:8080/api/v1"
 api -X POST "${API}/realms" -d '{"name":"example.com"}' >/dev/null
 api -X POST "${API}/realms/example.com/subscribers" -d '{"user":"alice","password":"alice-secret"}' >/dev/null
 api -X POST "${API}/realms/example.com/subscribers" -d '{"user":"bob","password":"bob-secret"}' >/dev/null
+api -X POST "${API}/realms/example.com/subscribers" -d '{"user":"carol","password":"carol-secret"}' >/dev/null
 
 # The callee registers with one node and waits; the caller registers with, and calls
 # through, another - or the same one, for the control.
@@ -149,6 +150,9 @@ run_pair() {
   uac_node="$4"
   uac_scenario="$5"
   timeout="$6"
+  uas_csv="${7:-bob.csv}"
+  uas_user="${8:-bob}"
+  uac_csv="${9:-alice.csv}"
 
   case "${name}" in
     *${FILTER}*) ;;
@@ -164,15 +168,15 @@ run_pair() {
   allocate_port
   dereg_port="${next_port}"
 
-  # Every binding of Bob's, from whichever node took it: the store is shared.
+  # Every binding of the callee's, from whichever node took it: the store is shared.
   ${COMPOSE} run --rm sipp-uas \
-    -sf /e2e/scenarios/deregister.xml -inf /e2e/bob.csv -au bob -ap bob-secret \
+    -sf /e2e/scenarios/deregister.xml -inf "/e2e/${uas_csv}" -au "${uas_user}" -ap "${uas_user}-secret" \
     -p "${dereg_port}" -cid_str "${name}-uas-dereg-%u-%p@%s" \
     -m 1 -r 1 -timeout 20s -timeout_error \
     -nostdin "${uas_node}:5060" >"${RESULTS}/cluster-${name}-uas-deregister.log" 2>&1 || true
 
   ${COMPOSE} run --rm sipp-uas \
-    -sf /e2e/scenarios/register.xml -inf /e2e/bob.csv -au bob -ap bob-secret \
+    -sf /e2e/scenarios/register.xml -inf "/e2e/${uas_csv}" -au "${uas_user}" -ap "${uas_user}-secret" \
     -p "${uas_port}" -cid_str "${name}-uas-reg-%u-%p@%s" \
     -m 1 -r 1 -timeout 20s -timeout_error \
     -nostdin "${uas_node}:5060" >"${RESULTS}/cluster-${name}-uas-register.log" 2>&1 || {
@@ -183,7 +187,7 @@ run_pair() {
   }
 
   ${COMPOSE} run -d --name "cluster-uas-${name}" sipp-uas \
-    -sf "/e2e/scenarios/${uas_scenario}" -inf /e2e/bob.csv -au bob -ap bob-secret \
+    -sf "/e2e/scenarios/${uas_scenario}" -inf "/e2e/${uas_csv}" -au "${uas_user}" -ap "${uas_user}-secret" \
     -p "${uas_port}" -cid_str "${name}-uas-%u-%p@%s" \
     -m 1 -r 1 -timeout "${timeout}" -timeout_error \
     -trace_err -error_file "/results/cluster-${name}-uas.err" \
@@ -192,7 +196,7 @@ run_pair() {
   sleep 2
 
   if ${COMPOSE} run --rm sipp-uac \
-    -sf "/e2e/scenarios/${uac_scenario}" -inf /e2e/alice.csv -au alice -ap alice-secret \
+    -sf "/e2e/scenarios/${uac_scenario}" -inf "/e2e/${uac_csv}" -au alice -ap alice-secret \
     -p "${uac_port}" -cid_str "${name}-%u-%p@%s" \
     -m 1 -r 1 -timeout "${timeout}" -timeout_error \
     -trace_err -error_file "/results/cluster-${name}.err" \
@@ -241,7 +245,7 @@ run_flow() {
 
   # Registered, as the node the caller will ask sees it: the binding is in the shared store.
   attempt=0
-  until api "http://${caller_node}:8080/api/v1/registrations" 2>/dev/null | grep -q "\"flow_id\":\"${transport}://172.32.0.22"; do
+  until api "http://${caller_node}:8080/api/v1/registrations" 2>/dev/null | grep -q "\"flow_id\":\"${transport}://172.31.0.22"; do
     attempt=$((attempt + 1))
     if [ "${attempt}" -ge 15 ]; then
       failed=$((failed + 1))
@@ -316,12 +320,47 @@ case "across-media" in
     ;;
 esac
 
+# The rest of what the single-node harness asks, with the callee held by the other node:
+# a call cancelled while it rings, a callee that is busy, an INVITE with no offer, hold and
+# resume, and a callee that never answers. Each crosses the inter-node link in both
+# directions, and the CANCEL and the timeout are the ones a forwarding proxy gets wrong.
+run_pair across-cancel-ringing "${NODE_B}" uas_ringing.xml       "${NODE_A}" cancel_after_180.xml     30s
+run_pair across-busy           "${NODE_B}" uas_busy.xml          "${NODE_A}" invite_busy.xml          30s
+run_pair across-delayed-offer  "${NODE_B}" uas_delayed_offer.xml "${NODE_A}" invite_delayed_offer.xml 30s
+run_pair across-hold-resume    "${NODE_B}" uas_hold.xml          "${NODE_A}" invite_hold.xml          30s
+
 # A callee on a connection. First on the caller's own node, as the control, then held by
 # the other node, for each of the two transports that are a connection.
 run_flow one-node-tcp-flow  tcp "${NODE_A}" "${NODE_A}"
 run_flow across-tcp-flow    tcp "${NODE_B}" "${NODE_A}"
 run_flow one-node-ws-flow   ws  "${NODE_A}" "${NODE_A}"
 run_flow across-ws-flow     ws  "${NODE_B}" "${NODE_A}"
+
+# The call records: one per call, written by the node the caller reached and read from the
+# shared store, so both nodes give the same list, and a call that crossed names both nodes.
+case "across-call-records" in
+  *${FILTER}*)
+    from_a=$(api "http://${NODE_A}:8080/api/v1/call-records?limit=1000" 2>/dev/null)
+    from_b=$(api "http://${NODE_B}:8080/api/v1/call-records?limit=1000" 2>/dev/null)
+
+    count_a=$(printf '%s' "${from_a}" | grep -o '"id":' | wc -l | tr -d ' ')
+    count_b=$(printf '%s' "${from_b}" | grep -o '"id":' | wc -l | tr -d ' ')
+    crossed=$(printf '%s' "${from_b}" | grep -o '"nodes":\["node-a","node-b"\]' | wc -l | tr -d ' ')
+
+    echo "  across-call-records (${count_a} from node A, ${count_b} from node B, ${crossed} naming both nodes)"
+
+    if [ "${count_a}" -gt 0 ] && [ "${count_a}" = "${count_b}" ] && [ "${crossed}" -gt 0 ]; then
+      passed=$((passed + 1))
+    else
+      failed=$((failed + 1))
+      failures="${failures} across-call-records"
+      echo "    failed - both nodes should list the same records, and a call across them should name both"
+    fi
+    ;;
+esac
+
+# Last, because timer B is 64*T1 and this one waits it out.
+run_pair across-invite-timeout "${NODE_B}" uas_silent.xml "${NODE_A}" invite_timeout.xml 60s carol.csv carol alice-to-carol.csv
 
 echo
 echo "${passed} passed, ${failed} failed"
