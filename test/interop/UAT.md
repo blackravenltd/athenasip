@@ -393,6 +393,13 @@ The first video call the phone app had ever taken.
 | Seen and heard | video and voice both ways (Tom) |
 | Call record | written by the node, with its thirty-day expiry |
 
+The phone's side agrees. The offer it received was the browser's own, 8367 bytes:
+`a=group:BUNDLE 0 1`, audio and video both `UDP/TLS/RTP/SAVPF`, both `sendrecv`. It
+auto-answered with video in 400 ms, accepting both streams (the video m-line's port 9 is the
+bundled placeholder, not a refusal), captured its front camera, and rendered the browser's
+picture full screen. Its own audio level readout was wrong for this call - it read the level
+off the video stream - so the audio evidence is the browser's counters and Tom's ears.
+
 Two things it needed that the audio call did not: the camera permission granted to the app
 on the phone, without which it answers a video call with 486 and no fallback to audio; and
 the console served from a secure context for the camera, as for the microphone.
