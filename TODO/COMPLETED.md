@@ -2619,3 +2619,33 @@ Tom's answers to the questions that were waiting on him, and what they led to.
       compiled, since scripting is parked; the example scripts under `config/` are removed.
 - [x] **Tests renamed** where the name described configured tokens and scopes rather than
       users and roles.
+
+### Push notifications, RFC 8599 (2026-10-04)
+
+Tom asked that a call can wake a registered client that is asleep, after a phone was
+missed because its connection had silently died.
+
+- [x] **The `push` plugin kind** (`src/push/push_service.h`), one driver per push service
+      named by its `pn-provider`, with what it accepts, its Feature-Caps indicators and
+      `send`. Contract version 16, because a binding now records whether it is pushed.
+- [x] **The registrar** answers a REGISTER asking for push with
+      `Feature-Caps: *;+sip.pns=...` (plus `+sip.vapid` and `+sip.pnsreg` where they
+      apply), 555 for a service this node does not run or a Contact missing what it needs,
+      and 423 for a binding too brief to be woken in time; a query (no `pn-prid`) is
+      answered for the service named or all of them; a `+sip.pns` already in the request
+      leaves push to the proxy that put it there.
+- [x] **The proxy's push bucket.** A request for a new dialog, or a standalone one, to a
+      push binding pushes and waits until the client registers again, found by the
+      registrar telling the proxy or by polling the store every 250 ms (a cluster), then
+      goes down the new flow. A failed push or `push.timeout` is a 480 for that target and
+      the fork moves on; a CANCEL ends the wait. Any node pushes, so a request from a peer
+      is not pushed twice.
+- [x] **Refresh pushes** (5.5): `push.refresh` seconds before a push binding expires,
+      unless it was refreshed meanwhile here or elsewhere.
+- [x] **`fcm://`** (OAuth 2.0 service-account token, cached, FCM HTTP v1 high-priority data
+      message) and **`webpush://`** (RFC 8030 with no payload, VAPID per RFC 8292), on a
+      small HTTPS client of our own. Tested against local HTTPS servers; not yet against
+      the real services.
+- [x] **The `pn-*` parameters stay private** (section 13): stripped from
+      `/api/v1/registrations`, the qualify listing, the subscriber-status event and the
+      log.

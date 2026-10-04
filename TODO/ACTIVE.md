@@ -11,9 +11,12 @@ Since `0.8.0`, on `develop` and deployed to both nodes: RFC 6026's Accepted stat
 callee's retransmitted 2xx now reaches the caller), media addresses that may be names and
 follow `sip.localnet` for rtpengine too, `--reset-password`, `--check`, `log.level` and
 `log.format`, the node's media in its status, and two log lines that were errors and are
-not. Not yet deployed: `sip.allow_unencrypted: false` now refuses plain listeners and
-dials only TLS, and the documentation and comments describe the code as it is. 1063 unit
-tests (one skipped without a resolver) at the head of `develop`.
+not; `sip.allow_unencrypted: false` refusing plain listeners and dialling only TLS; and
+documentation that describes the code as it is. corvus-fi-1 runs `c6126d3`; corvus-gbni-1
+was deployed by hand from the same build. Not yet deployed: RFC 8599 push (registrar,
+proxy bucket, refresh pushes, `fcm://` and `webpush://`), unproven against a real service
+for want of credentials. 1141 unit tests (one skipped without a resolver) at the head of
+`develop`.
 
 **Two live nodes**, neither production:
 - `corvus-fi-1` (10.35.1.20): builtin relay, AthenaPhone's usual home.
@@ -23,13 +26,11 @@ tests (one skipped without a resolver) at the head of `develop`.
   A headless browser called AthenaPhone with video through it on 2026-10-04 and the
   console's `e2e/phone-call.spec.ts` passed (`COMPLETED.md`).
 
-**The sipp harnesses have not run since before `0.8.0`** - Docker has been paused since. The
-single-node harness last passed 12 of 12 at `2e7ae4d`; the two-node harness 9 of 11 just
-before the tag, the two failures the scenarios' own. Both now cover RFC 6026, which is on
-the transaction path. Running them is the first thing to do with Docker back, and what they
-find goes into a 0.8.1.
+**The sipp harnesses pass at `67a4b75`** (2026-10-04, Docker back): single node 12 of 12,
+with rtpengine 12 of 12, two nodes 15 of 15. That covers RFC 6026 and `allow_unencrypted`;
+push is after it and has no scenario yet.
 
-**Next:** the harnesses, then Milestone 4's chaos test.
+**Next:** Milestone 4's chaos test.
 
 **Once things are stable, video calling is a primary feature** (Tom, 2026-10-03), not a
 later extra: principle 6 already says so, and this is the reminder that it is next in line
@@ -47,10 +48,7 @@ Nothing below can move until these are settled, and each one has somebody or som
 stopped against it. They are here rather than scattered through the milestones because a
 session that has lost its context needs to see them first.
 
-1. **Docker is paused.** Every sipp harness run, video through rtpengine in the harness,
-   and the chaos test wait on it.
-
-2. **How a browser that is only a SIP subscriber gets its configuration.** Decided that it
+1. **How a browser that is only a SIP subscriber gets its configuration.** Decided that it
    uses no HTTP at all (see Decisions). RFC 6080 (SUBSCRIBE to `ua-profile`) is the
    standard, but it is little implemented and leans on HTTPS for the profile itself. The
    suggestion on the table: the web client ships its configuration statically with the
@@ -58,13 +56,11 @@ session that has lost its context needs to see them first.
    long-term key (RFC 8489) is MD5(username:realm:password), the HA1 already stored. Needs
    Tom's word before anything is built.
 
-3. **Push, RFC 8599** (Milestone 6). Tom asked on 2026-10-04 that a call can wake a
-   registered client by push; the plan below is the two steps proposed, waiting on his
-   go-ahead, and the APNs and FCM providers need his Apple and Google credentials.
-
-4. **Tom's admin user on `corvus-gbni-1`.** Only the `provisioner` user exists there;
-   `athenasip --add-user tom ...` has to be run by him in a real terminal, because the
-   password is typed.
+2. **Push credentials, and APNs.** `fcm://` and `webpush://` are built and tested against
+   local servers; proving them needs a Firebase service account (for AthenaPhone on
+   Android) or a browser subscription. APNs only speaks HTTP/2, which nothing in the tree
+   does: hand-roll a minimal HTTP/2 client (HPACK included) or take nghttp2 as a
+   dependency. Waits on Tom's choice and an Apple key.
 
 ## How to prove it
 
@@ -198,7 +194,7 @@ Dated, and not reopened without asking.
     case it is done to get it out of the way.
   - **A browser that is only a subscriber reaches no HTTP endpoint**, `/client/config`
     included. If it needs configuration, that comes a SIP-idiomatic, standards way, or is
-    talked about first (Waiting on Tom, 2).
+    talked about first (Waiting on Tom, 1).
   - **No role is defined before it has routes to permit.** `manage-cluster` waits for M4
     and M5.
   - **`status_interval`** is in the node status payload, for monitors such as T.O.M.S to
@@ -389,7 +385,7 @@ milestone is the second node.
 
 - [ ] What the realm expects of a client, in `GET /api/v1/client/config` beside the node
       list it now carries. For an admin user's softphone only: a subscriber-only browser
-      reaches no HTTP endpoint (2026-10-03), so its equivalent waits on Waiting on Tom, 2.
+      reaches no HTTP endpoint (2026-10-03), so its equivalent waits on Waiting on Tom, 1.
 - [ ] RFC 5626 outbound, what is left of it: a flow token in the Path a node writes when
       it is the edge for another registrar, which is the cluster case. (No 430 for a gone
       in-dialog flow, by choice: see Known deviations.)
@@ -516,24 +512,13 @@ authentication from session issue to the OpenAPI document, and the one-command s
 - [ ] Presence: SUBSCRIBE/NOTIFY (RFC 6665), `presence` (RFC 3856) and `dialog` packages
       for BLF, `message-summary` for MWI, backed by MQTT fan-out.
 - [ ] SIP MESSAGE relay.
-- [ ] Push, RFC 8599 (Tom, 2026-10-04; Waiting on Tom, 3): a call to a client that is
-      asleep wakes it. The client registers with `pn-provider`, `pn-prid` and `pn-param`
-      on its Contact and `+sip.pns` in Feature-Caps; when a request routes to such a
-      binding the proxy sends a push and holds the transaction (Kamailio's `tsilo`
-      pattern), and resumes it down the flow the client re-registers on, or gives up and
-      moves to the next target. Two steps:
-      1. The node: keep the push parameters on the binding (so any node of a cluster can
-         push), hold and resume the transaction, the 555 a registrar without push owes.
-         Proved with a fake provider.
-      2. Push providers as a plugin kind keyed by scheme - `apns://` (PushKit VoIP pushes,
-         which iOS requires to put up the call screen at once), `fcm://` (high-priority
-         data messages), `webpush://` (RFC 8030) - with their credentials in their own
-         config sections.
-      It also covers what the 2026-10-04 run found: a phone whose connection silently
-      died still gets the call. The client side is AthenaPhone's.
+- [ ] Push, RFC 8599, what is left (`COMPLETED.md` has what shipped): `apns://` as PushKit
+      VoIP pushes, which iOS needs to put up the call screen at once (Waiting on Tom, 2); a
+      sipp scenario with a fake provider; and section 6, `pn-purr` for long-lived dialogs,
+      which nothing needs yet. The client side is AthenaPhone's.
 - [ ] Web client repository: video calling and conferencing, JsSIP over WSS, served by
       AthenaSIP. Not provisioned from `/api/v1/client/config`: a subscriber-only browser
-      reaches no HTTP endpoint (2026-10-03), so how it is configured is Waiting on Tom, 2.
+      reaches no HTTP endpoint (2026-10-03), so how it is configured is Waiting on Tom, 1.
 - [ ] The local UA, the fourth transaction user in the Architecture diagram. Its first
       use is tearing a lapsed call down towards both ends: on expiry this node discards
       its state, which is what RFC 4028 section 8 asks of a proxy, and a node that
