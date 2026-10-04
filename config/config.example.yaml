@@ -24,6 +24,10 @@ sip:
   # also takes a public_port, for a router that forwards a different port to it.
   # localnet: ["192.168.0.0/16", "10.0.0.0/8"]
 
+  # A REGISTER for a domain this node does not serve is forwarded to it for this node's
+  # own subscribers (subscribers), or refused (never).
+  forward_register: subscribers
+
   # Permit SIP over plain UDP, TCP and WS. When false, the node refuses to start with a plain
   # listener enabled and dials only TLS.
   allow_unencrypted: true
