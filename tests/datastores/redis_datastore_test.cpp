@@ -281,7 +281,7 @@ TEST(RedisDatastoreTest, SubscriberRoundTripsThroughRedis) {
 }
 
 // A subscriber's media profile survives the store, and an unset one comes back unset.
-TEST(RedisDatastoreTest, AnSubscribersMediaProfileRoundTrips) {
+TEST(RedisDatastoreTest, ASubscribersMediaProfileRoundTrips) {
   REQUIRE_REDIS(datastore);
   const auto realm = "prof-" + unique_suffix() + ".example";
 

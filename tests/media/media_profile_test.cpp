@@ -369,7 +369,7 @@ TEST(MediaProfileTest, ADelayedOfferIsAnsweredForTheEndThatOffered) {
 
 // A subscriber can say what its endpoint is, which decides the first offer towards a leg ahead of the realm
 // and the transport.
-TEST(MediaProfileTest, AnSubscribersProfileDecidesTheFirstOfferTowardsIt) {
+TEST(MediaProfileTest, ASubscribersProfileDecidesTheFirstOfferTowardsIt) {
   ProfileFixture f("tcp", "udp");
   f.bob->media_profile = types::MediaPolicy::Profiles::WebRtc;
   ASSERT_TRUE(f.store->subscriber_update(f.bob));
@@ -399,7 +399,7 @@ TEST(MediaProfileTest, WhatALegSaidOutranksItsSubscriber) {
 
 // A subscriber's setting takes the realm's values, transport and mirror included, so one endpoint can opt
 // out of a realm's rule.
-TEST(MediaProfileTest, AnSubscriberCanTakeItsLegOutOfTheTransportRule) {
+TEST(MediaProfileTest, ASubscriberCanTakeItsLegOutOfTheTransportRule) {
   ProfileFixture f("wss", "udp");
   f.bob->media_profile = types::MediaPolicy::Profiles::Mirror;
   ASSERT_TRUE(f.store->subscriber_update(f.bob));

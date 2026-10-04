@@ -140,7 +140,7 @@ TEST(ProvisioningApiTest, AnUnknownTokenIsRefused) {
 }
 
 // A credential without the route's role is forbidden.
-TEST(ProvisioningApiTest, ATokenWithoutTheScopeIsForbidden) {
+TEST(ProvisioningApiTest, ACredentialWithoutTheRoleIsForbidden) {
   ApiFixture f;
 
   auto response = f.get("/api/v1/realms", "client-token");
@@ -317,8 +317,8 @@ TEST(ProvisioningApiTest, AnUnreadableBehaviourIsRefusedAndChangesNothing) {
   EXPECT_EQ(f.get("/api/v1/realms/example.com").json().at("behaviour").at("media_profile").as_string(), "webrtc");
 }
 
-// The pre-behaviour media fields are refused with a pointer to their replacement, not silently ignored.
-TEST(ProvisioningApiTest, TheOldMediaFieldsAreRefusedWithWhereTheyWent) {
+// Media settings outside behaviour are refused with a pointer to it, not silently ignored.
+TEST(ProvisioningApiTest, AMediaFieldOutsideBehaviourIsRefusedWithAPointerToIt) {
   ApiFixture f;
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
 
@@ -336,7 +336,7 @@ TEST(ProvisioningApiTest, AnUnknownRealmIs404) {
 }
 
 // RFC 2617: the server holds HA1, never the password. The API takes a password and stores its HA1.
-TEST(ProvisioningApiTest, AnSubscriberIsCreatedWithItsHa1ComputedHere) {
+TEST(ProvisioningApiTest, ASubscriberIsCreatedWithItsHa1ComputedHere) {
   ApiFixture f;
 
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
@@ -356,7 +356,7 @@ TEST(ProvisioningApiTest, AnSubscriberIsCreatedWithItsHa1ComputedHere) {
 }
 
 // A subscriber's behaviour section has one setting, what the endpoint is. Empty takes the realm's.
-TEST(ProvisioningApiTest, AnSubscriberSaysWhatItsEndpointIs) {
+TEST(ProvisioningApiTest, ASubscriberSaysWhatItsEndpointIs) {
   ApiFixture f;
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
 
@@ -413,7 +413,7 @@ TEST(ProvisioningApiTest, ThePathParameterReachesTheHandler) {
   EXPECT_EQ(subscribers.as_array()[0].at("realm").as_string(), "example.com");
 }
 
-TEST(ProvisioningApiTest, AnSubscriberInARealmThatDoesNotExistIs404) {
+TEST(ProvisioningApiTest, ASubscriberInARealmThatDoesNotExistIs404) {
   ApiFixture f;
 
   auto response = f.post("/api/v1/realms/nowhere.example/subscribers", R"({"user":"alice","password":"secret"})");
@@ -423,7 +423,7 @@ TEST(ProvisioningApiTest, AnSubscriberInARealmThatDoesNotExistIs404) {
   EXPECT_NE(response.body.find("nowhere.example"), std::string::npos);
 }
 
-TEST(ProvisioningApiTest, AnSubscriberWithNoCredentialIsRefused) {
+TEST(ProvisioningApiTest, ASubscriberWithNoCredentialIsRefused) {
   ApiFixture f;
 
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
@@ -467,7 +467,7 @@ TEST(ProvisioningApiTest, DeletingARealmDeletesItsSubscribersAndRegistrations) {
 }
 
 // The id is derived from the URI, so every node agrees which subscriber a binding belongs to.
-TEST(ProvisioningApiTest, AnSubscriberIdIsDerivedFromItsUri) {
+TEST(ProvisioningApiTest, ASubscriberIdIsDerivedFromItsUri) {
   ApiFixture f;
 
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
@@ -480,7 +480,7 @@ TEST(ProvisioningApiTest, AnSubscriberIdIsDerivedFromItsUri) {
 }
 
 // With no REGISTER taken, the list is empty rather than absent.
-TEST(ProvisioningApiTest, RegistrationsAreListedForTheClientScope) {
+TEST(ProvisioningApiTest, RegistrationsAreListedForViewClusterStatus) {
   ApiFixture f;
 
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
