@@ -18,6 +18,7 @@
 #include "headers/cseq_header.h"
 #include "headers/session_expires_header.h"
 #include "headers/sip_identity_header.h"
+#include "headers/string_header.h"
 #include "headers/uint_header.h"
 #include "headers/via_header.h"
 #include "loggers/logger_scoped.h"
@@ -170,6 +171,30 @@ void Proxy::on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<tran
     return _send_status(transaction, request, 482, "Loop Detected");
   }
 
+  // RFC 3261 11.2: an OPTIONS for this node is answered by it. 16.3 step 3: so is one that has run out of hops.
+  if (request->header->request_method == "OPTIONS") {
+    const auto& uri = request->header->request_uri;
+    auto max_forwards = request->header->contains("Max-Forwards") ? request->header->headers_map["Max-Forwards"][0]->as<UIntHeader>() : nullptr;
+    if (max_forwards != nullptr && max_forwards->value == 0) return _answer_options(transaction, request);
+
+    if (uri->user.empty()) {
+      const auto discovered = core->address_discovery()->finding();
+      if (_names_this_node(*uri) || (discovered && discovered->address == uri->host)) return _answer_options(transaction, request);
+
+      // A realm served here, with no user, is this node as well.
+      auto self = shared_from_this();
+      return core->realm_get_by_name(Util::to_lower(uri->host),
+                                     [this, self, request, transaction, token](plugins::Result<std::shared_ptr<types::Realm>> found) {
+                                       if (found.ok && found.value) return _answer_options(transaction, request);
+                                       _proceed(request, transaction, token);
+                                     });
+    }
+  }
+
+  _proceed(request, transaction, token);
+}
+
+void Proxy::_proceed(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction, const std::string& token) {
   // RFC 4028 8.1, before any copy is forwarded.
   if (!_apply_session_timer(request, transaction)) return;
 
@@ -1811,6 +1836,22 @@ void Proxy::on_stray_response(std::shared_ptr<SIPMessage> response) {
 
     opened.value->send(response);
   });
+}
+
+void Proxy::_answer_options(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request) {
+  auto response = request->generate_response();
+  response->header->response_code = 200;
+  response->header->response_message = "OK";
+
+  // 11.2: what this node does. As a proxy it carries any method; these are the ones it takes part in.
+  response->header->add("Allow", std::make_shared<headers::StringHeader>("INVITE, ACK, CANCEL, BYE, OPTIONS, REGISTER, UPDATE, INFO, PRACK, MESSAGE, "
+                                                                         "SUBSCRIBE, NOTIFY, REFER"));
+  response->header->add("Accept", std::make_shared<headers::StringHeader>("application/sdp"));
+  response->header->add("Accept-Encoding", std::make_shared<headers::StringHeader>("identity"));
+  response->header->add("Accept-Language", std::make_shared<headers::StringHeader>("en"));
+  response->header->add("Supported", std::make_shared<headers::StringHeader>("path, outbound, timer"));
+
+  transaction->send(response);
 }
 
 void Proxy::forward_register(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction) {
