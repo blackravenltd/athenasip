@@ -6,8 +6,10 @@
 //
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "helpers/proxy_fixture_helper.h"
 
@@ -39,9 +41,11 @@ TEST(ProxyOptionsTest, AnOptionsForThisNodeIsAnsweredByIt) {
   auto answer = ProxyFixture::response_with(f.caller_connection, 200);
   ASSERT_NE(answer, nullptr);
   ASSERT_TRUE(answer->header->contains("Allow"));
-  std::string allow;
-  for (const auto& value : answer->header->headers_map["Allow"]) allow += value->to_string() + ",";
-  for (const std::string method : {"INVITE", "ACK", "CANCEL", "BYE", "OPTIONS", "REGISTER"}) EXPECT_NE(allow.find(method), std::string::npos) << method;
+  std::vector<std::string> allow;
+  for (const auto& value : answer->header->headers_map["Allow"]) allow.push_back(value->to_string());
+  for (const std::string method : {"INVITE", "ACK", "CANCEL", "BYE", "OPTIONS", "REGISTER"}) {
+    EXPECT_EQ(std::count(allow.begin(), allow.end(), method), 1) << method;
+  }
   EXPECT_TRUE(answer->header->contains("Accept"));
   EXPECT_TRUE(answer->header->contains("Supported"));
 }

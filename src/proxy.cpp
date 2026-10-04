@@ -1843,7 +1843,9 @@ void Proxy::_answer_options(const std::shared_ptr<transactions::TransactionBase>
   response->header->response_code = 200;
   response->header->response_message = "OK";
 
-  // 11.2: what this node does. As a proxy it carries any method; these are the ones it takes part in.
+  // 11.2: what this node does. As a proxy it carries any method; these are the ones it takes part in. It replaces
+  // the default Allow every response is generated with.
+  response->header->remove_value("Allow", [](const std::shared_ptr<headers::Header>&) { return true; });
   response->header->add("Allow", std::make_shared<headers::StringHeader>("INVITE, ACK, CANCEL, BYE, OPTIONS, REGISTER, UPDATE, INFO, PRACK, MESSAGE, "
                                                                          "SUBSCRIBE, NOTIFY, REFER"));
   response->header->add("Accept", std::make_shared<headers::StringHeader>("application/sdp"));
