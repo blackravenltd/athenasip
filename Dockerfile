@@ -14,8 +14,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         ca-certificates \
         cmake \
+        libnghttp2-dev \
         libssl-dev \
         libyaml-cpp-dev \
+        pkg-config \
         wget \
     && rm -rf /var/lib/apt/lists/*
 
@@ -53,6 +55,7 @@ FROM debian:trixie-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
+        libnghttp2-14 \
         libssl3 \
         libyaml-cpp0.8 \
     && rm -rf /var/lib/apt/lists/*

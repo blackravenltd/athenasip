@@ -232,7 +232,7 @@ its REGISTER. Off unless `urls` names a service.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `urls` | `[]` | The push services this node uses, one driver each: `fcm://`, `webpush://`. Each takes a section named after it, below. |
+| `urls` | `[]` | The push services this node uses, one driver each: `apns://`, `fcm://`, `webpush://`. Each takes a section named after it, below. |
 | `timeout` | `10` | Seconds a call waits for the client to wake and register again before the next target is tried, or the caller gets 480. 1 to 30. |
 | `refresh` | `180` | Seconds before a push binding expires that the client is pushed to refresh it. Over 120. A client asking for push must register for at least `refresh` + 60 seconds, or it gets 423. |
 
@@ -268,7 +268,22 @@ the public half to clients as `+sip.vapid`:
 | `ttl` | `60` | Seconds the push service keeps trying |
 | `ca_file` | system roots | Extra CA certificates to trust |
 
-iOS (APNs) is not supported yet.
+`push.apns`, for iOS through the [Apple Push Notification service](https://developer.apple.com/documentation/usernotifications/sending-notification-requests-to-apns).
+The client's `pn-param` is the Team ID and the topic, separated by the first period
+(`DEF123GHIJ.com.example.app.voip`), and `pn-prid` its device token. A topic ending in
+`.voip` gets a VoIP (PushKit) push; any other gets an alert-type push carrying
+`content-available`. The node signs a token with the team's APNs key and sends over
+HTTP/2, keeping one connection open to Apple. A binding for another team's app is 555:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `key_file` | required | Path to the APNs key (`AuthKey_<key ID>.p8`) from Certificates, Identifiers & Profiles > Keys in the Apple developer account |
+| `key_id` | required | The key's ten-character ID, shown beside it there |
+| `team_id` | required | The developer team's ten-character ID, as the app's `pn-param` starts |
+| `environment` | `production` | `sandbox` for an app built for development, which APNs knows by a different host |
+| `ttl` | `60` | Seconds APNs keeps trying to deliver the push. `0` is deliver now or not at all |
+| `api_base` | from `environment` | Only to go through a proxy |
+| `ca_file` | system roots | Extra CA certificates to trust |
 
 ## `behaviour`
 
