@@ -48,17 +48,10 @@ Nothing below can move until these are settled, and each one has somebody or som
 stopped against it. They are here rather than scattered through the milestones because a
 session that has lost its context needs to see them first.
 
-1. **Push credentials.** `fcm://` and `webpush://` are built and tested against
-   local servers; proving them needs a Firebase service account (for AthenaPhone on
-   Android) or a browser subscription. APNs only speaks HTTP/2, which nothing in the tree
-   does: hand-roll a minimal HTTP/2 client (HPACK included) or take nghttp2 as a
-   dependency. Waits on Tom's choice and an Apple key.
-
-2. **Which STUN server a node asks** when nothing is configured, for the node's own
-   address. A third party (a public STUN server) works out of the box but tells someone
-   else the node exists; none means discovery only from peers and the operator, so a
-   single node learns nothing. Proposed: use the `stun:` entries already in
-   `http.api.ice_servers` when there are any, and no default beyond that.
+1. **Push credentials.** `fcm://`, `webpush://` and `apns://` are built and tested against
+   local servers only. Proving them needs a Firebase service account (AthenaPhone on
+   Android), an Apple APNs key with the app's Team ID and bundle ID (iOS), or a browser
+   subscription.
 
 ## How to prove it
 
@@ -481,10 +474,10 @@ authentication from session issue to the OpenAPI document, and the one-command s
 - [ ] Presence: SUBSCRIBE/NOTIFY (RFC 6665), `presence` (RFC 3856) and `dialog` packages
       for BLF, `message-summary` for MWI, backed by MQTT fan-out.
 - [ ] SIP MESSAGE relay.
-- [ ] Push, RFC 8599, what is left (`COMPLETED.md` has what shipped): `apns://` as PushKit
-      VoIP pushes, which iOS needs to put up the call screen at once (Waiting on Tom, 1); a
-      sipp scenario with a fake provider; and section 6, `pn-purr` for long-lived dialogs,
-      which nothing needs yet. The client side is AthenaPhone's.
+- [ ] Push, RFC 8599, what is left (`COMPLETED.md` has what shipped): proving each service
+      for real (Waiting on Tom, 1); a sipp scenario with a fake provider; and section 6,
+      `pn-purr` for long-lived dialogs, which nothing needs yet. The client side is
+      AthenaPhone's.
 - [ ] Web client repository: video calling and conferencing, JsSIP over WSS, served by
       AthenaSIP, configured as decided on 2026-10-04 (no HTTP API; TURN with the
       subscriber's own credentials).

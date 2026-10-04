@@ -2688,3 +2688,9 @@ missed because its connection had silently died.
       discovered address, or a realm with no user, with Allow, Accept and Supported; and an
       OPTIONS with no hops left (16.3 step 3) instead of 483. Before this a monitor's OPTIONS
       to the node was refused or forwarded.
+- [x] **`apns://`** (Tom, 2026-10-04: nghttp2 rather than a hand-rolled HTTP/2 client). Token
+      authentication with the team's P-256 key, one HTTP/2 connection to Apple kept open, a
+      PushKit push for a `.voip` topic and a background push (priority 5) for any other. A
+      VoIP binding is never pushed to refresh: iOS 13 stops PushKit delivery to an app that
+      takes a VoIP push without ringing (`PushService::refreshes()`, contract version 17).
+      Tested against a local nghttp2 server; not yet against Apple.
