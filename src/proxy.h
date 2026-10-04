@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "dns/sip_locator.h"
+#include "headers/sip_identity_header.h"
 #include "loggers/logger.h"
 #include "media/media_engine.h"
 #include "sip_message.h"
@@ -41,6 +42,10 @@ class Core;
 class Proxy : public TransactionUser {
  public:
   Proxy(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<Core> core);
+
+  // RFC 3261 10.3 step 1: forwards a REGISTER for a domain this node does not serve, for one of this node's
+  // subscribers only, with this node on the Path (RFC 3327, RFC 5626 5.1).
+  void forward_register(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction);
 
   // The registrar has just stored this contact for a subscriber. A request waiting for that client's push is
   // forwarded now rather than at the next poll.
@@ -256,6 +261,18 @@ class Proxy : public TransactionUser {
                      const std::shared_ptr<types::Realm>& realm, const std::shared_ptr<SIPUri>& caller, std::function<void()> then);
   void _send_proxy_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
                              const std::shared_ptr<types::Realm>& realm);
+
+  // Who may have a REGISTER forwarded: a reliable connection one of this node's subscribers registered over, or
+  // credentials for one of its realms (RFC 3261 22.3). The From is the foreign address of record, so it does not
+  // decide.
+  void _authorize_relay(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
+                        std::function<void()> then);
+  void _send_relay_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request);
+
+  // This node as the side facing `facing` sees it, with a flow token in the user part (RFC 5626 5.1): for
+  // Record-Route and Path.
+  std::shared_ptr<headers::SIPIdentityHeader> _route_to_this_node(Core& core, const std::string& transport, const Channel& facing, const std::string& token,
+                                                                  bool secure) const;
 
   bool _names_this_node(const SIPUri& uri) const;
   std::shared_ptr<Channel> _flow_to(const SIPUri& uri) const;

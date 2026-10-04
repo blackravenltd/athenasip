@@ -207,6 +207,22 @@ TEST(ConfigTest, RefusingUnencryptedSipTakesASecureListener) {
   EXPECT_FALSE(config->sip_allow_unencrypted);
 }
 
+// sip.forward_register: RFC 3261 10.3 step 1 forwards for subscribers unless told never.
+TEST(ConfigTest, ForwardRegisterIsForSubscribersUnlessToldNever) {
+  ConfigFile defaults("sip:\n  node_id: test-node\n");
+  bool ok = false;
+  EXPECT_EQ(defaults.load(ok)->sip_forward_register, "subscribers");
+  ASSERT_TRUE(ok);
+
+  ConfigFile never("sip:\n  node_id: test-node\n  forward_register: never\n");
+  EXPECT_EQ(never.load(ok)->sip_forward_register, "never");
+  ASSERT_TRUE(ok);
+
+  ConfigFile anyone("sip:\n  node_id: test-node\n  forward_register: anyone\n");
+  anyone.load(ok);
+  EXPECT_FALSE(ok);
+}
+
 // push: the services, the bucket timer and the refresh lead (RFC 8599 5.5, 5.6.2).
 TEST(ConfigTest, ReadsThePushSection) {
   ConfigFile file(

@@ -40,6 +40,10 @@ class Config {
   // Log every message in full, not only its first line. Credentials are redacted.
   bool sip_log_messages = false;
 
+  // sip.forward_register: RFC 3261 10.3 step 1. "subscribers" forwards a REGISTER for a domain this node does
+  // not serve when one of this node's subscribers sends it; "never" answers 403.
+  std::string sip_forward_register = "subscribers";
+
   // The address this node tells others to reach it on. Empty falls back to the bind
   // address, which is no use to a client on a wildcard bind.
   std::string sip_public_address;
