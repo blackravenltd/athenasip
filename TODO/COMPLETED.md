@@ -2649,3 +2649,21 @@ missed because its connection had silently died.
 - [x] **The `pn-*` parameters stay private** (section 13): stripped from
       `/api/v1/registrations`, the qualify listing, the subscriber-status event and the
       log.
+
+### Milestone 4: client failover and the second node (2026-10-04)
+
+- [x] **The two-node harness in full**: 15 of 15 at `67a4b75`, the call records check
+      included, after Docker came back.
+- [x] **The chaos test** (`failover` in `test/e2e/cluster.sh`, last because it kills node A):
+      Bob registers through node A, node A is killed, Bob registers again through node B,
+      and a new call through node B reaches him. 11 seconds from the kill on the first run,
+      against a bound of one minute.
+- [x] **`GET /api/v1/client/config?realm=`** says what the realm expects of a client: the
+      lifetime the registrar grants and the shortest it takes, how many RFC 5626 flows to
+      keep (one per node, up to two), and the push services with the VAPID key and the
+      shortest registration push takes.
+- [x] **`AthenaSIP-Alternate-Server`** in the 2xx to REGISTER: the other nodes that are up,
+      on the same transport, in Contact grammar with `expires`; only over TLS or WSS, and
+      only to a client that sent `Supported: athenasip-failover`.
+- [x] **The image builds in an 8 GB Docker VM again**: one compiler per 1.5 GB of available
+      memory, and the cluster harness builds the node image once rather than twice at once.

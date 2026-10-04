@@ -30,7 +30,7 @@ for want of credentials. 1141 unit tests (one skipped without a resolver) at the
 with rtpengine 12 of 12, two nodes 15 of 15. That covers RFC 6026 and `allow_unencrypted`;
 push is after it and has no scenario yet.
 
-**Next:** Milestone 4's chaos test.
+**Next:** Milestone 4's last item, the node's own address, which waits on Tom (4).
 
 **Once things are stable, video calling is a primary feature** (Tom, 2026-10-03), not a
 later extra: principle 6 already says so, and this is the reminder that it is next in line
@@ -61,6 +61,18 @@ session that has lost its context needs to see them first.
    Android) or a browser subscription. APNs only speaks HTTP/2, which nothing in the tree
    does: hand-roll a minimal HTTP/2 client (HPACK included) or take nghttp2 as a
    dependency. Waits on Tom's choice and an Apple key.
+
+3. **Whether a node is ever an edge proxy.** RFC 5626's Path flow token applies when a
+   node forwards a REGISTER to another registrar. Today none does: every REGISTER goes to
+   the local registrar, which answers 404 for a domain it does not serve, and the nodes of
+   a cluster are all registrars on one store. Building it means forwarding a REGISTER for
+   a foreign domain instead of refusing it, which is a decision rather than a fix.
+
+4. **Which STUN server a node asks** when nothing is configured, for the node's own
+   address. A third party (a public STUN server) works out of the box but tells someone
+   else the node exists; none means discovery only from peers and the operator, so a
+   single node learns nothing. Proposed: use the `stun:` entries already in
+   `http.api.ice_servers` when there are any, and no default beyond that.
 
 ## How to prove it
 
@@ -383,36 +395,14 @@ milestone is the second node.
 
 ### Client failover, in the order decided on 2026-09-21
 
-- [ ] What the realm expects of a client, in `GET /api/v1/client/config` beside the node
-      list it now carries. For an admin user's softphone only: a subscriber-only browser
-      reaches no HTTP endpoint (2026-10-03), so its equivalent waits on Waiting on Tom, 1.
 - [ ] RFC 5626 outbound, what is left of it: a flow token in the Path a node writes when
-      it is the edge for another registrar, which is the cluster case. (No 430 for a gone
+      it is the edge for another registrar (Waiting on Tom, 3). (No 430 for a gone
       in-dialog flow, by choice: see Known deviations.)
-- [ ] `AthenaSIP-Alternate-Server`, the optional extension, and last because it is what
-      the standards above do not cover: a client that cannot do outbound and has no DNS
-      still has to learn where else to go. Four conditions, and it is not worth shipping
-      without them:
-      - Honoured only over a transport that authenticated the server - TLS or WSS with a
-        verified certificate. Digest authenticates the client to us, not us to the
-        client, so over anything else this is a redirection primitive handed to whoever
-        can forge a response.
-      - Negotiated by option tag, sent only to a client that advertised
-        `Supported: athenasip-failover`. Unknown headers are ignored anyway, so this
-        costs nothing and keeps the header off the wire for everyone else.
-      - The value borrows Contact's grammar rather than inventing one: name-addr with
-        parameters, `q` for preference, `expires` for how long the list is good. A stale
-        list is the failure mode to design for, so the lifetime is not optional.
-      - The name is vendor-prefixed because the header is ours and unregistered
-        (RFC 6648 killed `X-`). If it is ever worth standardising the name changes, which
-        is the other reason the option tag rather than the header name is what gets
-        negotiated.
-      The list itself comes from the same discovery bus as `GET /api/v1/nodes`, so this
-      is a way of carrying an answer the node already has, not a new source of truth.
 
 ### The node's own address
 
-- [ ] A node determines its own public address and reachability, rather than being told.
+- [ ] A node determines its own public address and reachability, rather than being told
+      (which STUN server: Waiting on Tom, 4).
       Configuration stays and always wins, because an explicit answer beats a guessed
       one, but a node with nothing configured should work out the answer itself. Three
       sources, cheapest first:
@@ -442,13 +432,14 @@ milestone is the second node.
 
 ### The second node
 
-- [ ] Re-run `test/e2e/cluster.sh` in full. Cancel, busy, the timeout and the TCP and
-      WebSocket callees passed across two nodes on 2026-10-03; delayed offer and hold
-      failed on the scenarios' own check of the relay address, the harness was moved to the
-      subnet they expect, and Docker was paused before the re-run. The call records check
-      across the two nodes has not run at all.
-- [ ] Chaos test: kill node A mid-registration-cycle, assert re-REGISTER on node B and
-      a new call completes within one registration interval.
+Both done on 2026-10-04 (`COMPLETED.md`): the full two-node harness, and the chaos test as
+its last scenario.
+
+- [ ] `across-cancel-ringing` failed once in five runs at `5986eaa` (once in the full run,
+      not in four runs on its own; it passed at `67a4b75`). Cause unknown: the logs were
+      overwritten by the next harness run before they were read. Run the full harness until
+      it fails again, and read `cluster-across-cancel-ringing*.log` and both nodes' logs
+      before naming a cause.
 
 ---
 
