@@ -280,8 +280,9 @@ TEST(ApnsPushServiceTest, SendsAnAlertPushToATopicThatIsNotVoip) {
   const auto requests = apns.server.requests();
   ASSERT_EQ(requests.size(), 1u);
   EXPECT_EQ(requests[0].header("apns-topic"), "com.example.app");
-  EXPECT_EQ(requests[0].header("apns-push-type"), "alert");
-  EXPECT_EQ(requests[0].header("apns-priority"), "10");
+  // Apple: a push carrying only content-available is a background push, sent at priority 5.
+  EXPECT_EQ(requests[0].header("apns-push-type"), "background");
+  EXPECT_EQ(requests[0].header("apns-priority"), "5");
   EXPECT_EQ(boost::json::parse(requests[0].body), boost::json::parse("{\"aps\":{\"content-available\":1},\"reason\":\"call\"}"));
 }
 
@@ -392,4 +393,13 @@ TEST(ApnsPushServiceTest, SendsNothingForABindingItDoesNotAccept) {
   EXPECT_FALSE(push_test::send(*fixture.service, binding("XYZ987WVUT.com.example.app.voip")).ok);
   EXPECT_FALSE(push_test::send(*fixture.service, binding(kVoipParam, "not-hex")).ok);
   EXPECT_TRUE(apns.server.requests().empty());
+}
+
+// iOS 13 and later stop delivering VoIP pushes to an app that takes one without reporting a call, so a binding on
+// a VoIP topic is never pushed to refresh (RFC 8599 5.5); one on any other topic is.
+TEST(ApnsPushServiceTest, AVoipTopicIsNeverPushedToRefresh) {
+  Fixture fixture;
+
+  EXPECT_FALSE(fixture.service->refreshes(binding(kVoipParam)));
+  EXPECT_TRUE(fixture.service->refreshes(binding("DEF123GHIJ.com.example.app")));
 }

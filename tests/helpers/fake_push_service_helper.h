@@ -28,6 +28,8 @@ class FakePushService : public athenasip::push::PushService {
     return !notification.prid.empty() && (!needs_param || !notification.param.empty());
   }
 
+  bool refreshes(const athenasip::push::Notification&) const override { return refresh_pushes; }
+
   std::vector<std::pair<std::string, std::string>> capabilities() const override { return _capabilities; }
 
   void send(athenasip::plugins::Executor on, athenasip::push::Notification notification, athenasip::plugins::StatusHandler handler) override {
@@ -45,6 +47,7 @@ class FakePushService : public athenasip::push::PushService {
   }
 
   bool needs_param = false;
+  bool refresh_pushes = true;
   bool fails = false;
 
  private:

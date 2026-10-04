@@ -102,7 +102,7 @@ void PushRefresher::_due(const std::string& key) {
     auto notification = push::notification_of(*binding->contact);
     auto service = notification ? core->push_service(notification->provider) : nullptr;
     _watched.erase(key);
-    if (!service) return;
+    if (!service || !service->refreshes(*notification)) return;
 
     notification->reason = push::Notification::Reason::Refresh;
     _logger->info("Asking " + watched.contact->to_string() + " to refresh its binding");
