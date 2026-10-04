@@ -50,6 +50,8 @@ class ApnsPushService final : public PushService, public std::enable_shared_from
   void close() override;
 
   bool accepts(const Notification& notification) const override;
+
+  bool refreshes(const Notification& notification) const override;
   void send(plugins::Executor on, Notification notification, plugins::StatusHandler handler) override;
 
   // The wall clock a token's iat and apns-expiration are read from. Tests replace it.

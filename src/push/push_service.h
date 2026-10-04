@@ -50,6 +50,13 @@ class PushService : public plugins::Plugin {
   // apns and fcm need a pn-param, webpush must not have one.
   virtual bool accepts(const Notification& notification) const = 0;
 
+  // Whether a push asking the client to refresh its binding (RFC 8599 5.5) may be sent to it. False where the
+  // service punishes a push that does not ring, as iOS does for VoIP pushes; that client refreshes on its own.
+  virtual bool refreshes(const Notification& notification) const {
+    (void)notification;
+    return true;
+  }
+
   // Feature-capability indicators this provider adds beside +sip.pns in a 2xx to REGISTER
   // (RFC 8599 5.4), as name and value: {"+sip.vapid", "<key>"}. Empty for most.
   virtual std::vector<std::pair<std::string, std::string>> capabilities() const { return {}; }

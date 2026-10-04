@@ -195,6 +195,13 @@ bool ApnsPushService::accepts(const Notification& notification) const {
   return _team_id.empty() || team_id == _team_id;
 }
 
+// iOS 13 and later end PushKit delivery to an app that takes a VoIP push without reporting a call, so a refresh is
+// never sent over VoIP.
+bool ApnsPushService::refreshes(const Notification& notification) const {
+  const auto dot = notification.param.find('.');
+  return dot == std::string::npos || !ends_with(notification.param.substr(dot + 1), ".voip");
+}
+
 void ApnsPushService::send(plugins::Executor on, Notification notification, plugins::StatusHandler handler) {
   if (!_client) return _complete(std::move(on), std::move(handler), plugins::Status::failure("apns is not configured"));
 
@@ -212,6 +219,7 @@ void ApnsPushService::send(plugins::Executor on, Notification notification, plug
 
   const char* reason = notification.reason == Notification::Reason::Refresh ? "refresh" : "call";
 
+  // Apple's background push: content-available only, which must go at priority 5.
   boost::json::object body;
   if (!voip) {
     boost::json::object aps;
@@ -224,12 +232,8 @@ void ApnsPushService::send(plugins::Executor on, Notification notification, plug
   const auto expiration = _ttl == 0 ? std::string("0") : std::to_string(seconds_since_epoch(now) + _ttl);
 
   HttpsHeaders headers = {
-      {"authorization", "bearer " + token.value},
-      {"apns-topic", topic},
-      {"apns-push-type", voip ? "voip" : "alert"},
-      {"apns-priority", "10"},
-      {"apns-expiration", expiration},
-      {"content-type", "application/json"},
+      {"authorization", "bearer " + token.value}, {"apns-topic", topic},           {"apns-push-type", voip ? "voip" : "background"},
+      {"apns-priority", voip ? "10" : "5"},       {"apns-expiration", expiration}, {"content-type", "application/json"},
   };
 
   auto self = shared_from_this();

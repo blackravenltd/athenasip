@@ -271,9 +271,11 @@ the public half to clients as `+sip.vapid`:
 `push.apns`, for iOS through the [Apple Push Notification service](https://developer.apple.com/documentation/usernotifications/sending-notification-requests-to-apns).
 The client's `pn-param` is the Team ID and the topic, separated by the first period
 (`DEF123GHIJ.com.example.app.voip`), and `pn-prid` its device token. A topic ending in
-`.voip` gets a VoIP (PushKit) push; any other gets an alert-type push carrying
-`content-available`. The node signs a token with the team's APNs key and sends over
-HTTP/2, keeping one connection open to Apple. A binding for another team's app is 555:
+`.voip` gets a VoIP (PushKit) push, only ever for a call: iOS cuts off an app that takes a
+VoIP push without ringing, so such a client is not pushed to refresh its registration and
+must refresh it itself. Any other topic gets a background push (`content-available`,
+priority 5). The node signs a token with the team's APNs key and sends over HTTP/2, keeping
+one connection open to Apple. A binding for another team's app is 555:
 
 | Key | Default | Meaning |
 |---|---|---|

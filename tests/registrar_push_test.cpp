@@ -262,3 +262,15 @@ TEST(RegistrarPushTest, ARemovedBindingIsNotPushedToRefresh) {
 
   EXPECT_TRUE(f.acme->sent().empty());
 }
+
+// A service that must not be pushed to refresh (a VoIP topic on iOS) is not: the client keeps its own registration.
+TEST(RegistrarPushTest, AServiceThatTakesNoRefreshPushIsNotPushedToRefresh) {
+  Fixture f;
+  f.acme->refresh_pushes = false;
+  ASSERT_EQ(f.register_with(kPushContact, "600")->header->response_code, 200);
+
+  f.timers->advance(std::chrono::seconds(600));
+  f.settle();
+
+  EXPECT_TRUE(f.acme->sent().empty());
+}
