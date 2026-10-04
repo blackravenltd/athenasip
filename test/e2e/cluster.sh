@@ -14,7 +14,7 @@
 #
 # It checks that a node reads a binding whose flow another node holds, forwards the call
 # over mutual TLS, and that the ACK and BYE cross back. The first scenario is the control:
-# both ends on one node of the cluster.
+# both ends on one node of the cluster. The last kills node A and calls through node B.
 
 set -u
 
@@ -55,8 +55,10 @@ curl_in() { ${COMPOSE} run --rm --no-deps --entrypoint curl sipp-uac -fsS "$@"; 
 
 api() { curl_in -H "Authorization: Bearer ${ADMIN_TOKEN}" -H "Content-Type: application/json" "$@"; }
 
+# Node A first: node B is the same image, and building both at once runs two full compiles
+# side by side, which a Docker VM with 8 GB does not survive.
 echo "Building..."
-${COMPOSE} --profile e2e build >"${RESULTS}/cluster-build.log" 2>&1 || {
+{ ${COMPOSE} build node-a && ${COMPOSE} --profile e2e build; } >"${RESULTS}/cluster-build.log" 2>&1 || {
   echo "The build failed - see ${RESULTS}/cluster-build.log"
   exit 1
 }
@@ -354,8 +356,69 @@ case "across-call-records" in
     ;;
 esac
 
-# Last, because timer B is 64*T1 and this one waits it out.
+# Timer B is 64*T1 and this one waits it out.
 run_pair across-invite-timeout "${NODE_B}" uas_silent.xml "${NODE_A}" invite_timeout.xml 60s carol.csv carol alice-to-carol.csv
+
+# Last, because it kills node A. Bob registers through node A, node A dies mid-registration,
+# Bob registers again through node B as an RFC 3263 client would, and a new call through
+# node B reaches him well inside his registration interval.
+case "failover" in
+  *${FILTER}*)
+    echo "  failover"
+
+    allocate_port
+    bob_port="${next_port}"
+    allocate_port
+    uac_port="${next_port}"
+
+    ${COMPOSE} run --rm sipp-uas \
+      -sf /e2e/scenarios/register.xml -inf /e2e/bob.csv -au bob -ap bob-secret \
+      -p "${bob_port}" -cid_str "failover-reg-a-%u-%p@%s" \
+      -m 1 -r 1 -timeout 20s -timeout_error \
+      -nostdin "${NODE_A}:5060" >"${RESULTS}/cluster-failover-register-a.log" 2>&1
+
+    docker kill athenasip-cluster-node-a >/dev/null 2>&1
+    killed_at=$(date +%s)
+
+    ${COMPOSE} run --rm sipp-uas \
+      -sf /e2e/scenarios/register.xml -inf /e2e/bob.csv -au bob -ap bob-secret \
+      -p "${bob_port}" -cid_str "failover-reg-b-%u-%p@%s" \
+      -m 1 -r 1 -timeout 20s -timeout_error \
+      -nostdin "${NODE_B}:5060" >"${RESULTS}/cluster-failover-register-b.log" 2>&1
+    registered=$?
+
+    ${COMPOSE} run -d --name cluster-uas-failover sipp-uas \
+      -sf /e2e/scenarios/uas.xml -inf /e2e/bob.csv -au bob -ap bob-secret \
+      -p "${bob_port}" -cid_str "failover-uas-%u-%p@%s" \
+      -m 1 -r 1 -timeout 30s -timeout_error \
+      -trace_err -error_file "/results/cluster-failover-uas.err" \
+      -nostdin "${NODE_B}:5060" >/dev/null 2>&1
+    sleep 2
+
+    ${COMPOSE} run --rm sipp-uac \
+      -sf /e2e/scenarios/invite_bye.xml -inf /e2e/alice.csv -au alice -ap alice-secret \
+      -p "${uac_port}" -cid_str "failover-%u-%p@%s" \
+      -m 1 -r 1 -timeout 30s -timeout_error \
+      -trace_err -error_file "/results/cluster-failover.err" \
+      -nostdin "${NODE_B}:5060" >"${RESULTS}/cluster-failover.log" 2>&1
+    called=$?
+    elapsed=$(($(date +%s) - killed_at))
+
+    docker logs cluster-uas-failover >"${RESULTS}/cluster-failover-uas.log" 2>&1 || true
+    docker rm -f cluster-uas-failover >/dev/null 2>&1 || true
+
+    echo "    node A killed; Bob registered through node B and was called ${elapsed}s later"
+
+    # register.xml asks for 3600 seconds; a minute is the bound that means something.
+    if [ "${registered}" -eq 0 ] && [ "${called}" -eq 0 ] && [ "${elapsed}" -lt 60 ]; then
+      passed=$((passed + 1))
+    else
+      failed=$((failed + 1))
+      failures="${failures} failover"
+      echo "    failed - see ${RESULTS}/cluster-failover*.log"
+    fi
+    ;;
+esac
 
 echo
 echo "${passed} passed, ${failed} failed"

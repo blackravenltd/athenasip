@@ -76,6 +76,7 @@ Mosquitto, joined with certificates from `--ca-init` and `--ca-node`
 | `across-cancel-ringing`, `across-busy`, `across-delayed-offer`, `across-hold-resume`, `across-invite-timeout` | The single-node scenarios, across the two nodes |
 | `one-node-tcp-flow`, `across-tcp-flow`, `one-node-ws-flow`, `across-ws-flow` | A callee reachable only down the TCP or WebSocket connection it registered on (`flow_callee.py`) |
 | `across-call-records` | Both nodes list the same call records, and a call across them names both |
+| `failover` | Last, because it kills node A: the callee registered through node A registers again through node B, and a new call reaches it within a minute |
 
 ## Adding a scenario
 
