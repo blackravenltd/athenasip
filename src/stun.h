@@ -24,4 +24,16 @@ bool is_stun(const std::string& datagram);
 // anything else.
 std::optional<std::string> binding_response(const std::string& request, const boost::asio::ip::address& address, std::uint16_t port);
 
+// RFC 5389 6: a Binding request with no attributes, carrying a 12-byte transaction id.
+std::string binding_request(const std::string& transaction_id);
+
+// What a Binding success response says the request came from: XOR-MAPPED-ADDRESS (15.2), else MAPPED-ADDRESS
+// (15.1) from a pre-5389 server. Nothing for anything else.
+struct Mapped {
+  boost::asio::ip::address address;
+  std::uint16_t port = 0;
+  std::string transaction_id;
+};
+std::optional<Mapped> binding_success(const std::string& datagram);
+
 }  // namespace athenasip::stun

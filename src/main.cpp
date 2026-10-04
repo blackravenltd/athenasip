@@ -543,6 +543,9 @@ int main(int argc, char* argv[]) {
   // Expire idle UDP flows.
   core->flow_sweep_start();
 
+  // Ask the stun: servers in http.api.ice_servers where this node is, for --check and the node status.
+  core->post([core]() { core->address_discovery()->start(); });
+
   // SIGINT shuts the node down. SIGHUP is logged and ignored.
   boost::asio::io_context signal_wait_context;
   boost::asio::signal_set signals(signal_wait_context, SIGINT, SIGHUP);
@@ -567,6 +570,7 @@ int main(int argc, char* argv[]) {
         // Replaces the retained status with "stopped".
         core->node_status_stop();
 
+        core->call_on_strand([core]() { core->address_discovery()->stop(); });
         media_engine->close();
         for (const auto& service : push_services) service->close();
         datastore->close();
