@@ -143,6 +143,23 @@ websocket:
   # certificate named here, or the tls section's. 0 is none.
   # secure_port: 9443
 
+# The inter-node listener: SIP between nodes over mutual TLS under the cluster's own CA.
+# athenasip --ca-init and --ca-node make the files (docs/certificates.md). A cluster also
+# shares a redis:// datastore and an mqtt:// broker.
+cluster:
+  enable: false
+  address: 0.0.0.0
+  port: 5062
+
+  # What peers dial; this node's certificate must name it. Unset, it is the bind address,
+  # or sip.public_address when bound to 0.0.0.0.
+  # advertise: node-a.example.com
+
+  # Required when enabled.
+  # ca: /etc/athenasip/cluster/ca.crt
+  # cert: /etc/athenasip/cluster/node-a.crt
+  # key: /etc/athenasip/cluster/node-a.key
+
 # The three plugin kinds. Each is a URL whose scheme picks the driver, plus an optional
 # section named after the driver. The URL alone is a working configuration.
 
