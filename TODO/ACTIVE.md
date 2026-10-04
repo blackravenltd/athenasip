@@ -30,7 +30,7 @@ for want of credentials. 1141 unit tests (one skipped without a resolver) at the
 with rtpengine 12 of 12, two nodes 15 of 15. That covers RFC 6026 and `allow_unencrypted`;
 push is after it and has no scenario yet.
 
-**Next:** Milestone 4's last item, the node's own address: discovery is in, verification and use are not.
+**Next:** what is left of the node's own address, under Milestone 4.
 
 **Once things are stable, video calling is a primary feature** (Tom, 2026-10-03), not a
 later extra: principle 6 already says so, and this is the reminder that it is next in line
@@ -396,34 +396,17 @@ Done (`COMPLETED.md`). What remains of client failover is the node's own address
 
 ### The node's own address
 
-- [ ] A node determines its own public address and reachability, rather than being told
-      (which STUN server: decided, see Decisions).
-      Configuration stays and always wins, because an explicit answer beats a guessed
-      one, but a node with nothing configured should work out the answer itself. Three
-      sources, cheapest first:
-      - From peers, for nothing. A peer that receives an inter-node request already
-        stamps `received` and `rport` on the top Via (RFC 3581), which is what
-        `Channel::_stamp_via` does in the receive direction. Reading them back off the
-        response is a per-transport observation of what a peer actually sees, which one
-        STUN answer cannot give.
-      - From STUN (RFC 5389) when there is no peer yet, which is every single-node first
-        start. coturn is already in the M5 compose, so the client is the only new part.
-        STUN reports the mapping the router made for an outbound packet, which on a SOHO
-        router doing symmetric NAT is not the port that was forwarded inbound. It gives
-        the public address with confidence and the port only as a guess, so it is a
-        starting point to be verified, never an answer to act on.
-      - From the operator, as today.
-      Then verify rather than believe: the node publishes what it thinks it is in the
-      retained `nodes/<id>/status` roster, and a peer sends an OPTIONS (11.1) back to
-      that address from outside. An address that does not answer is not advertised, and
-      the node says so loudly instead of record-routing something unreachable.
-      `athenasip --check` reports what was found, per transport, and how.
-      The honest failure case has to be expressible: a node behind symmetric NAT or a
-      connection-pinning balancer has no address peers can reach on their own, only
-      flows clients opened. Discovery must be able to answer "not directly reachable",
-      and a node in that state must not advertise itself as a routable cluster peer -
-      that is the case where Record-Route-the-node stops working and RFC 5626 flows are
-      the only way in.
+Discovery from STUN, verification by peers and advertising a verified address are in
+(`COMPLETED.md`, `docs/architecture.md`). What is left:
+
+- [ ] From peers, for nothing: read `received` and `rport` off the top Via of responses to
+      inter-node requests (RFC 3581), a per-transport observation STUN cannot give, and
+      use it beside STUN as a finding.
+- [ ] The honest failure case: a node behind symmetric NAT or a connection-pinning balancer
+      that no peer reaches must not advertise itself as a routable cluster peer either
+      (`cluster.advertise`), only take flows clients opened.
+- [ ] `athenasip --check` reports what peers have verified, not only what STUN says; today it
+      cannot, because it runs without the bus subscription the node has.
 
 ### The second node
 

@@ -2677,3 +2677,14 @@ missed because its connection had silently died.
       outbound. A request routed back through a Path or Record-Route this node sealed is
       admitted and goes down the flow. A REGISTER whose address of record is in one of this
       node's realms is registered here, whatever its Request-URI, as before.
+- [x] **The node's own address, from STUN and peers** (Tom, 2026-10-04: the `stun:` servers in
+      `http.api.ice_servers` and no others). A node asks them from its SIP UDP socket every
+      five minutes and reports `discovered` in its status and in `--check`, which fails when
+      `sip.public_address` disagrees. Every node probes every other node's discovered address
+      with an OPTIONS and publishes the ones that answer as `reaches`; a node whose address a
+      peer reached advertises it (`Config::public_address()`), and one nobody reached is
+      never advertised. `sip.public_address` always wins.
+- [x] **A node answers an OPTIONS for itself** (RFC 3261 11.2): its own, public or
+      discovered address, or a realm with no user, with Allow, Accept and Supported; and an
+      OPTIONS with no hops left (16.3 step 3) instead of 483. Before this a monitor's OPTIONS
+      to the node was refused or forwarded.
