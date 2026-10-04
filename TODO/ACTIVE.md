@@ -11,7 +11,9 @@ Since `0.8.0`, on `develop` and deployed to both nodes: RFC 6026's Accepted stat
 callee's retransmitted 2xx now reaches the caller), media addresses that may be names and
 follow `sip.localnet` for rtpengine too, `--reset-password`, `--check`, `log.level` and
 `log.format`, the node's media in its status, and two log lines that were errors and are
-not. 1057 unit tests at `b11c53f`.
+not. Not yet deployed: `sip.allow_unencrypted: false` now refuses plain listeners and
+dials only TLS, and the documentation and comments describe the code as it is. 1063 unit
+tests (one skipped without a resolver) at the head of `develop`.
 
 **Two live nodes**, neither production:
 - `corvus-fi-1` (10.35.1.20): builtin relay, AthenaPhone's usual home.
@@ -19,7 +21,7 @@ not. 1057 unit tests at `b11c53f`.
   native rtpengine, the domain as `sip.public_address` and as the media address, DNS kept
   current by manannan, the signalling and media ports forwarded and checked from outside.
   A headless browser called AthenaPhone with video through it on 2026-10-04 and the
-  console's `e2e/phone-call.spec.ts` passed (`test/interop/UAT.md`).
+  console's `e2e/phone-call.spec.ts` passed (`COMPLETED.md`).
 
 **The sipp harnesses have not run since before `0.8.0`** - Docker has been paused since. The
 single-node harness last passed 12 of 12 at `2e7ae4d`; the two-node harness 9 of 11 just
@@ -66,7 +68,7 @@ session that has lost its context needs to see them first.
 
 ## How to prove it
 
-`docs/testing.md` is the whole of it: the five layers, what each answers that the one
+`docs/testing.md` is the whole of it: the layers, what each answers that the one
 before it cannot, and the exact commands. The short version, cheapest first:
 
 ```
@@ -345,7 +347,7 @@ endpoint on an ordinary transport. All of that is in. What is not yet in is list
 here, in the order it is needed.
 
 The call was made on 2026-09-30 and heard both ways in both directions;
-`test/interop/UAT.md` holds the record and `COMPLETED.md` the account of what it found,
+`test/interop/UAT.md` at `47de4a2` holds the record and `COMPLETED.md` the account of what it found,
 including the behaviour profiles it led to. What is left of it is below.
 
 - [ ] **Ring the automated browser call.** `browser.sh` answers within milliseconds and
@@ -544,7 +546,7 @@ authentication from session issue to the OpenAPI document, and the one-command s
 Kept in the tree or history, not on any milestone:
 
 - Lua scripting (`src/script/`): not compiled, `on_message`/`send_message` are TODOs,
-  `luaL_openlibs` disabled. Revisit when routing policy needs more than location lookup,
+  `luaL_openlibs` disabled, no example scripts. Revisit when routing policy needs more than location lookup,
   and then as a routing-policy plugin through the plugin contract.
 - `RTPProxyClient` (`src/rtp/rtp_proxy_client.*`): rtpproxy text protocol. Out of the
   build path since 2026-09-21, the way Lua is. May become an `rtpproxy://` driver with
@@ -556,6 +558,6 @@ Kept in the tree or history, not on any milestone:
   creates one dialog per answering branch (12.1) and the model holds them, but with one
   branch outstanding at a time the second is untested; parallel forking is what would
   exercise it.
-- `Util::is_ipv4` (`src/util.cpp:161`) still uses a regex and does see network data, but
+- `Util::is_ipv4` (`src/util.cpp:148`) still uses a regex and does see network data, but
   the pattern is anchored with no nested quantifiers, so it is linear and not the hazard
   the message-path regexes were. Left deliberately.

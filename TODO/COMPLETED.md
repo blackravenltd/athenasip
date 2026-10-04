@@ -2023,7 +2023,7 @@ that came in from sibling sessions and one found by watching a live node.
 The call Milestone 3 was named for: a browser on this Mac called an AthenaPhone on a
 Blackview A85, through the interop fixture with rtpengine on the media path, and Tom heard
 it both ways; the phone then called the browser and he heard that both ways too, with a
-BYE from each end. `test/interop/UAT.md` carries the record - fixture, versions, counters
+BYE from each end. `test/interop/UAT.md` at `47de4a2` carries the record - fixture, versions, counters
 from the silent attempts and the working ones, both ends' SDP, and the defects found on
 both sides.
 
@@ -2499,7 +2499,7 @@ Tom's answers to the questions that were waiting on him, and what they led to.
       console softphone as 1001 to the A85 over TLS: one INVITE, the browser's own
       `UDP/TLS/RTP/SAVPF` offer, no 488, ICE and DTLS up, media direct on the LAN, 0 lost.
       The first call was silent one way because the Mac's default microphone was a
-      loopback device. `test/interop/UAT.md` has both calls and what it took to make them.
+      loopback device. `test/interop/UAT.md` at `47de4a2` has both calls and what it took to make them.
 
 ### HTTPS on the admin listener and configurable rate limits (2026-10-03)
 
@@ -2555,7 +2555,7 @@ Tom's answers to the questions that were waiting on him, and what they led to.
 - [x] **A video call, browser to AthenaPhone, seen and heard both ways.** The console
       softphone at `https://10.35.1.20:8443` over `wss`, no tunnel, to the phone on TLS:
       VP8 and opus, bundled, direct on the LAN, 464 frames decoded in forty seconds, and a
-      call record written. `test/interop/UAT.md`. Through the builtin relay's pass-through
+      call record written. `test/interop/UAT.md` at `47de4a2`. Through the builtin relay's pass-through
       only: video through rtpengine, and plain-RTP video end to end, have not been run.
 
 ### After 0.8.0 (2026-10-03)
@@ -2584,7 +2584,7 @@ Tom's answers to the questions that were waiting on him, and what they led to.
       corvus-gbni-1 as `macnessa.athenasip.org`, native rtpengine: a headless browser with a
       fake camera called AthenaPhone, 167 frames decoded in the browser and the pattern
       moving on the phone, the browser's media through the public address and a forwarded
-      port. `test/interop/UAT.md`.
+      port. `test/interop/UAT.md` at `47de4a2`.
 - [x] **RFC 6026: the INVITE transactions' Accepted state.** A 2xx moves both INVITE
       transactions to Accepted for 64*T1 rather than ending them, so a callee's 2xx
       retransmissions still match: the client transaction passes each to the proxy, which
@@ -2596,3 +2596,26 @@ Tom's answers to the questions that were waiting on him, and what they led to.
       step 7). The store still says there was nothing to remove; Core logs it at debug.
 - [x] **A TLS peer closing without close_notify is logged as a disconnect**, not an ERROR.
       Every browser hang-up through macnessa's secure WebSocket logged one.
+
+### The documentation describes the code (2026-10-04)
+
+- [x] **Documentation and comments rationalised.** Comments state intent, invariants and
+      RFC references in a line or two, with no history. The documents were checked against
+      the source and corrected where they had drifted: listener keys are `enable`, an
+      enabled listener needs a `port`, timers G and H are INVITE server timers, the
+      `cluster` and `websocket` sections and a dozen keys were undocumented, and the guides
+      still described configured API tokens. `docs/design.md` is folded into
+      `docs/architecture.md`; `docs/versions/` (MySQL, PostgreSQL, NSQ and NATS goals that
+      never shipped) is gone; `test/interop/UAT.md` is the procedure only, its run records
+      left at `47de4a2`.
+- [x] **`sip.allow_unencrypted` does what it says.** It was read and never used. When
+      false, an enabled `udp`, `tcp` or plain `websocket` listener (a plain `port` beside
+      `secure_port` included) is a configuration error, and `Core::channel_connect` dials
+      only TLS.
+- [x] **The example configuration shows the `cluster` section**, off, with the files
+      `--ca-init` and `--ca-node` make.
+- [x] **Every Lua log function takes the engine as its upvalue.** `debug`, `warn` and
+      `error` were given the logger, which `get_script_engine` reads as the engine. Not
+      compiled, since scripting is parked; the example scripts under `config/` are removed.
+- [x] **Tests renamed** where the name described configured tokens and scopes rather than
+      users and roles.
