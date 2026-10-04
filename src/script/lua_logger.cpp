@@ -7,6 +7,7 @@
 #include <functional>
 #include <lua.hpp>
 #include <string>
+#include <utility>
 
 #include "../loggers/logger_scoped.h"
 #include "../util.h"
@@ -49,23 +50,15 @@ int LuaScriptEngine::lua_log_error(lua_State* L) {
 void LuaScriptEngine::_register_logger_object() {
   lua_newtable(_current);  // table is at stack index -1
 
-  // The engine pointer, which the closure takes as its upvalue.
-  lua_pushlightuserdata(_current, this);
-
-  lua_pushcclosure(_current, LuaScriptEngine::lua_log_info, 1);
-  lua_setfield(_current, -2, "info");
-
-  lua_pushlightuserdata(_current, _logger.get());
-  lua_pushcclosure(_current, LuaScriptEngine::lua_log_debug, 1);
-  lua_setfield(_current, -2, "debug");
-
-  lua_pushlightuserdata(_current, _logger.get());
-  lua_pushcclosure(_current, LuaScriptEngine::lua_log_warn, 1);
-  lua_setfield(_current, -2, "warn");
-
-  lua_pushlightuserdata(_current, _logger.get());
-  lua_pushcclosure(_current, LuaScriptEngine::lua_log_error, 1);
-  lua_setfield(_current, -2, "error");
+  // Each closure takes the engine pointer as its upvalue (get_script_engine).
+  for (const auto& [name, fn] : {std::pair<const char*, lua_CFunction>{"info", LuaScriptEngine::lua_log_info},
+                                 {"debug", LuaScriptEngine::lua_log_debug},
+                                 {"warn", LuaScriptEngine::lua_log_warn},
+                                 {"error", LuaScriptEngine::lua_log_error}}) {
+    lua_pushlightuserdata(_current, this);
+    lua_pushcclosure(_current, fn, 1);
+    lua_setfield(_current, -2, name);
+  }
 
   lua_setglobal(_current, "log");
 }
