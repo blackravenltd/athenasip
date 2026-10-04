@@ -56,6 +56,10 @@ ATHENA_TEST_MQTT_URL=mqtt://127.0.0.1:1883 ./build-tests/athenasip_tests
 Tests come from the RFCs and the SIP concepts, never from the current behaviour. Write
 the test for what the standard requires, watch it fail, then fix the code.
 
+Assert facts about this node's own configuration, never a client's labels for them. A
+relayed browser candidate is recognised by its port lying in coturn's range, because
+Chrome reports it as `prflx` once connectivity checks run.
+
 Timers are injectable: use `ManualTimerSource` and advance it rather than waiting on a
 real clock. RFC 3261 timer B is 64*T1, 32 seconds of real time.
 

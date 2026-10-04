@@ -145,6 +145,10 @@ a plugin whose `api_version()` differs:
 Plugin acme 1.0.0 was built against contract version 1, this server speaks 2
 ```
 
+The version tracks shape only. A change of meaning under the same signatures, such as an
+operation that now succeeds where it failed, does not move it, and is stated at the
+declaration instead.
+
 An operation added to an interface is given a failing default rather than made pure
 virtual, so existing drivers keep compiling.
 
