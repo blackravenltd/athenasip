@@ -19,11 +19,8 @@
 
 namespace athenasip::transactions {
 
-// The RFC 3261 section 17 states. Not every machine uses every one: a client INVITE
-// starts in Calling, a non-INVITE starts in Trying, and only the INVITE server
-// transaction has Confirmed.
-// Accepted is RFC 6026's: an INVITE transaction that has seen a 2xx, kept for 64*T1 so the
-// 2xx retransmissions a UAS sends until its ACK arrives still have a transaction to match.
+// The RFC 3261 section 17 states; not every machine uses every one. Accepted is RFC 6026's: an INVITE transaction
+// that has seen a 2xx, kept for 64*T1 so 2xx retransmissions and their ACKs still have a transaction to match.
 enum class State { Calling, Trying, Proceeding, Completed, Confirmed, Accepted, Terminated };
 
 inline std::string state_to_string(State state) {
@@ -46,9 +43,8 @@ inline std::string state_to_string(State state) {
   return "Unknown";
 }
 
-// The section 17 timer values. T1 is the RTT estimate, T2 the retransmission ceiling
-// and T4 the maximum time a message lingers in the network; the rest are multiples of
-// those, which is how the config expresses them.
+// The section 17 timer values. T1 is the RTT estimate, T2 the retransmission ceiling and T4 the longest a message
+// lingers in the network; the rest are multiples of those.
 struct Timers {
   std::chrono::milliseconds t1{500};
   std::chrono::milliseconds t2{4000};
@@ -90,13 +86,9 @@ struct Timers {
   }
 };
 
-// One RFC 3261 section 17 transaction.
-//
-// The transaction sits between the transport and the transaction user. It absorbs
-// retransmissions so the TU sees each request once, and it retransmits responses so
-// the TU does not have to. Which of those it does depends on the transport:
-// is_reliable() disables the retransmission timers A, E and G, and zeroes the waiting
-// timers D, I, J and K, because a stream transport does not lose or duplicate.
+// One RFC 3261 section 17 transaction, between the transport and the transaction user. It absorbs retransmissions
+// so the TU sees each request once, and retransmits on the TU's behalf. On a reliable transport the retransmission
+// timers A, E and G do not run and the waiting timers D, I, J and K are zero.
 class TransactionBase : public std::enable_shared_from_this<TransactionBase> {
  public:
   // Out to the transport.
@@ -105,8 +97,7 @@ class TransactionBase : public std::enable_shared_from_this<TransactionBase> {
   using TuFn = std::function<void(std::shared_ptr<SIPMessage>)>;
   // The transaction has reached Terminated and can be forgotten.
   using TerminatedFn = std::function<void(const std::string& id)>;
-  // No answer came in time. RFC 3261 requires the TU be told, so it can fail the call
-  // rather than wait forever.
+  // No answer came in time. RFC 3261 requires the TU be told.
   using TimeoutFn = std::function<void()>;
 
   TransactionBase(std::shared_ptr<loggers::Logger> logger, std::string id, bool reliable, Timers timers, std::shared_ptr<TimerSource> timer_source, SendFn send,
@@ -129,13 +120,13 @@ class TransactionBase : public std::enable_shared_from_this<TransactionBase> {
   void on_terminated(TerminatedFn fn) { _on_terminated = std::move(fn); }
   void on_timeout(TimeoutFn fn) { _on_timeout = std::move(fn); }
 
-  // A message arrived from the transport for this transaction.
+  // A message from the transport for this transaction.
   virtual void receive(std::shared_ptr<SIPMessage> message) = 0;
 
-  // The transaction user wants to send a message through this transaction.
+  // A message from the transaction user to send through this transaction.
   virtual void send(std::shared_ptr<SIPMessage> message) = 0;
 
-  // Give up now, whatever state we are in.
+  // Terminates from any state.
   void terminate() {
     if (_state == State::Terminated) return;
 

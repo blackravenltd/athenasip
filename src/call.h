@@ -30,9 +30,8 @@ namespace athenasip {
 
 class Channel;
 
-// A call is multi-party from the start. A two-party call is the case where there are
-// two participants and no focus; a conference is the case where there are more and a
-// focus URI (RFC 4579). Nothing here assumes there are exactly two legs.
+// A call has any number of legs: two participants and no focus is a two-party call, more
+// with a focus URI is a conference (RFC 4579).
 class Call {
  public:
   enum State { Initial, Trying, Ringing, Connected, Closing, Closed };
@@ -55,38 +54,27 @@ class Call {
     return "Unknown";
   }
 
-  // One leg of the call. The channel is held weakly: a participant outlives the
-  // connection it arrived on, and in a cluster the leg may not be on this node at all,
-  // in which case node_id says whose it is and channel is empty.
+  // One leg of the call. The channel is weak: a participant outlives its connection. A leg
+  // on another cluster node has that node in node_id and no channel.
   struct Participant {
     std::shared_ptr<SIPIdentity> identity;
     std::weak_ptr<Channel> channel;
     std::string node_id;
 
-    // The dialog this leg takes part in (RFC 3261 section 12). Held rather than the two
-    // bare tags it used to be, because the tags alone cannot say where the leg's
-    // requests go, what route they take or whether the call is still up, and those are
-    // the questions a node that anchors media has to answer.
-    //
-    // A proxied two-party call has one dialog end to end, so both participants point at
-    // the same one. A conference has one per participant, each with the focus (RFC
-    // 4579), which is why this hangs off the leg and not off the call.
+    // The leg's dialog (RFC 3261 section 12). Both legs of a proxied two-party call share
+    // one; a conference has one per participant, each with the focus (RFC 4579).
     std::shared_ptr<Dialog> dialog;
 
     // Media for this leg, keyed by the SDP media identifier.
     std::unordered_map<int64_t, std::shared_ptr<MediaStream>> streams;
 
-    // What this leg has said its media is, from the last description that arrived from
-    // it. A leg's own offer or answer says exactly whether it asked for ICE, DTLS or
-    // SRTP, and that is a better answer than the transport it signals over: AthenaPhone
-    // is WebRTC on UDP, and RFC 7118 allows a plain phone on a WebSocket. Empty until
-    // this node has heard the leg describe itself, which is the only case where the
-    // realm and the transport have to decide.
+    // The media profile from the leg's last offer or answer. It outranks the signalling
+    // transport: WebRTC media can be signalled over UDP, and RFC 7118 allows a plain phone
+    // on a WebSocket. Empty until the leg has described itself.
     std::optional<media::Profile> profile;
 
-    // What the leg's subscriber says it is, where it says anything. Only for a leg that has
-    // not described itself: the operator's word about an endpoint is a better guess than
-    // its transport and a worse one than the endpoint's own.
+    // The subscriber's configured profile, used only while `profile` is empty. It outranks
+    // the transport.
     std::optional<MediaPolicy::Profiles> subscriber_profile;
 
     // The party that started the call.
@@ -96,28 +84,23 @@ class Call {
   std::string id;
   State state = State::Initial;
 
-  // Set when the call is a conference and this node is routing to a focus (RFC 4579).
-  // Empty for an ordinary two-party call.
+  // The conference focus this node routes to (RFC 4579). Empty for a two-party call.
   std::shared_ptr<SIPUri> focus;
 
-  // The realm's media policy, remembered when the call was set up. A re-INVITE travels
-  // in-dialog on its route set and never looks a realm up, so reading the policy again
-  // for each message would have hold and resume behave differently from the INVITE
-  // that started the call. It is decided once, where the realm is already in hand.
+  // The realm's media policy, fixed at call setup: a re-INVITE never looks the realm up,
+  // and hold and resume must behave as the first INVITE did.
   MediaPolicy media_policy;
 
-  // Whether Contacts in this call are rewritten to where messages came from, decided with
-  // the media policy and for the same reason.
+  // Whether Contacts are rewritten to the address messages came from. Fixed at call setup.
   std::optional<bool> rewrite_contact;
 
-  // A peer node forwarded this call here, so that node's engine holds the media and this
-  // one leaves every description in the call alone. The first node anchors.
+  // A peer node forwarded this call here and anchors its media, so this node leaves every
+  // session description alone.
   bool media_elsewhere = false;
 
-  // The call record (CDR). One node writes it: the node the caller reached, which is
-  // `node`. A node a peer forwarded the call to has that peer in `from_node` and writes
-  // nothing, or two nodes would be taking turns to overwrite one record with half of it
-  // each. `media_engine` is the engine that anchored the media, empty when none did.
+  // The call record (CDR). Only `node`, the node the caller reached, writes it. A node the
+  // call was forwarded to has that peer in `from_node` and writes nothing. `media_engine`
+  // is the engine that anchored the media, or empty.
   std::string node;
   std::string from_node;
   std::string media_engine;
@@ -146,9 +129,8 @@ class Call {
     return nullptr;
   }
 
-  // The index of the leg that started the call, or of one that did not. The media
-  // contract addresses a participant by index, so a caller that knows which end a
-  // session description came from has to be able to turn that into one.
+  // The index of the originating leg, or of the first other leg. The media contract
+  // addresses participants by index.
   std::optional<std::size_t> participant_index(bool originator_wanted) const {
     for (std::size_t i = 0; i < participants.size(); ++i) {
       if (participants[i].originator == originator_wanted) return i;

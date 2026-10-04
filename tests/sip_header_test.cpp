@@ -84,8 +84,8 @@ TEST(SIPHeaderTest, AddAppends) {
   EXPECT_EQ(header.headers_map["Via"][1]->as<ViaHeader>()->host, "second:5060");
 }
 
-// RFC 3261 16.6: a proxy prepends its own Via, and the topmost Via is the one just
-// added. Lookups go through headers_map, so the map order has to match the vector.
+// RFC 3261 16.6 step 8: a proxy prepends its Via. headers_map order must match the
+// vector, since lookups go through the map.
 TEST(SIPHeaderTest, AddStartPrependsInBothOrderings) {
   SIPHeader header;
   header.type = SIPHeader::Type::Request;
@@ -147,8 +147,8 @@ TEST(SIPHeaderTest, ToStringRoundTripsFirstLineAndHeaders) {
   EXPECT_NE(out.find("CSeq: 1 REGISTER\r\n"), std::string::npos);
 }
 
-// type defaults to Request, so a default-constructed header has a null request_uri.
-// first_line() used to dereference it, which took the outbound INVITE path down.
+// A default-constructed header is a Request with a null request_uri, so first_line()
+// throws rather than dereferencing it.
 TEST(SIPHeaderTest, FirstLineThrowsWhenRequestUriIsMissing) {
   SIPHeader header;
   header.request_method = "INVITE";

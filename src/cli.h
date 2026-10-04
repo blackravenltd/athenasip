@@ -11,46 +11,39 @@
 
 namespace athenasip::cli {
 
-// What the command line said. Hand-rolled rather than taken from a library, which is
-// the rule in this tree: a handful of options are not worth a dependency.
+// The parsed command line.
 struct Options {
-  // Empty means nothing was given and the search decides (see config_search_paths).
+  // Empty: search for one (see config_search_paths).
   std::string config;
 
   bool version = false;
   bool help = false;
 
-  // Print the values this node would actually run on, and exit. Not the file: the file
-  // is what `cat` is for, and most of what decides a node's behaviour is a default
-  // nobody wrote down.
+  // Print the effective configuration, defaults included, and exit.
   bool print_config = false;
 
-  // Try everything this node would connect to - datastore, event bus, media engine, the
-  // other nodes of its cluster - and say which of them answered. Nothing is started.
+  // Try the datastore, event bus, media engine and cluster peers, report which answered,
+  // and exit. Nothing is started.
   bool check = false;
 
-  // Create an administrator and exit, without starting a single listener. This is the
-  // way back in when the API cannot be reached or every admin password has been lost,
-  // so it goes to the datastore and nothing else.
+  // Create an administrator in the datastore and exit, without starting a listener. The way
+  // back in when the API is unreachable or every admin password is lost.
   std::string add_user;
 
-  // A new password for a user that exists, and every session it held ended. Read the way
-  // --add-user reads one.
+  // Give an existing user a new password and end its sessions.
   std::string reset_password;
   std::string display_name;
   std::vector<std::string> roles;
 
   // The cluster CA (see cluster_ca.h): make one, or issue a node its certificate. Neither
-  // reads the configuration. The directory defaults to ~/.athenasip/ca.
+  // reads the configuration. ca_dir defaults to ~/.athenasip/ca.
   bool ca_init = false;
   std::string ca_node;
   std::string ca_dir;
   std::vector<std::string> sans;
   bool replace = false;
 
-  // False stops the node before it starts. An argument it does not understand is not
-  // ignored: a daemon that silently drops the one telling it where its configuration
-  // is would read the wrong one and serve the wrong thing.
+  // False stops the node before it starts. An unknown argument is an error, never ignored.
   bool ok = true;
   std::string error;
 };
@@ -66,9 +59,7 @@ inline Options parse(int argc, char* argv[]) {
   for (int i = 1; i < argc && options.ok; ++i) {
     const std::string argument = argv[i];
 
-    // Both spellings for everything that takes a value: --name value and --name=value are
-    // each common enough that supporting one and not the other is a papercut in somebody
-    // else's script.
+    // Accepts both --name value and --name=value.
     const auto takes = [&](const std::string& name, const std::string& what, std::string& out) -> bool {
       if (argument == name) {
         if (i + 1 >= argc) {
@@ -103,7 +94,7 @@ inline Options parse(int argc, char* argv[]) {
     } else if (argument == "--check") {
       options.check = true;
     } else if (takes("--config", "a path", options.config) || takes("-c", "a path", options.config)) {
-      // Handled, and any error is already recorded.
+      // Handled; any error is already recorded.
     } else if (takes("--reset-password", "a username", options.reset_password)) {
     } else if (takes("--add-user", "a username", options.add_user)) {
     } else if (takes("--display-name", "a name", options.display_name)) {

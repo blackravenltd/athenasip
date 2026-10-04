@@ -55,16 +55,14 @@ struct Fixture {
     core->timer_source_set(timers);
   }
 
-  // Nothing may still be in flight when the fixture goes: the chain holds the channel
-  // and the connection the test is about to destroy.
+  // Drain the strand first: in-flight handlers hold the channel and connection being destroyed.
   ~Fixture() { settle(); }
 
   void settle(int rounds = 32) {
     for (int i = 0; i < rounds; ++i) core->call_on_strand([]() {});
   }
 
-  // Core answers these through a handler on the strand; the test wants the answer
-  // before its next assertion, so it starts the call there and waits here.
+  // Starts an asynchronous Core call on the strand and blocks the test thread for its status.
   template <typename Start>
   plugins::Status await_on_strand(Start start) {
     std::promise<plugins::Status> promise;
@@ -87,8 +85,7 @@ struct Fixture {
     return await_on_strand([&](plugins::StatusHandler handler) { core->subscriber_unregister(subscriber, contact, channel, std::move(handler)); }).ok;
   }
 
-  // Core is strand-confined, so tests reach it the same way the rest of the system
-  // does. call_on_strand runs inline when already on the strand, so nested use is fine.
+  // Core is strand-confined. call_on_strand runs inline when already on the strand, so nesting is safe.
   template <typename Fn>
   auto on_strand(Fn&& fn) {
     return core->call_on_strand(std::forward<Fn>(fn));
@@ -103,8 +100,7 @@ struct Fixture {
     return channel;
   }
 
-  // A transaction the registry can hold, wired the way Core wires its own so the
-  // terminate-while-iterating hazard is the real one.
+  // A transaction wired as Core wires its own: terminating removes it from the registry.
   std::shared_ptr<transactions::TransactionBase> make_transaction(const std::string& key) {
     auto transaction = std::make_shared<transactions::NonInviteServerTransaction>(
         logger, key, true, transactions::Timers::from_config(*config), timers, [](std::shared_ptr<SIPMessage>) {}, [](std::shared_ptr<SIPMessage>) {});
@@ -131,7 +127,7 @@ struct Fixture {
 
 }  // namespace
 
-// Regression: terminating a transaction removes it from the table being iterated.
+// Terminating a transaction removes it from the table transaction_end_all is iterating.
 TEST(CoreTest, TransactionEndAllClearsEveryTransaction) {
   Fixture f;
 
@@ -169,11 +165,11 @@ TEST(CoreTest, TransactionAddAndRemoveRoundTrip) {
   EXPECT_TRUE(f.on_strand([&]() { return f.core->transaction_remove(key); }));
   EXPECT_EQ(f.on_strand([&]() { return f.core->transaction_get(key); }), nullptr);
 
-  // Removing something that is not there is not a success.
+  // Removing an absent transaction reports failure.
   EXPECT_FALSE(f.on_strand([&]() { return f.core->transaction_remove(key); }));
 }
 
-// Regression: close() unregisters, which erases from the map being iterated.
+// close() unregisters the channel, erasing from the map channel_close_all is iterating.
 TEST(CoreTest, ChannelCloseAllClosesEveryChannel) {
   Fixture f;
 
@@ -197,7 +193,7 @@ TEST(CoreTest, ChannelCloseAllOnAnEmptyRegistryIsFine) {
   EXPECT_NO_THROW(f.on_strand([&]() { f.core->channel_close_all(); }));
 }
 
-// A channel closed on its own must not be closed a second time by the sweep.
+// A channel already closed is not closed again by channel_close_all.
 TEST(CoreTest, ChannelCloseIsIdempotent) {
   Fixture f;
 
@@ -211,8 +207,7 @@ TEST(CoreTest, ChannelCloseIsIdempotent) {
   EXPECT_EQ(connection->close_calls, 1);
 }
 
-// RFC 3261 10.3 step 7: a successful REGISTER stores the contact as a binding. Without
-// it the registrar has nothing to route to.
+// RFC 3261 10.3 step 7: a successful REGISTER stores the contact as a binding.
 TEST(CoreTest, SubscriberRegisterStoresTheContact) {
   Fixture f;
 
@@ -240,10 +235,8 @@ TEST(CoreTest, SubscriberRegisterIsRepeatable) {
   EXPECT_EQ(f.store->location_list(7).size(), 1u);
 }
 
-// RFC 5626: the binding records the flow it was learned over and the node holding it.
-// A browser or a NAT'd client has a Contact that resolves to nothing reachable, so the
-// flow is the only way back to it, and a second node cannot ask for a flow without
-// knowing whose it is.
+// RFC 5626: a binding records the flow it was learned over and the node holding that flow, the
+// only route back to a client behind NAT.
 TEST(CoreTest, SubscriberRegisterRecordsTheFlowItWasLearnedOver) {
   Fixture f;
 
@@ -259,9 +252,7 @@ TEST(CoreTest, SubscriberRegisterRecordsTheFlowItWasLearnedOver) {
   EXPECT_EQ(locations[0].node_id, "test-node");
 }
 
-// The recorded flow id is the registry's own key, not a second spelling of it. A key
-// built two ways is a lookup that silently misses, and the point of recording the flow
-// is that the node can find the connection again.
+// The recorded flow id is the channel registry's own key, so channel_find resolves it.
 TEST(CoreTest, TheRecordedFlowIdIsWhatChannelFindAnswersTo) {
   Fixture f;
 
@@ -280,8 +271,7 @@ TEST(CoreTest, TheRecordedFlowIdIsWhatChannelFindAnswersTo) {
   EXPECT_EQ(found, channel);
 }
 
-// A binding learned over no channel - a provisioned contact, or a REGISTER replayed by
-// another node - records no flow rather than an invented one.
+// A binding learned over no channel (provisioned, or replayed by another node) records no flow.
 TEST(CoreTest, SubscriberRegisterWithoutAChannelRecordsNoFlow) {
   Fixture f;
 
@@ -296,7 +286,7 @@ TEST(CoreTest, SubscriberRegisterWithoutAChannelRecordsNoFlow) {
   EXPECT_EQ(locations[0].node_id, "test-node");
 }
 
-// Unregistering drops the binding, so nothing is left for target determination to find.
+// Unregistering removes the binding.
 TEST(CoreTest, SubscriberUnregisterDropsTheBinding) {
   Fixture f;
 
@@ -312,11 +302,8 @@ TEST(CoreTest, SubscriberUnregisterDropsTheBinding) {
   EXPECT_TRUE(f.store->location_list(7).empty());
 }
 
-// A socket belongs to the thread its server runs on, and asio sockets and beast's
-// WebSocket stream are not safe for two threads at once. The Core strand is a different
-// thread, so everything it wants done to the stream it hands over. Reaching in from the
-// strand is what tsan catches on a WebSocket whose peer is tearing down at the same
-// time, and it is the same defect on TCP and TLS whether or not tsan has seen it there.
+// A socket belongs to its server's thread and is not safe for two threads at once, so the Core
+// strand hands every read, write and close to the connection's executor.
 TEST(CoreTest, ChannelStartsItsReadOnTheConnectionsExecutor) {
   Fixture f;
 
@@ -352,9 +339,7 @@ TEST(CoreTest, ChannelStartsItsWriteOnTheConnectionsExecutor) {
   EXPECT_TRUE(connection->write_on_own_executor);
 }
 
-// Closing is the case that bit: the far end goes away, the server's thread is inside the
-// stream finishing the read, and the node closes its end from the strand at the same
-// moment.
+// Close runs on the connection's executor too: the server's thread may be inside the stream.
 TEST(CoreTest, ChannelTearsTheConnectionDownOnItsOwnExecutor) {
   Fixture f;
 
@@ -373,10 +358,8 @@ TEST(CoreTest, ChannelTearsTheConnectionDownOnItsOwnExecutor) {
   EXPECT_TRUE(connection->close_on_own_executor);
 }
 
-// Two outstanding writes on one socket interleave their bytes: asio leaves the caller
-// with two messages arriving as neither, and beast's WebSocket stream refuses the
-// second outright. A transaction sends one message at a time today, and a forking proxy
-// on one flow is what would find this.
+// Writes on one connection are queued: two outstanding writes would interleave their bytes, and
+// beast's WebSocket stream refuses the second.
 TEST(CoreTest, ASecondMessageWaitsForTheFirstWriteToFinish) {
   Fixture f;
 
@@ -390,11 +373,11 @@ TEST(CoreTest, ASecondMessageWaitsForTheFirstWriteToFinish) {
   });
   f.settle();
 
-  // Only the first one is on the wire.
+  // Only the first is on the wire.
   EXPECT_EQ(connection->write_calls, 1);
   EXPECT_EQ(connection->written, "FIRST\r\n");
 
-  // Answering it releases the second.
+  // Completing it releases the second.
   f.on_strand([&connection]() { connection->complete_write(); });
   f.settle();
 
@@ -402,9 +385,7 @@ TEST(CoreTest, ASecondMessageWaitsForTheFirstWriteToFinish) {
   EXPECT_EQ(connection->written, "FIRST\r\nSECOND\r\n");
 }
 
-// async_write_some is not obliged to take the whole buffer. A short write that nobody
-// resumes is a truncated SIP message, which the far end either rejects or waits for
-// forever.
+// async_write_some may take part of the buffer; a short write is resumed until the message is out.
 TEST(CoreTest, AShortWriteIsResumedUntilTheMessageIsOut) {
   Fixture f;
 
@@ -419,8 +400,7 @@ TEST(CoreTest, AShortWriteIsResumedUntilTheMessageIsOut) {
   EXPECT_EQ(connection->write_calls, 3);
 }
 
-// Via is the proxy's, not the transport's: the transport must not invent one, or a
-// response would come back through a hop that never existed (RFC 3261 16.6 step 8).
+// The proxy adds the Via (RFC 3261 16.6 step 8); the transport must not add one.
 TEST(CoreTest, ChannelSendDoesNotAddAVia) {
   Fixture f;
 
@@ -439,8 +419,7 @@ TEST(CoreTest, ChannelSendDoesNotAddAVia) {
   EXPECT_FALSE(message->header->contains("Via"));
 }
 
-// RFC 3261 8.1.1.7: a Via without a branch names no transaction, so nothing may leave
-// carrying one. The transaction layer normally sets it; this is the transport's backstop.
+// RFC 3261 8.1.1.7: every Via carries a branch. The transaction layer sets it; the transport is the backstop.
 TEST(CoreTest, ChannelSendFillsInAMissingBranch) {
   Fixture f;
 
@@ -463,7 +442,7 @@ TEST(CoreTest, ChannelSendFillsInAMissingBranch) {
   EXPECT_EQ(message->branch, via->parameters["branch"]);
 }
 
-// A branch the transaction chose is the transaction's identity, and must be left alone.
+// An existing branch identifies the transaction and is left alone.
 TEST(CoreTest, ChannelSendKeepsAnExistingBranch) {
   Fixture f;
 
@@ -485,9 +464,7 @@ TEST(CoreTest, ChannelSendKeepsAnExistingBranch) {
   EXPECT_EQ(via->parameters["branch"], "z9hG4bK-chosen-by-the-transaction");
 }
 
-// RFC 3261 18.2.1: a request whose Via sent-by does not match where it actually came
-// from gets a received parameter, or the response goes to an address nothing is
-// listening on. This is a transport fact, so the transport is what records it.
+// RFC 3261 18.2.1: a request whose Via sent-by differs from its source address gets a received parameter.
 TEST(CoreTest, ChannelReceiveAddsReceivedWhenTheSourceDiffersFromTheVia) {
   Fixture f;
 
@@ -511,7 +488,7 @@ TEST(CoreTest, ChannelReceiveAddsReceivedWhenTheSourceDiffersFromTheVia) {
   EXPECT_EQ(via->parameters["received"], "192.0.2.77");
 }
 
-// A Via that already says where it came from needs nothing added.
+// A Via whose sent-by matches the source gets no received parameter.
 TEST(CoreTest, ChannelReceiveLeavesAMatchingViaAlone) {
   Fixture f;
 
@@ -535,9 +512,8 @@ TEST(CoreTest, ChannelReceiveLeavesAMatchingViaAlone) {
   EXPECT_FALSE(via->parameters.contains("received"));
 }
 
-// RFC 3581 section 4: rport sent empty is a request to be told the source port, because
-// a NAT's mapped port is not the one the client thinks it is using. Sent with a value it
-// is not ours to overwrite, and absent the client does not want it.
+// RFC 3581 section 4: an empty rport is filled with the source port; one with a value, or absent, is
+// left alone.
 TEST(CoreTest, ChannelReceiveFillsAnEmptyRport) {
   Fixture f;
 
@@ -584,11 +560,8 @@ TEST(CoreTest, ChannelReceiveDoesNotAddRportWhenItWasNotAskedFor) {
   EXPECT_FALSE(via->parameters.contains("rport"));
 }
 
-// RFC 3261 10.3 step 7: a REGISTER may ask to remove a binding the registrar does not hold -
-// a client clearing a Contact from before it restarted, the binding long expired - and that
-// is not an error. The store says there was nothing to remove; the node does not log it as a
-// failure, which on a node a phone re-registers with every few minutes is noise that hides
-// the real ones.
+// RFC 3261 10.3 step 7: removing a binding the registrar does not hold (expired, or from before a
+// client restart) is not an error and is not logged as one.
 TEST(CoreTest, RemovingABindingThatIsNotThereIsNotAnError) {
   Fixture f;
   auto subscriber = f.seed_subscriber(7, "sip:bob@example.com");

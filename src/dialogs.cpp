@@ -52,8 +52,8 @@ std::uint64_t cseq_of(const std::shared_ptr<SIPMessage>& message) {
   return cseq == nullptr ? 0 : cseq->sequence;
 }
 
-// RFC 3261 12.1.1 remote target: the Contact the end offered. A Contact of "*" is the
-// registrar's wildcard (20.10) and is not a target.
+// RFC 3261 12.1.1 remote target: the Contact. "*" is the registrar's wildcard (20.10), not
+// a target.
 std::shared_ptr<SIPUri> target_of(const std::shared_ptr<SIPMessage>& message) {
   auto contact = identity_of(message, "Contact");
   if (!contact || contact->star) return nullptr;
@@ -74,9 +74,7 @@ std::vector<std::shared_ptr<SIPUri>> route_set_of(const std::shared_ptr<SIPMessa
   return route_set;
 }
 
-// RFC 3261 12.1.1: a dialog is secure when the request was sent over TLS and the
-// Request-URI was a sips URI. Both are required - TLS on the hop this node saw says
-// nothing about the hops it did not.
+// RFC 3261 12.1.1: secure only if the request came over TLS and its Request-URI is sips.
 bool is_secure(const std::shared_ptr<SIPMessage>& request) {
   if (!request->header->request_uri || Util::to_lower(request->header->request_uri->scheme) != "sips") return false;
 
@@ -89,8 +87,7 @@ bool is_secure(const std::shared_ptr<SIPMessage>& request) {
 
 bool is_2xx(int code) { return code >= 200 && code < 300; }
 
-// RFC 4028 section 4. Null when the message carries no such field, which is the common
-// case and is not an error: session timers are an extension both ends have to offer.
+// RFC 4028 section 4. Null when the header is absent, which is not an error.
 headers::SessionExpiresHeader* session_expires_of(const std::shared_ptr<SIPMessage>& message) {
   if (!message->header->contains("Session-Expires")) return nullptr;
   return message->header->headers_map["Session-Expires"][0]->as<SessionExpiresHeader>();
@@ -109,15 +106,12 @@ void Dialogs::observe_request(const std::shared_ptr<SIPMessage>& request) {
   const auto to_tag = tag_of(request, "To");
   const auto& method = request->header->request_method;
 
-  // RFC 3261 12.1: an INVITE with no To tag is outside any dialog, so it is a new call
-  // attempt. The caller's half of the dialog is everything that can be known before the
-  // callee has said anything at all.
+  // RFC 3261 12.1: an INVITE with no To tag is a new call attempt; record the caller's half.
   if (method == "INVITE" && to_tag.empty()) {
     auto& branches = _by_call_id[call_id];
 
-    // A retransmission never reaches here - the server transaction absorbs it (17.2.1) -
-    // so a second attempt on one Call-ID is a caller that reused it, and the one already
-    // recorded stands.
+    // Retransmissions are absorbed by the server transaction (17.2.1), so a repeat here is a
+    // caller reusing the Call-ID; the recorded attempt stands.
     for (const auto& existing : branches) {
       if (existing->caller_tag == from_tag) return;
     }
@@ -143,8 +137,7 @@ void Dialogs::observe_request(const std::shared_ptr<SIPMessage>& request) {
   auto dialog = find(request);
   if (!dialog) return;
 
-  // 12.2.1.1: each end has its own sequence, and which one this request advances is a
-  // question of which end it came from.
+  // 12.2.1.1: each end has its own CSeq sequence.
   const auto cseq = cseq_of(request);
 
   if (dialog->is_from_caller(from_tag)) {
@@ -153,21 +146,17 @@ void Dialogs::observe_request(const std::shared_ptr<SIPMessage>& request) {
     dialog->callee_cseq = cseq;
   }
 
-  // RFC 3261 15.1: a BYE ends the dialog, whichever end sends it. This is the whole
-  // reason the node tracks dialogs at all - it is where media is released and the call
-  // record closed.
+  // RFC 3261 15.1: a BYE from either end terminates the dialog.
   if (method == "BYE") return _terminate(dialog, "BYE");
 
-  // RFC 3261 9.1: a CANCEL ends the attempt it names. It has no effect on one already
-  // answered, which is the race where the callee picked up as the caller gave up - the
-  // call is up, and a BYE is what ends it now.
+  // RFC 3261 9.1: a CANCEL ends an early attempt and has no effect on an answered call.
   if (method == "CANCEL") {
     if (dialog->state == Dialog::State::Early) _terminate(dialog, "CANCEL");
     return;
   }
 
-  // A re-INVITE or an UPDATE may move the remote target (12.2.1.1) and refresh the
-  // session (RFC 4028).
+  // A re-INVITE or UPDATE may move the remote target (12.2.1.1) and refresh the session
+  // (RFC 4028).
   if (method == "INVITE" || method == "UPDATE") {
     if (auto target = target_of(request)) {
       if (dialog->is_from_caller(from_tag)) {
@@ -177,10 +166,7 @@ void Dialogs::observe_request(const std::shared_ptr<SIPMessage>& request) {
       }
     }
 
-    // RFC 4028 section 7: the refresh is a re-INVITE or an UPDATE inside the dialog.
-    // A proxy takes the request itself as the proof it wants - a request travelling
-    // between the two ends is both of them still being there, which is the only
-    // question a node keeping state has to answer.
+    // RFC 4028 section 7: a re-INVITE or UPDATE in the dialog is the refresh.
     if (dialog->session_interval > 0) {
       dialog->session_deadline = _timers->now() + std::chrono::seconds(dialog->session_interval);
       _reschedule_sweep();
@@ -191,8 +177,7 @@ void Dialogs::observe_request(const std::shared_ptr<SIPMessage>& request) {
 }
 
 void Dialogs::observe_response(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<SIPMessage>& response) {
-  // Only an INVITE creates a dialog (12.1). Responses to anything else move nothing
-  // here, and a BYE's own 200 arrives after the dialog has already gone.
+  // Only an INVITE creates a dialog (12.1).
   if (request->header->request_method != "INVITE") return;
 
   const auto call_id = call_id_of(request);
@@ -201,8 +186,7 @@ void Dialogs::observe_response(const std::shared_ptr<SIPMessage>& request, const
   const auto code = response->header->response_code;
   const auto callee_tag = tag_of(response, "To");
 
-  // 12.1 again: without a To tag the callee has not identified itself, so there is no
-  // dialog yet - only an attempt that may still fail.
+  // 12.1: no To tag means no dialog yet, only an attempt that may still fail.
   if (callee_tag.empty()) {
     if (code >= 300) {
       auto attempt = find(request);
@@ -216,9 +200,8 @@ void Dialogs::observe_response(const std::shared_ptr<SIPMessage>& request, const
 
   if (code >= 300) return _terminate(dialog, "non-2xx final response");
 
-  // A provisional with a To tag is an early dialog; a 2xx confirms it (12.1). Either way
-  // the callee has now said where it is and what route it wants, so both are recorded -
-  // a call cancelled while ringing still has to release what the early dialog reserved.
+  // A provisional with a To tag makes an early dialog; a 2xx confirms it (12.1). The callee's
+  // target and route set are recorded in both cases.
   if (auto target = target_of(response)) dialog->callee_target = target;
   if (auto route_set = route_set_of(response); !route_set.empty()) dialog->route_set = std::move(route_set);
 
@@ -230,9 +213,8 @@ void Dialogs::observe_response(const std::shared_ptr<SIPMessage>& request, const
     dialog->confirmed_at = std::time(nullptr);
     dialog->confirmed_monotonic = _timers->now();
 
-    // RFC 4028 section 7.1: the 2xx carries what the two ends settled on, which is the
-    // only value worth recording - what the INVITE asked for is a request, not an
-    // agreement, and the UAS is free to lower it.
+    // RFC 4028 section 7.1: the 2xx carries the agreed interval; the INVITE's was only a
+    // request.
     if (auto* session = session_expires_of(response); session != nullptr && session->delta_seconds > 0) {
       dialog->session_interval = session->delta_seconds;
       dialog->refresher = session->refresher;
@@ -260,16 +242,16 @@ void Dialogs::observe_branch_failure(const std::shared_ptr<SIPMessage>& request,
   auto failed = std::find_if(branches.begin(), branches.end(), [&callee_tag](const auto& dialog) { return dialog->callee_tag == callee_tag; });
   if (failed == branches.end() || (*failed)->state != Dialog::State::Early) return;
 
-  // Another branch's dialog carries the call on, and this one simply goes. Quietly: the
-  // call record follows the dialog it is told about, and this one ending is not the call.
+  // Another branch's dialog carries the call on, so this one is dropped without a change
+  // notification.
   if (branches.size() > 1) {
     _logger->debug("Early dialog " + (*failed)->id() + " ended with its branch");
     branches.erase(failed);
     return;
   }
 
-  // The only one, which is the attempt itself with this branch's half filled in. It goes
-  // back to being an attempt, ready for the next branch to give it a callee.
+  // The only dialog is the attempt itself: clear the callee half so the next branch can
+  // fill it.
   auto& attempt = *failed;
   attempt->callee_tag.clear();
   attempt->callee = identity_of(request, "To");
@@ -288,9 +270,8 @@ std::shared_ptr<Dialog> Dialogs::_for_tag(const std::string& call_id, const std:
     if (dialog->callee_tag == callee_tag) return dialog;
   }
 
-  // The first tag to arrive completes the attempt that is already there. A second, which
-  // only happens when a fork had more than one branch answer, gets a dialog of its own
-  // built from the same caller half (12.1).
+  // The first tag completes the existing attempt. A later one (a fork with several answering
+  // branches) gets its own dialog copied from the caller's half (12.1).
   for (const auto& dialog : branches) {
     if (dialog->callee_tag.empty()) {
       dialog->callee_tag = callee_tag;
@@ -325,10 +306,8 @@ std::shared_ptr<Dialog> Dialogs::find(const std::shared_ptr<SIPMessage>& message
     if (dialog->matches(call_id, from_tag, to_tag)) return dialog;
   }
 
-  // A request from the caller with no To tag is one sent before the caller learned of
-  // any tag, so it belongs to the attempt whether or not the callee has since answered
-  // with one. The CANCEL is why this matters: it carries the INVITE's tagless To (9.1)
-  // and still has to find the call it is cancelling after a 180 has gone back.
+  // A caller's request with no To tag belongs to the attempt even after the callee has
+  // answered with one: a CANCEL carries the INVITE's tagless To (9.1).
   if (to_tag.empty()) {
     for (const auto& dialog : search->second) {
       if (dialog->caller_tag == from_tag) return dialog;
@@ -356,11 +335,8 @@ std::size_t Dialogs::size() const {
 
 void Dialogs::terminate(const std::shared_ptr<types::Dialog>& dialog) { _terminate(dialog, "torn down"); }
 
-// RFC 4028 section 8: a proxy keeping session state uses the timer to decide when to
-// discard it. Discard, and not a BYE to both ends: sending one would be acting as a user
-// agent in a dialog this node is only on the path of, and section 16 is clear that a
-// proxy is not that. The endpoints run their own timers and will each send their own
-// BYE; what expiry means here is that this node stops holding the call open.
+// RFC 4028 section 8: on expiry a proxy discards its session state. It does not send BYE;
+// the endpoints run their own timers and send their own.
 void Dialogs::_sweep() {
   const auto now = _timers->now();
 
@@ -396,15 +372,13 @@ void Dialogs::_reschedule_sweep() {
     }
   }
 
-  // Nothing negotiated a timer, so nothing can lapse and no timer is armed. A node
-  // whose endpoints do not use session timers pays nothing for this.
+  // No dialog negotiated a session timer, so none is armed.
   if (!found) return;
 
   const auto now = _timers->now();
   const auto delay = earliest <= now ? std::chrono::milliseconds(0) : std::chrono::duration_cast<std::chrono::milliseconds>(earliest - now);
 
-  // Weak: a timer outlives the node's shutdown otherwise, and fires into a table that
-  // has gone.
+  // Weak, so a timer that outlives shutdown does not fire into a destroyed table.
   std::weak_ptr<Dialogs> weak_self = weak_from_this();
   _sweep_timer = _timers->schedule(delay, [weak_self]() {
     if (auto self = weak_self.lock()) self->_sweep();
@@ -419,9 +393,7 @@ void Dialogs::_terminate(const std::shared_ptr<Dialog>& dialog, const char* reas
 
   _logger->info("Dialog " + (dialog->id().empty() ? dialog->call_id : dialog->id()) + " terminated - " + reason);
 
-  // The record goes out before the dialog does, because the callback is what writes the
-  // call record and releases the media. After it returns, what is left in the table is
-  // what is still live and nothing else.
+  // Notify before erasing: the callback writes the call record and releases media.
   _changed(dialog);
 
   auto search = _by_call_id.find(dialog->call_id);
@@ -434,7 +406,7 @@ void Dialogs::_terminate(const std::shared_ptr<Dialog>& dialog, const char* reas
 
   if (branches.empty()) _by_call_id.erase(search);
 
-  // The timer may have been armed for the dialog that just went.
+  // The sweep timer may have been armed for this dialog.
   if (had_timer) _reschedule_sweep();
 }
 

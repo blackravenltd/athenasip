@@ -13,9 +13,7 @@
 
 #include "loggers/logger.h"
 
-// A logger that says nothing and remembers everything. Most tests want the first half,
-// which is why it exists; a test about what this node logs wants the second, and a
-// logger that discarded it could not answer that question at all.
+// A silent logger that records every line, for tests about what the node logs.
 class MockLogger : public athenasip::loggers::Logger {
  public:
   void debug(const std::string& log) override { _record(athenasip::loggers::LogLevel::DEBUG, log); }

@@ -4,38 +4,29 @@
 # Copyright (C) 2026 Tom Cully <mail@tomcully.com>
 # Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 #
-# The node a SIP client is pointed at to see whether the two agree. Everything is
-# in-process: nothing here is testing Redis or a broker, and a fixture that needs them
-# is a fixture that fails for reasons that have nothing to do with SIP.
+# The node a SIP client is pointed at. Everything is in-process: no Redis, no broker.
 #
-# Rendered by up.sh, which is where the ports come from. They default to the ones
-# AthenaPhone's integration harness already uses for its Asterisk fixture, so pointing
-# that harness here is a host and a CA rather than a rewrite, and they can be moved so
-# that both fixtures run at once.
+# Rendered by up.sh, which supplies the ports. They default to those AthenaPhone's
+# harness uses for its Asterisk fixture, and can be moved to run both at once.
 #
-# The container binds the same number the host publishes. A node writes its own local
-# port into Via and Record-Route, so a mapping that translated the port would tell a
-# client to come back to one nothing is listening on.
+# The container binds the port numbers the host publishes: the node writes its own port
+# into Via and Record-Route.
 
 sip:
   node_id: interop-node
 
-  # The client runs on the host and reaches the container through published ports, so
-  # this is the address it can actually come back to. Without it the node writes the
-  # container's own address into Via and Record-Route and nothing routes.
+  # The host address the client reaches the published ports on, written into Via and
+  # Record-Route.
   public_address: @PUBLIC_ADDRESS@
 
-  # UDP, TCP and WS are the point of this fixture. TLS is here too, and a client that
-  # wants it verifies against tls/ca/snakeca.crt.
+  # UDP, TCP and WS are the point of this fixture. A client using TLS verifies against
+  # tls/ca/snakeca.crt.
   allow_unencrypted: true
 
-  # The whole of every message, bodies included, because this fixture exists to find out
-  # why a client and this node disagree and the session description is usually the
-  # answer. Credentials are redacted. ATHENA_INTEROP_LOG_MESSAGES=false turns it off.
+  # Log whole messages, bodies included; credentials are redacted.
+  # ATHENA_INTEROP_LOG_MESSAGES=false turns it off.
   log_messages: @LOG_MESSAGES@
 
-  # Long enough that a registration does not lapse mid-test, short enough that a stale
-  # one does not outlive the container.
   connect_timeout_ms: 4000
 
 udp:
@@ -55,9 +46,7 @@ tls:
   cert_pem_filename: "/tls/snakeoil.cer"
   key_pem_filename: "/tls/snakeoil.key"
 
-# One WebSocket listener, plain, on the port Asterisk serves ws on. A node has one
-# websocket section, so it is ws or wss and not both; this fixture is the signalling
-# one, and a client that cannot be given a CA cannot verify wss anyway.
+# Plain ws only, on the port Asterisk serves ws on.
 websocket:
   enable: true
   address: 0.0.0.0
@@ -70,14 +59,10 @@ datastore:
 events:
   url: "local://"
 
-# Which engine is on the media path. Both drivers are configured whichever it is: a
-# plugin reads its own YAML root, so the one that was not selected reads nothing.
+# Both drivers are configured; only the one the URL selects reads its section.
 #
-# builtin:// is the in-process relay and plain RTP, which is what an ordinary SIP
-# softphone on UDP, TCP or TLS expects. A client whose media is WebRTC will register
-# and signal cleanly against it and fail to agree on media, which is the honest result
-# rather than one arranged by configuration - and rtpengine, which up.sh --rtpengine
-# selects, is the answer to it.
+# builtin:// is plain RTP, which an ordinary softphone on UDP, TCP or TLS expects. A
+# WebRTC client needs rtpengine, which up.sh --rtpengine selects.
 media:
   url: "@MEDIA_URL@"
 
@@ -88,8 +73,7 @@ media:
     port_max: @RTP_MAX@
 
   rtpengine:
-    # The engine is a container away on a bridge and answers in microseconds, so this
-    # is a bound on silence rather than on work.
+    # The engine is on the same bridge, so this only bounds silence.
     timeout_ms: 500
     attempts: 3
 
@@ -99,19 +83,16 @@ http:
 
   api:
     enable: true
-    # No tokens. The node creates the fixture's user as it starts (docker-compose.yml), and
-    # everything that uses this API - up.sh provisioning, the browser spec - signs in as it.
+    # No tokens: up.sh and the browser spec sign in as the fixture's user, which the node
+    # creates as it starts (docker-compose.yml).
 
-    # What a browser is told to use for ICE, served by GET /api/v1/client/config. Rendered
-    # by up.sh: empty unless coturn is in the fixture, because a client told about a TURN
-    # server that is not there is worse off than one told about none.
+    # ICE servers for GET /api/v1/client/config. Rendered by up.sh: empty unless coturn is
+    # in the fixture.
 @ICE_SERVERS@
     turn_shared_secret: "@TURN_SECRET@"
     turn_credential_ttl: 600
 
-  # The admin client, which is also the harness's browser page: a softphone this node
-  # serves itself, so a browser test needs no second web server and no CORS. The
-  # directory is mounted by up.sh and is empty of this node's concern otherwise.
+  # The admin client, whose softphone is the browser test's page. Mounted by up.sh.
   files:
     enable: @FILES_ENABLE@
     path: "/admin"

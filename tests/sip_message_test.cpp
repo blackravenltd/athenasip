@@ -22,7 +22,7 @@ std::shared_ptr<SIPMessage> request_with(const std::string& text) {
   return message;
 }
 
-// A request that traversed two proxies, so it carries three Via values.
+// A request that crossed two proxies, so it carries three Via values.
 const char* kProxiedInvite =
     "INVITE sip:bob@example.com SIP/2.0\r\n"
     "Via: SIP/2.0/UDP proxy2.example.com:5060;branch=z9hG4bK-three\r\n"
@@ -36,8 +36,7 @@ const char* kProxiedInvite =
 
 }  // namespace
 
-// RFC 3261 8.2.6.2: the UAS MUST copy ALL Via header field values from the request
-// into the response, in order. Otherwise the response cannot retrace the proxy chain.
+// RFC 3261 8.2.6.2: the response copies every Via from the request, in order.
 TEST(SIPMessageTest, ResponseCopiesEveryViaInOrder) {
   auto request = request_with(kProxiedInvite);
   ASSERT_EQ(request->header->headers_map["Via"].size(), 3u);
@@ -60,8 +59,8 @@ TEST(SIPMessageTest, ResponseCopiesFromCallIdAndCSeq) {
   EXPECT_NE(response->header->headers_map["From"][0]->to_string().find("tag=alice-tag"), std::string::npos);
 }
 
-// RFC 3261 8.2.6.2: if the request's To has no tag, the response's To gets one. The
-// request itself must not be modified: it is still needed for transaction matching.
+// RFC 3261 8.2.6.2: a To without a tag gets one in the response. The request is not
+// modified, since it is still needed for transaction matching.
 TEST(SIPMessageTest, ResponseAddsToTagWithoutMutatingTheRequest) {
   auto request = request_with(kProxiedInvite);
   const auto to_before = request->header->headers_map["To"][0]->to_string();
@@ -78,8 +77,8 @@ TEST(SIPMessageTest, ResponseIsAResponse) {
   EXPECT_EQ(response->header->type, SIPHeader::Type::Response);
 }
 
-// RFC 3261 17.1.3 and 17.2.3: a transaction is matched on the topmost Via branch, the
-// sent-by of that Via, and the method. Branch alone collides across upstream hops.
+// RFC 3261 17.1.3, 17.2.3: a transaction is matched on the top Via's branch and sent-by
+// and the method. Branch alone collides across upstream hops.
 TEST(SIPMessageTest, TransactionIdIncludesSentBy) {
   auto from_proxy_one = request_with(
       "INVITE sip:bob@example.com SIP/2.0\r\n"

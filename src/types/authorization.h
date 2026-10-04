@@ -16,37 +16,32 @@ namespace athenasip::types {
 
 class Authorization {
  public:
-  /// The authentication scheme (e.g. "Digest")
+  // The authentication scheme, e.g. "Digest".
   std::string type;
 
-  /// Public storage for key/value pairs from the header.
+  // The parameters.
   std::unordered_map<std::string, std::string> fields;
 
   Authorization() = default;
 
-  /// Constructs and immediately parses the given header string.
-  /// If parsing fails, the instance will be empty.
+  // Parses the given header value; empty if it does not parse.
   explicit Authorization(const std::string& input) { parse(input); }
 
-  /// Parses the input header string.
-  /// Returns true if parsing was successful, false otherwise.
-  /// This function does not throw exceptions.
+  // False if the value does not parse. Does not throw.
   bool parse(const std::string& input) {
-    // Clear any existing content.
     fields.clear();
     type.clear();
 
     size_t pos = 0;
     const size_t len = input.size();
 
-    // Helper lambda: skip whitespace.
     auto skip_whitespace = [&](size_t& pos) {
       while (pos < len && std::isspace(static_cast<unsigned char>(input[pos]))) {
         ++pos;
       }
     };
 
-    // --- Parse the type (e.g. "Digest") ---
+    // The scheme.
     skip_whitespace(pos);
     size_t type_start = pos;
     while (pos < len && !std::isspace(static_cast<unsigned char>(input[pos]))) {
@@ -57,18 +52,15 @@ class Authorization {
     }
     type = input.substr(type_start, pos - type_start);
 
-    // Skip whitespace after the type.
     skip_whitespace(pos);
 
-    // --- Parse key-value pairs ---
+    // The parameters: key=value, comma-separated.
     while (pos < len) {
-      // Skip any commas and whitespace.
       while (pos < len && (std::isspace(static_cast<unsigned char>(input[pos])) || input[pos] == ',')) {
         ++pos;
       }
       if (pos >= len) break;
 
-      // Parse key: read until '=' or whitespace.
       size_t key_start = pos;
       while (pos < len && input[pos] != '=' && !std::isspace(static_cast<unsigned char>(input[pos])) && input[pos] != ',') {
         ++pos;
@@ -78,7 +70,6 @@ class Authorization {
       }
       std::string key = Util::trim(input.substr(key_start, pos - key_start));
 
-      // Skip whitespace until the '='.
       skip_whitespace(pos);
       if (pos >= len || input[pos] != '=') {
         return false;  // Expected '=' after key.
@@ -91,13 +82,12 @@ class Authorization {
 
       std::string value;
       if (input[pos] == '"') {
-        // Quoted value with escape support.
+        // Quoted, with backslash escapes.
         ++pos;  // Skip opening quote.
         std::string result;
         while (pos < len) {
           char c = input[pos];
           if (c == '\\') {
-            // Escape sequence: include next character literally.
             if (pos + 1 < len) {
               ++pos;
               result.push_back(input[pos]);
@@ -117,14 +107,13 @@ class Authorization {
         value = result;
         ++pos;  // Skip closing quote.
       } else {
-        // Unquoted value: read until comma.
+        // Unquoted: up to the next comma.
         size_t value_start = pos;
         while (pos < len && input[pos] != ',') {
           ++pos;
         }
         value = Util::trim(input.substr(value_start, pos - value_start));
       }
-      // Insert the key/value pair.
       fields[key] = value;
     }
 
@@ -133,17 +122,9 @@ class Authorization {
 
   bool contains_field(const std::string& field) { return fields.find(field) != fields.end(); }
 
-  /// Converts this header back into a std::string.
-  /// The format will be:
-  ///     <type> key=value, key="value", ...
-  // RFC 7616 section 3 and RFC 3261 25.1: whether a parameter is a token or a quoted
-  // string is fixed by the grammar, not by what its value happens to look like.
-  // algorithm, stale and nc are tokens, and quoting one is malformed - which is why
-  // this server could not send an algorithm at all until now.
-  //
-  // qop is the awkward one: quoted in a challenge and a token in the credentials a
-  // client sends back. This server writes challenges, so it is quoted here; a UAC
-  // sending its own credentials will have to say which it is building.
+  // RFC 7616 section 3 and RFC 3261 25.1: the grammar fixes whether a parameter is a token or a quoted string.
+  // algorithm, stale and nc are tokens, and quoting one is malformed. qop is quoted in a challenge and a token in
+  // credentials; this server writes challenges, so it is quoted here.
   static bool is_token_parameter(const std::string& name) {
     const auto lowered = Util::to_lower(name);
     return lowered == "algorithm" || lowered == "stale" || lowered == "nc";
@@ -171,11 +152,10 @@ class Authorization {
   }
 
  private:
-  // Helper: returns true if the value should be quoted when reconstructing.
+  // Whether a value must be quoted when written.
   static bool need_quote(const std::string& s) {
     if (s.empty()) return true;
     for (char c : s) {
-      // Allow alphanumerics and a few safe punctuation characters.
       if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '.' || c == '_' || c == ':')) {
         return true;
       }

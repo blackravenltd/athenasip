@@ -34,9 +34,8 @@ class RTPRelaySet : public std::enable_shared_from_this<RTPRelaySet> {
   std::unordered_map<std::string, std::shared_ptr<boost::asio::ip::udp::endpoint>> remotes;
   uint16_t port;
 
-  // One end of the relay, counted at the relay in both directions: in is what arrived from
-  // it - including a packet that went nowhere because the other end had not latched yet -
-  // and out is what the relay sent to it. One-way audio is one of the two standing still.
+  // One end of the relay. in is what arrived from it, including packets dropped because no other end was known yet; out
+  // is what the relay sent to it.
   struct Counts {
     std::uint64_t packets_in = 0;
     std::uint64_t bytes_in = 0;
@@ -44,8 +43,7 @@ class RTPRelaySet : public std::enable_shared_from_this<RTPRelaySet> {
     std::uint64_t bytes_out = 0;
   };
 
-  // `relayed` is the relay's running total of packets sent on, shared by every set it
-  // allocates, so the node can say how much media it has carried over its whole life.
+  // `relayed` is the owning relay's running total of packets sent on, shared by every set it allocates.
   RTPRelaySet(std::shared_ptr<Logger> logger, const std::string& _bind_address, uint16_t _port, std::shared_ptr<std::atomic<std::uint64_t>> relayed = nullptr)
       : _relayed(std::move(relayed)),
         port(_port),
@@ -55,11 +53,8 @@ class RTPRelaySet : public std::enable_shared_from_this<RTPRelaySet> {
         _socket(_io_context, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address(_bind_address), _port)),
         _buffer(boost::asio::buffer(_recv_buffer)) {}
 
-  // A socket belongs to the thread its io_context runs on, and this one runs on the
-  // process io_context. Starting a read from whatever thread happened to call in is a
-  // second thread inside the socket, which is the rule the transport learned the hard
-  // way; the work is handed over instead. dispatch rather than post, so a caller that
-  // is already the io thread - which the Core strand is - runs it inline.
+  // The socket belongs to the io_context thread, so the read is started there. dispatch, so a caller already on that
+  // thread runs it inline.
   void start() {
     _last_packet_ms.store(_now_ms(), std::memory_order_relaxed);
 
@@ -69,24 +64,14 @@ class RTPRelaySet : public std::enable_shared_from_this<RTPRelaySet> {
     _logger->info("Started");
   }
 
-  // When this relay last saw a packet arrive, on the steady clock. It starts at
-  // allocation rather than at zero, so a call whose media has not begun yet reads as
-  // young rather than as infinitely idle.
-  //
-  // This is what tells the node a call has gone away without saying so. A phone that
-  // loses power sends no BYE, and a proxy holding relay ports for it holds them until it
-  // restarts; nothing in the signalling plane will ever say otherwise. RTCP is relayed
-  // through a set of its own and counts here too, which is what keeps a call on hold or
-  // one whose codec suppresses silence from looking dead (RFC 3550 section 6: reports
-  // are sent for the life of the session, whether or not there is anything to carry).
+  // Time since a packet last arrived, counted from allocation so a call whose media has not begun reads as young. This
+  // is how the node detects a call that ended without a BYE. RTCP is relayed through its own set and counts too, so a
+  // held call or a silence-suppressing codec does not look dead (RFC 3550 section 6).
   std::chrono::milliseconds idle_for() const { return std::chrono::milliseconds(_now_ms() - _last_packet_ms.load(std::memory_order_relaxed)); }
 
-  // Where an end said to send its media (RFC 8866 5.7 and 5.14), before it has sent any.
-  // A latching relay that waited to hear from both ends forwarded nothing to one that only
-  // listens - muted with silence suppression, an IVR, a recorder - so each end starts at
-  // the address its description gave, and moves to wherever its packets really come from
-  // once it is heard (symmetric latching, for an end behind a NAT). Handed to the io thread,
-  // which is where the endpoints live.
+  // Where an end said to send its media (RFC 8866 5.7 and 5.14). Each end starts at its described address, so an end
+  // that only listens still receives, and moves to wherever its packets really come from once heard (symmetric
+  // latching, for NAT). Runs on the io thread, where the endpoints live.
   void expect(const std::string& address, std::uint16_t port) {
     boost::system::error_code ec;
     const auto parsed = boost::asio::ip::make_address(address, ec);
@@ -107,18 +92,14 @@ class RTPRelaySet : public std::enable_shared_from_this<RTPRelaySet> {
     });
   }
 
-  // Per end, in the order the ends were first heard from. Copied out under the lock: the
-  // read loop counts on the io thread and this is asked from anywhere.
+  // Per end, in the order the ends became known. Copied under the lock: the io thread counts and any thread may ask.
   std::vector<Counts> counts() const {
     std::lock_guard lock(_counts_mutex);
     return _received;
   }
 
-  // Closing goes to the io thread for the same reason, and then waits: the port is
-  // back in the pool the moment release_relay_set returns and the next allocation may
-  // bind it, so the socket has to be shut before then. The wait is bounded because a
-  // context that has already stopped will never run the work, and hanging a shutdown
-  // on that would be worse than a port that takes a moment longer to come back.
+  // Closes on the io thread and waits, because the port returns to the pool as soon as release_relay_set returns and
+  // may be rebound. The wait is bounded because a stopped context never runs the work.
   void stop() {
     auto self = shared_from_this();
     auto closed = std::make_shared<std::promise<void>>();
@@ -134,18 +115,14 @@ class RTPRelaySet : public std::enable_shared_from_this<RTPRelaySet> {
     _logger->info("Stopped");
   }
 
-  // Every continuation carries `self`. The read loop re-arms itself by posting, and a
-  // relay released while one of those posts is in flight would otherwise be destroyed
-  // under it: the posted lambda held a raw `this` and read() begins with
-  // shared_from_this(). stop() closes the socket, so the outstanding receive completes
-  // with operation_aborted, the chain ends, and the last reference goes with it.
+  // Every continuation holds self, so a relay released mid-read is not destroyed under it. stop() closes the socket,
+  // the receive completes with operation_aborted and the chain ends.
   void read() {
     auto self = shared_from_this();
     auto sender_endpoint = std::make_shared<boost::asio::ip::udp::endpoint>();
 
     _socket.async_receive_from(
         boost::asio::buffer(_buffer), *sender_endpoint, [this, self, sender_endpoint](boost::system::error_code ec, std::size_t bytes_recvd) {
-          // Drop packet if error
           if (ec) {
             if (ec != boost::asio::error::operation_aborted) {
               _logger->error("Socket error: " + ec.what());
@@ -153,18 +130,14 @@ class RTPRelaySet : public std::enable_shared_from_this<RTPRelaySet> {
             return;
           }
 
-          // Before anything else is decided about it: a packet arrived, so this relay is
-          // carrying a live call. Even one that is dropped below says that much.
+          // Any packet arriving, even one dropped below, means the call is live.
           _last_packet_ms.store(_now_ms(), std::memory_order_relaxed);
 
-          // Create a string key from the endpoint
           auto endpointString = _get_endpoint_str(sender_endpoint);
-          // Use unordered_map::find to check if key exists
           auto it = remotes.find(endpointString);
 
-          // Register if first seen. An end that was only described so far is this one if it
-          // shares the address, or if it is the only end not heard from yet: that is a NAT
-          // having moved the port, or the address, and the described one goes.
+          // First packet from this source. It replaces a described-only end on the same address, or the only end still
+          // unheard: a NAT moved the address or port.
           if (it == remotes.end()) {
             const auto replaced = _unheard_for(*sender_endpoint);
 
@@ -188,9 +161,7 @@ class RTPRelaySet : public std::enable_shared_from_this<RTPRelaySet> {
             _unheard.erase(endpointString);
           }
 
-          // A bridge has two ends. Once two have been heard from, an end that was only ever
-          // described is an address nothing answers from - the inside of somebody's NAT -
-          // and media stops going there.
+          // A bridge has two ends: once two have been heard, ends that were only described are unreachable and are dropped.
           if (!_unheard.empty() && remotes.size() - _unheard.size() >= 2) {
             std::lock_guard lock(_counts_mutex);
             for (const auto& key : _unheard) {
@@ -208,22 +179,18 @@ class RTPRelaySet : public std::enable_shared_from_this<RTPRelaySet> {
             _received[slot->second].bytes_in += bytes_recvd;
           }
 
-          // Drop packet if zero length
           if (bytes_recvd == 0) {
             boost::asio::post(_io_context, [this, self]() { read(); });
             return;
           }
 
-          // If less than two remotes are registered, there's no one else to relay to
+          // Nobody to relay to yet.
           if (remotes.size() < 2) {
             boost::asio::post(_io_context, [this, self]() { read(); });
             return;
           }
 
-          // The payload is copied rather than relayed out of the receive buffer. A send
-          // holds a reference to its buffer until it completes, and the next read is
-          // armed below and will write over that buffer, so relaying from it sends
-          // whatever arrived next instead of what was meant.
+          // Copied, because the next read reuses the receive buffer before the send completes.
           auto payload = std::make_shared<std::string>(_recv_buffer.data(), bytes_recvd);
 
           for (const auto& remote : remotes) {
@@ -238,11 +205,10 @@ class RTPRelaySet : public std::enable_shared_from_this<RTPRelaySet> {
               }
             }
             _socket.async_send_to(boost::asio::buffer(*payload), *(remote.second), [self, payload](boost::system::error_code, std::size_t) {
-              // Nothing to do with the result; the payload is held until it is sent.
+              // The payload is held until the send completes.
             });
           }
 
-          // Prepare for the next read
           boost::asio::post(_io_context, [this, self]() { read(); });
         });
   }
@@ -260,19 +226,16 @@ class RTPRelaySet : public std::enable_shared_from_this<RTPRelaySet> {
   std::array<char, 65535> _recv_buffer{};
   boost::asio::mutable_buffer _buffer;
 
-  // Relaxed throughout: this is one store on the packet path and one load from a sweep
-  // that runs every few minutes. Nothing is ordered against it and a read that is a few
-  // microseconds stale cannot change an answer measured in minutes.
+  // Relaxed: one store per packet and one load from an infrequent sweep; a stale read is harmless.
   std::atomic<std::int64_t> _last_packet_ms{0};
 
   static std::int64_t _now_ms() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 
-  // Described ends not yet heard from, on the io thread with the endpoints.
+  // Described ends not yet heard from. Io thread only.
   std::set<std::string> _unheard;
 
-  // The described end a newly heard source stands for: one on the same address, else the
-  // only one left unheard. Empty when it is a new end, or when two are unheard and nothing
-  // says which.
+  // The described end a newly heard source stands for: one on the same address, else the only one unheard. Empty for
+  // a new end, or when several are unheard and none shares the address.
   std::string _unheard_for(const boost::asio::ip::udp::endpoint& source) const {
     if (_unheard.empty()) return "";
 

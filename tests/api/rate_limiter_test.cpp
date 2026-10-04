@@ -30,11 +30,11 @@ TEST(RateLimiterTest, TheBurstIsAllowedAndTheNextIsNot) {
   const auto refused = limiter.take("a", kFivePerMinute, now);
   ASSERT_TRUE(refused.has_value());
 
-  // Five a minute is one every twelve seconds, and that is how long the next one is.
+  // Five a minute is one every twelve seconds.
   EXPECT_EQ(*refused, 12s);
 }
 
-// It refills at the rate, so a caller that waits what it was told is let through.
+// The bucket refills at the rate, so waiting as long as it said is enough.
 TEST(RateLimiterTest, WaitingWhatItSaidIsEnough) {
   api::RateLimiter limiter;
   auto now = api::RateLimiter::Clock::now();
@@ -49,7 +49,7 @@ TEST(RateLimiterTest, WaitingWhatItSaidIsEnough) {
   EXPECT_TRUE(limiter.take("a", kFivePerMinute, now).has_value());
 }
 
-// And it never refills beyond the burst, however long it was left.
+// It never refills beyond the burst.
 TEST(RateLimiterTest, AnIdleKeyRefillsOnlyToTheBurst) {
   api::RateLimiter limiter;
   auto now = api::RateLimiter::Clock::now();
@@ -61,7 +61,7 @@ TEST(RateLimiterTest, AnIdleKeyRefillsOnlyToTheBurst) {
   EXPECT_TRUE(limiter.take("a", kFivePerMinute, now).has_value());
 }
 
-// One caller exhausting its bucket costs nobody else anything.
+// Keys are independent.
 TEST(RateLimiterTest, KeysAreIndependent) {
   api::RateLimiter limiter;
   const auto now = api::RateLimiter::Clock::now();
@@ -79,8 +79,7 @@ TEST(RateLimiterTest, ZeroIsNoLimit) {
   EXPECT_EQ(limiter.size(), 0u);
 }
 
-// Keys are chosen by callers, so the map is bounded: buckets that have refilled are
-// forgotten once it grows past the bound, and the ones still limiting are kept.
+// The map is bounded: past the bound, refilled buckets are forgotten and those still limiting are kept.
 TEST(RateLimiterTest, RefilledKeysAreForgottenWhenThereAreTooMany) {
   api::RateLimiter limiter(10);
   auto now = api::RateLimiter::Clock::now();

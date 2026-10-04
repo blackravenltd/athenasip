@@ -127,8 +127,8 @@ class RedisDatastore : public Datastore {
   void _async_del(std::string key, IntegerCallback callback);
   void _async_exists(std::string key, BoolCallback callback);
 
-  // Sets are used as indexes, so listing never needs KEYS or SCAN. KEYS blocks the
-  // server, and location_list is on the call path for target determination.
+  // Sets serve as indexes, so listing never needs KEYS or SCAN: KEYS blocks the server, and
+  // location_list is on the call path.
   void _async_sadd(std::string key, std::string member, BoolCallback callback);
   void _async_srem(std::string key, std::string member, BoolCallback callback);
   void _async_smembers(std::string key, StringsCallback callback);

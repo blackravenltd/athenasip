@@ -15,7 +15,6 @@ using namespace boost::asio::ssl;
 
 namespace athenasip::servers {
 
-// Modified constructor now takes a bind address parameter
 TCPServer::TCPServer(std::shared_ptr<Logger> logger, std::shared_ptr<Core> core, const std::string& bind_address, short port)
     : Server(std::make_unique<LoggerScoped>("tcp_server", logger), core),
       _port(port),
@@ -24,20 +23,18 @@ TCPServer::TCPServer(std::shared_ptr<Logger> logger, std::shared_ptr<Core> core,
 void TCPServer::start() {
   _logger->debug("Starting...");
 
-  // Do the first start_accept on that thread
+  // The first accept runs on the listener's own thread.
   boost::asio::post(_io_context, [this]() {
     _logger->info("Listening on " + _acceptor.local_endpoint().address().to_string() + ":" + std::to_string(_acceptor.local_endpoint().port()) + " (tcp://)");
     start_accept();
   });
 
-  // Run the IO Context in our thread
   _thread = std::make_shared<std::thread>([this]() { _io_context.run(); });
 }
 
 void TCPServer::stop() {
   _logger->debug("Stopping...");
 
-  // Stop Thread
   if (_thread) {
     _io_context.stop();
     if (_thread->joinable()) {
@@ -71,7 +68,6 @@ void TCPServer::_handle_accept(const boost::system::error_code& error, std::shar
       return;
     }
 
-    // Create Channel from connection
     auto new_channel = std::make_shared<Channel>(_logger->base_logger(), _core, new_connection);
     _logger->info("Incoming TCP Connection Accepted: " + new_connection->remote_endpoint_name());
 
@@ -81,7 +77,6 @@ void TCPServer::_handle_accept(const boost::system::error_code& error, std::shar
     _logger->error("Incoming TCP Connection Accept Error: " + ec.message());
   }
 
-  // Start accepting next connection
   boost::asio::post(_io_context, [this]() { start_accept(); });
 }
 

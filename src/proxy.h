@@ -31,80 +31,64 @@ namespace athenasip {
 class Channel;
 class Core;
 
-// RFC 3261 section 16: the proxy, and the transaction user for everything that is not a
-// REGISTER.
+// RFC 3261 section 16 proxy, and the transaction user for everything except REGISTER. Order of work: loop
+// detection (16.3.4), route preprocessing (16.4), target determination (16.5), forwarding with serial forking
+// (16.6), response processing (16.7) and CANCEL (16.10).
 //
-// The order of work is the RFC's own: loop detection (16.3.4), route preprocessing
-// (16.4), target determination (16.5), forwarding (16.6) with serial forking, response
-// processing (16.7) and CANCEL (16.10).
-//
-// A proxy is transaction-stateful and not dialog-stateful (16.1). Nothing here knows
-// what a dialog is: an in-dialog request reaches its far end because the Route set the
-// endpoints kept from the Record-Route brings it back through this node, and because
-// its Request-URI is a target this node is not responsible for and so is forwarded as
-// it stands. Dialog tracking is a separate concern and belongs to the layer above.
+// Transaction-stateful, not dialog-stateful (16.1): in-dialog requests are routed by the Route set that
+// Record-Route established. Dialog tracking belongs to the layer above.
 class Proxy : public TransactionUser {
  public:
   Proxy(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<Core> core);
 
   void on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction) override;
 
-  // RFC 3261 9.2 and 16.10: a CANCEL is answered 200 OK on its own transaction, the
-  // INVITE server transaction it names is answered 487, and the branch already tried is
-  // cancelled in turn.
+  // RFC 3261 9.2, 16.10: answers the CANCEL 200 and the INVITE it names 487, and cancels the branch in
+  // flight.
   void on_cancel(std::shared_ptr<SIPMessage> cancel, std::shared_ptr<transactions::TransactionBase> cancel_transaction,
                  std::shared_ptr<transactions::TransactionBase> invite_transaction);
 
-  // RFC 3261 16.7 step 1 and 18.1.2: a response matching no client transaction has no
-  // context to be the best response of. It goes back down the Via chain with this
-  // node's own Via removed, and nothing is remembered about it.
+  // RFC 3261 16.7 step 1, 18.1.2: a response matching no client transaction is forwarded statelessly down the
+  // Via chain.
   void on_stray_response(std::shared_ptr<SIPMessage> response);
 
  private:
-  // Where a hop actually goes, once its URI has given up its transport, host and port
-  // (RFC 3261 16.6 step 7).
+  // Transport, host and port of a hop URI (RFC 3261 16.6 step 7).
   struct NextHop {
     std::string transport;
     std::string host;
     std::uint16_t port = 5060;
   };
 
-  // One entry of the target set (16.5). The URI that becomes the Request-URI and the
-  // hop the request is handed to are not the same thing whenever a Route set is in
-  // play: the Request-URI stays as it arrived and the top Route is where it goes.
+  // One entry of the target set (16.5). `uri` becomes the Request-URI; `next_hop` is where the request is
+  // sent, which differs when a Route set is in play.
   struct Target {
     std::shared_ptr<SIPUri> uri;
     std::shared_ptr<SIPUri> next_hop;
     std::weak_ptr<Channel> flow;
 
-    // Set on the one re-offer a 488 earns: the profile to offer this time, and the one the
-    // target refused.
+    // Set on the re-offer after a 488: the profile to offer, and the one the target refused.
     std::optional<media::Profile> profile;
     std::optional<media::Profile> rejected;
 
-    // What the client on this target's flow said its media is when last qualified.
+    // The media profile the client on this flow reported when last qualified.
     std::optional<media::Profile> said;
 
-    // RFC 5626 outbound: the client instance this flow belongs to, empty for an ordinary
-    // binding, and whether the flow has gone - which for an outbound binding is the target
-    // failing, never a reason to try its Contact.
+    // RFC 5626: the client instance owning this flow, empty for an ordinary binding. `dead` means the flow
+    // has gone, which fails the target; its Contact is not tried.
     std::string instance;
     bool dead = false;
   };
 
-  // The response context (16.7): the request as received, the server transaction it
-  // arrived on, the targets left to try, and the best response so far. It is kept alive
-  // by the callbacks the client transactions hold, and dies with the last of them.
+  // The response context (16.7). Kept alive by the client transaction callbacks.
   struct Context {
     std::shared_ptr<SIPMessage> request;
     std::shared_ptr<transactions::TransactionBase> server;
 
-    // The 16.3.4 half of the branch this node writes, computed once from the request as
-    // it arrived so that every branch of the fork carries the same one.
+    // The 16.3.4 loop token, computed once from the request as received and shared by every branch.
     std::string loop_token;
 
-    // The 2xx as it went to the caller, media and all, for sending again when the callee
-    // retransmits it (RFC 6026 8.4): a retransmission is the same answer, not a new one.
+    // The 2xx as sent to the caller, resent when the callee retransmits it (RFC 6026 8.4).
     std::shared_ptr<SIPMessage> answer_sent;
 
     std::vector<Target> targets;
@@ -112,150 +96,115 @@ class Proxy : public TransactionUser {
 
     std::shared_ptr<SIPMessage> best;
 
-    // The branch in flight, for CANCEL (16.10). RFC 3261 9.1 builds the CANCEL from the
-    // request that was sent, not from the one that arrived.
+    // The branch in flight. RFC 3261 9.1 builds the CANCEL from the request as sent.
     std::shared_ptr<SIPMessage> forwarded;
     std::weak_ptr<Channel> forwarded_flow;
 
-    // A CANCEL may not go out before a provisional response has come back (9.1), so one
-    // that arrives early is held until the branch answers.
+    // RFC 3261 9.1: a CANCEL is held until the branch has answered provisionally.
     bool provisional = false;
     bool cancelled = false;
 
-    // RFC 4028 section 8.1: "The proxy MUST remember, for the duration of the
-    // transaction, whether the request contained the Supported header field with the
-    // value 'timer'", and the interval it forwarded. Section 8.2 needs both to answer a
-    // callee that says nothing about session timers at all.
+    // RFC 4028 8.1: whether the request supported "timer", and the interval forwarded. 8.2 needs both.
     bool session_timer_supported = false;
     std::uint32_t session_interval = 0;
 
-    // RFC 3261 16.6 step 11: timer C, and the client transaction it bounds. The fork is
-    // serial, so there is one branch in flight and one of each at a time.
+    // RFC 3261 16.6 step 11: timer C and the client transaction it bounds. Forking is serial, so one of each.
     std::shared_ptr<Timer> timer_c;
     std::shared_ptr<transactions::TransactionBase> client;
 
-    // A CANCEL has already gone out because timer C fired once. 16.8 offers a reset of
-    // the timer as an alternative to terminating the transaction, so the branch gets one
-    // more interval to answer the CANCEL before it is terminated outright.
+    // Timer C has fired once and a CANCEL has gone out; the branch gets one more interval (16.8).
     bool timer_c_cancelled = false;
 
-    // A final response has gone upstream. The search is over, and a late answer from a
-    // branch must not be sent a second time.
+    // A final response has gone upstream; late branch answers are not forwarded.
     bool answered = false;
 
-    // The realm's media policy, where target determination found a realm to read it
-    // from. An in-dialog request has none, and takes the one the call remembers.
+    // The realm's media policy, when target determination found a realm. In-dialog requests use the call's.
     std::optional<types::MediaPolicy> media_policy;
 
-    // The callee's subscriber's media profile, read where the subscriber was in hand.
+    // The callee subscriber's media profile.
     std::optional<types::MediaPolicy::Profiles> callee_profile;
 
     // Whether Contacts are rewritten to where messages came from (types::Behaviour).
     bool rewrite_contact = false;
 
-    // The caller's, read only for an INVITE with no description (RFC 3264 section 5).
+    // The caller subscriber's media profile, read only for an INVITE without SDP (RFC 3264 section 5).
     std::optional<types::MediaPolicy::Profiles> caller_profile;
 
-    // The branch in flight's target, and the profile the engine made its offer for when
-    // nothing the callee had said decided it. A 488 to that offer is the one refusal this
-    // node can do something about.
+    // The target of the branch in flight, and the profile offered to it when the callee had not stated one. A
+    // 488 to that offer earns one re-offer.
     Target current;
     std::optional<media::Profile> offered;
 
-    // RFC 5626 section 5.3: one flow per client instance is in the target set at a time,
-    // and these are each instance's other flows, best first, for when that one fails.
+    // RFC 5626 5.3: each instance's remaining flows, best first, tried when the one in the target set fails.
     std::map<std::string, std::vector<Target>> other_flows;
 
-    // RFC 3263 4.3: the places the current target can still be tried, when DNS listed more
-    // than one and the branch in flight went to the first. A 503 or a timeout from that
-    // branch is the server failing rather than the call being refused, and the same target
-    // goes to the next of these instead of the fork moving on.
+    // RFC 3263 4.3: the remaining DNS hops for the current target, tried on a 503 or a timeout before the
+    // fork moves on.
     std::vector<dns::Hop> hops_left;
     std::optional<Target> hop_target;
   };
 
-  // RFC 4028 section 8.1: this node's say in the session timer negotiation, applied to
-  // the request before any copy of it is forwarded. False when the request was answered
-  // 422 and must go no further.
+  // RFC 4028 8.1: enforces the minimum session interval. False when the request was answered 422.
   bool _apply_session_timer(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction);
 
-  // RFC 4028 section 8.1's other half: the interval this node puts on a request that
-  // asked for none, so that a call whose far end knows what a session timer is gets one
-  // whether or not the near end thought to ask.
+  // RFC 4028 8.1: adds this node's Session-Expires to a request that carries none.
   void _insert_session_timer(const std::shared_ptr<SIPMessage>& request);
 
-  // RFC 4028 section 8.2: the 2xx for a session refresh request whose caller asked for a
-  // timer and whose callee answered without one.
+  // RFC 4028 8.2: adds Session-Expires to a 2xx when the caller asked for a timer and the callee answered
+  // without one.
   void _complete_session_timer(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response);
 
-  // 422 with the Min-SE that RFC 4028 section 6 requires on it.
+  // 422 with the Min-SE that RFC 4028 section 6 requires.
   void _send_interval_too_small(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
                                 std::uint32_t minimum);
 
-  // RFC 3261 16.3.4. The branch this node writes carries a hash of the fields that
-  // decide where a request goes, so a request that comes back can be told apart from
-  // one that never left: same hash is a loop, a different one is a spiral.
+  // RFC 3261 16.3.4: a hash of the fields that decide routing, carried in the branch. The same token in one
+  // of this node's Vias is a loop; a different one is a spiral.
   std::string _loop_token(const std::shared_ptr<SIPMessage>& request) const;
   bool _is_loop(const std::shared_ptr<SIPMessage>& request, const std::string& token) const;
 
-  // RFC 3261 16.4. Undoes a strict router's rewrite and takes off a Route naming this
-  // node, so that what is left is the route set the request still has to travel.
+  // RFC 3261 16.4: undoes a strict router's rewrite and removes Routes naming this node.
   void _preprocess_routes(const std::shared_ptr<SIPMessage>& request) const;
 
-  // RFC 3261 16.5, once route preprocessing is done. Answers the caller itself when
-  // there is nothing to route to, and otherwise hands a filled context to _forward_next.
+  // RFC 3261 16.5: fills a context and calls _forward_next, or answers the caller when there is no target.
   void _determine_targets(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
                           const std::string& loop_token);
 
-  // Rewrites one copy of the request for one hop: Request-URI, Max-Forwards,
-  // Record-Route, the route set and this node's Via (16.6 steps 2, 3, 4, 6 and 8).
-  // False when Max-Forwards has run out.
+  // RFC 3261 16.6 steps 2, 3, 4, 6 and 8: Request-URI, Max-Forwards, Record-Route, route set and Via. False
+  // when Max-Forwards is exhausted.
   bool _prepare_forward(const std::shared_ptr<SIPMessage>& copy, const std::shared_ptr<Channel>& channel, const Target& target,
                         const std::string& loop_token) const;
 
-  // Sends to the next untried target, and answers the caller when there are none left.
-  // Opens a flow to the target first where this node has none, which is a round trip, so
-  // the sending half is _forward_to.
+  // Forwards to the next untried target, opening a flow if needed; sends the best response when none are
+  // left.
   void _forward_next(const std::shared_ptr<Context>& context);
   void _connect_hops(const std::shared_ptr<Context>& context, const Target& target, std::vector<dns::Hop> hops, std::size_t index);
   void _unreachable(const std::shared_ptr<Context>& context);
   bool _try_next_hop(const std::shared_ptr<Context>& context);
 
-  // One target, one flow: the copy of the request, the rewrites 16.6 asks for, and the
-  // send.
+  // Copies the request, prepares it for the target and hands it to the media engine.
   void _forward_to(const std::shared_ptr<Context>& context, const Target& target, const std::shared_ptr<Channel>& channel);
 
-  // The tail of _forward_next, once the session description has been through the media
-  // engine. Separate because that is a round trip and the send waits for it. This is also
-  // where RFC 3261 18.1.1 moves an oversized request off UDP, which is another one.
+  // Runs once the media engine has handled the SDP. Moves an oversized request off UDP (RFC 3261 18.1.1).
   void _send_forward(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& copy, const std::shared_ptr<Channel>& channel);
 
-  // The send itself, once the transport is settled.
+  // Starts the client transaction, or writes an ACK straight to the transport.
   void _write_forward(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& copy, const std::shared_ptr<Channel>& channel);
 
   void _on_response(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response);
 
-  // RFC 3261 16.7: a response on its way back to the caller, once its own session
-  // description has been through the media engine.
+  // RFC 3261 16.7: sends a response to the caller once the media engine has handled its SDP.
   void _forward_response(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response);
 
-  // RFC 3264 through the media engine. A session description on its way through belongs
-  // to the leg it came from - a request carries the description of the end that sent it,
-  // and a response carries the description of the end that answered - and what the
-  // engine gives back names this node instead, so the media arrives here to be bridged
-  // rather than going end to end.
+  // Passes a session description through the media engine (RFC 3264) so that media is relayed through this
+  // node. This departs from RFC 3261 16.6, which leaves bodies alone; with no engine, no call, or an engine
+  // that declines, the message is forwarded unchanged.
   //
-  // This is a departure from 16.6, which says a proxy does not add to, modify or remove
-  // a body. The node does it because it is the media relay; where it cannot - no engine,
-  // no call, or an engine that will not take the description - the message travels on
-  // exactly as it arrived, which is the proxy behaviour the RFC describes.
-  //
-  // `then` runs when the message is ready to go: inline when there was nothing to do,
-  // and on the strand from the engine's handler when there was.
+  // `then` runs when the message is ready: inline if there was nothing to do, otherwise on the strand.
   void _anchor_media(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<SIPMessage>& message, const std::shared_ptr<Channel>& outgoing,
                      const std::shared_ptr<Context>& context, std::function<void()> then);
 
-  // RFC 3261 16.7 step 6: what goes back when every branch has been tried.
+  // RFC 3261 16.7 step 6: sends the best response once every branch has been tried.
   void _send_best(const std::shared_ptr<Context>& context);
   void _rewrite_contact(const std::shared_ptr<SIPMessage>& message, const std::shared_ptr<Channel>& from) const;
   void _read_caller_profile(const std::shared_ptr<Context>& context, std::function<void()> then);
@@ -264,26 +213,23 @@ class Proxy : public TransactionUser {
   bool _try_other_flow(const std::shared_ptr<Context>& context);
   void _report_reoffer(const std::shared_ptr<Context>& context, bool took);
 
-  // RFC 3261 16.10: the CANCEL for a branch already forwarded.
+  // RFC 3261 16.10: sends the CANCEL for the branch in flight.
   void _cancel_branch(const std::shared_ptr<Context>& context);
 
-  // RFC 3261 16.6 step 11, 16.7 step 2 and 16.8: timer C is what gives up on an INVITE
-  // branch that goes on answering provisionally and never finishes. The transaction
-  // layer will not: a provisional response moves the INVITE client transaction to
-  // Proceeding and cancels timer B (17.1.1.2), so from the first 100 Trying onwards the
-  // branch has no bound of its own at all.
+  // RFC 3261 16.6 step 11, 16.7 step 2, 16.8: timer C bounds an INVITE branch that keeps answering
+  // provisionally. Timer B stops at the first provisional (17.1.1.2), so nothing else does.
   void _timer_c_start(const std::shared_ptr<Context>& context);
   void _timer_c_cancel(const std::shared_ptr<Context>& context);
   void _on_timer_c(const std::shared_ptr<Context>& context);
 
-  // RFC 3261 16.10: a CANCEL this node has no response context for.
+  // RFC 3261 16.10: forwards a CANCEL that has no response context.
   void _forward_cancel_statelessly(const std::shared_ptr<SIPMessage>& cancel, const std::shared_ptr<transactions::TransactionBase>& transaction);
 
   void _send_status(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request, std::uint16_t code,
                     const std::string& reason);
 
-  // Who may send this where (RFC 3261 22.3, and the 2026-10-01 decision). `then` runs only
-  // for a request that may go on; anything else has been answered.
+  // Decides whether the request may be forwarded (RFC 3261 22.3). `then` runs only if it may; otherwise the
+  // request has been answered.
   void _authorize(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction, std::function<void()> then);
   void _authenticate(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
                      const std::shared_ptr<types::Realm>& realm, const std::shared_ptr<SIPUri>& caller, std::function<void()> then);
@@ -293,29 +239,25 @@ class Proxy : public TransactionUser {
   bool _names_this_node(const SIPUri& uri) const;
   std::shared_ptr<Channel> _flow_to(const SIPUri& uri) const;
 
-  // RFC 5626: the flow a binding was registered over is the route back to it, and for a
-  // browser or a NAT'd client it is the only one - their Contact resolves to nothing
-  // reachable. A UDP flow this node has forgotten is still sent down; a reliable one that
-  // has closed leaves the Contact as all there is to go on.
+  // RFC 5626: the target for a binding, preferring the flow it registered over. A forgotten UDP flow is still
+  // used; a closed reliable one falls back to the Contact, or fails the target for an outbound binding.
   Target _target_for(const types::Location& binding) const;
 
-  // Cluster forwarding: whether a binding's flow is another node's, and that node as the
-  // target for it.
+  // Cluster forwarding: whether another node holds a binding's flow, and that node as a target.
   bool _held_elsewhere(Core& core, const types::Location& binding) const;
   std::optional<Target> _peer_target(Core& core, const std::string& node_id, const std::shared_ptr<SIPMessage>& request) const;
   static std::shared_ptr<SIPUri> _datagram_hop(const std::string& flow_id);
 
   static NextHop _next_hop_of(const SIPUri& uri);
 
-  // The realm's say over the transport's. Only FromTransport defers to the flow.
+  // Maps the policy's profile setting to an engine profile. Only FromTransport consults the transport.
   static media::Flags::Profile _profile_under(const types::MediaPolicy& policy, const std::string& transport);
 
   std::shared_ptr<loggers::Logger> _logger;
   std::weak_ptr<Core> _core;
 
-  // Response contexts by the id of the server transaction they answer, so a CANCEL can
-  // find the branches its INVITE is still waiting on. Weak: the context belongs to the
-  // callbacks in flight and must not outlive them.
+  // Response contexts by server transaction id, so a CANCEL can find its INVITE's branch. Weak: a context is
+  // owned by the callbacks in flight.
   std::unordered_map<std::string, std::weak_ptr<Context>> _contexts;
 };
 

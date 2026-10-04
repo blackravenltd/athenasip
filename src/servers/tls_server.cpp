@@ -28,20 +28,18 @@ bool TLSServer::require_peer_certificates(const std::string& ca) { return athena
 void TLSServer::start() {
   _logger->debug("Starting...");
 
-  // Do the first start_accept on that thread
+  // The first accept runs on the listener's own thread.
   boost::asio::post(_io_context, [this]() {
     _logger->info("Listening on " + _acceptor.local_endpoint().address().to_string() + ":" + std::to_string(_acceptor.local_endpoint().port()) + " (tls://)");
     start_accept();
   });
 
-  // Run the IO Context in our thread
   _thread = std::make_shared<std::thread>([this]() { _io_context.run(); });
 }
 
 void TLSServer::stop() {
   _logger->debug("Stopping...");
 
-  // Stop Thread
   if (_thread) {
     _io_context.stop();
     if (_thread->joinable()) {
@@ -59,10 +57,8 @@ void TLSServer::start_accept() {
   _acceptor.async_accept(*new_connection, boost::bind(&TLSServer::_handle_accept, this, placeholders::error, new_connection));
 }
 
-// The handshake is each connection's own business and runs asynchronously, bounded by a
-// deadline, while the listener goes straight back to accepting. Done on the accept thread
-// it let one silent connection hold up every other, and one that failed stopped the
-// listener for good.
+// Each connection's handshake runs asynchronously under a deadline while the listener goes straight back to
+// accepting, so a silent or failing peer cannot hold up or stop the listener.
 void TLSServer::_handle_accept(const boost::system::error_code& error, std::shared_ptr<ip::tcp::socket> socket) {
   if (error) {
     _logger->error("Incoming Connection Accept Error: " + error.message());

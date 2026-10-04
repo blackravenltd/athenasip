@@ -21,8 +21,7 @@ void put16(std::vector<std::uint8_t>& out, std::uint16_t value) {
   out.push_back(static_cast<std::uint8_t>(value & 0xff));
 }
 
-// Reads a message front to back. Every read checks its own bounds, so a message that lies
-// about its lengths is refused where the lie is, rather than read past.
+// Reads a message front to back. Every read checks its own bounds, so a message that lies about a length is refused.
 class Reader {
  public:
   explicit Reader(const std::vector<std::uint8_t>& message) : _message(message) {}
@@ -63,9 +62,8 @@ class Reader {
     return true;
   }
 
-  // RFC 1035 4.1.4: labels, ended by a zero length or by a pointer to where the rest of
-  // the name already is. A pointer only ever goes backwards in a name a server wrote, so
-  // one that does not is refused, and with it every loop.
+  // RFC 1035 4.1.4: labels, ended by a zero length or by a pointer to the rest of the name. A pointer must point
+  // backwards, which also rules out loops.
   bool name(std::string& out) {
     out.clear();
 
@@ -166,8 +164,7 @@ bool read_record(Reader& reader, std::optional<Record>& out) {
     }
   }
 
-  // A record whose contents end before or after the length it declared has been misread,
-  // or is lying; either way the rest of the message cannot be trusted to line up.
+  // A record whose contents do not end where its declared length says is malformed, and so is the message.
   if (out && reader.at() != end) return false;
 
   reader.seek(end);
@@ -224,7 +221,7 @@ std::optional<Response> decode_response(const std::vector<std::uint8_t>& message
   reader.u16(authorities);
   reader.u16(additionals);
 
-  // QR: a query is not an answer to anything.
+  // QR: only a response is decoded.
   if ((flags & 0x8000) == 0) return std::nullopt;
 
   response.truncated = (flags & 0x0200) != 0;
@@ -241,8 +238,7 @@ std::optional<Response> decode_response(const std::vector<std::uint8_t>& message
     if (record) response.answers.push_back(*record);
   }
 
-  // The rest is read to check it is all there, and kept for nothing: a SOA in authority
-  // says "no such record", which an empty answer section already says.
+  // Authority and additional records are read only to check the message is whole.
   for (std::uint32_t i = 0; i < static_cast<std::uint32_t>(authorities) + additionals; ++i) {
     std::optional<Record> record;
     if (!read_record(reader, record)) return std::nullopt;

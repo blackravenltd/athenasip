@@ -31,13 +31,8 @@ class MockConnection : public athenasip::servers::Connection {
     return true;
   }
 
-  // A real connection belongs to its server's thread. By default this one belongs to the
-  // global io_context, which is where the Core strand runs too, so a hand-over from the
-  // strand runs inline and a test sees what it did without having to wait for it.
-  //
-  // own_strand() gives it an executor of its own, which is how a test tells a hand-over
-  // from a reach-in: work dispatched to a strand this thread is not in has to wait, and
-  // running_in_this_thread() is false for anything that arrived any other way.
+  // By default the global io_context, where the Core strand also runs, so a hand-over from the strand runs inline.
+  // own_strand() gives the connection its own executor, so a test can tell a hand-over from a reach-in.
   boost::asio::any_io_executor executor() override {
     if (_strand) return *_strand;
     return athenasip::detail::get_global_io_context().get_executor();
@@ -45,8 +40,7 @@ class MockConnection : public athenasip::servers::Connection {
 
   void own_strand() { _strand.emplace(boost::asio::make_strand(athenasip::detail::get_global_io_context())); }
 
-  // Whether this call arrived on the connection's own executor. Always true when it has
-  // no executor of its own, because then there is nothing to arrive on.
+  // Whether this call arrived on the connection's own executor. Always true when it has none of its own.
   bool on_own_executor() const { return !_strand || _strand->running_in_this_thread(); }
 
   void async_read_some(boost::asio::mutable_buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) override {
@@ -66,8 +60,7 @@ class MockConnection : public athenasip::servers::Connection {
     written.append(static_cast<const char*>(buffer.data()), taken);
     write_calls++;
 
-    // Held rather than answered, so a test can see what the channel does while a write
-    // is still in flight.
+    // Held, so a test can see what the channel does while a write is in flight.
     if (defer_writes) {
       pending_write = std::move(handler);
       pending_write_bytes = taken;
@@ -109,8 +102,7 @@ class MockConnection : public athenasip::servers::Connection {
 
   std::string transport_name() const override { return _transport; }
 
-  // The node a cluster-CA certificate named, as the inter-node listener reports it. Empty
-  // for everything that is not a peer.
+  // The node a cluster-CA certificate named; empty for anything that is not a peer.
   std::string peer_identity() const override { return peer; }
   std::string peer;
 

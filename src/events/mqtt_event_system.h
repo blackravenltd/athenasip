@@ -70,10 +70,8 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
   void unsubscribe_all(plugins::Executor on, plugins::StatusHandler handler) override;
 
  private:
-  // A handler already bound to the executor it answers on. The broker work happens on
-  // the MQTT strand, several frames from the caller, and carrying one callable there is
-  // simpler than carrying an executor and a handler side by side. Null means the caller
-  // did not ask, which is the fire-and-forget publish.
+  // A handler bound to the executor it answers on, carried to the MQTT strand as one
+  // callable. Null for the fire-and-forget publish.
   using Completion = std::function<void(plugins::Status)>;
 
   Completion bind_completion(plugins::Executor on, plugins::StatusHandler handler);
@@ -90,11 +88,8 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
 
   std::string _broker_host;
   std::uint16_t _broker_port;
-  // MQTT requires a client identifier to be unique on the broker, and a broker that
-  // sees a second connection with one it already has disconnects the first. Two nodes
-  // sharing a default would kick each other off for as long as both were running, so
-  // there is no shared default: unconfigured, it is this node's id, and failing that a
-  // value nothing else will pick.
+  // A broker disconnects the older of two connections sharing a client id, so there is no
+  // shared default: unconfigured, it is this node's id, and failing that a unique value.
   std::string _client_id;
   bool _client_id_was_given = false;
   std::string _username;
@@ -106,10 +101,8 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
   std::string _will_topic;
   std::string _will_message;
 
-  // How long connect() waits for the broker to answer before reporting that it is not
-  // there. boost.mqtt5 is an always-online client: it queues and reconnects for ever,
-  // so without a bound a node with the wrong broker address would hang at startup
-  // instead of saying so.
+  // How long connect() waits for the broker before reporting failure. boost.mqtt5 retries
+  // for ever, so without a bound a wrong broker address would hang startup.
   std::uint32_t _connect_timeout_ms = 5000;
 
   asio::io_context _mqtt_io_context;
@@ -117,11 +110,9 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
   std::optional<MQTTWorkGuard> _mqtt_work_guard;
   MQTTClient _client;
 
-  // Which run a completion handler belongs to. One mqtt_client is reused across
-  // connect/close cycles, so a handler from a finished run can still be in flight while the
-  // next one is starting - and it cannot tell from _connected alone, because connect() sets
-  // that true before it joins the previous thread. Each run captures this value and a
-  // completion that does not match it is a late arrival from a run that is over.
+  // Identifies the current run. One mqtt_client is reused across connect/close cycles, so a
+  // completion from a finished run can arrive while the next is starting; each run captures
+  // this value and a completion that does not match it is ignored.
   std::atomic<std::uint64_t> _run_generation{0};
 
   std::atomic_bool _connected{false};
@@ -133,10 +124,8 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
   // Accessed only on _mqtt_strand while the MQTT event loop is running.
   std::unordered_set<std::string> _broker_subscribed_events;
 
-  // MQTT 5 subscription identifiers, which are how a client knows which of its own
-  // subscriptions a message arrived for. Without them a message matching two of this
-  // client's filters is delivered once per filter and fanned out to every matching
-  // consumer, so each one sees it twice.
+  // MQTT 5 subscription identifiers say which of this client's filters a message arrived
+  // for, so a message matching two filters is not delivered to each consumer twice.
   std::unordered_map<std::int32_t, std::string> _events_by_identifier;
   std::int32_t _next_subscription_identifier = 1;
 

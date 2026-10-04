@@ -2,11 +2,8 @@
 <!DOCTYPE scenario SYSTEM "sipp.dtd">
 
 <!--
-  The open relay, from outside. Somebody who is nobody's subscriber here sends an INVITE to
-  a number on somebody else's network, which is the call a toll fraudster wants a proxy to
-  place for them. There is no subscriber to challenge for, so the answer is 403 and nothing
-  leaves the node (RFC 3261 22.3 says how a proxy asks; who it serves is the 2026-10-01
-  decision in TODO/ACTIVE.md).
+  The node is not an open relay. An INVITE from a sender who is not a subscriber here, to a
+  destination on another network, is answered 403 and nothing leaves the node.
 -->
 <scenario name="Stranger: INVITE to somewhere else, refused">
 

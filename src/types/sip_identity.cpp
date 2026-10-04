@@ -33,9 +33,8 @@ std::string_view trim(std::string_view value) {
   return value.substr(start, end - start);
 }
 
-// RFC 3261 25.1: quoted-string = SWS DQUOTE *(qdtext / quoted-pair) DQUOTE, with
-// quoted-pair = "\" (any). Returns the unescaped contents and moves index past the
-// closing quote. index must point at the opening quote.
+// RFC 3261 25.1 quoted-string. index must be at the opening quote; returns the unescaped contents and moves index
+// past the closing quote.
 bool read_quoted_string(std::string_view text, std::size_t& index, std::string& out) {
   if (index >= text.size() || text[index] != '"') return false;
 
@@ -60,12 +59,11 @@ bool read_quoted_string(std::string_view text, std::size_t& index, std::string& 
     ++index;
   }
 
-  // Ran off the end with no closing quote.
+  // No closing quote.
   return false;
 }
 
-// RFC 3261 25.1: generic-param = token [ EQUAL gen-value ], and EQUAL carries optional
-// whitespace either side. A parameter with no '=' is present with an empty value.
+// RFC 3261 25.1 generic-param, with optional whitespace round the '='. A parameter with no '=' has an empty value.
 void parse_parameters(std::string_view text, std::unordered_map<std::string, std::string>& out) {
   std::size_t start = 0;
 
@@ -84,7 +82,7 @@ void parse_parameters(std::string_view text, std::unordered_map<std::string, std
         const auto name = trim(piece.substr(0, equals));
         auto value = trim(piece.substr(equals + 1));
 
-        // A quoted parameter value keeps its contents, not its quotes.
+        // A quoted value keeps its contents, not its quotes.
         std::string unquoted;
         if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
           std::size_t cursor = 0;
@@ -123,10 +121,8 @@ SIPIdentity::SIPIdentity() : wrapped(false), star(false), display_name(std::null
 
 SIPIdentity::SIPIdentity(const std::string& identity) : wrapped(false), star(false), display_name(std::nullopt), uri(nullptr), tags() { parse(identity); }
 
-// Hand-written rather than a regular expression. This runs on every To, From and
-// Contact that arrives from the network; the regex it replaces backtracked, so its
-// recursion depth was bounded by the length of the header and nothing else, and it
-// could not express a quoted display name containing '<' or ';' at all.
+// Hand-written, not a regular expression: this runs on every To, From and Contact from the network, must not
+// backtrack, and must handle a quoted display name containing '<' or ';'.
 void SIPIdentity::parse(const std::string& identity) {
   wrapped = false;
   star = false;
@@ -136,7 +132,7 @@ void SIPIdentity::parse(const std::string& identity) {
 
   const auto text = trim(identity);
 
-  // RFC 3261 20.10: Contact = ... ( STAR / (contact-param *(COMMA contact-param))).
+  // RFC 3261 20.10: Contact may be "*".
   if (text == "*") {
     star = true;
     return;
@@ -144,7 +140,7 @@ void SIPIdentity::parse(const std::string& identity) {
 
   std::size_t cursor = 0;
 
-  // display-name, when there is one: a quoted-string, or a run of tokens before the '<'.
+  // display-name: a quoted-string, or a run of tokens before the '<'.
   if (cursor < text.size() && text[cursor] == '"') {
     std::string name;
     if (read_quoted_string(text, cursor, name)) {
@@ -155,8 +151,7 @@ void SIPIdentity::parse(const std::string& identity) {
   const auto open = text.find('<', cursor);
 
   if (open != std::string_view::npos) {
-    // name-addr. Anything between here and the '<' that we have not already taken as a
-    // quoted display name is an unquoted one.
+    // name-addr. Anything before the '<' not already taken as a quoted display name is an unquoted one.
     if (!display_name.has_value()) {
       const auto candidate = trim(text.substr(cursor, open - cursor));
       if (!candidate.empty()) display_name = std::string(candidate);
@@ -164,8 +159,7 @@ void SIPIdentity::parse(const std::string& identity) {
 
     const auto close = text.find('>', open);
     if (close == std::string_view::npos) {
-      // No closing bracket: not a name-addr at all. Treat what follows as an addr-spec
-      // rather than inventing a URI from a truncated header.
+      // No closing bracket: what follows is treated as an addr-spec.
       uri = std::make_shared<SIPUri>(std::string(trim(text.substr(open + 1))));
       return;
     }
@@ -173,7 +167,7 @@ void SIPIdentity::parse(const std::string& identity) {
     wrapped = true;
     uri = std::make_shared<SIPUri>(std::string(trim(text.substr(open + 1, close - open - 1))));
 
-    // Everything after the '>' is header parameters.
+    // Header parameters follow the '>'.
     const auto after = text.substr(close + 1);
     if (const auto semicolon = after.find(';'); semicolon != std::string_view::npos) {
       parse_parameters(after.substr(semicolon + 1), tags);
@@ -182,8 +176,7 @@ void SIPIdentity::parse(const std::string& identity) {
     return;
   }
 
-  // addr-spec. With no angle brackets the first semicolon starts the header
-  // parameters, so they are not part of the URI (RFC 3261 20).
+  // addr-spec: with no angle brackets the first semicolon starts the header parameters (RFC 3261 20).
   const auto remainder = text.substr(cursor);
   const auto semicolon = remainder.find(';');
 
@@ -201,16 +194,14 @@ std::string SIPIdentity::to_string() const {
 
   std::ostringstream oss;
 
-  // Always quoted. display-name may be a bare token sequence too, but a quoted string
-  // is legal for every value and needs no decision about which characters force it.
+  // Always quoted, which is legal for every display name.
   if (display_name.has_value()) {
     oss << "\"" << escape_quoted(*display_name) << "\" ";
   }
 
   oss << "<" << (uri ? uri->to_string() : std::string{}) << ">";
 
-  // Sorted rather than in hash order: the same identity has to produce the same bytes
-  // every time, or a retransmission is not byte-identical to what was sent.
+  // Sorted, so the same identity always produces the same bytes and a retransmission is byte-identical.
   std::vector<const std::pair<const std::string, std::string>*> ordered;
   ordered.reserve(tags.size());
   for (const auto& tag : tags) ordered.push_back(&tag);

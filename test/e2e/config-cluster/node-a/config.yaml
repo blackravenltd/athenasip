@@ -4,9 +4,8 @@
 # Copyright (C) 2026 Tom Cully <mail@tomcully.com>
 # Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 #
-# node-a of the two-node harness (test/e2e/cluster.sh). The two files differ in the node's
-# name and address and in nothing else: one Redis and one broker between them is what makes
-# them a cluster.
+# node-a of the two-node harness (test/e2e/cluster.sh). node-b differs only in name and
+# address; they share one Redis and one broker.
 
 sip:
   node_id: node-a
@@ -53,8 +52,7 @@ websocket:
 rtprelay:
   enable: false
 
-# The inter-node listener. The certificates are made by cluster.sh with the node's own
-# --ca-init and --ca-node, and name the address below.
+# The inter-node listener. cluster.sh makes the certificates with --ca-init and --ca-node.
 cluster:
   enable: true
   address: 0.0.0.0

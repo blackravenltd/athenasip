@@ -12,29 +12,24 @@
 
 namespace athenasip::transactions {
 
-// RFC 3261 section 17.2.1, the INVITE server transaction.
+// RFC 3261 section 17.2.1 with RFC 6026, the INVITE server transaction.
 //
-//   Proceeding -- 300-699 from TU --> Completed -- ACK --> Confirmed --> Terminated
-//              -- 2xx from TU -----> Terminated
+//   Proceeding -- 300-699 from TU --> Completed -- ACK --> Confirmed -- timer I --> Terminated
+//              -- 2xx from TU ------> Accepted -- timer L --> Terminated
 //
-// Two things about it are easy to get wrong and both are handled here. A 2xx
-// terminates the transaction immediately rather than going to Completed, because a 2xx
-// and its ACK are end to end and belong to the TU, not the transaction. And the ACK for
-// a non-2xx is absorbed here and never reaches the TU, which is the opposite of the 2xx
-// case.
+// The ACK for a non-2xx is absorbed here. A 2xx and its ACK are end to end and belong to the TU.
 class InviteServerTransaction : public TransactionBase {
  public:
   InviteServerTransaction(std::shared_ptr<loggers::Logger> logger, std::string id, bool reliable, Timers timers, std::shared_ptr<TimerSource> timer_source,
                           SendFn send, TuFn to_tu);
 
-  // Feeds the transaction the INVITE that created it: sets Proceeding, arms the
-  // 100 Trying timer and passes the request up.
+  // Takes the INVITE that created the transaction: sets Proceeding, arms the 100 Trying timer and passes the request up.
   void start(std::shared_ptr<SIPMessage> invite);
 
   void receive(std::shared_ptr<SIPMessage> message) override;
   void send(std::shared_ptr<SIPMessage> message) override;
 
-  // The last response passed down by the TU, which is what gets retransmitted.
+  // The last response the TU passed down, which is what is retransmitted.
   std::shared_ptr<SIPMessage> last_response() const { return _last_response; }
 
  protected:

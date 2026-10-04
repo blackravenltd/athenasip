@@ -45,8 +45,7 @@ std::shared_ptr<Plugin> PluginRegistry::create(std::shared_ptr<loggers::Logger> 
     return nullptr;
   }
 
-  // The versioning rule, enforced rather than documented. Compiled-in drivers cannot
-  // fail this; a loaded one built against an older contract can, and must not run.
+  // A plugin built against a different contract version must not run.
   if (plugin->api_version() != API_VERSION) {
     scoped->error("Plugin " + plugin->describe() + " was built against contract version " + std::to_string(plugin->api_version()) + ", this server speaks " +
                   std::to_string(API_VERSION));

@@ -15,13 +15,10 @@ using athenasip::types::SIPIdentity;
 //   contact-param = (name-addr / addr-spec) *(SEMI contact-params)
 //   name-addr     = [ display-name ] LAQUOT addr-spec RAQUOT
 //   display-name  = *(token LWS) / quoted-string
-//
-// These come from that grammar, not from what the parser currently accepts.
 
 // ------------------------------------------------------------------- display-name
 
-// A quoted-string display name may contain the characters that delimit everything
-// else. That is the entire reason it is allowed to be quoted.
+// A quoted-string display name may contain the characters that delimit everything else.
 TEST(SIPIdentityRFCTest, AQuotedDisplayNameMayContainAngleBracketsAndSemicolons) {
   SIPIdentity identity("\"Alice <the boss>;odd\" <sip:alice@example.com>;tag=x");
 
@@ -61,9 +58,7 @@ TEST(SIPIdentityRFCTest, NoDisplayNameLeavesItUnset) {
 
 // --------------------------------------------------------------------- parameters
 
-// RFC 3261 7.3.1: header field parameter names are case-insensitive. A UA sending
-// ";Tag=" or ";Expires=" means the same thing as the lower-case spelling, and a
-// registrar that misses it writes a binding with the wrong lifetime.
+// RFC 3261 7.3.1: header field parameter names are case-insensitive.
 TEST(SIPIdentityRFCTest, ParameterNamesAreCaseInsensitive) {
   SIPIdentity identity("<sip:alice@example.com>;Tag=abc;EXPIRES=60");
 
@@ -104,9 +99,7 @@ TEST(SIPIdentityRFCTest, NameAddrParametersInsideTheBracketsBelongToTheUri) {
 
 // --------------------------------------------------------------------- STAR
 
-// RFC 3261 20.10: Contact = ... ( STAR / (contact-param *(COMMA contact-param))).
-// A lone "*" is the grammar's own alternative, not a URI, and 10.2.2 gives it its
-// meaning: with Expires 0 it removes every binding.
+// RFC 3261 20.10: a lone "*" is a Contact alternative, not a URI. With Expires 0 it removes every binding (10.2.2).
 TEST(SIPIdentityRFCTest, AStarContactIsRecognisedAsStar) {
   SIPIdentity identity("*");
 
@@ -137,8 +130,7 @@ TEST(SIPIdentityRFCTest, StarSerialisesBackToStar) {
 
 // ------------------------------------------------------------------ serialisation
 
-// Serialising has to be deterministic: the same identity must produce the same bytes
-// every time, or a retransmission does not match what was sent.
+// The same identity must serialise to the same bytes, or a retransmission does not match what was sent.
 TEST(SIPIdentityRFCTest, SerialisationIsDeterministic) {
   SIPIdentity identity("<sip:alice@example.com>;tag=abc;expires=60;q=0.5");
 

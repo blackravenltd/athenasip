@@ -2,11 +2,9 @@
 <!DOCTYPE scenario SYSTEM "sipp.dtd">
 
 <!--
-  The callee's half of hold and resume. Each re-INVITE has to reach it through the node
-  with the direction the caller offered still in it, and pointing at the relay rather than
-  at the caller (RFC 3264 section 8.4).
-
-  run.sh registers it first, in a run of its own; see uas.xml for why.
+  The callee's half of hold and resume. Each re-INVITE must arrive with the direction the
+  caller offered and name the relay, not the caller (RFC 3264 section 8.4). run.sh
+  registers it first; see uas.xml.
 -->
 <scenario name="Callee: answer, be held, be resumed, hang up">
 

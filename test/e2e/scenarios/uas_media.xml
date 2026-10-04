@@ -2,22 +2,15 @@
 <!DOCTYPE scenario SYSTEM "sipp.dtd">
 
 <!--
-  The callee's half of the media test. The point of the assertion below: the description
-  that reaches the callee names the node's relay, not the caller. If the caller's own
-  address arrives here, the media engine did not anchor the call and the two ends are
-  talking to each other directly - which works on one LAN and never works for a browser.
-
-  RFC 8866 section 5.7: c= is where media goes.
+  The callee's half of the media test. The description that reaches the callee must name
+  the node's relay in c= (RFC 8866 section 5.7), not the caller, or the call was not
+  anchored.
 -->
 <scenario name="Callee: media is anchored at the node">
 
-  <!--
-    No REGISTER here, deliberately. sipp binds a scenario to a single call, so a callee
-    that registered in this scenario could not then be handed the INVITE: it arrives with
-    the caller's Call-ID, sipp cannot map it to the call already running, and discards it
-    as unmappable. run.sh registers the callee in a run of its own, on the port this one
-    then listens on, so the binding points here.
-  -->
+  <!-- No REGISTER here: sipp binds a scenario to one call and would discard the INVITE,
+       which arrives with the caller's Call-ID. run.sh registers the callee in a run of its
+       own, on the port this one listens on. -->
 
   <recv request="INVITE" crlf="true">
     <action>
@@ -69,8 +62,7 @@
 
   <recv request="ACK" rtd="true" crlf="true"/>
 
-  <!-- Echo whatever arrives back where it came from, so the caller can hear its own
-       stream return through the relay. -->
+  <!-- Echo media back, so the caller's stream returns through the relay. -->
   <pause milliseconds="3000"/>
 
   <recv request="BYE"/>

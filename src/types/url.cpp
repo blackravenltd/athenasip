@@ -43,9 +43,7 @@ void URL::parse(const std::string& url) {
   query.clear();
   fragment.clear();
 
-  // Hand-written rather than a regex, like the header, URI and identity parsers: the
-  // grammar is a sequence of splits on delimiters that cannot appear unescaped in what
-  // they delimit, and each split below names the rule it comes from.
+  // Hand-written, not a regex: a sequence of splits on delimiters, each naming its RFC 3986 rule.
   const auto separator = url.find("://");
   if (separator == std::string::npos || !is_scheme(url.substr(0, separator))) return;
 
@@ -53,8 +51,7 @@ void URL::parse(const std::string& url) {
 
   std::string rest = url.substr(separator + 3);
 
-  // 3986 3.5 then 3.4: the fragment runs to the end of the URL and the query to the
-  // fragment, so taking those off first is what leaves the rest unambiguous.
+  // 3986 3.5 then 3.4: the fragment runs to the end and the query to the fragment, so they come off first.
   const auto hash = rest.find('#');
   if (hash != std::string::npos) {
     fragment = rest.substr(hash + 1);
@@ -67,16 +64,14 @@ void URL::parse(const std::string& url) {
     rest.erase(question);
   }
 
-  // 3986 3.2: the authority ends at the first '/', which is the first character of the
-  // path. A URL with no '/' has no path, and "memory://" has neither.
+  // 3986 3.2: the authority ends at the first '/', which begins the path. "memory://" has neither.
   const auto slash = rest.find('/');
   if (slash != std::string::npos) {
     path = rest.substr(slash);
     rest.erase(slash);
   }
 
-  // 3986 3.2.1: userinfo is everything before the '@', and its own ':' separates the
-  // two halves. No ':' means a username and no password, rather than an empty one.
+  // 3986 3.2.1: userinfo is everything before the '@'. No ':' means a username and no password, not an empty one.
   const auto at = rest.find('@');
   if (at != std::string::npos) {
     const auto userinfo = rest.substr(0, at);
@@ -91,8 +86,8 @@ void URL::parse(const std::string& url) {
     }
   }
 
-  // 3986 3.2.2: an IPv6 literal is in brackets, and its own colons are why. The host is
-  // kept without them, because it is what a driver connects to; to_string puts them back.
+  // 3986 3.2.2: an IPv6 literal is in brackets. The host is kept without them, as a driver connects to it; to_string
+  // puts them back.
   std::string after_host;
 
   if (!rest.empty() && rest.front() == '[') {
@@ -122,10 +117,7 @@ void URL::parse(const std::string& url) {
     after_host = rest.substr(colon);
   }
 
-  // 3986 3.2.3: port = *DIGIT. Anything else after the colon is a configuration mistake
-  // worth refusing, rather than something to read as part of a hostname and then fail
-  // to connect to much later. An unbracketed IPv6 literal ends up here too, with colons
-  // in what should be digits, and is refused rather than guessed at.
+  // 3986 3.2.3: port = *DIGIT. Anything else is refused as a configuration mistake, including an unbracketed IPv6 literal.
   const auto digits = after_host.substr(1);
   if (digits.empty() || digits.find_first_not_of("0123456789") != std::string::npos) return;
   if (digits.size() > 5) return;
@@ -153,8 +145,7 @@ std::string URL::to_string() const {
   }
   url += host.find(':') == std::string::npos ? host : "[" + host + "]";
 
-  // The port is left off only when it is the one the scheme implies anyway. A scheme
-  // with no well-known port has to carry it, or the port is lost.
+  // The port is omitted only when it is the scheme's well-known one.
   if (port.has_value()) {
     const auto standard = _default_port(scheme);
     if (!standard.has_value() || *standard != *port) url += ":" + std::to_string(*port);

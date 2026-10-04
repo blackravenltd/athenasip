@@ -19,12 +19,9 @@
 
 namespace athenasip {
 
-// Where delayed work gets its sense of time from.
-//
-// The RFC 3261 section 17 timers run to 64*T1, which is 32 seconds at the default T1.
-// Tested against a real clock that is 32 seconds of waiting per case, so the timer
-// source is injectable: production uses the asio one, tests use ManualTimerSource and
-// advance time themselves.
+// The clock for delayed work. Injectable, so tests of the RFC 3261 section 17 timers (up
+// to 64*T1, 32 seconds) use ManualTimerSource and advance time themselves; production uses
+// AsioTimerSource.
 
 class Timer {
  public:
@@ -43,7 +40,7 @@ class TimerSource {
   virtual std::chrono::steady_clock::time_point now() const = 0;
 };
 
-// The real one: an asio steady_timer on an io_context.
+// The real clock: an asio steady_timer on an io_context.
 class AsioTimerSource : public TimerSource, public std::enable_shared_from_this<AsioTimerSource> {
  public:
   explicit AsioTimerSource(boost::asio::io_context& io_context) : _io_context(io_context) {}
@@ -89,8 +86,7 @@ class AsioTimerSource : public TimerSource, public std::enable_shared_from_this<
   boost::asio::io_context& _io_context;
 };
 
-// The test one: nothing happens until advance() is called, so a 32 second timer costs
-// nothing to exercise.
+// The test clock: nothing fires until advance() is called.
 class ManualTimerSource : public TimerSource {
  public:
   std::shared_ptr<Timer> schedule(std::chrono::milliseconds delay, std::function<void()> fn) override {
@@ -108,10 +104,8 @@ class ManualTimerSource : public TimerSource {
     return _now;
   }
 
-  // Moves time forward, stopping at each timer as it falls due so a callback sees the
-  // time its own timer fired at rather than the end of the step. Timer A doubles by
-  // re-arming from inside its callback, and jumping straight to the target would make
-  // every subsequent interval wrong.
+  // Moves time forward, stopping at each timer as it falls due, so a callback that re-arms
+  // (as Timer A does) sees the time its own timer fired.
   void advance(std::chrono::milliseconds by) {
     std::chrono::steady_clock::time_point target;
 
@@ -126,7 +120,7 @@ class ManualTimerSource : public TimerSource {
       {
         std::lock_guard<std::mutex> lock(_mutex);
 
-        // Forget anything that can no longer run.
+        // Drop entries that have fired or been cancelled.
         _entries.erase(std::remove_if(_entries.begin(), _entries.end(), [](const auto& entry) { return entry->fired || entry->cancelled; }), _entries.end());
 
         for (const auto& entry : _entries) {

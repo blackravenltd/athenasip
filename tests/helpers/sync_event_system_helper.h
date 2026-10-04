@@ -15,17 +15,13 @@
 #include "global_io_context.h"
 #include "plugins/plugin.h"
 
-// A blocking view of an event system, for tests only, and for the same reason as
-// SyncDatastore: the contract is async because a production caller is on the Core
-// strand and must not wait there. A test is not on the strand.
-//
-// The fire-and-forget publish is not here. It answers nothing by design, so a test of
-// it waits on what the consumer saw instead.
+// A blocking view of an event system, for tests only (see SyncDatastore). The fire-and-forget publish is
+// omitted: test it through what the consumer saw.
 class SyncEventSystem {
  public:
   explicit SyncEventSystem(std::shared_ptr<athenasip::events::EventSystem> events) : _events(std::move(events)) {}
 
-  // Straight through: these were never async.
+  // Synchronous in the contract.
   std::string name() const { return _events->name(); }
   std::string version() const { return _events->version(); }
   bool is_connected() const { return _events->is_connected(); }
@@ -62,8 +58,7 @@ class SyncEventSystem {
     return _status([this](auto on, auto handler) { _events->unsubscribe_all(std::move(on), std::move(handler)); });
   }
 
-  // The failure a call reported, for the tests that care which answer they got rather
-  // than only whether it worked.
+  // The failure the last call reported.
   const std::string& last_error() const { return _last_error; }
 
  private:

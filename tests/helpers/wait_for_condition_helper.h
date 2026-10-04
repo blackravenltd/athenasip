@@ -12,12 +12,12 @@
 
 #include "global_io_context.h"
 
-// Helper: Spin wait until the given atomic flag is true or timeout expires.
+// Polls the global io_context until the flag is set or the timeout expires.
 inline bool waitForCondition(const std::atomic<bool>& flag, std::chrono::milliseconds timeout) {
     auto start = std::chrono::steady_clock::now();
     while (!flag.load() && (std::chrono::steady_clock::now() - start < timeout)) {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        athenasip::detail::get_global_io_context().poll(); // Process any queued asynchronous tasks.
+        athenasip::detail::get_global_io_context().poll();
     }
     return flag.load();
 }

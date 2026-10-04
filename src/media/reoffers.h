@@ -19,8 +19,8 @@
 
 namespace athenasip::media {
 
-// A subscriber whose endpoint refused the profile this node offered it and was offered the
-// other. took is what it then accepted, or empty when it refused that as well.
+// A subscriber whose endpoint refused the profile it was offered and was offered the other. took is what it then
+// accepted, or empty if it refused both.
 struct Reoffer {
   std::string subscriber;
   Profile rejected = Profile::PlainRtp;
@@ -29,10 +29,8 @@ struct Reoffer {
   std::time_t last_at = 0;
 };
 
-// What this node has had to re-offer, kept for the operator rather than acted on: the node
-// suggests a subscriber's profile and the operator decides. Nothing here changes how a later
-// call is routed. Per node and in memory, like the live calls, and bounded so a run of
-// unknown callees cannot grow it without limit.
+// Re-offers this node has made, kept for the operator and never used for routing. Per node, in memory, and bounded
+// at kLimit by evicting the oldest.
 class Reoffers {
  public:
   static constexpr std::size_t kLimit = 1024;

@@ -18,13 +18,11 @@
 #include "types/password.h"
 #include "types/user.h"
 
-// Users signed in through the real Sessions, for the API tests. Configured tokens went on
-// 2026-10-01, so every credential a test presents is a session a user logged in for. The
-// tests still name them the way they always did, and a fixture maps those names to tokens
-// here:
+// Users signed in through the real Sessions, for the API tests. Tests present these names, which map to
+// session tokens:
 //
 //   admin-token      a user holding every role
-//   client-token     a user holding view-cluster-status alone, what a client reads with
+//   client-token     a user holding view-cluster-status alone
 //   scopeless-token  a user holding no role at all
 //
 // Call after the API's executor is running: a login answers on it.
@@ -38,8 +36,7 @@ class SignedInUsers {
     _sign_in(sessions, store, "scopeless-token", "test-noroles", {});
   }
 
-  // What to put after "Bearer ": the session for a name above, or the string itself, so a
-  // test can still present a token that names nothing.
+  // What to put after "Bearer ": the session for a name above, or the string itself.
   std::string presented(const std::string& token) const {
     const auto found = _tokens.find(token);
     return found == _tokens.end() ? token : found->second;

@@ -44,8 +44,7 @@ void NonInviteClientTransaction::receive(std::shared_ptr<SIPMessage> message) {
         _set_state(State::Proceeding);
         _deliver_to_tu(message);
 
-        // RFC 3261 17.1.2.2: in Proceeding, E fires at T2 flat rather than continuing
-        // to double.
+        // RFC 3261 17.1.2.2: in Proceeding, E fires at T2 flat.
         if (!_reliable) {
           _cancel(_timer_e);
           _e_interval = _timers.t2;
@@ -65,8 +64,7 @@ void NonInviteClientTransaction::receive(std::shared_ptr<SIPMessage> message) {
       return;
 
     case State::Completed:
-      // Absorbing retransmitted final responses is the only reason this state exists.
-      // The TU has already been told.
+      // Absorbs retransmitted final responses. The TU has already been told.
       return;
 
     default:
@@ -89,7 +87,7 @@ void NonInviteClientTransaction::_start_timer_e() {
 
     self->_transport_send(self->_request);
 
-    // In Trying E doubles up to T2; in Proceeding it is already pinned at T2.
+    // In Trying E doubles up to T2; in Proceeding it is already T2.
     self->_e_interval = std::min(self->_e_interval * 2, self->_timers.t2);
     self->_start_timer_e();
   });

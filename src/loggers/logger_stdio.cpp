@@ -33,9 +33,8 @@ void LoggerStdIO::error(const std::string& log) { _write("[ERROR]", "error", log
 
 void LoggerStdIO::raw(const std::string& log) { _write("[-----]", "raw", log); }
 
-// A scoped logger writes its scope as "(scope) " in front of the line, one for each scope
-// it is nested in, outermost first. In JSON those come off the front and become a field of
-// their own, so a shipper can filter by component without parsing the message.
+// A scoped logger prefixes the line with "(scope) " per nesting level, outermost first.
+// JSON output lifts those into a field of their own, so a shipper can filter by component.
 void LoggerStdIO::_write(const char* text_level, const char* json_level, const std::string& log) {
   std::lock_guard<std::mutex> lock(mtx);
 

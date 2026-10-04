@@ -100,8 +100,7 @@ TEST(InviteServerTransactionTest, StartsInProceedingAndPassesTheRequestUp) {
   EXPECT_EQ(h.to_tu[0], invite);
 }
 
-// 17.2.1: if the TU has not answered within 200ms the transaction sends 100 Trying
-// itself, so the far end stops retransmitting.
+// RFC 3261 17.2.1: if the TU has not answered within 200ms the transaction sends 100 Trying itself.
 TEST(InviteServerTransactionTest, SendsOneHundredTryingWhenTheTuIsSlow) {
   Harness h;
   auto transaction = make_ist(h, false);
@@ -128,8 +127,7 @@ TEST(InviteServerTransactionTest, DoesNotSendOneHundredWhenTheTuAlreadyResponded
   EXPECT_EQ(h.sent_count(180), 1);
 }
 
-// A retransmitted INVITE must be answered by the transaction, and must not reach the
-// TU a second time.
+// A retransmitted INVITE is answered by the transaction and does not reach the TU again.
 TEST(InviteServerTransactionTest, AbsorbsRetransmittedInvites) {
   Harness h;
   auto invite = request("INVITE");
@@ -144,8 +142,7 @@ TEST(InviteServerTransactionTest, AbsorbsRetransmittedInvites) {
   EXPECT_EQ(h.sent_count(180), 3) << "each retransmission should get the 180 back";
 }
 
-// RFC 6026 section 7.1, which replaces RFC 3261 17.2.1 here: a 2xx moves the transaction
-// to Accepted rather than ending it.
+// RFC 6026 7.1, replacing RFC 3261 17.2.1: a 2xx moves the transaction to Accepted rather than ending it.
 TEST(InviteServerTransactionTest, TwoHundredGoesToAccepted) {
   Harness h;
   auto invite = request("INVITE");
@@ -158,9 +155,8 @@ TEST(InviteServerTransactionTest, TwoHundredGoesToAccepted) {
   EXPECT_EQ(h.sent_count(200), 1);
 }
 
-// In Accepted the TU's 2xx retransmissions go out through the transaction, which is how a
-// proxy's copy of a callee's retransmitted 2xx reaches the caller on the connection the
-// INVITE came in on; and a retransmitted INVITE is absorbed, not passed up again.
+// In Accepted the TU's 2xx retransmissions go out through the transaction, and a retransmitted INVITE is
+// absorbed.
 TEST(InviteServerTransactionTest, AcceptedSendsTheTusTwoHundredsAndAbsorbsTheInvite) {
   Harness h;
   auto invite = request("INVITE");
@@ -317,8 +313,7 @@ TEST(NonInviteServerTransactionTest, StartsInTryingAndPassesTheRequestUp) {
   ASSERT_EQ(h.to_tu.size(), 1u);
 }
 
-// 17.2.2: in Trying there is nothing to send, so a retransmission is simply dropped.
-// The TU must not see the request twice.
+// RFC 3261 17.2.2: in Trying a retransmission is dropped and the TU does not see the request twice.
 TEST(NonInviteServerTransactionTest, DropsRetransmissionsWhileTrying) {
   Harness h;
   auto register_request = request("REGISTER");

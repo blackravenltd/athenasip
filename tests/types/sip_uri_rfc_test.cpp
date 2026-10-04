@@ -10,14 +10,11 @@
 
 using athenasip::types::SIPUri;
 
-// RFC 3261 section 19.1. These come from the grammar in 19.1.1, the escaping rules in
-// 19.1.2 and 25.1, and the comparison rules in 19.1.4, not from what the parser
-// currently does.
+// RFC 3261 19.1: the grammar (19.1.1), escaping (19.1.2, 25.1) and comparison (19.1.4).
 
 // ---------------------------------------------------------------- 19.1.1 parameters
 
-// A uri-parameter is name=value, and the proxy has to read them by name: Route
-// processing needs lr, target selection needs transport and maddr.
+// RFC 3261 19.1.1: uri-parameters are read by name; routing needs lr, transport and maddr.
 TEST(SIPUriRFCTest, ParametersAreReadableByName) {
   SIPUri uri("sip:alice@example.com;transport=tcp;maddr=239.255.255.1;ttl=15");
 
@@ -27,8 +24,7 @@ TEST(SIPUriRFCTest, ParametersAreReadableByName) {
   EXPECT_EQ(uri.parameter("ttl"), "15");
 }
 
-// RFC 3261 19.1.1: lr has no value. It is the flag that says a Route is loose, so
-// "present but empty" has to be distinguishable from "absent".
+// RFC 3261 19.1.1: lr has no value, so present-but-empty must be distinguishable from absent.
 TEST(SIPUriRFCTest, AValuelessParameterIsPresentWithAnEmptyValue) {
   SIPUri uri("sip:proxy.example.com;lr");
 
@@ -78,7 +74,7 @@ TEST(SIPUriRFCTest, EscapedCharactersAreDecodedInParametersAndHeaders) {
   EXPECT_EQ(uri.header("Subject"), "project x");
 }
 
-// Serialising has to put the escaping back, or the URI we send is not the one we read.
+// Serialising re-escapes, so the URI sent is the one read.
 TEST(SIPUriRFCTest, SerialisingReEscapes) {
   SIPUri uri("sip:alice%20smith@example.com;note=a%3Bb");
 
@@ -103,8 +99,7 @@ TEST(SIPUriRFCTest, HostIsCaseInsensitiveAndUserIsNot) {
   EXPECT_FALSE(SIPUri("sip:alice@example.com").equivalent_to(SIPUri("sip:ALICE@example.com")));
 }
 
-// RFC 3261 19.1.4: "an IP address or host name that is not the same is not equivalent",
-// and a missing port is not the default port.
+// RFC 3261 19.1.4: a missing port is not equivalent to the default port.
 TEST(SIPUriRFCTest, AnAbsentPortIsNotTheDefaultPort) {
   EXPECT_FALSE(SIPUri("sip:alice@example.com").equivalent_to(SIPUri("sip:alice@example.com:5060")));
 }
@@ -119,8 +114,7 @@ TEST(SIPUriRFCTest, AParameterPresentInBothMustMatch) {
   EXPECT_FALSE(SIPUri("sip:alice@example.com;transport=tcp").equivalent_to(SIPUri("sip:alice@example.com;transport=udp")));
 }
 
-// RFC 3261 19.1.4: "A user, ttl, or method uri-parameter appearing in only one URI
-// never matches, even if it contains the default value", and the same for maddr.
+// RFC 3261 19.1.4: a user, ttl, method or maddr parameter in only one URI never matches.
 TEST(SIPUriRFCTest, UserTtlMethodAndMaddrNeverMatchWhenOnlyOneSideHasThem) {
   EXPECT_FALSE(SIPUri("sip:alice@example.com;user=phone").equivalent_to(SIPUri("sip:alice@example.com")));
   EXPECT_FALSE(SIPUri("sip:alice@example.com;ttl=15").equivalent_to(SIPUri("sip:alice@example.com")));
@@ -128,8 +122,7 @@ TEST(SIPUriRFCTest, UserTtlMethodAndMaddrNeverMatchWhenOnlyOneSideHasThem) {
   EXPECT_FALSE(SIPUri("sip:alice@example.com;maddr=239.255.255.1").equivalent_to(SIPUri("sip:alice@example.com")));
 }
 
-// RFC 3261 19.1.4: "URI header components are never ignored. Any present header
-// component MUST be present in both URIs and match."
+// RFC 3261 19.1.4: a header component must be present in both URIs and match.
 TEST(SIPUriRFCTest, HeadersMustBePresentInBothAndMatch) {
   EXPECT_FALSE(SIPUri("sip:alice@example.com?Subject=x").equivalent_to(SIPUri("sip:alice@example.com")));
   EXPECT_TRUE(SIPUri("sip:alice@example.com?Subject=x").equivalent_to(SIPUri("sip:alice@example.com?Subject=x")));
@@ -140,17 +133,15 @@ TEST(SIPUriRFCTest, SipAndSipsAreNotEquivalent) {
   EXPECT_FALSE(SIPUri("sip:alice@example.com").equivalent_to(SIPUri("sips:alice@example.com")));
 }
 
-// The comparison exists so a REGISTER's Contact can be matched against the bindings
-// already held, which is where an unescaped-versus-escaped difference would otherwise
-// silently create a second binding for the same contact.
+// Escaped and unescaped forms are equivalent, or a REGISTER's Contact would create a second binding for the
+// same contact.
 TEST(SIPUriRFCTest, EscapingDoesNotChangeEquivalence) {
   EXPECT_TRUE(SIPUri("sip:alice%20smith@example.com").equivalent_to(SIPUri("sip:alice smith@example.com")));
 }
 
 // ----------------------------------------------------------------------- host naming
 
-// The field is the host of the URI (19.1.1), not a realm: a realm is the Digest
-// protection domain and a different SIP concept entirely.
+// The field is the URI's host (19.1.1), not a realm, which is the Digest protection domain.
 TEST(SIPUriRFCTest, TheHostFieldIsCalledHost) {
   SIPUri uri("sip:alice@example.com:5060");
 

@@ -12,14 +12,12 @@
 
 namespace athenasip::transactions {
 
-// RFC 3261 section 17.2.2, the non-INVITE server transaction. This is what REGISTER,
-// OPTIONS, BYE and the rest arrive on.
+// RFC 3261 section 17.2.2, the non-INVITE server transaction.
 //
-//   Trying -- 1xx from TU --> Proceeding -- final from TU --> Completed --> Terminated
+//   Trying -- 1xx from TU --> Proceeding -- final from TU --> Completed -- timer J --> Terminated
 //          -- final from TU ------------------------------->
 //
-// It is the simplest of the four: one timer, J, which holds the transaction open after
-// the final response purely so request retransmissions still get an answer.
+// Timer J holds the transaction open after the final response so request retransmissions still get an answer.
 class NonInviteServerTransaction : public TransactionBase {
  public:
   NonInviteServerTransaction(std::shared_ptr<loggers::Logger> logger, std::string id, bool reliable, Timers timers, std::shared_ptr<TimerSource> timer_source,

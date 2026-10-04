@@ -12,10 +12,9 @@
 #   test/e2e/cluster.sh            every scenario
 #   test/e2e/cluster.sh across     only those whose name contains "across"
 #
-# What it proves that run.sh cannot: a node reads a binding whose flow another node holds,
-# forwards the call over mutual TLS, and the ACK and the BYE cross back the same way. The
-# first scenario is the control - both ends on one node of the cluster - so that when a
-# call across the two fails, what failed is the crossing and not the cluster's plumbing.
+# It checks that a node reads a binding whose flow another node holds, forwards the call
+# over mutual TLS, and that the ACK and BYE cross back. The first scenario is the control:
+# both ends on one node of the cluster.
 
 set -u
 
@@ -40,8 +39,8 @@ passed=0
 failed=0
 failures=""
 
-# A port of its own for every sipp run, for the reason run.sh gives: sipp derives its
-# branch from the call number, so two runs from one port are one transaction.
+# Every sipp run gets its own port, as in run.sh: two runs from one port are one
+# transaction.
 next_port=5100
 allocate_port() { next_port=$((next_port + 2)); }
 
@@ -62,9 +61,8 @@ ${COMPOSE} --profile e2e build >"${RESULTS}/cluster-build.log" 2>&1 || {
   exit 1
 }
 
-# The cluster's own authority and a certificate for each node, made the way an operator
-# makes them (docs/certificates.md). Fresh every run: the authority refuses to be made over
-# an existing one.
+# The cluster's authority and a certificate for each node (docs/certificates.md). Fresh
+# every run: --ca-init refuses to overwrite an existing authority.
 echo "Making the cluster's certificates..."
 rm -rf "${CERTIFICATES}"
 mkdir -p "${CERTIFICATES}"
@@ -80,8 +78,8 @@ ca --ca-init >"${RESULTS}/cluster-ca.log" 2>&1 &&
 echo "Starting Redis and the broker..."
 ${COMPOSE} up -d redis mosquitto >/dev/null 2>&1
 
-# The first administrator, made on the host as it has to be. With redis:// the command
-# writes the user and exits, and both nodes then read it from the store they share.
+# The first administrator. With redis://, --add-user writes the user and exits, and both
+# nodes read it from the shared store.
 echo "Making the administrator..."
 ${COMPOSE} run --rm --entrypoint /bin/sh node-a -c \
   "printf '%s\n' '${ADMIN_PASSWORD}' | /usr/local/bin/athenasip --add-user ${ADMIN_USER} --role manage-realms --role manage-realm-subscribers --role view-cluster-status" \
@@ -116,8 +114,8 @@ if [ -z "${ADMIN_TOKEN}" ]; then
   exit 1
 fi
 
-# Each node has to have heard the other say where its peers reach it, or there is nobody
-# to forward to. The session made on node A is good on node B: one store, one set of users.
+# Each node must have learned where to reach the other before it can forward. A session
+# made on node A is valid on node B: the store is shared.
 echo "Waiting for the nodes to find each other..."
 knows() { api "http://$1:8080/api/v1/nodes" 2>/dev/null | grep -q "\"id\":\"$2\".*\"cluster\""; }
 attempt=0
@@ -212,9 +210,8 @@ run_pair() {
   docker rm -f "cluster-uas-${name}" >/dev/null 2>&1 || true
 }
 
-# The callee holds a connection to one node and is reachable only down it; the caller calls
-# through another. This is what forwarding is for: a UDP callee's Contact is an address any
-# node could send to, and a connection is not.
+# The callee holds a connection to one node and is reachable only down it; the caller
+# calls through another node, which must forward.
 run_flow() {
   name="$1"
   transport="$2"
@@ -243,7 +240,7 @@ run_flow() {
   ${COMPOSE} run -d --name "cluster-callee-${name}" flow-callee \
     --host "${callee_node}" --transport "${transport}" --user bob --password bob-secret >/dev/null 2>&1
 
-  # Registered, as the node the caller will ask sees it: the binding is in the shared store.
+  # Wait for the binding to be visible from the caller's node.
   attempt=0
   until api "http://${caller_node}:8080/api/v1/registrations" 2>/dev/null | grep -q "\"flow_id\":\"${transport}://172.31.0.22"; do
     attempt=$((attempt + 1))
@@ -266,8 +263,8 @@ run_flow() {
     -trace_err -error_file "/results/cluster-${name}.err" \
     -nostdin "${caller_node}:5060" >"${RESULTS}/cluster-${name}.log" 2>&1 || caller_ok=1
 
-  # The callee exits when it has seen the BYE, or when thirty seconds pass with nothing
-  # arriving on its connection, and says whether it saw the whole call.
+  # The callee exits on BYE, or after thirty idle seconds, with a status saying whether
+  # it saw the whole call.
   callee_status=$(docker wait "cluster-callee-${name}" 2>/dev/null || echo 1)
   docker logs "cluster-callee-${name}" >"${RESULTS}/cluster-${name}-callee.log" 2>&1 || true
   docker rm -f "cluster-callee-${name}" >/dev/null 2>&1 || true
@@ -293,11 +290,11 @@ run_pair one-node-invite-bye "${NODE_A}" uas.xml "${NODE_A}" invite_bye.xml 30s
 # Bob is held by node B, and Alice calls through node A.
 run_pair across-invite-bye "${NODE_B}" uas.xml "${NODE_A}" invite_bye.xml 30s
 
-# And the other way about, so neither node is only ever the first or only ever the second.
+# And the reverse, so each node is both first and second hop.
 run_pair across-reversed-invite-bye "${NODE_A}" uas.xml "${NODE_B}" invite_bye.xml 30s
 
-# Media across the two. The first node anchors it and the second leaves the call alone, so
-# node A's relay carries the packets and node B's carries none.
+# Media across the two: the first node anchors and the second does not, so node A's relay
+# carries the packets and node B's carries none.
 case "across-media" in
   *${FILTER}*)
     a_before=$(relayed_total "${NODE_A}")
@@ -320,24 +317,22 @@ case "across-media" in
     ;;
 esac
 
-# The rest of what the single-node harness asks, with the callee held by the other node:
-# a call cancelled while it rings, a callee that is busy, an INVITE with no offer, hold and
-# resume, and a callee that never answers. Each crosses the inter-node link in both
-# directions, and the CANCEL and the timeout are the ones a forwarding proxy gets wrong.
+# The single-node scenarios with the callee on the other node: cancel while ringing,
+# busy, an INVITE with no offer, hold and resume, and no answer.
 run_pair across-cancel-ringing "${NODE_B}" uas_ringing.xml       "${NODE_A}" cancel_after_180.xml     30s
 run_pair across-busy           "${NODE_B}" uas_busy.xml          "${NODE_A}" invite_busy.xml          30s
 run_pair across-delayed-offer  "${NODE_B}" uas_delayed_offer.xml "${NODE_A}" invite_delayed_offer.xml 30s
 run_pair across-hold-resume    "${NODE_B}" uas_hold.xml          "${NODE_A}" invite_hold.xml          30s
 
-# A callee on a connection. First on the caller's own node, as the control, then held by
-# the other node, for each of the two transports that are a connection.
+# A callee on a connection: on the caller's own node as the control, then on the other
+# node, over TCP and over WebSocket.
 run_flow one-node-tcp-flow  tcp "${NODE_A}" "${NODE_A}"
 run_flow across-tcp-flow    tcp "${NODE_B}" "${NODE_A}"
 run_flow one-node-ws-flow   ws  "${NODE_A}" "${NODE_A}"
 run_flow across-ws-flow     ws  "${NODE_B}" "${NODE_A}"
 
-# The call records: one per call, written by the node the caller reached and read from the
-# shared store, so both nodes give the same list, and a call that crossed names both nodes.
+# Call records: one per call, written by the caller's node to the shared store, so both
+# nodes list the same records and a call that crossed names both nodes.
 case "across-call-records" in
   *${FILTER}*)
     from_a=$(api "http://${NODE_A}:8080/api/v1/call-records?limit=1000" 2>/dev/null)

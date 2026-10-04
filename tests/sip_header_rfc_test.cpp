@@ -24,7 +24,7 @@ TEST(SIPHeaderRFCTest, FieldNamesAreCaseInsensitive) {
   EXPECT_TRUE(header.contains("Content-Length"));
 }
 
-// RFC 3261 7.3.3 and 20: compact forms are equivalent to the long names.
+// RFC 3261 7.3.3, 20: compact forms are equivalent to the long names.
 TEST(SIPHeaderRFCTest, CompactFormsResolveToLongNames) {
   SIPHeader header(
       "REGISTER sip:example.com SIP/2.0\r\n"
@@ -50,8 +50,8 @@ TEST(SIPHeaderRFCTest, CommaSeparatedValuesSplitIntoSeparateHeaders) {
   EXPECT_EQ(header.headers_map["Via"][1]->as<ViaHeader>()->host, "second:5060");
 }
 
-// RFC 3261 8.2.1 and 16.3: a request the server cannot parse is answered with 400,
-// so a failed parse has to be distinguishable from a good one.
+// RFC 3261 8.2.1, 16.3: an unparseable request is answered 400, so a failed parse is
+// reported as invalid.
 TEST(SIPHeaderRFCTest, MalformedStartLineIsReportedInvalid) {
   EXPECT_FALSE(SIPHeader("NOT A SIP MESSAGE AT ALL\r\n\r\n").is_valid());
   EXPECT_FALSE(SIPHeader("REGISTER\r\n\r\n").is_valid());

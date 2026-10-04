@@ -4,19 +4,15 @@
 # Copyright (C) 2026 Tom Cully <mail@tomcully.com>
 # Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 #
-# The node the harness talks to, with rtpengine on the media path instead of the
-# in-process relay. Everything else is identical, so a scenario that passes against one
-# and fails against the other has found something in the engine rather than in the node.
-#
-# The driver is otherwise only ever exercised against a fake socket in the unit tests,
-# which proves what it puts on the wire and not that rtpengine agrees.
+# The node the harness talks to, with rtpengine on the media path instead of the builtin
+# relay. Everything else matches ../config/config.yaml, so a scenario that fails only here
+# is an engine fault.
 
 sip:
   node_id: e2e-node-rtpengine
   event_prefix: athenasip
 
-  # The address inside the compose network, so Via, Record-Route and the node list all
-  # name something sipp can reach.
+  # The node's address on the compose network, which sipp can reach.
   public_address: 172.31.0.10
 
   allow_unencrypted: true
@@ -70,8 +66,7 @@ media:
   url: "rtpengine://172.31.0.30:22222"
 
   rtpengine:
-    # rtpengine answers in microseconds on a bridge network, so this is a bound on
-    # silence rather than on work.
+    # The engine is on the same bridge, so this only bounds silence.
     timeout_ms: 500
     attempts: 3
 

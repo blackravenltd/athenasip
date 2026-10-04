@@ -4,8 +4,7 @@
 # Copyright (C) 2026 Tom Cully <mail@tomcully.com>
 # Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 #
-# One node, built from this tree. Used by docker-compose.test.yml for the sipp harness
-# and by anyone who wants to run a node without installing a toolchain.
+# One node, built from this tree. docker-compose.test.yml uses it for the sipp harness.
 
 FROM debian:trixie-slim AS build
 
@@ -20,11 +19,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Debian ships Boost 1.83 and this needs 1.87 or newer for boost::redis and
-# boost::mqtt5, so Boost is built here. Only the three compiled libraries the server
-# links; everything else it uses - asio, beast, json's header-only mode - comes from the
-# headers this installs alongside them. Its own layer, because it is the slow one and it
-# changes only when BOOST_VERSION does.
+# Debian's Boost is older than the 1.87 that boost::redis and boost::mqtt5 need, so it
+# is built here: only the compiled libraries the server links, plus the headers. Its own
+# layer, because it is slow and changes only with BOOST_VERSION.
 RUN set -eux; \
     version_underscored="$(echo "${BOOST_VERSION}" | tr '.' '_')"; \
     wget -q "https://archives.boost.io/release/${BOOST_VERSION}/source/boost_${version_underscored}.tar.gz"; \
@@ -39,10 +36,8 @@ WORKDIR /src
 COPY CMakeLists.txt ./
 COPY src ./src
 
-# The install rules need both: the unit is generated from packaging/ at configure time,
-# and the default configuration comes from config/. The image itself copies the binary
-# out rather than installing, but a build stage that cannot run "cmake --install" is a
-# build stage that cannot produce a package.
+# CMake needs packaging/ and config/ at configure time for its install rules, though
+# the image copies the binary out rather than installing.
 COPY packaging ./packaging
 COPY config ./config
 
@@ -62,7 +57,7 @@ RUN ldconfig
 
 COPY --from=build /src/build/athenasip /usr/local/bin/athenasip
 
-# Where the server looks for its configuration. Mount one over this.
+# The server's configuration directory. Mount one over this.
 RUN mkdir -p /root/.athenasip
 COPY config/config.example.yaml /root/.athenasip/config.yaml
 

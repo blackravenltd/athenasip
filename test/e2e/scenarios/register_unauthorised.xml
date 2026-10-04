@@ -2,9 +2,8 @@
 <!DOCTYPE scenario SYSTEM "sipp.dtd">
 
 <!--
-  RFC 3261 22.4: a REGISTER with the wrong password is challenged again and never
-  accepted. The binding must not appear, which the harness checks over the admin API
-  after this scenario runs.
+  RFC 3261 22.4: a REGISTER with the wrong password is challenged again and never accepted.
+  The harness then checks over the admin API that no binding appeared.
 -->
 <scenario name="REGISTER with a wrong password">
 

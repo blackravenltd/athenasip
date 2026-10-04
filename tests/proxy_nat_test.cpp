@@ -24,9 +24,8 @@ using namespace athenasip;
 
 namespace {
 
-// A UDP listener as far as Core can tell: it can open a flow to a peer it has not heard
-// from, through what would be its own socket. Each one it opens is kept so a test can see
-// where it was asked to send and what went.
+// A stand-in UDP listener: it can open a flow to a peer it has not heard from, and keeps
+// each one so a test can see where it was asked to send and what went.
 class DatagramListener : public servers::Server {
  public:
   using Server::Server;
@@ -54,9 +53,9 @@ class DatagramListener : public servers::Server {
   std::vector<std::shared_ptr<MockConnection>> opened;
 };
 
-// Bob is a phone behind a NAT, registered over UDP. The Contact he wrote names his own side
-// of the NAT, which nothing outside it can reach; the REGISTER arrived from the NAT's
-// mapping of it, which is the only address that reaches him (RFC 3581, RFC 5626 section 3).
+// Bob is a phone behind NAT, registered over UDP. His Contact is a private address; the
+// NAT mapping the REGISTER came from is the only address that reaches him (RFC 3581,
+// RFC 5626 3).
 struct NatFixture : ProxyFixture {
   static constexpr const char* kPrivateContact = "sip:bob@192.168.1.5:5060";
 
@@ -75,8 +74,7 @@ struct NatFixture : ProxyFixture {
     register_binding(bob, std::make_shared<types::SIPUri>(kPrivateContact), phone, 3600);
   }
 
-  // What the idle sweep does to a UDP flow that has been quiet for five minutes: this node
-  // forgets it. The NAT has not, and nor has the phone.
+  // What the idle sweep does to a quiet UDP flow: this node forgets it, the NAT does not.
   void forget_the_phones_flow() {
     on_strand([this]() { phone->close(); });
     settle();
@@ -85,8 +83,7 @@ struct NatFixture : ProxyFixture {
 
 }  // namespace
 
-// The control. While the node still holds the flow, the INVITE goes down it and nothing new
-// is opened.
+// Control: a flow the node still holds is used, and nothing new is opened.
 TEST(ProxyNatTest, ALiveUdpFlowIsUsedAsItIs) {
   NatFixture f;
 
@@ -96,14 +93,9 @@ TEST(ProxyNatTest, ALiveUdpFlowIsUsedAsItIs) {
   EXPECT_TRUE(f.listener->opened.empty());
 }
 
-// RFC 5626 section 5.3: a request for a binding goes over the flow the binding was
-// registered on, and for UDP that flow is the pair of addresses (section 3.1) - it does not
-// end because this node stopped keeping a record of it. The Request-URI stays the Contact;
-// only the hop is the flow's.
-//
-// Before this, a forgotten UDP flow fell back to the Contact, which for a phone behind a
-// NAT is an address on somebody else's LAN, and the call failed 480 five minutes after the
-// phone last said anything.
+// RFC 5626 5.3, 3.1: a UDP flow is the address pair, so a binding whose flow record is
+// gone is still reached at the address it registered from. The Request-URI stays the
+// Contact; only the hop is the flow's.
 TEST(ProxyNatTest, AUdpBindingIsReachedWhereItRegisteredFromOnceItsFlowIsForgotten) {
   NatFixture f;
   f.forget_the_phones_flow();
@@ -120,13 +112,13 @@ TEST(ProxyNatTest, AUdpBindingIsReachedWhereItRegisteredFromOnceItsFlowIsForgott
   EXPECT_EQ(f.listener->opened_to("192.168.1.5", 5060), nullptr) << "the private Contact was tried as well";
 }
 
-// The flow is the holding node's. Another node sending from its own socket comes from an
-// address the phone's NAT has never seen, and a NAT that filters by source drops it.
+// Only the node holding the flow may reopen it: the phone's NAT has not seen any other
+// node's address and may drop what comes from it.
 TEST(ProxyNatTest, AnotherNodesForgottenFlowIsNotReopenedFromHere) {
   NatFixture f;
   f.forget_the_phones_flow();
 
-  // The binding was written by a node of another name.
+  // The binding belongs to another node.
   f.config->sip_node_id = "another-node";
 
   f.receive(f.caller, f.invite());
@@ -134,10 +126,8 @@ TEST(ProxyNatTest, AnotherNodesForgottenFlowIsNotReopenedFromHere) {
   EXPECT_EQ(f.listener->opened_to("203.0.113.7", 40000), nullptr);
 }
 
-// The same for a request inside a dialog. Alice called from behind a NAT over UDP, the
-// call has gone on longer than the idle sweep, and Bob hangs up. The Record-Route this node
-// wrote carries a token for Alice's flow, and it has to still say where that flow went;
-// her Contact is on her LAN.
+// The same within a dialog: the flow token in this node's Record-Route still reaches a
+// UDP caller behind NAT after her flow record is gone.
 TEST(ProxyNatTest, AByeReachesAUdpCallerWhoseFlowWasForgottenDuringTheCall) {
   ProxyFixture f;
 
@@ -160,7 +150,7 @@ TEST(ProxyNatTest, AByeReachesAUdpCallerWhoseFlowWasForgottenDuringTheCall) {
   invite += "Max-Forwards: 70\r\n";
   invite += "\r\n";
 
-  // A phone on UDP proves who it is by answering the challenge; a source address cannot.
+  // A UDP phone is authenticated by answering the challenge, not by its source address.
   f.receive(alice, f.with_credentials(invite, "alice", "alice-ha1"));
   f.receive(f.callee, f.response_from_callee(200, "OK"));
   f.settle();
@@ -168,8 +158,7 @@ TEST(ProxyNatTest, AByeReachesAUdpCallerWhoseFlowWasForgottenDuringTheCall) {
   auto forwarded = ProxyFixture::request_with(f.callee_connection, "INVITE");
   ASSERT_NE(forwarded, nullptr);
 
-  // Bob's route set: the Record-Route values in the order the request carried them
-  // (RFC 3261 12.1.1).
+  // Bob's route set: the Record-Route values in request order (RFC 3261 12.1.1).
   std::string bye = "BYE sip:alice@10.0.0.9:5060 SIP/2.0\r\n";
   bye += "Via: SIP/2.0/UDP 192.0.2.20:5060;branch=z9hG4bK-nat-bye\r\n";
   for (const auto& value : forwarded->header->headers_map["Record-Route"]) bye += "Route: " + value->to_string() + "\r\n";
@@ -180,7 +169,7 @@ TEST(ProxyNatTest, AByeReachesAUdpCallerWhoseFlowWasForgottenDuringTheCall) {
   bye += "Max-Forwards: 70\r\n";
   bye += "\r\n";
 
-  // Five quiet minutes into the call.
+  // The idle sweep forgets Alice's flow mid-call.
   f.on_strand([&alice]() { alice->close(); });
   f.settle();
 
@@ -196,10 +185,8 @@ TEST(ProxyNatTest, AByeReachesAUdpCallerWhoseFlowWasForgottenDuringTheCall) {
   EXPECT_EQ(listener->opened_to("10.0.0.9", 5060), nullptr) << "the private Contact was tried as well";
 }
 
-// RFC 3261 16.7 step 1 sends a response with no transaction here back down the Via chain
-// statelessly, and 18.2.2 with RFC 3581 section 4 says where: over UDP, to received and
-// rport. That is an address and a port, not a record this node has to still be keeping -
-// the flow it names may have been forgotten, and the NAT in front of it has not.
+// RFC 3261 16.7 step 1, 18.2.2 and RFC 3581 4: a response with no transaction is sent
+// statelessly over UDP to received and rport, whether or not that flow is still on record.
 TEST(ProxyNatTest, AStrayResponseGoesToReceivedAndRportEvenWhenTheFlowIsForgotten) {
   ProxyFixture f;
 
@@ -223,8 +210,7 @@ TEST(ProxyNatTest, AStrayResponseGoesToReceivedAndRportEvenWhenTheFlowIsForgotte
   EXPECT_EQ(listener->opened_to("10.0.0.9", 5060), nullptr) << "the sent-by was tried as well";
 }
 
-// The Via chain is anybody's to write. An rport that is not a port is dropped with the
-// response it came in, rather than thrown out of the parser and taking the node with it.
+// A Via whose rport is not a port: the response is dropped and nothing throws.
 TEST(ProxyNatTest, AStrayResponseWithAnRportThatIsNotAPortIsDropped) {
   ProxyFixture f;
 
@@ -247,10 +233,8 @@ TEST(ProxyNatTest, AStrayResponseWithAnRportThatIsNotAPortIsDropped) {
   EXPECT_TRUE(listener->opened.empty());
 }
 
-// RFC 3263, through the proxy: a request for a URI naming a host goes where DNS says, in
-// the order it says, and a place that cannot be reached is passed over for the next (4.3).
-// NAPTR puts TCP first here and the TCP server is not listening, so the INVITE leaves by
-// UDP to the second service's host.
+// RFC 3263 4.3: hops are tried in DNS order and an unreachable one is passed over. NAPTR
+// puts TCP first, nothing listens there, so the INVITE leaves by UDP to the second host.
 TEST(ProxyNatTest, AHostIsLocatedByDnsAndAnUnreachableHopIsPassedOver) {
   ProxyFixture f;
 
@@ -268,8 +252,7 @@ TEST(ProxyNatTest, AHostIsLocatedByDnsAndAnUnreachableHopIsPassedOver) {
 
   f.receive(f.caller, f.invite("z9hG4bK-trunk", "sip:+15551234567@trunk.example.net"));
 
-  // The TCP attempt is a real connect to a port nothing listens on, so it is refused by
-  // the kernel rather than by the clock; give it a moment either way.
+  // The TCP connect is refused by the kernel; poll briefly for the UDP attempt.
   for (int i = 0; i < 200 && !listener->opened_to("198.51.100.80", 5080); ++i) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
     f.settle();
@@ -286,8 +269,7 @@ TEST(ProxyNatTest, AHostIsLocatedByDnsAndAnUnreachableHopIsPassedOver) {
 
 namespace {
 
-// A trunk known by name, served by two hosts of equal standing (RFC 2782 priorities 10 and
-// 20), both on UDP.
+// A trunk known by name, served by two UDP hosts (RFC 2782 priorities 10 and 20).
 struct TwoHopFixture : ProxyFixture {
   std::shared_ptr<DatagramListener> listener;
 
@@ -326,8 +308,7 @@ struct TwoHopFixture : ProxyFixture {
 
 }  // namespace
 
-// RFC 3263 4.3: "If a 503 ... is received, the element SHOULD try the next element in the
-// list". The server was too busy, not the call refused, and the next server may not be.
+// RFC 3263 4.3: a 503 from one hop tries the next hop of the same target.
 TEST(ProxyNatTest, A503FromOneHopTriesTheNextHopOfTheSameTarget) {
   TwoHopFixture f;
   f.call();
@@ -347,14 +328,14 @@ TEST(ProxyNatTest, A503FromOneHopTriesTheNextHopOfTheSameTarget) {
   EXPECT_EQ(ProxyFixture::response_with(f.caller_connection, 500), nullptr) << "the caller was answered before the next hop had its turn";
 }
 
-// 4.3: "... or a transaction timeout ..." - a server that never answered.
+// RFC 3263 4.3: so does a transaction timeout.
 TEST(ProxyNatTest, ATimeoutOnOneHopTriesTheNextHopOfTheSameTarget) {
   TwoHopFixture f;
   f.call();
 
   ASSERT_NE(f.listener->opened_to("198.51.100.1", 5060), nullptr);
 
-  // Timer B, 64*T1, on the injectable clock.
+  // Timer B, 64*T1.
   f.timers->advance(std::chrono::seconds(33));
   f.settle();
 
@@ -363,8 +344,7 @@ TEST(ProxyNatTest, ATimeoutOnOneHopTriesTheNextHopOfTheSameTarget) {
   EXPECT_NE(ProxyFixture::request_with(second, "INVITE"), nullptr);
 }
 
-// But a 486 is the far end saying no, which another server for the same domain would say
-// too. Failover is for a server failing, not for an answer.
+// A 486 is an answer, not a server failure, and is not failed over.
 TEST(ProxyNatTest, AnAnswerFromAHopIsNotFailedOver) {
   TwoHopFixture f;
   f.call();
@@ -375,8 +355,7 @@ TEST(ProxyNatTest, AnAnswerFromAHopIsNotFailedOver) {
   EXPECT_NE(ProxyFixture::response_with(f.caller_connection, 486), nullptr);
 }
 
-// When every hop has failed, the caller is told, and a 503 is not passed upstream as one
-// (RFC 3261 16.7 step 6: it would make the caller think this node was overloaded).
+// When every hop fails the caller is answered, and not with a 503 (RFC 3261 16.7 step 6).
 TEST(ProxyNatTest, WhenEveryHopFailsTheCallerIsAnswered) {
   TwoHopFixture f;
   f.call();
@@ -388,9 +367,8 @@ TEST(ProxyNatTest, WhenEveryHopFailsTheCallerIsAnswered) {
   EXPECT_NE(ProxyFixture::response_with(f.caller_connection, 500), nullptr);
 }
 
-// A desk phone with a routable address, registered over UDP, whose flow this node has
-// forgotten: the flow's address and the Contact are the same place, and it is reached.
-// Before outbound UDP existed this failed too, because nothing could open a UDP flow at all.
+// A forgotten UDP flow whose Contact is routable is reached: flow address and Contact
+// are the same place.
 TEST(ProxyNatTest, AForgottenUdpFlowWithARoutableContactIsReached) {
   ProxyFixture f;
 

@@ -2,13 +2,8 @@
 <!DOCTYPE scenario SYSTEM "sipp.dtd">
 
 <!--
-  RFC 3261 17.2.2: over UDP a request can arrive twice, and the second copy has to be
-  answered from what the server transaction last sent rather than handed to the
-  registrar again. A registrar that sees it twice writes the binding twice and issues a
-  second challenge against a nonce the client never asked for.
-
-  The retransmission here is the same request with the same branch, which is what a
-  client's own timer would send.
+  RFC 3261 17.2.2: a retransmitted request (same branch) is answered from what the server
+  transaction last sent, and is not handed to the registrar again.
 -->
 <scenario name="REGISTER retransmitted over UDP">
 
@@ -70,8 +65,7 @@
     ]]>
   </send>
 
-  <!-- The same answer, from the transaction. A 401 here would mean the registrar saw
-       it twice. -->
+  <!-- The same answer, from the transaction. A 401 would mean the registrar saw it twice. -->
   <recv response="200"/>
 
 </scenario>

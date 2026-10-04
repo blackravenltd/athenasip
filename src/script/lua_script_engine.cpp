@@ -30,16 +30,14 @@ void LuaScriptEngine::start() {
   // TODO: This should be configurable
   // luaL_openlibs(_current);
 
-  // Register our custom functions and objects
   _register_functions();
   _register_logger_object();
 
-  // Load routing script from file
   if (luaL_loadfile(_current, Util::expand_path("~/.athenasip/routing.lua").c_str()) != LUA_OK) {
     _logger->error("(runtime) Script load error: " + std::string(lua_tostring(_current, -1)));
     lua_pop(_current, 1);
   } else {
-    // Execute the loaded chunk so that all function definitions are registered.
+    // Run the chunk so its function definitions are registered.
     if (lua_pcall(_current, 0, LUA_MULTRET, 0) != LUA_OK) {
       _logger->error("(runtime) Script execution error: " + std::string(lua_tostring(_current, -1)));
       lua_pop(_current, 1);
@@ -48,7 +46,6 @@ void LuaScriptEngine::start() {
 
   _logger->info("(runtime) Started");
 
-  // Execute Lua function main() with one argument.
   std::string result = execute_lua_fn("main", "sip.atheasip.org");
 }
 
@@ -69,7 +66,6 @@ void LuaScriptEngine::send_message(std::function<void(std::shared_ptr<SIPMessage
   // TODO: implement message sending
 }
 
-// Register Lua Functions into the Lua state.
 void LuaScriptEngine::_register_functions() {
   _register_function("print", LuaScriptEngine::lua_log_info, 1);
   _register_function("include", LuaScriptEngine::lua_include, 1);
@@ -81,23 +77,18 @@ void LuaScriptEngine::_register_function(std::string name, LuaCFunction fn, uint
   lua_setglobal(_current, name.c_str());
 }
 
-// Lua Functions
-
 std::string LuaScriptEngine::execute_lua_fn(const std::string& functionName, const std::string& arg) {
   if (!_current) {
     _logger->error("(runtime) Lua state not initialized");
     return "";
   }
-  // Push the function onto the stack.
   lua_getglobal(_current, functionName.c_str());
   if (!lua_isfunction(_current, -1)) {
     _logger->error("(runtime) Function '" + functionName + "' not found");
     lua_pop(_current, 1);
     return "";
   }
-  // Push the argument.
   lua_pushstring(_current, arg.c_str());
-  // Call the function with 1 argument and expect 1 return value.
   if (lua_pcall(_current, 1, 1, 0) != LUA_OK) {
     _logger->error("(runtime) Error executing Lua function '" + functionName + "': " + std::string(lua_tostring(_current, -1)));
     lua_pop(_current, 1);
@@ -113,9 +104,8 @@ std::string LuaScriptEngine::execute_lua_fn(const std::string& functionName, con
   return result;
 }
 
-// Helper: retrieve the script engine from the upvalue.
 LuaScriptEngine* LuaScriptEngine::get_script_engine(lua_State* L) {
-  // Upvalue index 1 should be a lightuserdata holding the logger pointer.
+  // Upvalue 1 is a lightuserdata holding the engine pointer.
   return static_cast<LuaScriptEngine*>(lua_touserdata(L, lua_upvalueindex(1)));
 }
 

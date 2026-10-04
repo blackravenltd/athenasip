@@ -18,21 +18,15 @@
 
 namespace athenasip::types {
 
-// RFC 3261 section 12. A dialog is a peer-to-peer relationship between two user agents,
-// and this node is neither of them: it is on the path because it record-routed, and what
-// it keeps is a record of a dialog it does not own. Section 16.1 is explicit that a
-// proxy is transaction-stateful rather than dialog-stateful, so nothing routes on what
-// is here. The node keeps it because it anchors media, writes call records and shows
-// live calls, all of which need to know when a call ended.
+// RFC 3261 section 12: this node's record of a dialog it is on the path of but does not own. A proxy is
+// transaction-stateful, not dialog-stateful (16.1), so nothing routes on this; it is kept for media anchoring, call
+// records and live calls, which need to know when a call ended.
 //
-// That vantage point is why the two ends are named for their part in the call rather
-// than the RFC's "local" and "remote". Those are written from inside one UA, and a proxy
-// using them would have to pick an end to pretend to be. Everything else is 12.1.1's
-// list, kept as it is seen.
+// The ends are named caller and callee, not the RFC's "local" and "remote", which are a UA's view. The rest is
+// 12.1.1's list.
 struct Dialog {
   enum class State {
-    // 12.1: the callee has responded, but not with a final response. There may be
-    // several of these for one call if the request forked.
+    // 12.1: a non-final response from the callee. A forked request may have several.
     Early,
     // Confirmed by a 2xx.
     Confirmed,
@@ -40,35 +34,30 @@ struct Dialog {
     Terminated,
   };
 
-  // 12.1.1: the dialog ID is the Call-ID and the two tags. The callee's is not known
-  // until it answers, so a call attempt exists here before its dialog does.
+  // 12.1.1: the dialog ID is the Call-ID and the two tags. The callee's is unknown until it answers.
   std::string call_id;
   std::string caller_tag;
   std::string callee_tag;
 
-  // The peer node that forwarded the request that began this dialog, when one did. Empty
-  // on the node the caller reached, which is the node that owns the call's record.
+  // The peer node that forwarded the request that began this dialog. Empty on the node the caller reached, which
+  // owns the call's record.
   std::string from_node;
 
   std::shared_ptr<SIPIdentity> caller;
   std::shared_ptr<SIPIdentity> callee;
 
-  // 12.1.1 remote target: the Contact each end offered, which is where a request in this
-  // dialog goes once its route set has been walked.
+  // 12.1.1 remote target: the Contact each end offered, where an in-dialog request goes after its route set.
   std::shared_ptr<SIPUri> caller_target;
   std::shared_ptr<SIPUri> callee_target;
 
-  // 12.1.1 route set: the Record-Route values, in the order they were recorded. This
-  // node put itself in this list, which is what brings the BYE back through it.
+  // 12.1.1 route set: the Record-Route values in the order recorded, this node's own among them.
   std::vector<std::shared_ptr<SIPUri>> route_set;
 
-  // 12.2.1.1: the sequence number each end has reached. A request below what has been
-  // seen is out of order (12.2.2).
+  // 12.2.1.1: the sequence number each end has reached. A lower one is out of order (12.2.2).
   std::uint64_t caller_cseq = 0;
   std::uint64_t callee_cseq = 0;
 
-  // 12.1.1: a dialog is secure when the INVITE arrived over TLS and its Request-URI was
-  // a sips URI. Both, not either: TLS on one hop says nothing about the rest of the path.
+  // 12.1.1: secure only when the INVITE arrived over TLS and its Request-URI was a sips URI.
   bool secure = false;
 
   State state = State::Early;
@@ -77,37 +66,26 @@ struct Dialog {
   std::time_t confirmed_at = 0;
   std::time_t terminated_at = 0;
 
-  // RFC 4028, as negotiated in the 2xx. Zero when the call carries no session timer,
-  // which is every call between endpoints that did not offer one, and which is why
-  // nothing expires by default: a proxy that timed out a call whose ends never agreed to
-  // a timer would be ending a call that is still up.
+  // RFC 4028, as negotiated in the 2xx. Zero when the call has no session timer, in which case nothing expires.
   std::uint32_t session_interval = 0;
 
-  // Which end refreshes, "uac" or "uas", or empty when the 2xx did not say. Recorded
-  // because it is what says whose silence is meaningful, not because this node refreshes
-  // anything - it is a proxy, and the refresh is an endpoint's to send.
+  // Which end refreshes, "uac" or "uas", or empty when the 2xx did not say. This node never refreshes; it is a proxy.
   std::string refresher;
 
-  // When the session lapses if nothing refreshes it. On the steady clock, not the wall
-  // one: a session interval is a duration, and a clock step backwards must not extend a
-  // call by an hour.
+  // When the session lapses unless refreshed. Steady clock, so a wall-clock step cannot extend a call.
   std::chrono::steady_clock::time_point session_deadline{};
 
-  // When the callee answered, on the steady clock and for the same reason. This is what
-  // a maximum call duration is measured from; `confirmed_at` is the wall-clock time for
-  // the call record, which is a different question with a different right answer.
+  // When the callee answered, on the steady clock: what a maximum call duration is measured from. `confirmed_at`
+  // is the wall-clock time for the call record.
   std::chrono::steady_clock::time_point confirmed_monotonic{};
 
-  // 12.1.1: Call-ID plus both tags. Empty while the callee has not answered, because
-  // until then there is no dialog to have an identifier.
+  // 12.1.1: Call-ID plus both tags. Empty until the callee has answered.
   std::string id() const;
 
-  // 12.2.2, read from the side of a proxy: a request in this dialog may come from either
-  // end, so the two tags arrive in either order and both orders are the same dialog.
+  // 12.2.2, seen from a proxy: either end may send, so both orders of the tags match.
   bool matches(const std::string& message_call_id, const std::string& from_tag, const std::string& to_tag) const;
 
-  // Which end a request came from, which is what says whose CSeq and whose target it
-  // carries.
+  // Which end a request came from, and so whose CSeq and target it carries.
   bool is_from_caller(const std::string& from_tag) const;
 };
 

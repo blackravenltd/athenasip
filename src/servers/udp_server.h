@@ -21,43 +21,37 @@ class UDPServer : public Server {
   void start() override;
   void stop() override;
 
-  // Called by UDPConnection::async_write_some to send data.
+  // Sends for UDPConnection::async_write_some.
   void async_send_to(boost::asio::const_buffer buffer, boost::asio::ip::udp::endpoint remote_endpoint,
                      std::function<void(const boost::system::error_code&, std::size_t)> handler);
 
-  // Returns the local endpoint of the UDP socket as a TCP endpoint.
+  // The UDP socket's local endpoint, as a TCP endpoint.
   boost::asio::ip::tcp::endpoint local_endpoint();
 
-  // The strand below, for the connections hanging off this server: one socket serves all
-  // of them, so it is their executor too.
+  // The executor of every connection on this server, since one socket serves them all.
   boost::asio::any_io_executor executor() { return _strand; }
 
   bool open_datagram_flow(boost::asio::ip::udp::endpoint remote, std::function<void(std::shared_ptr<Connection>)> handler) override;
 
-  // Remove a connection from the mapping (e.g. after shutdown). Only that connection: a
-  // closing one is removed after the fact, and by then a new flow to the same peer may have
-  // taken its key.
+  // Removes that connection only: by the time a closing one is removed, a new flow to the same peer may hold its key.
   void remove_connection(const std::string& key, const Connection* connection);
 
  protected:
-  // Start an asynchronous receive.
   void start_receive();
-  // Handle an incoming datagram.
   void handle_receive_from(const boost::system::error_code& error, std::size_t bytes_transferred, std::shared_ptr<std::vector<char>> buffer,
                            std::shared_ptr<boost::asio::ip::udp::endpoint> sender_endpoint);
 
   boost::asio::io_context _io_context;
 
-  // One socket serves every UDP channel, so unlike TCP or TLS it is shared. Sends now
-  // arrive from the Core strand while this server's own thread is receiving, and an
-  // asio socket is not safe for that, so every operation on it goes through here.
+  // One socket serves every UDP channel. Sends arrive from the Core strand while this server's thread receives, so
+  // every operation on the socket goes through this strand.
   boost::asio::strand<boost::asio::io_context::executor_type> _strand;
 
   boost::asio::ip::udp::socket _socket;
   uint16_t _port;
   std::shared_ptr<std::thread> _thread;
 
-  // Mapping from remote endpoint key to UDPConnection.
+  // Keyed by remote host:port.
   std::unordered_map<std::string, std::shared_ptr<UDPConnection>> _connections;
 };
 

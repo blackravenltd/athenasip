@@ -22,8 +22,7 @@ class TCPServer : public Server {
   void start() override;
   void stop() override;
 
-  // The port actually being listened on. Not the configured one when that was zero and
-  // the operating system chose, which is what a test binds and what a node logs.
+  // The port being listened on, which is the operating system's choice when zero was configured.
   std::uint16_t port() const { return _acceptor.local_endpoint().port(); }
 
  protected:

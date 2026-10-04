@@ -41,8 +41,8 @@ std::optional<std::string> binding_response(const std::string& request, const bo
 
   const auto transaction = request.substr(8, 12);
 
-  // RFC 5389 section 15.2: the port XORed with the top of the cookie, an IPv4 address with
-  // the cookie, and an IPv6 address with the cookie and the transaction id together.
+  // RFC 5389 section 15.2 XOR-MAPPED-ADDRESS: the port XORed with the top of the cookie, an
+  // IPv4 address with the cookie, an IPv6 address with the cookie and transaction id.
   std::string value;
   value += '\x00';
   value += static_cast<char>(address.is_v4() ? 0x01 : 0x02);

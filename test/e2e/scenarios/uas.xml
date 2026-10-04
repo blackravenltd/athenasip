@@ -2,26 +2,19 @@
 <!DOCTYPE scenario SYSTEM "sipp.dtd">
 
 <!--
-  The callee. It answers whatever the node sends it: 180 then 200, and a 200 to the BYE
-  that ends the call. run.sh registers it first, in a run of its own.
-
-  RFC 3261 13.3.1: a UAS that rings before answering is what makes the early dialog and
-  the CANCEL cases below testable at all.
+  The callee: 180 then 200 to the INVITE, and 200 to the BYE. run.sh registers it first,
+  in a run of its own. Ringing before answering (RFC 3261 13.3.1) is what creates the early
+  dialog.
 -->
 <scenario name="Callee: ring, answer, hang up">
 
-  <!--
-    No REGISTER here, deliberately. sipp binds a scenario to a single call, so a callee
-    that registered in this scenario could not then be handed the INVITE: it arrives with
-    the caller's Call-ID, sipp cannot map it to the call already running, and discards it
-    as unmappable. run.sh registers the callee in a run of its own, on the port this one
-    then listens on, so the binding points here.
-  -->
+  <!-- No REGISTER here: sipp binds a scenario to one call and would discard the INVITE,
+       which arrives with the caller's Call-ID. run.sh registers the callee in a run of its
+       own, on the port this one listens on. -->
 
   <recv request="INVITE" crlf="true">
     <action>
-      <!-- RFC 3261 16.6 step 4: the node Record-Routes itself into the dialog, or the
-           BYE would never come back through it. -->
+      <!-- RFC 3261 16.6 step 4: the node Record-Routes itself, so the BYE returns through it. -->
       <ereg regexp="lr" search_in="hdr" header="Record-Route:" check_it="true" assign_to="route"/>
     </action>
   </recv>

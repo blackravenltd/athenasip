@@ -47,8 +47,7 @@ class LocalEventSystem : public EventSystem, public std::enable_shared_from_this
   void unsubscribe_all(plugins::Executor on, plugins::StatusHandler handler) override;
 
  private:
-  // The delivery half of a publish, shared by both forms: what it could not do is the
-  // reason a caller that asked for one gets back.
+  // Delivery, shared by both forms of publish; the Status is what the waiting form reports.
   plugins::Status deliver(const std::string& event_name, const std::string& message);
 
   std::shared_ptr<Subscription> add_subscription(const std::string& event_name, Subscription::EventCallbackFn event_callback);

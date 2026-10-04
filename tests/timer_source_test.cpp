@@ -56,7 +56,7 @@ TEST(ManualTimerSourceTest, CancelStopsATimer) {
   auto timer = timers->schedule(100ms, [&fired]() { fired = true; });
   EXPECT_TRUE(timer->cancel());
 
-  // Cancelling twice is not a second cancellation.
+  // A second cancel reports nothing cancelled.
   EXPECT_FALSE(timer->cancel());
 
   timers->advance(1s);
@@ -72,8 +72,8 @@ TEST(ManualTimerSourceTest, CancelAfterFiringReportsFalse) {
   EXPECT_FALSE(timer->cancel());
 }
 
-// A retransmission timer reschedules itself from inside its own callback. Anything
-// that falls due within the same advance has to run in that same call.
+// A callback may schedule more work, as a retransmission timer does; anything falling
+// due within the same advance runs in that call.
 TEST(ManualTimerSourceTest, CallbacksMayScheduleMoreWork) {
   auto timers = std::make_shared<ManualTimerSource>();
   int fires = 0;
@@ -89,8 +89,7 @@ TEST(ManualTimerSourceTest, CallbacksMayScheduleMoreWork) {
   EXPECT_EQ(fires, 5);
 }
 
-// The point of the whole thing: RFC 3261 timer B is 64*T1, 32 seconds at the default
-// T1 of 500ms. Against a real clock this test would take 32 seconds.
+// RFC 3261 timer B is 64*T1, 32 seconds at the default T1; advancing the clock is instant.
 TEST(ManualTimerSourceTest, ATimerBLengthWaitCostsNothing) {
   auto timers = std::make_shared<ManualTimerSource>();
   bool timed_out = false;

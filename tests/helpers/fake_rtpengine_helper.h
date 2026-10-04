@@ -17,13 +17,8 @@
 
 #include "media/bencode.h"
 
-// An rtpengine that is not rtpengine: a UDP socket on localhost that decodes the ng
-// datagram, records it, and answers with whatever the test told it to.
-//
-// A driver for a wire protocol is only as good as what it puts on the wire, and the
-// only way to assert on that is to be the other end of the socket. This also makes the
-// two things that are otherwise untestable easy: an engine that answers an error, and
-// one that does not answer at all.
+// A UDP socket on localhost that decodes each ng datagram, records it, and answers as the test directs,
+// including with an error or not at all.
 class FakeRtpengine {
  public:
   FakeRtpengine() : _socket(_io, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0)) {
@@ -45,8 +40,7 @@ class FakeRtpengine {
     _replies.insert_or_assign(command, std::move(reply));
   }
 
-  // Say nothing to the next count datagrams, whatever they are. This is what a lost
-  // packet looks like to the driver.
+  // Ignore the next count datagrams, as if they were lost.
   void swallow(unsigned count) {
     std::lock_guard<std::mutex> lock(_mutex);
     _swallow = count;
@@ -67,8 +61,7 @@ class FakeRtpengine {
     return _requests.size();
   }
 
-  // The last request for a command, for a test that does not care how many times the
-  // driver had to ask.
+  // The last request for a command.
   std::optional<athenasip::media::Bencode> last(const std::string& command) const {
     std::lock_guard<std::mutex> lock(_mutex);
 

@@ -20,31 +20,18 @@ namespace athenasip::transactions {
 
 // RFC 3261 17.1.3 and 17.2.3: which transaction a message belongs to.
 //
-// A request from a 3261 implementation is identified by the branch of the topmost Via,
-// the sent-by of that Via and the method. Two of the cases are not the obvious one:
+// A 3261 request is identified by the topmost Via's branch and sent-by, and the method. Two cases force the method
+// to INVITE:
 //
-//   - An ACK for a non-2xx belongs to the INVITE server transaction that sent the final
-//     response, not to a transaction of its own. Its CSeq method is ACK, so the key is
-//     computed with the method forced to INVITE.
-//   - A CANCEL gets its own non-INVITE server transaction and separately names the
-//     INVITE transaction it cancels (9.2). Finding that one forces the method to INVITE
-//     as well.
+//   - An ACK for a non-2xx belongs to the INVITE server transaction that sent the final response.
+//   - A CANCEL has its own non-INVITE server transaction, and separately names the INVITE transaction it cancels (9.2).
 //
-// A request whose topmost Via carries no branch, or one that does not begin with the
-// z9hG4bK magic cookie, came from an RFC 2543 implementation, which had no transaction
-// identifier to offer. 17.2.3's fallback names it by the fields that were the same
-// across a retransmission then: Request-URI, From tag, Call-ID, CSeq number, topmost
-// Via and method, hashed into one token for the reasons at `_legacy_key`. Both forms
-// are strings in the one table, so nothing above this layer has to know which kind it
-// is holding.
+// A request whose topmost Via has no branch, or one without the z9hG4bK cookie, is from an RFC 2543 implementation
+// and is keyed by 17.2.3's fallback (see `_legacy_key`). Both kinds of key are strings in the one table.
 class TransactionMatcher {
  public:
-  // branch|sent-by|method, or 2543-<digest>|method for a request with no usable branch. The
-  // separators matter: without them "abc" + "INVITE" and "abcI" + "NVITE" are the same
-  // string. Empty when the message carries no Via or CSeq, which is not a transaction
-  // we can name, and for a response with no magic cookie: 17.2.3's fallback includes
-  // the Request-URI, which a response does not have, so a response can only ever be
-  // matched by its branch.
+  // branch|sent-by|method, or 2543-<digest>|method for a request with no usable branch. Empty when the message has no
+  // Via or CSeq, and for a response without the magic cookie, which can only be matched by its branch.
   static std::string key(const std::shared_ptr<SIPMessage>& message, const std::string& method_override = "");
 
   void add(const std::string& key, std::shared_ptr<TransactionBase> transaction);
@@ -57,15 +44,12 @@ class TransactionMatcher {
   // The INVITE server transaction a CANCEL refers to.
   std::shared_ptr<TransactionBase> match_cancelled(const std::shared_ptr<SIPMessage>& cancel) const;
 
-  // The client transaction a response belongs to (17.1.3). The topmost Via of a
-  // response is the one this node put on the request, so the key is the same one the
-  // client transaction was filed under.
+  // The client transaction a response belongs to (17.1.3): the response's topmost Via is the one this node put on the request.
   std::shared_ptr<TransactionBase> match_response(const std::shared_ptr<SIPMessage>& response) const;
 
   std::size_t size() const { return _transactions.size(); }
 
-  // Terminates everything and empties the table. terminate() fires on_terminated, which
-  // removes from the table being walked, so take a copy and clear first.
+  // Terminates everything and empties the table.
   void terminate_all();
 
  private:

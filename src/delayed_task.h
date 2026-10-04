@@ -20,40 +20,35 @@
 
 namespace athenasip {
 
-// A delayed, cancelable task that runs a std::function<T()> after some milliseconds.
+// Runs a task once after a delay, unless cancelled first.
 template <typename T>
 class DelayedTask : public std::enable_shared_from_this<DelayedTask<T>> {
  public:
   using Task = std::function<T()>;
 
-  // Factory method to create and schedule a delayed task. The timer source defaults to
-  // the real clock; tests pass a ManualTimerSource so a 32 second timer costs nothing.
+  // The timer source defaults to the real clock; tests pass a ManualTimerSource.
   static std::shared_ptr<DelayedTask<T>> schedule(Task task, int delay_ms, std::shared_ptr<TimerSource> timers = default_timer_source()) {
     auto instance = std::shared_ptr<DelayedTask<T>>(new DelayedTask<T>(std::move(task), delay_ms, std::move(timers)));
 
-    // schedule the async wait
     instance->startTimer();
     return instance;
   }
 
-  // Cancels the task if it hasn't already executed.
-  // Returns true if this call actually canceled the task,
-  // false if the task was already canceled or already ran.
+  // Returns true if this call cancelled the task, false if it had already run or been
+  // cancelled.
   bool cancel() {
     bool expected = false;
-    // If _has_executed was false, try to mark it true so we know we can't run
     if (_has_executed.compare_exchange_strong(expected, true)) {
-      if (_timer) _timer->cancel();  // forcibly cancel the timer
+      if (_timer) _timer->cancel();
       return true;
     }
-    // task was already executed or canceled
     return false;
   }
 
-  // Checks if the task has executed
+  // True once the task has run or been cancelled.
   bool has_executed() const { return _has_executed.load(); }
 
-  // Gets the result of the lambda, if it has run
+  // The task's return value. Throws if it has not run or was cancelled.
   T result() const {
     if (!_has_executed.load()) {
       throw std::runtime_error("Task has not executed yet.");
@@ -67,13 +62,11 @@ class DelayedTask : public std::enable_shared_from_this<DelayedTask<T>> {
   ~DelayedTask() = default;
 
  private:
-  // Private constructor (use schedule() factory).
   DelayedTask(Task task, int delay_ms, std::shared_ptr<TimerSource> timers)
       : _task(std::move(task)), _delay_ms(delay_ms), _timers(std::move(timers)), _has_executed(false) {}
 
-  // Actually starts the timer and schedules the callback
   void startTimer() {
-    // Capture shared_ptr to ourselves so we live through the async callback
+    // Keep this alive until the timer fires.
     auto self = this->shared_from_this();
 
     _timer = _timers->schedule(std::chrono::milliseconds(_delay_ms), [self]() {

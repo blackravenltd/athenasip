@@ -15,8 +15,7 @@ using namespace athenasip;
 
 namespace {
 
-// RFC 5389 section 6: a Binding request with no attributes, the shape RFC 5626 4.4.2
-// keep-alives take.
+// RFC 5389 6: a Binding request with no attributes, as RFC 5626 4.4.2 keep-alives are.
 std::string binding_request(const std::string& transaction = "ABCDEFGHIJKL") {
   std::string raw;
   raw += '\x00';
@@ -37,9 +36,8 @@ std::uint16_t u16(const std::string& s, std::size_t at) {
 
 }  // namespace
 
-// Only a STUN message is one: the top two bits clear, the magic cookie in place and a length
-// that matches. SIP starts with a letter, so the two cannot be confused (RFC 5626 4.4.2,
-// RFC 5389 section 6).
+// RFC 5389 6, RFC 5626 4.4.2: a STUN message has its top two bits clear, the magic
+// cookie in place and a matching length, so it cannot be confused with SIP.
 TEST(StunTest, OnlyAStunMessageIsRecognised) {
   EXPECT_TRUE(stun::is_stun(binding_request()));
 
@@ -56,9 +54,8 @@ TEST(StunTest, OnlyAStunMessageIsRecognised) {
   EXPECT_FALSE(stun::is_stun(wrong_length));
 }
 
-// RFC 5389 section 7.3.1: the answer to a Binding request is a success response with the
-// same transaction id and the source address in XOR-MAPPED-ADDRESS (section 15.2), which is
-// how a client behind a NAT learns its mapping has moved.
+// RFC 5389 7.3.1, 15.2: a Binding request is answered with a success response carrying
+// the same transaction id and the source address in XOR-MAPPED-ADDRESS.
 TEST(StunTest, ABindingRequestIsAnsweredWithWhereItCameFrom) {
   const auto response = stun::binding_response(binding_request("0123456789AB"), boost::asio::ip::make_address("192.0.2.10"), 5062);
   ASSERT_TRUE(response.has_value());
@@ -79,7 +76,7 @@ TEST(StunTest, ABindingRequestIsAnsweredWithWhereItCameFrom) {
   for (int i = 0; i < 4; ++i) EXPECT_EQ(static_cast<unsigned char>((*response)[28 + i]) ^ cookie[i], expected[i]);
 }
 
-// IPv6 XORs the address with the cookie and the transaction id together (section 15.2).
+// RFC 5389 15.2: an IPv6 address is XORed with the cookie and the transaction id.
 TEST(StunTest, AnIpv6SourceIsXoredWithTheCookieAndTheTransaction) {
   const std::string transaction = "0123456789AB";
   const auto source = boost::asio::ip::make_address("2001:db8::1");
@@ -94,8 +91,7 @@ TEST(StunTest, AnIpv6SourceIsXoredWithTheCookieAndTheTransaction) {
   for (int i = 0; i < 16; ++i) EXPECT_EQ(static_cast<unsigned char>((*response)[28 + i]) ^ static_cast<unsigned char>(mask[i]), bytes[i]);
 }
 
-// Anything but a Binding request - a response, an indication, another method - is not
-// answered: answering a response would be two servers talking to each other forever.
+// Only a Binding request is answered; answering a response would loop between servers.
 TEST(StunTest, OnlyABindingRequestIsAnswered) {
   auto response = binding_request();
   response[0] = '\x01';

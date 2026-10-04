@@ -10,7 +10,7 @@
 
 namespace athenasip::headers {
 
-// Default Implementation
+// The default: the field value kept as text.
 class StringHeader : public Header {
  public:
   StringHeader() = default;

@@ -41,7 +41,7 @@ Hop hop(const std::string& transport, const std::string& address, std::uint16_t 
 
 }  // namespace
 
-// 4.1 and 4.2: a numeric host is already an address. No DNS at all.
+// RFC 3263 4.1 and 4.2: a numeric host is already an address. No DNS at all.
 TEST(SipLocatorTest, ANumericHostNeedsNoDns) {
   auto resolver = std::make_shared<FakeResolver>();
 
@@ -61,7 +61,7 @@ TEST(SipLocatorTest, ANumericHostTakesItsTransportAndPortFromTheUri) {
   EXPECT_EQ(hops.value, std::vector<Hop>{hop("tcp", "192.0.2.9", 5080)});
 }
 
-// 4.1: "if the URI ... is a SIPS URI ... TCP" - TLS over it - and 5061.
+// RFC 3263 4.1: a SIPS URI means TLS over TCP, on 5061.
 TEST(SipLocatorTest, ASipsUriWithANumericHostIsTlsOn5061) {
   auto resolver = std::make_shared<FakeResolver>();
 
@@ -81,8 +81,7 @@ TEST(SipLocatorTest, AnIpv6LiteralNeedsNoDnsEither) {
   EXPECT_TRUE(resolver->asked.empty());
 }
 
-// 4.2: "If the TARGET was not a numeric IP address, but a port is present in the URI, the
-// client performs an A or AAAA record lookup of the domain name." No NAPTR, no SRV.
+// RFC 3263 4.2: with a port in the URI, an A or AAAA lookup only. No NAPTR, no SRV.
 TEST(SipLocatorTest, AnExplicitPortSkipsNaptrAndSrv) {
   auto resolver = std::make_shared<FakeResolver>();
   resolver->a("pbx.example.com", "198.51.100.5");
@@ -96,8 +95,7 @@ TEST(SipLocatorTest, AnExplicitPortSkipsNaptrAndSrv) {
   EXPECT_FALSE(resolver->was_asked("_sip._udp.pbx.example.com", Type::SRV));
 }
 
-// 4.1 and 4.2: a transport parameter decides the transport; SRV for it still decides the
-// port and the hosts.
+// RFC 3263 4.1 and 4.2: a transport parameter decides the transport; SRV still decides the port and the hosts.
 TEST(SipLocatorTest, ATransportParameterSkipsNaptrButNotSrv) {
   auto resolver = std::make_shared<FakeResolver>();
   resolver->srv("_sip._tcp.example.com", 10, 0, 5090, "edge.example.com");
@@ -110,9 +108,8 @@ TEST(SipLocatorTest, ATransportParameterSkipsNaptrButNotSrv) {
   EXPECT_FALSE(resolver->was_asked("example.com", Type::NAPTR));
 }
 
-// 4.1: NAPTR, in order then preference, keeping only services this client can use; each
-// replacement is an SRV name. sip2sip.info's real records, in a shuffled order to show
-// the sorting is the locator's and not the server's.
+// RFC 3263 4.1: NAPTR by order then preference, keeping only usable services; each replacement is an SRV name.
+// The records are given shuffled, so the sorting is the locator's.
 TEST(SipLocatorTest, NaptrDecidesTheTransportsInOrder) {
   auto resolver = std::make_shared<FakeResolver>();
   resolver->naptr("sip2sip.info", 25, 100, "SIPS+D2T", "_sips._tcp.sip2sip.info");
@@ -129,8 +126,7 @@ TEST(SipLocatorTest, NaptrDecidesTheTransportsInOrder) {
   EXPECT_EQ(hops.value, (std::vector<Hop>{hop("tcp", "81.23.228.129", 5060), hop("udp", "81.23.228.129", 5060), hop("tls", "81.23.228.129", 5061)}));
 }
 
-// 4.1: "If the URI is a SIPS URI, only those records with a service field of SIPS+D2T are
-// retained."
+// RFC 3263 4.1: a SIPS URI keeps only SIPS+D2T records.
 TEST(SipLocatorTest, ASipsUriKeepsOnlySipsNaptrRecords) {
   auto resolver = std::make_shared<FakeResolver>();
   resolver->naptr("sip2sip.info", 10, 100, "SIP+D2T", "_sip._tcp.sip2sip.info");
@@ -145,8 +141,7 @@ TEST(SipLocatorTest, ASipsUriKeepsOnlySipsNaptrRecords) {
   EXPECT_EQ(hops.value, std::vector<Hop>{hop("tls", "81.23.228.129", 5061)});
 }
 
-// A service this client cannot speak is not one to try. SIP over WebSocket (RFC 7118) is
-// a transport this node accepts and cannot open.
+// A service this node cannot open is dropped: it accepts SIP over WebSocket (RFC 7118) but cannot dial it.
 TEST(SipLocatorTest, ServicesThisNodeCannotUseAreDropped) {
   auto resolver = std::make_shared<FakeResolver>();
   resolver->naptr("example.com", 5, 10, "SIP+D2W", "_sip._ws.example.com");
@@ -161,8 +156,7 @@ TEST(SipLocatorTest, ServicesThisNodeCannotUseAreDropped) {
   EXPECT_FALSE(resolver->was_asked("_sip._ws.example.com", Type::SRV));
 }
 
-// 4.1: "If no NAPTR records are found, the client constructs SRV queries for those
-// transport protocols it supports."
+// RFC 3263 4.1: with no NAPTR records, an SRV query for each supported transport.
 TEST(SipLocatorTest, NoNaptrMeansSrvForEachTransport) {
   auto resolver = std::make_shared<FakeResolver>();
   resolver->srv("_sip._udp.iptel.org", 0, 25, 5060, "sip.iptel.org");
@@ -175,8 +169,7 @@ TEST(SipLocatorTest, NoNaptrMeansSrvForEachTransport) {
   EXPECT_TRUE(resolver->was_asked("_sip._tcp.iptel.org", Type::SRV));
 }
 
-// 4.2: "If no SRV records were found, the client SHOULD use ... A or AAAA" with the
-// default port, UDP for sip.
+// RFC 3263 4.2: with no SRV records, A or AAAA on the default port, UDP for sip.
 TEST(SipLocatorTest, NoNaptrAndNoSrvMeansTheAddressesOnTheDefaultPort) {
   auto resolver = std::make_shared<FakeResolver>();
   resolver->a("pbx.example.com", "198.51.100.5");
@@ -202,9 +195,8 @@ TEST(SipLocatorTest, SrvTargetsAreTriedInPriorityOrder) {
   EXPECT_EQ(hops.value, (std::vector<Hop>{hop("udp", "198.51.100.1", 5060), hop("udp", "198.51.100.2", 5060)}));
 }
 
-// RFC 2782's selection within one priority: sum the weights, pick a number in [0, sum],
-// take the first record whose running sum reaches it, remove it and repeat. Here the dice
-// say 70 of 0..100 the first time, which falls in the second record's range.
+// RFC 2782 weighted selection within one priority. The injected roll of 70 in 0..100 falls in the second
+// record's range.
 TEST(SipLocatorTest, WithinAPriorityTheWeightsDecide) {
   auto resolver = std::make_shared<FakeResolver>();
   resolver->srv("_sip._udp.example.com", 10, 60, 5060, "big.example.com");
@@ -218,8 +210,7 @@ TEST(SipLocatorTest, WithinAPriorityTheWeightsDecide) {
   EXPECT_EQ(hops.value, (std::vector<Hop>{hop("udp", "198.51.100.2", 5060), hop("udp", "198.51.100.1", 5060)}));
 }
 
-// RFC 2782: "A Target of '.' means that the service is decidedly not available at this
-// domain."
+// RFC 2782: a target of "." means the service is not available at this domain.
 TEST(SipLocatorTest, ATargetOfDotIsNoServiceAtAll) {
   auto resolver = std::make_shared<FakeResolver>();
   resolver->srv("_sip._udp.example.com", 0, 0, 0, ".");
@@ -241,9 +232,8 @@ TEST(SipLocatorTest, ANameThatDoesNotExistIsAnEmptyAnswer) {
   EXPECT_TRUE(hops.value.empty());
 }
 
-// RFC 6761 section 6.4: a name under .invalid does not exist, and a resolver should say so
-// without asking anybody. Clients put such names in their Contact on purpose - a browser
-// always, AthenaPhone on every transport - so this is asked often.
+// RFC 6761 6.4: a name under .invalid does not exist and is answered without asking DNS. Clients put such
+// names in their Contact.
 TEST(SipLocatorTest, ANameUnderInvalidIsAnsweredWithoutAskingDns) {
   auto resolver = std::make_shared<FakeResolver>();
 
@@ -254,9 +244,8 @@ TEST(SipLocatorTest, ANameUnderInvalidIsAnsweredWithoutAskingDns) {
   EXPECT_TRUE(resolver->asked.empty());
 }
 
-// Against the real DNS, through this machine's own nameservers, when ATHENA_TEST_DNS is
-// set: the resolver, the codec and the locator together, on a domain that publishes the
-// full RFC 3263 set. Opt-in like the Redis and MQTT tests, because it needs the network.
+// Opt-in with ATHENA_TEST_DNS, because it needs the network: the resolver, codec and locator together against
+// a real domain that publishes the full RFC 3263 set.
 TEST(SipLocatorTest, ARealDomainIsLocatedThroughTheSystemResolver) {
   if (!std::getenv("ATHENA_TEST_DNS")) GTEST_SKIP() << "set ATHENA_TEST_DNS=1 to resolve against the real DNS";
 
@@ -286,7 +275,7 @@ TEST(SipLocatorTest, ARealDomainIsLocatedThroughTheSystemResolver) {
   EXPECT_TRUE(tls) << seen;
 }
 
-// No answer from DNS is not "nothing there": it is not knowing, and the caller is told so.
+// No answer from DNS is a failure, not an empty result.
 TEST(SipLocatorTest, NoAnswerAtAllIsAFailure) {
   auto resolver = std::make_shared<FakeResolver>();
   resolver->failing = {"pbx.example.com/1", "pbx.example.com/28"};
@@ -296,8 +285,7 @@ TEST(SipLocatorTest, NoAnswerAtAllIsAFailure) {
   EXPECT_FALSE(hops.ok);
 }
 
-// But a failure at one step of several is not the end: an unanswered NAPTR question moves
-// on to SRV, as an empty one would.
+// An unanswered NAPTR query moves on to SRV, as an empty one would.
 TEST(SipLocatorTest, AnUnansweredNaptrMovesOnToSrv) {
   auto resolver = std::make_shared<FakeResolver>();
   resolver->failing = {"example.com/35"};

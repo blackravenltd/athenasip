@@ -15,12 +15,11 @@
 
 namespace athenasip::types {
 
-// One registered contact for a subscriber: what RFC 3261 section 10 calls a binding.
-// A subscriber may have several, and target determination (16.5) uses all of them.
+// One registered contact for a subscriber: a binding (RFC 3261 section 10). A subscriber may have several, and
+// target determination (16.5) uses all of them.
 //
-// node_id, flow_id and path are empty on a single node. They carry the cluster
-// information: which node holds the flow, which flow it is (RFC 5626) and the Path
-// header recorded at registration (RFC 3327).
+// node_id, flow_id and path are empty on a single node. In a cluster they are the node holding the flow, the flow
+// (RFC 5626) and the Path recorded at registration (RFC 3327).
 struct Location {
   std::shared_ptr<SIPUri> contact;
   std::uint64_t subscriber_id = 0;
@@ -32,12 +31,10 @@ struct Location {
   std::time_t registered_at = 0;
   std::time_t expires_at = 0;
 
-  // The contact is on a private address, so it is behind NAT as far as we are
-  // concerned and responses have to go back down the flow it arrived on.
+  // The contact is on a private address, so it is treated as behind NAT and reached down the flow it registered on.
   bool nat = false;
 
-  // RFC 5626 outbound: the client's +sip.instance and the reg-id of this flow, which
-  // together are what identifies the binding once the client has asked for outbound. Empty
+  // RFC 5626 outbound: the client's +sip.instance and this flow's reg-id, which together identify the binding. Empty
   // and zero for an ordinary binding, which is identified by its contact.
   std::string instance;
   std::uint32_t reg_id = 0;

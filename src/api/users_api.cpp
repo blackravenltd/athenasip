@@ -32,8 +32,7 @@ std::vector<std::string> strings_of(const boost::json::array& values) {
   return out;
 }
 
-// An array field, absent rather than empty when it is not there: on a PUT, "roles not
-// given" leaves them alone and "roles given as []" takes them all away.
+// nullopt when absent: on a PUT, omitting "roles" leaves them alone and [] removes them all.
 std::optional<boost::json::array> array_field(const boost::json::object& object, const std::string& name) {
   const auto it = object.find(name);
   if (it == object.end() || !it->value().is_array()) return std::nullopt;
@@ -70,28 +69,25 @@ void UsersAPI::register_routes(Router& router) {
   router.add(http::verb::delete_, "/api/v1/users/{user}", manage, [self](RouteContext c) { self->_delete(std::move(c)); });
   router.add(http::verb::delete_, "/api/v1/users/{user}/sessions", manage, [self](RouteContext c) { self->_revoke_sessions(std::move(c)); });
 
-  // Any authenticated caller, because "this is my own user" is not something a role can
-  // express. The handler admits somebody changing their own password with the old one, and
-  // anybody holding manage-admin-users changing anyone's without it.
+  // Any authenticated caller: the handler admits a user changing their own password with
+  // the old one, and a holder of manage-admin-users changing anyone's without it.
   router.add(http::verb::post, "/api/v1/users/{user}/password", {}, [self](RouteContext c) { self->_set_password(std::move(c)); });
 }
 
 boost::json::object UsersAPI::_user_json(const types::User& user) {
   boost::json::object object;
 
-  // The username as it was given, not the key it is filed under, which is case-folded.
+  // The username as given, not the case-folded key.
   object["username"] = user.username;
   object["display_name"] = user.display_name;
   object["roles"] = strings_json(user.roles);
   object["disabled"] = user.disabled;
 
-  // Unix seconds, as every other time this API hands back.
+  // Unix seconds, as every time in this API is.
   object["created_at"] = static_cast<std::int64_t>(user.created_at);
   object["last_login_at"] = static_cast<std::int64_t>(user.last_login_at);
 
-  // password_hash is deliberately absent. It is the password in the only form this node
-  // holds it, and an API that hands it back is one that puts it in every log that records
-  // a response.
+  // password_hash is never returned.
   return object;
 }
 
@@ -189,8 +185,7 @@ void UsersAPI::_create(RouteContext context) {
 
   _datastore->user_create(_executor, user, [self, context, user](plugins::Status status) mutable {
     if (!status.ok) {
-      // The contract makes create refuse an existing username, which is what lets this be
-      // a conflict rather than an overwrite.
+      // user_create refuses an existing username, so a failure here is a conflict.
       self->_logger->debug("user_create refused: " + status.error);
       write_error(context.response, http::status::conflict, "conflict", "a user called " + user->username + " already exists");
       return context.done();
@@ -224,7 +219,7 @@ void UsersAPI::_update(RouteContext context) {
   auto self = shared_from_this();
 
   _with_user(username, std::move(context), [self, body, self_edit](std::shared_ptr<types::User> user, RouteContext context) {
-    // A read hands back a copy, so this is the copy being changed and written back.
+    // user is a copy; it is changed and written back.
     if (const auto display_name = string_field(*body, "display_name")) user->display_name = *display_name;
 
     if (const auto roles = array_field(*body, "roles")) {
@@ -236,10 +231,8 @@ void UsersAPI::_update(RouteContext context) {
 
       auto wanted = strings_of(*roles);
 
-      // Nobody locks themselves out of the door they are standing in. Agreed with the
-      // console, and the reason is not politeness: an administrator who does this to
-      // themselves by accident needs `athenasip --add-user` on the host to get back in, which
-      // is a shell they may not have.
+      // A user cannot remove its own manage-admin-users: getting back in would need
+      // `athenasip --add-user` on the host.
       if (self_edit && user->has_role(types::roles::manage_admin_users) &&
           std::find(wanted.begin(), wanted.end(), types::roles::manage_admin_users) == wanted.end()) {
         write_error(context.response, http::status::conflict, "would_lock_out", "a user cannot take manage-admin-users away from itself");
@@ -264,8 +257,7 @@ void UsersAPI::_update(RouteContext context) {
         return context.done();
       }
 
-      // Disabling is immediate rather than eventual, which is what the sessions being
-      // revocable is for. Without this the user keeps working until each token expires.
+      // Revoke the sessions, so that disabling takes effect at once.
       if (user->disabled) self->_datastore->session_delete_for_user(self->_executor, user->key(), [](plugins::Status) {});
 
       write_json(context.response, http::status::ok, _user_json(*user));
@@ -277,9 +269,7 @@ void UsersAPI::_update(RouteContext context) {
 void UsersAPI::_delete(RouteContext context) {
   const auto username = context.parameter("user");
 
-  // The same rule as disabling, for the same reason: a user that deleted itself has locked
-  // itself out just as thoroughly, and leaving the hole open would make the other check
-  // decorative.
+  // A user cannot delete itself, for the same reason it cannot disable itself.
   if (_is_self(context, username)) {
     write_error(context.response, http::status::conflict, "would_lock_out", "a user cannot delete itself");
     return context.done();
@@ -287,8 +277,8 @@ void UsersAPI::_delete(RouteContext context) {
 
   auto self = shared_from_this();
 
-  // The existence check is the handler's, because the store answers a delete the same way
-  // whether or not anything was there.
+  // The store answers a delete the same whether or not the user existed, so existence is
+  // checked here.
   _with_user(username, std::move(context), [self](std::shared_ptr<types::User> user, RouteContext context) {
     self->_datastore->user_delete(self->_executor, user->key(), [self, context, user](plugins::Status status) mutable {
       if (!status.ok) {
@@ -308,9 +298,8 @@ void UsersAPI::_revoke_sessions(RouteContext context) {
   const auto username = context.parameter("user");
   auto self = shared_from_this();
 
-  // 404 for a user that does not exist; 204 for one that exists and holds nothing, because
-  // holding nothing is the state the caller asked for. The store will not tell those apart,
-  // so the existence check happens here.
+  // 404 for a user that does not exist, 204 for one that holds no sessions. The store does
+  // not tell those apart, so existence is checked here.
   _with_user(username, std::move(context), [self](std::shared_ptr<types::User> user, RouteContext context) {
     self->_datastore->session_delete_for_user(self->_executor, user->key(), [self, context, user](plugins::Status status) mutable {
       if (!status.ok) {
@@ -344,8 +333,7 @@ void UsersAPI::_set_password(RouteContext context) {
   const auto manages = context.caller.has_role(types::roles::manage_admin_users);
   const auto self_edit = _is_self(context, username);
 
-  // Somebody else's password, without the role, is not something to answer in detail: 403
-  // before the store is asked, so this cannot be used to find out who exists.
+  // 403 before the store is asked, so this cannot be used to find out who exists.
   if (!manages && !self_edit) {
     write_error(context.response, http::status::forbidden, "forbidden", "this credential does not hold " + std::string(types::roles::manage_admin_users));
     return context.done();
@@ -355,15 +343,12 @@ void UsersAPI::_set_password(RouteContext context) {
   auto self = shared_from_this();
 
   _with_user(username, std::move(context), [self, password, old_password, manages, self_edit](std::shared_ptr<types::User> user, RouteContext context) {
-    // Your own password needs the old one. Holding the role does not, because the case it
-    // exists for is somebody who has lost theirs.
+    // Changing your own password needs the old one; holding the role does not, since it
+    // exists to reset a lost one.
     if (self_edit && !manages) {
       if (!old_password || !types::Password::verify(*old_password, user->password_hash)) {
-        // 403 and not 401, which this answered until the console pointed out what it was
-        // being told. A 401 on an authenticated request means "your credential is no
-        // longer good", and a client that believes it signs the user out; here the bearer
-        // is perfectly good and it is a field in the body that is wrong. Its own code, so
-        // a client can tell it from the 403 for a missing role without a second request.
+        // 403, not 401: the bearer is good and a client must not sign the user out. A code
+        // of its own distinguishes it from the 403 for a missing role.
         write_error(context.response, http::status::forbidden, "wrong_password", "the old password is not right");
         return context.done();
       }
@@ -381,10 +366,8 @@ void UsersAPI::_set_password(RouteContext context) {
         return context.done();
       }
 
-      // Every session the user held, including the one that asked. A password is changed
-      // because the old one is no longer trusted, and a session issued against it is
-      // exactly as untrusted; an administrator resetting a compromised user would
-      // otherwise leave whoever compromised it logged in.
+      // Revoke every session the user held, including the caller's: a session issued under
+      // the old password is as untrusted as the password.
       self->_datastore->session_delete_for_user(self->_executor, user->key(), [self, context](plugins::Status status) mutable {
         if (!status.ok) self->_logger->warn("could not revoke sessions after a password change: " + status.error);
 

@@ -13,27 +13,23 @@
 
 using namespace athenasip::types;
 
-// Helper: Returns whether a URL is valid
 static bool isValidURL(const std::string& urlStr) {
   URL url(urlStr);
   return url.is_valid();
 }
 
 TEST(URLTest, ValidBasicURL) {
-  // A simple URL with no user info, no port specified.
   URL url("http://example.com/path");
   EXPECT_TRUE(url.is_valid());
   EXPECT_EQ(url.scheme, "http");
   EXPECT_EQ(url.host, "example.com");
   EXPECT_EQ(url.path, "/path");
-  // Since "http" default is 80, to_string should NOT include ":80".
+  // 80 is the http default, so to_string omits it.
   std::string toStr = url.to_string();
-  // Expect that the string does NOT contain ":80"
   EXPECT_EQ(toStr.find(":80"), std::string::npos) << "to_string output: " << toStr;
 }
 
 TEST(URLTest, ValidURLWithUserInfoAndPort) {
-  // A URL with user, password, and an explicit port different than the default.
   URL url("ftp://user:pass@ftp.example.com:2121/files");
   EXPECT_TRUE(url.is_valid());
   EXPECT_EQ(url.scheme, "ftp");
@@ -44,13 +40,12 @@ TEST(URLTest, ValidURLWithUserInfoAndPort) {
   EXPECT_EQ(url.port.value(), 2121);
   EXPECT_EQ(url.path, "/files");
 
-  // In to_string, since port 2121 is not the default for ftp (default is 21), it should appear.
+  // 2121 is not the ftp default (21), so to_string includes it.
   std::string toStr = url.to_string();
   EXPECT_NE(toStr.find(":2121"), std::string::npos) << "to_string output: " << toStr;
 }
 
 TEST(URLTest, DefaultPortNotIncluded) {
-  // If the URL uses the default port, then to_string should not include the port.
   URL url("https://secure.example.com/securepath");
   EXPECT_TRUE(url.is_valid());
   EXPECT_EQ(url.scheme, "https");
@@ -58,27 +53,22 @@ TEST(URLTest, DefaultPortNotIncluded) {
   EXPECT_TRUE(url.port.has_value());
   EXPECT_EQ(url.port.value(), 443);
   std::string toStr = url.to_string();
-  // Expect that the port is not explicitly appended.
   EXPECT_EQ(toStr.find(":443"), std::string::npos) << "to_string output: " << toStr;
 }
 
 TEST(URLTest, QueryAndFragment) {
-  // Test parsing a URL with query parameters and fragment.
   URL url("https://example.com/path?key=value#section");
   EXPECT_TRUE(url.is_valid());
   EXPECT_EQ(url.query, "key=value");
   EXPECT_EQ(url.fragment, "section");
 
-  // The output string should include the query and fragment.
   std::string toStr = url.to_string();
   EXPECT_NE(toStr.find("?key=value"), std::string::npos);
   EXPECT_NE(toStr.find("#section"), std::string::npos);
 }
 
 TEST(URLTest, InvalidURL) {
-  // Provide an input that does not match the URL regex.
   URL url("not a valid url");
-  // Expect invalid since regex match should fail.
   EXPECT_FALSE(url.is_valid());
 }
 
@@ -111,9 +101,7 @@ TEST(URLTest, HostlessUrlIsValid) {
   EXPECT_EQ(url.host, "");
 }
 
-// RFC 3986 3.2.3: port = *DIGIT. The regex this replaces read a non-numeric port as
-// part of the path and called the URL valid, so a typo in a datastore address surfaced
-// as a connection failure much later instead of as a bad URL.
+// RFC 3986 3.2.3: port = *DIGIT. A non-numeric port is a bad URL, not part of the path.
 TEST(URLTest, APortThatIsNotDigitsIsNotAUrl) {
   EXPECT_FALSE(isValidURL("redis://localhost:sixthreeseven"));
   EXPECT_FALSE(isValidURL("redis://localhost:"));
@@ -153,9 +141,7 @@ TEST(URLTest, TheDefaultPortIsFoundWhateverTheSchemeCase) {
   EXPECT_EQ(url.port.value(), 6379);
 }
 
-// 3986 3.2.1: the ':' inside userinfo separates the two halves. Without one there is a
-// username and no password, rather than an empty password that to_string would write
-// back out as a trailing colon.
+// RFC 3986 3.2.1: with no ':' in userinfo there is a username and no password, not an empty one.
 TEST(URLTest, AUsernameWithNoPasswordHasNone) {
   URL url("redis://alice@cache.example.com");
 

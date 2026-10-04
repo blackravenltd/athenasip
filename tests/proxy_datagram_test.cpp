@@ -25,13 +25,8 @@ using tcp = boost::asio::ip::tcp;
 
 namespace {
 
-// Somewhere for the node to fall back to. It accepts and reads, which is all RFC 3261
-// 18.1.1 needs of the far end: what matters is whether this node moved the request off
-// UDP, not what the far end did with it afterwards.
-//
-// Everything on the socket happens on the listener's own thread and what arrived is
-// handed to the test under a lock. Reaching into the socket from the test thread is a
-// data race, whatever it looks like it is reading.
+// A TCP far end that accepts and records what arrives. The socket is touched only on
+// the listener's thread; received() hands the bytes to the test under a lock.
 struct TcpListener {
   net::io_context io;
   tcp::acceptor acceptor{io, tcp::endpoint(net::ip::make_address("127.0.0.1"), 0)};
@@ -82,10 +77,8 @@ struct TcpListener {
   std::string _received;
 };
 
-// Alice calls Bob, both on UDP, with Bob's flow pointed at a loopback port a test can
-// put a real TCP listener on. Everything about 18.1.1 is a decision this node makes on
-// the way out, so the fixture only has to make the two transports real enough to tell
-// apart.
+// Alice calls Bob over UDP, with Bob's flow on a loopback port a test can put a TCP
+// listener on.
 struct DatagramFixture : CoreFixture {
   std::shared_ptr<MockConnection> caller_connection;
   std::shared_ptr<athenasip::Channel> caller;
@@ -105,14 +98,11 @@ struct DatagramFixture : CoreFixture {
 
     register_binding(bob, std::make_shared<athenasip::types::SIPUri>("sip:bob@127.0.0.1:" + std::to_string(callee_port)), callee, 3600);
 
-    // Alice registered over her connection, so her calls are not challenged; what is under
-    // test here is where the INVITE leaves by, not whether she may send it.
+    // Alice is authenticated, so her INVITE is not challenged.
     on_strand([this]() { caller->authenticated_as("sip:alice@example.com"); });
   }
 
-  // An INVITE whose session description is long enough to push the forwarded request past
-  // 1300 bytes. A description this size is ordinary: a browser's offer with ICE candidates
-  // and a DTLS fingerprint is larger still, which is why the rule exists.
+  // An INVITE whose SDP pushes the forwarded request past 1300 bytes.
   std::string large_invite() {
     std::string sdp =
         "v=0\r\n"
@@ -172,10 +162,8 @@ std::string top_via_of(const std::shared_ptr<athenasip::SIPMessage>& message) {
 
 }  // namespace
 
-// RFC 3261 18.1.1: a request larger than 1300 bytes, with the path MTU unknown, MUST be
-// sent over a congestion controlled transport. Sending it as a datagram invites IP
-// fragmentation, and a fragmented SIP request is one lost fragment away from a call that
-// silently never happens.
+// RFC 3261 18.1.1: a request over 1300 bytes, path MTU unknown, must leave over a
+// congestion-controlled transport.
 TEST(ProxyDatagramTest, AnOversizedRequestLeavesOverTcpInsteadOfUdp) {
   TcpListener listener;
   DatagramFixture fixture(listener.port());
@@ -183,16 +171,12 @@ TEST(ProxyDatagramTest, AnOversizedRequestLeavesOverTcpInsteadOfUdp) {
   fixture.receive(fixture.caller, fixture.large_invite());
   fixture.settle();
 
-  // Nothing went out as a datagram.
   EXPECT_EQ(ProxyFixture::request_with(fixture.callee_connection, "INVITE"), nullptr);
 
-  // And the node opened a TCP flow to the same hop to carry it.
   EXPECT_NE(fixture.tcp_flow_to(listener.port()), nullptr);
 }
 
-// "If this causes a change in the transport protocol from the one indicated in the top
-// Via, the value in the top Via MUST be changed." A Via that names UDP when the request
-// left over TCP sends the answer to a port nothing is listening on.
+// RFC 3261 18.1.1: the top Via names the transport the request actually left on.
 TEST(ProxyDatagramTest, TheTopViaSaysWhereTheRequestReallyWent) {
   TcpListener listener;
   DatagramFixture fixture(listener.port());
@@ -203,7 +187,7 @@ TEST(ProxyDatagramTest, TheTopViaSaysWhereTheRequestReallyWent) {
   auto flow = fixture.tcp_flow_to(listener.port());
   ASSERT_NE(flow, nullptr);
 
-  // Read what this node actually wrote to the far end off the wire.
+  // What this node wrote to the far end.
   std::string raw;
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
 
@@ -222,9 +206,7 @@ TEST(ProxyDatagramTest, TheTopViaSaysWhereTheRequestReallyWent) {
   EXPECT_EQ(top_via_of(forwarded), "SIP/2.0/TCP");
 }
 
-// The rule is about size and nothing else. A request that fits goes out the way it was
-// routed, and a node that opened a TCP connection for every call would be paying a
-// handshake for nothing.
+// RFC 3261 18.1.1: a request that fits stays on UDP.
 TEST(ProxyDatagramTest, ARequestThatFitsStaysOnUdp) {
   TcpListener listener;
   DatagramFixture fixture(listener.port());
@@ -239,11 +221,9 @@ TEST(ProxyDatagramTest, ARequestThatFitsStaysOnUdp) {
   EXPECT_EQ(fixture.tcp_flow_to(listener.port()), nullptr);
 }
 
-// 18.1.1 again: "if the attempt to establish the connection ... results in a TCP reset,
-// the element SHOULD retry the request, using UDP". A datagram that may be fragmented
-// beats a request that never leaves.
+// RFC 3261 18.1.1: when the TCP connection is refused, the request is retried over UDP.
 TEST(ProxyDatagramTest, ARequestFallsBackToUdpWhenTcpIsRefused) {
-  // A port nothing is listening on, so the connection is refused at once.
+  // Nothing listens on port 9, so the connection is refused at once.
   const std::uint16_t closed_port = 9;
 
   DatagramFixture fixture(closed_port);

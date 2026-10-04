@@ -56,9 +56,8 @@ using namespace athenasip;
 using namespace athenasip::datastores;
 using namespace athenasip::events;
 
-// Startup is the one place a wait is the right answer: this is the main thread, there
-// is no strand yet, and there is nothing to serve until the datastore answers. The
-// contract is async so that the Core strand never waits; main is not the Core strand.
+// Blocks the main thread until a plugin's async connect answers. Only for startup: the
+// Core strand never waits.
 plugins::Status connect_and_wait(const std::function<void(plugins::Executor, plugins::StatusHandler)>& start) {
   std::promise<plugins::Status> promise;
   auto future = promise.get_future();
@@ -68,8 +67,7 @@ plugins::Status connect_and_wait(const std::function<void(plugins::Executor, plu
   return future.get();
 }
 
-// Every plugin is configured the same way, whatever it plugs into: its own section of
-// the config, then the whole config for what it cannot be told twice.
+// Hands a plugin its own config section and the whole config.
 bool configure_plugin(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<plugins::Plugin> plugin, std::shared_ptr<Config> config) {
   if (plugin->configure(config->plugin_root(plugin->kind(), plugin->name()), *config)) {
     return true;
@@ -79,10 +77,8 @@ bool configure_plugin(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<p
   return false;
 }
 
-// A password from the terminal, with the echo off so it does not end up in somebody's
-// scrollback, or from standard input when that is not a terminal so a script and the
-// compose file can pipe one in. Never from the command line: every other process on the
-// host can read that.
+// Reads a password from the terminal with echo off, or from standard input when piped.
+// Never from the command line, which other processes can read.
 std::string read_password(const std::string& prompt, bool confirm) {
   const auto read_line = [](std::string& out) -> bool { return static_cast<bool>(std::getline(std::cin, out)); };
 
@@ -142,8 +138,7 @@ int main(int argc, char* argv[]) {
 
   const auto options = cli::parse(argc, argv);
 
-  // Answered before anything is started, and on stdout rather than through the logger:
-  // a person or a script asked a question, and the answer is the whole output.
+  // Usage errors, --version and --help are answered before anything starts.
   if (!options.ok) {
     std::cerr << "athenasip: " << options.error << "\n\n" << cli::usage();
     return 2;
@@ -177,17 +172,12 @@ int main(int argc, char* argv[]) {
     return 0;
   }
 
-  // Create Logger
-  //
-  // An administrative command is a person asking a question at a prompt, often in the
-  // middle of an incident, and the answer is the whole output. A node starting up is a
-  // service whose log is the record of what it did, so it stays at DEBUG.
+  // An administrative command logs at WARN so its answer is the whole output. A node logs
+  // at DEBUG until the configuration sets the level.
   const auto administering = !options.add_user.empty() || !options.reset_password.empty() || options.print_config || options.check;
 
   auto logger = std::make_shared<loggers::LoggerStdIO>(administering ? LogLevel::WARN : LogLevel::DEBUG);
 
-  // Log Splash. Not for an administrative command: raw goes out whatever the level is,
-  // and a banner is not an answer to the question that was asked.
   if (!administering) {
     auto title = " AthenaSIP v" + version->to_string() + " ";
     auto lines = std::string(title.size(), '-');
@@ -196,17 +186,14 @@ int main(int argc, char* argv[]) {
     logger->raw(lines);
   }
 
-  // Register Datastore Handlers, Event System Handlers
   register_builtin_datastores(logger);
   register_builtin_event_systems(logger);
   media::register_builtin_media_engines(logger);
 
-  // Create Config
   auto config = std::make_shared<Config>(logger);
 
-  // Where a node looks for its configuration, in the order a deployment wants: what it
-  // was told, then what the environment says, then the system path a package installs
-  // to, and last a home directory, which is a person's checkout and not a service.
+  // Configuration search order: --config, ATHENASIP_CONFIG, /etc/athenasip/config.yaml,
+  // ~/.athenasip/config.yaml.
   const auto config_path = [&]() -> std::filesystem::path {
     if (!options.config.empty()) return Util::expand_path(options.config);
 
@@ -228,15 +215,12 @@ int main(int argc, char* argv[]) {
     return -1;
   }
 
-  // The configuration names how the node logs, and it is read by the logger it names, so
-  // the logger changes now. An administrative command keeps its own quieter level.
+  // Apply log.format and log.level. An administrative command keeps its quieter level.
   logger->set_format(config->log_format);
   if (!administering) logger->set_level(config->log_level);
 
-  // Answered here rather than earlier, because the whole question is what the file, the
-  // search path and the defaults came to between them - which is not known until the file
-  // has been read. Nothing is started and no driver is constructed: a node that cannot
-  // reach its datastore must still be able to tell you why it is trying to reach that one.
+  // --print-config needs only the loaded file: no driver is constructed, so it works when
+  // the datastore is unreachable.
   if (options.print_config) {
     std::cout << "# AthenaSIP " << version->to_string() << " effective configuration\n";
     std::cout << "# from " << config_path.string() << ", with defaults resolved\n";
@@ -246,24 +230,21 @@ int main(int argc, char* argv[]) {
     return 0;
   }
 
-  // What this node needs, tried one at a time, and out. Its own drivers, made and closed
-  // again: nothing here is shared with a node that goes on to start.
+  // --check tries each thing the node needs, with drivers of its own, and exits.
   if (options.check) {
     auto lines = cli::check(logger, config, connect_and_wait);
 
-    // It loaded, or this would not have been reached; said first, and in the same table.
+    // The configuration loaded, or this would not be reached.
     lines.insert(lines.begin(), cli::CheckLine{true, "configuration", config_path.string()});
     std::cout << cli::report(lines);
     return cli::passed(lines) ? 0 : 1;
   }
 
-  // Create Datastore
   auto datastore = Datastore::create_driver(logger, config->db_url);
   if (!datastore) {
     logger->error("Unknown datastore scheme: " + config->db_url);
   }
 
-  // Create Event System
   auto events = EventSystem::create_driver(logger, config->events_url);
   if (!events) {
     logger->error("Unknown event scheme: " + config->events_url);
@@ -278,15 +259,13 @@ int main(int argc, char* argv[]) {
   logger->info("Datastore Driver: " + datastore->describe());
   logger->info("Events Driver: " + events->describe());
 
-  // Configure before connect: a driver reads its own section here, and refusing it is
-  // how a driver says the configuration it was given cannot work.
+  // Configure before connect. A driver rejects a configuration it cannot work with.
   if (!configure_plugin(logger, datastore, config) || !configure_plugin(logger, events, config)) {
     datastore->close();
     events->close();
     return -2;
   }
 
-  // Attempt Datastore connection
   const auto datastore_connected =
       connect_and_wait([&datastore](plugins::Executor on, plugins::StatusHandler handler) { datastore->connect(std::move(on), std::move(handler)); });
 
@@ -295,14 +274,11 @@ int main(int argc, char* argv[]) {
     return -3;
   }
 
-  // Administration, and then out. Here rather than earlier because it needs the datastore,
-  // and here rather than later because it must not connect the bus, start a listener or
-  // build a Core: it is meant to be safe to run against a node that is already serving.
+  // --reset-password and --add-user need only the datastore, then exit. They connect no
+  // bus and start no listener, so they are safe to run beside a serving node.
   //
-  // Except with memory://, whose users live only in this process. A user created and then
-  // dropped on exit is no user at all, and a separate process can never reach a running
-  // node's memory - so there the same command creates the user in the datastore this
-  // process is about to serve from, and carries on starting the node.
+  // With memory:// the datastore dies with the process, so --add-user creates the user and
+  // carries on to start the node.
   const bool keeps_nothing = Util::to_lower(types::URL(config->db_url).scheme) == "memory";
 
   if (!options.reset_password.empty()) {
@@ -359,14 +335,11 @@ int main(int argc, char* argv[]) {
     logger->set_level(config->log_level);
   }
 
-  // The will, set while the bus is still closed because that is the only time a broker
-  // will take one. A node that is killed, loses power or loses its network never gets
-  // to publish again, and without this the last retained thing it said would go on
-  // claiming it was healthy.
+  // The last-will status, which the broker publishes if this node vanishes. A broker takes
+  // a will only at connect, so it is set first.
   events->will_set(events::topics::node_status(config->sip_node_id),
                    Core::node_status_json("down", config->sip_node_id, version->to_string(), datastore->describe(), 0, config->events_status_interval));
 
-  // Attempt Events connection
   const auto events_connected =
       connect_and_wait([&events](plugins::Executor on, plugins::StatusHandler handler) { events->connect(std::move(on), std::move(handler)); });
 
@@ -376,7 +349,6 @@ int main(int argc, char* argv[]) {
     return -3;
   }
 
-  // Create Media Engine
   auto media_engine = media::MediaEngine::create_driver(logger, config->media_url);
   if (!media_engine) {
     logger->error("Unknown media scheme: " + config->media_url);
@@ -403,28 +375,25 @@ int main(int argc, char* argv[]) {
     return -3;
   }
 
-  // Create Core
   auto core = std::make_shared<Core>(logger, config, datastore, events);
   core->media_register(media_engine);
 
-  // HTTP Admin API
+  // The HTTP listener: admin API and static files.
   std::shared_ptr<api::Router> api_router;
   std::shared_ptr<api::ProvisioningAPI> provisioning;
 
   if (config->http_api_enable || config->http_files_enable) {
     auto adminAPI = std::make_shared<api::AdminAPI>(logger, config->http_address, config->http_port);
 
-    // HTTPS beside it, when asked for. A certificate that will not load stops the node:
-    // an operator who asked for HTTPS and got only HTTP would find out from a browser.
+    // HTTPS that was asked for and cannot start stops the node.
     if (config->http_tls_enable && !adminAPI->tls_enable(config->http_tls_address, config->http_tls_port, config->http_tls_cert(), config->http_tls_key())) {
       logger->error("Could not start the HTTPS listener on " + config->http_tls_address + ":" + std::to_string(config->http_tls_port));
       return 1;
     }
 
     if (config->http_api_enable) {
-      // The API talks to the datastore on its own executor. It is not on the Core
-      // strand and must not be: an admin listing subscribers cannot be allowed to hold up
-      // a call, which is what the async plugin contract is for.
+      // The API talks to the datastore on its own executor, never the Core strand, so an
+      // admin request cannot hold up a call.
       auto bearer = std::make_shared<api::BearerAuth>();
 
       const auto limit = [](const Config::RateLimit& from) { return api::RateLimiter::Policy{from.burst, from.per_minute}; };
@@ -440,15 +409,13 @@ int main(int argc, char* argv[]) {
       provisioning->register_routes(*api_router);
       provisioning->nodes_register(core->nodes(), std::chrono::seconds(config->events_status_interval));
 
-      // Admin logins. The datastore is what holds the users, so a driver that does not
-      // implement the user operations answers that it cannot and a login fails as
-      // unavailable rather than as a wrong password.
+      // Admin logins. Users live in the datastore; with a driver that cannot hold them a
+      // login fails as unavailable, not as a wrong password.
       auto sessions = std::make_shared<api::Sessions>(
           logger, datastore, adminAPI->executor(),
           api::Sessions::Lifetimes{static_cast<std::time_t>(config->http_api_session_lifetime), static_cast<std::time_t>(config->http_api_session_idle)});
 
-      // The router resolves a session token through this, so every route can name roles
-      // rather than scopes and a user's credential works everywhere a token's does.
+      // The router resolves session tokens through this, so routes are guarded by role.
       bearer->sessions_register(sessions);
 
       auto auth = std::make_shared<api::AuthAPI>(logger, sessions);
@@ -457,8 +424,7 @@ int main(int argc, char* argv[]) {
       auto users = std::make_shared<api::UsersAPI>(logger, datastore, adminAPI->executor(), sessions);
       users->register_routes(*api_router);
 
-      // What the node is doing now: live calls, the media engine, and /metrics for a
-      // monitoring system. It reads Core's own state, on Core's strand.
+      // Live calls, the media engine and /metrics, read from Core on its strand.
       auto calls = std::make_shared<api::CallsAPI>(logger, core, adminAPI->executor());
       calls->register_routes(*api_router);
 
@@ -469,9 +435,7 @@ int main(int argc, char* argv[]) {
     if (config->http_files_enable) {
       StaticOptions so;
 
-      // An ordinary document root rather than a single-page application: a path with
-      // nothing behind it is a 404 again, which is what it should be for anything that
-      // is not routed in a browser.
+      // Without SPA mode an unknown path is a 404.
       if (!config->http_files_spa) so.fallback.clear();
 
       logger->info("Serving files from " + config->http_files_path + (config->http_files_spa ? " (SPA mode)" : ""));
@@ -484,10 +448,9 @@ int main(int argc, char* argv[]) {
     core->admin_start();
   }
 
-  // Servers: Create the TLSServer instance with the logger and start it on the specified port
+  // SIP listeners.
   if (config->tls_enable) {
     auto tlsServer = std::make_shared<servers::TLSServer>(logger, core, config->tls_address, config->tls_port);
-    // Set Certificates
     if (!tlsServer->set_certificates(config->tls_cert_pem_filename, config->tls_key_pem_filename)) {
       logger->error("Cannot load TLS certificates");
       datastore->close();
@@ -496,8 +459,8 @@ int main(int argc, char* argv[]) {
     core->server_register(tlsServer);
   }
 
-  // The inter-node listener, and the same certificates for the flows this node opens to its
-  // peers. Mutual TLS: what the cluster CA signed is a node, and nothing else is let in.
+  // The inter-node listener: mutual TLS, admitting only certificates the cluster CA signed.
+  // The same certificates secure the flows this node opens to its peers.
   if (config->cluster_enable) {
     auto clusterServer = std::make_shared<servers::TLSServer>(logger, core, config->cluster_address, config->cluster_port);
     if (!clusterServer->set_certificates(config->cluster_cert, config->cluster_key) || !clusterServer->require_peer_certificates(config->cluster_ca) ||
@@ -509,24 +472,20 @@ int main(int argc, char* argv[]) {
     core->server_register(clusterServer);
   }
 
-  // Servers: Create the TCPServer instance with the logger and start it on the specified port
   if (config->tcp_enable) {
     auto tcpServer = std::make_shared<servers::TCPServer>(logger, core, config->tcp_address, config->tcp_port);
     core->server_register(tcpServer);
   }
 
-  // Servers: Create the UDPServer instance with the logger and start it on the specified port
   if (config->udp_enable) {
     auto udpServer = std::make_shared<servers::UDPServer>(logger, core, config->udp_address, config->udp_port);
     core->server_register(udpServer);
   }
 
-  // Servers: Create the Websocket instance with the logger and start it on the specified port
   if (config->websocket_enable) {
     auto websocketServer = std::make_shared<servers::WebsocketServer>(logger, core, config->websocket_address, config->websocket_port);
 
-    // A listener asked to be secure and unable to be is fatal. Serving a browser over
-    // ws:// because the certificate would not load is the failure nobody notices.
+    // Never fall back to ws:// when wss was asked for.
     if (config->websocket_tls && !websocketServer->set_certificates(config->websocket_cert_pem_filename, config->websocket_key_pem_filename)) {
       logger->error("Cannot load WebSocket TLS certificates");
       datastore->close();
@@ -535,8 +494,7 @@ int main(int argc, char* argv[]) {
 
     core->server_register(websocketServer);
 
-    // And a secure one beside it, when asked for: a page served over HTTPS may open no
-    // other kind.
+    // websocket.secure_port: a wss listener beside the plain one.
     if (!config->websocket_tls && config->websocket_secure_port != 0) {
       auto secureServer = std::make_shared<servers::WebsocketServer>(logger, core, config->websocket_address, config->websocket_secure_port);
 
@@ -550,19 +508,16 @@ int main(int argc, char* argv[]) {
     }
   }
 
-  // Start all configured servers
   core->server_start_all();
 
-  // Say what this node is, and keep saying it. Retained and on an interval, with the
-  // broker told what to say if this node stops saying anything at all: a monitor asks
-  // "is it alive", and a message published once at startup answers a different question.
+  // Publish this node's status, retained, on events.status_interval.
   core->version_set(version->to_string());
   core->node_status_start();
 
-  // UDP flows have no socket to end them, so something has to forget the quiet ones.
+  // Expire idle UDP flows.
   core->flow_sweep_start();
 
-  // Wait for Signals
+  // SIGINT shuts the node down. SIGHUP is logged and ignored.
   boost::asio::io_context signal_wait_context;
   boost::asio::signal_set signals(signal_wait_context, SIGINT, SIGHUP);
   wait_for_signal(signals, [&](int signal_number) {
@@ -574,8 +529,7 @@ int main(int argc, char* argv[]) {
       case SIGINT:
         logger->debug("Received Signal SIGINT");
 
-        // These touch strand-confined state and this is the main thread, so they run
-        // through the strand and wait rather than reaching in directly.
+        // Strand-confined state, reached from the main thread.
         core->call_on_strand([&core]() {
           core->transaction_end_all();
           core->channel_close_all();
@@ -584,8 +538,7 @@ int main(int argc, char* argv[]) {
         core->server_stop_all();
         core->admin_stop();
 
-        // Replaces the retained heartbeat, so nothing is left claiming for ever that a
-        // node which stopped cleanly is still up.
+        // Replaces the retained status with "stopped".
         core->node_status_stop();
 
         media_engine->close();
@@ -601,6 +554,5 @@ int main(int argc, char* argv[]) {
     }
   });
 
-  // Do the SIGINT Wait
   signal_wait_context.run();
 }

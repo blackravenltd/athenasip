@@ -4,15 +4,13 @@
 # Copyright (C) 2026 Tom Cully <mail@tomcully.com>
 # Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 #
-# The two-node harness: two nodes, one Redis, one broker, and sipp, on a network of their
+# The two-node harness: two nodes, one Redis, one broker and sipp on a network of their
 # own.
 #
 #   test/e2e/cluster.sh
 #
-# runs it. Milestone 4's goal in one file: a subscriber on node A calls a subscriber on
-# node B. The single-node harness (docker-compose.test.yml) proves RFC 3261 behaviour on
-# memory:// and local://; this one proves what only two processes can - that a node reads a
-# binding another node holds, forwards over mutual TLS, and the dialog crosses back.
+# runs it. A subscriber on node A calls a subscriber on node B: one node reads a binding
+# the other holds, forwards over mutual TLS, and the dialog crosses back.
 
 x-node: &node
   build:
@@ -103,9 +101,8 @@ services:
       cluster:
         ipv4_address: 172.31.0.21
 
-  # A callee that keeps the connection it registered over and is reachable no other way
-  # (test/e2e/flow_callee.py): a TCP or WebSocket client, which sipp cannot be. Python's
-  # standard library and nothing else.
+  # A callee reachable only over the connection it registered on, which sipp cannot be
+  # (test/e2e/flow_callee.py). Python standard library only.
   flow-callee:
     image: python:3-alpine
     profiles: [e2e]
@@ -121,7 +118,7 @@ networks:
     driver: bridge
     ipam:
       config:
-        # The single-node harness's subnet, with node A at its node's address, because the
-        # scenarios the two share check that a description names the relay by that
-        # address. The two harnesses are never up at once.
+        # The single-node harness's subnet, with node A at that harness's node address:
+        # the shared scenarios check the relay address in descriptions. The two harnesses
+        # are never up at once.
         - subnet: 172.31.0.0/24

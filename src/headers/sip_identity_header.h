@@ -26,7 +26,6 @@ class SIPIdentityHeader : public Header {
   std::shared_ptr<SIPIdentity> value;
 };
 
-// Register this field type
 struct SIPIdentityHeaderRegister {
   SIPIdentityHeaderRegister() {
     auto reg = []() { return std::make_shared<SIPIdentityHeader>(); };
@@ -34,16 +33,12 @@ struct SIPIdentityHeaderRegister {
     Header::register_factory("From", reg);
     Header::register_factory("Contact", reg);
 
-    // RFC 3261 20.30 and 20.34: Route and Record-Route are name-addr with parameters,
-    // the same grammar. The proxy has to read the lr parameter of the top Route (16.12)
-    // and compare its URI with this node's own, neither of which is possible while the
-    // value is a string.
+    // RFC 3261 20.30 and 20.34: Route and Record-Route are name-addr with parameters. The proxy reads the top
+    // Route's lr parameter (16.12) and compares its URI with its own.
     Header::register_factory("Route", reg);
     Header::register_factory("Record-Route", reg);
 
-    // RFC 3327 and RFC 3608: Path and Service-Route are the same grammar again, and
-    // both are route sets this node has to read rather than echo - Service-Route is one
-    // it writes, and a value it cannot parse is one it cannot check it wrote correctly.
+    // RFC 3327 and RFC 3608: Path and Service-Route share the grammar, and this node reads both.
     Header::register_factory("Path", reg);
     Header::register_factory("Service-Route", reg);
   }

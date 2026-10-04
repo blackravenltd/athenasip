@@ -14,26 +14,18 @@
 
 using namespace athenasip::headers;
 
-// -----------------------------------------------------------------------------
-// Helper accessor class to expose the protected registry.
-// This subclass exists solely for testing purposes.
+// Exposes the protected factory registry to the tests.
 class HeaderTestAccessor : public Header {
  public:
-  // Expose the registry publicly.
   static std::unordered_map<std::string, std::function<std::shared_ptr<Header>()>>& publicRegistry() {
     return Header::get_registry();
   }
-  // Provide dummy implementations to make this class instantiable.
   virtual bool parse(const std::string& /*value*/) override { return false; }
   virtual std::string to_string() const override { return ""; }
 };
 
-// The factory registry is process-wide: every header type registers itself into it, and
-// SIPHeader::parse asks it which class to build. A test that clears it and walks away
-// leaves every later test in the same process parsing To, Via and Authorization as a
-// plain StringHeader, so `as<SIPIdentityHeader>()` returns null and a registrar answers
-// 400 where it should answer 401. ctest hides that by forking per test; running the
-// binary directly does not. So these tests put it back.
+// The registry is process-wide, so each test restores it. Left cleared, every later test in the process would
+// parse To, Via and Authorization as plain StringHeaders.
 class HeaderFactoryTest : public ::testing::Test {
  protected:
   void SetUp() override { _saved = HeaderTestAccessor::publicRegistry(); }
@@ -44,8 +36,7 @@ class HeaderFactoryTest : public ::testing::Test {
   std::unordered_map<std::string, std::function<std::shared_ptr<Header>()>> _saved;
 };
 
-// -----------------------------------------------------------------------------
-// DummyHeader: Implements parse() and to_string() so we can test custom factories.
+// Parses and serialises, for testing custom factories.
 class DummyHeader : public Header {
  public:
   std::string dummy;
@@ -70,26 +61,22 @@ class FailHeader : public Header {
 };
 
 TEST_F(HeaderFactoryTest, FallbackReturnsStringHeader) {
-  // Clear the registry via our test accessor.
   HeaderTestAccessor::publicRegistry().clear();
 
-  // When no factory is registered for "X-Unknown", create() should fall back to a default StringHeader.
+  // With no factory registered, create() falls back to StringHeader.
   std::shared_ptr<Header> hdr = Header::create("X-Unknown", "fallback-test");
   auto sh = std::dynamic_pointer_cast<StringHeader>(hdr);
   ASSERT_NE(sh, nullptr) << "Expected fallback to StringHeader";
-  // Instead of accessing a (possibly private) member variable, we use to_string().
   EXPECT_EQ(sh->to_string(), "fallback-test");
 }
 
 TEST_F(HeaderFactoryTest, CustomFactoryRegistration) {
   HeaderTestAccessor::publicRegistry().clear();
 
-  // Register a custom factory for field "X-Custom" that returns a DummyHeader.
   Header::register_factory("X-Custom", []() -> std::shared_ptr<Header> {
     return std::make_shared<DummyHeader>();
   });
 
-  // Create a header using the custom factory.
   std::shared_ptr<Header> hdr = Header::create("X-Custom", "custom-value");
   auto dh = std::dynamic_pointer_cast<DummyHeader>(hdr);
   ASSERT_NE(dh, nullptr) << "Expected a DummyHeader from custom factory";
@@ -99,12 +86,11 @@ TEST_F(HeaderFactoryTest, CustomFactoryRegistration) {
 TEST_F(HeaderFactoryTest, CustomFactoryParseFailureFallsBack) {
   HeaderTestAccessor::publicRegistry().clear();
 
-  // Register a factory for "X-Fail" that produces an instance whose parse() always fails.
   Header::register_factory("X-Fail", []() -> std::shared_ptr<Header> {
     return std::make_shared<FailHeader>();
   });
 
-  // When create() is called, since parse() returns false, the fallback should be used.
+  // parse() fails, so create() falls back to StringHeader.
   std::shared_ptr<Header> hdr = Header::create("X-Fail", "some-value");
   auto sh = std::dynamic_pointer_cast<StringHeader>(hdr);
   ASSERT_NE(sh, nullptr) << "Expected fallback to StringHeader when custom parse fails";
@@ -114,10 +100,8 @@ TEST_F(HeaderFactoryTest, CustomFactoryParseFailureFallsBack) {
 TEST_F(HeaderFactoryTest, RegistryRetention) {
   HeaderTestAccessor::publicRegistry().clear();
 
-  // Initially, the registry should be empty.
   EXPECT_TRUE(HeaderTestAccessor::publicRegistry().empty());
 
-  // Register two factories.
   Header::register_factory("X-One", []() -> std::shared_ptr<Header> {
     return std::make_shared<StringHeader>();
   });
@@ -125,6 +109,5 @@ TEST_F(HeaderFactoryTest, RegistryRetention) {
     return std::make_shared<DummyHeader>();
   });
 
-  // Verify that the registry now contains two entries.
   EXPECT_EQ(HeaderTestAccessor::publicRegistry().size(), 2);
 }

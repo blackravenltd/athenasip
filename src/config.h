@@ -31,40 +31,31 @@ class Config {
  public:
   Config(std::shared_ptr<Logger> logger);
 
-  // SIP configuration
+  // Field names follow the YAML keys: sip_node_id is sip.node_id.
   std::string sip_node_id;
 
-  // Allow SIP over an unencrypted transport. WSS is required for browsers, and TLS is
-  // what a cluster talks, so this is the switch that permits plain UDP, TCP and WS.
+  // Permits SIP over plain UDP, TCP and WS.
   bool sip_allow_unencrypted = true;
 
-  // Whether to log the whole of every message rather than only its first line. A
-  // session description is the one thing a node is better placed to show than either
-  // end of a call, and it is also most of the bytes, so it is asked for rather than
-  // assumed. Credentials are redacted whichever way they were going.
+  // Log every message in full, not only its first line. Credentials are redacted.
   bool sip_log_messages = false;
 
-  // The address this node tells the outside world to reach it on. A node bound to
-  // 0.0.0.0 knows every address it answers on and none that a client should use, so
-  // anything that has to name this node to somebody else - the node list, and the
-  // failover work in M4 - needs to be told. Empty means fall back to the bind address,
-  // which is right on a single-homed host and useless on a wildcard bind.
+  // The address this node tells others to reach it on. Empty falls back to the bind
+  // address, which is no use to a client on a wildcard bind.
   std::string sip_public_address;
 
-  // sip.localnet: the prefixes on this node's own side of the router. A far end inside
-  // them is given the node's local address and port, because the public address only
-  // reaches it if the router hairpins; everyone else is given the public ones (Asterisk's
-  // localnet). parse_localnet turns the strings into prefixes and says whether they all were.
+  // sip.localnet: prefixes on this node's side of the router. A far end inside them is
+  // given the local address and port; everyone else the public ones. parse_localnet
+  // returns false when an entry is not a prefix or an address.
   std::vector<std::string> sip_localnet;
   bool parse_localnet();
   bool in_localnet(const boost::asio::ip::address& address) const;
 
-  // The public port for a transport by its name - udp, tcp, tls, ws or wss - or zero.
+  // The public port for udp, tcp, tls, ws or wss, or zero.
   std::uint16_t public_port_for(const std::string& transport) const;
 
-  // Where this node can be reached, one entry per enabled transport, at sip.public_address
-  // when there is one and the bind address otherwise. The node list and the status the
-  // node publishes both say this, so they are one function.
+  // Where this node can be reached, one entry per enabled transport: at sip.public_address
+  // when set, otherwise the bind address.
   struct AdvertisedTransport {
     std::string transport;
     std::string address;
@@ -75,42 +66,24 @@ class Config {
   };
   std::vector<AdvertisedTransport> advertised_transports() const;
 
-  // Where a peer node reaches the inter-node listener, or nothing when this node is not in
-  // a cluster. cluster.advertise when it is said; otherwise the address the listener is
-  // bound to, and where that is every address, sip.public_address.
+  // Where a peer reaches the inter-node listener, or nullopt outside a cluster:
+  // cluster.advertise, else the bind address, else sip.public_address on a wildcard bind.
   std::optional<AdvertisedTransport> advertised_cluster() const;
 
-  // RFC 4028 section 8.1: the session interval this node puts on a call that asked for
-  // none, in seconds. Zero leaves such a call without one.
-  //
-  // It is what gets an expiry onto a call whose caller never mentioned session timers but
-  // whose callee knows what they are - section 9 Table 2 has a timer-aware UAS take the
-  // refreshing itself when the UAC cannot. Where neither end implements RFC 4028, section
-  // 8.2 leaves the call with no expiration at all and `sip_media_timeout` is what
-  // eventually notices.
-  //
-  // Section 4 recommends 1800 and sets an absolute floor of 90.
+  // RFC 4028 section 8.1: the session interval, in seconds, put on a call that asked for
+  // none. Zero inserts none. Minimum 90; the RFC recommends 1800.
   uint32_t sip_session_expires = 1800;
 
-  // RFC 4028 section 8.1: whether to insist on a session timer by putting Require: timer
-  // on a request whose caller did not advertise support. Off by default, and it should
-  // usually stay off.
-  //
-  // The RFC calls it NOT RECOMMENDED, and the reason is concrete: an endpoint that does
-  // not implement the extension answers 420 Bad Extension, so the call fails outright
-  // rather than merely going without an expiry. That is a reasonable trade on a closed
-  // fleet where every handset is known, and the wrong one on anything a stranger can
-  // call. Where it is off, a caller that cannot do session timers still gets one offered
-  // (`sip_session_expires`) and the callee decides.
+  // RFC 4028 section 8.1: add Require: timer when the caller did not advertise support.
+  // NOT RECOMMENDED by the RFC: an endpoint without the extension answers 420 and the call
+  // fails. Only for a closed fleet of known handsets.
   bool sip_require_session_timer = false;
 
-  // RFC 4028 section 5: the shortest session interval this node will let a call
-  // negotiate, and the floor the RFC itself sets is 90 seconds. A proxy that keeps state
-  // for a call has a stake in how often it is told the call is still there, and rejecting
-  // an interval below this is the only say it gets (section 8).
+  // RFC 4028 section 5: the shortest session interval a call may negotiate, in seconds.
+  // Minimum 90.
   uint32_t sip_session_min_se = 90;
 
-  // SIP Timers
+  // sip.timers: the RFC 3261 section 17 timers.
   uint16_t sip_timer_t1_rtt_ms = 500;
   uint16_t sip_timer_t2_max_retransmit_interval_ms = 4000;
   uint16_t sip_timer_t4_network_propagation_ms = 5000;
@@ -127,161 +100,97 @@ class Config {
 
   bool sip_timer_reliable_transport_retransmits = false;
 
-  // The longest this node will hold any call open, in seconds. Zero, the default, means
-  // no cap at all.
-  //
-  // The backstop for the calls the other two mechanisms cannot see: one whose media went
-  // end to end has nothing for `sip_media_timeout` to watch, and one between two
-  // endpoints that neither implement RFC 4028 gets no session timer however willing this
-  // node is to offer one. A blunt instrument, which is why it is off - set this and a
-  // legitimate call of that length is cut - but on a deployment that knows its calls are
-  // never hours long it is the only thing that catches the rest.
+  // The longest any call is held, in seconds. Zero is no cap. It also cuts legitimate calls
+  // of that length, so set it only where calls are known to be shorter.
   uint32_t sip_max_call_duration = 0;
 
-  // How long a call may carry no media at all before this node stops holding it open,
-  // in seconds. Zero turns it off.
-  //
-  // A call between two endpoints that never negotiated a session timer has no expiry, so
-  // a phone that loses power - which sends no BYE - leaves this node holding its dialog,
-  // its call record and its relay ports until the process restarts, and the ports are a
-  // finite pool. Nothing in the signalling plane will ever say that call ended. The media
-  // plane will: the relay knows when it last carried a packet.
-  //
-  // Minutes rather than seconds, because being wrong means cutting the media on a call
-  // that is still up. RTCP counts as well as RTP, so a call on hold or one whose codec
-  // suppresses silence is not silent here (RFC 3550 section 6).
-  //
-  // Only calls this node anchors are covered. Where the engine declined the description,
-  // or a realm is set to pass media through, there is nothing to watch.
+  // How long an anchored call may carry no media before this node drops its state, in
+  // seconds. Zero turns it off. It catches an endpoint that vanished without a BYE. RTCP
+  // counts as media, so a call on hold is not silent (RFC 3550 section 6).
   uint32_t sip_media_timeout = 300;
 
-  // RFC 3261 16.6 step 11: how long a proxied INVITE branch may go on answering
-  // provisionally before this node gives up on it. Timer B does not cover this - the
-  // first provisional response moves the client transaction to Proceeding and cancels
-  // Timer B (17.1.1.2) - so without timer C a branch that says 180 Ringing and then
-  // goes quiet is never given up on at all. The RFC's floor is "larger than 3 minutes";
-  // four is comfortably past it and still less than anyone waits for a phone to answer.
+  // RFC 3261 16.6 step 11, timer C: how long a proxied INVITE may stay in a provisional
+  // state. Must be larger than three minutes.
   uint32_t sip_timer_c_invite_proxy_ms = 240000;
 
-  // How long this node will spend opening a flow to a next hop it has none to (RFC 3261
-  // 16.6 step 7). Not an RFC timer - the RFC does not give one - but it has to be
-  // bounded: the operating system's own connect timeout is well over a minute, and Timer
-  // B gives the whole transaction thirty-two seconds. A fork with several bindings has
-  // to have room to try more than the first.
+  // How long opening a flow to a next hop may take (RFC 3261 16.6 step 7). Short enough
+  // that a fork can try a second target inside timer B's 32 seconds.
   uint32_t sip_connect_timeout_ms = 4000;
 
-  // How long a connectionless flow may sit idle before this node forgets it, in seconds.
-  // Zero never forgets one, which is what it did before this existed.
-  //
-  // Only UDP needs it. A TCP, TLS or WebSocket flow ends when its socket does; UDP has no
-  // socket per peer and no close to wait for, so a flow made by a single datagram lived as
-  // long as the process - and the map it lived in is keyed by a remote address that a
-  // datagram can claim to be from, which on a public listener is a way to grow a node's
-  // memory from off the network.
-  //
-  // Five minutes is comfortably past every RFC 3261 section 17 timer - the longest is
-  // 64*T1, 32 seconds - so nothing with transaction state outstanding is ever swept.
-  // Forgetting a flow costs a UDP peer nothing it notices: the next datagram makes a new
-  // one, and a request for it is sent to the address the flow named, which a binding and a
-  // flow token both still carry. That address, and not the Contact, is what a peer behind
-  // a NAT is reachable at.
+  // How long a UDP flow may sit idle before it is forgotten, in seconds. Zero never
+  // forgets. Keep it above 32 seconds (64*T1), so no live transaction loses its flow.
   std::uint32_t sip_flow_idle_timeout = 300;
 
-  // TLS Configuration
+  // tls, tcp, udp and websocket: the listeners. public_port is the port a router forwards
+  // to the listener; zero means the bound port.
   bool tls_enable = false;
   std::string tls_address;
   uint16_t tls_port = 0;
-  // The port this listener is reached on from outside, when the router forwards another one
-  // to it. Zero is the bound port.
   uint16_t tls_public_port = 0;
   std::string tls_cert_pem_filename;
   std::string tls_key_pem_filename;
 
-  // TCP Configuration
   bool tcp_enable = false;
-  std::string tcp_address;  // e.g. "127.0.0.1"
-  uint16_t tcp_port = 0;    // e.g. 5060
-  // The port this listener is reached on from outside, when the router forwards another one
-  // to it. Zero is the bound port.
+  std::string tcp_address;
+  uint16_t tcp_port = 0;
   uint16_t tcp_public_port = 0;
 
-  // UDP Configuration
   bool udp_enable = false;
-  std::string udp_address;  // e.g. "127.0.0.1"
-  uint16_t udp_port = 0;    // e.g. 5060
-  // The port this listener is reached on from outside, when the router forwards another one
-  // to it. Zero is the bound port.
+  std::string udp_address;
+  uint16_t udp_port = 0;
   uint16_t udp_public_port = 0;
 
-  // UDP Configuration
   bool websocket_enable = false;
-  std::string websocket_address;  // e.g. "127.0.0.1"
-  uint16_t websocket_port = 0;    // e.g. 5060
-  // The port this listener is reached on from outside, when the router forwards another one
-  // to it. Zero is the bound port.
+  std::string websocket_address;
+  uint16_t websocket_port = 0;
   uint16_t websocket_public_port = 0;
 
-  // RFC 7118 over TLS. A browser will not open an insecure WebSocket from a page served
-  // over https, so this is what a web client actually connects to; ws:// is for local
-  // development. The certificate is the listener's own rather than the tls section's,
-  // because the name a browser reaches the node by is rarely the name a SIP peer does.
+  // websocket.tls: serve wss (RFC 7118 over TLS) on websocket.port. Needs the websocket
+  // section's own certificate and key.
   bool websocket_tls = false;
 
-  // websocket.secure_port: a second WebSocket listener, wss, beside a plain one. A page
-  // served over HTTPS may only open a secure WebSocket, and a page served from localhost
-  // or by a development client may only have a plain one to hand, so a node can need
-  // both. Zero is none. Not used when the listener above is already secure.
+  // websocket.secure_port: a second, wss listener beside a plain one. Zero is none. Unused
+  // when websocket.tls is set.
   std::uint16_t websocket_secure_port = 0;
 
-  // The certificate a secure WebSocket shows: the websocket section's, or the tls section's.
+  // The secure_port listener's certificate: the websocket section's, or the tls section's.
   std::string websocket_cert() const { return websocket_cert_pem_filename.empty() ? tls_cert_pem_filename : websocket_cert_pem_filename; }
   std::string websocket_key() const { return websocket_key_pem_filename.empty() ? tls_key_pem_filename : websocket_key_pem_filename; }
   std::string websocket_cert_pem_filename;
   std::string websocket_key_pem_filename;
 
-  // DB configuration
-  // Defaulted, not blank. A node whose configuration says nothing about where to keep
-  // state has to start anyway, on what needs no external service - that is the whole of
-  // the ten-line config the project promises. redis:// is what a cluster says instead.
+  // datastore.url. The default needs no external service; a cluster uses redis://.
   std::string db_url = "memory://";  // or "redis://127.0.0.1:6379"
 
-  // Events configuration
-  // Same reason. The event bus carries observability, presence and discovery and is
-  // never on the call setup path, so a single node with nothing to tell has a working
-  // default and a cluster names its broker.
+  // events.url. The default is in-process; a cluster names its broker.
   std::string events_url = "local://";  // or "mqtt://user:pass@127.0.0.1:1883/athenasip?client_id=sip-01&keep_alive=30"
 
-  // How often a node says on the bus that it is alive, in seconds. Zero turns it off.
-  //
-  // A message published once at startup says a node started, which is a different
-  // question from whether it is running now and one nobody is asking an hour later.
+  // Seconds between this node's status reports on the bus. Zero publishes once.
   std::uint32_t events_status_interval = 30;
 
-  // Media configuration
+  // media.url
   std::string media_url = "builtin://";  // or "rtpengine://host:port"
 
-  // HTTP configuration
+  // http: the admin API and the file server.
   std::string http_address;
-  uint16_t http_port = 0;  // e.g. 5060
+  uint16_t http_port = 0;
   bool http_api_enable = false;
-  // The server's default for every behaviour that differs between SIP servers, which a
-  // realm overrides setting by setting (types::Behaviour). What ships is the 2026-10-01
-  // decision: standard, apart from anchoring media.
+
+  // behaviour: the server's defaults for what differs between SIP servers. A realm
+  // overrides any of them (types::Behaviour).
   types::MediaPolicy behaviour;
 
-  // behaviour.qualify_interval: seconds between OPTIONS to a registered client, zero for
-  // never. Decided at registration rather than per call, so it is not on the media policy.
+  // behaviour.qualify_interval: seconds between OPTIONS to a registered client. Zero is never.
   std::uint32_t behaviour_qualify_interval = 0;
 
-  // cluster: the inter-node listener, mutual TLS with every peer showing a certificate the
-  // cluster CA signed (docs/certificates.md), and the same certificates for the flows this
-  // node opens to its peers. Off on a node that is not part of a cluster.
+  // cluster: the inter-node listener, mutual TLS under the cluster CA
+  // (docs/certificates.md). The same certificates secure the flows this node opens to peers.
   bool cluster_enable = false;
   std::string cluster_address = "0.0.0.0";
   std::uint16_t cluster_port = 5062;
 
-  // What this node tells its peers to dial: a name or an address its certificate names,
-  // since a peer checks the certificate against what it dialled. Empty works it out.
+  // cluster.advertise: what peers dial. It must be a name or address this node's
+  // certificate carries. Empty derives it; see advertised_cluster.
   std::string cluster_advertise;
   std::string cluster_ca;
   std::string cluster_cert;
@@ -293,32 +202,18 @@ class Config {
   bool http_files_enable = false;
   std::string http_files_path;
 
-  // Single-page application mode: a path with nothing behind it is answered with
-  // index.html from the document root, so a client-side route survives a reload or a
-  // link. /api/ is never answered this way, so an unknown API path still 404s, and
-  // neither is a path that names a file extension, so a missing asset stays missing.
-  //
-  // On by default, because the thing this node serves is the admin client and that is
-  // what it needs. False makes it an ordinary file server.
+  // http.files.spa: answer a path that matches no file with index.html, so client-side
+  // routes survive a reload. Never for /api/ or a path with a file extension. False makes
+  // it a plain file server.
   bool http_files_spa = true;
 
-  // How long an admin login is good for, and how long it survives unused, in seconds.
-  //
-  // Absolute lifetime is written on the session record and is what the datastore prunes
-  // on, so it cannot be zero: a session no store can expire is not one it can hold. Idle
-  // timeout is the caller's rule - no driver is told it - and zero turns it off.
-  //
-  // The defaults suit a console somebody keeps open on a screen: a working day before it
-  // asks for the password again, an hour of being ignored before it stops trusting the
-  // tab.
+  // An admin session's absolute lifetime and idle timeout, in seconds. The lifetime cannot
+  // be zero; a zero idle timeout turns that check off.
   std::uint32_t http_api_session_lifetime = 12 * 60 * 60;
   std::uint32_t http_api_session_idle = 60 * 60;
 
-  // http.api.rate_limits: how many requests a caller is let make at once, and how many a
-  // minute after that. Zero in either turns that limit off, which is what an operator who
-  // fronts the API with something that limits already sets. The defaults are chosen for
-  // the callers there are: a person at a login prompt, a monitor polling health, and the
-  // console, which polls every two seconds and makes several requests when it does.
+  // http.api.rate_limits: a burst allowance, then a rate per minute. Zero turns either
+  // off, as for an API behind a proxy that already limits.
   struct RateLimit {
     std::uint32_t burst = 0;
     std::uint32_t per_minute = 0;
@@ -332,19 +227,16 @@ class Config {
   // A signed-in caller, by session.
   RateLimit http_api_limit_session{60, 300};
 
-  // log.level and log.format: how much the node says and in what shape. The defaults are
-  // what a node did before there was a choice: everything, as text.
+  // log.level (debug, info, warn, error) and log.format (text, json).
   loggers::LogLevel log_level = loggers::LogLevel::DEBUG;
   loggers::LogFormat log_format = loggers::LogFormat::Text;
 
-  // calls.history_retention: how long the record of a call that has ended is kept, in
-  // seconds. Thirty days. Zero keeps every record for ever, which on a busy node is a
-  // datastore that only grows.
+  // calls.history_retention: how long an ended call's record is kept, in seconds. Zero
+  // keeps records for ever.
   std::uint32_t calls_history_retention = 30 * 24 * 60 * 60;
 
-  // http.tls: an HTTPS listener beside the plain one, serving the same thing. A browser
-  // gives a page that is not a secure context no microphone, so the console's softphone
-  // needs it. The certificate is the tls section's unless this section names its own.
+  // http.tls: an HTTPS listener beside the plain one. Browsers give the microphone only to
+  // a secure page, so the console's softphone needs it.
   bool http_tls_enable = false;
   std::string http_tls_address;
   std::uint16_t http_tls_port = 8443;
@@ -355,67 +247,41 @@ class Config {
   std::string http_tls_cert() const { return http_tls_cert_pem_filename.empty() ? tls_cert_pem_filename : http_tls_cert_pem_filename; }
   std::string http_tls_key() const { return http_tls_key_pem_filename.empty() ? tls_key_pem_filename : http_tls_key_pem_filename; }
 
-  // What a web client is told to use for ICE, served by `GET /api/v1/client/config`.
-  //
-  // A browser cannot be configured by hand and cannot read a YAML file, so everything it
-  // needs to place a call has to be fetched. Nothing here changes what this node does with
-  // media: it is what the client is told, and the client is what acts on it.
+  // http.api.ice_servers: the ICE servers a web client is told to use, served by
+  // `GET /api/v1/client/config`. It does not affect this node's own media.
   struct IceServer {
-    // stun:host:port or turn:host:port, as RFC 7064 and 7065 write them. A turn: URL gets
-    // credentials; a stun: one needs none and is given none.
+    // stun:host:port or turn:host:port (RFC 7064, RFC 7065). Only turn: URLs get credentials.
     std::string url;
   };
 
   std::vector<IceServer> ice_servers;
 
-  // The coturn shared-secret scheme (its `use-auth-secret` / `static-auth-secret`): the
-  // username is an expiry, the password is an HMAC of it under a secret this node and the
-  // TURN server both hold. It means a client can be handed a credential that stops working
-  // on its own, without the TURN server knowing anything about users.
-  //
-  // Empty turns TURN credentials off, and then a turn: URL is served without them - which
-  // is useless to a browser and is said out loud at startup rather than quietly.
+  // The secret shared with the TURN server (coturn's `static-auth-secret`), from which
+  // expiring credentials are minted. Empty serves turn: URLs without credentials.
   std::string turn_shared_secret;
 
-  // How long a credential this node mints is good for. Long enough to place a call and
-  // for that call to run; short enough that one copied out of a page is not a permanent
-  // relay for whoever took it.
+  // How long a minted TURN credential lasts, in seconds. Cannot be zero.
   std::uint32_t turn_credential_ttl = 3600;
 
-  // Loads configuration from a YAML file.
   bool load_from_yaml(const std::string& filename);
 
-  // A plugin's own configuration: the section named after the driver, inside the
-  // section for its kind. The URL stays the selector, so this is only for what a URL
-  // cannot express (engine pools, health-check intervals) and is usually absent.
+  // A plugin's own section: the one named after the driver's name(), inside the section
+  // for its kind. For what the URL cannot express.
   //
   //   datastore:
   //     url: redis://127.0.0.1:6379
   //     redis:
   //       health_check_interval: 5
-  //
-  // Keyed on the driver's name() rather than the scheme it was reached by, so the
-  // three Redis schemes share one section instead of needing three.
   YAML::Node plugin_root(const std::string& kind, const std::string& name) const;
 
-  // Every value this node is actually running on, as YAML, after the file, the search
-  // path and the defaults have all had their say. What `athenasip --print-config` prints.
-  //
-  // It is the fields rather than the document, deliberately: the interesting question is
-  // never "what did I write" - that is what `cat` is for - but "what did it decide", and
-  // most of the answer is defaults nobody wrote down. Plugin sections are carried through
-  // from the document, because only the plugin knows what they mean.
-  //
-  // Secrets are redacted. An operator pasting this into an issue should not be handing
-  // over the credential that administers their node.
+  // The configuration in effect, defaults included, as YAML: what `athenasip --print-config`
+  // prints. Plugin sections are copied through from the file.
   std::string effective_yaml() const;
 
  private:
   std::shared_ptr<Logger> _logger;
 
-  // The document as loaded, kept so plugins can be handed their own section. Nothing
-  // else should read it: everything the server itself needs is parsed into the fields
-  // above at load time.
+  // The document as loaded, kept only to hand plugins their sections.
   YAML::Node _root;
 
   std::vector<boost::asio::ip::network_v4> _localnet_v4;
