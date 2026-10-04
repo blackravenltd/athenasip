@@ -155,7 +155,7 @@ struct UsersFixture {
 
 // --- Creating ---
 
-TEST(UsersApiTest, TheConfigurationTokenCreatesTheFirstUser) {
+TEST(UsersApiTest, ACallerWithTheRoleCreatesAUser) {
   UsersFixture f;
 
   // A caller holding the role creates a user.

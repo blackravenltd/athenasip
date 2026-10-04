@@ -222,7 +222,7 @@ TEST(RouteRolesTest, TheRolesARouteWantsAreNamedInTheRefusal) {
 
 // --- The fixture's users, by the roles they hold ---
 
-TEST(RouteRolesTest, TheAdminScopeStillReachesEverything) {
+TEST(RouteRolesTest, AnAdministratorReachesEveryRoute) {
   RolesFixture f;
 
   // admin-token holds every role.
@@ -232,7 +232,7 @@ TEST(RouteRolesTest, TheAdminScopeStillReachesEverything) {
   EXPECT_EQ(f.get("/api/v1/session", "admin-token").status, 200u);
 }
 
-TEST(RouteRolesTest, TheClientScopeReachesWhatItAlwaysDidAndNoMore) {
+TEST(RouteRolesTest, ViewClusterStatusReachesTheStatusRoutesAndNoMore) {
   RolesFixture f;
 
   EXPECT_EQ(f.get("/api/v1/nodes", "client-token").status, 200u);
@@ -241,7 +241,7 @@ TEST(RouteRolesTest, TheClientScopeReachesWhatItAlwaysDidAndNoMore) {
   EXPECT_EQ(f.get("/api/v1/realms", "client-token").status, 403u);
 }
 
-TEST(RouteRolesTest, AKnownTokenHoldingNoScopesIsForbiddenNotUnauthorised) {
+TEST(RouteRolesTest, AUserWithNoRolesIsForbiddenNotUnauthorised) {
   RolesFixture f;
 
   // A real credential with no roles is forbidden; an unknown token is unauthorised.

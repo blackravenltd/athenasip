@@ -261,7 +261,7 @@ TEST(AuthApiTest, ASessionTokenIsAUser) {
   ASSERT_TRUE(body.at("expires_at").is_int64());
 }
 
-TEST(AuthApiTest, TheClientScopeIsOnlyWhatAClientReaches) {
+TEST(AuthApiTest, TheSessionReportsTheRolesItsUserHolds) {
   AuthFixture f;
 
   auto response = f.session("client-token");
