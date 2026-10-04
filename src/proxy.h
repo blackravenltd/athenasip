@@ -163,6 +163,12 @@ class Proxy : public TransactionUser {
     std::shared_ptr<Timer> push_poll;
   };
 
+  // on_request after the 16.3 checks and OPTIONS for this node: session timer, routes, authorization, targets.
+  void _proceed(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction, const std::string& token);
+
+  // RFC 3261 11.2: this node's answer to an OPTIONS for itself.
+  void _answer_options(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request);
+
   // RFC 4028 8.1: enforces the minimum session interval. False when the request was answered 422.
   bool _apply_session_timer(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction);
 
