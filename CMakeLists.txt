@@ -60,6 +60,7 @@ if(APPLE)
             boost
             openssl@3
             yaml-cpp
+            libnghttp2
             googletest
         )
             execute_process(
@@ -96,6 +97,10 @@ find_package(Boost 1.87.0 CONFIG REQUIRED COMPONENTS thread json charconv)
 find_package(OpenSSL REQUIRED COMPONENTS SSL Crypto)
 
 find_package(yaml-cpp CONFIG REQUIRED)
+
+# APNs speaks only HTTP/2.
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(NGHTTP2 REQUIRED IMPORTED_TARGET libnghttp2)
 
 if(TARGET yaml-cpp::yaml-cpp)
     set(ATHENA_YAML_TARGET yaml-cpp::yaml-cpp)
@@ -149,6 +154,7 @@ target_link_libraries(athena_core
         Boost::charconv
         OpenSSL::SSL
         OpenSSL::Crypto
+        PkgConfig::NGHTTP2
         "${ATHENA_YAML_TARGET}"
 )
 
