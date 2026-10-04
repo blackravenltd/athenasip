@@ -167,7 +167,8 @@ class Core : public std::enable_shared_from_this<Core> {
 
   // sip.public_address when set, otherwise the given local address.
   std::string advertised_address(const std::string& local_address) const {
-    return config->sip_public_address.empty() ? local_address : config->sip_public_address;
+    const auto public_address = config->public_address();
+    return public_address.empty() ? local_address : public_address;
   }
 
   // The address this node writes in Via, Record-Route, Service-Route and its own requests

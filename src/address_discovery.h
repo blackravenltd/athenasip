@@ -48,11 +48,25 @@ class AddressDiscovery : public std::enable_shared_from_this<AddressDiscovery> {
 
   std::optional<Finding> finding() const { return _finding; }
 
+  // Run on each status publication. Probes each other node's discovered address with an OPTIONS to its UDP port,
+  // at most every ten minutes per address, and reads whether a peer has reached this node's. With
+  // sip.public_address unset, a finding a peer has reached becomes the address this node advertises; one none
+  // has reached is never advertised.
+  void review();
+
+  // The nodes whose discovered address this node has reached: node id to address.
+  const std::map<std::string, std::string>& reached() const { return _reached; }
+
+  // The nodes that have reached this node's finding.
+  const std::vector<std::string>& verified_by() const { return _verified_by; }
+
   // The stun: servers in http.api.ice_servers, as host and port (RFC 7064; 3478 by default).
   static std::vector<std::pair<std::string, std::uint16_t>> servers_from(const std::vector<std::string>& urls);
 
  private:
   void _ask(std::size_t index);
+  void _probe(const std::string& node, const std::string& address, std::uint16_t port);
+  void _adopt();
 
   std::shared_ptr<loggers::LoggerScoped> _logger;
   std::weak_ptr<Core> _core;
@@ -66,6 +80,11 @@ class AddressDiscovery : public std::enable_shared_from_this<AddressDiscovery> {
   bool _stopped = false;
 
   std::optional<Finding> _finding;
+
+  std::map<std::string, std::pair<std::string, std::chrono::steady_clock::time_point>> _probed;
+  std::map<std::string, std::string> _reached;
+  std::vector<std::string> _verified_by;
+  std::string _warned;
 };
 
 }  // namespace athenasip

@@ -62,6 +62,19 @@ bool NodeDirectory::observe(const std::string& topic, const std::string& message
       node.cluster_port = static_cast<std::uint16_t>(port->as_int64());
   }
 
+  if (const auto* discovered = report.if_contains("discovered"); discovered != nullptr && discovered->is_object()) {
+    node.discovered = string_of(discovered->as_object(), "address");
+  }
+
+  if (const auto* reaches = report.if_contains("reaches"); reaches != nullptr && reaches->is_array()) {
+    for (const auto& entry : reaches->as_array()) {
+      if (!entry.is_object()) continue;
+      const auto peer = string_of(entry.as_object(), "node");
+      const auto address = string_of(entry.as_object(), "address");
+      if (!peer.empty() && !address.empty()) node.reaches.emplace_back(peer, address);
+    }
+  }
+
   std::lock_guard<std::mutex> lock(_mutex);
   _nodes[id] = std::move(node);
   return true;

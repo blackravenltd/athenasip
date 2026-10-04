@@ -14,6 +14,7 @@
 #include <boost/asio/ip/network_v6.hpp>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -47,6 +48,11 @@ class Config {
   // The address this node tells others to reach it on. Empty falls back to the bind
   // address, which is no use to a client on a wildcard bind.
   std::string sip_public_address;
+
+  // sip.public_address, or else an address peers have verified this node at (AddressDiscovery), or empty. Read
+  // it rather than sip_public_address wherever the node says where it is. Safe from any thread.
+  std::string public_address() const;
+  void discovered_address_set(std::string address);
 
   // sip.localnet: prefixes on this node's side of the router. A far end inside them is
   // given the local address and port; everyone else the public ones. parse_localnet
@@ -301,6 +307,13 @@ class Config {
 
   // The document as loaded, kept only to hand plugins their sections.
   YAML::Node _root;
+
+  // Shared, so a copy of a Config sees the same discovery.
+  struct Discovered {
+    mutable std::mutex mutex;
+    std::string address;
+  };
+  std::shared_ptr<Discovered> _discovered = std::make_shared<Discovered>();
 
   std::vector<boost::asio::ip::network_v4> _localnet_v4;
   std::vector<boost::asio::ip::network_v6> _localnet_v6;

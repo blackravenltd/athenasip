@@ -169,9 +169,9 @@ bool Core::channel_register(std::string endpoint, std::shared_ptr<Channel> chann
     const auto advertised = advertised_for(*channel);
     local_address_add(advertised.host + ":" + std::to_string(advertised.port));
 
-    if (!config->sip_public_address.empty()) {
+    if (const auto public_address = config->public_address(); !public_address.empty()) {
       const auto public_port = config->public_port_for(Util::to_lower(channel->_connection->transport_name()));
-      local_address_add(config->sip_public_address + ":" + std::to_string(public_port != 0 ? public_port : local.port()));
+      local_address_add(public_address + ":" + std::to_string(public_port != 0 ? public_port : local.port()));
     }
   }
 
@@ -591,9 +591,9 @@ Core::Advertised Core::advertised_for(const Channel& channel) const {
     }
   }
 
-  if (!config->sip_public_address.empty() && !config->in_localnet(remote.address())) {
+  if (const auto public_address = config->public_address(); !public_address.empty() && !config->in_localnet(remote.address())) {
     const auto public_port = config->public_port_for(transport);
-    out.host = config->sip_public_address;
+    out.host = public_address;
     out.port = public_port != 0 ? public_port : local.port();
     return out;
   }
@@ -1017,10 +1017,19 @@ std::string Core::node_status_json(const std::string& status) const {
 
   // This node's address as a STUN server sees it: reported, not advertised. Null until one has answered.
   if (const auto finding = _address_discovery ? _address_discovery->finding() : std::nullopt) {
-    report["discovered"] = {{"address", finding->address}, {"port", finding->port}, {"source", finding->source}};
+    boost::json::array verified_by;
+    for (const auto& node : _address_discovery->verified_by()) verified_by.push_back(boost::json::string(node));
+    report["discovered"] = {{"address", finding->address}, {"port", finding->port}, {"source", finding->source}, {"verified_by", std::move(verified_by)}};
   } else {
     report["discovered"] = nullptr;
   }
+
+  // The other nodes' discovered addresses this node has reached, which is how they learn theirs are good.
+  boost::json::array reaches;
+  if (_address_discovery) {
+    for (const auto& [node, address] : _address_discovery->reached()) reaches.push_back({{"node", node}, {"address", address}});
+  }
+  report["reaches"] = std::move(reaches);
 
   // The media engine and what it can do. Null, not absent, for a node with no engine.
   if (media) {
@@ -1052,6 +1061,8 @@ std::string Core::node_status_json(const std::string& status) const {
 void Core::_node_status_publish() {
   // A node without its datastore is running but not serving: degraded.
   const auto status = (datastore && datastore->is_connected()) ? "ok" : "degraded";
+
+  if (_address_discovery) _address_discovery->review();
 
   events->publish_state(events::topics::node_status(config->sip_node_id), node_status_json(status));
 

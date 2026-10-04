@@ -802,13 +802,26 @@ std::string Config::AdvertisedTransport::uri() const {
   return std::string(secure ? "sips:" : "sip:") + address + ":" + std::to_string(port) + ";transport=" + transport;
 }
 
+std::string Config::public_address() const {
+  if (!sip_public_address.empty()) return sip_public_address;
+
+  std::lock_guard<std::mutex> lock(_discovered->mutex);
+  return _discovered->address;
+}
+
+void Config::discovered_address_set(std::string address) {
+  std::lock_guard<std::mutex> lock(_discovered->mutex);
+  _discovered->address = std::move(address);
+}
+
 std::vector<Config::AdvertisedTransport> Config::advertised_transports() const {
   std::vector<AdvertisedTransport> out;
+  const auto public_address = this->public_address();
 
-  const auto add = [this, &out](const std::string& transport, const std::string& bind_address, std::uint16_t port, bool secure) {
+  const auto add = [this, &out, &public_address](const std::string& transport, const std::string& bind_address, std::uint16_t port, bool secure) {
     const auto public_port = public_port_for(transport);
-    out.push_back(AdvertisedTransport{transport, sip_public_address.empty() ? bind_address : sip_public_address,
-                                      !sip_public_address.empty() && public_port != 0 ? public_port : port, secure});
+    out.push_back(AdvertisedTransport{transport, public_address.empty() ? bind_address : public_address,
+                                      !public_address.empty() && public_port != 0 ? public_port : port, secure});
   };
 
   if (udp_enable) add("udp", udp_address, udp_port, false);
@@ -818,7 +831,7 @@ std::vector<Config::AdvertisedTransport> Config::advertised_transports() const {
 
   // The secure_port listener. websocket.public_port applies only to the plain one.
   if (websocket_enable && !websocket_tls && websocket_secure_port != 0) {
-    out.push_back(AdvertisedTransport{"wss", sip_public_address.empty() ? websocket_address : sip_public_address, websocket_secure_port, true});
+    out.push_back(AdvertisedTransport{"wss", public_address.empty() ? websocket_address : public_address, websocket_secure_port, true});
   }
 
   return out;
@@ -830,7 +843,7 @@ std::optional<Config::AdvertisedTransport> Config::advertised_cluster() const {
   const bool everywhere = cluster_address.empty() || cluster_address == "0.0.0.0" || cluster_address == "::";
 
   std::string address = cluster_advertise;
-  if (address.empty()) address = everywhere && !sip_public_address.empty() ? sip_public_address : cluster_address;
+  if (address.empty()) address = everywhere && !public_address().empty() ? public_address() : cluster_address;
 
   return AdvertisedTransport{"tls", address, cluster_port, true};
 }
