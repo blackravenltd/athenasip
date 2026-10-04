@@ -105,6 +105,10 @@ class Registrar : public TransactionUser {
   // or was granted.
   std::vector<std::string> _push_capabilities(const std::shared_ptr<SIPMessage>& request, const std::vector<types::Location>& bindings) const;
 
+  // AthenaSIP-Alternate-Server: the other nodes to register with if this one goes, for a client that asked with
+  // Supported: athenasip-failover over TLS or WSS. Contact grammar, each with how long the list holds.
+  std::vector<std::string> _alternate_servers(const std::shared_ptr<SIPMessage>& request, std::uint32_t expires_seconds) const;
+
   // 401 with a fresh nonce for the realm, if the realm is known.
   void _send_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
                        const std::shared_ptr<types::Realm>& realm);

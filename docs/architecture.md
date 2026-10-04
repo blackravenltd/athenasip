@@ -122,6 +122,17 @@ Outbound (RFC 5626):
 - Keep-alives: a double CRLF on TCP and TLS is answered with CRLF, and a STUN Binding
   request on the SIP UDP port with the source address (4.4).
 
+Client failover, for a client that can use none of RFC 3263, RFC 5626 or a balancer:
+
+- `AthenaSIP-Alternate-Server` in the 2xx to a REGISTER lists the other nodes that are
+  up, in Contact grammar, each with `expires` set to the registration's lifetime:
+  `<sips:203.0.113.9:5061;transport=tls>;expires=600`. The list is the one
+  `/api/v1/nodes` gives.
+- It is sent only to a client that sent `Supported: athenasip-failover`, and only over TLS
+  or WSS, on the same transport. Over anything else it would be a redirection whoever can
+  forge a response could send; a client should honour it only from a server whose
+  certificate it verified.
+
 ## Media
 
 `MediaEngine` advertises capabilities (`bridge`, `conference`, `record`, `transcode`) and
