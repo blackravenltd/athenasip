@@ -199,6 +199,10 @@ void Proxy::_authorize(const std::shared_ptr<SIPMessage>& request, const std::sh
   // In-dialog requests of an authorized call pass. The dialog table decides; a To tag alone proves nothing.
   if (!tag_of(request, "To").empty() && request->in_known_dialog) return then();
 
+  // A request routed back through a Path or Record-Route this node wrote passes: the flow token in it is sealed
+  // by this node (FlowTokens), so nobody else could have made it.
+  if (!request->flow_token.empty() && !core->flow_tokens().open(request->flow_token).empty()) return then();
+
   auto from = request->header->contains("From") ? request->header->headers_map["From"][0]->as<SIPIdentityHeader>() : nullptr;
   if (from == nullptr || from->value == nullptr || from->value->uri == nullptr) {
     _logger->info("Request with no usable From - 400");
@@ -1379,34 +1383,29 @@ bool Proxy::_prepare_forward(const std::shared_ptr<SIPMessage>& copy, const std:
     auto inbound = copy->channel.lock();
 
     // Names this node as the end it faces sees it (sip.localnet, public ports).
-    auto record_route_for = [&](const std::string& interface_transport, const Channel& facing, const std::string& token) {
-      const auto advertised = core->advertised_for(facing);
-      auto uri = std::make_shared<SIPUri>();
-      uri->valid = true;
-      uri->scheme = (interface_transport == "tls" || secure_request) ? "sips" : "sip";
-      uri->host = advertised.host;
-      uri->port = advertised.port;
-
-      // RFC 5626 5.1: the flow token is the user part.
-      uri->user = token;
-
-      // 19.1.1: lr marks this node as a loose router.
-      uri->set_parameter("lr", "");
-      if (interface_transport != "udp") uri->set_parameter("transport", interface_transport);
-
-      auto identity = std::make_shared<SIPIdentity>();
-      identity->wrapped = true;
-      identity->uri = uri;
-
-      return std::make_shared<SIPIdentityHeader>(identity);
-    };
-
     // add_start prepends, so the bottom value is added first.
     if (inbound && inbound->_connection) {
-      header->add_start("Record-Route", record_route_for(Util::to_lower(inbound->_connection->transport_name()), *inbound, inbound->flow_token()));
+      header->add_start("Record-Route",
+                        _route_to_this_node(*core, Util::to_lower(inbound->_connection->transport_name()), *inbound, inbound->flow_token(), secure_request));
     }
 
-    header->add_start("Record-Route", record_route_for(transport, *channel, channel->flow_token()));
+    header->add_start("Record-Route", _route_to_this_node(*core, transport, *channel, channel->flow_token(), secure_request));
+  }
+
+  // RFC 3327 5.2: a forwarded REGISTER puts this node on the Path, if the client supports it, so the far
+  // registrar's requests come back this way. RFC 5626 5.1: the first hop carries the flow token and "ob"; an
+  // outbound client gets the Path whatever it said.
+  if (header->request_method == "REGISTER") {
+    auto inbound = copy->channel.lock();
+    const bool outbound = header->contains("Contact") && header->headers_map["Contact"][0]->to_string().find("reg-id") != std::string::npos;
+
+    if (inbound && inbound->_connection && (has_option_tag(copy, "Supported", "path") || outbound)) {
+      const bool first_hop = header->headers_map["Via"].size() <= 1;
+      auto path = _route_to_this_node(*core, Util::to_lower(inbound->_connection->transport_name()), *inbound, first_hop ? inbound->flow_token() : "",
+                                      Util::to_lower(header->request_uri->scheme) == "sips");
+      if (first_hop) path->value->uri->set_parameter("ob", "");
+      header->add_start("Path", path);
+    }
   }
 
   // Step 6: a top Route without lr is a strict router. It becomes the Request-URI, and the old Request-URI
@@ -1812,6 +1811,148 @@ void Proxy::on_stray_response(std::shared_ptr<SIPMessage> response) {
 
     opened.value->send(response);
   });
+}
+
+void Proxy::forward_register(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction) {
+  if (!request->header->request_uri) return _send_status(transaction, request, 400, "Bad Request");
+
+  const auto token = _loop_token(request);
+  if (_is_loop(request, token)) {
+    _logger->info("REGISTER has been here before with nothing changed - 482");
+    return _send_status(transaction, request, 482, "Loop Detected");
+  }
+
+  _preprocess_routes(request);
+
+  auto self = shared_from_this();
+  _authorize_relay(request, transaction, [this, self, request, transaction, token]() {
+    _logger->info("Forwarding a REGISTER for " + request->header->request_uri->to_string() + " (RFC 3261 10.3 step 1)");
+    _determine_targets(request, transaction, token);
+  });
+}
+
+void Proxy::_authorize_relay(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
+                             std::function<void()> then) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  // A reliable connection a REGISTER authenticated over is trusted, as for calls. A UDP source address is not.
+  auto channel = request->channel.lock();
+  if (channel && channel->_connection && channel->_connection->is_reliable() && channel->is_authenticated()) return then();
+
+  // The credentials name their realm, which must be one of this node's.
+  std::shared_ptr<headers::Header> answered;
+  std::shared_ptr<types::Authorization> credentials;
+  for (const auto& value : request->header->headers_map["Proxy-Authorization"]) {
+    auto header = value->as<headers::AuthorizationHeader>();
+    if (header == nullptr || !digest::is_complete(header->value) || !header->value->contains_field("username")) continue;
+    answered = value;
+    credentials = header->value;
+    break;
+  }
+
+  if (!credentials) {
+    _logger->info("REGISTER to forward from a sender with no credentials here - challenging");
+    return _send_relay_challenge(transaction, request);
+  }
+
+  auto self = shared_from_this();
+  const auto realm_name = Util::to_lower(credentials->fields["realm"]);
+
+  core->realm_get_by_name(realm_name, [this, self, request, transaction, credentials, answered, then](plugins::Result<std::shared_ptr<types::Realm>> realm) {
+    auto core = _core.lock();
+    if (!core) return;
+
+    if (!realm.ok) {
+      _logger->error("Could not read a realm - " + realm.error);
+      return _send_status(transaction, request, 500, "Server Internal Error");
+    }
+    if (!realm.value) return _send_relay_challenge(transaction, request);
+
+    core->nonce_check(credentials->fields["nonce"], [this, self, request, transaction, credentials, answered, then,
+                                                     realm = realm.value](plugins::Result<bool> checked) {
+      auto core = _core.lock();
+      if (!core) return;
+
+      if (!checked.ok) {
+        _logger->error("Could not check a nonce - " + checked.error);
+        return _send_status(transaction, request, 500, "Server Internal Error");
+      }
+      if (!checked.value) return _send_relay_challenge(transaction, request);
+
+      auto claimed = std::make_shared<SIPIdentity>("sip:" + credentials->fields["username"] + "@" + realm->name);
+      core->subscriber_get(claimed, [this, self, request, transaction, credentials, answered, then](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
+        if (!found.ok) {
+          _logger->error("Could not read a subscriber - " + found.error);
+          return _send_status(transaction, request, 500, "Server Internal Error");
+        }
+
+        // An unknown subscriber is challenged like a wrong password, so subscribers cannot be enumerated.
+        if (!found.value || !digest::verify(*found.value, *credentials, request->header->request_method).empty()) {
+          _logger->info("REGISTER to forward with credentials that do not verify - challenging");
+          return _send_relay_challenge(transaction, request);
+        }
+
+        // Spent here; the far registrar's Authorization is left alone (22.3).
+        request->header->remove_value("Proxy-Authorization", [&answered](std::shared_ptr<headers::Header> value) { return value == answered; });
+        then();
+      });
+    });
+  });
+}
+
+// One challenge for each of this node's realms, each with its own nonce: the From is the foreign address of
+// record, so nothing says which realm the sender belongs to (RFC 3261 22.3 allows several).
+void Proxy::_send_relay_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  auto self = shared_from_this();
+  core->datastore->realm_list(core->strand(), [this, self, transaction, request](plugins::Result<std::vector<std::shared_ptr<types::Realm>>> realms) {
+    if (!realms.ok || realms.value.empty()) {
+      _logger->info("REGISTER to forward, and no realm here to authenticate it - 403");
+      return _send_status(transaction, request, 403, "Forbidden");
+    }
+
+    auto response = request->generate_response();
+    response->header->response_code = 407;
+    response->header->response_message = "Proxy Authentication Required";
+
+    auto pending = std::make_shared<std::size_t>(realms.value.size());
+    for (const auto& realm : realms.value) {
+      auto core = _core.lock();
+      if (!core) return;
+
+      // The nonce must be stored before it is sent, or it would fail its own check.
+      core->nonce_create(realm, [this, self, transaction, request, response, realm, pending](plugins::Result<std::string> nonce) {
+        if (nonce.ok) digest::add_challenges(*response->header, "Proxy-Authenticate", realm->name, nonce.value);
+        if (--*pending == 0) transaction->send(response);
+      });
+    }
+  });
+}
+
+std::shared_ptr<headers::SIPIdentityHeader> Proxy::_route_to_this_node(Core& core, const std::string& transport, const Channel& facing,
+                                                                       const std::string& token, bool secure) const {
+  const auto advertised = core.advertised_for(facing);
+  auto uri = std::make_shared<SIPUri>();
+  uri->valid = true;
+  uri->scheme = (transport == "tls" || secure) ? "sips" : "sip";
+  uri->host = advertised.host;
+  uri->port = advertised.port;
+
+  // RFC 5626 5.1: the flow token is the user part.
+  uri->user = token;
+
+  // 19.1.1: lr marks this node as a loose router.
+  uri->set_parameter("lr", "");
+  if (transport != "udp") uri->set_parameter("transport", transport);
+
+  auto identity = std::make_shared<SIPIdentity>();
+  identity->wrapped = true;
+  identity->uri = uri;
+
+  return std::make_shared<SIPIdentityHeader>(identity);
 }
 
 bool Proxy::_names_this_node(const SIPUri& uri) const {

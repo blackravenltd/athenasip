@@ -65,6 +65,9 @@ class Channel : public std::enable_shared_from_this<Channel> {
   std::string peer_node() const { return _connection ? _connection->peer_identity() : std::string(); }
   bool is_authenticated_as(const std::string& aor) const;
 
+  // Whether a REGISTER has authenticated anyone over this connection.
+  bool is_authenticated() const { return !_authenticated.empty(); }
+
   State state = State::Normal;
 
   std::shared_ptr<SIPMessage> _incoming_message;

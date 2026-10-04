@@ -38,6 +38,7 @@ class Registrar : public TransactionUser {
  private:
   // The steps of RFC 3261 10.3. Each stage resumes after a datastore round trip and is named
   // for what it has just learned.
+  void _on_unserved(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::shared_ptr<types::SIPIdentity> aor);
   void _on_realm(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::shared_ptr<types::SIPIdentity> aor,
                  std::shared_ptr<types::Realm> realm);
   void _on_nonce_checked(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,

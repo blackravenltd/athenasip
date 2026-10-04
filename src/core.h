@@ -245,6 +245,9 @@ class Core : public std::enable_shared_from_this<Core> {
   // Refresh pushes for push bindings (RFC 8599 5.5).
   std::shared_ptr<PushRefresher> push_refresher();
 
+  // RFC 3261 10.3 step 1: a REGISTER for a domain this node does not serve, for the proxy to forward.
+  void register_forward(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction);
+
   // The registrar has stored a binding; a request held for that client's push goes now (RFC 8599 5.6.2).
   void binding_registered(std::uint64_t subscriber_id, const std::shared_ptr<SIPUri>& contact);
 

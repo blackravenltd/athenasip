@@ -149,7 +149,41 @@ void Registrar::on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<
       return _send_status(transaction, request, 500, "Server Internal Error");
     }
 
-    _on_realm(request, transaction, aor, found.value);
+    if (found.value) return _on_realm(request, transaction, aor, found.value);
+    _on_unserved(request, transaction, aor);
+  });
+}
+
+// RFC 3261 10.3 step 1: a Request-URI for a domain this node holds no bindings for is forwarded there, this node
+// being a proxy too, when sip.forward_register allows. A Request-URI naming this node or one of its realms is
+// step 5's 404: the address of record is not valid here.
+void Registrar::_on_unserved(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
+                             std::shared_ptr<types::SIPIdentity> aor) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  const auto& uri = request->header->request_uri;
+  const std::uint16_t port = uri ? uri->port.value_or(Util::to_lower(uri->scheme) == "sips" ? 5061 : 5060) : 0;
+  if (!uri || core->is_local_address(uri->host, port)) return _on_realm(request, transaction, aor, nullptr);
+
+  auto self = shared_from_this();
+  core->realm_get_by_name(Util::to_lower(uri->host), [this, self, request, transaction, aor](plugins::Result<std::shared_ptr<types::Realm>> found) {
+    auto core = _core.lock();
+    if (!core) return;
+
+    if (!found.ok) {
+      _logger->error("REGISTER could not read the realm - " + found.error);
+      return _send_status(transaction, request, 500, "Server Internal Error");
+    }
+
+    if (found.value) return _on_realm(request, transaction, aor, nullptr);
+
+    if (core->config->sip_forward_register != "subscribers") {
+      _logger->info("REGISTER for " + request->header->request_uri->to_string() + ", a domain not served here, and sip.forward_register is never - 403");
+      return _send_status(transaction, request, 403, "Forbidden");
+    }
+
+    core->register_forward(request, transaction);
   });
 }
 

@@ -46,6 +46,12 @@ bool Config::load_from_yaml(const std::string& filename) {
 
   if (sip["allow_unencrypted"]) sip_allow_unencrypted = sip["allow_unencrypted"].as<bool>();
 
+  if (sip["forward_register"]) sip_forward_register = Util::to_lower(sip["forward_register"].as<std::string>());
+  if (sip_forward_register != "subscribers" && sip_forward_register != "never") {
+    _logger->error("'sip.forward_register' is '" + sip_forward_register + "': it is subscribers or never");
+    return false;
+  }
+
   if (sip["flow_idle_timeout"]) {
     try {
       sip_flow_idle_timeout = sip["flow_idle_timeout"].as<std::uint32_t>();
@@ -653,6 +659,7 @@ std::string Config::effective_yaml() const {
   out << YAML::Key << "public_address" << YAML::Value << sip_public_address;
   out << YAML::Key << "localnet" << YAML::Value << YAML::Flow << sip_localnet;
   out << YAML::Key << "allow_unencrypted" << YAML::Value << sip_allow_unencrypted;
+  out << YAML::Key << "forward_register" << YAML::Value << sip_forward_register;
   out << YAML::Key << "log_messages" << YAML::Value << sip_log_messages;
   out << YAML::Key << "session_expires" << YAML::Value << sip_session_expires;
   out << YAML::Key << "session_min_se" << YAML::Value << sip_session_min_se;

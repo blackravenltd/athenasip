@@ -626,6 +626,10 @@ std::shared_ptr<push::PushService> Core::push_service(const std::string& provide
   return found == _push_services.end() ? nullptr : found->second;
 }
 
+void Core::register_forward(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction) {
+  if (_proxy) _proxy->forward_register(std::move(request), std::move(transaction));
+}
+
 void Core::binding_registered(std::uint64_t subscriber_id, const std::shared_ptr<SIPUri>& contact) {
   if (_proxy) _proxy->on_registered(subscriber_id, contact);
 }
