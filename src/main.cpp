@@ -433,6 +433,7 @@ int main(int argc, char* argv[]) {
       provisioning = std::make_shared<api::ProvisioningAPI>(logger, datastore, adminAPI->executor(), config, version->to_string());
       provisioning->register_routes(*api_router);
       provisioning->nodes_register(core->nodes(), std::chrono::seconds(config->events_status_interval));
+      provisioning->push_register(push_services);
 
       // Admin logins. Users live in the datastore; with a driver that cannot hold them a
       // login fails as unavailable, not as a wrong password.

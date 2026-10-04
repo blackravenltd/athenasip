@@ -11,11 +11,13 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "../config.h"
 #include "../datastores/datastore.h"
 #include "../loggers/logger.h"
 #include "../node_directory.h"
+#include "../push/push_service.h"
 #include "../types/location.h"
 #include "../types/realm.h"
 #include "../types/subscriber.h"
@@ -40,6 +42,9 @@ class ProvisioningAPI : public std::enable_shared_from_this<ProvisioningAPI> {
     _nodes = std::move(nodes);
     _node_heartbeat = heartbeat;
   }
+
+  // The push services this node runs (RFC 8599), for what /client/config tells a client.
+  void push_register(std::vector<std::shared_ptr<push::PushService>> services) { _push_services = std::move(services); }
 
  private:
   // Realms
@@ -90,6 +95,7 @@ class ProvisioningAPI : public std::enable_shared_from_this<ProvisioningAPI> {
   std::shared_ptr<Config> _config;
   std::string _version;
   std::shared_ptr<NodeDirectory> _nodes;
+  std::vector<std::shared_ptr<push::PushService>> _push_services;
   std::chrono::seconds _node_heartbeat{30};
 };
 

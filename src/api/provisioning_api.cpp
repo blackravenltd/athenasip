@@ -6,6 +6,7 @@
 //
 #include "provisioning_api.h"
 
+#include <algorithm>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -648,8 +649,42 @@ void ProvisioningAPI::_client_config(RouteContext context) {
 
   out["ice_servers"] = std::move(ice);
 
-  write_json(context.response, http::status::ok, out);
-  context.done();
+  const auto named = context.query.find("realm");
+  if (named == context.query.end()) {
+    write_json(context.response, http::status::ok, out);
+    return context.done();
+  }
+
+  const auto flows = std::min<std::size_t>(2, out["nodes"].as_array().size());
+  auto self = shared_from_this();
+
+  _with_realm(named->second, std::move(context), [this, self, out, flows](std::shared_ptr<types::Realm> realm, RouteContext context) mutable {
+    boost::json::object expects;
+    expects["name"] = realm->name;
+
+    // RFC 3261 10.3 step 7: what the registrar grants when asked for nothing, and the shortest it takes.
+    expects["registration"] = {{"expires", realm->registration_timeout > 0 ? realm->registration_timeout : 3600u}, {"minimum", realm->registration_minimum}};
+
+    // RFC 5626 4.2: a flow to each of two nodes, so one dying leaves the client reachable.
+    expects["outbound"] = {{"flows", flows}};
+
+    // RFC 8599: each push service, with what a client needs before it subscribes.
+    boost::json::array push;
+    for (const auto& service : _push_services) {
+      boost::json::object entry;
+      entry["service"] = service->name();
+      entry["minimum_expires"] = _config->push_minimum_expiry();
+      for (const auto& [name, value] : service->capabilities()) {
+        if (name == "+sip.vapid") entry["vapid"] = value;
+      }
+      push.push_back(std::move(entry));
+    }
+    expects["push"] = std::move(push);
+
+    out["realm"] = std::move(expects);
+    write_json(context.response, http::status::ok, out);
+    context.done();
+  });
 }
 
 boost::json::array ProvisioningAPI::_nodes_json(bool usable_only) const {
