@@ -122,6 +122,12 @@ Outbound (RFC 5626):
 - Keep-alives: a double CRLF on TCP and TLS is answered with CRLF, and a STUN Binding
   request on the SIP UDP port with the source address (4.4).
 
+A REGISTER for a domain no node serves (`sip.forward_register`) goes to that domain's
+registrar, for this node's subscribers only, with a Path naming this node and carrying the
+flow token and `ob` (RFC 3327, RFC 5626 5.1). A request that comes back through that Path
+goes down the client's flow. Flow tokens are sealed with a per-process key, so after a
+restart the client has to register again before the far end can reach it.
+
 Client failover, for a client that can use none of RFC 3263, RFC 5626 or a balancer:
 
 - `AthenaSIP-Alternate-Server` in the 2xx to a REGISTER lists the other nodes that are

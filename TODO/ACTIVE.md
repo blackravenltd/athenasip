@@ -30,7 +30,7 @@ for want of credentials. 1141 unit tests (one skipped without a resolver) at the
 with rtpengine 12 of 12, two nodes 15 of 15. That covers RFC 6026 and `allow_unencrypted`;
 push is after it and has no scenario yet.
 
-**Next:** Milestone 4's last item, the node's own address, which waits on Tom (4).
+**Next:** Milestone 4's last item, the node's own address, which waits on Tom (3).
 
 **Once things are stable, video calling is a primary feature** (Tom, 2026-10-03), not a
 later extra: principle 6 already says so, and this is the reminder that it is next in line
@@ -62,13 +62,7 @@ session that has lost its context needs to see them first.
    does: hand-roll a minimal HTTP/2 client (HPACK included) or take nghttp2 as a
    dependency. Waits on Tom's choice and an Apple key.
 
-3. **Whether a node is ever an edge proxy.** RFC 5626's Path flow token applies when a
-   node forwards a REGISTER to another registrar. Today none does: every REGISTER goes to
-   the local registrar, which answers 404 for a domain it does not serve, and the nodes of
-   a cluster are all registrars on one store. Building it means forwarding a REGISTER for
-   a foreign domain instead of refusing it, which is a decision rather than a fix.
-
-4. **Which STUN server a node asks** when nothing is configured, for the node's own
+3. **Which STUN server a node asks** when nothing is configured, for the node's own
    address. A third party (a public STUN server) works out of the box but tells someone
    else the node exists; none means discovery only from peers and the operator, so a
    single node learns nothing. Proposed: use the `stun:` entries already in
@@ -395,14 +389,12 @@ milestone is the second node.
 
 ### Client failover, in the order decided on 2026-09-21
 
-- [ ] RFC 5626 outbound, what is left of it: a flow token in the Path a node writes when
-      it is the edge for another registrar (Waiting on Tom, 3). (No 430 for a gone
-      in-dialog flow, by choice: see Known deviations.)
+Done (`COMPLETED.md`). What remains of client failover is the node's own address, below.
 
 ### The node's own address
 
 - [ ] A node determines its own public address and reachability, rather than being told
-      (which STUN server: Waiting on Tom, 4).
+      (which STUN server: Waiting on Tom, 3).
       Configuration stays and always wins, because an explicit answer beats a guessed
       one, but a node with nothing configured should work out the answer itself. Three
       sources, cheapest first:

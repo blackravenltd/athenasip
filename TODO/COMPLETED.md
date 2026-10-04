@@ -2667,3 +2667,13 @@ missed because its connection had silently died.
       only to a client that sent `Supported: athenasip-failover`.
 - [x] **The image builds in an 8 GB Docker VM again**: one compiler per 1.5 GB of available
       memory, and the cluster harness builds the node image once rather than twice at once.
+- [x] **A REGISTER for a domain not served here is forwarded** (RFC 3261 10.3 step 1, Tom
+      2026-10-04: configurable, default to subscribers, UDP as well). `sip.forward_register`
+      is `subscribers` or `never` (403). A subscriber is one registered over a reliable
+      connection, or one answering a 407 offered for each of this node's realms, since the
+      From is the foreign address of record. The forwarded REGISTER carries no
+      Record-Route; it carries a Path naming this node, with the flow token and `ob` at the
+      first hop (RFC 3327 5.2, RFC 5626 5.1), when the client supports Path or asks for
+      outbound. A request routed back through a Path or Record-Route this node sealed is
+      admitted and goes down the flow. A REGISTER whose address of record is in one of this
+      node's realms is registered here, whatever its Request-URI, as before.
