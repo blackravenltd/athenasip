@@ -3,19 +3,20 @@
 ## Dependencies
 
 CMake 3.23 or newer, a C++20 compiler, Boost 1.87 or newer (`thread`, `json` and
-`charconv` are linked; the rest is header-only), OpenSSL and yaml-cpp. GoogleTest is
-needed only for the test build.
+`charconv` are linked; the rest is header-only), OpenSSL, yaml-cpp and nghttp2, which
+APNs needs because it speaks only HTTP/2. CMake finds nghttp2 through pkg-config.
+GoogleTest is needed only for the test build.
 
 macOS:
 
 ```
-brew install cmake boost openssl@3 yaml-cpp googletest
+brew install cmake pkg-config boost openssl@3 yaml-cpp libnghttp2 googletest
 ```
 
 Debian and Ubuntu:
 
 ```
-apt install build-essential cmake libssl-dev libyaml-cpp-dev libgtest-dev
+apt install build-essential cmake pkg-config libssl-dev libyaml-cpp-dev libnghttp2-dev libgtest-dev
 ```
 
 Where the distribution's Boost is older than 1.87, build Boost from source; `Dockerfile`

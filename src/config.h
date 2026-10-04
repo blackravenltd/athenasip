@@ -181,7 +181,7 @@ class Config {
   // media.url
   std::string media_url = "builtin://";  // or "rtpengine://host:port"
 
-  // push.urls: RFC 8599 push notification services, one driver each ("fcm://", "webpush://"). None by default.
+  // push.urls: RFC 8599 push notification services, one driver each ("apns://", "fcm://", "webpush://"). None by default.
   std::vector<std::string> push_urls;
 
   // push.timeout: seconds a request waits for the client to re-register after a push (RFC 8599 5.6.2). Kept
