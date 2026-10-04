@@ -8,7 +8,7 @@ drivers in the tree use the same contract an external one does, and none is priv
 | `datastore` | `datastores::Datastore` (`src/datastores/datastore.h`) | `memory://`, `redis://` |
 | `events` | `events::EventSystem` (`src/events/event_system.h`) | `local://`, `mqtt://` |
 | `media` | `media::MediaEngine` (`src/media/media_engine.h`) | `builtin://`, `rtpengine://` |
-| `push` | `push::PushService` (`src/push/push_service.h`) | `fcm://`, `webpush://` |
+| `push` | `push::PushService` (`src/push/push_service.h`) | `apns://`, `fcm://`, `webpush://` |
 
 A kind is a string, so a plugin can introduce a new one. Plugins are compiled into the
 server; there is no shared-library loader.

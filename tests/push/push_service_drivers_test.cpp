@@ -29,5 +29,8 @@ TEST(PushServiceDriversTest, RegistersEachProviderUnderItsPnProviderValue) {
   EXPECT_EQ(fcm->name(), "fcm");
   EXPECT_TRUE(std::dynamic_pointer_cast<push::FcmPushService>(fcm));
 
-  EXPECT_FALSE(push::PushService::create_driver(logger, "apns://"));
+  auto apns = push::PushService::create_driver(logger, "apns://");
+  ASSERT_TRUE(apns);
+  EXPECT_EQ(apns->name(), "apns");
+  EXPECT_TRUE(std::dynamic_pointer_cast<push::ApnsPushService>(apns));
 }
