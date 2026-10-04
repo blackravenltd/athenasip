@@ -626,6 +626,15 @@ std::shared_ptr<push::PushService> Core::push_service(const std::string& provide
   return found == _push_services.end() ? nullptr : found->second;
 }
 
+std::shared_ptr<AddressDiscovery> Core::address_discovery() {
+  if (!_address_discovery) _address_discovery = std::make_shared<AddressDiscovery>(_logger->base_logger(), weak_from_this());
+  return _address_discovery;
+}
+
+void Core::stun_answered(const stun::Mapped& mapped) {
+  if (_address_discovery) _address_discovery->answered(mapped);
+}
+
 void Core::register_forward(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction) {
   if (_proxy) _proxy->forward_register(std::move(request), std::move(transaction));
 }
@@ -1005,6 +1014,13 @@ std::string Core::node_status_json(const std::string& status) const {
   auto report = boost::json::parse(node_status_json(status, config->sip_node_id, _version, datastore ? datastore->describe() : "none", uptime,
                                                     config->events_status_interval, config->advertised_transports(), config->advertised_cluster()))
                     .as_object();
+
+  // This node's address as a STUN server sees it: reported, not advertised. Null until one has answered.
+  if (const auto finding = _address_discovery ? _address_discovery->finding() : std::nullopt) {
+    report["discovered"] = {{"address", finding->address}, {"port", finding->port}, {"source", finding->source}};
+  } else {
+    report["discovered"] = nullptr;
+  }
 
   // The media engine and what it can do. Null, not absent, for a node with no engine.
   if (media) {

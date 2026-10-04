@@ -21,6 +21,7 @@
 #include <string>
 #include <utility>
 
+#include "address_discovery.h"
 #include "api/admin_api.h"
 #include "call.h"
 #include "config.h"
@@ -242,6 +243,10 @@ class Core : public std::enable_shared_from_this<Core> {
   std::shared_ptr<push::PushService> push_service(const std::string& provider) const;
   const std::map<std::string, std::shared_ptr<push::PushService>>& push_services() const { return _push_services; }
 
+  // This node's own address as STUN servers see it (AddressDiscovery), and the answers that arrive for it.
+  std::shared_ptr<AddressDiscovery> address_discovery();
+  void stun_answered(const stun::Mapped& mapped);
+
   // Refresh pushes for push bindings (RFC 8599 5.5).
   std::shared_ptr<PushRefresher> push_refresher();
 
@@ -318,6 +323,7 @@ class Core : public std::enable_shared_from_this<Core> {
   std::shared_ptr<Proxy> _proxy;
   std::shared_ptr<Qualifier> _qualifier;
   std::shared_ptr<PushRefresher> _push_refresher;
+  std::shared_ptr<AddressDiscovery> _address_discovery;
   std::map<std::string, std::shared_ptr<push::PushService>> _push_services;
   std::shared_ptr<dns::SipLocator> _locator;
   std::shared_ptr<Dialogs> _dialogs;

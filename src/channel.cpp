@@ -424,6 +424,12 @@ void Channel::_frame_datagram() {
   // RFC 5626 4.4.2: the UDP keep-alive is a STUN Binding request on the SIP port, answered
   // with the address it came from.
   if (stun::is_stun(datagram)) {
+    // An answer to this node asking a STUN server where it is.
+    if (auto mapped = stun::binding_success(datagram)) {
+      if (_core) _core->stun_answered(*mapped);
+      return;
+    }
+
     if (!_connection) return;
     const auto from = _connection->remote_endpoint();
     if (auto response = stun::binding_response(datagram, from.address(), from.port())) _schedule_async_write(std::move(*response));

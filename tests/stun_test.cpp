@@ -102,3 +102,61 @@ TEST(StunTest, OnlyABindingRequestIsAnswered) {
   indication[1] = '\x11';
   EXPECT_FALSE(stun::binding_response(indication, boost::asio::ip::make_address("192.0.2.10"), 5060).has_value());
 }
+
+namespace {
+
+std::string from_hex(const std::string& hex) {
+  std::string out;
+  for (std::size_t i = 0; i + 1 < hex.size(); i += 2) out += static_cast<char>(std::stoi(hex.substr(i, 2), nullptr, 16));
+  return out;
+}
+
+// RFC 5769 2.2: the sample IPv4 Binding success response, whose mapped address is 192.0.2.1 port 32853.
+std::string sample_response() {
+  return from_hex(
+      "0101003c2112a442b7e7a701bc34d686fa87dfae"  // header and transaction id
+      "8022000b74657374207665637"
+      "46f7220"  // SOFTWARE "test vector", padded
+      "0020000800"
+      "01a147e112a643"                                    // XOR-MAPPED-ADDRESS
+      "000800142b91f599fd9e90c38c7489f92af9ba53f06be7d7"  // MESSAGE-INTEGRITY
+      "80280004c07d4c96");                                // FINGERPRINT
+}
+
+}  // namespace
+
+// RFC 5389 6: a Binding request this node sends is a header with the cookie and its transaction id, and no
+// attributes; it is recognised as STUN.
+TEST(StunTest, ABindingRequestCarriesItsTransactionId) {
+  const auto request = stun::binding_request("ABCDEFGHIJKL");
+
+  ASSERT_EQ(request.size(), 20u);
+  EXPECT_EQ(request.substr(0, 4), std::string("\x00\x01\x00\x00", 4));
+  EXPECT_EQ(request.substr(4, 4), std::string("\x21\x12\xA4\x42", 4));
+  EXPECT_EQ(request.substr(8), "ABCDEFGHIJKL");
+  EXPECT_TRUE(stun::is_stun(request));
+}
+
+// RFC 5769 2.2: the mapped address of the sample response, read from XOR-MAPPED-ADDRESS (RFC 5389 15.2).
+TEST(StunTest, TheSampleResponseMapsTo192_0_2_1Port32853) {
+  const auto mapped = stun::binding_success(sample_response());
+
+  ASSERT_TRUE(mapped.has_value());
+  EXPECT_EQ(mapped->address.to_string(), "192.0.2.1");
+  EXPECT_EQ(mapped->port, 32853);
+  EXPECT_EQ(mapped->transaction_id, from_hex("b7e7a701bc34d686fa87dfae"));
+}
+
+// What this node answers a keep-alive with is read back to the address it named.
+TEST(StunTest, ThisNodesOwnResponseReadsBack) {
+  const auto response = stun::binding_response(binding_request(), boost::asio::ip::make_address("203.0.113.7"), 40000);
+  ASSERT_TRUE(response.has_value());
+
+  const auto mapped = stun::binding_success(*response);
+  ASSERT_TRUE(mapped.has_value());
+  EXPECT_EQ(mapped->address.to_string(), "203.0.113.7");
+  EXPECT_EQ(mapped->port, 40000);
+}
+
+// A request is not a success response.
+TEST(StunTest, ARequestIsNotASuccessResponse) { EXPECT_FALSE(stun::binding_success(binding_request()).has_value()); }

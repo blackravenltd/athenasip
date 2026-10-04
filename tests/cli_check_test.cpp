@@ -9,9 +9,11 @@
 #include <gtest/gtest.h>
 
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/udp.hpp>
 #include <chrono>
 #include <memory>
 #include <string>
+#include <thread>
 
 #include "cli.h"
 #include "config.h"
@@ -19,6 +21,7 @@
 #include "events/event_system_drivers.h"
 #include "media/media_engine_drivers.h"
 #include "mocks/logger_mock.h"
+#include "stun.h"
 
 using namespace athenasip;
 
@@ -135,4 +138,68 @@ TEST(CliCheckTest, TheFlagIsRead) {
 
   EXPECT_TRUE(options.ok);
   EXPECT_TRUE(options.check);
+}
+
+namespace {
+
+// A STUN server on loopback, on its own thread, that says whoever asks is at 203.0.113.7.
+struct StunResponder {
+  boost::asio::io_context io;
+  boost::asio::ip::udp::socket socket{io, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0)};
+  std::thread thread;
+
+  StunResponder() {
+    thread = std::thread([this]() {
+      std::string request(2048, '\0');
+      boost::asio::ip::udp::endpoint from;
+      boost::system::error_code ec;
+      socket.non_blocking(true);
+      const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+      while (std::chrono::steady_clock::now() < until) {
+        const auto size = socket.receive_from(boost::asio::buffer(request), from, 0, ec);
+        if (!ec) {
+          request.resize(size);
+          if (auto response = stun::binding_response(request, boost::asio::ip::make_address("203.0.113.7"), 40000)) {
+            socket.send_to(boost::asio::buffer(*response), from, 0, ec);
+          }
+          return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      }
+    });
+  }
+
+  ~StunResponder() { thread.join(); }
+
+  std::string url() { return "stun:127.0.0.1:" + std::to_string(socket.local_endpoint().port()); }
+};
+
+}  // namespace
+
+// The address a stun: server sees is reported, so an operator knows what sip.public_address should be.
+TEST(CliCheckTest, ReportsTheAddressAStunServerSees) {
+  CheckFixture f;
+  StunResponder stun;
+  f.config->ice_servers.push_back({stun.url()});
+
+  const auto lines = f.run();
+
+  const auto* address = CheckFixture::find(lines, "public address");
+  ASSERT_NE(address, nullptr);
+  EXPECT_TRUE(address->ok);
+  EXPECT_NE(address->detail.find("203.0.113.7"), std::string::npos) << address->detail;
+}
+
+// A sip.public_address that is not what the world sees is the likely mistake, and fails the check.
+TEST(CliCheckTest, APublicAddressTheStunServerDisagreesWithFails) {
+  CheckFixture f;
+  StunResponder stun;
+  f.config->ice_servers.push_back({stun.url()});
+  f.config->sip_public_address = "198.51.100.1";
+
+  const auto lines = f.run();
+
+  const auto* address = CheckFixture::find(lines, "public address");
+  ASSERT_NE(address, nullptr);
+  EXPECT_FALSE(address->ok) << address->detail;
 }

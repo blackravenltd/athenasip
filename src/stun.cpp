@@ -14,6 +14,7 @@ constexpr std::size_t kHeader = 20;
 constexpr std::uint16_t kBindingRequest = 0x0001;
 constexpr std::uint16_t kBindingSuccess = 0x0101;
 constexpr std::uint16_t kXorMappedAddress = 0x0020;
+constexpr std::uint16_t kMappedAddress = 0x0001;
 const std::string kCookie("\x21\x12\xA4\x42", 4);
 
 std::uint16_t u16(const std::string& s, std::size_t at) {
@@ -66,6 +67,61 @@ std::optional<std::string> binding_response(const std::string& request, const bo
   put16(response, static_cast<std::uint16_t>(value.size()));
   response += value;
   return response;
+}
+
+std::string binding_request(const std::string& transaction_id) {
+  std::string request;
+  put16(request, kBindingRequest);
+  put16(request, 0);
+  request += kCookie;
+  request += transaction_id.substr(0, 12);
+  request.resize(kHeader, '\0');
+  return request;
+}
+
+std::optional<Mapped> binding_success(const std::string& datagram) {
+  if (!is_stun(datagram) || u16(datagram, 0) != kBindingSuccess) return std::nullopt;
+
+  const auto transaction = datagram.substr(8, 12);
+  const auto mask = kCookie + transaction;
+
+  std::optional<Mapped> plain;
+  for (std::size_t at = kHeader; at + 4 <= datagram.size();) {
+    const auto type = u16(datagram, at);
+    const auto length = u16(datagram, at + 2);
+    const auto value = at + 4;
+    if (value + length > datagram.size()) break;
+
+    if ((type == kXorMappedAddress || type == kMappedAddress) && length >= 8) {
+      const bool xored = type == kXorMappedAddress;
+      const auto family = static_cast<unsigned char>(datagram[value + 1]);
+      const std::size_t size = family == 0x01 ? 4 : family == 0x02 ? 16 : 0;
+
+      if (size != 0 && length >= 4 + size) {
+        Mapped mapped;
+        mapped.transaction_id = transaction;
+        mapped.port = static_cast<std::uint16_t>(u16(datagram, value + 2) ^ (xored ? 0x2112 : 0));
+
+        if (size == 4) {
+          boost::asio::ip::address_v4::bytes_type bytes;
+          for (std::size_t i = 0; i < 4; ++i) bytes[i] = static_cast<unsigned char>(datagram[value + 4 + i] ^ (xored ? mask[i] : 0));
+          mapped.address = boost::asio::ip::address_v4(bytes);
+        } else {
+          boost::asio::ip::address_v6::bytes_type bytes;
+          for (std::size_t i = 0; i < 16; ++i) bytes[i] = static_cast<unsigned char>(datagram[value + 4 + i] ^ (xored ? mask[i] : 0));
+          mapped.address = boost::asio::ip::address_v6(bytes);
+        }
+
+        if (xored) return mapped;
+        plain = mapped;
+      }
+    }
+
+    // 15: attributes are padded to four bytes.
+    at = value + ((length + 3u) & ~3u);
+  }
+
+  return plain;
 }
 
 }  // namespace athenasip::stun
