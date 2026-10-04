@@ -8,20 +8,14 @@
 
 namespace athenasip::media {
 
-// What a session description has to be, as opposed to what is in it. It lives here
-// rather than inside Flags because a Call remembers one per leg, and call.h cannot see
-// the media contract - the contract is what sees the Call.
+// The profile a session description must have. Defined outside Flags because a Call keeps one per leg and call.h
+// cannot include the media contract.
 //
-// Mirror leaves it to the engine, which is right for a call whose ends match and wrong
-// for one that does not. The others say plainly which.
-//
-// SrtpSdes is the desk phone that wants its media encrypted and has never heard of
-// DTLS: RTP/SAVP with the keys in the description (RFC 4568), rather than a browser's
-// UDP/TLS/RTP/SAVPF.
+// Mirror leaves the choice to the engine. SrtpSdes is RTP/SAVP with the keys in the description (RFC 4568), as
+// opposed to WebRTC's UDP/TLS/RTP/SAVPF.
 enum class Profile { Mirror, PlainRtp, WebRtc, SrtpSdes };
 
-// A profile in the words the behaviour settings use, so what is logged or reported can be
-// set as it is read.
+// The profile as the behaviour settings spell it.
 inline const char* setting_name(Profile profile) {
   switch (profile) {
     case Profile::WebRtc:

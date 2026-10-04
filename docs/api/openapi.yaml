@@ -12,27 +12,24 @@ info:
   description: |
     Provisioning and read-only status for one AthenaSIP node.
 
-    Everything here goes straight to the datastore on the API's own executor. The API is
-    not on the Core strand and must not be: an operator listing subscribers cannot be
-    allowed to hold up a call.
-
-    Every route names the roles that admit it, and any of them does. The one credential is
-    a **session token**, held by a user who logged in through `POST /auth/login`. Its
-    roles are the user's, read on every request, so a role taken away takes effect on the
-    next one rather than at the next login.
+    The one credential is a **session token** from `POST /auth/login`. Each route needs
+    any one of the roles it names. Roles are read on every request, so a change takes
+    effect on the next one.
 
     There are no configured tokens. The first administrator is made on the node's host
-    with `athenasip --add-user`, which is also the way back in when every password has
-    been lost; everything after that is a user.
+    with `athenasip --add-user`, which is also the way back in when every password is
+    lost.
 
-    The three refusals are distinct and a client should treat them differently. `401` is
-    a credential that is absent or no longer good - an unknown token, an expired session,
-    a disabled user - and is the one that means sign in again. `403` is a real credential
-    that does not hold the role. `503` is the node being unable to tell, because its
-    datastore did not answer; it is a retry, not a bad password.
+    Refusals, and what a client does with each:
 
-    Every route is rate limited, and `429` is the fourth answer: wait the seconds in
-    `Retry-After` and try again. It is never a reason to sign out. The limits are per node:
+    - `401`: the credential is absent or no longer good (unknown token, expired session,
+      disabled user). Sign in again.
+    - `403`: the credential is good and does not hold a role the route needs. Do not
+      sign out.
+    - `503`: the datastore did not answer, so the node cannot tell. Retry.
+    - `429`: rate limited. Wait the seconds in `Retry-After` and retry. Do not sign out.
+
+    Rate limits are per node:
 
     | Who | Keyed by | Burst | Then |
     | --- | --- | --- | --- |
@@ -41,9 +38,9 @@ info:
     | `POST /auth/login`, on top of that | username | 5 | 1 a minute |
     | A signed-in caller | session | 60 | 300 a minute |
 
-    These are the defaults; an operator sets them under `http.api.rate_limits`. The login
-    limits count every attempt, not only failures. The source address is the
-    peer of the connection; a node behind a reverse proxy sees every caller as the proxy.
+    These are the defaults; `http.api.rate_limits` sets them. The login limits count
+    every attempt, not only failures. The source address is the peer of the connection,
+    so a node behind a reverse proxy sees every caller as the proxy.
   license:
     name: GPL-3.0-or-later
     url: https://www.gnu.org/licenses/gpl-3.0.html
@@ -85,12 +82,9 @@ paths:
       tags: [status]
       summary: Whether this node is serving
       description: |
-        Open, with no token: a container healthcheck and a load balancer reach it before
-        they have any credentials to present. It says the node is up and what it is, and
-        nothing about who is on it.
+        Open, with no token, for healthchecks and load balancers.
 
-        `503` when the datastore is not connected, because a node that cannot read its
-        own subscribers cannot serve a REGISTER.
+        `503` when the datastore is not connected.
       security: []
       responses:
         "200":
@@ -112,22 +106,16 @@ paths:
       tags: [auth]
       summary: Exchange a username and password for a session token
       description: |
-        Open, with no credential: this is how a credential is obtained.
+        Open, with no credential.
 
-        The token is given out once here and is never retrievable again. The node stores
-        only its SHA-256, so a dump of the datastore does not hand over live sessions.
+        The token is given out once and cannot be retrieved again; the node stores only
+        its SHA-256.
 
-        A user that does not exist, a password that does not verify and a user that has
-        been disabled are all one answer, byte for byte, because between them the
-        alternatives are a list of who is a subscriber on this node. An empty password is
-        that same `401` rather than a `400`, so probing with one learns nothing a wrong
-        password would not; a *missing* field is a `400`, because that is the caller's own
-        mistake and says nothing about anybody.
+        An unknown user, a wrong password, an empty password and a disabled user are all
+        the same `401`, so the answer does not reveal who exists. A missing field is a
+        `400`.
 
-        A user holding no roles may log in and is told it holds none, so a console can say
-        "ask an administrator" rather than failing to load.
-
-        There is no rate limiting yet. See `docs/authentication.md`.
+        A user holding no roles may log in and is told it holds none.
       security: []
       requestBody:
         required: true
@@ -159,12 +147,11 @@ paths:
       tags: [auth]
       summary: End the presented session
       description: |
-        `204` whether or not the token named a live session: the state the caller asked
-        for is that it is gone, and it is. A `404` here would be a way to ask this node
-        whether a token is real, one guess at a time, on a route anybody can reach.
+        `204` whether or not the token named a live session, so the answer does not
+        reveal whether a token is real.
 
-        Only the session presented ends. Every other session that user holds keeps
-        working; `DELETE /users/{user}/sessions` is what ends all of them.
+        Only the session presented ends. `DELETE /users/{user}/sessions` ends all of a
+        user's sessions.
       security: []
       responses:
         "204":
@@ -184,11 +171,10 @@ paths:
       tags: [auth]
       summary: Who this credential is and what roles it holds
       description: |
-        Any signed-in user, holding any roles or none: its `username`, `display_name` and
-        the `expires_at` of the session presented. `kind` is always `user`.
+        Any signed-in user, holding any roles or none.
 
-        The roles are resolved on this request rather than at login, so this is also how a
-        client notices that its permissions have changed.
+        Roles are resolved on this request, so this is how a client notices that its
+        permissions have changed.
       responses:
         "200":
           description: Who you are
@@ -208,21 +194,17 @@ paths:
       summary: The cluster as this node knows it
       description: |
         One entry per node, each with a URI per enabled SIP transport. A client reads
-        this to learn where else the realm is served from, over the HTTP it is already
-        speaking, which is what lets a browser fail over without DNS SRV it cannot use.
+        this to learn where else the realm is served, which lets a browser fail over
+        without DNS SRV.
 
-        This node first, marked `self` and described from its own configuration. Then
-        every other node as it last described itself on the event bus (its retained
-        `nodes/<id>/status` message), with the status it gave. A node whose report has
-        not been repeated within three status intervals is `stale`: listed, so a node
-        that went quiet can be told from one never heard of, and marked, so nothing
-        routes to it on the strength of an old `ok`. A node the broker reported `down`
-        is listed as down.
+        This node is first, marked `self`, described from its own configuration. Every
+        other node is listed as it last described itself on the event bus (its retained
+        `nodes/<id>/status` message). A node whose report is older than three status
+        intervals is marked `stale` and must not be routed to. A node the broker
+        reported `down` is listed as down.
 
-        The address is `sip.public_address` when it is set. A node bound to `0.0.0.0`
-        answers on every address it has and can name none of them to a client, so a node
-        that has not been told reports what it was bound to - which an operator can see
-        is unusable.
+        The address is `sip.public_address` when set, otherwise the address the listener
+        is bound to, which for `0.0.0.0` is unusable to a client.
       responses:
         "200":
           description: The nodes serving this realm
@@ -243,25 +225,17 @@ paths:
       operationId: getClientConfig
       summary: Everything a web client needs that it cannot be told by hand
       description: |
-        A browser reads no configuration file and cannot be given one, so what it needs to
-        place a call is fetched over the API it is already speaking: where to signal, and
-        what to use for ICE.
+        What a browser needs to place a call: where to signal and what to use for ICE.
 
-        `websocket_uri` is the secure WebSocket listener, pulled out of `transports` so a
-        client does not have to know that `wss` is the answer. It is **absent** when this
-        node has no secure WebSocket listener, because a page served over https cannot open
-        `ws://` and a browser handed one would fail later and further away.
+        `websocket_uri` is the secure WebSocket listener. It is **absent** when this node
+        has no `wss` listener, because a page served over https cannot open `ws://`.
 
-        `ice_servers` is shaped as `RTCIceServer`, so it can be handed to
-        `RTCPeerConnection` unchanged. A `turn:` entry carries a credential minted for this
-        request under the coturn shared-secret scheme, which expires on its own; a `stun:`
-        entry carries none, because STUN has nothing to authenticate to. A `turn:` entry
-        appears without a credential when the node has no shared secret configured - the
-        URL is still reported, because it is what the operator configured, but a credential
-        that could not work is not invented.
+        `ice_servers` is shaped as `RTCIceServer` and can be handed to `RTCPeerConnection`
+        unchanged. A `turn:` entry carries a credential minted for this request under the
+        coturn shared-secret scheme, which expires on its own. It carries none when the
+        node has no `http.api.turn_shared_secret`. A `stun:` entry never carries one.
 
-        The same role as `/nodes`, and for the same reason: it is what a client reads to
-        learn how to reach the realm, and it says nothing about who is on it.
+        Needs the same role as `/nodes`.
       responses:
         "200":
           description: What to use
@@ -297,12 +271,9 @@ paths:
       tags: [realms]
       summary: Create a realm
       description: |
-        `409` when the realm already exists rather than overwriting it: create and update
-        are separate operations in the datastore contract precisely so this can tell them
-        apart.
+        `409` when the realm already exists; it is never overwritten.
 
-        `nonce_secret` is generated when it is not given. A realm with no secret mints
-        Digest nonces keyed on nothing, and it is never returned by any endpoint.
+        `nonce_secret` is generated when not given, and no endpoint returns it.
       requestBody:
         required: true
         content:
@@ -346,9 +317,7 @@ paths:
       tags: [realms]
       summary: Update a realm
       description: |
-        Only the fields given are changed. A body that leaves a field out leaves it
-        alone, rather than resetting it to a default - which would be a way to lose a
-        nonce secret without being told.
+        Only the fields given are changed. A field left out is left alone.
       requestBody:
         required: true
         content:
@@ -399,16 +368,11 @@ paths:
       tags: [subscribers]
       summary: Create a subscriber
       description: |
-        Give a `password` and the server computes HA1 from it (RFC 2617: the hash of
-        user, realm and password). That hash is the only form of the password this
-        server ever holds, and no endpoint returns it.
+        Give a `password` and the server stores only its HA1 (RFC 2617: the hash of
+        user, realm and password), which no endpoint returns. `ha1` is accepted instead,
+        for importing subscribers.
 
-        `ha1` is accepted instead, for importing subscribers from somewhere that already
-        holds one.
-
-        The subscriber id is derived from its URI rather than counted, so every node that
-        provisions the same subscriber agrees about which subscriber a registration belongs to
-        without a shared sequence.
+        The subscriber id is derived from its URI, so every node agrees on it.
       requestBody:
         required: true
         content:
@@ -519,14 +483,13 @@ paths:
         Live calls only. A call that has ended is gone from this list and is on
         `/call-records`.
 
-        `media` is null for a call nothing anchors - the realm does not anchor, or the
+        `media` is null for a call nothing anchors: the realm does not anchor, or the
         node has no media engine. Otherwise it is what the engine reports, cumulative
-        since the call began. Each leg is one end of one stream as the engine sees it,
-        counted at the engine in both directions: `_in` is what arrived from that end and
-        `_out` what the engine sent it, so one-way audio is one of the two standing still.
-        A direction the engine does not report is absent, never zero. `participant` is
-        null: a relay knows an end by the address its packets come from, which behind a
-        NAT is not one any participant described.
+        since the call began. Each leg is one end of one stream, counted at the engine:
+        `_in` is what arrived from that end and `_out` what the engine sent it. A
+        direction the engine does not report is absent, never zero. `participant` is
+        always null: the engine knows a leg by its packets' source address, not by
+        participant.
       responses:
         "200":
           description: The live calls
@@ -548,12 +511,11 @@ paths:
       summary: The calls that have ended
       description: |
         One record per call, newest first, read from the datastore, so every node of a
-        cluster gives the same list. The node the caller reached writes the record; a node
-        a peer forwarded the call to does not, and is named in `nodes`. A call that never
-        got as far as a dialog - refused before anybody rang - has no record.
+        cluster gives the same list. The node the caller reached writes the record; a
+        node the call was forwarded to is named in `nodes`. A call that never reached a
+        dialog has no record.
 
-        Records are kept for `calls.history_retention` seconds, thirty days unless the
-        operator says otherwise.
+        Records are kept for `calls.history_retention` seconds, thirty days by default.
       parameters:
         - name: limit
           in: query
@@ -633,10 +595,9 @@ paths:
       description: |
         When a callee answers an offer this node's engine produced with 488 Not Acceptable
         Here, the node offers it the other profile once (WebRTC for plain RTP and back).
-        This lists each subscriber that needed that, on this node and since it started, most
-        recent first. The node suggests and the operator decides: `suggested_media_profile`
-        is the value the subscriber's `behaviour.media_profile` would be set to, and nothing
-        sets it.
+        This lists each subscriber that needed that, on this node since it started, most
+        recent first. `suggested_media_profile` is the value to set as the subscriber's
+        `behaviour.media_profile`; the node does not set it.
       responses:
         "200":
           description: The re-offers, most recent first
@@ -752,17 +713,14 @@ paths:
       tags: [users]
       summary: Create a user
       description: |
-        Needs `manage-admin-users`. On a fresh node there are no users, so the first one
-        is made on the host with `athenasip --add-user`, and that user can create the rest.
+        Needs `manage-admin-users`. The first user on a fresh node is made on the host
+        with `athenasip --add-user`.
 
-        `409` when the username is taken rather than overwriting somebody. Usernames are
-        one case-folded namespace: `Tom` and `tom` cannot both exist, either spelling logs
-        in, and the spelling given is kept for display.
+        `409` when the username is taken. Usernames are case-folded: `Tom` and `tom`
+        cannot both exist, either spelling logs in, and the spelling given is kept for
+        display.
 
-        `400 unknown_role` for a role this build does not have. The datastore carries a
-        role it does not recognise rather than dropping it - so that an older node
-        rewriting a user cannot silently strip a role a newer one granted - which leaves
-        this as the only place a typo can be caught.
+        `400 unknown_role` for a role this build does not have.
       requestBody:
         required: true
         content:
@@ -815,19 +773,17 @@ paths:
       tags: [users]
       summary: Change a user
       description: |
-        Needs `manage-admin-users`. The username cannot be changed, because it is the key
-        the user is filed under; the password has its own endpoint.
+        Needs `manage-admin-users`. The username cannot be changed, and the password has
+        its own endpoint.
 
-        A field not given is left alone. `roles` given as `[]` takes them all away, which
-        is why "not given" and "given as empty" are different answers.
+        A field not given is left alone. `roles` given as `[]` takes them all away.
 
         `409 would_lock_out` when a user tries to disable itself or take
-        `manage-admin-users` away from itself. The rule is about *self*, not about the
-        role: somebody else holding it may still be disabled and demoted, and a node with
-        no administrators left is recovered with `athenasip --add-user` on the host.
+        `manage-admin-users` away from itself. Another holder of the role may still do
+        either, and a node left with no administrators is recovered with
+        `athenasip --add-user` on the host.
 
-        Disabling a user revokes every session it held, so it stops working immediately
-        rather than when each token happens to expire.
+        Disabling a user revokes every session it held.
       requestBody:
         required: true
         content:
@@ -864,11 +820,9 @@ paths:
       description: |
         Needs `manage-admin-users`. `204` with no body, `404` when there is no such user.
 
-        Deleting a user revokes its sessions: a live token against a user that no longer
-        exists is a session nobody can revoke.
+        Deleting a user revokes its sessions.
 
-        `409 would_lock_out` when a user tries to delete itself, for the same reason it
-        cannot disable itself - it is locked out exactly as thoroughly either way.
+        `409 would_lock_out` when a user tries to delete itself.
       responses:
         "204":
           description: Deleted
@@ -895,32 +849,21 @@ paths:
       tags: [users]
       summary: Set a password
       description: |
-        Any authenticated caller, because "this is my own user" is not something a role
-        can express.
+        Any authenticated caller may set its own password. Setting another user's needs
+        `manage-admin-users`.
 
-        `old_password` is required when, and only when, the caller does **not** hold
-        `manage-admin-users`. Holding that role sets anyone's password without the old
-        one - including the holder's own - because the case it exists for is somebody who
-        has lost theirs. So a user with no roles changing their own password must present
-        it, and an administrator changing theirs need not.
-
-        That is deliberate rather than an oversight: requiring it of a holder of
-        `manage-admin-users` would not protect them, since anyone holding that role can
-        already set any other administrator's password or create a new one.
+        `old_password` is required only when the caller does **not** hold
+        `manage-admin-users`. A holder of that role sets any password, its own included,
+        without the old one.
 
         **This ends every session that user held, including the one that asked.** A
-        password is changed because the old one is no longer trusted, and a session issued
-        against it is exactly as untrusted; an administrator resetting a compromised
-        user would otherwise leave whoever compromised it logged in. A client changing
-        its own password should expect to sign in again.
+        client changing its own password must sign in again.
 
-        A wrong or missing `old_password` is `403 wrong_password`, not `401`. The bearer
-        presented is still perfectly good - it is a field in the body that is wrong - so a
-        client must not treat it as the session ending.
+        A wrong or missing `old_password` is `403 wrong_password`, not `401`: the bearer
+        is still good, and a client must not treat it as the session ending.
 
-        Somebody else's password without the role is `403` before the datastore is asked,
-        so this cannot be walked to find out who exists. With the role it is `404`,
-        because by then the caller is allowed to know.
+        Somebody else's password without the role is `403` whether or not the user
+        exists. With the role, an unknown user is `404`.
       requestBody:
         required: true
         content:
@@ -956,11 +899,10 @@ paths:
       tags: [users]
       summary: Sign a user out everywhere
       description: |
-        Needs `manage-admin-users`. Revokes every session that user holds, leaving the
-        user alone so they can log in again.
+        Needs `manage-admin-users`. Revokes every session that user holds; the user can
+        log in again.
 
-        `204` for a user that holds none, because holding none is the state the caller
-        asked for; `404` only when there is no such user.
+        `204` even when the user held none; `404` only when there is no such user.
       responses:
         "204":
           description: Every session that user held is gone
@@ -979,10 +921,8 @@ components:
       type: http
       scheme: bearer
       description: |
-        A session token from `POST /auth/login`, which resolves to the signed-in user's roles.
-
-        A session token is 32 bytes from a CSPRNG, rendered as 64 hex characters. It is
-        given out once and is never retrievable again: the node stores only its SHA-256.
+        A session token from `POST /auth/login`: 32 bytes from a CSPRNG as 64 hex
+        characters. It is given out once; the node stores only its SHA-256.
 
   parameters:
     Realm:
@@ -1040,8 +980,8 @@ components:
             $ref: "#/components/schemas/Error"
     Forbidden:
       description: |
-        A real credential that does not hold a role this endpoint admits. Not a reason to
-        sign the user out: the credential is good, it is the permission that is missing.
+        A good credential that does not hold a role this endpoint needs. Not a reason
+        to sign the user out.
       content:
         application/json:
           schema:
@@ -1060,8 +1000,8 @@ components:
             $ref: "#/components/schemas/Error"
     Unavailable:
       description: |
-        The datastore could not be asked, so the node cannot tell whether the credential
-        is good. A retry rather than a bad password, and never a reason to sign a user out.
+        The datastore did not answer, so the node cannot tell whether the credential is
+        good. Retry; never a reason to sign a user out.
       content:
         application/json:
           schema:
@@ -1076,7 +1016,7 @@ components:
           type: string
           description: |
             The secure WebSocket to signal over. Absent when this node has no `wss`
-            listener, which a browser must treat as "there is nothing here for me".
+            listener.
           example: wss://203.0.113.5:9443
         transports:
           type: array
@@ -1096,9 +1036,8 @@ components:
               username:
                 type: string
                 description: |
-                  Present for a `turn:` entry when a shared secret is configured. It is the
-                  credential's own expiry in Unix seconds, optionally followed by a name -
-                  that is the scheme, not a coincidence.
+                  Present for a `turn:` entry when a shared secret is configured: the
+                  credential's expiry in Unix seconds, optionally followed by a name.
               credential:
                 type: string
                 description: Present with `username`. base64 of HMAC-SHA1 over it.
@@ -1128,20 +1067,18 @@ components:
         token:
           type: string
           description: |
-            64 hex characters, being 32 bytes from a CSPRNG. Given out here once and never
-            retrievable again; the node stores only its SHA-256.
+            64 hex characters. Given out here once and never retrievable again.
         expires_at:
           type: integer
           format: int64
           description: |
             Unix seconds, from `http.api.session_lifetime`. The session also ends after
-            `http.api.session_idle` seconds without being used, which is not reported here
-            because using the session moves it.
+            `http.api.session_idle` seconds without use, which is not reported here.
         roles:
           type: array
           items:
             $ref: "#/components/schemas/Role"
-          description: Empty for a user that holds none, which is an answer rather than an error
+          description: Empty for a user that holds none
       example:
         token: 3f9a1c7e2b8d4056a1c3e5f70981b2d4c6e8fa0b1d3f5a7e9920c4e6a8b0d2f41
         expires_at: 1790506751
@@ -1151,8 +1088,7 @@ components:
       type: object
       required: [kind, roles]
       description: |
-        Who a credential is: always a user. `kind` is kept so a client that reads it keeps
-        working, and has the one value.
+        Who a credential is. `kind` is always `user`.
       properties:
         kind:
           type: string
@@ -1181,9 +1117,8 @@ components:
     Role:
       type: string
       description: |
-        A permission rather than a rank. Nothing here implies anything else: somebody who
-        needs to read cluster status and manage realms is given both, and there is
-        deliberately no role that covers everything.
+        A permission, not a rank. No role implies another, and no role covers
+        everything.
       enum:
         - view-cluster-status
         - manage-admin-users
@@ -1194,9 +1129,9 @@ components:
     User:
       type: object
       description: |
-        A user administers this node. It is not a subscriber: a subscriber is registered
-        on a realm to make and receive calls and authenticates with Digest, and neither
-        credential works as the other.
+        A user administers this node. It is not a subscriber: a subscriber belongs to a
+        realm, makes and receives calls and authenticates with Digest. Neither credential
+        works as the other.
       properties:
         username:
           type: string
@@ -1241,7 +1176,7 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Role"
-          description: Absent means none, which is a user that may log in and do nothing
+          description: Absent means none; such a user may log in and do nothing
 
     UserUpdate:
       type: object
@@ -1269,16 +1204,15 @@ components:
           type: string
           format: password
           description: |
-            Required when changing your own password *and* you do not hold
-            `manage-admin-users`. Ignored when you do, because that role can set any
-            password already, so asking would protect nothing.
+            Required when changing your own password without holding
+            `manage-admin-users`. Ignored when you hold it.
 
     Error:
       type: object
       required: [error]
       description: |
-        One shape for every failure. The code is for a client to branch on and does not
-        change wording between releases; the message is for a person reading a log.
+        One shape for every failure. `code` is stable and is what a client branches on;
+        `message` is for a person.
       properties:
         error:
           type: object
@@ -1693,7 +1627,7 @@ components:
         participant:
           type: integer
           nullable: true
-          description: Always null today; see listCalls
+          description: Always null; see listCalls
         packets_in:
           type: integer
         bytes_in:

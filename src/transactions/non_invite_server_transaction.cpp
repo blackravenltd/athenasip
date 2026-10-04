@@ -33,13 +33,12 @@ void NonInviteServerTransaction::receive(std::shared_ptr<SIPMessage> message) {
 
   switch (_state) {
     case State::Trying:
-      // RFC 3261 17.2.2: there is nothing to send yet, so a retransmission is dropped.
-      // The TU must not see the request twice.
+      // RFC 3261 17.2.2: nothing to send yet, so a retransmission is dropped. The TU must not see the request twice.
       return;
 
     case State::Proceeding:
     case State::Completed:
-      // Answer the retransmission with whatever we last sent.
+      // A retransmission gets the last response again.
       if (_last_response) _transport_send(_last_response);
       return;
 
@@ -73,8 +72,7 @@ void NonInviteServerTransaction::send(std::shared_ptr<SIPMessage> message) {
 void NonInviteServerTransaction::_start_timer_j() {
   auto self = std::static_pointer_cast<NonInviteServerTransaction>(shared_from_this());
 
-  // J only exists to answer request retransmissions. A reliable transport does not
-  // retransmit, so it is zero and the transaction ends as soon as the response is out.
+  // J answers request retransmissions; on a reliable transport there are none and the transaction ends at once.
   const auto delay = _reliable ? std::chrono::milliseconds(0) : _timers.j;
 
   _timer_j = _start_timer(delay, [self]() { self->_set_state(State::Terminated); });

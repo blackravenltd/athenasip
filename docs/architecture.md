@@ -1,131 +1,135 @@
 # AthenaSIP - Architecture
 
-AthenaSIP is a multi-master, clusterable SIP server. Any node serves any subscriber;
-registrations survive a node dying, and in-flight dialogs on a dead node do not.
+AthenaSIP is a multi-master, clusterable SIP proxy and registrar. Any node serves any
+subscriber. Registrations survive a node dying; dialogs in flight on that node do not.
 
-The layering follows RFC 3261's own, because the RFC's own division of labour is the one
-the timers and the retransmission rules are written against:
+The layering is RFC 3261's:
 
 ```
-udp/tcp/tls/ws/wss servers -> Connection -> Channel     transport   s18, RFC 3581
+udp/tcp/tls/ws/wss Server -> Connection -> Channel     transport          s18, RFC 3581
                                               |
-                                      Transaction layer   s17: matcher + 4 machines
+                                      Transaction layer   matcher + 4 machines   s17
                                               |
                     +-------------+-----------+-----------+
-                Registrar       Proxy       Dialogs       UA        transaction users
-               s10, 3327,      s16, 3263   s12, 4028     (local
-               5626 flows      loose route              responses)
+                Registrar       Proxy       Dialogs    Qualifier   transaction users
+               s10, 3327,      s16, 3263   s12, 4028   (OPTIONS)
+               5626            6026
                     |             |
-                Datastore    MediaEngine       Events: observability only, never the call path
-                (async)
+                Datastore    MediaEngine       EventSystem: observability only
+                (async)      (async)
 
 Core = composition root + the strand
 ```
 
-`Core` owns the strand and composes everything else. It does not process SIP itself.
+[Glossary](glossary.md) defines the terms.
 
-## The strand, and what is not on it
+## Source layout
 
-Core runs on a single strand. Servers post into it, transaction users run on it, and the
-registries it owns - channels, transactions, dialogs, calls - are touched from nowhere
-else.
+| Path | Holds |
+|---|---|
+| `src/core.*` | `Core`: owns the strand and the channel, transaction, dialog and call registries |
+| `src/servers/` | One `Server` and `Connection` type per transport |
+| `src/channel.*` | `Channel`: SIP framing and parsing over one connection |
+| `src/transactions/` | The four RFC 3261 17 state machines and the matcher |
+| `src/registrar.*`, `src/proxy.*`, `src/dialogs.*`, `src/qualifier.*` | Transaction users |
+| `src/dns/` | RFC 3263 server location: NAPTR, SRV, A/AAAA |
+| `src/datastores/`, `src/events/`, `src/media/` | Plugin interfaces and the in-tree drivers |
+| `src/plugins/` | The plugin base class and registry |
+| `src/api/` | The admin HTTP API |
+| `src/config.*`, `src/cli*.h`, `src/main.cpp` | Configuration, command line, startup |
+| `tests/` | GoogleTest, mirroring `src/` ([Testing](testing.md)) |
 
-That is why every plugin operation is async. A blocking datastore read on the strand
-stops every call on the node rather than only the one that asked, so `Datastore`,
-`EventSystem` and `MediaEngine` all take the caller's executor and answer through a
-handler. The admin API is deliberately not on the strand at all: it goes to the
-datastore directly with its own executor, so provisioning cannot hold up a call.
+## Threading
 
-A connection belongs to the thread its server's io_context runs on, not to the strand.
-Everything the strand wants done to a socket it hands to `Connection::executor()`.
+| Runs on | What |
+|---|---|
+| The Core strand | All signalling: transaction users, and the registries Core owns. Nothing here blocks. |
+| Each server's `io_context` thread | Socket reads, writes and closes. The strand hands socket work to `Connection::executor()`. |
+| The admin API's own executor | Provisioning. It calls the datastore directly, so it cannot hold up a call. |
+
+This is why every plugin operation is asynchronous: it takes the caller's executor and
+answers through a handler ([Plugins](plugins.md)).
+
+Timers come from an injectable `TimerSource` (`src/timer_source.h`), so tests advance time
+instead of waiting.
 
 ## Transport
 
-One `Channel` per flow, whatever carries it: UDP, TCP, TLS, WebSocket or secure
-WebSocket. A channel is known by one name, `transport://host:port`, which is the key the
-registry files it under and the flow id a binding records (RFC 5626).
+| Layer | Role |
+|---|---|
+| `Server` (`src/servers/server.h`) | Listens on one transport and address; creates a `Connection` per peer. |
+| `Connection` (`src/servers/connection.h`) | One byte-level path to a peer: a socket, or for UDP a remote address. Knows nothing of SIP. |
+| `Channel` (`src/channel.h`) | Wraps exactly one connection; frames, parses and serialises SIP messages. Not a session or dialog. |
 
-WSS matters more than it looks: a browser will not open an insecure WebSocket from a
-page served over https, so it is not a hardening option for a web client but the only
-way in.
+A channel is named `transport://host:port`. That name is the channel registry key and the
+flow id a binding records (RFC 5626), so the node holding a binding can find the
+connection again without resolving the Contact.
+
+A channel writes one message at a time; later writes queue behind the one in flight.
+
+Browsers served over HTTPS can only open `wss`, so secure WebSocket is the only way in for
+a web client.
 
 ## Plugins
 
-`Datastore`, `EventSystem` and `MediaEngine` are plugin kinds behind one registry keyed
-by `(kind, URL scheme)`. A kind is a string rather than an enum, so a plugin can
-introduce one the core was not built knowing about.
+`Datastore`, `EventSystem` and `MediaEngine` are plugin kinds in one registry keyed by
+`(kind, URL scheme)`.
 
-Two implementations ship per kind: one built-in that needs no external service, and one
-canonical for production.
-
-| Kind | In-tree | Canonical |
+| Kind | No external service | For a cluster or production |
 |---|---|---|
 | `datastore` | `memory://` | `redis://` |
 | `events` | `local://` | `mqtt://` |
 | `media` | `builtin://` | `rtpengine://` |
 
-The architecture privileges none of them. DynamoDB, NATS, Kafka, an SFU or anything else
-is a plugin someone can write against the same contract, not a roadmap item the core
-carries. What the project promises is the contract: versioned, async from its first
-version because it could not be made async later, and handing each plugin its own YAML
-root plus read access to the system config.
-
-`docs/plugins.md` is how to write one.
+None is privileged; anything else is a plugin written against the same versioned, async
+contract, with its own YAML section. [Plugins](plugins.md) is the contract.
 
 ## Clustering
 
-Nodes proxy SIP to each other, over mutual TLS from a cluster CA on a dedicated
-listener. A cluster-CA client certificate is what distinguishes a peer node from an
-endpoint or a trunk, which authenticate with Digest.
+Nodes share a datastore and an event bus, and proxy SIP to each other over mutual TLS on a
+dedicated listener ([`cluster`](configuration.md#cluster), [Certificates](certificates.md)).
+A certificate signed by the cluster CA marks a connection as a peer node; everything else
+is an endpoint and authenticates with Digest.
 
-The event bus carries observability, presence and discovery, and is never on the call
-setup path. Nodes find each other through retained `nodes/<id>/status` messages carrying
-each node's SIP and inter-node TLS addresses; Redis holds registration ownership with a
-TTL.
+The event bus is never on the call path. Nodes discover each other through the retained
+`nodes/<id>/status` messages ([Events](events.md)).
 
-A binding shares and a flow does not. The Redis row is readable by any node, but the
-socket a client registered on lives on one node, which is what `Location.node_id` and
-`Location.flow_id` record: a node that reads a binding it does not own forwards to the
-node that does.
+**Bindings are shared; flows are not.** Any node can read a binding, but the connection a
+client registered on lives on one node, recorded as `Location.node_id` and
+`Location.flow_id`.
 
-Forwarding is the request as it arrived, still addressed to the subscriber, sent to the
-other node's inter-node listener: once per node, however many of the subscriber's flows
-that node holds. The node that receives it reads the same bindings and delivers to the
-flows it holds itself, and never sends a peer's request on to a third node - the first
-node already sent to everyone who holds a flow, so doing it again would ring those devices
-twice or pass the request round in a circle. A request from a peer is not challenged: the
-certificate says it is a node, and that node challenged the caller. A node that has said
-it is down, has gone quiet for three status intervals or was never heard from is not
-forwarded to.
+Forwarding rules:
 
-The first node holds the media. A call a peer forwarded is not anchored a second time by
-the node that delivers it, for the whole life of the call. Both nodes stay in the dialog
-through Record-Route, and each names its inter-node listener to the other, so the ACK and
-the BYE cross between them the same way the INVITE did.
+- A node that reads a binding it does not own forwards the request, unchanged and still
+  addressed to the subscriber, to the owning node's inter-node listener: once per node,
+  however many flows that node holds.
+- The receiving node delivers to the flows it holds and never forwards a peer's request
+  to a third node.
+- A request from a peer is not challenged; the first node already challenged the caller.
+- A node whose status is not `ok`, that is stale for three status intervals, or that was
+  never heard from is not forwarded to.
+- The first node anchors the media; the delivering node does not anchor it again.
+- Both nodes Record-Route with their inter-node listener, so ACK and BYE cross the same
+  way.
 
-A client that supports RFC 5626 outbound identifies each flow by its `+sip.instance` and
-`reg-id`, which the binding keeps as `Location.instance` and `Location.reg_id`. The
-registrar treats that pair, not the Contact, as the binding: registering the same pair
-again from a new flow replaces the old one, and a second reg-id is a second flow from the
-same client, which is how a client holds flows to two nodes at once. A call to the client
-goes down one of its flows at a time, the most recently registered first; a 408 or 430
-moves it to the next flow, any other answer is the client's, and a flow that has gone is
-never replaced by the Contact (RFC 5626 section 5.3). The node answers a
-double-CRLF keep-alive on TCP and TLS with a CRLF, and a STUN Binding request on its SIP
-UDP port with the source address (RFC 5626 section 4.4).
+Outbound (RFC 5626):
+
+- A binding is identified by `+sip.instance` and `reg-id` (`Location.instance`,
+  `Location.reg_id`), not by its Contact. Registering the same pair from a new flow
+  replaces the old one; a second `reg-id` is a second flow from the same client.
+- A call tries the client's flows one at a time, most recently registered first. A 408 or
+  430 moves to the next flow. A lost flow is never replaced by the Contact (5.3).
+- Keep-alives: a double CRLF on TCP and TLS is answered with CRLF, and a STUN Binding
+  request on the SIP UDP port with the source address (4.4).
 
 ## Media
 
-`MediaEngine` is not a two-party SDP rewriter. It advertises capabilities - `bridge`,
-`conference`, `record`, `transcode` - and a `Call` is multi-party from the start, with
-participants and an optional conference focus. Web video calling and conferencing are
-first-class targets, so the signalling and media model has to allow for them before
-they are built.
+`MediaEngine` advertises capabilities (`bridge`, `conference`, `record`, `transcode`) and
+the media profiles it can produce. A `Call` holds a list of participants rather than two
+fixed legs. Whether and how a call's media is anchored is [Behaviour](behaviour.md).
 
-## Where this is going
+## Versions
 
-`TODO/ACTIVE.md` is the plan and the decisions behind it; `TODO/COMPLETED.md` is what
-has landed. This document describes the shape, not the schedule.
-
-`design.md` is the transport layering in more detail, `plugins.md` is the contract,
-`events.md` is the topic scheme, and `scripting.md` says why there is no scripting.
+The version is CMake's `project(... VERSION x.y.z)`; `src/build_version.h.in` carries it
+into the binary, so `athenasip --version` prints the same number. Release tags are plain
+`x.y.z`, cut from `main`.

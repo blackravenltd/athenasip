@@ -54,13 +54,8 @@ namespace athenasip {
 
 namespace {
 
-// The whole message as it went on the wire, with credentials taken out of it.
-//
-// A Digest response is a hash rather than the password, but it is replayable for as
-// long as its nonce lives, and a challenge carries the nonce the next response is
-// computed over. A log is a file somebody else can read, so neither goes in one. The
-// line is kept rather than dropped, because knowing that a request carried credentials
-// is part of reading the exchange.
+// The message as sent, with Digest credentials and challenges redacted: a response is
+// replayable while its nonce lives. The header line itself is kept.
 std::string for_logging(const std::shared_ptr<SIPMessage>& message) {
   static const std::vector<std::string> secret = {"authorization:", "proxy-authorization:", "www-authenticate:", "proxy-authenticate:"};
 
@@ -108,18 +103,12 @@ Channel::Channel(std::shared_ptr<Logger> logger, std::shared_ptr<Core> core, std
 void Channel::start() {
   auto self(this->shared_from_this());
 
-  // Servers call this from their own thread. Everything a channel touches belongs to
-  // the Core strand, so hand over immediately. dispatch, not post: a caller already on
-  // the strand runs inline.
+  // Servers call this from their own thread. dispatch runs inline when already on the strand.
   boost::asio::dispatch(_core->strand(), [this, self]() {
     _logger->info("Connected");
     state = State::Normal;
 
-    // Register callback
     _core->channel_register(_flow_id, self);
-
-    // REGISTER timeout
-    // TODO: Make rational
 
     _schedule_async_read();
   });
@@ -133,12 +122,8 @@ void Channel::close() {
 
     state = State::Closing;
 
-    // Ensure Connection Closed
     if (_connection) {
-      // The socket belongs to its server's thread, which may be inside it right now
-      // finishing a read the far end has just ended. Tearing it down from here would be
-      // a second thread in a stream that is not safe for one, so hand it over and let
-      // the strand get on with the registry.
+      // The socket belongs to its server's thread and is not thread-safe, so close it there.
       boost::asio::dispatch(_connection->executor(), [connection = _connection]() {
         if (connection->is_open()) {
           connection->shutdown();
@@ -148,7 +133,6 @@ void Channel::close() {
 
       _logger->info("Closed");
 
-      // Unregister Connection
       _core->channel_unregister(_flow_id, self);
 
       _connection.reset();
@@ -171,16 +155,14 @@ void Channel::send(std::shared_ptr<SIPMessage> message) {
 }
 
 void Channel::_send_on_strand(std::shared_ptr<SIPMessage> message) {
-  // close() resets _connection, and a transaction can still be holding this channel.
+  // A transaction can outlive the connection.
   if (!_connection) {
     _logger->info("Dropping " + message->header->summary() + " - channel is closed");
     return;
   }
 
-  // Via belongs to the layers above: the proxy adds its own on forward (RFC 3261 16.6
-  // step 8) and strips it from responses (16.7 step 3). The transport's only remaining
-  // interest is that nothing leaves with a branchless Via, because a branch is what names
-  // the transaction the answer has to find (8.1.1.7).
+  // The layers above own the Via (RFC 3261 16.6 step 8). The transport only ensures the top
+  // one has a branch, which is what the response matches on (8.1.1.7).
   if (message->header->type == SIPHeader::Type::Request && message->header->contains("Via") && !message->header->headers_map["Via"].empty()) {
     auto via = message->header->headers_map["Via"][0]->as<ViaHeader>();
 
@@ -192,7 +174,6 @@ void Channel::_send_on_strand(std::shared_ptr<SIPMessage> message) {
     }
   }
 
-  // Reset Length to body length
   message->header->clear("Content-Length");
   message->header->add("Content-Length", std::make_shared<UIntHeader>(message->body.size()));
 
@@ -202,7 +183,7 @@ void Channel::_send_on_strand(std::shared_ptr<SIPMessage> message) {
   _schedule_async_write(message->to_string());
 }
 
-// Called from the read handler, which already runs on the Core strand.
+// On the strand.
 void Channel::receive(std::shared_ptr<SIPMessage> message) {
   _logger->info("> " + message->header->summary());
   if (_core->config->sip_log_messages) _logger->debug("> " + for_logging(message));
@@ -214,11 +195,9 @@ void Channel::receive(std::shared_ptr<SIPMessage> message) {
   _core->process_message(message);
 }
 
-// RFC 3261 18.2.1 and RFC 3581 section 4. A client behind NAT sees a different address
-// and port from the one it put in its Via, so the response would go nowhere. received
-// records where the request actually came from, and rport, when the client asked for it
-// by sending the parameter empty, records the port as well. This is a transport fact, so
-// the transport is what writes it.
+// RFC 3261 18.2.1 and RFC 3581 section 4: record where a request really came from, so the
+// response reaches a client behind NAT. `received` is the source address when it differs
+// from the Via's; `rport` is the source port, when the client asked for it.
 void Channel::_stamp_via(const std::shared_ptr<SIPMessage>& message) {
   if (!_connection) return;
   if (message->header->type != SIPHeader::Type::Request) return;
@@ -236,8 +215,7 @@ void Channel::_stamp_via(const std::shared_ptr<SIPMessage>& message) {
 
   if (sent_by != source) via->parameters["received"] = source;
 
-  // Present and empty means "tell me the port"; present with a value is not ours to
-  // overwrite, and absent means the client does not want it.
+  // Only an empty rport is a request for the port.
   auto rport = via->parameters.find("rport");
   if (rport != via->parameters.end() && rport->second.empty()) rport->second = std::to_string(remote.port());
 }
@@ -245,15 +223,13 @@ void Channel::_stamp_via(const std::shared_ptr<SIPMessage>& message) {
 void Channel::_schedule_async_write(std::string message) {
   if (!_connection) return;
 
-  // Sending counts as much as receiving. A node answering a retransmission, or forwarding
-  // into a flow, is using it even if the far end has gone quiet.
+  // Sending keeps a flow alive as much as receiving does.
   touch();
 
-  // The buffer has to outlive the write, so the queue owns it.
+  // The queue owns the buffer, which must outlive the write.
   _write_queue.push_back(std::make_shared<std::string>(std::move(message)));
 
-  // Already writing: the completion will pick this up. Starting a second write here is
-  // what puts two of them on one socket.
+  // A write is in flight; its completion picks this one up.
   if (_writing) return;
 
   _write_next();
@@ -271,11 +247,11 @@ void Channel::_write_next() {
   auto buffer = _write_queue.front();
   const auto offset = _write_offset;
 
-  // Starting the write is touching the stream, so it happens where the stream lives.
+  // The stream is only touched on the connection's executor.
   boost::asio::dispatch(_connection->executor(), [this, self, buffer, offset, connection = _connection]() {
     connection->async_write_some(boost::asio::buffer(buffer->data() + offset, buffer->size() - offset),
                                  [this, self, buffer](boost::system::error_code ec, std::size_t length) {
-                                   // The completion runs on the connection's own io_context thread, so hop back.
+                                   // Back to the strand from the connection's thread.
                                    boost::asio::post(_core->strand(), [this, self, ec, length]() { _on_write(ec, length); });
                                  });
   });
@@ -285,7 +261,6 @@ void Channel::_on_write(boost::system::error_code ec, std::size_t length) {
   if (ec) {
     _logger->error("Write Error " + ec.to_string());
 
-    // Nothing queued behind a failed write is going anywhere: the channel is closing.
     _write_queue.clear();
     _write_offset = 0;
     _writing = false;
@@ -294,8 +269,7 @@ void Channel::_on_write(boost::system::error_code ec, std::size_t length) {
     return;
   }
 
-  // async_write_some is not obliged to take the whole buffer, and a short write that
-  // nobody resumes is a truncated SIP message on the wire.
+  // async_write_some may write less than the whole buffer; resume from the offset.
   _write_offset += length;
 
   if (!_write_queue.empty() && _write_offset >= _write_queue.front()->size()) {
@@ -309,15 +283,12 @@ void Channel::_on_write(boost::system::error_code ec, std::size_t length) {
 void Channel::_schedule_async_read() {
   auto self(shared_from_this());
 
-  // Are we already closed?
   if (!_connection) return;
 
-  // Schedule Read, on the connection's own executor: only one read is outstanding at a
-  // time, so the buffer is this channel's until the completion hands it back.
+  // One read is outstanding at a time, so _read_buffer is not shared.
   boost::asio::dispatch(_connection->executor(), [this, self, connection = _connection]() {
     connection->async_read_some(boost::asio::buffer(_read_buffer), [this, self](boost::system::error_code ec, std::size_t length) {
-      // The completion runs on the connection's own io_context thread. Everything the
-      // body touches is strand-confined, so hop back before any of it.
+      // Back to the strand from the connection's thread.
       boost::asio::post(_core->strand(), [this, self, ec, length]() { _on_read(ec, length); });
     });
   });
@@ -327,9 +298,8 @@ void Channel::touch() { _last_activity = _core->now(); }
 
 namespace {
 
-// An address of record compared the way RFC 3261 19.1.4 compares URIs where it matters
-// here: the user part exactly and the host without regard to case. Parameters are not
-// part of who somebody is.
+// An address of record reduced to what identifies it (RFC 3261 19.1.4): the user part
+// exactly, the host lowercased, no parameters.
 std::string subscriber_key(const std::string& aor) {
   const SIPUri uri(aor);
   return uri.user + "@" + Util::to_lower(uri.host);
@@ -344,36 +314,31 @@ bool Channel::is_authenticated_as(const std::string& aor) const { return _authen
 void Channel::_on_read(boost::system::error_code ec, std::size_t length) {
   auto self(shared_from_this());
 
-  // Before anything is decided about the bytes: a flow that carried something is a flow
-  // in use, whatever the something turns out to be.
+  // Any bytes received keep the flow alive, whatever they turn out to be.
   if (!ec && length > 0) touch();
 
   {
     if (ec) {
       if (ec == boost::asio::error::operation_aborted) {
-        // Normal (We closed the connection)
+        // This node closed the connection.
       } else if (ec == boost::asio::error::eof || ec == boost::asio::ssl::error::stream_truncated) {
-        // A TLS peer closing without close_notify - a browser's secure WebSocket when its
-        // page hangs up, and plenty of phones - has closed the connection (RFC 8446 6.1),
-        // between messages and with nothing truncated, and is not a fault.
+        // A TLS peer closing without close_notify (RFC 8446 6.1), as browsers and many
+        // phones do, is a disconnect and not a fault.
         _logger->info("Remote Disconnected");
       } else {
         _logger->error("Read Error (" + ec.what() + ")");
       }
       close();
     } else {
-      // No Input, schedule read again and exit
       if (length == 0) {
         if (_connection) _schedule_async_read();
         return;
       };
 
-      // Add to buffer
       _buffer.append(_read_buffer.data(), length);
 
-      // Nothing below may throw out of here. This is the read handler, so an exception
-      // from a message off the network unwinds through io_context::run() and takes the
-      // process with it: one malformed datagram from anybody would be the whole node.
+      // Nothing may throw out of the read handler: an exception would unwind through
+      // io_context::run() and a malformed message would stop the node.
       try {
         _frame();
       } catch (const std::exception& e) {
@@ -382,16 +347,11 @@ void Channel::_on_read(boost::system::error_code ec, std::size_t length) {
         _incoming_message = nullptr;
       }
 
-      // Schedule Next Read
       if (_connection) _schedule_async_read();
     }
   }
 }
 
-// RFC 3261 18.3. A stream has no message boundaries, so Content-Length is what says
-// where a body ends and a message may arrive in as many reads as the network likes. A
-// datagram is one message on its own and nothing carries over between them, which is a
-// different rule and not a special case of the same one.
 void Channel::_frame() {
   if (_connection && !_connection->is_reliable()) return _frame_datagram();
 
@@ -399,7 +359,7 @@ void Channel::_frame() {
 }
 
 void Channel::_frame_stream() {
-  // Still short of a body promised by a header already read.
+  // Still reading the body of a message whose headers have arrived.
   if (_incoming_message) {
     if (!_append_body()) return;
 
@@ -408,11 +368,9 @@ void Channel::_frame_stream() {
     return;
   }
 
-  // A CRLF between messages is a keep-alive, not a message (RFC 5626 section 4.4.1).
   _take_keep_alives();
 
-  // As many whole messages as the buffer holds. A stream may deliver several in one
-  // read and half of one in the next, and both have to come out right.
+  // A read may hold several messages, or part of one.
   std::size_t split;
 
   while ((split = _buffer.find("\r\n\r\n")) != std::string::npos) {
@@ -423,9 +381,7 @@ void Channel::_frame_stream() {
 
     _buffer.erase(0, split + 4);
 
-    // RFC 3261 18.3: on a stream transport Content-Length is the only thing that says
-    // where the body ends. Absent, it is zero, which is what a request with no body
-    // carries.
+    // RFC 3261 18.3: Content-Length frames the body. Absent, it is zero.
     if (message->header->contains("Content-Length")) {
       auto length = message->header->headers_map["Content-Length"][0]->as<UIntHeader>();
       if (length != nullptr) message->body_length = length->value;
@@ -443,9 +399,8 @@ void Channel::_frame_stream() {
   }
 }
 
-// RFC 5626 section 4.4.1: a double CRLF is the client's "ping" and a single CRLF back is the
-// "pong" it waits for; without one it decides the flow has failed. The ping may straddle two
-// reads, so the CRLFs are counted across them, and a message arriving resets the count.
+// RFC 5626 4.4.1: a double CRLF between messages is a keep-alive ping, answered with a
+// single CRLF. The ping may straddle two reads, so the count carries across them.
 void Channel::_take_keep_alives() {
   while (_buffer.size() >= 2 && _buffer.compare(0, 2, "\r\n") == 0) {
     _buffer.erase(0, 2);
@@ -460,18 +415,14 @@ void Channel::_take_keep_alives() {
   }
 }
 
-// One datagram is one message, whole or not at all. A datagram that is not a whole
-// message is discarded and the next one starts clean: leaving a half-message behind
-// would let one sender's truncated request swallow the next request to arrive on a flow
-// they share, and on UDP every peer at one address and port shares a flow.
+// A datagram is one whole message or is discarded; nothing carries over to the next.
 void Channel::_frame_datagram() {
   std::string datagram;
   datagram.swap(_buffer);
   _incoming_message = nullptr;
 
-  // RFC 5626 section 4.4.2: the UDP keep-alive is a STUN Binding request to the SIP port,
-  // answered with where it came from, which is also how the client learns its NAT mapping
-  // has moved. Told from SIP by its first byte; never handed to the SIP parser.
+  // RFC 5626 4.4.2: the UDP keep-alive is a STUN Binding request on the SIP port, answered
+  // with the address it came from.
   if (stun::is_stun(datagram)) {
     if (!_connection) return;
     const auto from = _connection->remote_endpoint();
@@ -479,7 +430,7 @@ void Channel::_frame_datagram() {
     return;
   }
 
-  // A datagram of CRLFs is a keep-alive, not a message (RFC 5626 section 4.4.1).
+  // A datagram of CRLFs is a keep-alive (RFC 5626 4.4.1).
   std::size_t at = 0;
   while (datagram.size() - at >= 2 && datagram.compare(at, 2, "\r\n") == 0) at += 2;
   if (at >= datagram.size()) return;
@@ -505,16 +456,13 @@ void Channel::_frame_datagram() {
 
   const auto carried = datagram.size() - (split + 4);
 
-  // "If the message has a Content-Length header field value that is greater than the
-  // size of the body, the message MUST be discarded." There is no later packet that
-  // completes a datagram, so waiting for one is waiting for something that cannot come.
+  // RFC 3261 18.3: a Content-Length greater than the body carried discards the message.
   if (declared > carried) {
     _logger->warn("Datagram claims " + std::to_string(declared) + " bytes of body and carries " + std::to_string(carried) + ", discarded");
     return;
   }
 
-  // "If it is less than the size of the body, the body is truncated to that length."
-  // The bytes after it are not a second message: a datagram carries one.
+  // RFC 3261 18.3: a shorter Content-Length truncates the body to it.
   message->body = datagram.substr(split + 4, declared);
   message->body_length = static_cast<unsigned int>(declared);
 
@@ -522,12 +470,10 @@ void Channel::_frame_datagram() {
 }
 
 bool Channel::_append_body() {
-  // How much do we need to read?
   auto to_append = std::min(_incoming_message->body_length - _incoming_message->body.size(), _buffer.size());
-  // Update current message body
   _incoming_message->body += _buffer.substr(0, to_append);
   _buffer.erase(0, to_append);
-  // Return true if read complete
+  // True once the body is complete.
   return (_incoming_message->body.size() == _incoming_message->body_length);
 }
 

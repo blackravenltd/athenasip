@@ -2,18 +2,15 @@
 <!DOCTYPE scenario SYSTEM "sipp.dtd">
 
 <!--
-  The callee's half of the delayed offer. The INVITE arrives with no body, so this end
-  makes the offer in its 200 (RFC 3264 section 5), and the answer it is given in the ACK
-  has to name the relay rather than the caller at 172.31.0.21.
-
-  run.sh registers it first, in a run of its own; see uas.xml for why.
+  The callee's half of the delayed offer. The INVITE has no body, so this end offers in its
+  200 (RFC 3264 section 5), and the answer in the ACK must name the relay, not the caller
+  at 172.31.0.21. run.sh registers it first; see uas.xml.
 -->
 <scenario name="Callee: offer in the 200, answer in the ACK">
 
   <recv request="INVITE" crlf="true">
     <action>
-      <!-- Still no body: the node has nothing to offer on the caller's behalf, and making
-           one up would be answering a question nobody asked. -->
+      <!-- Still no body: the node does not make an offer on the caller's behalf. -->
       <ereg regexp="^ *0 *$" search_in="hdr" header="Content-Length:" check_it="true" assign_to="no_offer"/>
     </action>
   </recv>

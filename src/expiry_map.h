@@ -19,47 +19,39 @@ namespace athenasip {
 template <typename K, typename V>
 class ExpiryMap : public std::enable_shared_from_this<ExpiryMap<K, V>> {
  public:
-  // Adds or replaces an entry with the given key and value, expiring after expiryMs milliseconds.
-  // If an entry already exists for the key, its expiration timer is canceled and replaced.
+  // Adds or replaces an entry that removes itself after expiryMs milliseconds.
   void add(const K& key, const V& value, uint32_t expiryMs) {
     {
       std::lock_guard<std::mutex> lock(_mutex);
       remove_internal(key);
     }
 
-    // Capture a shared pointer to this so that the lambda keeps the ExpiryMap alive.
+    // The task holds a shared_ptr, keeping the map alive until it fires.
     auto self = this->shared_from_this();
     auto task = [self, key]() -> int {
-      // Remove the entry once the timer expires.
       self->remove(key);
       return 0;  // The returned value is unused.
     };
 
-    // Create and schedule the delayed task.
     auto delayedTask = DelayedTask<int>::schedule(task, expiryMs);
 
-    // Insert the new entry along with its delayed task.
     {
       std::lock_guard<std::mutex> lock(_mutex);
       _entries[key] = std::make_pair(value, delayedTask);
     }
   }
 
-  // Returns true if the map contains the specified key.
   bool contains(const K& key) const {
     std::lock_guard<std::mutex> lock(_mutex);
     return _entries.find(key) != _entries.end();
   }
 
-  // Removes the entry for the given key.
-  // Cancels the associated delayed task if it exists.
   void remove(const K& key) {
     std::lock_guard<std::mutex> lock(_mutex);
     remove_internal(key);
   }
 
-  // Operator[] returns a copy of the value associated with the key.
-  // If the key does not exist, a default-constructed V is returned.
+  // Returns a copy of the value, or a default-constructed V if the key is absent.
   V operator[](const K& key) const {
     std::lock_guard<std::mutex> lock(_mutex);
     auto it = _entries.find(key);
@@ -70,20 +62,17 @@ class ExpiryMap : public std::enable_shared_from_this<ExpiryMap<K, V>> {
   }
 
  protected:
-  // Internal helper to remove an entry. Must be called with _mutex already locked.
+  // Must be called with _mutex held.
   void remove_internal(const K& key) {
     auto it = _entries.find(key);
     if (it != _entries.end()) {
-      // Cancel the expiration timer.
       it->second.second->cancel();
       _entries.erase(it);
     }
   }
 
-  // Map storing the key and a pair of value and its corresponding delayed expiration task.
   std::unordered_map<K, std::pair<V, std::shared_ptr<DelayedTask<int>>>> _entries;
 
-  // Mutex to guard access to _entries.
   mutable std::mutex _mutex;
 };
 

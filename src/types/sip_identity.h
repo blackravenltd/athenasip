@@ -22,36 +22,28 @@ namespace athenasip::types {
 //   name-addr     = [ display-name ] LAQUOT addr-spec RAQUOT
 //   display-name  = *(token LWS) / quoted-string
 //
-// The distinction that matters is where a semicolon belongs. Inside the angle brackets
-// it is a URI parameter; outside them, or anywhere in an addr-spec, it starts the
-// header parameters. They mean different things and are stored apart.
+// A semicolon inside the angle brackets is a URI parameter; outside them, or anywhere in an addr-spec, it starts
+// the header parameters. The two are stored apart.
 class SIPIdentity {
  public:
-  // Constructors
   SIPIdentity();
   explicit SIPIdentity(const std::string& identity);
 
-  // Data members
   bool wrapped;
 
-  // RFC 3261 20.10: Contact has "*" as an alternative to a contact-param, and 10.2.2
-  // gives it its meaning - with Expires 0 it removes every binding. It is the grammar's
-  // own alternative rather than a URI, so it gets its own flag and leaves uri null.
-  // Before this it was parsed as a URI and recognised by the shape of the wreckage.
+  // RFC 3261 20.10: Contact may be "*", which with Expires 0 removes every binding (10.2.2). It is not a URI, so it
+  // has its own flag and leaves uri null.
   bool star;
 
   std::optional<std::string> display_name;
   std::shared_ptr<SIPUri> uri;
 
-  // Header parameters. Names are lower-cased on the way in because RFC 3261 7.3.1 makes
-  // them case-insensitive, and every lookup here spells them in lower case.
+  // Header parameters. Names are lower-cased on the way in, being case-insensitive (RFC 3261 7.3.1).
   std::unordered_map<std::string, std::string> tags;
 
-  // Member functions
   void parse(const std::string& identity);
   std::string to_string() const;
 
-  // Friend concatenation operators
   friend std::string operator+(const SIPIdentity& identity, const std::string& str);
   friend std::string operator+(const std::string& str, const SIPIdentity& identity);
 };

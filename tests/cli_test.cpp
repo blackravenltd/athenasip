@@ -23,16 +23,14 @@ Options parse_of(std::vector<const char*> arguments) {
 
 }  // namespace
 
-// A node that cannot be told where its configuration is cannot be installed: a service
-// reads /etc, and only a person reads a home directory.
+// --config, -c and --config=PATH name the configuration file.
 TEST(CliTest, TheConfigurationPathCanBeGiven) {
   EXPECT_EQ(parse_of({"--config", "/etc/athenasip/config.yaml"}).config, "/etc/athenasip/config.yaml");
   EXPECT_EQ(parse_of({"-c", "/tmp/other.yaml"}).config, "/tmp/other.yaml");
   EXPECT_EQ(parse_of({"--config=/tmp/joined.yaml"}).config, "/tmp/joined.yaml");
 }
 
-// Nothing given is not an error. Where it looks, and in what order, is the whole of
-// how a package and a checkout can both work without either being told.
+// With no arguments the path is left empty for the configuration search.
 TEST(CliTest, NothingGivenLeavesThePathToTheSearch) {
   const auto options = parse_of({});
 
@@ -42,8 +40,7 @@ TEST(CliTest, NothingGivenLeavesThePathToTheSearch) {
   EXPECT_FALSE(options.help);
 }
 
-// The version is what a tag, CMake and this binary all have to agree on, so asking the
-// binary has to be possible.
+// --version/-v and --help/-h are recognised.
 TEST(CliTest, TheVersionCanBeAskedFor) {
   EXPECT_TRUE(parse_of({"--version"}).version);
   EXPECT_TRUE(parse_of({"-v"}).version);
@@ -51,9 +48,7 @@ TEST(CliTest, TheVersionCanBeAskedFor) {
   EXPECT_TRUE(parse_of({"-h"}).help);
 }
 
-// An option that is not understood stops the node rather than being ignored. A daemon
-// that silently drops the argument telling it where its configuration is would read
-// the wrong one and serve the wrong thing.
+// An unknown option, or one missing its value, is an error rather than ignored.
 TEST(CliTest, WhatIsNotUnderstoodIsRefused) {
   const auto unknown = parse_of({"--colour=green"});
   EXPECT_FALSE(unknown.ok);
@@ -81,8 +76,7 @@ TEST(CliTest, RolesAccumulateAndADisplayNameIsOptional) {
   EXPECT_EQ(options.roles[1], "manage-admin-users");
 }
 
-// A password on the command line is readable by every other process on the host, so
-// there is deliberately no option that takes one.
+// There is deliberately no --password: arguments are visible to every process on the host.
 TEST(CliTest, ThereIsNoWayToPassAPasswordOnTheCommandLine) {
   EXPECT_FALSE(parse_of({"--add-user", "tom", "--password", "hunter2"}).ok);
   EXPECT_EQ(parse_of({"--add-user", "tom", "--password", "hunter2"}).error, "unknown option: --password");
@@ -93,8 +87,6 @@ TEST(CliTest, AnOptionMissingItsValueIsRefusedRatherThanIgnored) {
   EXPECT_FALSE(parse_of({"--role"}).ok);
   EXPECT_FALSE(parse_of({"--add-user="}).ok);
 
-  // A daemon that silently dropped the argument telling it what to do would do something
-  // else instead, which is worse than refusing.
   EXPECT_NE(parse_of({"--add-user"}).error.find("a username"), std::string::npos);
 }
 
@@ -110,15 +102,14 @@ TEST(CliTest, TheEffectiveConfigurationCanBeAskedFor) {
   EXPECT_TRUE(parse_of({"--print-config"}).print_config);
   EXPECT_FALSE(parse_of({"--print-config"}).version);
 
-  // It needs a configuration to resolve, so it goes with --config rather than instead
-  // of it.
+  // It combines with --config.
   const auto options = parse_of({"--config", "/etc/athenasip/config.yaml", "--print-config"});
   ASSERT_TRUE(options.ok);
   EXPECT_TRUE(options.print_config);
   EXPECT_EQ(options.config, "/etc/athenasip/config.yaml");
 }
 
-// The cluster CA is made and used from the command line, with no OpenSSL to learn.
+// --ca-init, --ca-dir, --ca-node, --san and --replace drive the cluster CA.
 TEST(CliTest, TheClusterCaCanBeMadeAndUsed) {
   const auto init = parse_of({"--ca-init", "--ca-dir", "/srv/ca"});
   ASSERT_TRUE(init.ok);

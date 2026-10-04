@@ -23,7 +23,6 @@ using namespace athenasip;
 using namespace athenasip::loggers;
 
 namespace athenasip {
-// Forward declaration
 class Core;
 }  // namespace athenasip
 
@@ -36,13 +35,11 @@ class Server : public std::enable_shared_from_this<Server> {
   virtual void start() = 0;
   virtual void stop() = 0;
 
-  // A flow to a peer this listener has not heard from. Only a datagram listener can make
-  // one, because the datagram has to leave by the listener's own socket: that is the source
-  // port the far end answers to (RFC 3261 18.1.1, RFC 3581), and the address a NAT in front
-  // of it has a mapping for. Everything else answers false at once.
+  // Opens a flow to a peer this listener has not heard from. Only a datagram listener can: the datagram must leave by
+  // the listener's own socket, the source port the far end answers to (RFC 3261 18.1.1, RFC 3581). Others return false.
   //
-  // True means the handler will be called on the Core strand, with the connection or with
-  // null. The listener only makes the connection; the channel over it is the caller's.
+  // True means the handler will be called on the Core strand with the connection, or with null. The channel over the
+  // connection is the caller's to make.
   virtual bool open_datagram_flow(boost::asio::ip::udp::endpoint remote, std::function<void(std::shared_ptr<Connection>)> handler) {
     (void)remote;
     (void)handler;

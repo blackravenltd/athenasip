@@ -62,8 +62,7 @@ class TopicFilter {
       return false;
     }
 
-    // MQTT system topics are not matched by a leading wildcard. AthenaSIP
-    // topics should not normally use '$', but keep the semantics compatible.
+    // As in MQTT, a leading wildcard does not match a topic beginning with '$'.
     if (!topic.empty() && topic.front() == '$' && !filter.empty() && (filter.front() == '#' || filter.front() == '+')) {
       return false;
     }
@@ -125,59 +124,38 @@ class Subscription {
 };
 
 // The event bus: observability, presence and discovery. It is never on the call setup
-// path, which is what makes the fire-and-forget publish below legitimate.
-//
-// Every operation that can be waited on takes the caller's executor and answers through
-// a handler, the same way Datastore and MediaEngine do. A broker is a network round trip
-// and the caller is usually on the Core strand, which must never wait; and one contract
-// the whole of which is shaped the same way is one thing for a plugin author to learn.
+// path. Operations that can be waited on take the caller's executor and answer through a
+// handler, as Datastore and MediaEngine do.
 class EventSystem : public plugins::Plugin {
  public:
   ~EventSystem() override = default;
 
   std::string kind() const final { return plugins::kinds::events; }
 
-  // Lifecycle, as Datastore and MediaEngine have it: connect() is a round trip for a
-  // networked bus and answers through the handler; close() is teardown, synchronous and
-  // safe to call twice.
+  // connect() answers through the handler; close() is synchronous and safe to call twice.
   virtual void connect(plugins::Executor on, plugins::StatusHandler handler) = 0;
   virtual void close() = 0;
   virtual bool is_connected() const = 0;
 
-  // Fire and forget, and the reason the bus is not simply async like everything else:
-  // a node announcing a channel or a transaction has nothing to do with the answer, and
-  // making it wait for one would put the broker on the path of the call that caused it.
-  // It never blocks and never fails loudly; a driver logs what it could not send.
+  // Fire and forget: never blocks and never reports failure; a driver logs what it could
+  // not send.
   virtual void publish(std::string event_name, std::string message) = 0;
 
-  // The same publish for a caller that does care - provisioning, an admin action, a
-  // test - and is willing to hear that the broker refused it.
+  // A publish whose caller wants to hear whether the bus accepted it.
   virtual void publish(plugins::Executor on, std::string event_name, std::string message, plugins::StatusHandler handler) = 0;
 
-  // State rather than an event: the last one is kept and given to whoever subscribes
-  // next. An event says something happened and is gone; state says what is true now,
-  // and a monitor that connects after it was said still has to be able to learn it.
-  //
-  // Defaulted rather than pure, because a bus that cannot retain is not a broken bus -
-  // it is one where this degrades to an ordinary publish, and an existing driver keeps
-  // compiling and keeps working.
+  // Retained state: the last message is kept and delivered to whoever subscribes later.
+  // A bus that cannot retain falls back to an ordinary publish.
   virtual void publish_state(std::string event_name, std::string message) { publish(std::move(event_name), std::move(message)); }
 
-  // What the bus should say on this node's behalf if it stops saying anything at all.
-  // A node that dies does not get to publish its own obituary, so the broker is asked
-  // in advance to publish one for it (MQTT calls this the will).
-  //
-  // Set before connect() or not at all: a broker takes this when the session opens and
-  // never afterwards. Defaulted to nothing, because a bus with no such mechanism has
-  // nothing useful to do with it.
+  // The message the bus publishes on this node's behalf if the node vanishes (the MQTT
+  // will). Call before connect(); it has no effect afterwards. Optional.
   virtual void will_set(std::string event_name, std::string message) {
     (void)event_name;
     (void)message;
   }
 
-  // The subscription handle comes back through the handler rather than by return,
-  // because a broker has to be asked before the subscription exists. Unsubscribing
-  // needs the handle, so a caller that intends to unsubscribe keeps it.
+  // The subscription handle arrives through the handler; keep it to unsubscribe.
   virtual void subscribe(plugins::Executor on, std::string event_name, Subscription::EventCallbackFn event_callback,
                          plugins::Handler<std::shared_ptr<Subscription>> handler) = 0;
 

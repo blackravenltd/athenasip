@@ -20,11 +20,8 @@ using namespace athenasip::servers;
 namespace net = boost::asio;
 using tcp = boost::asio::ip::tcp;
 
-// A peer may reset its connection at any moment, including between the accept and the
-// connection being made from it, and asking such a socket for its peer's address fails.
-// That failure was an exception thrown inside the listener's handler, which nothing caught:
-// the whole node stopped. A socket with no peer is what such a socket looks like, and the
-// connection made from it has to be a connection that is simply not open.
+// A peer may reset between the accept and the connection being made, and asking that socket for its peer's
+// address fails. The result must be a connection that is not open, not an exception in the listener's handler.
 TEST(ConnectionEndpointTest, ATcpConnectionWhosePeerHasGoneDoesNotThrow) {
   net::io_context io;
   auto socket = std::make_shared<tcp::socket>(io);

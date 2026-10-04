@@ -50,10 +50,8 @@ class LuaScriptEngine : public ScriptEngine {
   void _register_function(std::string name, LuaCFunction fn, uint8_t args);
   static int lua_include(lua_State* L);
 
-  // Set and retreive this instance
+  // The engine instance behind a Lua state.
   static LuaScriptEngine* get_script_engine(lua_State* L);
-
-  // System functions
 
   // Logger
   void _register_logger_object();

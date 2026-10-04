@@ -31,7 +31,7 @@ using boost::asio::ip::tcp;
 
 CheckLine line(bool ok, std::string what, std::string detail) { return CheckLine{ok, std::move(what), std::move(detail)}; }
 
-// A plugin made, configured and connected, as main does it, and closed again.
+// Creates, configures and connects a plugin as main does, then closes it.
 template <typename Plugin>
 CheckLine check_plugin(const std::string& what, const std::string& url, std::shared_ptr<Plugin> plugin, const std::shared_ptr<Config>& config,
                        const ConnectAndWait& connect_and_wait, bool keep_open = false) {
@@ -49,7 +49,7 @@ CheckLine check_plugin(const std::string& what, const std::string& url, std::sha
   return connected.ok ? line(true, what, where) : line(false, what, where + " - " + connected.error);
 }
 
-// A certificate and its key, loaded the way the listener that uses them loads them.
+// Loads a certificate and key the way the listener that uses them does.
 CheckLine check_certificate(const std::shared_ptr<loggers::Logger>& logger, const std::string& what, const std::string& cert, const std::string& key) {
   boost::asio::ssl::context context(boost::asio::ssl::context::tls_server);
 
@@ -59,9 +59,8 @@ CheckLine check_certificate(const std::shared_ptr<loggers::Logger>& logger, cons
                     (cert.empty() ? std::string("no certificate") : cert) + " - cannot be loaded with " + (key.empty() ? std::string("no key") : key));
 }
 
-// A mutual TLS handshake with a peer's inter-node listener, which is what forwarding a call
-// to it starts with: this node's certificate shown, the peer's checked against the cluster
-// CA and against the address that was dialled.
+// A mutual TLS handshake with a peer's inter-node listener: this node's certificate is
+// presented, and the peer's is verified against the cluster CA and the dialled address.
 CheckLine check_peer(const std::shared_ptr<loggers::Logger>& logger, const Config& config, const NodeDirectory::Node& node) {
   const auto what = "peer " + node.id;
   const auto where = node.cluster_address + ":" + std::to_string(node.cluster_port);
@@ -118,8 +117,7 @@ std::vector<CheckLine> check(std::shared_ptr<loggers::Logger> logger, std::share
 
   lines.push_back(check_plugin("datastore", config->db_url, datastores::Datastore::create_driver(logger, config->db_url), config, connect_and_wait));
 
-  // The bus is kept open for a moment: every node's status is retained on it, so listening
-  // briefly is how this node learns who its peers are, exactly as a running node does.
+  // Node statuses are retained on the bus, so listening briefly discovers the peers.
   auto nodes = std::make_shared<NodeDirectory>();
   auto events = events::EventSystem::create_driver(logger, config->events_url);
   lines.push_back(check_plugin("events", config->events_url, events, config, connect_and_wait, true));
@@ -135,8 +133,7 @@ std::vector<CheckLine> check(std::shared_ptr<loggers::Logger> logger, std::share
 
   lines.push_back(check_plugin("media", config->media_url, media::MediaEngine::create_driver(logger, config->media_url), config, connect_and_wait));
 
-  // Every certificate a listener will ask for, so a missing file is found here and not by
-  // the first client to connect.
+  // Every certificate a listener will load, so a missing file is found before a client is.
   if (config->tls_enable) lines.push_back(check_certificate(logger, "tls certificate", config->tls_cert_pem_filename, config->tls_key_pem_filename));
   if (config->websocket_enable && (config->websocket_tls || config->websocket_secure_port != 0)) {
     lines.push_back(check_certificate(logger, "websocket certificate", config->websocket_cert(), config->websocket_key()));
@@ -154,7 +151,7 @@ std::vector<CheckLine> check(std::shared_ptr<loggers::Logger> logger, std::share
       peers++;
     }
 
-    // Not a failure: the first node of a cluster has nobody to find.
+    // Not a failure: the first node of a cluster has no peers.
     if (peers == 0) lines.push_back(line(true, "peers", "no other node has said it is up on the event bus"));
   }
 

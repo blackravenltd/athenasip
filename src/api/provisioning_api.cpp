@@ -20,37 +20,32 @@ namespace athenasip::api {
 
 namespace {
 
-// A subscriber is identified by the realm it lives in and the user within it, which is
-// exactly a SIP URI. The API takes the two apart in the path because a path segment
-// with an @ in it reads badly; this puts them back together.
+// A subscriber is a user within a realm, which is a SIP URI. The path carries the two
+// separately; this joins them.
 std::shared_ptr<types::SIPIdentity> identity_of(const std::string& realm_name, const std::string& user) {
   return std::make_shared<types::SIPIdentity>("sip:" + user + "@" + realm_name);
 }
 
 std::string uri_of(const std::string& realm_name, const std::string& user) { return "sip:" + user + "@" + realm_name; }
 
-// RFC 2617 / RFC 7616: HA1 is the hash of user, realm and password, and it is the only
-// form of the password this server ever holds. A password given to the API is turned
-// into one here and is not written down anywhere else.
+// HA1 (RFC 2617 / RFC 7616): the hash of user, realm and password, and the only form of
+// the password this server holds.
 std::string ha1_of(const std::string& user, const std::string& realm_name, const std::string& password) {
   return Util::to_lower(Util::md5(user + ":" + realm_name + ":" + password));
 }
 
-// RFC 8760, the same thing with SHA-256. Both are computed while the password is in
-// hand, because neither can be derived from the other afterwards: a subscriber
-// provisioned with a password can answer either challenge, and one imported as a bare
-// MD5 hash can only ever answer that one.
+// The SHA-256 HA1 (RFC 8760). Both are computed while the password is in hand, since
+// neither can be derived from the other; a subscriber imported as a bare MD5 hash can
+// answer only MD5 challenges.
 std::string ha1_sha256_of(const std::string& user, const std::string& realm_name, const std::string& password) {
   return Util::to_lower(Util::sha256(user + ":" + realm_name + ":" + password));
 }
 
-// A realm's behaviour section: what it does differently from the server's default. Only what
-// was given, like everything else here, and a setting given as null goes back to inheriting.
-// Anything unreadable is refused with what was wrong, because a setting silently not taken is
-// a realm behaving other than its operator thinks. Empty on success, the reason otherwise.
+// Reads a realm's behaviour section: what it does differently from the server's default.
+// Only what was given is changed, and a setting given as null goes back to inheriting.
+// Returns empty on success, otherwise what was wrong.
 std::string read_behaviour(const boost::json::object& body, types::Behaviour& behaviour) {
-  // Where these lived before the section existed. Refused rather than ignored, so a client
-  // still sending them learns where they went instead of wondering why nothing changed.
+  // These belong in the behaviour section; at the top level they are refused, not ignored.
   for (const auto* moved : {"media_anchor", "media_profiles"}) {
     if (body.contains(moved)) return std::string(moved) + " has moved into the behaviour section";
   }
@@ -101,8 +96,8 @@ std::string read_behaviour(const boost::json::object& body, types::Behaviour& be
   return "";
 }
 
-// A subscriber's behaviour section is the same shape with one setting in it: what its endpoint
-// is. Anchoring is a question about a realm's media path and not about one endpoint.
+// A subscriber's behaviour section has one setting: what its endpoint is. Anchoring is a
+// realm's choice.
 std::string read_behaviour(const boost::json::object& body, types::Subscriber& subscriber) {
   const auto* section = body.if_contains("behaviour");
   if (section == nullptr) return "";
@@ -138,18 +133,15 @@ void ProvisioningAPI::register_routes(Router& router) {
 
   using namespace types::roles;
 
-  // Anyone placing a subscriber has to be able to discover which realms exist, so reading
-  // them admits either role. Changing one is manage-realms alone. Agreed with the console,
-  // which needs exactly this to show a realm picker to somebody who only manages subscribers.
+  // Reading realms admits either role, so that somebody who only manages subscribers can
+  // pick a realm. Changing one needs manage-realms.
   const std::vector<std::string> read_realms = {manage_realms, manage_realm_subscribers};
 
-  // Open, because a container healthcheck and a load balancer reach it before they have
-  // any credentials to present. It says the node is up and what it is; nothing about
-  // who is on it.
+  // Open, for healthchecks and load balancers. It says the node is up and what it is.
   router.add_open(http::verb::get, "/api/v1/health", [self](RouteContext c) { self->_health(std::move(c)); });
 
-  // What a client reads to know where the realm is served from. It says nothing about who
-  // is on it, which is why it is the cluster-status role rather than a provisioning one.
+  // Where the realm is served from; it says nothing about who is on it, hence the
+  // cluster-status role.
   router.add(http::verb::get, "/api/v1/nodes", {view_cluster_status}, [self](RouteContext c) { self->_node_list(std::move(c)); });
 
   router.add(http::verb::get, "/api/v1/realms", read_realms, [self](RouteContext c) { self->_realm_list(std::move(c)); });
@@ -169,12 +161,10 @@ void ProvisioningAPI::register_routes(Router& router) {
   router.add(http::verb::delete_, "/api/v1/realms/{realm}/subscribers/{user}", {manage_realm_subscribers},
              [self](RouteContext c) { self->_subscriber_delete(std::move(c)); });
 
-  // Where a subscriber is registered is what a client needs to show a presence list, and
-  // it provisions nothing, so it reads rather than manages.
+  // Reads registrations and provisions nothing, so it takes the status role.
   router.add(http::verb::get, "/api/v1/registrations", {view_cluster_status}, [self](RouteContext c) { self->_registration_list(std::move(c)); });
 
-  // The same role as /nodes, and for the same reason: it is what a client reads to learn
-  // how to reach the realm, and it says nothing about who is on it.
+  // The same role as /nodes: how to reach the realm, not who is on it.
   router.add(http::verb::get, "/api/v1/client/config", {view_cluster_status}, [self](RouteContext c) { self->_client_config(std::move(c)); });
 }
 
@@ -214,8 +204,7 @@ void ProvisioningAPI::_realm_create(RouteContext context) {
   auto realm = std::make_shared<types::Realm>(*name);
   realm->id = Util::stable_id("realm:" + *name);
 
-  // A realm with no secret mints nonces keyed on nothing, so one is generated rather
-  // than left empty. It is never returned: the only thing that needs it is this node.
+  // Generated when not given: a realm needs a secret to mint nonces. It is never returned.
   realm->nonce_secret = string_field(*body, "nonce_secret").value_or(Util::generate_random_string("", 32));
 
   if (const auto expiry = uint_field(*body, "nonce_expiry")) realm->nonce_expiry = *expiry;
@@ -259,8 +248,7 @@ void ProvisioningAPI::_realm_update(RouteContext context) {
 
   auto self = shared_from_this();
   _with_realm(realm_name, std::move(context), [self, body](std::shared_ptr<types::Realm> realm, RouteContext context) {
-    // Only what was given. A PUT that left out a field and silently reset it to the
-    // default would be a way to lose a nonce secret without being told.
+    // Only what was given is changed; an omitted field keeps its value.
     if (const auto secret = string_field(*body, "nonce_secret")) realm->nonce_secret = *secret;
     if (const auto expiry = uint_field(*body, "nonce_expiry")) realm->nonce_expiry = *expiry;
     if (const auto timeout = uint_field(*body, "registration_timeout")) realm->registration_timeout = *timeout;
@@ -346,8 +334,8 @@ void ProvisioningAPI::_subscriber_create(RouteContext context) {
     const auto password = string_field(*body, "password");
     const auto ha1 = string_field(*body, "ha1");
 
-    // ha1 is for importing subscribers from somewhere that already holds one. Either is
-    // enough; neither is a subscriber that can never authenticate.
+    // ha1 is for importing subscribers from a system that already holds one. One of the two
+    // is required, or the subscriber could never authenticate.
     if (!password && !ha1) {
       write_error(context.response, http::status::bad_request, "invalid_request", "password or ha1 is required");
       return context.done();
@@ -362,8 +350,7 @@ void ProvisioningAPI::_subscriber_create(RouteContext context) {
       subscriber->ha1_sha256 = ha1_sha256_of(*user, realm->name, *password);
     }
 
-    // An explicit hash wins over one derived from a password, which is what makes an
-    // import of either kind work.
+    // An explicit hash wins over one derived from a password.
     if (ha1) subscriber->ha1 = *ha1;
     if (const auto imported = string_field(*body, "ha1_sha256")) subscriber->ha1_sha256 = *imported;
 
@@ -461,8 +448,8 @@ void ProvisioningAPI::_subscriber_delete(RouteContext context) {
   auto self = shared_from_this();
   auto identity = identity_of(realm_name, user);
 
-  // Delete answers "it did not happen" for a subscriber that was never there, and that is
-  // a 404 rather than a 500. The read is what tells the two apart.
+  // The store fails a delete of a subscriber that is not there; the read first makes that a
+  // 404 rather than a 500.
   _datastore->subscriber_get(_executor, identity, [self, context, identity](plugins::Result<std::shared_ptr<types::Subscriber>> result) mutable {
     if (!result.ok) {
       write_error(context.response, http::status::internal_server_error, "datastore_error", result.error);
@@ -491,9 +478,8 @@ void ProvisioningAPI::_subscriber_delete(RouteContext context) {
 void ProvisioningAPI::_registration_list(RouteContext context) {
   auto self = shared_from_this();
 
-  // One realm when asked for one, every realm otherwise. Walking them is a read per
-  // subscriber and this is a diagnostic rather than something on the call path, so the
-  // cost is the caller's to choose.
+  // One realm when asked for one, every realm otherwise. The walk costs a read per
+  // subscriber; this is a diagnostic, not on the call path.
   const auto realm_filter = context.query.find("realm");
   const auto wanted = realm_filter == context.query.end() ? std::string() : realm_filter->second;
 
@@ -504,8 +490,7 @@ void ProvisioningAPI::_registration_list(RouteContext context) {
     context.done();
   };
 
-  // Each step starts the next from its own completion: with nothing to block on, a walk
-  // is a chain.
+  // Each step starts the next from its own completion.
   auto walk_subscribers = [self, registrations](std::vector<std::shared_ptr<types::Subscriber>> subscribers, std::function<void()> done) {
     struct Walk : std::enable_shared_from_this<Walk> {
       std::shared_ptr<ProvisioningAPI> api;
@@ -596,14 +581,11 @@ void ProvisioningAPI::_health(RouteContext context) {
 void ProvisioningAPI::_client_config(RouteContext context) {
   boost::json::object out;
 
-  // Every transport this node serves, the same list /nodes gives. A browser takes the wss
-  // entry and ignores the rest; something else on the page may want the others.
+  // Every transport this node serves, the same list /nodes gives.
   out["transports"] = _local_transports();
 
-  // The one a browser can actually use, pulled out so a client does not have to know that
-  // "wss" is the answer. Absent rather than empty when there is no secure WebSocket
-  // listener, because a browser being handed ws:// from an https page cannot use it and
-  // should be told there is nothing rather than given something that will not work.
+  // The one a browser can use. Absent when there is no secure WebSocket listener: a page
+  // served over https cannot use ws://.
   for (const auto& transport : _local_transports()) {
     if (transport.at("transport").as_string() == "wss") {
       out["websocket_uri"] =
@@ -612,13 +594,12 @@ void ProvisioningAPI::_client_config(RouteContext context) {
     }
   }
 
-  // Where else it can go: this node first, then the others that are up and current, and
-  // their secure WebSocket URIs in the same order for a browser to fail over along.
+  // Failover targets: this node first, then the others that are up and current, with their
+  // secure WebSocket URIs in the same order.
   auto nodes = _nodes_json(true);
   boost::json::array websocket_uris;
   for (const auto& node : nodes) {
-    // Another node's entries came off the bus, so they are read as carefully as anything
-    // else that did: one that is not shaped right is skipped, not trusted.
+    // Another node's entries came off the bus: skip any that is not shaped right.
     const auto* transports = node.as_object().if_contains("transports");
     if (transports == nullptr || !transports->is_array()) continue;
 
@@ -636,9 +617,8 @@ void ProvisioningAPI::_client_config(RouteContext context) {
   out["nodes"] = std::move(nodes);
   out["websocket_uris"] = std::move(websocket_uris);
 
-  // Shaped as RTCIceServer, so a browser can hand this to RTCPeerConnection unchanged.
-  // Credentials are minted per request and expire on their own; a stun: URL gets none,
-  // because STUN has nothing to authenticate to.
+  // Shaped as RTCIceServer, so a browser can hand it to RTCPeerConnection unchanged.
+  // TURN credentials are minted per request and expire; a stun: URL gets none.
   boost::json::array ice;
   const auto now = std::time(nullptr);
 
@@ -649,10 +629,8 @@ void ProvisioningAPI::_client_config(RouteContext context) {
     const bool needs_credential = server.url.rfind("turn:", 0) == 0 || server.url.rfind("turns:", 0) == 0;
 
     if (needs_credential) {
-      // The caller's own name where there is one, so a relay session can be tied back to
-      // it in the TURN server's log. Not Caller::describe(), which is prose for a log line
-      // of ours and says so - putting prose in a protocol field is what once made coturn
-      // answer 400 rather than relay anything.
+      // The caller's name, so a relay session can be traced in the TURN server's log. It
+      // must be a plain key, not Caller::describe(): coturn answers 400 to prose here.
       const auto asked_by = context.caller.user ? context.caller.user->key() : std::string("anonymous");
 
       const auto credential = types::TurnCredential::issue(_config->turn_shared_secret, asked_by, now, _config->turn_credential_ttl);
@@ -677,8 +655,7 @@ boost::json::array ProvisioningAPI::_nodes_json(bool usable_only) const {
   boost::json::object node;
   node["id"] = _config->sip_node_id;
 
-  // Every node answers "this is me" about itself. A client that reads the list from one
-  // node and finds no entry marked self is talking to something that is not a node.
+  // A list with no entry marked self did not come from a node.
   node["self"] = true;
   node["status"] = "ok";
   node["version"] = _version;
@@ -687,9 +664,8 @@ boost::json::array ProvisioningAPI::_nodes_json(bool usable_only) const {
   boost::json::array nodes;
   nodes.push_back(std::move(node));
 
-  // The others, as each last described itself on the bus. Three missed heartbeats make a
-  // report stale: listed, so "gone quiet" can be told from "never heard of", and marked,
-  // so nobody routes to it on the strength of an old "ok".
+  // The others, as each last described itself on the bus. After three missed heartbeats a
+  // node is listed but marked stale, so nobody routes to it on an old "ok".
   if (_nodes) {
     for (const auto& other : _nodes->list(_node_heartbeat * 3)) {
       if (other.id == _config->sip_node_id) continue;
@@ -704,7 +680,7 @@ boost::json::array ProvisioningAPI::_nodes_json(bool usable_only) const {
       entry["at"] = other.at;
       entry["transports"] = other.transports;
 
-      // For whoever administers the cluster; a client has no use for the inter-node listener.
+      // For administrators; a client has no use for the inter-node listener.
       if (!usable_only && !other.cluster_address.empty()) {
         boost::json::object peer;
         peer["address"] = other.cluster_address;
@@ -770,8 +746,8 @@ boost::json::object ProvisioningAPI::_realm_json(const types::Realm& realm) cons
   object["nonce_expiry"] = realm.nonce_expiry;
   object["registration_timeout"] = realm.registration_timeout;
   object["registration_minimum"] = realm.registration_minimum;
-  // What the realm chose, null for what it inherits; and what it comes to, with the server's
-  // default laid under it, so a reader sees both the choice and its effect.
+  // What the realm chose (null where it inherits), and the effective result over the
+  // server's default.
   boost::json::object chosen;
   chosen["media_anchor"] = realm.behaviour.media_anchor ? boost::json::value(*realm.behaviour.media_anchor) : boost::json::value(nullptr);
   chosen["media_profile"] =
@@ -790,13 +766,10 @@ boost::json::object ProvisioningAPI::_realm_json(const types::Realm& realm) cons
   };
   object["behaviour_effective"] = policy_json(realm.behaviour.over(_config->behaviour), realm.behaviour.qualify_over(_config->behaviour_qualify_interval),
                                               realm.behaviour.rewrite_contact.value_or(_config->behaviour_rewrite_contact));
-  // And the server's default on its own, so a reader can say what choosing "inherit" would
-  // come to for a setting the realm has chosen.
+  // The server's default on its own: what "inherit" would give.
   object["behaviour_default"] = policy_json(_config->behaviour, _config->behaviour_qualify_interval, _config->behaviour_rewrite_contact);
 
-  // nonce_secret is deliberately absent. It is the key this node mints nonces with, and
-  // an API that hands it back is an API that leaks it into every log that records a
-  // response.
+  // nonce_secret is never returned.
   return object;
 }
 
@@ -810,14 +783,13 @@ boost::json::object ProvisioningAPI::_subscriber_json(const types::Subscriber& s
     object["realm"] = subscriber.identity->uri->host;
   }
 
-  // What the subscriber chose, null for taking its realm's.
+  // What the subscriber chose; null where it takes its realm's.
   boost::json::object behaviour;
   behaviour["media_profile"] =
       subscriber.media_profile ? boost::json::value(types::MediaPolicy::to_string(*subscriber.media_profile)) : boost::json::value(nullptr);
   object["behaviour"] = std::move(behaviour);
 
-  // ha1 is the password in the only form this server holds it. It does not come back
-  // out.
+  // ha1 is never returned.
   return object;
 }
 
@@ -830,7 +802,7 @@ boost::json::object ProvisioningAPI::_location_json(const types::Location& locat
   object["expires_at"] = static_cast<std::int64_t>(location.expires_at);
   object["nat"] = location.nat;
 
-  // Empty on a single node, and the whole point on more than one.
+  // Empty on a single node.
   object["node_id"] = location.node_id;
   object["flow_id"] = location.flow_id;
   object["path"] = location.path;

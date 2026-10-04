@@ -24,11 +24,10 @@
 using namespace athenasip;
 using athenasip::datastores::RedisDatastore;
 
-// These run against a real Redis. Point ATHENA_TEST_REDIS_URL at one to enable them;
-// without it every case skips, so a machine with no Redis still runs the suite green.
+// These run against a real Redis and skip without ATHENA_TEST_REDIS_URL:
 //
 //   redis-server --port 6399 --save '' --daemonize yes
-//   ATHENA_TEST_REDIS_URL=redis://127.0.0.1:6399 ctest -R RedisDatastoreTest
+//   ATHENA_TEST_REDIS_URL=redis://127.0.0.1:6399 ./build-tests/athenasip_tests --gtest_filter='RedisDatastoreTest.*'
 namespace {
 
 std::string redis_url() {
@@ -36,8 +35,7 @@ std::string redis_url() {
   return url ? std::string(url) : std::string();
 }
 
-// The contract is async; these tests are statements about what Redis holds, so they
-// drive it through the blocking test view.
+// The contract is async; these tests drive it through the blocking test view.
 std::shared_ptr<SyncDatastore> make_datastore() {
   const auto url = redis_url();
   if (url.empty()) return nullptr;
@@ -100,9 +98,7 @@ types::Session make_session(const std::string& token_hash, const std::string& us
   do {                                                                                \
   } while (0)
 
-// The connection's own chatter goes through this node's logger, with a level and a scope,
-// rather than straight to the console. On the console it lands in the output of
-// `athenasip --add-user`, whose whole point is a clean answer.
+// The connection logs through the node's logger, not the console, so `athenasip --add-user` output stays clean.
 TEST(RedisDatastoreTest, TheConnectionLogsThroughTheNodesLoggerAndNotTheConsole) {
   const auto url = redis_url();
   if (url.empty()) GTEST_SKIP() << "no Redis: set ATHENA_TEST_REDIS_URL to run these";
@@ -119,7 +115,7 @@ TEST(RedisDatastoreTest, TheConnectionLogsThroughTheNodesLoggerAndNotTheConsole)
 
   ASSERT_TRUE(connected);
 
-  // "(Boost.Redis) " is the library's own prefix for what it prints by default.
+  // "(Boost.Redis) " is the library's default log prefix.
   EXPECT_EQ(err.find("Boost.Redis"), std::string::npos) << err;
   EXPECT_EQ(out.find("Boost.Redis"), std::string::npos) << out;
 
@@ -153,8 +149,7 @@ TEST(RedisDatastoreTest, RealmRoundTripsThroughRedis) {
   EXPECT_EQ(found->registration_timeout, 3600u);
   EXPECT_EQ(found->registration_minimum, 60u);
 
-  // The behaviour a realm chose has to survive being written down, or a cluster would
-  // anchor differently depending on which node read the realm.
+  // A realm's behaviour survives the store, so every node anchors the same way.
   ASSERT_TRUE(found->behaviour.media_anchor.has_value());
   EXPECT_FALSE(*found->behaviour.media_anchor);
   ASSERT_TRUE(found->behaviour.media_profile.has_value());
@@ -169,8 +164,7 @@ TEST(RedisDatastoreTest, RealmRoundTripsThroughRedis) {
   EXPECT_EQ(datastore->realm_get_by_name(name), nullptr);
 }
 
-// A realm is deleted with its subscribers and their bindings (Tom, 2026-10-03), and with
-// nothing of any other realm's.
+// A realm is deleted with its subscribers and their bindings, and nothing of any other realm's.
 TEST(RedisDatastoreTest, RealmDeleteTakesItsSubscribersAndTheirRegistrations) {
   REQUIRE_REDIS(datastore);
   const auto name = "gone-" + unique_suffix() + ".example";
@@ -200,8 +194,7 @@ TEST(RedisDatastoreTest, RealmDeleteTakesItsSubscribersAndTheirRegistrations) {
   datastore->realm_delete(other);
 }
 
-// And what it did not choose stays unchosen, so it follows the server's default - which
-// may change after the realm is written - rather than freezing the default of the day.
+// What a realm did not choose stays unchosen, so it keeps following the server's default.
 TEST(RedisDatastoreTest, ARealmThatChoseNoBehaviourInheritsAfterTheRoundTrip) {
   REQUIRE_REDIS(datastore);
 
@@ -230,8 +223,7 @@ TEST(RedisDatastoreTest, ARealmsQualifyIntervalRoundTrips) {
   realm->behaviour.qualify_interval = 0;
   ASSERT_TRUE(datastore->realm_create(realm));
 
-  // Zero is a choice - this realm is not probed whatever the server does - and not the
-  // same as having chosen nothing.
+  // Zero is a choice (never probed), not the same as unset.
   auto found = datastore->realm_get_by_name(name);
   ASSERT_NE(found, nullptr);
   ASSERT_TRUE(found->behaviour.qualify_interval.has_value());
@@ -288,8 +280,7 @@ TEST(RedisDatastoreTest, SubscriberRoundTripsThroughRedis) {
   EXPECT_EQ(datastore->subscriber_list(realm).size(), 0u);
 }
 
-// A subscriber's media profile survives the store, and one that chose nothing comes back
-// having chosen nothing rather than whatever a default would have written for it.
+// A subscriber's media profile survives the store, and an unset one comes back unset.
 TEST(RedisDatastoreTest, AnSubscribersMediaProfileRoundTrips) {
   REQUIRE_REDIS(datastore);
   const auto realm = "prof-" + unique_suffix() + ".example";
@@ -313,8 +304,8 @@ TEST(RedisDatastoreTest, AnSubscribersMediaProfileRoundTrips) {
   datastore->subscriber_delete(silent->identity);
 }
 
-// RFC 5626 outbound's identity for a binding has to survive the store, or a second node
-// would not know which flow a re-registration replaces.
+// RFC 5626: a binding's instance and reg-id survive the store, so any node knows which flow a re-registration
+// replaces.
 TEST(RedisDatastoreTest, AnOutboundBindingKeepsItsInstanceAndRegId) {
   REQUIRE_REDIS(datastore);
   const auto realm = "ob-" + unique_suffix() + ".example";
@@ -360,8 +351,7 @@ TEST(RedisDatastoreTest, RegistrationsAreListedFromTheLocationIndex) {
   EXPECT_TRUE(datastore->location_list(5150).empty());
 }
 
-// The second credential makes the round trip, and a subscriber without one reads back as
-// a subscriber without one rather than as a broken row.
+// The SHA-256 credential round-trips, and a subscriber without one reads back without one.
 TEST(RedisDatastoreTest, TheSha256CredentialRoundTripsAndIsOptional) {
   REQUIRE_REDIS(datastore);
   const auto realm = "sha-" + unique_suffix() + ".example";
@@ -385,9 +375,7 @@ TEST(RedisDatastoreTest, TheSha256CredentialRoundTripsAndIsOptional) {
   ASSERT_TRUE(datastore->subscriber_delete(md5_only->identity));
 }
 
-// A binding written by one node has to be usable by another, which is the whole reason
-// the flow and the node holding it are on it (RFC 5626). They survive the round trip
-// through Redis or they are of no use to the node that reads them back.
+// RFC 5626: a binding's flow and the node holding it survive the store, so another node can use it.
 TEST(RedisDatastoreTest, RegistrationRoundTripsTheFlowAndTheNode) {
   REQUIRE_REDIS(datastore);
   const auto realm = "flow-" + unique_suffix() + ".example";
@@ -412,8 +400,7 @@ TEST(RedisDatastoreTest, RegistrationRoundTripsTheFlowAndTheNode) {
   ASSERT_TRUE(datastore->subscriber_delete(subscriber->identity));
 }
 
-// A single node writes neither, and reading back an empty flow is not the same as
-// reading back the string "flow_id".
+// A single node writes neither, and both read back empty.
 TEST(RedisDatastoreTest, RegistrationWithoutAFlowLeavesItEmpty) {
   REQUIRE_REDIS(datastore);
   const auto realm = "noflow-" + unique_suffix() + ".example";
@@ -442,7 +429,7 @@ TEST(RedisDatastoreTest, NonceRoundTripsAndIsRefusedWhenAlreadyExpired) {
   EXPECT_FALSE(datastore->nonce_check("stale-" + nonce));
 }
 
-// A multi-party call survives the round trip, participants and all.
+// A multi-party call round-trips with its participants.
 TEST(RedisDatastoreTest, CallRoundTripsWithItsParticipants) {
   REQUIRE_REDIS(datastore);
   const auto id = "call-" + unique_suffix();
@@ -490,10 +477,8 @@ TEST(RedisDatastoreTest, UpdateOfSomethingAbsentFails) {
   EXPECT_FALSE(datastore->call_update(call));
 }
 
-// Users and the sessions they hold, in the store the deployed node actually runs. These
-// are the same statements the memory datastore is held to, deliberately: a login that
-// behaves differently on memory:// and redis:// is worse than one that only works on
-// one of them, and the user record is what authorises every request.
+// Users and sessions: the same requirements the memory datastore is held to, so a login behaves the same on
+// both drivers.
 
 TEST(RedisDatastoreTest, UserRoundTripsThroughRedisWithEveryField) {
   REQUIRE_REDIS(datastore);
@@ -513,8 +498,7 @@ TEST(RedisDatastoreTest, UserRoundTripsThroughRedisWithEveryField) {
   EXPECT_EQ(found->created_at, user->created_at);
   EXPECT_EQ(found->last_login_at, 1700000000);
 
-  // Every field, not a chosen few. A password hash a driver quietly dropped is a user
-  // nobody can log in as, and roles it dropped are an authorisation failure.
+  // Every field survives, password hash and roles included.
   EXPECT_EQ(found->password_hash, user->password_hash);
   EXPECT_TRUE(types::Password::verify("correct horse", found->password_hash));
   EXPECT_TRUE(found->has_role(types::roles::manage_realms));
@@ -643,9 +627,8 @@ TEST(RedisDatastoreTest, SessionRoundTripsByItsTokenHash) {
   EXPECT_TRUE(datastore->session_delete(hash));
 }
 
-// There is no session_update on the contract, because a token hash is 32 bytes from a
-// CSPRNG and does not collide by accident. Writing the same hash again is how a session
-// carries last_seen_at forward, which is what idle expiry is counted from.
+// There is no session_update: writing the same hash again carries last_seen_at forward, which idle expiry is
+// counted from.
 TEST(RedisDatastoreTest, WritingASessionAgainMovesItsLastSeen) {
   REQUIRE_REDIS(datastore);
   const auto suffix = unique_suffix();
@@ -665,9 +648,7 @@ TEST(RedisDatastoreTest, WritingASessionAgainMovesItsLastSeen) {
   EXPECT_TRUE(datastore->session_delete(hash));
 }
 
-// Issuing a session that is already dead is a caller bug, and both drivers refuse it for
-// the same reason nonce_create does. Redis could not store it anyway: SETEX has no
-// non-positive expiry to give it.
+// A session that is already expired is refused: SETEX takes no non-positive expiry.
 TEST(RedisDatastoreTest, AnAlreadyExpiredSessionIsRefused) {
   REQUIRE_REDIS(datastore);
   const auto suffix = unique_suffix();
@@ -692,15 +673,14 @@ TEST(RedisDatastoreTest, SessionDeleteEndsThatOneSession) {
   EXPECT_EQ(datastore->session_get("hash-a-" + suffix), nullptr);
   EXPECT_NE(datastore->session_get("hash-b-" + suffix), nullptr);
 
-  // Twice is success twice, and so is a hash that was never held: the two drivers answer
-  // the same because a logout must not tell a real token from an invented one.
+  // Deleting twice succeeds twice, as does deleting an unknown hash: a logout must not tell a real token from
+  // an invented one.
   EXPECT_TRUE(datastore->session_delete("hash-a-" + suffix));
   EXPECT_TRUE(datastore->session_delete("never-existed-" + suffix));
   EXPECT_TRUE(datastore->session_delete("hash-b-" + suffix));
 }
 
-// What makes disabling a user immediate rather than eventual. The per-user index is what
-// finds them, so this never needs KEYS.
+// Ends every session a user holds, found through the per-user index, never KEYS.
 TEST(RedisDatastoreTest, SessionDeleteForUserEndsAllOfTheirsAndNobodyElses) {
   REQUIRE_REDIS(datastore);
   const auto suffix = unique_suffix();
@@ -714,14 +694,13 @@ TEST(RedisDatastoreTest, SessionDeleteForUserEndsAllOfTheirsAndNobodyElses) {
   EXPECT_EQ(datastore->session_get("hash-judy-2-" + suffix), nullptr);
   EXPECT_NE(datastore->session_get("hash-ken-" + suffix), nullptr);
 
-  // Nothing to revoke is not a failure: holding none is the state the caller asked for,
-  // which is what makes DELETE /users/{u}/sessions a 204 for a user who never logged in.
+  // Nothing to revoke is success, so DELETE /users/{u}/sessions is a 204 for a user who never logged in.
   EXPECT_TRUE(datastore->session_delete_for_user("judy-" + suffix));
 
   EXPECT_TRUE(datastore->session_delete("hash-ken-" + suffix));
 }
 
-// A live token against a user that no longer exists is a session nobody can revoke.
+// Deleting a user revokes their sessions.
 TEST(RedisDatastoreTest, UserDeleteRevokesTheirSessions) {
   REQUIRE_REDIS(datastore);
   const auto suffix = unique_suffix();
@@ -747,10 +726,8 @@ TEST(RedisDatastoreTest, UserAndSessionRefuseWhatCannotBeStored) {
   EXPECT_EQ(datastore->session_get(""), nullptr);
 }
 
-// A role this build does not know survives the round trip. It grants nothing, because
-// every authorisation check asks whether a specific known role is held, and dropping it
-// would mean an older node rewriting a user silently strips a role a newer node gave
-// them - which is the one thing a cluster mid-upgrade must not do.
+// A role this build does not know is carried, not dropped, so an older node rewriting a user mid-upgrade cannot
+// strip a role a newer node granted.
 TEST(RedisDatastoreTest, ARoleThisBuildDoesNotKnowIsCarriedNotDropped) {
   REQUIRE_REDIS(datastore);
   const auto username = "future-" + unique_suffix();
@@ -763,7 +740,7 @@ TEST(RedisDatastoreTest, ARoleThisBuildDoesNotKnowIsCarriedNotDropped) {
   EXPECT_TRUE(found->has_role("manage-something-later"));
   EXPECT_TRUE(found->has_role(types::roles::manage_realms));
 
-  // And it grants nothing, because nothing asks for it.
+  // It grants nothing: no check asks for it.
   EXPECT_FALSE(types::roles::is_known("manage-something-later"));
   EXPECT_FALSE(found->has_role(types::roles::manage_cluster));
 

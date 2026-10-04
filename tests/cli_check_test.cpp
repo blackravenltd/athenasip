@@ -24,7 +24,7 @@ using namespace athenasip;
 
 namespace {
 
-// What main gives the checks: a connect, waited for. Here on a context of its own.
+// Runs a driver's connect to completion on a private io_context, as main does for --check.
 plugins::Status wait_for(const std::function<void(plugins::Executor, plugins::StatusHandler)>& start) {
   boost::asio::io_context io;
   auto status = plugins::Status::failure("the driver never answered");
@@ -62,7 +62,7 @@ struct CheckFixture {
 
 }  // namespace
 
-// The ten-line configuration: nothing external, and everything answers.
+// The default drivers (memory, local, builtin) need nothing external and pass.
 TEST(CliCheckTest, ANodeThatNeedsNothingExternalPasses) {
   CheckFixture f;
 
@@ -74,8 +74,7 @@ TEST(CliCheckTest, ANodeThatNeedsNothingExternalPasses) {
   EXPECT_TRUE(cli::passed(lines)) << cli::report(lines);
 }
 
-// A driver nobody wrote is said plainly, and the rest is still tried: one answer per thing,
-// not the first failure and silence.
+// An unknown driver scheme fails its own line; the remaining checks still run.
 TEST(CliCheckTest, AnUnknownDriverFailsAndTheRestIsStillTried) {
   CheckFixture f;
   f.config->db_url = "carrier-pigeon://loft";
@@ -94,8 +93,7 @@ TEST(CliCheckTest, AnUnknownDriverFailsAndTheRestIsStillTried) {
   EXPECT_FALSE(cli::passed(lines));
 }
 
-// A certificate a listener will ask for and cannot have is found here rather than by the
-// first client to connect.
+// A certificate file a TLS listener needs and cannot read fails the check.
 TEST(CliCheckTest, AMissingCertificateIsFound) {
   CheckFixture f;
   f.config->http_tls_enable = true;
@@ -110,7 +108,7 @@ TEST(CliCheckTest, AMissingCertificateIsFound) {
   EXPECT_FALSE(cli::passed(lines));
 }
 
-// A cluster's first node has nobody to find, and that is not a failure.
+// A cluster's first node has no peers, which is not a failure.
 TEST(CliCheckTest, AClusterOfOneHasNoPeersAndStillPasses) {
   CheckFixture f;
   f.config->cluster_enable = true;
@@ -122,7 +120,7 @@ TEST(CliCheckTest, AClusterOfOneHasNoPeersAndStillPasses) {
   EXPECT_TRUE(peers->ok);
 }
 
-// The report is printed, so a password in a URL is not.
+// Passwords in driver URLs are redacted from the report.
 TEST(CliCheckTest, APasswordInAUrlIsNotPrinted) {
   EXPECT_EQ(cli::redacted("memory://"), "memory://");
 

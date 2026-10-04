@@ -19,10 +19,8 @@ namespace fs = std::filesystem;
 
 namespace {
 
-// A document root with a secret next to it rather than inside it, which is the shape
-// every path traversal is trying to reach. The sibling is deliberately named so that
-// its path begins with the root's: a containment check written as a string comparison
-// says that "/tmp/x/public-secrets" is inside "/tmp/x/public".
+// A document root with a secret beside it. The sibling's path begins with the root's, to catch a containment
+// check written as a string comparison.
 struct DocumentRoot {
   fs::path base;
   fs::path root;
@@ -47,7 +45,7 @@ struct DocumentRoot {
     write(root / "favicon.ico", "icon");
     write(sibling / "secret.txt", "the secret");
 
-    // Somewhere outside the tree entirely, for the symlink.
+    // Outside the tree entirely, for the symlink.
     write(base / "outside.txt", "outside");
     std::error_code ec;
     fs::create_symlink(base / "outside.txt", root / "escape.txt", ec);
@@ -110,10 +108,7 @@ TEST(StaticMiddlewareTest, ServesAFileFromTheDocumentRootWithItsType) {
   EXPECT_EQ(served.content_type, "application/javascript");
 }
 
-// A browser refuses a module script that does not arrive as JavaScript, and an SVG that
-// does not arrive as image/svg+xml is not rendered as one. A built bundle is made of
-// exactly these, so a document root that cannot name them cannot serve a web client -
-// which is what this one exists to do.
+// A browser refuses a module script not served as JavaScript and an SVG not served as image/svg+xml.
 TEST(StaticMiddlewareTest, NamesTheTypesABuiltBundleIsMadeOf) {
   DocumentRoot tree;
 
@@ -122,7 +117,7 @@ TEST(StaticMiddlewareTest, NamesTheTypesABuiltBundleIsMadeOf) {
   EXPECT_EQ(get("/app/font.woff2", tree).content_type, "font/woff2");
   EXPECT_EQ(get("/favicon.ico", tree).content_type, "image/x-icon");
 
-  // A source map is JSON, and a browser only fetches it when the developer tools ask.
+  // A source map is JSON.
   EXPECT_EQ(get("/app/bundle.js.map", tree).content_type, "application/json");
 }
 
@@ -133,27 +128,21 @@ TEST(StaticMiddlewareTest, ServesTheIndexForADirectory) {
   EXPECT_EQ(get("/app/", tree).body, "<html>app</html>");
 }
 
-// A client-side router keeps real paths, and a person who reloads one, or opens a link
-// to one, asks this node for a document that is not on disk. Answering 404 makes every
-// page of the client work only if you arrived at it from somewhere else, which is not a
-// working client. The document that knows how to route the path is index.html.
+// A client-side router keeps real paths, so a path with no file behind it gets index.html, which can route it.
 TEST(StaticMiddlewareTest, APathWithNoFileBehindItGetsTheDocumentThatCanRouteIt) {
   DocumentRoot tree;
 
   EXPECT_EQ(get("/diagnostics/softphone", tree).body, "<html>root</html>");
   EXPECT_EQ(get("/sip/realms", tree).body, "<html>root</html>");
 
-  // The query is not part of the path here either.
+  // The query is not part of the path.
   EXPECT_EQ(get("/diagnostics/softphone?register=1", tree).body, "<html>root</html>");
 
-  // Its own type, not the type of whatever was asked for.
+  // With index.html's own type, not that of the path asked for.
   EXPECT_EQ(get("/diagnostics/softphone", tree).content_type, "text/html");
 }
 
-// The fallback is for a route, and these are not routes. A missing asset has to stay
-// missing: a bundle that 200s with HTML in it is a far worse thing to debug than one
-// that 404s, and an unknown API path answering with a web page would be a lie about
-// what this node serves.
+// The fallback is for routes only: a missing asset and an unknown API path stay missing.
 TEST(StaticMiddlewareTest, TheFallbackDoesNotInventAssetsOrApiRoutes) {
   DocumentRoot tree;
 
@@ -166,7 +155,7 @@ TEST(StaticMiddlewareTest, TheFallbackDoesNotInventAssetsOrApiRoutes) {
   EXPECT_TRUE(serve(boost::beast::http::verb::delete_, "/sip/realms", tree).passed_on);
 }
 
-// And a file that is really there is still served as itself.
+// A file that exists is served as itself.
 TEST(StaticMiddlewareTest, TheFallbackNeverShadowsAFileThatExists) {
   DocumentRoot tree;
 
@@ -174,9 +163,7 @@ TEST(StaticMiddlewareTest, TheFallbackNeverShadowsAFileThatExists) {
   EXPECT_EQ(get("/app/", tree).body, "<html>app</html>");
 }
 
-// SPA mode is a choice, not a fact about every document root. A plain file server that
-// invented index.html for a missing page would hide a broken link behind a 200, so the
-// node has to be told that the thing it is serving is a single-page application.
+// The fallback is opt-in: a plain file server answers 404 for a missing page.
 TEST(StaticMiddlewareTest, TheRoutingFallbackCanBeTurnedOff) {
   DocumentRoot tree;
 
@@ -186,7 +173,7 @@ TEST(StaticMiddlewareTest, TheRoutingFallbackCanBeTurnedOff) {
   EXPECT_TRUE(get("/diagnostics/softphone", tree, plain).passed_on);
   EXPECT_TRUE(get("/sip/realms", tree, plain).passed_on);
 
-  // What is really there is still served, which is the whole of what it does now.
+  // What exists is still served.
   EXPECT_EQ(get("/app/bundle.js", tree, plain).content_type, "application/javascript");
   EXPECT_EQ(get("/", tree, plain).body, "<html>root</html>");
 }
@@ -197,8 +184,7 @@ TEST(StaticMiddlewareTest, PassesOnWhatItDoesNotHave) {
   EXPECT_TRUE(get("/nothing/here.js", tree).passed_on);
 }
 
-// A document root is a boundary. Every one of these is a way of asking for something on
-// the other side of it, and the answer to all of them is the same.
+// Every one of these asks for something outside the document root, and all are refused.
 TEST(StaticMiddlewareTest, RefusesToLeaveTheDocumentRoot) {
   DocumentRoot tree;
 
@@ -206,21 +192,17 @@ TEST(StaticMiddlewareTest, RefusesToLeaveTheDocumentRoot) {
   EXPECT_TRUE(get("/app/../../public-secrets/secret.txt", tree).passed_on);
   EXPECT_TRUE(get("/./../public-secrets/secret.txt", tree).passed_on);
 
-  // Percent-encoded, because a check that looks for the two characters and not for what
-  // they mean is a check that is one decoder away from being no check at all.
+  // Percent-encoded dots are decoded before the check.
   EXPECT_TRUE(get("/%2e%2e/public-secrets/secret.txt", tree).passed_on);
   EXPECT_TRUE(get("/%2E%2E/public-secrets/secret.txt", tree).passed_on);
 
-  // An absolute path, in case the root is treated as a prefix to concatenate rather
-  // than a directory to resolve within. The routing fallback does not stand in for it
-  // either: a route is made of names, and this one has an empty segment.
+  // An absolute path, in case the root is treated as a prefix to concatenate. Its empty segment also keeps the
+  // routing fallback from answering.
   EXPECT_TRUE(get("//etc/hosts", tree).passed_on);
   EXPECT_TRUE(get("//etc/shadow", tree).passed_on);
 }
 
-// A symlink is the other way out, and the one the path check cannot see: the path never
-// mentions anywhere it should not go. Only resolving the file and asking where it
-// actually is catches this.
+// A symlink leaves the root without the path saying so; only resolving the file catches it.
 TEST(StaticMiddlewareTest, RefusesASymlinkThatPointsOutOfTheDocumentRoot) {
   DocumentRoot tree;
 
@@ -229,9 +211,7 @@ TEST(StaticMiddlewareTest, RefusesASymlinkThatPointsOutOfTheDocumentRoot) {
   EXPECT_TRUE(get("/escape.txt", tree).passed_on);
 }
 
-// The sibling directory exists to catch a containment check written as a string
-// comparison: "/tmp/x/public-secrets/secret.txt" starts with "/tmp/x/public", and is
-// not inside it. Reached through a symlink, because the path itself is unremarkable.
+// "/tmp/x/public-secrets/secret.txt" starts with "/tmp/x/public" and is not inside it. Reached through a symlink.
 TEST(StaticMiddlewareTest, ADirectoryWhoseNameExtendsTheRootIsNotInsideIt) {
   DocumentRoot tree;
 
@@ -243,10 +223,7 @@ TEST(StaticMiddlewareTest, ADirectoryWhoseNameExtendsTheRootIsNotInsideIt) {
   EXPECT_TRUE(get("/sibling.txt", tree).passed_on);
 }
 
-// A query string is not part of the path. Every web application cache-busts with one,
-// and the admin client is a built bundle that does exactly this, so a middleware that
-// looks for a file called "bundle.js?v=2" serves a blank page to anybody who deploys a
-// second version.
+// A query string is not part of the path: built bundles cache-bust with one.
 TEST(StaticMiddlewareTest, AQueryStringIsNotPartOfTheFilename) {
   DocumentRoot tree;
 
@@ -262,16 +239,14 @@ TEST(StaticMiddlewareTest, AQueryStringOnADirectoryStillFindsTheIndex) {
   EXPECT_EQ(get("/?first=true", tree).body, "<html>root</html>");
 }
 
-// A fragment never reaches a server from a browser, but nothing stops a client sending
-// one, and it is part of the URI rather than of the path either way (RFC 3986 3.5).
+// RFC 3986 3.5: a fragment is not part of the path either.
 TEST(StaticMiddlewareTest, AFragmentIsNotPartOfTheFilenameEither) {
   DocumentRoot tree;
 
   EXPECT_EQ(get("/app/bundle.js#top", tree).body, "console.log(1)");
 }
 
-// The prefix is what says which requests are the middleware's, so anything outside it
-// belongs to the API routes that come after.
+// Anything outside the prefix belongs to the API routes that come after.
 TEST(StaticMiddlewareTest, RequestsOutsideThePrefixArePassedOn) {
   DocumentRoot tree;
 

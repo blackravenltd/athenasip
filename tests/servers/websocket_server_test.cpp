@@ -35,9 +35,7 @@ namespace {
 const std::string kCert = std::string(ATHENA_TEST_SOURCE_DIR) + "/tls/snakeoil.cer";
 const std::string kKey = std::string(ATHENA_TEST_SOURCE_DIR) + "/tls/snakeoil.key";
 
-// A node with one WebSocket listener on a port the operating system picked, so nothing
-// here depends on a number being free. Port zero is what a test binds; a node binds what
-// it was configured with.
+// A node with one WebSocket listener on a port the operating system picked.
 struct WebsocketFixture : CoreFixture {
   std::shared_ptr<athenasip::servers::WebsocketServer> server;
 
@@ -59,9 +57,8 @@ struct WebsocketFixture : CoreFixture {
   std::uint16_t port() const { return server->port(); }
   std::string authority() const { return "127.0.0.1:" + std::to_string(port()); }
 
-  // A REGISTER with no credentials. The registrar has to challenge it, which is what
-  // proves the bytes that arrived over the WebSocket reached the transaction layer and
-  // an answer came back the same way.
+  // A REGISTER with no credentials. The challenge proves the bytes reached the transaction layer and an answer
+  // came back the same way.
   static std::string register_request() {
     std::string raw = "REGISTER sip:example.com SIP/2.0\r\n";
     raw += "Via: SIP/2.0/WSS df7jal23ls0d.invalid;branch=z9hG4bK-ws-register\r\n";
@@ -77,9 +74,7 @@ struct WebsocketFixture : CoreFixture {
   }
 };
 
-// RFC 7118 section 4: the client offers the "sip" subprotocol and the server names it
-// back. A client that does not see it back is entitled to conclude the far end does not
-// speak SIP.
+// RFC 7118 4: the client offers the "sip" subprotocol and the server names it back.
 void offer_sip_subprotocol(websocket::request_type& request) { request.set(http::field::sec_websocket_protocol, "sip"); }
 
 std::string read_one(auto& ws) {
@@ -96,17 +91,15 @@ int response_code_of(const std::string& raw) {
 
 }  // namespace
 
-// A browser will not open an insecure WebSocket from a page served over https, so wss is
-// not a hardening option for a web client but the only way in. This is the whole of the
-// path: TLS handshake, HTTP upgrade, SIP over the frames, and an answer back.
+// wss is the only way in for a browser on an https page. The whole path: TLS handshake, HTTP upgrade, SIP over
+// the frames, and an answer back.
 TEST(WebsocketServerTest, CarriesSipOverTls) {
   WebsocketFixture fixture(true);
 
   net::io_context io;
   ssl::context context(ssl::context::tls_client);
 
-  // The snakeoil certificate is self-signed and names nothing this test resolves. What is
-  // under test is that the listener speaks TLS at all, not that a CA vouches for it.
+  // The test certificate is self-signed. What is under test is that the listener speaks TLS, not who vouches for it.
   context.set_verify_mode(ssl::verify_none);
 
   websocket::stream<ssl::stream<tcp::socket>> ws(io, context);
@@ -127,9 +120,7 @@ TEST(WebsocketServerTest, CarriesSipOverTls) {
   ws.close(websocket::close_code::normal, ec);
 }
 
-// ws:// is the same path with nothing under it, and stays for local development. The two
-// listeners are one class, so this is what says the TLS one added a layer rather than
-// changing the behaviour.
+// ws:// is the same path without TLS, for local development.
 TEST(WebsocketServerTest, CarriesSipWithoutTls) {
   WebsocketFixture fixture(false);
 
@@ -151,8 +142,7 @@ TEST(WebsocketServerTest, CarriesSipWithoutTls) {
   ws.close(websocket::close_code::normal, ec);
 }
 
-// A secure listener that would serve a client which never offered TLS is not a secure
-// listener. The handshake has to fail rather than fall back.
+// A secure listener refuses a client that does not offer TLS, rather than falling back.
 TEST(WebsocketServerTest, ASecureListenerRefusesAPlainClient) {
   WebsocketFixture fixture(true);
 
@@ -168,12 +158,8 @@ TEST(WebsocketServerTest, ASecureListenerRefusesAPlainClient) {
   EXPECT_TRUE(ec) << "a plain client completed a handshake with a wss listener";
 }
 
-// The listener is not a web server. Anything that is not the SIP upgrade is answered and
-// closed, not upgraded.
-// RFC 7118 names no path, and every client picks its own: "/ws" is what Asterisk,
-// Kamailio and FreeSWITCH serve and what a client arrives configured with. This
-// listener has a port to itself and serves nothing but SIP, so there is nothing for a
-// path to distinguish, and refusing one refuses a client for a reason no RFC gives.
+// RFC 7118 names no path and clients pick their own ("/ws" is common). The listener serves nothing but SIP, so
+// it accepts the upgrade on any path.
 TEST(WebsocketServerTest, AcceptsTheUpgradeOnWhateverPathTheClientAsks) {
   WebsocketFixture fixture(false);
 
@@ -213,8 +199,7 @@ TEST(WebsocketServerTest, RefusesARequestThatIsNotAnUpgrade) {
   EXPECT_EQ(response.result_int(), 400);
 }
 
-// Both files or neither. A listener asked to be secure with nothing to be secure with
-// must refuse to start rather than quietly serve a browser in the clear.
+// Both files or neither: a secure listener with nothing to be secure with refuses to start.
 TEST(WebsocketServerTest, RefusesToBeSecureWithoutBothFiles) {
   WebsocketFixture fixture(false);
 

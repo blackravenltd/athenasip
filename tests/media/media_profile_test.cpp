@@ -22,9 +22,8 @@ using athenasip::media::Flags;
 
 namespace {
 
-// An engine that takes everything, changes nothing, and remembers what it was told. The
-// question these tests ask is what the proxy says to an engine, not what an engine does
-// with it, and a real engine would answer both at once.
+// An engine that takes everything, changes nothing, and records what it was asked: these tests are about
+// what the proxy says to an engine.
 class RecordingMediaEngine : public media::MediaEngine {
  public:
   struct Call {
@@ -49,7 +48,7 @@ class RecordingMediaEngine : public media::MediaEngine {
     return capabilities;
   }
 
-  // An engine that relays plain RTP and converts nothing, which is what builtin is.
+  // An engine that relays plain RTP and converts nothing, as builtin does.
   void plain_rtp_only_set() { _plain_rtp_only = true; }
   bool produces(media::Profile profile) const override { return !_plain_rtp_only || profile == media::Profile::PlainRtp || profile == media::Profile::Mirror; }
 
@@ -104,8 +103,7 @@ const std::string kOffer =
     "t=0 0\r\n"
     "m=audio 49170 RTP/AVP 0\r\n";
 
-// What a browser writes, and what AthenaPhone writes over any transport it signals on:
-// ICE credentials, a DTLS fingerprint and the SAVPF profile (RFC 8839, 8122, 5764).
+// A WebRTC offer: ICE credentials, a DTLS fingerprint and the SAVPF profile (RFC 8839, 8122, 5764).
 const std::string kWebRtcOffer =
     "v=0\r\n"
     "o=- 1 1 IN IP4 0.0.0.0\r\n"
@@ -119,8 +117,7 @@ const std::string kWebRtcOffer =
     "a=fingerprint:sha-256 AA:BB:CC\r\n"
     "a=rtcp-mux\r\n";
 
-// The desk phone that wants its media encrypted and has never heard of DTLS: RTP/SAVP
-// with the keys in the description (RFC 4568).
+// An SDES offer: RTP/SAVP with the keys in the description (RFC 4568).
 const std::string kSdesOffer =
     "v=0\r\n"
     "o=- 1 1 IN IP4 192.0.2.30\r\n"
@@ -133,15 +130,13 @@ const std::string kSdesOffer =
 struct ProfileFixture : ProxyFixture {
   std::shared_ptr<RecordingMediaEngine> engine = std::make_shared<RecordingMediaEngine>();
 
-  // Each end's transport, which is what a node has to go on until that end has
-  // described itself, and nothing after that.
+  // Each end's transport, which is all a node has to go on until that end has described itself.
   explicit ProfileFixture(const std::string& callee_transport, const std::string& caller_transport = "udp") {
     engine->connect(core->strand(), [](plugins::Status) {});
     core->media_register(engine);
     settle();
 
-    // What these tests are about is the rule that reads a leg that has said nothing from
-    // its transport, which since 2026-10-01 is a setting rather than the default.
+    // These tests are about reading an undescribed leg from its transport, which is a setting, not the default.
     config->behaviour.profiles = types::MediaPolicy::Profiles::FromTransport;
 
     caller = make_channel("192.0.2.10", &caller_connection, caller_transport);
@@ -166,9 +161,8 @@ struct ProfileFixture : ProxyFixture {
 
   std::string ok_with(const std::string& sdp) { return with_body(response_from_callee(200, "OK"), sdp); }
 
-  // The route set this node wrote into the INVITE, as the leg that learned it sends it
-  // back. A UAS takes Record-Route in the order it arrived (RFC 3261 12.1.1) and a UAC
-  // takes it reversed (12.1.2).
+  // The route set this node wrote into the INVITE, as a leg sends it back: a UAS in the order it arrived
+  // (RFC 3261 12.1.1), a UAC reversed (12.1.2).
   std::string routes(bool reversed) {
     auto forwarded = request_with(callee_connection, "INVITE");
     if (!forwarded) return "";
@@ -182,8 +176,7 @@ struct ProfileFixture : ProxyFixture {
     return out;
   }
 
-  // A final response to the INVITE most recently forwarded to the callee, which after a
-  // re-offer is not the first one.
+  // A final response to the INVITE most recently forwarded to the callee.
   std::string response_to_latest(int code, const std::string& reason, const std::string& sdp = "", std::shared_ptr<MockConnection> connection = nullptr,
                                  const std::string& to_tag = "bob") {
     const auto forwarded = requests_with(connection ? connection : callee_connection, "INVITE");
@@ -205,7 +198,7 @@ struct ProfileFixture : ProxyFixture {
     return on_strand([this]() { return core->reoffers().list(); });
   }
 
-  // Hold, resume, or any other mid-call re-offer, sent by the end that answered.
+  // A mid-call re-offer (hold, resume) sent by the end that answered.
   std::string reinvite_from_callee(const std::string& sdp) {
     std::string raw = "INVITE sip:alice@192.0.2.10:5060 SIP/2.0\r\n";
     raw += "Via: SIP/2.0/UDP 192.0.2.20:5060;branch=z9hG4bK-reinvite\r\n";
@@ -237,8 +230,7 @@ struct ProfileFixture : ProxyFixture {
 
 }  // namespace
 
-// The transport is the only thing that says what the far leg is before that leg has
-// described itself, and a browser reaches a node over a WebSocket and nothing else
+// Before a leg has described itself only its transport says what it is; a browser arrives over a WebSocket
 // (RFC 7118).
 TEST(MediaProfileTest, TheProfileOfALegComesFromItsTransport) {
   EXPECT_EQ(Flags::profile_for_transport("ws"), Flags::Profile::WebRtc);
@@ -249,31 +241,27 @@ TEST(MediaProfileTest, TheProfileOfALegComesFromItsTransport) {
   EXPECT_EQ(Flags::profile_for_transport("tcp"), Flags::Profile::PlainRtp);
   EXPECT_EQ(Flags::profile_for_transport("tls"), Flags::Profile::PlainRtp);
 
-  // Nothing known is not the same as plain RTP, and the engine is left to decide.
+  // Unknown is not plain RTP: the engine is left to decide.
   EXPECT_EQ(Flags::profile_for_transport(""), Flags::Profile::Mirror);
 }
 
-// And a description says what the end that wrote it is, which is better than the
-// transport because it is not a guess. DTLS is the WebRTC handshake and nothing else
-// uses it; keys in the description are SDES; neither is plain RTP.
+// A description says what the end that wrote it is: DTLS is WebRTC, keys in the description are SDES.
 TEST(MediaProfileTest, ADescriptionSaysWhatTheEndThatWroteItIs) {
   EXPECT_EQ(Flags::from_sdp(kWebRtcOffer).stated(), Flags::Profile::WebRtc);
   EXPECT_EQ(Flags::from_sdp(kSdesOffer).stated(), Flags::Profile::SrtpSdes);
   EXPECT_EQ(Flags::from_sdp(kOffer).stated(), Flags::Profile::PlainRtp);
 
-  // RFC 5764 section 8: UDP/TLS/RTP/SAVP and SAVPF are DTLS-SRTP by name. The profile on
-  // the m-line is the statement, so a capability description - an OPTIONS 200 that has no
-  // DTLS session to fingerprint yet - says WebRTC without one.
+  // RFC 5764 8: UDP/TLS/RTP/SAVP and SAVPF are DTLS-SRTP by name, so the m-line profile alone says WebRTC,
+  // with no fingerprint.
   const std::string profile_only =
       "v=0\r\no=- 1 1 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\nc=IN IP4 0.0.0.0\r\na=rtpmap:111 opus/48000/2\r\n";
   EXPECT_EQ(Flags::from_sdp(profile_only).stated(), Flags::Profile::WebRtc);
 
-  // Nothing readable says nothing, which is not the same as saying plain RTP. Recording
-  // a guess would have the leg quoted on something it never said.
+  // An unreadable description states nothing, which is not the same as plain RTP.
   EXPECT_FALSE(Flags::from_sdp("not a session description").stated().has_value());
 }
 
-// The offer goes to Bob, so what the engine has to produce is what Bob's leg needs.
+// The offer goes to Bob, so the engine produces what Bob's leg needs.
 TEST(MediaProfileTest, AnOfferForwardedToABrowserAsksForTheWebRtcProfile) {
   ProfileFixture f("wss");
 
@@ -285,7 +273,7 @@ TEST(MediaProfileTest, AnOfferForwardedToABrowserAsksForTheWebRtcProfile) {
   EXPECT_TRUE(calls[0].was_offer);
   EXPECT_EQ(calls[0].flags.target, Flags::Profile::WebRtc);
 
-  // What the offer itself was is a separate question, and it was plain RTP.
+  // The offer itself was plain RTP.
   EXPECT_FALSE(calls[0].flags.ice);
   EXPECT_FALSE(calls[0].flags.dtls);
 }
@@ -301,9 +289,7 @@ TEST(MediaProfileTest, AnOfferForwardedToAPhoneAsksForPlainRtp) {
   EXPECT_EQ(calls[0].flags.target, Flags::Profile::PlainRtp);
 }
 
-// The answer travels the other way, so the leg that decides is the one the request
-// came in on. Reading the wrong end here is how a browser ends up being handed an
-// answer with no ICE.
+// The answer travels the other way, so the leg that decides is the one the request came in on.
 TEST(MediaProfileTest, AnAnswerTakesTheProfileOfTheEndItGoesBackTo) {
   ProfileFixture f("udp", "wss");
 
@@ -318,10 +304,8 @@ TEST(MediaProfileTest, AnAnswerTakesTheProfileOfTheEndItGoesBackTo) {
   EXPECT_EQ(answer.flags.target, Flags::Profile::WebRtc);
 }
 
-// RFC 3264: an answer goes back to the end that made the offer, and that offer already
-// says exactly what that end asked for. Reading its transport instead is how an
-// AthenaPhone on UDP - WebRTC media over ordinary SIP signalling - is handed an answer
-// it cannot use.
+// RFC 3264: an answer goes back to the end that made the offer, and is profiled from that offer, not from
+// the end's transport.
 TEST(MediaProfileTest, AnAnswerIsProfiledFromTheOfferItAnswers) {
   ProfileFixture f("udp", "udp");
 
@@ -336,9 +320,7 @@ TEST(MediaProfileTest, AnAnswerIsProfiledFromTheOfferItAnswers) {
   EXPECT_EQ(answer.flags.target, Flags::Profile::WebRtc);
 }
 
-// And what a leg said is remembered for the rest of the call. Hold and resume are
-// re-INVITEs, and profiling one from the transport would have this node contradict
-// mid-call what it produced for the same leg a moment earlier.
+// What a leg said is remembered for the call, so a re-INVITE is not profiled from the transport.
 TEST(MediaProfileTest, ALegThatHasDescribedItselfIsNotReadFromItsTransportAgain) {
   ProfileFixture f("wss", "udp");
 
@@ -358,8 +340,7 @@ TEST(MediaProfileTest, ALegThatHasDescribedItselfIsNotReadFromItsTransportAgain)
   EXPECT_EQ(calls.back().flags.target, Flags::Profile::WebRtc);
 }
 
-// A leg this node has never heard from is the one case the transport and the realm are
-// for, and the answer going back to the end that offered is not it.
+// The transport and the realm are for a leg this node has not heard from.
 TEST(MediaProfileTest, TheFirstOfferTowardsALegIsStillReadFromItsTransport) {
   ProfileFixture f("wss", "udp");
 
@@ -370,10 +351,8 @@ TEST(MediaProfileTest, TheFirstOfferTowardsALegIsStillReadFromItsTransport) {
   EXPECT_EQ(calls[0].flags.target, Flags::Profile::WebRtc);
 }
 
-// RFC 3264 section 5 inverts the exchange when the INVITE carries no description: the
-// 200 becomes the offer and the ACK the answer. The end that offered is the callee, so
-// the answer in the ACK has to be produced for what the callee said - which the memory
-// of it gives and reading the request body cannot.
+// RFC 3264 5: with no description in the INVITE, the 200 is the offer and the ACK the answer. The ACK's
+// answer is produced for what the callee offered.
 TEST(MediaProfileTest, ADelayedOfferIsAnsweredForTheEndThatOffered) {
   ProfileFixture f("udp", "udp");
 
@@ -388,10 +367,8 @@ TEST(MediaProfileTest, ADelayedOfferIsAnsweredForTheEndThatOffered) {
   EXPECT_EQ(calls.back().flags.target, Flags::Profile::WebRtc);
 }
 
-// Step 3 of the 2026-10-01 decision: a subscriber can say what its endpoint is, as an
-// Asterisk endpoint's webrtc=yes does. It is for the leg nothing else can read -
-// AthenaPhone signals over TCP and its media is WebRTC - and it decides the first offer
-// towards that leg where the realm and the transport would have guessed.
+// A subscriber can say what its endpoint is, which decides the first offer towards a leg ahead of the realm
+// and the transport.
 TEST(MediaProfileTest, AnSubscribersProfileDecidesTheFirstOfferTowardsIt) {
   ProfileFixture f("tcp", "udp");
   f.bob->media_profile = types::MediaPolicy::Profiles::WebRtc;
@@ -404,9 +381,7 @@ TEST(MediaProfileTest, AnSubscribersProfileDecidesTheFirstOfferTowardsIt) {
   EXPECT_EQ(calls[0].flags.target, Flags::Profile::WebRtc);
 }
 
-// And it is the operator's word about an endpoint, not the endpoint's: once the leg has
-// described itself, what it said is what it gets. A subscriber that says plain RTP for a
-// phone that has since been replaced by a browser is answered as a browser.
+// What a leg has said about itself outranks its subscriber's setting.
 TEST(MediaProfileTest, WhatALegSaidOutranksItsSubscriber) {
   ProfileFixture f("udp", "udp");
   f.bob->media_profile = types::MediaPolicy::Profiles::PlainRtp;
@@ -422,8 +397,8 @@ TEST(MediaProfileTest, WhatALegSaidOutranksItsSubscriber) {
   EXPECT_EQ(calls.back().flags.target, Flags::Profile::WebRtc);
 }
 
-// A subscriber's setting takes the realm's values, transport and mirror included, so an
-// subscriber can opt one endpoint out of a realm's rule.
+// A subscriber's setting takes the realm's values, transport and mirror included, so one endpoint can opt
+// out of a realm's rule.
 TEST(MediaProfileTest, AnSubscriberCanTakeItsLegOutOfTheTransportRule) {
   ProfileFixture f("wss", "udp");
   f.bob->media_profile = types::MediaPolicy::Profiles::Mirror;
@@ -436,10 +411,7 @@ TEST(MediaProfileTest, AnSubscriberCanTakeItsLegOutOfTheTransportRule) {
   EXPECT_EQ(calls[0].flags.target, Flags::Profile::Mirror);
 }
 
-// Step 4 of the 2026-10-01 decision, Kamailio's failure-route pattern: a callee that
-// answers an offer this node produced by guessing with 488 Not Acceptable Here (RFC 3261
-// 21.4.26) is offered the other profile, once. AthenaPhone on TCP under the transport rule
-// is the call this exists for: offered plain RTP, it can only refuse.
+// A callee that answers a guessed offer with 488 (RFC 3261 21.4.26) is offered the other profile, once.
 TEST(MediaProfileTest, A488ToAGuessIsReofferedWithTheOtherProfile) {
   ProfileFixture f("tcp", "udp");
 
@@ -455,16 +427,14 @@ TEST(MediaProfileTest, A488ToAGuessIsReofferedWithTheOtherProfile) {
   EXPECT_TRUE(calls.back().was_offer);
   EXPECT_EQ(calls.back().flags.target, Flags::Profile::WebRtc);
 
-  // The caller never hears about the refusal, and does hear the answer.
+  // The caller hears the answer and never the refusal.
   EXPECT_EQ(f.response_with(f.caller_connection, 488), nullptr);
   f.receive(f.callee, f.response_to_latest(200, "OK", kWebRtcOffer));
   EXPECT_NE(f.response_with(f.caller_connection, 200), nullptr);
 }
 
-// The other profile is only worth offering if the engine can make it. A relay that does
-// plain RTP and nothing else would send the refused offer again, byte for byte, which is
-// what corvus-fi-1 did to AthenaPhone on 2026-10-03: the phone answered the copy with 482.
-// The 488 is the answer, and the caller hears it.
+// The other profile is offered only if the engine can make it: a plain-RTP relay would resend the refused
+// offer byte for byte. Otherwise the 488 is the answer, and the caller hears it.
 TEST(MediaProfileTest, NothingIsReofferedWhenTheEngineCannotMakeTheOtherProfile) {
   ProfileFixture f("tcp", "udp");
   f.engine->plain_rtp_only_set();
@@ -477,9 +447,8 @@ TEST(MediaProfileTest, NothingIsReofferedWhenTheEngineCannotMakeTheOtherProfile)
   EXPECT_TRUE(f.reoffers().empty());
 }
 
-// And the same when the first offer was asked for in a profile the engine cannot make: a
-// subscriber the operator marked webrtc, behind a relay that only does plain RTP. What went
-// out was plain RTP whatever was asked, so plain RTP is not "the other" to try next.
+// The same when the first offer was asked for in a profile the engine cannot make: what went out was plain
+// RTP, so plain RTP is not "the other" to try.
 TEST(MediaProfileTest, NothingIsReofferedWhenTheEngineCouldNotMakeTheFirstOfferAsAsked) {
   ProfileFixture f("tcp", "udp");
   f.engine->plain_rtp_only_set();
@@ -495,9 +464,8 @@ TEST(MediaProfileTest, NothingIsReofferedWhenTheEngineCouldNotMakeTheFirstOfferA
   EXPECT_TRUE(f.reoffers().empty());
 }
 
-// The first node anchors the media (TODO/ACTIVE.md, Milestone 4). A request a peer node
-// forwarded has been through that node's engine already, and a second pass here would
-// relay a relay - or, with one rtpengine between them, offer the same call to it twice.
+// The first node anchors the media. A request a peer node forwarded has been through that node's engine and
+// is not anchored again.
 TEST(MediaProfileTest, ACallAPeerNodeForwardedIsNotAnchoredAgain) {
   ProfileFixture f("tcp", "udp");
   f.caller_connection->peer = "node-b";
@@ -511,10 +479,8 @@ TEST(MediaProfileTest, ACallAPeerNodeForwardedIsNotAnchoredAgain) {
   EXPECT_TRUE(f.engine->calls().empty());
 }
 
-// But it does let go of it. Every node a call passed through tells its engine when the call
-// is over, whether or not it was the one that anchored: with one rtpengine between the
-// nodes that is what lets the end of the call, reaching either node, give the ports back.
-// An engine that never saw the call takes the release as nothing to do.
+// Every node a call passed through tells its engine when the call is over, whether or not it anchored, so
+// a shared rtpengine gives the ports back. An engine that never saw the call has nothing to do.
 TEST(MediaProfileTest, ACallAPeerNodeForwardedIsStillReleasedHereWhenItEnds) {
   ProfileFixture f("tcp", "udp");
   f.caller_connection->peer = "node-b";
@@ -527,11 +493,8 @@ TEST(MediaProfileTest, ACallAPeerNodeForwardedIsStillReleasedHereWhenItEnds) {
   EXPECT_EQ(f.engine->releases(), 1);
 }
 
-// The warning that an engine cannot make a profile is for an offer the node would have had
-// to convert. A WebRTC offer to a WebRTC subscriber needs nothing made: it goes through as
-// it came, and saying "cannot produce webrtc - offering what it can" about it, as
-// corvus-fi-1 did on every browser call to AthenaPhone, sends an operator looking for a
-// fault that is not there.
+// The cannot-produce warning is for an offer the node would have had to convert. A WebRTC offer to a WebRTC
+// subscriber passes through as it came, with no warning.
 TEST(MediaProfileTest, NoWarningWhenTheOfferIsAlreadyWhatTheCalleeTakes) {
   ProfileFixture f("tcp", "udp");
   f.engine->plain_rtp_only_set();
@@ -547,8 +510,7 @@ TEST(MediaProfileTest, NoWarningWhenTheOfferIsAlreadyWhatTheCalleeTakes) {
   }
 }
 
-// And when it does have to say so, it names the subscriber, which is what an operator can
-// act on, and not the Contact of whichever device the call happened to be sent to.
+// The warning names the subscriber, not the Contact of the device the call was sent to.
 TEST(MediaProfileTest, TheWarningNamesTheSubscriberTheEngineCouldNotServe) {
   ProfileFixture f("tcp", "udp");
   f.engine->plain_rtp_only_set();
@@ -568,8 +530,7 @@ TEST(MediaProfileTest, TheWarningNamesTheSubscriberTheEngineCouldNotServe) {
   EXPECT_TRUE(warned);
 }
 
-// Nothing is learned silently: the node says which subscriber needed it and what it took,
-// for the operator to set as that subscriber's profile or not.
+// A re-offer that works is reported: which subscriber needed it and what it took.
 TEST(MediaProfileTest, AReofferThatWorksIsReportedForTheSubscriber) {
   ProfileFixture f("tcp", "udp");
 
@@ -586,9 +547,8 @@ TEST(MediaProfileTest, AReofferThatWorksIsReportedForTheSubscriber) {
   EXPECT_EQ(reported[0].count, 1u);
 }
 
-// Under the shipped default nothing is guessed, and the callee is offered what the caller
-// offered: a browser calling a desk phone hands it WebRTC. The other profile is then the
-// other of what the caller said.
+// Under the shipped default the callee is offered what the caller offered, and the other profile is the
+// other of that.
 TEST(MediaProfileTest, AMirroredOfferRefusedIsReofferedAsTheOtherOfWhatTheCallerSaid) {
   ProfileFixture f("udp", "wss");
   f.config->behaviour.profiles = types::MediaPolicy::Profiles::Mirror;
@@ -602,8 +562,8 @@ TEST(MediaProfileTest, AMirroredOfferRefusedIsReofferedAsTheOtherOfWhatTheCaller
   EXPECT_EQ(calls.back().flags.target, Flags::Profile::PlainRtp);
 }
 
-// Once. A callee that refuses both has refused, and the caller is told so with the
-// refusal it gave; the operator is told both were refused.
+// Once. A callee that refuses both has refused: the caller gets its refusal and the operator is told both
+// were refused.
 TEST(MediaProfileTest, A488ToTheReofferIsTheAnswer) {
   ProfileFixture f("tcp", "udp");
 
@@ -619,7 +579,7 @@ TEST(MediaProfileTest, A488ToTheReofferIsTheAnswer) {
   EXPECT_FALSE(reported[0].took.has_value());
 }
 
-// 488 is the one refusal that is about the media. Busy is busy whatever was offered.
+// Only a 488 is about the media.
 TEST(MediaProfileTest, OnlyA488IsReoffered) {
   ProfileFixture f("tcp", "udp");
 
@@ -631,8 +591,7 @@ TEST(MediaProfileTest, OnlyA488IsReoffered) {
   EXPECT_TRUE(f.reoffers().empty());
 }
 
-// A node that is not anchoring produced nothing, so there is nothing of its own to take
-// back: the 488 is the callee's answer to the caller's offer, and goes to the caller.
+// A node that is not anchoring produced nothing to take back: the 488 goes to the caller.
 TEST(MediaProfileTest, NothingIsReofferedWhenTheMediaIsNotAnchored) {
   ProfileFixture f("tcp", "udp");
   f.config->behaviour.anchor = false;
@@ -644,11 +603,8 @@ TEST(MediaProfileTest, NothingIsReofferedWhenTheMediaIsNotAnchored) {
   EXPECT_NE(f.response_with(f.caller_connection, 488), nullptr);
 }
 
-// RFC 3261 16.7: a branch that fails ends that branch, and the attempt goes on to the next
-// target. The caller's call is not over until this node sends it a final response, so the
-// call record - and the media anchored for it - outlives every branch but the last. A
-// failed branch had been closing the call, and every later branch of a serial fork went
-// out unanchored with its media released under it.
+// RFC 3261 16.7: a failed branch ends that branch only. The call record and its anchored media live until
+// this node sends the caller a final response, so every branch of a serial fork is anchored.
 TEST(MediaProfileTest, EveryBranchOfASerialForkIsAnchored) {
   ProfileFixture f("udp", "udp");
 
@@ -685,8 +641,7 @@ TEST(MediaProfileTest, EveryBranchOfASerialForkIsAnchored) {
   EXPECT_EQ(f.dialogs()[0]->state, types::Dialog::State::Confirmed);
 }
 
-// And when the last branch fails, the attempt is over: the caller is told, and the call
-// and its media go.
+// When the last branch fails the caller is told, and the call and its media go.
 TEST(MediaProfileTest, TheAttemptEndsWithTheLastBranch) {
   ProfileFixture f("udp", "udp");
 
@@ -700,9 +655,8 @@ TEST(MediaProfileTest, TheAttemptEndsWithTheLastBranch) {
   EXPECT_EQ(f.engine->releases(), 1);
 }
 
-// Step 5: what a callee said in answer to an OPTIONS is its own word, and decides the
-// first offer towards it ahead of the subscriber, the realm and the transport.
-// AthenaPhone answers OPTIONS with a WebRTC description whatever it signals over.
+// What a callee said in answer to an OPTIONS decides the first offer towards it, ahead of the subscriber,
+// the realm and the transport.
 TEST(MediaProfileTest, WhatAQualifiedClientSaidDecidesTheFirstOfferTowardsIt) {
   ProfileFixture f("tcp", "udp");
   f.bob->media_profile = types::MediaPolicy::Profiles::PlainRtp;
@@ -732,9 +686,8 @@ TEST(MediaProfileTest, WhatAQualifiedClientSaidDecidesTheFirstOfferTowardsIt) {
   EXPECT_EQ(calls[0].flags.target, Flags::Profile::WebRtc);
 }
 
-// RFC 3264 section 5: an INVITE with no description has the callee make the offer, in its
-// 200, and that offer is produced for the caller - a leg that has said nothing yet. Its
-// subscriber is then the operator's word on it, as the callee's is for an ordinary offer.
+// RFC 3264 5: with no description in the INVITE, the callee's offer in its 200 is produced for the caller,
+// a leg that has said nothing, so its subscriber's setting decides.
 TEST(MediaProfileTest, ADelayedOfferIsProducedForTheCallersSubscriber) {
   ProfileFixture f("udp", "udp");
   f.alice->media_profile = types::MediaPolicy::Profiles::WebRtc;
@@ -749,8 +702,8 @@ TEST(MediaProfileTest, ADelayedOfferIsProducedForTheCallersSubscriber) {
   EXPECT_EQ(calls[0].flags.target, Flags::Profile::WebRtc);
 }
 
-// The media half of sip.localnet: a callee inside it is sent the relay's address as it
-// is seen from there, and a caller outside it is left to the engine's public address.
+// sip.localnet for media: a callee inside it is sent the relay's local address, and a caller outside it the
+// engine's public one.
 TEST(MediaProfileTest, ALegOnTheLanIsGivenTheLocalAddressForMedia) {
   ProfileFixture f("udp", "udp");
   f.config->sip_public_address = "203.0.113.5";

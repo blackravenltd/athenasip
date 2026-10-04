@@ -21,13 +21,8 @@
 
 namespace athenasip::plugins {
 
-// One registry for every kind of plugin, keyed by (kind, scheme). There were three
-// copy-pasted template registries before this, one per interface, which was fine for
-// three kinds and the wrong shape for a server whose plugin contract is the product:
-// adding a kind meant adding a registry.
-//
-// A built-in driver registers here exactly as an external one will. The only
-// difference is link time against load time.
+// The one registry for every kind of plugin, keyed by (kind, scheme). Built-in drivers
+// register here exactly as external ones do.
 class PluginRegistry {
  public:
   using Factory = std::function<std::shared_ptr<Plugin>(std::shared_ptr<loggers::Logger>, std::shared_ptr<types::URL>)>;
@@ -49,9 +44,8 @@ class PluginRegistry {
         });
   }
 
-  // Construct the driver registered for this kind and the URL's scheme. Returns
-  // nullptr when no driver is registered, or when the one that is was built against a
-  // different contract version.
+  // Constructs the driver registered for this kind and the URL's scheme. Returns nullptr
+  // when none is registered or its contract version does not match.
   std::shared_ptr<Plugin> create(std::shared_ptr<loggers::Logger> logger, const std::string& kind, const std::string& url_string) const;
 
   template <typename T, typename = std::enable_if_t<std::is_base_of_v<Plugin, T>>>
@@ -59,11 +53,11 @@ class PluginRegistry {
     return std::dynamic_pointer_cast<T>(create(std::move(logger), kind, url_string));
   }
 
-  // Everything registered, for diagnostics and for `athenasip plugins list` later.
+  // Everything registered, for diagnostics.
   std::vector<Registration> list() const;
   std::vector<std::string> schemes(const std::string& kind) const;
 
-  // Tests register drivers of their own; this puts the registry back.
+  // For tests that register drivers of their own.
   void clear();
 
  private:

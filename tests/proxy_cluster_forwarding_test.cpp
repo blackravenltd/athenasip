@@ -18,15 +18,14 @@ using namespace athenasip;
 
 namespace {
 
-// Two nodes and one datastore, seen from node "test-node". The 2026-09-20 decision: a
-// binding shares and a flow does not, so a node that reads a binding whose flow another
-// node holds forwards to that node, and that node delivers down the flow.
+// Two nodes and one datastore, seen from node "test-node". Bindings are shared and flows are not: a
+// node that reads a binding whose flow another node holds forwards to that node, which delivers.
 struct ClusterFixture : ProxyFixture {
   std::shared_ptr<MockConnection> peer_connection;
   std::shared_ptr<Channel> peer;
 
   ClusterFixture() {
-    // node-b, as it describes itself on the bus, and the mutual-TLS flow to it.
+    // node-b's status as published on the bus, and the mutual-TLS flow to it.
     hear("node-b", "ok", "198.51.100.80");
     peer = make_channel("198.51.100.80", &peer_connection, "tls", 5062);
     peer_connection->peer = "node-b";
@@ -38,8 +37,8 @@ struct ClusterFixture : ProxyFixture {
     on_strand([this, node, report]() { core->nodes()->observe(events::topics::node_status(node), report); });
   }
 
-  // Bob registered over a WebSocket that another node holds: a Contact that resolves to
-  // nothing, and a flow this node has no channel for.
+  // Bob registered over a WebSocket another node holds: an unresolvable Contact and a flow with no
+  // channel here.
   void bind_bob_on(const std::string& node, const std::string& flow = "wss://203.0.113.9:50000",
                    const std::string& contact = "sip:k3j2@n7.invalid;transport=ws") {
     types::Location binding;
@@ -67,8 +66,7 @@ struct ClusterFixture : ProxyFixture {
 
 }  // namespace
 
-// The call goes to the node that holds the flow, still addressed to Bob: that node reads
-// the same bindings and knows which of them are its own to deliver.
+// A call for a flow held elsewhere is forwarded to the holding node, still addressed to Bob.
 TEST(ProxyClusterForwardingTest, ACallForAFlowHeldElsewhereGoesToTheNodeThatHoldsIt) {
   ClusterFixture f;
   f.bind_bob_on("node-b");
@@ -81,8 +79,7 @@ TEST(ProxyClusterForwardingTest, ACallForAFlowHeldElsewhereGoesToTheNodeThatHold
   EXPECT_EQ(ProxyFixture::request_with(f.callee_connection, "INVITE"), nullptr);
 }
 
-// One request per node, however many of the subscriber's devices that node holds: the
-// peer forks to its own flows, and two copies would ring each of them twice.
+// A peer is sent one request however many of the subscriber's flows it holds; the peer forks to them.
 TEST(ProxyClusterForwardingTest, ANodeHoldingTwoFlowsIsSentOneRequest) {
   ClusterFixture f;
   f.bind_bob_on("node-b", "wss://203.0.113.9:50000", "sip:one@n7.invalid;transport=ws");
@@ -93,8 +90,7 @@ TEST(ProxyClusterForwardingTest, ANodeHoldingTwoFlowsIsSentOneRequest) {
   EXPECT_EQ(ProxyFixture::requests_with(f.peer_connection, "INVITE").size(), 1u);
 }
 
-// A device registered here and another on node-b: the local one is offered the call down
-// its own flow, and node-b is sent the request for the other.
+// With one device registered here and one on node-b, the local flow and the peer are both tried.
 TEST(ProxyClusterForwardingTest, LocalFlowsAndAPeersAreBothTried) {
   ClusterFixture f;
   f.bind_bob();
@@ -103,7 +99,7 @@ TEST(ProxyClusterForwardingTest, LocalFlowsAndAPeersAreBothTried) {
   f.receive(f.caller, f.invite());
   ASSERT_TRUE(ProxyFixture::request_with(f.callee_connection, "INVITE") != nullptr || ProxyFixture::request_with(f.peer_connection, "INVITE") != nullptr);
 
-  // The fork is serial, so the second is tried when the first has refused.
+  // The fork is serial: the second target is tried once the first has refused.
   auto first_local = ProxyFixture::request_with(f.callee_connection, "INVITE") != nullptr;
   f.receive(first_local ? f.callee : f.peer, ClusterFixture::response_to_latest_on(first_local ? f.callee_connection : f.peer_connection, 486, "Busy Here"));
 
@@ -111,10 +107,8 @@ TEST(ProxyClusterForwardingTest, LocalFlowsAndAPeersAreBothTried) {
   EXPECT_NE(ProxyFixture::request_with(f.peer_connection, "INVITE"), nullptr);
 }
 
-// What a peer sends is delivered to this node's own flows and never sent on to another
-// node. A peer forwards because it read a binding held here; sending it back out to
-// whoever holds the subscriber's other bindings is that peer's job, and doing it here too
-// would ring those devices twice or send the request round in a circle.
+// A request from a peer is delivered to this node's own flows only. Forwarding it on would ring
+// other devices twice or loop.
 TEST(ProxyClusterForwardingTest, ARequestFromAPeerIsDeliveredLocallyAndNeverForwardedOn) {
   ClusterFixture f;
   f.hear("node-c", "ok", "198.51.100.81");
@@ -132,9 +126,7 @@ TEST(ProxyClusterForwardingTest, ARequestFromAPeerIsDeliveredLocallyAndNeverForw
   EXPECT_EQ(ProxyFixture::request_with(f.peer_connection, "INVITE"), nullptr);
 }
 
-// A node that has said it is down, or has gone quiet, or was never heard from, is not one
-// to forward to: the flow it held went with it, and the client will register again
-// somewhere that is up.
+// Nothing is forwarded to a node that is down, stale or unknown: its flows went with it.
 TEST(ProxyClusterForwardingTest, NothingIsForwardedToANodeThatIsNotUp) {
   ClusterFixture f;
   f.hear("node-b", "down", "198.51.100.80");
@@ -145,9 +137,8 @@ TEST(ProxyClusterForwardingTest, NothingIsForwardedToANodeThatIsNotUp) {
   EXPECT_EQ(ProxyFixture::request_with(f.peer_connection, "INVITE"), nullptr);
 }
 
-// The Record-Route this node writes towards a peer names its inter-node listener, which is
-// where the peer can reach it again for the ACK and the BYE. The address of the connection
-// the request went out on would be a port nothing listens on once that connection closes.
+// The Record-Route towards a peer names this node's inter-node listener, where the peer can reach
+// it for the ACK and BYE, not the ephemeral source of the outbound connection.
 TEST(ProxyClusterForwardingTest, TheRecordRouteTowardsAPeerNamesTheInterNodeListener) {
   ClusterFixture f;
   f.on_strand([&f]() {
@@ -168,9 +159,7 @@ TEST(ProxyClusterForwardingTest, TheRecordRouteTowardsAPeerNamesTheInterNodeList
   EXPECT_NE(facing_peer.find("transport=tls"), std::string::npos) << facing_peer;
 }
 
-// One node writes a call's record: the one the caller reached. A node a peer forwarded the
-// call to carries it and records nothing, or two nodes would take turns to overwrite one
-// record with half of it each.
+// Only the node the caller reached writes the call record; a node a peer forwarded to records nothing.
 TEST(ProxyClusterForwardingTest, ACallAPeerForwardedIsNotRecordedHere) {
   ClusterFixture f;
   f.bind_bob();
@@ -183,8 +172,7 @@ TEST(ProxyClusterForwardingTest, ACallAPeerForwardedIsNotRecordedHere) {
   EXPECT_TRUE(f.store->call_list().empty());
 }
 
-// And the record the first node writes says which node held the callee, which is where
-// the answer came from.
+// The call record names the node that held the callee.
 TEST(ProxyClusterForwardingTest, TheRecordNamesTheNodeThatHeldTheCallee) {
   ClusterFixture f;
   f.bind_bob_on("node-b");

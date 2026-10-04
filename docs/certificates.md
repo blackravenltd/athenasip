@@ -1,9 +1,8 @@
-# Certificates for a cluster
+# AthenaSIP - Certificates for a cluster
 
-Nodes in a cluster talk SIP to each other over mutual TLS. Each node proves who it is with a
-certificate signed by the cluster's own certificate authority, and trusts what that
-authority signed and nothing else. AthenaSIP makes both, so nothing here needs OpenSSL's
-command line.
+Nodes in a cluster talk SIP to each other over mutual TLS. Each node holds a certificate
+signed by the cluster's own certificate authority and trusts only what that authority
+signed. AthenaSIP makes both; no `openssl` commands are needed.
 
 ## Make the authority, once
 
@@ -11,11 +10,10 @@ command line.
 athenasip --ca-init
 ```
 
-This writes `ca.key` and `ca.crt` to `~/.athenasip/ca` (or to `--ca-dir PATH`). The key is
-the cluster: anyone holding it can make a certificate every node will trust. Keep it on one
-machine, readable only by you, and somewhere it is backed up. AthenaSIP writes it readable
-by its owner only, and refuses to make a second authority over the first, because that
-would orphan every node certificate the first one signed.
+This writes `ca.key` and `ca.crt` to `~/.athenasip/ca`, or to `--ca-dir PATH`. Anyone
+holding `ca.key` can make a certificate every node will trust: keep it on one machine,
+backed up. It is written readable by its owner only. `--ca-init` refuses to overwrite an
+existing authority, because that would orphan every certificate it signed.
 
 ## Issue each node its certificate
 
@@ -23,13 +21,11 @@ would orphan every node certificate the first one signed.
 athenasip --ca-node node-a --san 10.35.1.20 --san node-a.example.com
 ```
 
-This writes `node-a.key` and `node-a.crt` beside the authority. The certificate names the
-node id and every address and host name given with `--san`, which should be every way
-another node reaches it. It is good for both ends of a TLS connection, which mutual TLS
-needs. A node certificate lasts two years. Issue it again with `--replace` to renew it or to
-change its names. The authority lasts ten years.
+This writes `node-a.key` and `node-a.crt` beside the authority. Give a `--san` for every
+address and host name another node reaches this one by. `--replace` issues again over an
+existing certificate, to renew it or change its names.
 
-Copy `ca.crt`, `node-a.crt` and `node-a.key` to node A. Only `ca.key` stays behind.
+Copy `ca.crt`, `node-a.crt` and `node-a.key` to node A. `ca.key` stays where it is.
 
 ## Use them
 
@@ -44,20 +40,22 @@ cluster:
   key: /etc/athenasip/cluster/node-a.key
 ```
 
-This is the inter-node listener. A peer has to show a certificate the cluster CA signed,
-and the node records which node it is from that certificate. The same certificates are used
-for the TLS connections this node opens to its peers, where the peer's certificate has to
-be signed by the cluster CA and name the address that was dialled. A `cluster` section
-enabled without all three files stops the node at start-up, because a cluster listener
-that cannot tell a node from anybody else would be open to anyone.
+This is the inter-node listener. A peer must present a certificate the cluster CA
+signed. The same files are used for the connections this node opens to its peers, where
+the peer's certificate must also name the address that was dialled. A node with
+`cluster.enable` set and any of the three files missing refuses to start.
 
-`advertise` is what this node tells its peers to dial, in its status on the event bus. It
-has to be a name or an address the node's certificate carries (`--san`), because a peer
-checks the certificate against what it dialled. Left out, it is `address`, and where that
-is `0.0.0.0`, `sip.public_address`.
+`advertise` is the name or address this node tells its peers to dial. It must be one the
+node's certificate carries (`--san`). It defaults to `address`, or to
+`sip.public_address` where `address` is `0.0.0.0`.
 
-## What it makes
+`athenasip --check` verifies the certificates and tries the other nodes.
 
-Keys are EC P-256. The authority is `CA:TRUE` with a path length of zero, so it signs node
-certificates and cannot sign another authority. Node certificates are `CA:FALSE`, for
-digital signature and key agreement, and both server and client authentication.
+## What is made
+
+| | Authority | Node |
+|---|---|---|
+| Key | EC P-256 | EC P-256 |
+| Lifetime | ten years | two years |
+| Basic constraints | `CA:TRUE`, path length 0 | `CA:FALSE` |
+| Usage | certificate and CRL signing | digital signature, key agreement; server and client authentication |

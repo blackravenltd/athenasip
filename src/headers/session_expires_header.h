@@ -21,9 +21,7 @@ namespace athenasip::headers {
 //   refresher-param  = "refresher" EQUAL ("uas" / "uac")
 //   Min-SE           = "Min-SE" HCOLON delta-seconds *(SEMI generic-param)
 //
-// One type for both. Min-SE is the same delta-seconds with no refresher, and a field
-// that cannot carry one simply leaves it empty; giving it a type of its own would buy
-// nothing but a second parser to keep in step.
+// One type for both: Min-SE is the same delta-seconds with no refresher.
 class SessionExpiresHeader : public Header {
  public:
   SessionExpiresHeader() = default;
@@ -36,13 +34,10 @@ class SessionExpiresHeader : public Header {
 
   std::uint32_t delta_seconds = 0;
 
-  // "uac" or "uas", lower-cased (7.3.1 makes parameter names case-insensitive and 4028
-  // gives the value only these two spellings). Empty when the field did not say, which
-  // RFC 4028 section 7.1 allows and leaves for the endpoints to settle.
+  // "uac" or "uas", lower-cased. Empty when the field did not say, which RFC 4028 section 7.1 allows.
   std::string refresher;
 };
 
-// Register this field type
 struct SessionExpiresHeaderRegister {
   SessionExpiresHeaderRegister() {
     auto reg = []() { return std::make_shared<SessionExpiresHeader>(); };

@@ -244,8 +244,7 @@ def connect(args, transport):
         if "101" not in text.split(CRLF, 1)[0]:
             raise ConnectionError("the upgrade was refused: " + text.split(CRLF, 1)[0])
 
-        # RFC 7118 section 4: a server that does not name the subprotocol back is a
-        # server a client is entitled to conclude does not speak SIP.
+        # RFC 7118 section 4: the server must name the sip subprotocol back.
         if "sip" not in (header(text, "Sec-WebSocket-Protocol") or ""):
             raise ConnectionError("the server did not name the sip subprotocol")
 
@@ -293,9 +292,7 @@ def main():
     parser.add_argument("--ws-path", default="/ws")
     parser.add_argument("--user", default="1001")
     parser.add_argument("--password", default="athenaphone")
-    # The realm is named for the address a client dialled, so it follows the host unless
-    # it is given. A fixture off loopback - rtpengine's, which advertises this machine's
-    # own address - would otherwise be registered against the wrong realm.
+    # The realm defaults to the host dialled, which is how the fixture names it.
     parser.add_argument("--realm", default=None)
     parser.add_argument("--timeout", type=float, default=5.0)
     parser.add_argument(

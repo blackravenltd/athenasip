@@ -22,13 +22,8 @@ using athenasip::media::Result;
 
 namespace {
 
-// An engine that anchors nothing and reports whatever idleness the test sets.
-//
-// The relay's own clock is the real one, because it is stamped in the receive handler on
-// the packet path and a manual clock has no business there. That leaves the sweep's own
-// behaviour - read the engine's answer, decide, tear the call down - needing a way to be
-// asked a question whose answer the test chooses. The relay's half, that a packet
-// arriving resets the reading, is a builtin engine test.
+// An engine that anchors nothing and reports whatever idleness the test sets. The builtin relay
+// stamps activity from the real clock, so the sweep is tested against this stub instead.
 class StubMediaEngine : public MediaEngine {
  public:
   std::atomic<std::int64_t> idle_seconds{0};
@@ -52,8 +47,7 @@ class StubMediaEngine : public MediaEngine {
     return capabilities;
   }
 
-  // The description travels on untouched. This engine is here for what it says about a
-  // call, not for what it does to one.
+  // SDP passes through untouched.
   void offer(plugins::Executor on, std::shared_ptr<Call> call, std::string sdp, Flags flags, MediaHandler handler) override {
     (void)call;
     (void)flags;
@@ -94,7 +88,7 @@ struct SweepFixture : ProxyFixture {
     bind_bob();
   }
 
-  // Alice calls Bob and Bob answers, which is what makes a confirmed dialog.
+  // Alice calls Bob and Bob answers: a confirmed dialog.
   void connect_call() {
     receive(caller, invite());
     receive(callee, response_from_callee(200, "OK"));
@@ -109,10 +103,8 @@ struct SweepFixture : ProxyFixture {
 
 }  // namespace
 
-// A phone that loses power sends no BYE, and a call between two endpoints that never
-// negotiated a session timer has no expiry of its own. Nothing in the signalling plane
-// will ever say that call ended, so the node held its dialog, its call record and its
-// relay ports until the process restarted - and the ports are a finite pool.
+// A call whose media has been idle for sip_media_timeout is torn down and its relay released: an
+// endpoint that vanishes sends no BYE, and relay ports are a finite pool.
 TEST(CoreMediaSweepTest, ACallWhoseMediaHasStoppedIsLetGo) {
   SweepFixture f;
   f.config->sip_media_timeout = 300;
@@ -120,12 +112,12 @@ TEST(CoreMediaSweepTest, ACallWhoseMediaHasStoppedIsLetGo) {
   f.connect_call();
   ASSERT_EQ(f.dialogs().size(), 1u);
 
-  // Media still flowing. However long the call runs, it is not this node's to end.
+  // Media still flowing: the call stays however long it runs.
   f.engine->idle_seconds = 0;
   f.advance(std::chrono::seconds(3600));
   EXPECT_EQ(f.dialogs().size(), 1u);
 
-  // Quiet, but not for long enough yet.
+  // Idle, but for less than the timeout.
   f.engine->idle_seconds = 299;
   f.advance(std::chrono::seconds(120));
   EXPECT_EQ(f.dialogs().size(), 1u);
@@ -137,11 +129,7 @@ TEST(CoreMediaSweepTest, ACallWhoseMediaHasStoppedIsLetGo) {
   EXPECT_GT(f.engine->releases.load(), 0);
 }
 
-// RFC 4028 section 8.3: "the proxy MAY remove associated call state, and MAY free any
-// resources associated with the call. Unlike the UA, it MUST NOT send a BYE." This node
-// is on the path of the dialog, not an end of it, and a BYE from here would be it acting
-// as a user agent in somebody else's call. Both ends run their own timers and will each
-// send their own when they notice.
+// RFC 4028 section 8.3: a proxy may drop call state and free resources but MUST NOT send a BYE.
 TEST(CoreMediaSweepTest, NoByeIsSentToEitherEnd) {
   SweepFixture f;
   f.config->sip_media_timeout = 60;
@@ -158,7 +146,7 @@ TEST(CoreMediaSweepTest, NoByeIsSentToEitherEnd) {
   EXPECT_TRUE(ProxyFixture::requests_with(f.callee_connection, "BYE").empty());
 }
 
-// Zero is off, and off has to mean the node never ends a call on its own subscriber.
+// sip_media_timeout: 0 turns the media timeout off.
 TEST(CoreMediaSweepTest, ATimeoutOfZeroNeverEndsACall) {
   SweepFixture f;
   f.config->sip_media_timeout = 0;
@@ -172,9 +160,7 @@ TEST(CoreMediaSweepTest, ATimeoutOfZeroNeverEndsACall) {
   EXPECT_EQ(f.dialogs().size(), 1u);
 }
 
-// An engine holding nothing for a call is not an engine reporting a very idle one. Where
-// the media went end to end - the engine declined the description, or a realm passes it
-// through - there is nothing to watch and nothing to conclude.
+// A call the engine holds no media for (media end to end) reports no idleness and is left alone.
 TEST(CoreMediaSweepTest, ACallTheEngineHoldsNothingForIsLeftAlone) {
   SweepFixture f;
   f.config->sip_media_timeout = 60;
@@ -188,12 +174,8 @@ TEST(CoreMediaSweepTest, ACallTheEngineHoldsNothingForIsLeftAlone) {
   EXPECT_EQ(f.dialogs().size(), 1u);
 }
 
-// The backstop for the calls the media question cannot reach: one whose media went end to
-// end has nothing to watch, and one between two endpoints that neither implement RFC 4028
-// gets no session timer however willing this node is to offer one.
-//
-// It is blunt by nature - a legitimate call of that length is cut - which is why it is
-// off unless somebody sets it.
+// sip_max_call_duration is the backstop for calls with no anchored media and no session timer
+// (RFC 4028). It cuts legitimate long calls too, so it is off by default.
 TEST(CoreMediaSweepTest, ACallLongerThanTheMaximumIsLetGo) {
   SweepFixture f;
   f.config->sip_media_timeout = 0;
@@ -209,8 +191,7 @@ TEST(CoreMediaSweepTest, ACallLongerThanTheMaximumIsLetGo) {
   EXPECT_EQ(f.dialogs().size(), 0u);
 }
 
-// It reaches a call this node anchors nothing for, which is the whole point of having it
-// as well as the media timeout.
+// The maximum applies to a call this node anchors no media for.
 TEST(CoreMediaSweepTest, TheMaximumReachesACallWithNoMediaToWatch) {
   SweepFixture f;
   f.config->sip_media_timeout = 300;
@@ -220,7 +201,7 @@ TEST(CoreMediaSweepTest, TheMaximumReachesACallWithNoMediaToWatch) {
   f.engine->holds_media = false;
   ASSERT_EQ(f.dialogs().size(), 1u);
 
-  // The media question says nothing about this call at all.
+  // The media timeout does not apply: there is no media to watch.
   f.advance(std::chrono::seconds(900));
   EXPECT_EQ(f.dialogs().size(), 1u);
 
@@ -228,7 +209,7 @@ TEST(CoreMediaSweepTest, TheMaximumReachesACallWithNoMediaToWatch) {
   EXPECT_EQ(f.dialogs().size(), 0u);
 }
 
-// Zero is off, and a node with no cap holds a call for as long as the endpoints keep it.
+// sip_max_call_duration: 0 turns the cap off.
 TEST(CoreMediaSweepTest, AMaximumOfZeroNeverEndsACall) {
   SweepFixture f;
   f.config->sip_media_timeout = 300;
@@ -243,8 +224,7 @@ TEST(CoreMediaSweepTest, AMaximumOfZeroNeverEndsACall) {
   EXPECT_EQ(f.dialogs().size(), 1u);
 }
 
-// Section 8.3 again, for the other half of the sweep: whatever made this node decide the
-// call is over, it says nothing to either end about it.
+// RFC 4028 section 8.3 holds for the duration cap too: no BYE to either end.
 TEST(CoreMediaSweepTest, TheMaximumSendsNoByeEither) {
   SweepFixture f;
   f.config->sip_media_timeout = 0;

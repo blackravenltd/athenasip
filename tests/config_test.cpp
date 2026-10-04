@@ -21,8 +21,7 @@ using namespace athenasip;
 
 namespace {
 
-// A configuration file of its own per test, removed with the fixture. Config reads a
-// path rather than a string, which is the same thing the node does at startup.
+// A temporary configuration file per test: Config loads from a path, as the node does at startup.
 struct ConfigFile {
   std::shared_ptr<MockLogger> logger = std::make_shared<MockLogger>();
   std::filesystem::path path;
@@ -54,8 +53,7 @@ struct ConfigFile {
 
 }  // namespace
 
-// RFC 7118 over TLS. A browser will not open an insecure WebSocket from a page served
-// over https, so this is what says a web client can reach the node at all.
+// websocket.tls with a certificate and key configures a wss listener (RFC 7118).
 TEST(ConfigTest, ReadsASecureWebsocketListener) {
   ConfigFile file(
       "sip:\n  node_id: test-node\n"
@@ -78,9 +76,7 @@ TEST(ConfigTest, ReadsASecureWebsocketListener) {
   EXPECT_EQ(config->websocket_key_pem_filename, "../tls/snakeoil.key");
 }
 
-// ws:// is what the listener is without the section saying otherwise, and it stays for
-// local development. Nothing about the plain listener changed when the secure one
-// arrived.
+// The WebSocket listener is plain ws:// unless websocket.tls is set.
 TEST(ConfigTest, AWebsocketListenerIsPlainUnlessItSaysOtherwise) {
   ConfigFile file(
       "sip:\n  node_id: test-node\n"
@@ -97,9 +93,7 @@ TEST(ConfigTest, AWebsocketListenerIsPlainUnlessItSaysOtherwise) {
   EXPECT_FALSE(config->websocket_tls);
 }
 
-// A listener asked to be secure with nothing to be secure with must not start. Falling
-// back to ws:// would be a node quietly serving a browser in the clear, which is the
-// failure nobody notices.
+// websocket.tls without both certificate and key is refused, never downgraded to ws://.
 TEST(ConfigTest, ASecureWebsocketListenerWithoutCertificatesIsRefused) {
   ConfigFile without_key(
       "sip:\n  node_id: test-node\n"
@@ -137,11 +131,7 @@ TEST(ConfigTest, ASecureWebsocketListenerWithoutCertificatesIsRefused) {
   EXPECT_FALSE(ok);
 }
 
-// The node ships defaulting to what needs no external service, which is the whole of the
-// "easy to install" principle in one line: a config that says nothing has to start.
-// A listener turned off does not need a port. Refusing to start over the port of
-// something that will never listen is the kind of thing that makes a server feel
-// hostile to configure, and principle 3 is that it should not.
+// A disabled listener needs no port.
 TEST(ConfigTest, AListenerThatIsOffNeedsNoPort) {
   ConfigFile file(
       "sip:\n  node_id: test-node\n"
@@ -157,8 +147,7 @@ TEST(ConfigTest, AListenerThatIsOffNeedsNoPort) {
   EXPECT_EQ(config->udp_port, 5060);
 }
 
-// A listener that is on still does: binding somewhere nobody asked for is worse than
-// saying the configuration is incomplete.
+// An enabled listener without a port is refused.
 TEST(ConfigTest, AListenerThatIsOnStillNeedsAPort) {
   ConfigFile file(
       "sip:\n  node_id: test-node\n"
@@ -170,6 +159,7 @@ TEST(ConfigTest, AListenerThatIsOnStillNeedsAPort) {
   EXPECT_FALSE(ok);
 }
 
+// A configuration that sets only the node id starts, on drivers that need no external service.
 TEST(ConfigTest, DefaultsNeedNoExternalService) {
   ConfigFile file("sip:\n  node_id: test-node\n");
 
@@ -181,9 +171,8 @@ TEST(ConfigTest, DefaultsNeedNoExternalService) {
   EXPECT_EQ(config->media_url, "builtin://");
 }
 
-// RFC 3261 16.6 step 11: "The timer MUST be larger than 3 minutes." A node configured
-// under that would give up on calls that are only still ringing, so the value is refused
-// and the default kept rather than honoured.
+// Timer C must be larger than 3 minutes (RFC 3261 16.6 step 11); a lower value is ignored and the
+// default kept.
 TEST(ConfigTest, TimerCBelowTheRfcFloorIsRefused) {
   ConfigFile file(
       "sip:\n  node_id: test-node\n"
@@ -210,10 +199,7 @@ TEST(ConfigTest, TimerCAboveTheRfcFloorIsTaken) {
   EXPECT_EQ(config->sip_timer_c_invite_proxy_ms, 300000u);
 }
 
-// RFC 4028 section 8.1: the minimum a proxy quotes in a 422 "MUST NOT be lower than 90
-// seconds". Section 4 explains why: it is a bit more than twice the longest a SIP
-// transaction can take, so below it a refresh could not complete before the session it
-// was refreshing expired.
+// Min-SE must not be lower than 90 seconds (RFC 4028 section 8.1); a lower value is not taken.
 TEST(ConfigTest, ASessionMinimumBelowTheRfcFloorIsRefused) {
   ConfigFile file(
       "sip:\n  node_id: test-node\n"
@@ -264,8 +250,7 @@ TEST(ConfigTest, TheBehaviourSectionSetsTheServerDefault) {
   EXPECT_EQ(config->behaviour.profiles, types::MediaPolicy::Profiles::FromTransport);
 }
 
-// A misspelt profile is a node doing something other than what its operator wrote, so it
-// does not start.
+// An unknown media_profile is refused.
 TEST(ConfigTest, AnUnknownMediaProfileIsRefused) {
   ConfigFile file(
       "sip:\n  node_id: test-node\n"
@@ -277,8 +262,7 @@ TEST(ConfigTest, AnUnknownMediaProfileIsRefused) {
   EXPECT_FALSE(ok);
 }
 
-// It is what --print-config shows, because "what does this node do by default" is the
-// question that file answers.
+// The effective configuration (--print-config) shows the behaviour defaults.
 TEST(ConfigTest, TheEffectiveConfigurationShowsTheBehaviourDefault) {
   ConfigFile file("sip:\n  node_id: test-node\n");
 
@@ -292,8 +276,7 @@ TEST(ConfigTest, TheEffectiveConfigurationShowsTheBehaviourDefault) {
   EXPECT_NE(effective.find("media_anchor: true"), std::string::npos) << effective;
 }
 
-// Probing registered clients with OPTIONS is something servers do when configured to and
-// RFC 3261 does not ask for, so it is off unless the operator says how often.
+// OPTIONS qualifying of registered clients is off unless qualify_interval is set.
 TEST(ConfigTest, QualifyingIsOffUnlessAnIntervalIsGiven) {
   ConfigFile off("sip:\n  node_id: test-node\n");
   bool ok = false;
@@ -308,8 +291,7 @@ TEST(ConfigTest, QualifyingIsOffUnlessAnIntervalIsGiven) {
   EXPECT_EQ(config->behaviour_qualify_interval, 60u);
 }
 
-// Every few seconds is a flood across thousands of registrations, and a negative interval
-// is a mistake. Both stop the node rather than being read as something else.
+// A qualify_interval that is too short, too long, negative or not a number is refused.
 TEST(ConfigTest, AnUnusableQualifyIntervalIsRefused) {
   for (const auto* value : {"2", "-1", "often", "100000"}) {
     ConfigFile file(std::string("sip:\n  node_id: test-node\nbehaviour:\n  qualify_interval: ") + value + "\n");
@@ -319,8 +301,7 @@ TEST(ConfigTest, AnUnusableQualifyIntervalIsRefused) {
   }
 }
 
-// A proxy that rewrites a Contact changes what an endpoint said about itself, so it is off
-// unless asked for, and anything but true or false stops the node.
+// rewrite_contact defaults to false, and anything but a boolean is refused.
 TEST(ConfigTest, RewritingContactsIsOffUnlessAskedFor) {
   ConfigFile off("sip:\n  node_id: test-node\n");
   bool ok = false;
@@ -340,8 +321,8 @@ TEST(ConfigTest, RewritingContactsIsOffUnlessAskedFor) {
   EXPECT_FALSE(ok);
 }
 
-// The config: localnet is a list of prefixes, a bare address is a prefix of one, and
-// anything else stops the node. public_port belongs to each listener.
+// sip.localnet is a list of prefixes (a bare address is a host prefix); an invalid one is refused.
+// public_port is per listener.
 TEST(ConfigTest, LocalnetAndPublicPortsAreRead) {
   ConfigFile file(
       "sip:\n  node_id: test-node\n  public_address: 203.0.113.5\n  localnet: [\"10.0.0.0/8\", \"192.168.1.7\", \"fd00::/8\"]\n"
@@ -370,8 +351,7 @@ TEST(ConfigTest, LocalnetAndPublicPortsAreRead) {
   EXPECT_FALSE(ok);
 }
 
-// The inter-node listener is off unless asked for, and asked for without certificates it
-// would let anybody in, so that stops the node.
+// The cluster listener is off by default, and enabling it without ca, cert and key is refused.
 TEST(ConfigTest, TheClusterListenerNeedsItsCertificates) {
   ConfigFile off("sip:\n  node_id: test-node\n");
   bool ok = false;
@@ -395,9 +375,8 @@ TEST(ConfigTest, TheClusterListenerNeedsItsCertificates) {
   EXPECT_FALSE(ok);
 }
 
-// What a node tells its peers to dial. The certificate a peer checks has to name it, so an
-// operator can say; left unsaid it is the address the listener is bound to, and where that
-// is every address, the one the node is told the world reaches it at.
+// The address peers dial is cluster.advertise, else the bound cluster.address, else (wildcard bind)
+// sip.public_address. The node certificate must name it.
 TEST(ConfigTest, TheClusterAddressAPeerDialsIsSaidOrWorkedOut) {
   const std::string certificates = "  ca: /ca/ca.crt\n  cert: /ca/node-a.crt\n  key: /ca/node-a.key\n";
   bool ok = false;
@@ -423,8 +402,7 @@ TEST(ConfigTest, TheClusterAddressAPeerDialsIsSaidOrWorkedOut) {
   EXPECT_EQ(found->address, "203.0.113.5");
 }
 
-// The rate limits are the operator's to set (Tom, 2026-10-03), each one separately, and
-// what is not set keeps its default. Zero turns a limit off.
+// Each API rate limit is set separately; unset values keep their defaults, and zero turns a limit off.
 TEST(ConfigTest, TheRateLimitsAreConfigurable) {
   bool ok = false;
 
@@ -455,8 +433,8 @@ TEST(ConfigTest, TheRateLimitsAreConfigurable) {
   EXPECT_FALSE(ok);
 }
 
-// HTTPS on the admin listener is off unless asked for, sits beside plain HTTP on a port of
-// its own, and uses the tls section's certificate unless it names another.
+// Admin HTTPS is off by default, listens beside plain HTTP on its own port, and uses the tls
+// section's certificate unless http.tls names another.
 TEST(ConfigTest, TheAdminListenerOffersHttpsWhenAsked) {
   bool ok = false;
 
@@ -485,16 +463,15 @@ TEST(ConfigTest, TheAdminListenerOffersHttpsWhenAsked) {
   EXPECT_EQ(config->http_tls_port, 9443);
   EXPECT_EQ(config->http_tls_cert(), "/admin/admin.cer");
 
-  // Asked for with nothing to show is refused at start rather than found out by a browser.
+  // Enabled with no certificate available, it is refused.
   ConfigFile bare("sip:\n  node_id: test-node\nhttp:\n  port: 8080\n  tls:\n    enable: true\n");
   ok = true;
   bare.load(ok);
   EXPECT_FALSE(ok);
 }
 
-// A page served over HTTPS may only open a secure WebSocket, so a node that serves its
-// console over HTTPS needs wss; a plain one beside it is still what a local page or a test
-// client uses. Both, on a port each, and both advertised.
+// websocket.secure_port adds a wss listener beside the plain one; both are advertised, and the two
+// ports must differ.
 TEST(ConfigTest, ASecureWebSocketListenerSitsBesideThePlainOne) {
   bool ok = false;
 
@@ -522,8 +499,7 @@ TEST(ConfigTest, ASecureWebSocketListenerSitsBesideThePlainOne) {
   EXPECT_FALSE(ok);
 }
 
-// How much a node logs and in what shape is the operator's: a level, and text for a person
-// or JSON for a log shipper. The defaults are what a node did before there was a choice.
+// log.level and log.format (text or json) default to debug and text; an unknown level is refused.
 TEST(ConfigTest, TheLogSectionSetsTheLevelAndTheFormat) {
   bool ok = false;
 
@@ -558,9 +534,7 @@ TEST(ConfigTest, SessionLifetimesAreTakenFromTheApiSection) {
   EXPECT_EQ(config->http_api_session_idle, 900u);
 }
 
-// The absolute expiry is written on the session record and is what the datastore prunes
-// on, so there is no such thing as a session without one: Redis has no non-positive
-// SETEX to give it, and a record nothing expires is one that outlives the node.
+// Every session has an absolute expiry, which the datastore prunes on, so a lifetime of zero is refused.
 TEST(ConfigTest, ASessionLifetimeOfZeroIsRefused) {
   ConfigFile file(
       "sip:\n  node_id: test-node\n"
@@ -572,8 +546,7 @@ TEST(ConfigTest, ASessionLifetimeOfZeroIsRefused) {
   EXPECT_FALSE(ok);
 }
 
-// Zero is how an operator turns the idle rule off, which is a different thing from
-// leaving it out.
+// session_idle: 0 turns idle expiry off.
 TEST(ConfigTest, ASessionIdleOfZeroTurnsIdleExpiryOff) {
   ConfigFile file(
       "sip:\n  node_id: test-node\n"
@@ -599,20 +572,17 @@ TEST(ConfigTest, TheEffectiveConfigurationCarriesDefaultsNobodyWroteDown) {
 
   const auto effective = config->effective_yaml();
 
-  // What was written.
+  // What the file set.
   EXPECT_NE(effective.find("node_id: test-node"), std::string::npos);
   EXPECT_NE(effective.find("redis://127.0.0.1:6379"), std::string::npos);
 
-  // And what was decided, which is the point: the interesting half of what a node runs
-  // on is never in the file.
+  // Defaults the file did not set.
   EXPECT_NE(effective.find("session_min_se: 90"), std::string::npos);
   EXPECT_NE(effective.find("timer_t1_rtt_ms: 500"), std::string::npos);
   EXPECT_NE(effective.find("url: local://"), std::string::npos);
 }
 
-// Configured tokens were removed on 2026-10-01. A file that still sets them is refused,
-// and says what to do instead, rather than being read as if they were not there - which
-// would leave an operator unable to log in with no idea why.
+// http.api.tokens is not supported; a file that sets it is refused rather than silently ignored.
 TEST(ConfigTest, AConfigurationThatSetsApiTokensIsRefused) {
   ConfigFile file(
       "sip:\n  node_id: test-node\n"
@@ -640,9 +610,8 @@ TEST(ConfigTest, TheEffectiveConfigurationCarriesPluginSectionsThrough) {
   EXPECT_NE(effective.find("timeout_ms: 750"), std::string::npos);
 }
 
-// Carrying a plugin section through means copying what the server did not parse, and
-// events.status_interval is parsed. Emitting it from the field and again from the
-// document put the key in twice and gave a reader two answers.
+// A key the server parses (events.status_interval) appears once, even beside a plugin section that is
+// carried through verbatim.
 TEST(ConfigTest, TheEffectiveConfigurationSaysEachThingOnce) {
   ConfigFile file(
       "sip:\n  node_id: test-node\n"
@@ -662,10 +631,7 @@ TEST(ConfigTest, TheEffectiveConfigurationSaysEachThingOnce) {
   EXPECT_NE(effective.find("keep_alive: 30"), std::string::npos);
 }
 
-// The configuration this project ships as its example has to be one the node accepts.
-// It is the first thing anybody copies, and every setting in it is written as its own
-// default, so a key that has been renamed or removed shows up here rather than in
-// somebody's log.
+// config/config.example.yaml loads, and the defaults it documents match the code.
 TEST(ConfigTest, TheShippedExampleConfigurationLoads) {
   const std::string path = std::string(ATHENA_TEST_SOURCE_DIR) + "/config/config.example.yaml";
   ASSERT_TRUE(std::filesystem::exists(path)) << path;
@@ -675,8 +641,7 @@ TEST(ConfigTest, TheShippedExampleConfigurationLoads) {
 
   ASSERT_TRUE(config->load_from_yaml(path));
 
-  // Spot-check the values the file claims are the defaults, because a comment that has
-  // drifted from the code is worse than no comment.
+  // Spot-check the values the example documents as defaults.
   EXPECT_EQ(config->sip_media_timeout, 300u);
   EXPECT_EQ(config->sip_session_expires, 1800u);
   EXPECT_EQ(config->sip_session_min_se, 90u);
@@ -687,8 +652,7 @@ TEST(ConfigTest, TheShippedExampleConfigurationLoads) {
   EXPECT_EQ(config->http_api_session_lifetime, 12u * 60u * 60u);
   EXPECT_EQ(config->http_api_session_idle, 60u * 60u);
 
-  // What a monitor's staleness threshold is a multiple of, so it is worth the example
-  // saying it rather than leaving it to be discovered from the source.
+  // Monitors derive their staleness threshold from the status interval.
   EXPECT_EQ(config->events_status_interval, 30u);
   EXPECT_EQ(config->sip_flow_idle_timeout, 300u);
 }

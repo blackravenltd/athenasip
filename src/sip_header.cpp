@@ -10,11 +10,11 @@ namespace athenasip {
 
 namespace {
 
-// RFC 3261 20: the canonical long name for every field the RFC defines a compact form
-// for, plus the fields we look up by name elsewhere. Keys are lowercase.
+// Lowercase key to canonical field name: the compact forms (RFC 3261 7.3.3, 20) and the
+// fields looked up by name.
 const std::unordered_map<std::string, std::string>& canonical_names() {
   static const std::unordered_map<std::string, std::string> names = {
-      // Compact forms (RFC 3261 7.3.3, 20)
+      // Compact forms
       {"a", "Accept-Contact"},
       {"b", "Referred-By"},
       {"c", "Content-Type"},
@@ -31,7 +31,7 @@ const std::unordered_map<std::string, std::string>& canonical_names() {
       {"u", "Allow-Events"},
       {"v", "Via"},
       {"x", "Session-Expires"},
-      // Long forms, so any casing normalises to the spelling used for lookups
+      // Long forms, so any casing normalises to the lookup spelling
       {"accept", "Accept"},
       {"allow", "Allow"},
       {"authorization", "Authorization"},
@@ -60,8 +60,8 @@ const std::unordered_map<std::string, std::string>& canonical_names() {
   return names;
 }
 
-// RFC 3261 7.3.1: fields whose grammar is 1#(value). The credential fields are not
-// here on purpose - their commas separate auth parameters within a single value.
+// RFC 3261 7.3.1: fields whose grammar is 1#(value). Credential fields are excluded: their
+// commas separate auth parameters within one value.
 const std::set<std::string>& list_valued_names() {
   static const std::set<std::string> names = {
       "Accept",        "Accept-Encoding",  "Accept-Language",  "Alert-Info", "Allow",       "Call-Info",
@@ -85,7 +85,7 @@ std::string SIPHeader::canonical_field_name(const std::string& field_name) {
   auto it = names.find(to_lower_copy(Util::trim(field_name)));
   if (it != names.end()) return it->second;
 
-  // Unknown field: keep the spelling it arrived with. Lookups are case-insensitive.
+  // Unknown field: keep its spelling. Lookups are case-insensitive.
   return Util::trim(field_name);
 }
 
@@ -133,7 +133,7 @@ std::vector<std::string> SIPHeader::split_field_value(const std::string& value) 
 
   values.push_back(Util::trim(current));
 
-  // An unterminated quote or angle bracket means we cannot trust the split.
+  // An unterminated quote or angle bracket: do not split.
   if (in_quotes || angle_depth != 0) return {Util::trim(value)};
 
   return values;
@@ -153,7 +153,7 @@ void SIPHeader::add(const std::string& field_name, std::shared_ptr<headers::Head
 void SIPHeader::add(const std::string& field_name, const std::string& value) {
   const auto canonical = canonical_field_name(field_name);
 
-  // A comma-separated list is equivalent to separate rows (RFC 3261 7.3.1).
+  // A comma-separated list is equivalent to separate header fields (RFC 3261 7.3.1).
   if (is_list_valued(canonical)) {
     for (const auto& single : split_field_value(value)) add(canonical, headers::Header::create(canonical, single));
     return;
@@ -165,12 +165,10 @@ void SIPHeader::add(const std::string& field_name, const std::string& value) {
 void SIPHeader::add_start(const std::string& field_name, std::shared_ptr<headers::Header> value) {
   const auto canonical = canonical_field_name(field_name);
 
-  // Create a new HeaderField and push it into the vector.
   HeaderField hf{canonical, value};
   headers.insert(headers.begin(), hf);
 
-  // The map has to prepend too, or headers_map[field][0] is no longer the topmost
-  // value and Via lookups pick up the wrong hop.
+  // The map prepends too, so headers_map[field][0] stays the topmost value (the top Via).
   auto& vec = headers_map[canonical];
   vec.insert(vec.begin(), value);
 }
@@ -210,7 +208,6 @@ void SIPHeader::_store_parsed_field(const std::string& field_name, const std::st
 }
 
 void SIPHeader::parse(const std::string& sip_message) {
-  // Clear any previous state.
   headers.clear();
   headers_map.clear();
   _valid = true;
@@ -218,14 +215,13 @@ void SIPHeader::parse(const std::string& sip_message) {
   std::istringstream stream(sip_message);
   std::string line, current_key, current_value, request_uri_str;
 
-  // Read the request/response line (first line)
   if (std::getline(stream, line) && !Util::trim(line).empty()) {
     std::istringstream first_line_stream(line);
     std::string token;
     first_line_stream >> token;
 
     if (token == "SIP/2.0") {
-      // This is a SIP response. Status-Line is SIP-Version SP Status-Code SP Reason.
+      // Status-Line: SIP-Version SP Status-Code SP Reason-Phrase.
       type = Type::Response;
       sip_version = token;  // "SIP/2.0"
 
@@ -234,7 +230,7 @@ void SIPHeader::parse(const std::string& sip_message) {
       std::getline(first_line_stream, response_message);
       response_message = Util::trim(response_message);
     } else {
-      // This is a SIP request. Request-Line is Method SP Request-URI SP SIP-Version.
+      // Request-Line: Method SP Request-URI SP SIP-Version.
       type = Type::Request;
       request_method = token;
       first_line_stream >> request_uri_str >> sip_version;
@@ -249,15 +245,14 @@ void SIPHeader::parse(const std::string& sip_message) {
     _valid = false;
   }
 
-  // Process header lines
   while (std::getline(stream, line)) {
-    // getline splits on LF, so the CR of the CRLF pair is still on the end.
+    // getline splits on LF, leaving the CR.
     if (!line.empty() && line.back() == '\r') line.pop_back();
 
-    // Stop at an empty line (end of headers)
+    // The empty line ends the headers.
     if (line.empty()) break;
 
-    // If line begins with space or tab, it's a continuation of the previous header.
+    // Leading whitespace continues the previous header (line folding).
     if (!line.empty() && (line[0] == ' ' || line[0] == '\t')) {
       if (!current_key.empty()) {
         current_value += " " + Util::trim(line);
@@ -265,14 +260,13 @@ void SIPHeader::parse(const std::string& sip_message) {
       continue;
     }
 
-    // If we have a previous header pending, store it.
     if (!current_key.empty()) {
       _store_parsed_field(current_key, current_value);
       current_key.clear();
       current_value.clear();
     }
 
-    // Extract new header key and value. A header line with no colon is malformed.
+    // A header line with no colon is malformed.
     size_t colon_pos = line.find(':');
     if (colon_pos != std::string::npos) {
       current_key = line.substr(0, colon_pos);
@@ -282,14 +276,12 @@ void SIPHeader::parse(const std::string& sip_message) {
     }
   }
 
-  // Store the last header if present.
   if (!current_key.empty()) _store_parsed_field(current_key, current_value);
 }
 
 std::string SIPHeader::to_string() const {
   std::string out = first_line() + "\r\n";
 
-  // Add headers in order.
   for (const auto& header : headers) {
     out += header.key + ": " + header.value->to_string() + "\r\n";
   }

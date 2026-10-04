@@ -25,13 +25,8 @@ namespace servers {
 namespace websocket = boost::beast::websocket;
 using tcp = boost::asio::ip::tcp;
 
-// RFC 7118. A SIP WebSocket connection, over a plain TCP socket or over TLS.
-//
-// The next layer is a template parameter rather than two classes, because everything
-// below the websocket framing is identical: a browser's ws:// and its wss:// differ in
-// what carries the frames and in nothing this class does with them. The transport name
-// is carried rather than deduced, because it is the one thing that does differ and the
-// layers above route on it.
+// RFC 7118: a SIP WebSocket connection over a plain socket or TLS. The next layer is a template parameter because
+// nothing here depends on it. The transport name is carried, not deduced, because the layers above route on it.
 template <typename NextLayer>
 class WebsocketConnectionFor : public Connection, public std::enable_shared_from_this<WebsocketConnectionFor<NextLayer>> {
  public:
@@ -41,7 +36,7 @@ class WebsocketConnectionFor : public Connection, public std::enable_shared_from
 
   bool start() override {
     auto& socket = boost::beast::get_lowest_layer(*_ws);
-    // As TCPConnection: a peer that has gone has no address, and that is not an exception.
+    // The error_code forms, as in TCPConnection: a peer that has gone has no address.
     boost::system::error_code gone;
     _local_endpoint = socket.local_endpoint(gone);
     _remote_endpoint = socket.remote_endpoint(gone);
@@ -53,7 +48,7 @@ class WebsocketConnectionFor : public Connection, public std::enable_shared_from
   void async_read_some(boost::asio::mutable_buffer buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) override {
     auto self = this->shared_from_this();
     _ws->async_read_some(buffer, [self, handler](boost::system::error_code ec, std::size_t length) {
-      // Rationalise close error code
+      // A closed WebSocket is reported as eof, like any other transport.
       if (ec == websocket::error::closed || ec == boost::asio::error::not_connected) ec = boost::asio::error::eof;
       handler(ec, length);
     });
@@ -62,7 +57,7 @@ class WebsocketConnectionFor : public Connection, public std::enable_shared_from
   void async_write_some(boost::asio::const_buffer buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) override {
     auto self = this->shared_from_this();
     _ws->async_write_some(true, buffer, [self, handler](boost::system::error_code ec, std::size_t length) {
-      // Rationalise close error code
+      // A closed WebSocket is reported as eof, like any other transport.
       if (ec == websocket::error::closed || ec == boost::asio::error::not_connected) ec = boost::asio::error::eof;
       handler(ec, length);
     });
@@ -94,9 +89,7 @@ class WebsocketConnectionFor : public Connection, public std::enable_shared_from
   boost::asio::ip::tcp::endpoint _remote_endpoint;
 };
 
-// ws:// over a plain socket, and wss:// over TLS. Browsers need the second: a page
-// served over https may not open an insecure WebSocket, so wss is not a hardening option
-// for a web client but the only way in.
+// ws:// and wss://. A page served over https may only open wss.
 using WebsocketConnection = WebsocketConnectionFor<tcp::socket>;
 using WebsocketTLSConnection = WebsocketConnectionFor<boost::asio::ssl::stream<tcp::socket>>;
 

@@ -27,16 +27,14 @@ struct Hop {
   friend bool operator==(const Hop&, const Hop&) = default;
 };
 
-// RFC 3263 section 4: where a request for a SIP URI goes, as an ordered list of hops to try
-// in turn (4.3). NAPTR picks the transport, SRV the port and the hosts, A and AAAA the
-// addresses, and each step is skipped when the URI already says what it would have found.
+// RFC 3263 section 4: where a request for a SIP URI goes, as an ordered list of hops to try in turn (4.3). NAPTR
+// picks the transport, SRV the port and hosts, A and AAAA the addresses; a step is skipped when the URI already
+// answers it.
 //
-// Empty is an answer: the name exists and nothing serves SIP at it, or it does not exist.
-// A failure is only for not getting answers at all.
+// An empty list is an answer: nothing serves SIP at the name, or it does not exist. A failure means no answers at all.
 class SipLocator : public std::enable_shared_from_this<SipLocator> {
  public:
-  // The source of randomness for RFC 2782's weighted choice, in [0, total]. Injectable so a
-  // test can say which way the dice fall.
+  // The randomness for RFC 2782's weighted choice, in [0, total]. Injectable for tests.
   using Random = std::function<std::uint32_t(std::uint32_t total)>;
 
   explicit SipLocator(std::shared_ptr<Resolver> resolver, Random random = {});

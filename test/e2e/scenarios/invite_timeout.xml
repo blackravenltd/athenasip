@@ -2,12 +2,9 @@
 <!DOCTYPE scenario SYSTEM "sipp.dtd">
 
 <!--
-  RFC 3261 17.1.1.2: timer B is 64*T1. An INVITE to a subscriber with a binding that nothing
-  answers is retransmitted by the node until timer B fires, and the caller is then told
-  408 rather than left waiting.
-
-  This one takes 32 seconds by design: T1 is 500ms and 64*T1 is what the RFC says. The
-  harness runs it last for that reason.
+  RFC 3261 17.1.1.2: timer B is 64*T1. The node retransmits an INVITE that a registered
+  callee never answers until timer B fires, then tells the caller 408. This takes 32
+  seconds, so the harness runs it last.
 -->
 <scenario name="Caller: 408 when the callee never answers">
 
@@ -75,9 +72,8 @@
     ]]>
   </send>
 
-  <!-- RFC 3261 22.3: a subscriber proves who it is to the proxy as well as to the
-       registrar, and on UDP nothing else can prove it. The 407 is acknowledged as any
-       final non-2xx is (17.1.1.3) and the INVITE sent again with credentials. -->
+  <!-- RFC 3261 22.3: the proxy challenges the INVITE. The 407 is ACKed (17.1.1.3) and the
+       INVITE sent again with credentials. -->
   <recv response="100" optional="true"/>
   <recv response="407" auth="true"/>
 

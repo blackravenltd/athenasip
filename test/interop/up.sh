@@ -5,23 +5,20 @@
 # Copyright (C) 2026 Tom Cully <mail@tomcully.com>
 # Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 #
-# Brings up the interop fixture and provisions it over the admin API, which is the same
-# path an operator uses and a second check that the API works.
+# Brings up the interop fixture and provisions it over the admin API.
 #
 #   test/interop/up.sh              bring it up and provision it
 #   test/interop/up.sh --rtpengine  the same, with rtpengine on the media path
 #   test/interop/up.sh --admin      also serve the admin client, whose softphone is the
-#                                   browser end of the Milestone 3 harness
+#                                   browser end of the browser-call test
 #   test/interop/up.sh down         take it down
 #
-# The in-process relay is plain RTP, which is what an ordinary softphone expects. A
-# browser needs rtpengine, and --rtpengine also moves the fixture off loopback: the
-# address a client is told to send media to has to be one it can reach, and a phone on
-# a device is not on loopback.
+# The builtin relay is plain RTP, which suits an ordinary softphone. A browser needs
+# rtpengine, and --rtpengine also moves the fixture off loopback so that a phone on
+# another device can reach the media address.
 #
-# The ports default to the ones AthenaPhone's harness already uses for its Asterisk
-# fixture, so pointing that harness here changes a host and a CA. Move them to run both
-# at once:
+# The ports default to those AthenaPhone's harness uses for its Asterisk fixture. Move
+# them to run both at once:
 #
 #   ATHENA_INTEROP_SIP_PORT=15060 ATHENA_INTEROP_TLS_PORT=15061 \
 #   ATHENA_INTEROP_WS_PORT=18088  ATHENA_INTEROP_API_PORT=18080 \
@@ -53,9 +50,7 @@ export ATHENA_INTEROP_RTP_MIN="${ATHENA_INTEROP_RTP_MIN:-22000}"
 export ATHENA_INTEROP_RTP_MAX="${ATHENA_INTEROP_RTP_MAX:-22100}"
 export ATHENA_INTEROP_NAME="${ATHENA_INTEROP_NAME:-athenasip-interop}"
 
-# The address this host has on the network a client is on. Loopback is enough while the
-# client is a process on this machine; it is no use at all to a phone on the LAN or to
-# a browser told where to send its media, which is why rtpengine moves off it.
+# This host's address on its network. Loopback only serves clients on this machine.
 lan_address() {
   local interface
   if interface="$(route -n get default 2>/dev/null | awk '/interface:/{print $2}')" && [[ -n "$interface" ]]; then
@@ -77,8 +72,8 @@ fi
 export ATHENA_INTEROP_PUBLIC_ADDRESS="${ATHENA_INTEROP_PUBLIC_ADDRESS:-127.0.0.1}"
 PUBLIC_ADDRESS="$ATHENA_INTEROP_PUBLIC_ADDRESS"
 
-# What the host publishes the fixture on, which follows from the address it advertises:
-# a client on another device cannot reach a port published to loopback only.
+# The host address the fixture is published on: a client on another device cannot reach
+# a port published to loopback only.
 if [[ -z "${ATHENA_INTEROP_BIND:-}" ]]; then
   case "$PUBLIC_ADDRESS" in
     127.*|localhost) ATHENA_INTEROP_BIND="127.0.0.1" ;;
@@ -89,25 +84,21 @@ fi
 export ATHENA_INTEROP_BIND
 export ATHENA_INTEROP_RTPENGINE_ADDRESS="${ATHENA_INTEROP_RTPENGINE_ADDRESS:-172.32.0.30}"
 
-# What the engine writes into the session description. The public address unless told
-# otherwise; the engine's own address on the fixture network is what makes a relay-only call
-# work, because TURN needs only the TURN server to reach the peer and coturn is on that
-# network. A direct client cannot reach it that way, which is why browser.sh runs the two
-# cases separately rather than trying to serve both at once.
+# The address rtpengine writes into session descriptions. The engine's own address on the
+# fixture network makes a relay-only (TURN) call work but is unreachable to a direct
+# client, which is why browser.sh runs the two cases separately.
 export ATHENA_INTEROP_RTPENGINE_ADVERTISE="${ATHENA_INTEROP_RTPENGINE_ADVERTISE:-$PUBLIC_ADDRESS}"
 
 export ATHENA_INTEROP_TURN_PORT="${ATHENA_INTEROP_TURN_PORT:-3478}"
 export ATHENA_INTEROP_TURN_MIN="${ATHENA_INTEROP_TURN_MIN:-22300}"
 export ATHENA_INTEROP_TURN_MAX="${ATHENA_INTEROP_TURN_MAX:-22350}"
 
-# Per run rather than fixed. Nothing outside this fixture needs it, and a credential that
-# outlives the fixture is one somebody could still relay with.
+# Per run, so no TURN credential outlives the fixture.
 TURN_SECRET="${ATHENA_INTEROP_TURN_SECRET:-$(openssl rand -hex 16)}"
 export ATHENA_INTEROP_NG_PORT="${ATHENA_INTEROP_NG_PORT:-22222}"
 export ATHENA_INTEROP_LOG_MESSAGES="${ATHENA_INTEROP_LOG_MESSAGES:-true}"
 
-# The engine is named by URL and nothing else changes, which is the plugin contract
-# doing its job: the node is the same node either way.
+# The engine is selected by URL; nothing else in the node's configuration changes.
 if [[ "$ENGINE" == "rtpengine" ]]; then
   MEDIA_URL="rtpengine://${ATHENA_INTEROP_RTPENGINE_ADDRESS}:22222"
 else
@@ -115,19 +106,15 @@ else
 fi
 
 API="http://127.0.0.1:${ATHENA_INTEROP_API_PORT}/api/v1"
-# The fixture's user, created by the node as it starts. A password per run rather than one
-# checked in, because this fixture can be bound to the LAN.
+# The fixture's user, created by the node as it starts, with a password per run because
+# the fixture can be bound to the LAN.
 export ATHENA_INTEROP_API_USER="${ATHENA_INTEROP_API_USER:-interop}"
 export ATHENA_INTEROP_API_PASSWORD="${ATHENA_INTEROP_API_PASSWORD:-$(openssl rand -hex 10)}"
 
-# The realm is named for the domain a client puts in its From and To, which for a
-# fixture on loopback is the address it dialled. A realm named anything else is one the
-# registrar will not find (RFC 3261 10.3 step 2).
+# The realm is the domain clients put in From and To (RFC 3261 10.3 step 2).
 REALM="${ATHENA_INTEROP_REALM:-${PUBLIC_ADDRESS}}"
 
-# Taking it down names the overlay whether or not it was asked for, because compose
-# removes what the files it was given describe: a down that did not name it would leave
-# the rtpengine container's network behind.
+# down always names the overlay, or compose would leave the rtpengine network behind.
 COMPOSE_FILES=(-f "$HERE/docker-compose.yml")
 if [[ "$ENGINE" == "rtpengine" || "$ACTION" == "down" ]]; then
   COMPOSE_FILES+=(-f "$HERE/docker-compose.rtpengine.yml")
@@ -138,20 +125,15 @@ compose() { docker compose -p "${ATHENA_INTEROP_NAME}" "${COMPOSE_FILES[@]}" "$@
 if [[ "$ACTION" == "down" ]]; then
   compose down --remove-orphans
 
-  # The rendered state goes with the containers. A fixture.env describing a fixture that is
-  # not running is worse than none: it reads as current, and the ports and the TURN secret in
-  # it are whatever the last run happened to use.
+  # Remove the rendered state too, so a stale fixture.env is not read as current.
   rm -f "$HERE/generated/fixture.env" "$HERE/generated/config.yaml" "$HERE/generated/coturn/turnserver.conf"
   exit 0
 fi
 
-# Anything left from a previous run goes first, so that bringing the fixture up twice
-# works and the check below does not find this fixture's own ports.
+# Remove a previous run so the port check does not find this fixture's own ports.
 compose down --remove-orphans >/dev/null 2>&1 || true
 
-# A port already taken is the common way this fails, and Docker's own message does not
-# say who has it. Asterisk on the same ports is the likely answer, because this fixture
-# deliberately uses them.
+# Docker does not say who holds a taken port. Asterisk is likely: the defaults match its.
 taken=()
 for port in "$ATHENA_INTEROP_SIP_PORT" "$ATHENA_INTEROP_TLS_PORT" "$ATHENA_INTEROP_WS_PORT" "$ATHENA_INTEROP_API_PORT"; do
   if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then taken+=("$port"); fi
@@ -177,11 +159,8 @@ MSG
   exit 1
 fi
 
-# The checked-in certificate names loopback and nothing else, so a fixture advertising
-# this machine's own address serves one that does not name what the client dialled -
-# which fails verification however good the chain is. Sign a second one for this
-# address with the same CA, so a client that already trusts tls/ca/snakeca.crt needs
-# nothing new, and serve that instead.
+# The checked-in certificate names only loopback. For any other address, sign a second
+# one with the same CA, so a client trusting tls/ca/snakeca.crt needs nothing new.
 export ATHENA_INTEROP_TLS_DIR="../../tls"
 
 case "$PUBLIC_ADDRESS" in
@@ -193,9 +172,7 @@ case "$PUBLIC_ADDRESS" in
     ;;
 esac
 
-# The admin client is built in its own repository and its output is mounted here rather
-# than checked in: a built bundle in this tree would be a copy that goes stale, and the
-# client is versioned where it is written.
+# The admin client is built in its own repository and mounted when present.
 export ATHENA_INTEROP_ADMIN_DIR="${ATHENA_INTEROP_ADMIN_DIR:-$HERE/../../../athenasip-admin/build}"
 FILES_ENABLE="false"
 
@@ -219,15 +196,12 @@ MSG
 open the softphone over loopback like that whatever the node advertises: localhost is a
 secure origin, which is what getUserMedia needs."
 else
-  # Nothing to serve, and a mount that has to resolve to something: the fixture's own
-  # generated directory is there in every case and is never served, because files are
-  # disabled.
+  # The mount must still resolve: this directory always exists, and file serving is off.
   ATHENA_INTEROP_ADMIN_DIR="$HERE/generated"
   ADMIN_NOTE="No admin client served. Add --admin for the softphone the browser harness drives."
 fi
 
-# ICE, and only with rtpengine: coturn is in that overlay, and telling a client about a TURN
-# server that is not running leaves it worse off than telling it about none.
+# ICE servers only with rtpengine: coturn is in that overlay.
 if [[ "$ENGINE" == "rtpengine" ]]; then
   ICE_SERVERS=$(printf '    ice_servers:\n      - url: "stun:%s:%s"\n      - url: "turn:%s:%s"' \
     "$PUBLIC_ADDRESS" "$ATHENA_INTEROP_TURN_PORT" "$PUBLIC_ADDRESS" "$ATHENA_INTEROP_TURN_PORT")
@@ -243,7 +217,7 @@ else
   TURN_SECRET=""
 fi
 
-# The node binds what the host publishes, so the config is rendered rather than fixed.
+# Rendered, because the node binds the ports the host publishes.
 mkdir -p "$HERE/generated"
 sed -e "s|@PUBLIC_ADDRESS@|${PUBLIC_ADDRESS}|g" \
     -e "s|@SIP_PORT@|${ATHENA_INTEROP_SIP_PORT}|g" \
@@ -286,9 +260,8 @@ while IFS=, read -r username password; do
     -d "{\"user\":\"${username}\",\"password\":\"${password}\"}" > /dev/null
 done < "$HERE/subscribers.csv"
 
-# What the fixture actually turned out to be, for anything that has to talk to it and
-# did not choose these values itself. The addresses are worked out here - the LAN one is
-# detected - so a wrapper that guessed them again could guess differently.
+# The fixture's effective values, for anything that talks to it. Read these rather than
+# working them out again: the LAN address is detected.
 cat > "$HERE/generated/fixture.env" <<ENV
 ATHENA_INTEROP_NAME=${ATHENA_INTEROP_NAME}
 ATHENA_INTEROP_PUBLIC_ADDRESS=${PUBLIC_ADDRESS}
@@ -305,9 +278,7 @@ ATHENA_INTEROP_NG_PORT=${ATHENA_INTEROP_NG_PORT}
 ATHENA_INTEROP_ADMIN_DIR=${ATHENA_INTEROP_ADMIN_DIR}
 ATHENA_INTEROP_PASSWORD=${ATHENA_INTEROP_PASSWORD:-athenaphone}
 
-# The fixture's user, which is what signs in to reach /api/v1/client/config. Exported so
-# the spec reads it rather than knowing it: a credential it has memorised is one that goes
-# stale silently the day this fixture changes it.
+# The user that signs in to reach /api/v1/client/config.
 ATHENA_INTEROP_API_USER=${ATHENA_INTEROP_API_USER}
 ATHENA_INTEROP_API_PASSWORD=${ATHENA_INTEROP_API_PASSWORD}
 ATHENA_INTEROP_RTPENGINE_ADVERTISE=${ATHENA_INTEROP_RTPENGINE_ADVERTISE}

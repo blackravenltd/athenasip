@@ -15,7 +15,7 @@ namespace {
 constexpr std::string_view kPrefix = "nodes/";
 constexpr std::string_view kSuffix = "/status";
 
-// The node a status topic names, or empty when the topic is not one.
+// The node id in a nodes/<id>/status topic, or empty for any other topic.
 std::string node_of(const std::string& topic) {
   if (topic.size() <= kPrefix.size() + kSuffix.size()) return "";
   if (topic.compare(0, kPrefix.size(), kPrefix) != 0) return "";

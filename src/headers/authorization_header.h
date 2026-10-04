@@ -23,12 +23,11 @@ class AuthorizationHeader : public Header {
   bool parse(const std::string& val) override;
   std::string to_string() const override;
 
-  // Public member storing the parsed WWW-Authorization value.
+  // The parsed challenge or credentials.
   std::shared_ptr<athenasip::types::Authorization> value;
 };
 
-// The four fields that carry a challenge or credentials (RFC 3261 20.7, 20.27, 20.28,
-// 20.44): the registrar's pair and the proxy's.
+// The four fields that carry a challenge or credentials (RFC 3261 20.7, 20.27, 20.28, 20.44).
 struct AuthorizationHeaderRegister {
   AuthorizationHeaderRegister() {
     auto reg = []() -> std::shared_ptr<Header> { return std::make_shared<AuthorizationHeader>(); };

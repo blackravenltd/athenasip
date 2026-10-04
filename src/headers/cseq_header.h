@@ -25,12 +25,10 @@ class CSeqHeader : public Header {
   bool parse(const std::string& val) override;
   std::string to_string() const override;
 
-  // Public members to store the CSeq components.
   uint64_t sequence = 0;
   std::string method;
 };
 
-// Register this field type under the "CSeq" header name.
 struct CSeqHeaderRegister {
   CSeqHeaderRegister() {
     auto reg = []() -> std::shared_ptr<Header> { return std::make_shared<CSeqHeader>(); };

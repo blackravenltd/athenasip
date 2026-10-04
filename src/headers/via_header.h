@@ -31,7 +31,6 @@ class ViaHeader : public Header {
   std::string to_string() const;
 };
 
-// Register this field type
 struct ViaHeaderRegister {
   ViaHeaderRegister() {
     auto reg = []() { return std::make_shared<ViaHeader>(); };

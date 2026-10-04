@@ -2,13 +2,9 @@
 <!DOCTYPE scenario SYSTEM "sipp.dtd">
 
 <!--
-  RFC 3261 sections 13 and 16: the whole of a call through the proxy. INVITE, 180, 200,
-  ACK, and a BYE that ends it.
-
-  The caller registers first, as a real phone would. The BYE has to come back through the
-  node, which it does by the Record-Route the node wrote into the dialog (16.6 step 4).
-  The INVITE is challenged as well (RFC 3261 22.3): on UDP a source address proves
-  nothing, so a subscriber answers the proxy's 407 as it answered the registrar's 401.
+  RFC 3261 sections 13 and 16: a whole call through the proxy. INVITE, 180, 200, ACK and
+  BYE. The caller registers first and answers the proxy's 407 (22.3). The BYE returns
+  through the node by the Record-Route it wrote into the dialog (16.6 step 4).
 -->
 <scenario name="Caller: INVITE, 180, 200, ACK, BYE">
 
@@ -76,9 +72,8 @@
     ]]>
   </send>
 
-  <!-- RFC 3261 22.3: a subscriber proves who it is to the proxy as well as to the
-       registrar, and on UDP nothing else can prove it. The 407 is acknowledged as any
-       final non-2xx is (17.1.1.3) and the INVITE sent again with credentials. -->
+  <!-- RFC 3261 22.3: the proxy challenges the INVITE. The 407 is ACKed (17.1.1.3) and the
+       INVITE sent again with credentials. -->
   <recv response="100" optional="true"/>
   <recv response="407" auth="true"/>
 
@@ -128,8 +123,7 @@
 
   <recv response="200" rtd="true">
     <action>
-      <!-- RFC 3261 16.6 step 4 again, from the other side: the route set the caller
-           keeps is what sends its BYE back through the node. -->
+      <!-- RFC 3261 16.6 step 4: the caller's route set sends its BYE through the node. -->
       <ereg regexp="lr" search_in="hdr" header="Record-Route:" check_it="true" assign_to="route"/>
     </action>
   </recv>

@@ -27,8 +27,7 @@ using athenasip::datastores::MemoryDatastore;
 
 namespace {
 
-// The contract is async; these tests are statements about what the store holds, so
-// they drive it through the blocking test view.
+// The contract is async; these tests drive it through the blocking test view.
 std::shared_ptr<SyncDatastore> make_datastore() {
   auto logger = std::make_shared<MockLogger>();
   auto url = std::make_shared<types::URL>("memory://");
@@ -134,9 +133,7 @@ TEST(MemoryDatastoreTest, RegistrationStoresAContactThatCanBeLookedUp) {
   EXPECT_EQ(locations[0].contact->port.value(), 5060);
 }
 
-// The binding is what the caller gave, apart from the lifetime and the identity the
-// store settles. A store that kept only the contact would lose the flow the binding was
-// learned over (RFC 5626) and the node holding it, which is what a second node needs.
+// A binding keeps the flow it was learned over (RFC 5626) and the node holding it, which a second node needs.
 TEST(MemoryDatastoreTest, RegistrationKeepsTheFlowAndTheNodeItWasGiven) {
   auto datastore = make_datastore();
   auto subscriber = make_subscriber(7, "sip:bob@example.com");
@@ -155,14 +152,12 @@ TEST(MemoryDatastoreTest, RegistrationKeepsTheFlowAndTheNodeItWasGiven) {
   EXPECT_EQ(locations[0].flow_id, "tcp://192.168.1.50:5060");
   EXPECT_EQ(locations[0].node_id, "node-a");
 
-  // The store's own fields, whatever the caller put there.
+  // The store sets these itself, whatever the caller put there.
   EXPECT_EQ(locations[0].subscriber_id, 7u);
   EXPECT_GT(locations[0].expires_at, locations[0].registered_at);
 }
 
-// RFC 8760: a subscriber can hold a credential per algorithm, and a read that returns
-// only some of them is a credential that silently does not exist. This is the bug that
-// made a SHA-256 registration fail against a subscriber that had the hash for it.
+// RFC 8760: a subscriber can hold a credential per algorithm, and a read returns all of them.
 TEST(MemoryDatastoreTest, EveryCredentialSurvivesARead) {
   auto datastore = make_datastore();
 
@@ -177,8 +172,7 @@ TEST(MemoryDatastoreTest, EveryCredentialSurvivesARead) {
   EXPECT_EQ(found->ha1_sha256, "sha256-hash");
 }
 
-// RFC 3261 10.2.1: a subscriber may register more than one contact, and all of them
-// are targets.
+// RFC 3261 10.2.1: a subscriber may register several contacts, and all of them are targets.
 TEST(MemoryDatastoreTest, MultipleContactsForOneSubscriberAreKept) {
   auto datastore = make_datastore();
   auto subscriber = make_subscriber(7, "sip:bob@example.com");
@@ -212,14 +206,14 @@ TEST(MemoryDatastoreTest, UnregisterRemovesOnlyThatContact) {
   ASSERT_TRUE(datastore->subscriber_unregister(subscriber, first));
   EXPECT_EQ(datastore->location_list(7).size(), 1u);
 
-  // Removing something that is not there is not a success.
+  // Removing what is not there is not a success.
   EXPECT_FALSE(datastore->subscriber_unregister(subscriber, first));
 }
 
 TEST(MemoryDatastoreTest, ExpiredRegistrationsAreNotReturned) {
   auto datastore = make_datastore();
 
-  // A realm whose registrations last no time at all.
+  // A realm with a registration_timeout of 0.
   datastore->realm_create(make_realm("192.168.1.50", 0));
 
   auto subscriber = make_subscriber(7, "sip:bob@example.com");
@@ -227,7 +221,7 @@ TEST(MemoryDatastoreTest, ExpiredRegistrationsAreNotReturned) {
 
   ASSERT_TRUE(datastore->subscriber_register(subscriber, contact, 3600, ""));
 
-  // registration_timeout of 0 falls back to the default, so this contact is live.
+  // A registration_timeout of 0 falls back to the default, so this contact is live.
   EXPECT_EQ(datastore->location_list(7).size(), 1u);
 }
 
@@ -265,8 +259,7 @@ TEST(MemoryDatastoreTest, CallRoundTrips) {
   EXPECT_FALSE(datastore->call_create(nullptr));
 }
 
-// The registry has to hand back a MemoryDatastore for memory://, or zero-config does
-// not work from the config file.
+// memory:// resolves to a MemoryDatastore through the registry, which zero-config depends on.
 TEST(MemoryDatastoreTest, ResolvesThroughTheDriverRegistry) {
   auto logger = std::make_shared<MockLogger>();
   athenasip::datastores::Datastore::register_driver<MemoryDatastore>(logger, "memory");
@@ -279,8 +272,7 @@ TEST(MemoryDatastoreTest, ResolvesThroughTheDriverRegistry) {
   EXPECT_TRUE(datastore.is_connected());
 }
 
-// Write operations. create and update are distinct on purpose: provisioning has to be
-// able to tell "already exists" from "changed" rather than silently overwriting.
+// Write operations. create and update are distinct so provisioning can tell "already exists" from "changed".
 
 TEST(MemoryDatastoreTest, RealmCreateRefusesADuplicate) {
   auto datastore = make_datastore();
@@ -315,9 +307,8 @@ TEST(MemoryDatastoreTest, RealmDeleteAndList) {
   EXPECT_EQ(datastore->realm_get_by_name("one.example"), nullptr);
 }
 
-// A realm is deleted with everything in it (Tom, 2026-10-03). Subscribers left behind
-// would be unreachable through the API, which finds them through their realm, and their
-// bindings would go on routing calls into a domain this node no longer serves.
+// A realm is deleted with its subscribers and their bindings, which would otherwise be unreachable through the
+// API and go on routing calls.
 TEST(MemoryDatastoreTest, RealmDeleteTakesItsSubscribersAndTheirRegistrations) {
   auto datastore = make_datastore();
 
@@ -378,8 +369,7 @@ TEST(MemoryDatastoreTest, SubscriberListIsScopedToTheRealm) {
   EXPECT_EQ(datastore->subscriber_list("nowhere.example").size(), 0u);
 }
 
-// A deleted subscriber keeps no bindings: leaving them would route calls to someone
-// who no longer exists.
+// A deleted subscriber keeps no bindings.
 TEST(MemoryDatastoreTest, SubscriberDeleteDropsTheirRegistrations) {
   auto datastore = make_datastore();
 
@@ -425,10 +415,8 @@ TEST(MemoryDatastoreTest, CallUpdateRequiresAnExistingCallAndListReturnsThem) {
   EXPECT_EQ(datastore->call_list().size(), 1u);
 }
 
-// Users and the sessions they hold. These are statements out of docs/authentication.md:
-// a user is a record beside realms and subscribers, usernames are one namespace matched
-// without regard to case, and a session is held by the hash of its token and never by
-// the token.
+// Users and sessions, per docs/authentication.md: usernames are one case-insensitive namespace, and a session
+// is held by the hash of its token, never the token.
 
 TEST(MemoryDatastoreTest, UserRoundTrips) {
   auto datastore = make_datastore();
@@ -444,8 +432,7 @@ TEST(MemoryDatastoreTest, UserRoundTrips) {
   EXPECT_TRUE(found->has_role(types::roles::manage_realms));
   EXPECT_FALSE(found->has_role(types::roles::manage_admin_users));
 
-  // The whole record, not a chosen few fields: a password hash a store quietly dropped
-  // is a user nobody can log in as, which is how ha1_sha256 went missing once already.
+  // The whole record survives, password hash included.
   EXPECT_EQ(found->password_hash, user->password_hash);
   EXPECT_TRUE(types::Password::verify("correct horse", found->password_hash));
   EXPECT_EQ(found->created_at, user->created_at);
@@ -462,14 +449,14 @@ TEST(MemoryDatastoreTest, UsernamesAreOneNamespaceWhateverTheirCase) {
   EXPECT_NE(datastore->user_get("tom"), nullptr);
   EXPECT_NE(datastore->user_get("TOM"), nullptr);
 
-  // The spelling it was given is what it is called, not the key it is filed under.
+  // The username keeps the spelling it was given.
   EXPECT_EQ(datastore->user_get("tom")->username, "Tom");
 
   EXPECT_FALSE(datastore->user_create(make_user("TOM", {})));
   EXPECT_FALSE(datastore->user_create(make_user("tom", {})));
 }
 
-// create is not update, so the API can answer 409 rather than overwrite somebody.
+// create is not update, so the API can answer 409.
 TEST(MemoryDatastoreTest, UserCreateRefusesAnExistingUsername) {
   auto datastore = make_datastore();
 
@@ -479,15 +466,14 @@ TEST(MemoryDatastoreTest, UserCreateRefusesAnExistingUsername) {
   auto second = make_user("alice", {types::roles::manage_admin_users});
   EXPECT_FALSE(datastore->user_create(second));
 
-  // And the refusal changed nothing.
+  // The refusal changed nothing.
   auto found = datastore->user_get("alice");
   ASSERT_NE(found, nullptr);
   EXPECT_TRUE(found->has_role(types::roles::view_cluster_status));
   EXPECT_FALSE(found->has_role(types::roles::manage_admin_users));
 }
 
-// update is not create, so a PUT to a username that does not exist is a 404 rather than
-// a way to make one without going through the rules that creating one applies.
+// update is not create, so a PUT to an unknown username is a 404.
 TEST(MemoryDatastoreTest, UserUpdateRequiresAnExistingUser) {
   auto datastore = make_datastore();
 
@@ -507,8 +493,7 @@ TEST(MemoryDatastoreTest, UserUpdateRequiresAnExistingUser) {
   EXPECT_TRUE(found->disabled);
 }
 
-// A user with no roles is the default for a newly created one, and a legitimate state
-// for one being set up or wound down. It is not an invalid record.
+// A user with no roles is a valid record.
 TEST(MemoryDatastoreTest, AUserWithNoRolesIsStored) {
   auto datastore = make_datastore();
 
@@ -546,9 +531,7 @@ TEST(MemoryDatastoreTest, UserDeleteRemovesThemOnceAndSaysSoTheSecondTime) {
   EXPECT_FALSE(datastore->user_delete("dave"));
 }
 
-// A live token against a user that no longer exists is a session nobody can revoke, so
-// deleting a user takes their sessions with it, the way deleting a subscriber takes its
-// registrations.
+// Deleting a user revokes their sessions.
 TEST(MemoryDatastoreTest, UserDeleteRevokesTheirSessions) {
   auto datastore = make_datastore();
 
@@ -584,9 +567,8 @@ TEST(MemoryDatastoreTest, SessionWithoutAHashOrAUserIsRefused) {
   EXPECT_FALSE(datastore->session_create(make_session("hash-two", "")));
 }
 
-// There is no session_update on the contract, because a token hash is 32 random bytes
-// and cannot collide by accident. Writing the same hash again is how a session's
-// last_seen_at is carried forward, which is what idle expiry is counted from.
+// There is no session_update: writing the same hash again carries last_seen_at forward, which idle expiry is
+// counted from.
 TEST(MemoryDatastoreTest, WritingASessionAgainMovesItsLastSeen) {
   auto datastore = make_datastore();
 
@@ -602,13 +584,8 @@ TEST(MemoryDatastoreTest, WritingASessionAgainMovesItsLastSeen) {
   EXPECT_EQ(found->username, "grace");
 }
 
-// Absolute expiry is the store's to keep, because it is written on the record and needs
-// no configuration to read. Idle expiry is not: how long a session survives unused is
-// config the caller holds, so the caller asks Session::has_expired.
-//
-// Issuing a session that is already dead is a caller bug, and both drivers refuse it for
-// the same reason nonce_create does. Redis could not store it anyway: SETEX has no
-// non-positive expiry to give it, so accepting it here would be a divergence.
+// The store keeps the absolute expiry; idle expiry is the caller's (Session::has_expired). Both drivers refuse
+// a session that is already expired, as Redis SETEX must.
 TEST(MemoryDatastoreTest, AnAlreadyExpiredSessionIsRefused) {
   auto datastore = make_datastore();
 
@@ -618,9 +595,7 @@ TEST(MemoryDatastoreTest, AnAlreadyExpiredSessionIsRefused) {
   EXPECT_FALSE(datastore->session_create(session));
   EXPECT_EQ(datastore->session_get("hash-old"), nullptr);
 
-  // A session with no absolute expiry at all is not "expired long ago": 0 is what a
-  // record written before expiry existed would carry, and it is refused rather than
-  // stored as one that never ends.
+  // An expires_at of 0 is refused, not stored as a session that never ends.
   session.expires_at = 0;
   EXPECT_FALSE(datastore->session_create(session));
 }
@@ -635,16 +610,12 @@ TEST(MemoryDatastoreTest, SessionDeleteEndsThatOneSession) {
   EXPECT_EQ(datastore->session_get("hash-a"), nullptr);
   EXPECT_NE(datastore->session_get("hash-b"), nullptr);
 
-  // Twice is success twice. A session is named by a secret the caller holds, so an answer
-  // that tells a live token from one that was never real is an oracle a logout hands to
-  // anybody; the realm and subscriber deletes still say when there was nothing there,
-  // because a realm name is not a secret.
+  // Deleting twice succeeds twice: an answer that told a live token from an unknown one would be an oracle.
   EXPECT_TRUE(datastore->session_delete("hash-a"));
   EXPECT_TRUE(datastore->session_delete("never-existed"));
 }
 
-// What makes disabling a user immediate rather than eventual, and what a console's
-// "sign out everywhere" is.
+// Ends every session a user holds: what makes disabling immediate, and "sign out everywhere".
 TEST(MemoryDatastoreTest, SessionDeleteForUserEndsAllOfTheirsAndNobodyElses) {
   auto datastore = make_datastore();
 
@@ -657,15 +628,11 @@ TEST(MemoryDatastoreTest, SessionDeleteForUserEndsAllOfTheirsAndNobodyElses) {
   EXPECT_EQ(datastore->session_get("hash-judy-2"), nullptr);
   EXPECT_NE(datastore->session_get("hash-ken"), nullptr);
 
-  // Nothing to revoke is not a failure: the caller asked for them to be gone and they
-  // are, which is what disabling a user that has never logged in does.
+  // Nothing to revoke is success.
   EXPECT_TRUE(datastore->session_delete_for_user("judy"));
 }
 
-// A read hands back a copy, not the record. A driver that goes to the network cannot do
-// otherwise, so a driver that is a hash map must not either, or the API changes roles
-// on this node by forgetting to write and is then surprised by Redis. The user record is
-// what authorises every request, which is the worst place for the two to differ.
+// A read returns a copy, as a networked driver must, so the drivers cannot differ on an unwritten change.
 TEST(MemoryDatastoreTest, ChangingWhatAReadHandedBackDoesNotChangeTheStore) {
   auto datastore = make_datastore();
   ASSERT_TRUE(datastore->user_create(make_user("mallory", {})));
@@ -691,8 +658,7 @@ TEST(MemoryDatastoreTest, ChangingWhatAReadHandedBackDoesNotChangeTheStore) {
   EXPECT_EQ(datastore->session_get("hash-mallory")->username, "mallory");
 }
 
-// A call record is kept for as long as the operator said and no longer, or a store that is
-// only ever added to is what a busy node ends up with.
+// A call record is kept for the configured retention and no longer.
 TEST(MemoryDatastoreTest, EndedCallsAreForgottenAfterTheRetention) {
   auto logger = std::make_shared<MockLogger>();
   auto driver = std::make_shared<MemoryDatastore>(logger, std::make_shared<types::URL>("memory://"));

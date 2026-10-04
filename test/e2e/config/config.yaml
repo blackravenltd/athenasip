@@ -4,16 +4,13 @@
 # Copyright (C) 2026 Tom Cully <mail@tomcully.com>
 # Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 #
-# The node the harness talks to. Everything in-process: nothing here is testing Redis or
-# a broker, and a harness that needs them is a harness that fails for reasons that have
-# nothing to do with SIP.
+# The node the harness talks to. Everything is in-process: no Redis, no broker.
 
 sip:
   node_id: e2e-node
   event_prefix: athenasip
 
-  # The address inside the compose network, so Via, Record-Route and the node list all
-  # name something sipp can reach.
+  # The node's address on the compose network, which sipp can reach.
   public_address: 172.31.0.10
 
   allow_unencrypted: true

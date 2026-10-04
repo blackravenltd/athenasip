@@ -31,9 +31,8 @@ using athenasip::headers::UIntHeader;
 
 namespace {
 
-// RFC 3261 10.2.2: a single Contact of "*" with Expires 0 removes every binding. The
-// grammar has STAR as its own alternative (20.10), so the identity says whether it saw
-// one rather than this having to recognise the shape a "*" left behind.
+// RFC 3261 10.2.2: a single Contact of "*" (STAR, 20.10) with Expires 0 removes every
+// binding.
 bool is_star_contact(const std::shared_ptr<SIPHeader>& header) {
   const auto& contacts = header->headers_map["Contact"];
   if (contacts.size() != 1) return false;
@@ -60,11 +59,9 @@ bool supports(const std::shared_ptr<SIPHeader>& header, const std::string& tag) 
   return false;
 }
 
-// RFC 5626 section 6: a client has asked for outbound on a contact when it says it supports
-// outbound and the contact carries both an instance and a reg-id. Anything less is an
-// ordinary binding. The instance is held without the quotes the parameter carries it in.
-// Zero for the reg-id means not outbound; a reg-id that is not a number is the caller's
-// to refuse.
+// RFC 5626 section 6: a contact asks for outbound when the request supports "outbound" and
+// the contact has both +sip.instance and reg-id. Returns the unquoted instance and the
+// reg-id; sets malformed when the reg-id is not a positive number.
 std::optional<std::pair<std::string, std::uint32_t>> outbound_of(const std::shared_ptr<SIPMessage>& request, const SIPIdentity& contact, bool& malformed) {
   malformed = false;
   if (!supports(request->header, "outbound")) return std::nullopt;
@@ -86,8 +83,8 @@ std::optional<std::pair<std::string, std::uint32_t>> outbound_of(const std::shar
   }
 }
 
-// RFC 5626 section 6: through an edge proxy, outbound only works when that first hop keeps
-// the flow, which it says with "ob" on the URI it put in Path.
+// RFC 5626 section 6: through an edge proxy, outbound needs the first hop to keep the
+// flow, which it signals with "ob" on its Path URI.
 bool first_hop_supports_outbound(const std::shared_ptr<SIPMessage>& request) {
   if (!request->header->contains("Path")) return true;
 
@@ -99,12 +96,11 @@ bool first_hop_supports_outbound(const std::shared_ptr<SIPMessage>& request) {
   return at != std::string::npos && (at + 3 == first.size() || first[at + 3] == ';' || first[at + 3] == '>');
 }
 
-// RFC 3261 10.3 step 7 draws the line itself: an interval of an hour or more is never
-// too brief, whatever minimum a realm is configured with.
+// RFC 3261 10.3 step 7: an interval of an hour or more is never too brief.
 constexpr std::uint32_t kNeverTooBrief = 3600;
 
-// The longest registration granted, and the default asked for, when the realm names no
-// maximum of its own.
+// The longest registration granted, and the default requested, when the realm sets no
+// maximum.
 constexpr std::uint32_t kDefaultMaximumExpiry = 3600;
 
 }  // namespace
@@ -132,9 +128,7 @@ void Registrar::on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<
 
   auto self = shared_from_this();
   core->realm_get_by_name(Util::to_lower(aor->uri->host), [this, self, request, transaction, aor](plugins::Result<std::shared_ptr<types::Realm>> found) {
-    // A datastore that cannot answer is not a domain we do not
-    // serve. One is 500, the other 404, and before the contract
-    // could report the difference both looked like "no realm".
+    // A datastore failure is a 500; only a realm that is not served is a 404.
     if (!found.ok) {
       _logger->error("REGISTER could not read the realm - " + found.error);
       return _send_status(transaction, request, 500, "Server Internal Error");
@@ -149,9 +143,8 @@ void Registrar::_on_realm(std::shared_ptr<SIPMessage> request, std::shared_ptr<t
   auto core = _core.lock();
   if (!core) return;
 
-  // RFC 3261 10.3 step 5: an address of record this registrar does not serve is a 404.
-  // A subscriber that does not exist inside a realm we do serve is challenged instead,
-  // so a REGISTER sweep cannot enumerate subscribers.
+  // RFC 3261 10.3 step 5: an unserved domain is a 404. An unknown subscriber in a served
+  // realm is challenged instead, so REGISTER cannot enumerate subscribers.
   if (!realm) {
     _logger->info("REGISTER for unserved domain " + aor->uri->host + " - 404");
     return _send_status(transaction, request, 404, "Not Found");
@@ -217,9 +210,7 @@ void Registrar::_on_subscriber(std::shared_ptr<SIPMessage> request, std::shared_
 
   request->authenticated = true;
 
-  // The connection this arrived on now belongs to the subscriber who proved it. The proxy
-  // takes a request as that subscriber on it without a second challenge, if the
-  // connection is one a source address cannot be forged onto; see Channel::authenticated_as.
+  // The connection now belongs to this subscriber; see Channel::authenticated_as.
   if (auto channel = request->channel.lock()) channel->authenticated_as(aor->uri->to_string());
 
   _apply_bindings(request, transaction, realm, subscriber);
@@ -233,9 +224,8 @@ void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared
   const auto requested = _requested_expiry(request, realm);
   const auto expires = _granted_expiry(requested, realm);
 
-  // A REGISTER with no Contact is a query for the current bindings (RFC 3261 10.2.2).
-  // Step 6 skips to the last step for one of those, so step 7 never runs and there is
-  // no interval to find too brief.
+  // A REGISTER with no Contact queries the current bindings (RFC 3261 10.2.2); step 7 does
+  // not apply.
   if (!request->header->contains("Contact")) {
     return _send_ok(transaction, request, subscriber, expires);
   }
@@ -248,8 +238,7 @@ void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared
       return _send_status(transaction, request, 400, "Bad Request");
     }
 
-    // Every binding goes, which means reading them first and then removing them one at
-    // a time: each removal is its own round trip.
+    // List every binding, then remove them one at a time.
     return core->location_list(subscriber->id, [this, self, request, transaction, subscriber](plugins::Result<std::vector<types::Location>> found) {
       if (!found.ok) {
         _logger->error("REGISTER could not list the bindings - " + found.error);
@@ -283,8 +272,7 @@ void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared
       }
     }
 
-    // Step 7 refuses the whole request on the first contact it will not honour, rather
-    // than registering some of them: "It then skips the remaining steps."
+    // Step 7: the first contact that is too brief refuses the whole request.
     if (_is_too_brief(contact_requested, realm)) {
       _logger->info("REGISTER asked for " + std::to_string(contact_requested) + "s, below the realm minimum - 423");
       return _send_interval_too_brief(transaction, request, realm);
@@ -324,10 +312,9 @@ void Registrar::_write_bindings(std::shared_ptr<SIPMessage> request, std::shared
   auto channel = request->channel.lock();
   auto self = shared_from_this();
 
-  // RFC 5626 section 6: an outbound binding is its instance and reg-id, not its contact. One
-  // already held under the same pair with another contact is the same flow from before -
-  // a reconnect, a new port - and goes first, so the write below replaces it rather than
-  // leaving a dead binding beside it. A removal goes by the pair as well.
+  // RFC 5626 section 6: an outbound binding is keyed by instance and reg-id, not contact.
+  // One held under the same pair with a different contact is the same flow reconnected, so
+  // it is removed first. A removal also goes by the pair.
   if (binding.reg_id != 0) {
     return core->location_list(subscriber->id, [this, self, request, transaction, subscriber, bindings, index, expires_seconds, binding,
                                                 channel](plugins::Result<std::vector<types::Location>> found) {
@@ -354,8 +341,7 @@ void Registrar::_write_bindings(std::shared_ptr<SIPMessage> request, std::shared
   _store_binding(request, transaction, subscriber, bindings, index, expires_seconds, binding, channel);
 }
 
-// Removes each contact in turn, then carries on whatever came of it: the client asked for
-// all of them and a partial answer is better than none.
+// Removes each contact in turn, then continues whether or not the removals succeeded.
 void Registrar::_remove_then(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<Channel> channel,
                              std::vector<std::shared_ptr<types::SIPUri>> contacts, std::size_t index, std::function<void()> then) {
   auto core = _core.lock();
@@ -383,8 +369,7 @@ void Registrar::_store_binding(std::shared_ptr<SIPMessage> request, std::shared_
   };
 
   if (binding.expires == 0) {
-    // A removal that fails is logged and the rest still go: the client asked for all of
-    // them and a partial answer is better than none.
+    // A failed removal does not stop the rest.
     core->qualifier()->forget(subscriber->identity->uri->to_string(), binding.contact);
     return core->subscriber_unregister(subscriber, binding.contact, channel, [next](plugins::Status) { next(); });
   }
@@ -426,8 +411,8 @@ std::uint32_t Registrar::_requested_expiry(const std::shared_ptr<SIPMessage>& re
     if (expires != nullptr) return static_cast<std::uint32_t>(expires->value);
   }
 
-  // "If there is neither, a locally-configured default value MUST be taken as the
-  // requested expiration." The realm's own maximum is that default.
+  // RFC 3261 10.3 step 7: with neither, the local default applies, which is the realm's
+  // maximum.
   return realm && realm->registration_timeout > 0 ? realm->registration_timeout : kDefaultMaximumExpiry;
 }
 
@@ -439,10 +424,8 @@ std::uint32_t Registrar::_granted_expiry(std::uint32_t requested, const std::sha
 bool Registrar::_is_too_brief(std::uint32_t requested, const std::shared_ptr<types::Realm>& realm) const {
   if (!realm || realm->registration_minimum == 0) return false;
 
-  // "If and only if the requested expiration interval is greater than zero AND smaller
-  // than one hour AND less than a registrar-configured minimum". Zero is a removal, not
-  // a short registration, and an hour is long enough by the RFC's own reckoning however
-  // the realm is configured.
+  // RFC 3261 10.3 step 7: too brief only if greater than zero (zero is a removal), under an
+  // hour, and below the realm's minimum.
   return requested > 0 && requested < kNeverTooBrief && requested < realm->registration_minimum;
 }
 
@@ -469,15 +452,13 @@ std::shared_ptr<headers::Header> Registrar::_service_route(const std::shared_ptr
   route->valid = true;
   route->scheme = (transport == "tls" || transport == "wss") ? "sips" : "sip";
 
-  // The address the node was told to advertise, when it was told one. A UDP listener is
-  // bound to the wildcard, so its local endpoint is 0.0.0.0 - and a Service-Route
-  // pointing at 0.0.0.0 is a route the client cannot use, which is worse than sending
-  // none at all. The same rule now decides the Via and the Record-Route.
+  // The advertised address, not the local endpoint: a wildcard-bound UDP listener's is
+  // 0.0.0.0, which no client can route to.
   const auto advertised = core->advertised_for(*channel);
   route->host = advertised.host;
   route->port = advertised.port;
 
-  // 19.1.1 again: loose routing, so the next hop does not rewrite the Request-URI.
+  // RFC 3261 19.1.1: loose routing, so the next hop keeps the Request-URI.
   route->set_parameter("lr", "");
   if (transport != "udp") route->set_parameter("transport", transport);
 
@@ -495,9 +476,7 @@ void Registrar::_send_ok(const std::shared_ptr<transactions::TransactionBase>& t
 
   auto self = shared_from_this();
 
-  // RFC 3261 10.3 step 8: list every binding that is now current, each with the time it
-  // has left, so a client that lost track can resynchronise from the response alone.
-  // Reading them is a round trip, so the response is built in the handler.
+  // RFC 3261 10.3 step 8: list every current binding with its remaining lifetime.
   core->location_list(subscriber->id, [this, self, transaction, request, expires_seconds](plugins::Result<std::vector<types::Location>> found) {
     auto response = request->generate_response();
     response->header->response_code = 200;
@@ -506,9 +485,8 @@ void Registrar::_send_ok(const std::shared_ptr<transactions::TransactionBase>& t
     const auto now = std::time(nullptr);
 
     if (!found.ok) {
-      // The bindings were written; only the read-back failed. Answering 200 with no
-      // Contact would tell the client its registration is gone, which is worse than
-      // answering 500 and having it retry.
+      // The bindings were written but cannot be read back. A 200 with no Contact would say the
+      // registration is gone, so answer 500 and let the client retry.
       _logger->error("REGISTER could not list the bindings for the response - " + found.error);
       return _send_status(transaction, request, 500, "Server Internal Error");
     }
@@ -534,10 +512,9 @@ void Registrar::_send_ok(const std::shared_ptr<transactions::TransactionBase>& t
 
     response->header->add("Expires", std::make_shared<UIntHeader>(expires_seconds));
 
-    // RFC 5626 section 6: a registrar that honoured outbound for a contact in the request
-    // says so. No Flow-Timer: it is optional, and the one value this node could give - how
-    // long it keeps an idle UDP flow - is longer than most NATs keep theirs, so the client's
-    // own default keep-alive interval is the better one.
+    // RFC 5626 section 6: Require: outbound when outbound was honoured for a contact. No
+    // Flow-Timer is sent: it is optional, and the client's default keep-alive interval is
+    // shorter than this node's idle UDP flow timeout.
     bool honoured = false;
     for (const auto& header : request->header->headers_map["Contact"]) {
       auto contact = header->as<SIPIdentityHeader>();
@@ -546,12 +523,8 @@ void Registrar::_send_ok(const std::shared_ptr<transactions::TransactionBase>& t
     }
     if (honoured) response->header->add("Require", std::make_shared<headers::StringHeader>("outbound"));
 
-    // RFC 3608: where everything after this registration should go. The client reached
-    // this node over a flow this node holds, and its own Contact is often unroutable -
-    // a browser's always is - so telling it to route back through here is what makes
-    // the next request work at all. It is also half of failover: a client that
-    // re-registers somewhere else is told that node's route by that node, and needs no
-    // DNS to learn it.
+    // RFC 3608: tell the client to route later requests through this node, which holds its
+    // flow; the client's own Contact is often unroutable.
     if (auto service_route = _service_route(request)) response->header->add("Service-Route", service_route);
 
     transaction->send(response);
@@ -573,9 +546,8 @@ void Registrar::_send_interval_too_brief(const std::shared_ptr<transactions::Tra
   response->header->response_code = 423;
   response->header->response_message = "Interval Too Brief";
 
-  // "This response MUST contain a Min-Expires header field that states the minimum
-  // expiration interval the registrar is willing to honor." Without it the client has
-  // nothing to retry with, which is the whole reason 423 is not just a 400.
+  // RFC 3261 10.3 step 7: a 423 must carry Min-Expires so the client knows what to retry
+  // with.
   response->header->add("Min-Expires", std::make_shared<UIntHeader>(realm ? realm->registration_minimum : 0));
 
   transaction->send(response);
@@ -598,8 +570,7 @@ void Registrar::_send_challenge(const std::shared_ptr<transactions::TransactionB
 
   auto self = shared_from_this();
 
-  // Minting a nonce writes it to the datastore, so the challenge cannot be built until
-  // that lands: a nonce the store never accepted would fail its own check next time.
+  // The nonce must be stored before the challenge is sent, or its own check would fail.
   core->nonce_create(realm, [this, self, transaction, request, response, realm](plugins::Result<std::string> nonce) {
     if (!nonce.ok) {
       _logger->error("Cannot mint a nonce for " + realm->name + " - " + nonce.error);

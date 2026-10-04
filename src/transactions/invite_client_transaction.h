@@ -12,14 +12,12 @@
 
 namespace athenasip::transactions {
 
-// RFC 3261 section 17.1.1, the INVITE client transaction.
+// RFC 3261 section 17.1.1 with RFC 6026, the INVITE client transaction.
 //
-//   Calling -- 1xx --> Proceeding -- 300-699 --> Completed --> Terminated
-//           -- 2xx ------------------------------------------> Terminated
+//   Calling -- 1xx --> Proceeding -- 300-699 --> Completed -- timer D --> Terminated
+//           -- 2xx ------------------------------> Accepted -- timer M --> Terminated
 //
-// The transaction builds and sends the ACK for a non-2xx itself (17.1.1.3). A 2xx is
-// acknowledged end to end by the TU instead, because the ACK for a 2xx is a separate
-// transaction and may take a different route.
+// The transaction ACKs a non-2xx itself (17.1.1.3). The ACK for a 2xx is a separate transaction and is the TU's.
 class InviteClientTransaction : public TransactionBase {
  public:
   InviteClientTransaction(std::shared_ptr<loggers::Logger> logger, std::string id, bool reliable, Timers timers, std::shared_ptr<TimerSource> timer_source,
@@ -42,9 +40,7 @@ class InviteClientTransaction : public TransactionBase {
   void _start_timer_d();
   void _start_timer_m();
 
-  // RFC 3261 17.1.1.3: the ACK reuses the request's Call-ID, From, Request-URI and top
-  // Via, takes the To from the response being acknowledged, and keeps the request's
-  // CSeq number with the method changed to ACK.
+  // RFC 3261 17.1.1.3: the request's Call-ID, From, Request-URI, top Via and CSeq number, the response's To, method ACK.
   std::shared_ptr<SIPMessage> _build_ack(const std::shared_ptr<SIPMessage>& response) const;
 
   std::shared_ptr<SIPMessage> _request;

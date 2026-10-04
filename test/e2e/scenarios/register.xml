@@ -2,11 +2,9 @@
 <!DOCTYPE scenario SYSTEM "sipp.dtd">
 
 <!--
-  RFC 3261 section 10 and 22.4: REGISTER is challenged, answered with Digest, and the
-  200 OK lists the binding with the expiry the registrar granted.
-
-  Also RFC 3608: the 200 OK carries a Service-Route naming the node, which is what tells
-  the client where to send everything after this.
+  RFC 3261 section 10 and 22.4: REGISTER is challenged, answered with Digest, and the 200
+  lists the binding with the expiry granted. RFC 3608: the 200 carries a Service-Route
+  naming the node.
 -->
 <scenario name="REGISTER with Digest">
 
@@ -56,9 +54,8 @@
 
   <recv response="200">
     <action>
-      <!-- The binding is echoed back with what is left of its lifetime (10.3 step 8),
-           and the route to use from here on (RFC 3608). A 200 with neither is a
-           registration the client cannot act on. -->
+      <!-- The binding with its remaining lifetime (10.3 step 8) and the Service-Route
+           (RFC 3608). -->
       <ereg regexp="expires=[0-9]+" search_in="hdr" header="Contact:" check_it="true" assign_to="granted"/>
       <ereg regexp="lr" search_in="hdr" header="Service-Route:" check_it="true" assign_to="route"/>
     </action>

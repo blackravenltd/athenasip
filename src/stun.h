@@ -11,20 +11,17 @@
 #include <optional>
 #include <string>
 
-// The STUN server RFC 5626 section 4.4.2 asks of a SIP node: a client keeps a UDP flow alive
-// with STUN Binding requests sent to the SIP port, and the node answers each with where it
-// came from. That and nothing else - no authentication, no other methods, no attributes
-// read - which is the whole of what the keep-alive needs and why it is written here rather
-// than taken from a library.
+// The STUN server RFC 5626 section 4.4.2 requires of a SIP node: clients keep a UDP flow
+// alive with Binding requests to the SIP port, and each is answered with its source
+// address. No authentication, other methods or attributes are handled.
 namespace athenasip::stun {
 
-// Whether a datagram is a STUN message (RFC 5389 section 6): the top two bits clear, the
-// magic cookie, and a length that is the rest of the datagram and a multiple of four. SIP
-// starts with a letter or a CRLF, so the two are told apart by the first byte alone.
+// Whether a datagram is a STUN message (RFC 5389 section 6): top two bits clear, the magic
+// cookie, and a length that matches the datagram and is a multiple of four.
 bool is_stun(const std::string& datagram);
 
-// The Binding success response to a Binding request from address:port, or nothing for
-// anything that is not a Binding request.
+// The Binding success response to a Binding request from address:port, or nullopt for
+// anything else.
 std::optional<std::string> binding_response(const std::string& request, const boost::asio::ip::address& address, std::uint16_t port);
 
 }  // namespace athenasip::stun

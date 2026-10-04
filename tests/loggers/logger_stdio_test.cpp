@@ -31,7 +31,7 @@ std::vector<std::string> lines_of(const std::string& text) {
 
 }  // namespace
 
-// The text format is what it was: a time, the level, and the line.
+// Text format: a time, the level, and the line.
 TEST(LoggerStdIOTest, TheTextFormatIsUnchanged) {
   std::ostringstream out;
   auto logger = std::make_shared<LoggerStdIO>(LogLevel::DEBUG, out);
@@ -43,10 +43,8 @@ TEST(LoggerStdIOTest, TheTextFormatIsUnchanged) {
   EXPECT_NE(lines[0].find("[INFO ] (proxy) No subscriber"), std::string::npos) << lines[0];
 }
 
-// One JSON object a line, for a log shipper to read without a pattern: when, how bad,
-// which part of the node, and what it said. The scope a component logs under is a field of
-// its own rather than a prefix of the message, and nested scopes are all kept, outermost
-// first.
+// JSON format: one object a line. The scope is a field of its own, not a message prefix, and nested scopes are
+// kept outermost first.
 TEST(LoggerStdIOTest, TheJsonFormatIsOneObjectALine) {
   std::ostringstream out;
   auto logger = std::make_shared<LoggerStdIO>(LogLevel::DEBUG, out);
@@ -78,8 +76,7 @@ TEST(LoggerStdIOTest, TheJsonFormatIsOneObjectALine) {
   EXPECT_FALSE(third.contains("scope"));
 }
 
-// The level filters in both formats, and can be changed once the configuration that names
-// it has been read, which is after the logger that reads it was made.
+// The level filters in both formats and can be changed after construction.
 TEST(LoggerStdIOTest, TheLevelFiltersWhicheverTheFormat) {
   std::ostringstream out;
   auto logger = std::make_shared<LoggerStdIO>(LogLevel::DEBUG, out);

@@ -20,24 +20,16 @@
 
 namespace athenasip::api {
 
-// Administering the users that administer this node.
+// Administers the users of this API: a different population from the subscribers
+// ProvisioningAPI places in realms (docs/authentication.md).
 //
-// A different population from the subscribers `ProvisioningAPI` places in realms: a user
-// holds roles and calls this API, a subscriber holds an HA1 and makes telephone calls.
-// Neither is created from the other and neither credential works as the other - see
-// docs/authentication.md.
-//
-// Everything here needs `manage-admin-users` except changing a password, which anyone may
-// do to their own by presenting the old one. That route is therefore declared for any
-// authenticated caller and decides for itself, because "it is mine" is not something a
-// role can express.
+// Everything needs `manage-admin-users` except changing a password, which any
+// authenticated caller may do to their own by presenting the old one; that route decides
+// for itself.
 class UsersAPI : public std::enable_shared_from_this<UsersAPI> {
  public:
-  // The iteration count is a parameter rather than a constant so a test can turn it down.
-  // It is deliberately not configuration: nothing has asked to tune it, the count is
-  // stored with each hash so it can be raised later without invalidating anybody, and a
-  // knob whose wrong setting is invisible until somebody steals the database is not one to
-  // offer before there is a reason.
+  // The iteration count is a parameter so a test can lower it. It is stored with each hash,
+  // so raising it invalidates nobody.
   UsersAPI(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<datastores::Datastore> datastore, plugins::Executor executor,
            std::shared_ptr<Sessions> sessions, std::uint32_t password_iterations = types::Password::default_iterations);
 
@@ -52,19 +44,15 @@ class UsersAPI : public std::enable_shared_from_this<UsersAPI> {
   void _set_password(RouteContext context);
   void _revoke_sessions(RouteContext context);
 
-  // The user a request names, or a 404 that says so. Every route below the collection
-  // starts here, exactly as `_with_realm` does for realms: a user that does not exist is a
-  // typo rather than a 500, and the datastore deliberately will not make that distinction
-  // for a delete.
+  // Looks up the user a request names, or answers 404. The datastore does not distinguish
+  // a missing user on delete, so the routes check here.
   void _with_user(const std::string& username, RouteContext context, std::function<void(std::shared_ptr<types::User>, RouteContext)> then);
 
   // Whether this request is that user acting on itself.
   static bool _is_self(const RouteContext& context, const std::string& username);
 
-  // What may be granted, checked on the way in. The datastore carries a role it does not
-  // recognise rather than dropping it, because an older node rewriting a user must not
-  // silently strip a role a newer one gave them - which leaves this as the only place a
-  // typo can be caught.
+  // Rejects roles this node does not know. The datastore keeps unknown roles rather than
+  // dropping them, so this is the only place a typo is caught.
   static bool _roles_are_known(const boost::json::array& roles, std::string& unknown);
 
   static boost::json::object _user_json(const types::User& user);

@@ -19,9 +19,7 @@ using namespace athenasip::plugins;
 
 namespace {
 
-// A plugin of a kind the core knows nothing about, which is the case the contract has
-// to serve: a registry that only works for the three built-in kinds is not a plugin
-// architecture.
+// A plugin of a kind the core knows nothing about: the registry must serve more than the built-in kinds.
 class FakePlugin : public Plugin {
  public:
   FakePlugin(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<types::URL> url) : _logger(std::move(logger)), _url(std::move(url)) {}
@@ -45,8 +43,7 @@ class OtherPlugin : public FakePlugin {
   std::string name() const override { return "other"; }
 };
 
-// A plugin built against a contract this server does not speak. Compiled in it could
-// not happen; loaded from a shared library it can, and it must not run.
+// A plugin built against another contract version, as a shared library could be. It must not run.
 class StalePlugin : public FakePlugin {
  public:
   using FakePlugin::FakePlugin;
@@ -90,9 +87,7 @@ TEST_F(PluginRegistryTest, HandsTheDriverTheParsedUrl) {
   EXPECT_EQ(plugin->url()->port.value(), 1234);
 }
 
-// The reason the registry is keyed by (kind, scheme) and not by scheme alone:
-// memory:// is a datastore and, separately, an event system. One registry must keep
-// them apart.
+// The registry is keyed by (kind, scheme): memory:// is both a datastore and an event system.
 TEST_F(PluginRegistryTest, TheSameSchemeUnderTwoKindsAreDifferentDrivers) {
   PluginRegistry::instance().add<FakePlugin>(_logger, "kind-a", "memory");
   PluginRegistry::instance().add<OtherPlugin>(_logger, "kind-b", "memory");
@@ -126,8 +121,7 @@ TEST_F(PluginRegistryTest, RefusesAKnownSchemeUnderTheWrongKind) {
   EXPECT_EQ(PluginRegistry::instance().create(_logger, "other-kind", "thing://host"), nullptr);
 }
 
-// The versioning rule is enforced, not documented: a plugin built against a different
-// contract version does not get constructed into service.
+// A plugin built against a different contract version is not constructed.
 TEST_F(PluginRegistryTest, RefusesAPluginBuiltAgainstAnotherContractVersion) {
   PluginRegistry::instance().add<StalePlugin>(_logger, "fake", "thing");
 
@@ -150,8 +144,7 @@ TEST_F(PluginRegistryTest, ListsWhatIsRegistered) {
   EXPECT_TRUE(PluginRegistry::instance().schemes("nothing-here").empty());
 }
 
-// Registering the same (kind, scheme) twice replaces the driver rather than keeping
-// both, so a plugin can deliberately override a built-in.
+// Registering the same (kind, scheme) again replaces the driver, so a plugin can override a built-in.
 TEST_F(PluginRegistryTest, ReregisteringASchemeReplacesTheDriver) {
   PluginRegistry::instance().add<FakePlugin>(_logger, "fake", "thing");
   PluginRegistry::instance().add<OtherPlugin>(_logger, "fake", "thing");

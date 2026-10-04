@@ -4,9 +4,8 @@
 # Copyright (C) 2026 Tom Cully <mail@tomcully.com>
 # Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 #
-# sipp, from Debian's own package rather than a registry image nobody in this project
-# controls. curl comes with it because the harness provisions over the admin API before
-# it makes a call.
+# sipp from Debian's package, plus curl, which the harness uses to provision over the
+# admin API.
 
 FROM debian:trixie-slim
 

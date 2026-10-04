@@ -22,9 +22,8 @@ std::vector<std::uint8_t> from_hex(const std::string& hex) {
   return bytes;
 }
 
-// Real responses from 1.1.1.1 on 2026-10-01, byte for byte. The expectations beside each
-// were read off the bytes by hand from RFC 1035, 2782 and 3403, not produced by the code
-// under test.
+// Captured responses from 1.1.1.1, byte for byte. The expectations were read off the bytes by hand from
+// RFC 1035, 2782 and 3403.
 const char* kSip2SipNaptr =
     "4ff981800001000300000000077369703273697004696e666f0000230001c00c0023000100000e100027000a00640173075349502b44325400045f736970045f74637007"
     "7369703273697004696e666f00c00c002300010000012c0027001400640173075349502b44325500045f736970045f756470077369703273697004696e666f00c00c00"
@@ -44,8 +43,7 @@ const char* kGoogleAaaa =
     "00145040100c0f0000000000000066c00c001c00010000002200102a00145040100c0f000000000000008ac00c001c00010000002200102a00145040100c0f00000000"
     "00000064";
 
-// No answer, one SOA in the authority section: what a server says when the name exists and
-// has nothing of the type asked for.
+// No answer and one SOA in the authority section: the name exists and has nothing of the type asked for.
 const char* kIptelNoNaptr =
     "b4ce8180000100000001000005697074656c036f72670000230001c00c000600010000012c00310178026e73056a6f6b657203636f6d000a686f73746d6173746572c02c"
     "78c3b2770000384000000e10001275000000012c";
@@ -103,8 +101,7 @@ TEST(DnsMessageTest, NaptrRecordsAreReadInFull) {
   EXPECT_EQ(response->answers[2].naptr.replacement, "_sips._tcp.sip2sip.info");
 }
 
-// RFC 2782: priority, weight, port, target. The owner name is a compression pointer back
-// to the question (RFC 1035 4.1.4), which is where nearly every answer's name comes from.
+// RFC 2782: priority, weight, port, target. The owner name is a compression pointer to the question (RFC 1035 4.1.4).
 TEST(DnsMessageTest, SrvRecordsAreReadAndTheirOwnerNameIsDecompressed) {
   const auto response = decode_response(from_hex(kIptelSrv));
   ASSERT_TRUE(response.has_value());
@@ -150,8 +147,7 @@ TEST(DnsMessageTest, AnAaaaRecordIsTheCompressedTextForm) {
   EXPECT_EQ(response->answers[3].address, "2a00:1450:4010:c0f::64");
 }
 
-// No record of the type asked for is not an error: it is an empty answer, and RFC 3263
-// moves on to the next step.
+// No record of the type asked for is an empty answer, not an error.
 TEST(DnsMessageTest, ANameWithNothingOfTheTypeAskedForIsAnEmptyAnswer) {
   const auto response = decode_response(from_hex(kIptelNoNaptr));
   ASSERT_TRUE(response.has_value());
@@ -160,8 +156,7 @@ TEST(DnsMessageTest, ANameWithNothingOfTheTypeAskedForIsAnEmptyAnswer) {
   EXPECT_TRUE(response->answers.empty());
 }
 
-// The response is anybody's to write. Every way of running off the end is refused, and so
-// is a pointer that points at itself, which would otherwise never finish.
+// Every way of running off the end is refused, and so is a pointer that points at itself.
 TEST(DnsMessageTest, AMessageCutShortIsRefusedWherever) {
   const auto full = from_hex(kSip2SipNaptr);
 

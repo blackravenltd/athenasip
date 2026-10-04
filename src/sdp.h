@@ -16,13 +16,9 @@
 
 namespace athenasip {
 
-// A session description, modelled the way a proxy needs it: every line is kept, in the
-// order it arrived, and only the few fields we rewrite are parsed out.
-//
-// That ordering matters. A proxy that rebuilds SDP from a struct silently drops
-// everything it does not model, which for a browser offer means ICE candidates, DTLS
-// fingerprints and BUNDLE groups. RFC 8866 section 5.13 also requires a parser to
-// ignore line types it does not understand, and for a proxy "ignore" means "pass on".
+// A session description as a proxy needs it: every line is kept in arrival order and only
+// the fields this node rewrites are parsed. Lines that are not modelled (ICE candidates,
+// DTLS fingerprints, BUNDLE groups) pass through untouched (RFC 8866 section 5).
 
 // One "<type>=<value>" line.
 struct Line {
@@ -50,8 +46,8 @@ struct ConnectionInfo {
   std::string to_string() const { return nettype + " " + addrtype + " " + address; }
 };
 
-// The origin field, e.g. "alice 2890844526 2890844526 IN IP4 192.0.2.1"
-// (RFC 8866 section 5.2).
+// The origin field, e.g. "alice 2890844526 2890844526 IN IP4 192.0.2.1" (RFC 8866 section
+// 5.2).
 struct Origin {
   std::string username;
   std::string sessionId;
@@ -71,8 +67,6 @@ struct Origin {
 };
 
 // The "m=" line: "<media> <port>[/<count>] <proto> <fmt> ..." (RFC 8866 section 5.14).
-// The optional port count is why the port cannot be read with a plain integer parse:
-// "49170/2" stops the parse at the slash and the proto then swallows "/2".
 struct MediaDescription {
   std::string media;
   std::uint16_t port = 0;
@@ -111,8 +105,7 @@ struct MediaDescription {
   }
 };
 
-// One media section: its "m=" line plus every line that follows, in order, until the
-// next "m=" or the end.
+// One media section: its "m=" line and every following line up to the next "m=".
 class MediaSection {
  public:
   MediaDescription description;
@@ -129,8 +122,7 @@ class MediaSection {
     return line ? ConnectionInfo::parse(line->value) : ConnectionInfo();
   }
 
-  // Replaces the media-level c=, or inserts one in the position RFC 8866 section 5
-  // gives it: after i=, before b=, k= and a=.
+  // Replaces the media-level c=, or inserts one where RFC 8866 section 5 puts it: after i=.
   void set_connection(const ConnectionInfo& connection) {
     for (auto& line : _lines) {
       if (line.type == 'c') {
@@ -152,8 +144,8 @@ class MediaSection {
     return result;
   }
 
-  // Replaces the first a= whose value starts with the prefix. Returns false when there
-  // was none, so the caller can decide whether to add one.
+  // Replaces the first a= whose value starts with the prefix. Returns false if there is
+  // none.
   bool set_attribute(const std::string& prefix, const std::string& value) {
     for (auto& line : _lines) {
       if (line.type == 'a' && line.value.rfind(prefix, 0) == 0) {
@@ -214,9 +206,8 @@ class MediaSection {
 
 class SDP {
  public:
-  // Returns false when the text is not a session description. RFC 8866 section 5 makes
-  // v=, o=, s= and t= mandatory, so a description missing any of them is rejected
-  // rather than quietly half-parsed.
+  // Returns false when the text is not a session description: v=, o=, s= and t= are
+  // mandatory (RFC 8866 section 5).
   bool parse(const std::string& text) {
     _clear();
 
@@ -228,7 +219,6 @@ class SDP {
       if (!line.empty() && line.back() == '\r') line.pop_back();
       if (line.empty()) continue;
 
-      // Every line is "<type>=<value>" with a single-character type.
       if (line.size() < 2 || line[1] != '=') return false;
 
       const char type = line[0];
@@ -261,8 +251,8 @@ class SDP {
     return line ? ConnectionInfo::parse(line->value) : ConnectionInfo();
   }
 
-  // Replaces the session-level c=, or inserts one where RFC 8866 section 5 puts it:
-  // after s=, i=, u=, e= and p=, before b=, t= and the rest.
+  // Replaces the session-level c=, or inserts one where RFC 8866 section 5 puts it: after
+  // v=, o=, s=, i=, u=, e= and p=.
   void set_connection(const ConnectionInfo& connection) {
     for (auto& line : _session_lines) {
       if (line.type == 'c') {
@@ -283,9 +273,7 @@ class SDP {
     return line ? Origin::parse(line->value) : Origin();
   }
 
-  // Replaces the o= line. It never inserts one: RFC 8866 section 5 makes the field
-  // mandatory and parse() refuses a description without it, so there is always one to
-  // replace and a description that reached here has passed that.
+  // Replaces the o= line. parse() guarantees there is one.
   void set_origin(const Origin& origin) {
     for (auto& line : _session_lines) {
       if (line.type == 'o') {
@@ -308,14 +296,12 @@ class SDP {
   std::vector<MediaSection>& media() { return _media; }
   const std::vector<MediaSection>& media() const { return _media; }
 
-  // Re-emits every line in the order it arrived, so anything not modelled comes out
-  // exactly as it went in.
+  // Emits every line in arrival order, so unmodelled lines come out unchanged.
   std::string to_string() const {
     std::ostringstream oss;
 
     for (const auto& line : _session_lines) {
-      // RFC 8866 section 5.3: s= must carry at least one character. "-" is the
-      // conventional filler, and emitting a bare "s=" would be invalid.
+      // RFC 8866 section 5.3: s= cannot be empty; "-" is the conventional filler.
       if (line.type == 's' && line.value.empty()) {
         oss << "s=-\r\n";
         continue;

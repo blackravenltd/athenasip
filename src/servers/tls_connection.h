@@ -21,10 +21,10 @@ namespace athenasip::servers {
 
 class TLSConnection : public Connection {
  public:
-  // handshaken is for a flow this node opened, whose client handshake has already run.
+  // handshaken: a flow this node opened, whose client handshake has already run.
   TLSConnection(std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> ssl_socket, bool handshaken = false)
       : _ssl_socket(ssl_socket), _handshaken(handshaken) {
-    // As TCPConnection: a peer that has gone has no address, and that is not an exception.
+    // The error_code forms, as in TCPConnection: a peer that has gone has no address.
     boost::system::error_code gone;
     _local_endpoint = _ssl_socket->lowest_layer().local_endpoint(gone);
     _remote_endpoint = _ssl_socket->lowest_layer().remote_endpoint(gone);

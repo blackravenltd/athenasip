@@ -16,8 +16,7 @@
 
 #include "dns/resolver.h"
 
-// Canned DNS: answers by name and type, a failure where a test says so, and a record of
-// every question asked, because some of RFC 3263 is about which questions are not.
+// Canned DNS: answers by name and type, fails where a test says so, and records every question asked.
 class FakeResolver : public athenasip::dns::Resolver {
  public:
   void query(athenasip::plugins::Executor on, std::string name, athenasip::dns::Type type,

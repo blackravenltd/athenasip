@@ -15,15 +15,8 @@
 
 namespace athenasip::servers {
 
-// One loader for every secure listener the node runs. A node whose TLS listener and
-// whose secure WebSocket listener were set up two different ways is a node whose
-// security depends on which port you reached it on, and the difference would be
-// invisible until someone looked.
-//
-// The options are the ones that are not worth making configurable: SSLv2, SSLv3, TLS 1.0
-// and TLS 1.1 are all broken and a SIP endpoint that can only speak them is not one this
-// node should carry. Everything else - which ciphers, which curves - is OpenSSL's own
-// default, which tracks the state of the art better than a list written here would.
+// The one loader for every secure listener, so TLS and secure WebSocket are set up identically. SSLv2, SSLv3, TLS 1.0
+// and TLS 1.1 are refused; ciphers and curves are OpenSSL's defaults.
 inline bool load_tls_certificates(const std::shared_ptr<loggers::Logger>& logger, boost::asio::ssl::context& context, const std::string& cert,
                                   const std::string& key) {
   if (cert.empty() || key.empty()) {
@@ -48,9 +41,8 @@ inline bool load_tls_certificates(const std::shared_ptr<loggers::Logger>& logger
   return true;
 }
 
-// Mutual TLS for the inter-node listener and the flows a node opens to its peers: the far end
-// has to show a certificate signed by the cluster CA, or the handshake fails. What the CA
-// signed is what a node is; nothing else is trusted on these connections.
+// Mutual TLS for the inter-node listener and the flows a node opens to its peers: the far end must present a
+// certificate signed by the cluster CA or the handshake fails.
 inline bool require_peer_certificates(const std::shared_ptr<loggers::Logger>& logger, boost::asio::ssl::context& context, const std::string& ca) {
   if (ca.empty()) {
     logger->error("Mutual TLS needs the cluster CA certificate");

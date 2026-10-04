@@ -37,8 +37,7 @@ struct Fixture {
     store->connect();
   }
 
-  // The production iteration count is most of a second per user, and these are statements
-  // about the command rather than about PBKDF2.
+  // Far below the production PBKDF2 count, to keep the tests fast.
   static constexpr std::uint32_t kIterations = 1000;
 
   cli::AddUserResult add(const std::string& username, std::vector<std::string> roles = {}, const std::string& password = "a recovery password",
@@ -52,8 +51,7 @@ struct Fixture {
 TEST(CliAddUserTest, AnAdministratorIsCreatedWithoutTheApi) {
   Fixture f;
 
-  // The way back in: no listener has started, nothing has been provisioned, and the only
-  // thing this touches is the datastore.
+  // Needs only the datastore: no listener, no prior provisioning.
   const auto result = f.add("tom", {types::roles::manage_realms}, "a recovery password", "Tom Cully");
 
   ASSERT_TRUE(result.ok()) << result.message;
@@ -73,7 +71,7 @@ TEST(CliAddUserTest, ThePasswordIsStoredAsAHashThatVerifies) {
   auto user = f.store->user_get("tom");
   ASSERT_NE(user, nullptr);
 
-  // What the API would have written, so the user this made can log in through it.
+  // The same hash format the API writes, so the user can log in through it.
   EXPECT_EQ(user->password_hash.rfind("pbkdf2-sha256$", 0), 0u);
   EXPECT_TRUE(types::Password::verify("a recovery password", user->password_hash));
   EXPECT_FALSE(types::Password::verify("not it", user->password_hash));
@@ -86,8 +84,7 @@ TEST(CliAddUserTest, WithNoRolesGivenItCanAdministerUsers) {
   auto user = f.store->user_get("tom");
   ASSERT_NE(user, nullptr);
 
-  // A recovery user that cannot administer anybody is not a way back in, which is the
-  // only reason this tool exists.
+  // The default role lets a recovery user administer the others.
   EXPECT_TRUE(user->has_role(types::roles::manage_admin_users));
 }
 
@@ -97,9 +94,7 @@ TEST(CliAddUserTest, AnExistingUserIsNotOverwritten) {
 
   const auto again = f.add("TOM", {}, "a different password");
 
-  // Case-folded, as everywhere else. Overwriting would be a way to take over
-  // a user by knowing their username and having shell access - which, granted, is most
-  // of the way to owning the node anyway, but the tool should not be the easy path.
+  // Usernames are case-folded, and --add-user never takes over an existing user.
   EXPECT_EQ(again.outcome, Outcome::taken);
 
   auto user = f.store->user_get("tom");
@@ -129,9 +124,7 @@ TEST(CliAddUserTest, NothingUsableIsRefusedRatherThanGuessedAt) {
 TEST(CliAddUserTest, AStoreThatCannotHoldUsersSaysSoInItsOwnWords) {
   auto logger = std::make_shared<MockLogger>();
 
-  // A datastore written against an earlier contract answers that it does not support the
-  // operation rather than failing to build, and that answer has to reach the operator
-  // instead of being reported as a name collision.
+  // A driver that does not support user_create has its own message reported, not a name collision.
   class NoUsers : public datastores::MemoryDatastore {
    public:
     using MemoryDatastore::MemoryDatastore;
@@ -150,8 +143,7 @@ TEST(CliAddUserTest, AStoreThatCannotHoldUsersSaysSoInItsOwnWords) {
   EXPECT_NE(result.message.find("does not support"), std::string::npos);
 }
 
-// The way back in for somebody who has lost a password, without editing the datastore by
-// hand: a new password for a user that exists, from the host, as --add-user makes one.
+// Resetting replaces an existing user's password from the host.
 TEST(CliResetPasswordTest, AUsersPasswordIsReplaced) {
   Fixture f;
   ASSERT_TRUE(f.add("tom", {types::roles::manage_realms}, "the old password").ok());
@@ -169,8 +161,7 @@ TEST(CliResetPasswordTest, AUsersPasswordIsReplaced) {
   EXPECT_EQ(user->roles[0], types::roles::manage_realms);
 }
 
-// A password is reset because the old one is lost or known to somebody else, and whoever
-// holds it may be signed in with it. Every session the user holds ends.
+// A reset ends every session the user holds: the old password may be known to somebody else.
 TEST(CliResetPasswordTest, EverySessionTheUserHeldEnds) {
   Fixture f;
   ASSERT_TRUE(f.add("tom").ok());
@@ -188,8 +179,7 @@ TEST(CliResetPasswordTest, EverySessionTheUserHeldEnds) {
   EXPECT_EQ(f.store->session_get("a-session-hash"), nullptr);
 }
 
-// The names are case-folded as everywhere else, and a user that is not there is said so
-// rather than made: making users is --add-user's, with the roles it asks for.
+// Usernames are case-folded; a missing user is reported, not created, and an empty password is invalid.
 TEST(CliResetPasswordTest, AUserThatIsNotThereIsNotMade) {
   Fixture f;
   ASSERT_TRUE(f.add("tom").ok());

@@ -66,7 +66,7 @@ bool MemoryDatastore::_realm_create(std::shared_ptr<types::Realm> realm) {
 
   std::lock_guard<std::mutex> lock(_mutex);
 
-  // create is not update: an existing realm is a conflict, not an overwrite.
+  // An existing realm is a conflict, not an overwrite.
   if (_realms.find(realm->name) != _realms.end()) return false;
 
   _realms[realm->name] = std::move(realm);
@@ -89,7 +89,7 @@ bool MemoryDatastore::_realm_delete(const std::string& realm_name) {
 
   if (_realms.erase(realm_name) == 0) return false;
 
-  // Everything in it goes too: its subscribers, and their bindings with them.
+  // Its subscribers and their bindings go with it.
   std::set<std::uint64_t> gone;
   for (auto it = _subscribers.begin(); it != _subscribers.end();) {
     const auto& subscriber = it->second;
@@ -118,11 +118,8 @@ std::vector<std::shared_ptr<types::Realm>> MemoryDatastore::_realm_list() {
   return realms;
 }
 
-// A copy, not the record. A driver that goes to the network hands back what it
-// deserialised and can do nothing else; this one must behave the same way, or a caller
-// that changes a user it read without writing it back would change the roles on this
-// node and not on a node running Redis. The user record is what authorises every
-// request, and that is the worst place for two drivers to differ.
+// Returns a copy, as a networked driver must: a caller that changes a user without
+// writing it back must not change the stored record.
 std::shared_ptr<types::User> MemoryDatastore::_user_get(const std::string& username) {
   std::lock_guard<std::mutex> lock(_mutex);
 
@@ -137,8 +134,7 @@ bool MemoryDatastore::_user_create(std::shared_ptr<types::User> user) {
 
   std::lock_guard<std::mutex> lock(_mutex);
 
-  // create is not update, and the key is case-folded, so "Tom" and "tom" are the same
-  // conflict rather than two users nobody can tell apart at a login prompt.
+  // An existing user is a conflict. The key is case-folded, so "Tom" and "tom" collide.
   if (_users.find(key) != _users.end()) return false;
 
   _users[key] = std::make_shared<types::User>(*user);
@@ -165,7 +161,7 @@ bool MemoryDatastore::_user_delete(const std::string& username) {
 
   if (_users.erase(key) == 0) return false;
 
-  // A live token against a user that no longer exists is a session nobody can revoke.
+  // A session whose user is gone could not be revoked by username.
   _session_erase_for_user(key);
   return true;
 }
@@ -180,22 +176,19 @@ std::vector<std::shared_ptr<types::User>> MemoryDatastore::_user_list() {
   return users;
 }
 
-// Writing a hash that is already held replaces it, which is how a session's last_seen_at
-// moves: there is no session_update on the contract because a token hash is 32 bytes
-// from a CSPRNG and does not collide by accident.
+// Creating over a held hash replaces the record, which is how last_seen_at moves: the
+// contract has no session_update.
 bool MemoryDatastore::_session_create(types::Session session) {
   if (session.token_hash.empty() || session.username.empty()) return false;
 
-  // Issuing a session that is already dead is a caller bug, refused here for the same
-  // reason nonce_create refuses an expired nonce - and Redis could not store it at all,
-  // because SETEX has no non-positive expiry to give it.
+  // An already-expired session is a caller bug and is refused, as Redis must: SETEX takes
+  // no non-positive expiry.
   if (session.expires_at <= std::time(nullptr)) {
     _logger->warn("session_create: refusing to create already-expired session");
     return false;
   }
 
-  // Filed under the same key the user is, so revoking by username finds them whatever
-  // case the login was typed in.
+  // Filed under the user's case-folded key, so revoking by username finds it.
   session.username = types::User::normalise(session.username);
 
   const auto key = session.token_hash;
@@ -215,17 +208,14 @@ std::shared_ptr<types::Session> MemoryDatastore::_session_get(const std::string&
   return it == _sessions.end() ? nullptr : std::make_shared<types::Session>(it->second);
 }
 
-// Gone either way, as the contract says: a hash that was not held is not a failure,
-// because reporting the difference tells whoever asked whether the token they presented
-// was a real one.
+// Succeeds whether or not the hash was held, as the contract requires.
 bool MemoryDatastore::_session_delete(const std::string& token_hash) {
   std::lock_guard<std::mutex> lock(_mutex);
   _sessions.erase(token_hash);
   return true;
 }
 
-// Nothing to revoke is not a failure: the caller asked for this user to hold no
-// sessions, and it holds none.
+// Having nothing to revoke is success.
 bool MemoryDatastore::_session_delete_for_user(const std::string& username) {
   std::lock_guard<std::mutex> lock(_mutex);
 
@@ -256,11 +246,8 @@ std::shared_ptr<types::Subscriber> MemoryDatastore::_subscriber_get(std::shared_
   auto it = _subscribers.find(_subscriber_key(identity->uri->host, identity->uri->user));
   if (it == _subscribers.end()) return nullptr;
 
-  // Hand back the identity the caller asked with, as the Redis driver does, so the
-  // returned subscriber carries the tags of this request.
-  // Every field the stored subscriber has, not a chosen few: a copy that forgets one is a
-  // credential that silently does not exist, which is exactly what happened to
-  // ha1_sha256 the moment it was added.
+  // A full copy of the stored subscriber, carrying the identity the caller asked with (and
+  // so this request's tags), as the Redis driver returns.
   auto subscriber = std::make_shared<types::Subscriber>(*it->second);
   subscriber->identity = std::move(identity);
   return subscriber;
@@ -272,9 +259,8 @@ bool MemoryDatastore::_subscriber_register(const std::shared_ptr<types::Subscrib
   std::lock_guard<std::mutex> lock(_mutex);
   _prune_expired();
 
-  // The registrar negotiated this lifetime with the client and told the client about it
-  // in the 200 OK, so the binding has to expire when it said it would. A caller that
-  // asks for nothing gets the built-in default (RFC 3261 10.2.1).
+  // The registrar told the client this lifetime in the 200 OK, so the binding expires on
+  // it. Zero takes the default (RFC 3261 10.2.1).
   const std::time_t ttl = expires_seconds > 0 ? static_cast<std::time_t>(expires_seconds) : kDefaultRegistrationSeconds;
 
   const auto contact = binding.contact;
@@ -282,8 +268,7 @@ bool MemoryDatastore::_subscriber_register(const std::shared_ptr<types::Subscrib
 
   const auto now = std::time(nullptr);
 
-  // The lifetime and the identity are the store's to settle; everything else on the
-  // binding is what the caller knew and is kept as it was given.
+  // The store settles the lifetime and the identity; the rest is kept as given.
   binding.subscriber_id = subscriber->id;
   binding.registered_at = now;
   binding.expires_at = now + ttl;
@@ -340,8 +325,8 @@ bool MemoryDatastore::configure(const YAML::Node& own_root, const Config& system
   return true;
 }
 
-// The records of calls that ended longer ago than they are kept for. Called with the lock
-// held, when a call is added: that is when the map grows.
+// Drops call records older than the retention. Called with the lock held, when a call is
+// added.
 void MemoryDatastore::_call_prune(std::time_t now) {
   if (_call_retention == 0) return;
 
@@ -449,10 +434,7 @@ std::vector<std::shared_ptr<types::Subscriber>> MemoryDatastore::_subscriber_lis
   return subscribers;
 }
 
-// Every operation above answers at once; the contract is about where the handler runs,
-// not about how long the work takes. These post it to the caller's executor so a
-// caller is never re-entered from inside its own call, which is the one behaviour a
-// driver that really does go to the network could not offer.
+// The contract: answers are posted to the caller's executor, never delivered inline.
 void MemoryDatastore::realm_get_by_name(plugins::Executor on, std::string realm_name, plugins::Handler<std::shared_ptr<types::Realm>> handler) {
   _complete(std::move(on), std::move(handler), plugins::Result<std::shared_ptr<types::Realm>>::success(_realm_get_by_name(realm_name)));
 }
@@ -585,9 +567,8 @@ void MemoryDatastore::_prune_expired() {
     it = (it->second <= now) ? _nonces.erase(it) : std::next(it);
   }
 
-  // A session's absolute expiry is written on the record and needs nothing else to
-  // read, so the store keeps it. Idle expiry is not here: how long a session survives
-  // unused is configuration the caller holds, and it asks Session::has_expired.
+  // Sessions are pruned on their absolute expiry. Idle expiry is the caller's rule
+  // (Session::has_expired).
   for (auto it = _sessions.begin(); it != _sessions.end();) {
     it = (it->second.expires_at != 0 && it->second.expires_at <= now) ? _sessions.erase(it) : std::next(it);
   }

@@ -31,24 +31,19 @@ void AuthAPI::register_routes(Router& router) {
   auto self = shared_from_this();
   _throttle = router.throttle();
 
-  // Open, because it is how a credential is obtained.
   router.add_open(http::verb::post, "/api/v1/auth/login", [self](RouteContext c) { self->_login(std::move(c)); });
 
-  // Open too, and not because it is unauthenticated: it ends whatever session it was
-  // handed and answers the same either way, so a token that resolves to nothing must reach
-  // the handler rather than be turned away with a 401 that says it was not real.
+  // Open: logout answers the same whether or not the token resolves, so an unknown token
+  // must reach the handler rather than a 401.
   router.add_open(http::verb::post, "/api/v1/auth/logout", [self](RouteContext c) { self->_logout(std::move(c)); });
 
-  // Any authenticated caller, of either kind, holding any roles or none. The router has
-  // resolved them by the time this runs, so the handler only has to describe what it was
-  // given.
+  // Any authenticated caller, whatever roles it holds.
   router.add(http::verb::get, "/api/v1/session", {}, [self](RouteContext c) { self->_session(std::move(c)); });
 }
 
 void AuthAPI::_refuse(RouteContext& context) {
-  // One body for all of them. Which of "no such user", "wrong password" and "that user
-  // is disabled" it was is the thing not to say, because between them the answers are a
-  // list of who is a user on this node.
+  // One body for "no such user", "wrong password" and "disabled", so that a refusal does
+  // not reveal who is a user.
   context.response->set(http::field::www_authenticate, "Bearer realm=\"athenasip\"");
   write_error(context.response, http::status::unauthorized, "unauthorized", "the username or password is not right");
 }
@@ -68,18 +63,15 @@ void AuthAPI::_login(RouteContext context) {
   const auto username = string_field(*body, "username");
   const auto password = string_field(*body, "password");
 
-  // A missing field is the caller's mistake and is worth saying so, because it is not a
-  // guess at somebody's password. An empty one is a refusal rather than a 400, so that
-  // probing with an empty password learns nothing a wrong password would not.
+  // A missing field is a 400. An empty one is refused like a wrong password, so probing
+  // with it learns nothing.
   if (!username || !password) {
     write_error(context.response, http::status::bad_request, "invalid_request", "username and password are required");
     return context.done();
   }
 
-  // A login without a limit is a password oracle. Per source address, and per username
-  // whoever is asking, so guesses spread across many addresses still meet a limit. Every
-  // attempt counts, not only the failures: the handler cannot know which an attempt is
-  // without doing the work that is being limited.
+  // Limited per source address and per username, so guesses spread over many addresses
+  // still meet a limit. Every attempt counts, not only failures.
   if (_throttle) {
     auto wait = _throttle->take("login-source:" + context.remote, _throttle->limits().login_source);
     if (!wait) wait = _throttle->take("login-user:" + types::User::normalise(*username), _throttle->limits().login_user);
@@ -111,8 +103,7 @@ void AuthAPI::_login(RouteContext context) {
     boost::json::object out;
     out["token"] = answer.value.token;
 
-    // Unix seconds, agreed with the console, and the same as every other time this API
-    // hands back: a registration's registered_at and expires_at are seconds too.
+    // Unix seconds, as every time in this API is.
     out["expires_at"] = answer.value.expires_at;
     out["roles"] = roles_json(answer.value.roles);
 
@@ -122,8 +113,7 @@ void AuthAPI::_login(RouteContext context) {
 }
 
 void AuthAPI::_logout(RouteContext context) {
-  // Nothing presented is not a logout. A client with no token has nothing to end and is
-  // told so rather than being congratulated on it.
+  // With no token there is nothing to end: 401.
   if (context.bearer.empty()) {
     context.response->set(http::field::www_authenticate, "Bearer realm=\"athenasip\"");
     write_error(context.response, http::status::unauthorized, "unauthorized", "a bearer token is required");
@@ -138,9 +128,8 @@ void AuthAPI::_logout(RouteContext context) {
       return context.done();
     }
 
-    // 204, as every other thing in this API that ends something answers. A token that
-    // named no session gets it too: the state the caller asked for is that the session is
-    // gone, and it is - which is also what stops a logout saying whether a token was real.
+    // 204 whether or not the token named a session, so a logout does not reveal whether
+    // a token was real.
     write_no_content(context.response);
     context.done();
   });
@@ -149,14 +138,11 @@ void AuthAPI::_logout(RouteContext context) {
 void AuthAPI::_session(RouteContext context) {
   boost::json::object out;
 
-  // The roles are the caller's as the router resolved them a moment ago, which for a user
-  // means read off the user on this request rather than off the session: a role taken away
-  // is gone here too. An empty list is an answer - a user with no roles may log in and is
-  // told it holds none.
+  // The roles as the router resolved them on this request, read from the user rather than
+  // the session. An empty list is a valid answer.
   out["roles"] = roles_json(context.caller.roles);
 
-  // Always a user since configured tokens went; "kind" stays in the body so a client that
-  // reads it keeps working.
+  // "kind" is always "user"; clients read it.
   if (context.caller.user) {
     const auto& user = *context.caller.user;
 

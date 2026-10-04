@@ -9,7 +9,6 @@
 namespace athenasip::headers {
 
 bool ViaHeader::parse(const std::string& value) {
-  // Reset members.
   version.clear();
   host.clear();
   parameters.clear();
@@ -23,7 +22,7 @@ bool ViaHeader::parse(const std::string& value) {
   version = s.substr(0, space_pos);
   std::string rest = Util::trim(s.substr(space_pos + 1));
 
-  // The host is before the first semicolon (if any).
+  // The host is everything before the first semicolon.
   auto semicolon_pos = rest.find(';');
   if (semicolon_pos == std::string::npos) {
     host = rest;
@@ -32,7 +31,6 @@ bool ViaHeader::parse(const std::string& value) {
   host = Util::trim(rest.substr(0, semicolon_pos));
   std::string params_str = rest.substr(semicolon_pos + 1);
 
-  // Parse parameters separated by semicolons.
   while (!params_str.empty()) {
     auto next_semicolon = params_str.find(';');
     std::string param;
@@ -47,7 +45,7 @@ bool ViaHeader::parse(const std::string& value) {
     if (param.empty()) {
       continue;
     }
-    // Each parameter is in the form key[=value].
+    // key[=value]
     auto equal_pos = param.find('=');
     if (equal_pos == std::string::npos) {
       parameters[param] = "";

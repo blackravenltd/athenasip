@@ -37,10 +37,8 @@ bool is_alphanum(char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z
 // unreserved = alphanum / mark
 bool is_unreserved(char c) { return is_alphanum(c) || std::string_view("-_.!~*'()").find(c) != std::string_view::npos; }
 
-// The character sets that may appear unescaped in each component (RFC 3261 25.1). A
-// character outside its component's set is percent-escaped, which is why these are
-// separate: a ';' is ordinary inside a header value and a delimiter inside the
-// parameter list.
+// The characters that may appear unescaped in each component (RFC 3261 25.1); any other is percent-escaped. The
+// sets differ: a ';' is ordinary in a header value and a delimiter in the parameter list.
 bool is_user_char(char c) { return is_unreserved(c) || std::string_view("&=+$,;?/").find(c) != std::string_view::npos; }
 bool is_password_char(char c) { return is_unreserved(c) || std::string_view("&=+$,").find(c) != std::string_view::npos; }
 bool is_param_char(char c) { return is_unreserved(c) || std::string_view("[]/:&+$").find(c) != std::string_view::npos; }
@@ -53,8 +51,7 @@ int hex_value(char c) {
   return -1;
 }
 
-// RFC 3261 19.1.2: escaped = "%" HEX HEX. A '%' that is not followed by two hex digits
-// is not an escape sequence and is left as it stands rather than swallowed.
+// RFC 3261 19.1.2: escaped = "%" HEX HEX. A '%' not followed by two hex digits is left as it stands.
 std::string unescape(std::string_view value) {
   std::string out;
   out.reserve(value.size());
@@ -98,8 +95,7 @@ std::string escape(std::string_view value, Predicate allowed) {
   return out;
 }
 
-// RFC 3261 19.1.1 port is 1*DIGIT, and a port is 16 bits. An overlong run of digits is
-// not a valid port, and must not throw out of a message parser.
+// RFC 3261 19.1.1: port is 1*DIGIT and 16 bits. An overlong run of digits is invalid and must not throw.
 bool parse_port(std::string_view text, std::uint16_t& out) {
   if (text.empty() || text.size() > 5) return false;
 
@@ -115,8 +111,7 @@ bool parse_port(std::string_view text, std::uint16_t& out) {
   return true;
 }
 
-// Splits "a=1;b;c=2" on the separator, keeping a valueless name as a name with an empty
-// value: lr is present-or-absent and carries nothing (19.1.1).
+// Splits "a=1;b;c=2" on the separator. A valueless name, such as lr (19.1.1), is kept with an empty value.
 SIPUri::Fields split_fields(std::string_view text, char separator) {
   SIPUri::Fields fields;
 
@@ -209,10 +204,8 @@ void SIPUri::_reset_invalid(const std::string& uri) {
   valid = false;
 }
 
-// Hand-written rather than a regular expression. The grammar is a sequence of splits on
-// characters that cannot appear unescaped in the parts they delimit, which is a few
-// lines of find(); a backtracking regex over attacker-supplied text is both harder to
-// read and a recursion depth nobody has bounded.
+// Hand-written, not a regular expression: the grammar is a sequence of splits on delimiters, and a backtracking
+// regex over untrusted text has unbounded recursion.
 void SIPUri::parse(const std::string& uri) {
   _parameters.clear();
   _headers.clear();
@@ -229,8 +222,7 @@ void SIPUri::parse(const std::string& uri) {
 
   std::string_view rest = std::string_view(uri).substr(scheme_end + 1);
 
-  // Headers first, then parameters: '?' ends the parameter list, and a ';' after the
-  // '?' belongs to a header value rather than starting a new parameter.
+  // Headers first: '?' ends the parameter list, and a ';' after it belongs to a header value.
   std::string_view header_text;
   if (const auto question = rest.find('?'); question != std::string_view::npos) {
     header_text = rest.substr(question + 1);
@@ -243,8 +235,7 @@ void SIPUri::parse(const std::string& uri) {
     rest = rest.substr(0, semicolon);
   }
 
-  // The userinfo ends at the last '@': '@' may appear escaped in a user part, but an
-  // unescaped one is the delimiter and the host cannot contain one at all.
+  // The userinfo ends at the last '@': the host cannot contain one.
   std::string_view host_port = rest;
   if (const auto at = rest.rfind('@'); at != std::string_view::npos) {
     const auto userinfo = rest.substr(0, at);
@@ -266,8 +257,7 @@ void SIPUri::parse(const std::string& uri) {
     return _reset_invalid(uri);
   }
 
-  // An IPv6 reference is bracketed (19.1.1, RFC 5118 section 4). The colons inside it
-  // are part of the address, so the port separator is only the one after the ']'.
+  // An IPv6 reference is bracketed (19.1.1, RFC 5118 section 4), so the port separator is the colon after the ']'.
   std::string_view host_text = host_port;
   std::string_view port_text;
 
@@ -298,7 +288,7 @@ void SIPUri::parse(const std::string& uri) {
   if (!port_text.empty()) {
     std::uint16_t parsed_port = 0;
     if (!parse_port(port_text, parsed_port)) {
-      // A host that carries an unusable port is not a usable URI.
+      // An unusable port makes the URI invalid.
       return _reset_invalid(uri);
     }
     port = parsed_port;
@@ -347,19 +337,17 @@ std::string SIPUri::to_string() const {
 
 // RFC 3261 19.1.4.
 bool SIPUri::equivalent_to(const SIPUri& other) const {
-  // "A SIP and SIPS URI are never equivalent."
+  // A SIP and a SIPS URI are never equivalent.
   if (!equals_ignoring_case(scheme, other.scheme)) return false;
 
-  // The user part is case-sensitive; the host is not. A missing port is not the default
-  // port, so the optionals are compared as they stand.
+  // The user part is case-sensitive; the host is not. A missing port does not equal the default port.
   if (user != other.user) return false;
   if (password.value_or("") != other.password.value_or("")) return false;
   if (!equals_ignoring_case(host, other.host)) return false;
   if (port != other.port) return false;
 
-  // "Any uri-parameter appearing in both URIs must match." A parameter in only one is
-  // ignored, except for these four: they change where the request goes, so their
-  // absence is not the same as agreement.
+  // A uri-parameter in both URIs must match; one in only one is ignored, except these four, which change where the
+  // request goes.
   static const char* kNeverIgnored[] = {"user", "ttl", "method", "maddr"};
 
   for (const char* name : kNeverIgnored) {
@@ -375,8 +363,7 @@ bool SIPUri::equivalent_to(const SIPUri& other) const {
     if (!equals_ignoring_case(value, other.parameter(name))) return false;
   }
 
-  // "URI header components are never ignored. Any present header component MUST be
-  // present in both URIs and match."
+  // Header components are never ignored: each must be present in both and match.
   if (_headers.size() != other._headers.size()) return false;
 
   for (const auto& [name, value] : _headers) {

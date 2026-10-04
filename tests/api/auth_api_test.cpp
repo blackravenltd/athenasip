@@ -50,8 +50,7 @@ struct Response {
   }
 };
 
-// The auth routes on a real listener, because what is under test is a status code and a
-// body, and both are decided on the way out.
+// The auth routes on a real listener: status codes and bodies are decided on the way out.
 struct AuthFixture {
   std::shared_ptr<MockLogger> logger = std::make_shared<MockLogger>();
   std::shared_ptr<Config> config;
@@ -77,8 +76,7 @@ struct AuthFixture {
     router = std::make_shared<api::Router>(bearer);
     sessions = std::make_shared<api::Sessions>(logger, datastore, admin->executor(), api::Sessions::Lifetimes{3600, 600});
 
-    // What makes a session token work on a route that names roles, rather than only on the
-    // routes that ask Sessions themselves.
+    // Lets a session token work on routes that name roles.
     bearer->sessions_register(sessions);
 
     auth = std::make_shared<api::AuthAPI>(logger, sessions);
@@ -141,8 +139,7 @@ struct AuthFixture {
   Response logout(const std::string& token) { return request(http::verb::post, "/api/v1/auth/logout", token, ""); }
   Response session(const std::string& token) { return request(http::verb::get, "/api/v1/session", token, ""); }
 
-  // The token from a login that worked, for the tests that need one and are not about
-  // getting one.
+  // The token from a successful login.
   std::string token_for(const std::string& username) {
     auto response = login(username, kPassword);
     EXPECT_EQ(response.status, 200u);
@@ -167,8 +164,7 @@ TEST(AuthApiTest, ALoginAnswersATokenItsExpiryAndTheRolesHeld) {
   EXPECT_EQ(body.at("roles").as_array().size(), 1u);
   EXPECT_EQ(body.at("roles").at(0).as_string(), types::roles::manage_realms);
 
-  // Unix seconds, agreed with the console, so a client can work out how long it has left
-  // without parsing a date.
+  // Unix seconds, so a client need not parse a date.
   ASSERT_TRUE(body.at("expires_at").is_int64());
   EXPECT_GT(body.at("expires_at").as_int64(), std::time(nullptr));
 }
@@ -177,8 +173,7 @@ TEST(AuthApiTest, LoggingInNeedsNoCredentialToStartWith) {
   AuthFixture f;
   f.add_user("tom", {});
 
-  // The route that hands out credentials cannot require one, which is the one place in
-  // this API where that is true.
+  // The route that hands out credentials is the only one that cannot require one.
   EXPECT_EQ(f.login("tom", kPassword).status, 200u);
 }
 
@@ -195,8 +190,7 @@ TEST(AuthApiTest, AWrongPasswordAnUnknownUserAndADisabledUserGiveTheSameAnswer) 
   EXPECT_EQ(unknown.status, 401u);
   EXPECT_EQ(disabled.status, 401u);
 
-  // Byte for byte the same, because a difference anywhere in it is a way to ask this node
-  // who is a user here.
+  // Byte for byte the same: any difference would reveal who is a user here.
   EXPECT_EQ(wrong.body, unknown.body);
   EXPECT_EQ(wrong.body, disabled.body);
   EXPECT_EQ(wrong.json().at("error").at("code").as_string(), "unauthorized");
@@ -206,7 +200,7 @@ TEST(AuthApiTest, AnEmptyPasswordIsARefusalRatherThanABadRequest) {
   AuthFixture f;
   f.add_user("tom", {});
 
-  // Probing with an empty password learns nothing that a wrong one would not.
+  // An empty password learns nothing that a wrong one would not.
   EXPECT_EQ(f.login("tom", "").status, 401u);
 }
 
@@ -242,7 +236,7 @@ TEST(AuthApiTest, AUserWithNoRolesLogsInAndIsToldItHasNone) {
 TEST(AuthApiTest, ALoginDoesNotAnswer404AnyMore) {
   AuthFixture f;
 
-  // What this step was for: the console could not get past a 404 on this path.
+  // The route exists: never a 404.
   EXPECT_NE(f.login("nobody", kPassword).status, 404u);
 }
 
@@ -288,8 +282,7 @@ TEST(AuthApiTest, RolesOnASessionAreReadOffTheUserOnEveryRequest) {
   user->roles = {};
   ASSERT_TRUE(f.store->user_update(user));
 
-  // A role taken away is gone on the next request rather than at the next login, which is
-  // the whole reason the session does not carry them.
+  // A role taken away is gone on the next request: the session does not carry roles.
   auto response = f.session(token);
   ASSERT_EQ(response.status, 200u);
   EXPECT_TRUE(response.json().at("roles").as_array().empty());
@@ -341,7 +334,7 @@ TEST(AuthApiTest, LoggingOutWithNoTokenIsRefusedRatherThanCongratulated) {
 TEST(AuthApiTest, LoggingOutWithATokenThatNamedNothingSaysNothingAboutIt) {
   AuthFixture f;
 
-  // A 404 here would be a way to ask whether a token is real, one guess at a time.
+  // A 404 here would reveal whether a token is real.
   EXPECT_EQ(f.logout(std::string(64, 'a')).status, 204u);
 }
 

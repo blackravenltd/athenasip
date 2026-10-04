@@ -16,27 +16,19 @@ namespace athenasip::clients {
 
 class RTPProxyResponse {
  public:
-  // Public fields for direct access
   int status_code;  // The first token (e.g., 0 for success, or error code)
   std::string ip;   // If present in response
   int rtp_port;     // If present
   int rtcp_port;    // If present
   bool valid;       // True if parsing was successful
 
-  /**
-   * @brief Constructs and immediately parses the given RTPproxy response line.
-   * @param resp_line A line from RTPproxy, e.g. "0 203.0.113.5 40000 40001".
-   */
+  // Parses an RTPproxy response line, e.g. "0 203.0.113.5 40000 40001".
   explicit RTPProxyResponse(const std::string& resp_line) : status_code(-1), ip(""), rtp_port(-1), rtcp_port(-1), valid(false) { _parse(resp_line); }
 
   const std::string to_string() const { return std::to_string(status_code) + " " + ip + " " + std::to_string(rtp_port) + " " + std::to_string(rtcp_port); }
 
  private:
-  /**
-   * @brief Internal parsing method that extracts tokens and populates fields.
-   */
   void _parse(const std::string& resp_line) {
-    // Split the line by whitespace
     std::istringstream iss(resp_line);
     std::vector<std::string> tokens;
     std::string token;
@@ -44,44 +36,37 @@ class RTPProxyResponse {
       tokens.push_back(token);
     }
 
-    // Must have at least one token for status code
     if (tokens.empty()) {
-      // No data => invalid
+      // No status code: invalid.
       return;
     }
 
-    // Parse status code
     try {
       status_code = std::stoi(tokens[0]);
     } catch (...) {
-      // Not an integer => invalid
+      // Not an integer: invalid.
       return;
     }
 
-    // If we have a success code (0), possibly more tokens for IP/ports
-    // Example: "0 203.0.113.5 40000 40001"
-    // - tokens[1] = IP
-    // - tokens[2] = RTP port
-    // - tokens[3] = RTCP port
+    // On success (0) the address, RTP port and RTCP port may follow.
     if (status_code == 0 && tokens.size() >= 2) {
       ip = tokens[1];
       if (tokens.size() >= 3) {
         try {
           rtp_port = std::stoi(tokens[2]);
         } catch (...) {
-          // If we can't parse the port, we'll leave it as -1
+          // An unparseable port stays -1.
         }
       }
       if (tokens.size() >= 4) {
         try {
           rtcp_port = std::stoi(tokens[3]);
         } catch (...) {
-          // If we can't parse the port, we'll leave it as -1
+          // An unparseable port stays -1.
         }
       }
     }
 
-    // If we've reached here, we consider it valid
     valid = true;
   }
 };

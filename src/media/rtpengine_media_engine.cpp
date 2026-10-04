@@ -32,32 +32,22 @@ unsigned positive_or(const YAML::Node& node, unsigned fallback) {
   return static_cast<unsigned>(value);
 }
 
-// RFC 8838, RFC 8842 and RFC 5764 through rtpengine's own vocabulary. What a leg needs
-// is not what the leg on the other side sent, and with no flag at all rtpengine mirrors
-// what it was handed: a WebRTC offer produces a WebRTC offer to the callee, which is
-// right for browser to browser and exactly wrong for browser to desk phone.
-//
-// DTLS is passive towards a browser because the browser is the one that starts the
-// handshake, and rtcp-mux is required there because a browser will not offer separate
-// RTCP (RFC 5761, and what every implementation does).
+// Maps a profile onto rtpengine's flags (RFC 8838, RFC 8842, RFC 5764). With no flags rtpengine mirrors what it was
+// handed, which is wrong when the two legs differ. Towards a browser DTLS is passive, because the browser starts the
+// handshake, and rtcp-mux is required (RFC 5761).
 void apply_profile(Bencode& command, Flags::Profile profile, bool source_wants_mux, bool answering) {
   switch (profile) {
     case Flags::Profile::WebRtc:
       command.set("ICE", Bencode(std::string("force")));
-      // Only in an offer. Towards an offerer that said actpass the engine has already
-      // chosen active and started the handshake as soon as ICE came up, which is its
-      // right as the answerer (RFC 5763 section 5). Telling it passive in the answer
-      // flips the role under a handshake in flight: the engine resets and waits, the
-      // offerer was told passive too late to start one, and nothing ever arrives.
+      // Offer only. As answerer to an actpass offer the engine has already gone active (RFC 5763 section 5); setting
+      // passive in the answer would reset a handshake in flight and it would never complete.
       if (!answering) command.set("DTLS", Bencode(std::string("passive")));
       command.set("transport-protocol", Bencode(std::string("UDP/TLS/RTP/SAVPF")));
       command.set("rtcp-mux", Bencode::list({Bencode(std::string("offer")), Bencode(std::string("require"))}));
       return;
 
     case Flags::Profile::SrtpSdes:
-      // RFC 4568: the keys travel in the description, so there is no handshake and no
-      // ICE. RTP/SAVP rather than the browser's UDP/TLS/RTP/SAVPF, and rtpengine
-      // generates the crypto attributes from the profile alone.
+      // RFC 4568: keys in the description, so no handshake and no ICE. rtpengine generates the crypto attributes.
       command.set("ICE", Bencode(std::string("remove")));
       command.set("DTLS", Bencode(std::string("off")));
       command.set("transport-protocol", Bencode(std::string("RTP/SAVP")));
@@ -72,9 +62,7 @@ void apply_profile(Bencode& command, Flags::Profile profile, bool source_wants_m
       return;
 
     case Flags::Profile::Mirror:
-      // Nothing said, so rtpengine keeps what it was given. Offering mux onward only
-      // where the end that sent this asked for it, because an endpoint that did not is
-      // an endpoint that may not understand it.
+      // rtpengine keeps what it was given. rtcp-mux is offered onward only if the sending end asked for it.
       if (source_wants_mux) command.set("rtcp-mux", Bencode::list({Bencode(std::string("offer"))}));
       return;
   }
@@ -131,7 +119,7 @@ bool RtpengineMediaEngine::is_connected() const { return _connected.load(std::me
 void RtpengineMediaEngine::connect(plugins::Executor on, plugins::StatusHandler handler) {
   if (is_connected()) return _complete(std::move(on), std::move(handler), plugins::Status::success());
 
-  // A name is looked up before the node serves anything, then kept current.
+  // Resolves a name before the node serves anything.
   _public.set(_media_address);
   _public.start();
 
@@ -146,9 +134,7 @@ void RtpengineMediaEngine::connect(plugins::Executor on, plugins::StatusHandler 
     auto address = boost::asio::ip::make_address(_host, ec);
 
     if (ec) {
-      // A name rather than a literal. Resolving it here is a blocking call on the io
-      // thread, which is acceptable exactly once at startup and nowhere else: the
-      // engine's address is read before there is a call to hold up.
+      // A name: resolved with a blocking call, acceptable only here at startup, before there is a call to hold up.
       try {
         boost::asio::ip::udp::resolver resolver(detail::get_global_io_context());
         auto endpoints = resolver.resolve(boost::asio::ip::udp::v4(), _host, std::to_string(_port));
@@ -179,9 +165,8 @@ void RtpengineMediaEngine::connect(plugins::Executor on, plugins::StatusHandler 
 
     _receive();
 
-    // The engine is only connected once it has answered. A UDP socket opens whether or
-    // not anything is listening, so without the ping a node would start, report a media
-    // engine, and fail the first call instead of failing to start.
+    // A UDP socket opens whether or not anything listens, so connecting succeeds only once rtpengine answers a ping;
+    // close() clears the flag if it does not.
     _connected.store(true, std::memory_order_relaxed);
 
     auto ping = Bencode::dictionary({{"command", Bencode(std::string("ping"))}});
@@ -220,15 +205,9 @@ void RtpengineMediaEngine::close() {
 
   if (!socket) return;
 
-  // The socket is closed on the strand and by a handler that owns it, so nothing
-  // reaches into a member from the shutdown thread and nothing outlives what it
-  // touches. Closing it ends the receive loop with operation_aborted, and that loop
-  // holds the last reference this object has to itself.
-  //
-  // The pending requests are failed rather than dropped, or a caller waiting on one
-  // waits for ever. That needs the object, so it is taken weakly: close() is also
-  // called from the destructor, where there is nothing left to resurrect and by which
-  // point there can be no pending requests, because each one holds a reference.
+  // The socket is closed on the strand, which ends the receive loop with operation_aborted and drops the loop's
+  // reference to this object. Pending requests are failed so no caller waits for ever; the object is held weakly
+  // because close() also runs from the destructor.
   auto weak = weak_from_this();
 
   boost::asio::post(_strand, [socket, weak]() {
@@ -253,10 +232,6 @@ void RtpengineMediaEngine::_fail_all(const std::string& reason) {
   if (!pending.empty()) _logger->warn(std::to_string(pending.size()) + " request(s) abandoned: " + reason);
 }
 
-// The ng protocol's request identity. rtpengine caches its answer against the cookie,
-// so a retransmission with the same one is answered from that cache rather than acted
-// on twice - which is what makes it safe to send an offer again when the first went
-// missing.
 Bencode RtpengineMediaEngine::_command(const std::string& name, const std::shared_ptr<Call>& call) const {
   auto command = Bencode::dictionary({{"command", Bencode(name)}});
   if (call) command.set("call-id", Bencode(call->id));
@@ -297,17 +272,14 @@ void RtpengineMediaEngine::_send(const std::shared_ptr<Pending>& pending) {
 
   --pending->attempts_left;
 
-  // Synchronous, because a datagram to a socket with room does not block and this runs
-  // on the strand where the pending table already lives. A send that cannot be made at
-  // all reports rather than waits.
+  // Synchronous: a datagram send does not block, and this is already on the strand.
   boost::system::error_code ec;
   socket->send_to(boost::asio::buffer(pending->datagram), _endpoint, 0, ec);
 
   if (ec) {
     _logger->warn("Could not send to rtpengine - " + ec.message());
 
-    // A send that failed outright will fail again on the next attempt for the same
-    // reason, so the caller is told now rather than after the retransmissions.
+    // A send that failed outright would fail again, so report now rather than after the retransmissions.
     auto handler = std::move(pending->handler);
     _pending.erase(pending->cookie);
     if (handler) handler(std::nullopt);
@@ -341,10 +313,8 @@ void RtpengineMediaEngine::_on_timeout(const std::string& cookie) {
   if (handler) handler(std::nullopt);
 }
 
-// Every continuation carries self, so the buffer it is reading into cannot go away
-// under it. That reference is also the only thing keeping this object alive once the
-// caller has let go, which is why close() is what ends the loop: the socket closes, the
-// receive completes with operation_aborted, the chain stops and the reference goes.
+// Each continuation holds self, keeping the buffer and this object alive. close() ends the loop: the receive
+// completes with operation_aborted and the reference goes.
 void RtpengineMediaEngine::_receive() {
   auto socket = _current_socket();
   if (!socket || !socket->is_open()) return;
@@ -358,8 +328,7 @@ void RtpengineMediaEngine::_receive() {
 
 void RtpengineMediaEngine::_on_receive(const boost::system::error_code& ec, std::size_t length) {
   if (ec) {
-    // operation_aborted is close() doing its job; anything else is worth knowing about
-    // and worth carrying on from, because the next datagram may be fine.
+    // operation_aborted is close(); after anything else, carry on, since the next datagram may be fine.
     if (ec != boost::asio::error::operation_aborted) {
       _logger->warn("Receive failed - " + ec.message());
       _receive();
@@ -380,8 +349,7 @@ void RtpengineMediaEngine::_on_receive(const boost::system::error_code& ec, std:
   auto search = _pending.find(cookie);
 
   if (search == _pending.end()) {
-    // The answer to a request already given up on, or one this node never sent. Either
-    // way there is nobody to hand it to.
+    // A reply to a request already given up on, or never sent.
     _receive();
     return;
   }
@@ -412,10 +380,8 @@ std::string RtpengineMediaEngine::_error_of(const std::optional<Bencode>& reply)
   return result.empty() ? "rtpengine answered without a result" : "rtpengine answered \"" + result + "\"";
 }
 
-// RFC 3261 12.1.1: a dialog is the Call-ID and the two tags, and which of the two names
-// the end whose description this is depends on which end sent it. rtpengine wants the
-// offerer as from-tag throughout an exchange, so an answer names the offerer as from
-// and the answerer as to - the reverse of the participant that handed us the SDP.
+// RFC 3261 12.1.1. rtpengine wants the offerer as from-tag throughout an exchange, so an answer names the offerer
+// as from and the answerer as to.
 RtpengineMediaEngine::Tags RtpengineMediaEngine::_tags_for(const std::shared_ptr<Call>& call, const Flags& flags, bool answering) {
   Tags tags;
 
@@ -430,8 +396,7 @@ RtpengineMediaEngine::Tags RtpengineMediaEngine::_tags_for(const std::shared_ptr
   const auto& other = participant.originator ? dialog->callee_tag : dialog->caller_tag;
 
   if (answering) {
-    // The offer came from the other end, so it is the one rtpengine has already filed
-    // this media under.
+    // The offerer is the other end.
     if (other.empty() || own.empty()) return tags;
     tags.from = other;
     tags.to = own;
@@ -456,15 +421,8 @@ void RtpengineMediaEngine::offer(plugins::Executor on, std::shared_ptr<Call> cal
   if (!tags.to.empty()) command.set("to-tag", Bencode(tags.to));
   command.set("sdp", Bencode(std::move(sdp)));
 
-  // The substitutions this node would otherwise make itself, and the ones the builtin
-  // relay does make. The o= line and the session-level c= name this node rather than
-  // the endpoint, so a call whose media is anchored does not hand one end the other's
-  // address (RFC 8866 section 5.2).
-  //
-  // sdp-version puts the version in rtpengine's hands too, which is RFC 3264 section
-  // 8: what this node emits is not what the endpoint sent, so two offers the endpoint
-  // considered identical can come out of here different, and passing its version
-  // through would tell the far end nothing had changed.
+  // o= and the session-level c= name this node, so an anchored call does not give one end the other's address
+  // (RFC 8866 section 5.2). sdp-version has rtpengine version what it emits (RFC 3264 section 8).
   command.set("replace", Bencode::list({Bencode(std::string("origin")), Bencode(std::string("session-connection")), Bencode(std::string("sdp-version"))}));
 
   apply_profile(command, flags.target, flags.rtcp_mux, false);
@@ -516,9 +474,7 @@ void RtpengineMediaEngine::release(plugins::Executor on, std::shared_ptr<Call> c
   if (!call) return _complete(std::move(on), std::move(handler), plugins::Status::success());
   if (!is_connected()) return _complete(std::move(on), std::move(handler), plugins::Status::failure("rtpengine is not connected"));
 
-  // No tags: a delete naming the call alone takes every leg of it, which is what
-  // releasing a call means here. Releasing one leg would leave the other holding ports
-  // for a call that has ended.
+  // No tags: a delete naming only the call releases every leg of it.
   auto command = _command("delete", call);
 
   auto self = shared_from_this();
@@ -547,14 +503,9 @@ void RtpengineMediaEngine::query(plugins::Executor on, std::shared_ptr<Call> cal
   });
 }
 
-// What the call sweep reads, in the shape the builtin engine answers in: how long the
-// quietest moment ago was across every stream, because one stream still carrying is a
-// call still up.
-//
-// rtpengine reports a per-stream "last packet" as a unix timestamp, and zero for a
-// stream nothing has arrived on. A stream that has never carried is idle from when the
-// call was created rather than not idle at all, which is what the builtin relay reports
-// too - its counter starts at the moment the relay does.
+// The query document, in the builtin engine's shape. idle_seconds is the time since the most recent packet on any
+// stream: one stream still carrying is a call still up. rtpengine reports "last packet" per stream as a unix
+// timestamp, zero if nothing has arrived; such a stream counts as idle since the call was created.
 std::string RtpengineMediaEngine::_idle_document(const std::shared_ptr<Call>& call, const Bencode& reply) const {
   const auto now = static_cast<std::int64_t>(std::time(nullptr));
   const auto created = reply.integer_at("created", now);
@@ -562,8 +513,7 @@ std::string RtpengineMediaEngine::_idle_document(const std::shared_ptr<Call>& ca
   std::int64_t newest = 0;
   std::size_t streams = 0;
 
-  // One per stream: rtpengine's "stats" is what arrived on the stream's port from its end,
-  // and "stats_out", where a version reports it, what the engine sent that end.
+  // Per stream: "stats" is what arrived from the stream's end and "stats_out", where rtpengine reports it, what was sent to it.
   std::string legs = "[";
 
   if (const auto* tags = reply.find("tags"); tags != nullptr && tags->is_dictionary()) {
@@ -598,8 +548,7 @@ std::string RtpengineMediaEngine::_idle_document(const std::shared_ptr<Call>& ca
     }
   }
 
-  // A call rtpengine is holding no streams for has no media to be idle, and says so
-  // with null rather than with a number the sweep would act on.
+  // A call with no streams reports null, not a number the call sweep would act on.
   const auto idle = streams == 0 ? std::string("null") : std::to_string(now > newest ? now - newest : 0);
 
   legs += "]";

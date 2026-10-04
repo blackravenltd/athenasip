@@ -99,8 +99,7 @@ TEST(InviteClientTransactionTest, SendsTheInviteAndEntersCalling) {
   EXPECT_EQ(h.sent_method("INVITE"), 1);
 }
 
-// Timer A doubles on every retransmission. Unlike E it is not capped at T2, because
-// timer B ends the attempt first.
+// Timer A doubles on every retransmission. Unlike E it is not capped at T2: timer B ends the attempt first.
 TEST(InviteClientTransactionTest, RetransmitsWithDoublingIntervals) {
   Harness h;
   auto transaction = make_ict(h, false);
@@ -145,7 +144,7 @@ TEST(InviteClientTransactionTest, AProvisionalStopsRetransmissions) {
   EXPECT_EQ(h.sent_method("INVITE"), 1) << "a provisional must stop timer A";
 }
 
-// Timer B: nothing came back at all.
+// Timer B: no response at all.
 TEST(InviteClientTransactionTest, TimesOutWithNoResponse) {
   Harness h;
   auto transaction = make_ict(h, false);
@@ -159,9 +158,8 @@ TEST(InviteClientTransactionTest, TimesOutWithNoResponse) {
   EXPECT_EQ(h.timeouts, 1);
 }
 
-// RFC 6026 section 7.2, which replaces RFC 3261 17.1.1.2 here: a 2xx moves the
-// transaction to Accepted rather than ending it, and is not acknowledged by it - the ACK
-// for a 2xx is the TU's, a separate transaction that may take a different route.
+// RFC 6026 7.2, replacing RFC 3261 17.1.1.2: a 2xx moves the transaction to Accepted and is not acknowledged
+// by it. The ACK for a 2xx is the TU's.
 TEST(InviteClientTransactionTest, TwoHundredGoesToAcceptedAndIsNotAcknowledgedHere) {
   Harness h;
   auto invite = request("INVITE");
@@ -175,11 +173,8 @@ TEST(InviteClientTransactionTest, TwoHundredGoesToAcceptedAndIsNotAcknowledgedHe
   EXPECT_EQ(h.sent_method("ACK"), 0) << "the transaction must not ACK a 2xx";
 }
 
-// The reason for Accepted: a retransmitted 2xx - the UAS resends it until its ACK arrives
-// - still matches this transaction and is passed to the TU every time, so a proxy can send
-// it on to the caller. Ended at once, the retransmission had no transaction to match and
-// arrived as a stray, which a proxy can only route by Via; a WebSocket caller's Via names
-// nothing (RFC 7118), and the 2xx was lost.
+// In Accepted a retransmitted 2xx still matches the transaction and is passed to the TU each time, so a proxy
+// can forward it to the caller.
 TEST(InviteClientTransactionTest, ARetransmittedTwoHundredIsPassedToTheTuEachTime) {
   Harness h;
   auto invite = request("INVITE");
@@ -192,13 +187,12 @@ TEST(InviteClientTransactionTest, ARetransmittedTwoHundredIsPassedToTheTuEachTim
   EXPECT_EQ(h.to_tu.size(), 2u);
   EXPECT_EQ(transaction->state(), State::Accepted);
 
-  // And a non-2xx in Accepted is nothing: the call was answered.
+  // A non-2xx in Accepted is ignored: the call was answered.
   transaction->receive(response_to(invite, 486, "Busy Here"));
   EXPECT_EQ(h.to_tu.size(), 2u);
 }
 
-// Timer M, 64*T1, ends Accepted, on any transport: 2xx retransmissions come from the UAS's
-// own timer, not this transport's.
+// Timer M, 64*T1, ends Accepted on any transport: 2xx retransmissions run on the UAS's own timer.
 TEST(InviteClientTransactionTest, TimerMEndsAccepted) {
   Harness h;
   auto invite = request("INVITE");
@@ -227,7 +221,7 @@ TEST(InviteClientTransactionTest, AcknowledgesANonTwoHundredItself) {
   ASSERT_EQ(h.to_tu.size(), 1u);
 }
 
-// RFC 3261 17.1.1.3 spells out exactly which headers the ACK carries.
+// RFC 3261 17.1.1.3: the headers the ACK carries.
 TEST(InviteClientTransactionTest, TheAckFollowsTheRulesForItsHeaders) {
   Harness h;
   auto invite = request("INVITE");
@@ -251,7 +245,7 @@ TEST(InviteClientTransactionTest, TheAckFollowsTheRulesForItsHeaders) {
   EXPECT_EQ(ack->header->headers_map["Call-ID"][0]->to_string(), "call-1");
   EXPECT_NE(ack->header->headers_map["From"][0]->to_string().find("tag=alice"), std::string::npos);
 
-  // The To comes from the response, because it carries the tag the far end chose.
+  // The To comes from the response, which carries the far end's tag.
   EXPECT_EQ(ack->header->headers_map["To"][0]->to_string(), busy->header->headers_map["To"][0]->to_string());
 
   // Same sequence number, method ACK.
@@ -261,8 +255,7 @@ TEST(InviteClientTransactionTest, TheAckFollowsTheRulesForItsHeaders) {
   EXPECT_EQ(cseq->method, "ACK");
 }
 
-// In Completed the ACK is repeated for each retransmitted final response, and the TU
-// hears about the failure only once.
+// In Completed the ACK is repeated for each retransmitted final response, and the TU hears of the failure once.
 TEST(InviteClientTransactionTest, RepeatsTheAckWithoutTellingTheTuAgain) {
   Harness h;
   auto invite = request("INVITE");

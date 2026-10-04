@@ -50,9 +50,7 @@ struct Response {
   }
 };
 
-// A store that cannot resolve a session, for the difference between "you may not" and
-// "I could not ask". Everything else it does works, so a route that needs no store still
-// answers.
+// A store that cannot resolve a session, to tell "you may not" from "I could not ask". Everything else works.
 class NoSessionsDatastore : public datastores::MemoryDatastore {
  public:
   using MemoryDatastore::MemoryDatastore;
@@ -62,8 +60,7 @@ class NoSessionsDatastore : public datastores::MemoryDatastore {
   }
 };
 
-// The whole API behind one router, because what is under test is which credentials reach
-// which routes and that is decided in the router rather than in any handler.
+// The whole API behind one router, which is where credentials are matched to routes.
 struct RolesFixture {
   std::shared_ptr<MockLogger> logger = std::make_shared<MockLogger>();
   std::shared_ptr<Config> config;
@@ -147,7 +144,7 @@ struct RolesFixture {
 
   Response get(const std::string& target, const std::string& token) { return request(http::verb::get, target, token); }
 
-  // A user's own credential, which before roles on the routes could reach nothing.
+  // A user's own session token.
   std::string login(const std::string& username) {
     boost::json::object body;
     body["username"] = username;
@@ -162,14 +159,12 @@ struct RolesFixture {
 
 }  // namespace
 
-// --- What a session token can now reach ---
+// --- What a session token can reach ---
 
 TEST(RouteRolesTest, AUsersOwnTokenReachesARouteItHoldsTheRoleFor) {
   RolesFixture f;
   f.add_user("tom", {types::roles::manage_realms});
 
-  // The point of the whole step: before this, only a configuration token could get past
-  // the router, so a logged-in administrator could do nothing at all.
   EXPECT_EQ(f.get("/api/v1/realms", f.login("tom")).status, 200u);
 }
 
@@ -179,8 +174,7 @@ TEST(RouteRolesTest, AUserWithoutTheRoleIsForbiddenRatherThanUnauthorised) {
 
   auto response = f.get("/api/v1/realms", f.login("tom"));
 
-  // 403, not 401: this caller is who it says it is, and may not do this. A 401 would tell
-  // it to go and log in again, which would not help.
+  // 403, not 401: the caller is known and may not do this; logging in again would not help.
   EXPECT_EQ(response.status, 403u);
   EXPECT_EQ(response.json().at("error").at("code").as_string(), "forbidden");
 }
@@ -194,8 +188,7 @@ TEST(RouteRolesTest, AUserWithNoRolesReachesNothingButCanStillAskWhoItIs) {
   EXPECT_EQ(f.get("/api/v1/realms", token).status, 403u);
   EXPECT_EQ(f.get("/api/v1/nodes", token).status, 403u);
 
-  // An empty role set on a route means any authenticated caller, which is what lets the
-  // console tell somebody they have no permissions rather than just failing to load.
+  // A route with no roles admits any authenticated caller, so the console can tell a user they have no permissions.
   EXPECT_EQ(f.get("/api/v1/session", token).status, 200u);
 }
 
@@ -207,11 +200,10 @@ TEST(RouteRolesTest, ReadingRealmsAdmitsEitherRoleAndChangingThemDoesNot) {
 
   const auto token = f.login("placer");
 
-  // Somebody who places subscribers has to be able to discover which realms exist, which is
-  // what was agreed with the console.
+  // A user who manages subscribers must be able to list the realms.
   EXPECT_EQ(f.get("/api/v1/realms", token).status, 200u);
 
-  // Discovering them is not the same as changing them.
+  // Listing them is not changing them.
   EXPECT_EQ(f.request(http::verb::post, "/api/v1/realms", token, "{\"name\":\"example.com\"}").status, 403u);
   EXPECT_EQ(f.request(http::verb::delete_, "/api/v1/realms/example.com", token).status, 403u);
 }
@@ -222,19 +214,18 @@ TEST(RouteRolesTest, TheRolesARouteWantsAreNamedInTheRefusal) {
 
   auto response = f.get("/api/v1/realms", f.login("tom"));
 
-  // Role names are the API's own vocabulary and are in the documentation, so naming them
-  // tells a caller how to get the access it is missing and tells an attacker nothing.
+  // Role names are documented API vocabulary, so the message names the roles that would admit the caller.
   const std::string message(response.json().at("error").at("message").as_string());
   EXPECT_NE(message.find(types::roles::manage_realms), std::string::npos);
   EXPECT_NE(message.find(types::roles::manage_realm_subscribers), std::string::npos);
 }
 
-// --- Configuration tokens, mapped to the same vocabulary ---
+// --- The fixture's users, by the roles they hold ---
 
 TEST(RouteRolesTest, TheAdminScopeStillReachesEverything) {
   RolesFixture f;
 
-  // No deployment should break on this change: an admin token is every role there is.
+  // admin-token holds every role.
   EXPECT_EQ(f.get("/api/v1/realms", "admin-token").status, 200u);
   EXPECT_EQ(f.get("/api/v1/nodes", "admin-token").status, 200u);
   EXPECT_EQ(f.get("/api/v1/registrations", "admin-token").status, 200u);
@@ -253,8 +244,7 @@ TEST(RouteRolesTest, TheClientScopeReachesWhatItAlwaysDidAndNoMore) {
 TEST(RouteRolesTest, AKnownTokenHoldingNoScopesIsForbiddenNotUnauthorised) {
   RolesFixture f;
 
-  // It is a real credential this node issued and it may do nothing, which is a different
-  // answer from a token nobody has heard of.
+  // A real credential with no roles is forbidden; an unknown token is unauthorised.
   EXPECT_EQ(f.get("/api/v1/realms", "scopeless-token").status, 403u);
   EXPECT_EQ(f.get("/api/v1/session", "scopeless-token").status, 200u);
 
@@ -297,7 +287,7 @@ TEST(RouteRolesTest, ARoleTakenAwayIsGoneOnTheNextRequest) {
   user->roles = {};
   ASSERT_TRUE(f.store->user_update(user));
 
-  // Not at the next login, which is why the session does not carry the roles.
+  // On the next request, not at the next login: the session does not carry the roles.
   EXPECT_EQ(f.get("/api/v1/realms", token).status, 403u);
 }
 
@@ -313,7 +303,7 @@ TEST(RouteRolesTest, DisablingAUserShutsEveryRouteOnIt) {
   user->disabled = true;
   ASSERT_TRUE(f.store->user_update(user));
 
-  // 401 rather than 403: the credential itself has stopped being good.
+  // 401, not 403: the credential itself is no longer good.
   EXPECT_EQ(f.get("/api/v1/realms", token).status, 401u);
 }
 
@@ -333,8 +323,7 @@ TEST(RouteRolesTest, AStoreThatCannotResolveASessionIs503AndNotARefusal) {
   auto logger = std::make_shared<MockLogger>();
   RolesFixture f(std::make_shared<NoSessionsDatastore>(logger, std::make_shared<types::URL>("memory://")));
 
-  // A 401 here would send an administrator looking for their password while the real
-  // problem is Redis.
+  // Not a 401: the fault is the store, not the caller's credential.
   auto response = f.get("/api/v1/realms", std::string(64, 'a'));
   EXPECT_EQ(response.status, 503u);
   EXPECT_EQ(response.json().at("error").at("code").as_string(), "unavailable");

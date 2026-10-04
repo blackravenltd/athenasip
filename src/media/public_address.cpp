@@ -72,9 +72,8 @@ void PublicAddress::stop() {
   _tick.reset();
 }
 
-// Every minute, on the process's own io_context and never on the Core strand: a lookup is
-// a network round trip. A change is logged, because it is the site's address moving. This
-// object owns the loop and each step holds it weakly, so stopping ends it.
+// Re-resolves every minute on the global io_context, never the Core strand. Each step holds this object's state
+// weakly, so stop() ends the loop.
 void PublicAddress::_schedule() {
   _timer = std::make_shared<boost::asio::steady_timer>(detail::get_global_io_context());
   _tick = std::make_shared<std::function<void()>>();

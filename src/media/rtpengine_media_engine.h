@@ -28,9 +28,7 @@
 
 namespace athenasip::media {
 
-// The production media engine: rtpengine, spoken to over its ng protocol. This is the
-// engine that does WebRTC, because ICE, DTLS and SRTP are what a browser requires and
-// what the builtin relay declines rather than pretends to.
+// The production engine: rtpengine, driven over its ng protocol. It handles ICE, DTLS and SRTP, so it is the engine for WebRTC.
 //
 //   media:
 //     url: rtpengine://203.0.113.9:2223
@@ -39,12 +37,8 @@ namespace athenasip::media {
 //       attempts: 3
 //       media_address: 203.0.113.9
 //
-// The ng protocol is a UDP datagram of "<cookie> <bencoded dictionary>", answered with
-// a datagram of the same shape. The cookie is the request identity and rtpengine caches
-// its answer against it, which is what makes a retransmission safe: the same cookie
-// asks for the answer again rather than for the work again. That is the whole of the
-// reliability story over UDP, and it is why this driver retransmits rather than giving
-// up on the first silence.
+// An ng message is a UDP datagram of "<cookie> <bencoded dictionary>", answered in the same shape. rtpengine caches
+// its answer against the cookie, so retransmitting the same datagram is safe, and this driver does so on silence.
 class RtpengineMediaEngine : public MediaEngine, public std::enable_shared_from_this<RtpengineMediaEngine> {
  public:
   RtpengineMediaEngine(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<types::URL> url);
@@ -59,8 +53,7 @@ class RtpengineMediaEngine : public MediaEngine, public std::enable_shared_from_
   void close() override;
   bool is_connected() const override;
 
-  // Bridge, record and transcode. Not conference: rtpengine's publish/subscribe is a
-  // later item and claiming it now would have a caller ask for a mix and get a relay.
+  // Bridge, record and transcode. Not conference.
   Capabilities capabilities() const override;
 
   void offer(plugins::Executor on, std::shared_ptr<Call> call, std::string sdp, Flags flags, MediaHandler handler) override;
@@ -71,13 +64,11 @@ class RtpengineMediaEngine : public MediaEngine, public std::enable_shared_from_
   void start_recording(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) override;
   void stop_recording(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) override;
 
-  // The default ng port. rtpengine's own is 2223 for the UDP control socket.
+  // rtpengine's default UDP control port.
   static constexpr std::uint16_t kDefaultPort = 2223;
 
  private:
-  // What one outstanding request holds. The datagram is kept whole rather than rebuilt,
-  // because a retransmission has to carry the same cookie and the same bytes or it is a
-  // second request rather than the same one again.
+  // One outstanding request. The datagram is kept whole: a retransmission must carry the same cookie and bytes.
   struct Pending {
     std::string cookie;
     std::string datagram;
@@ -88,13 +79,11 @@ class RtpengineMediaEngine : public MediaEngine, public std::enable_shared_from_
 
   using Reply = std::function<void(std::optional<Bencode>)>;
 
-  // The two halves of every operation: build the dictionary, then send it and turn what
-  // comes back into the contract's answer.
+  // _command builds the dictionary; _request sends it and hands back the reply, or nothing on failure.
   Bencode _command(const std::string& name, const std::shared_ptr<Call>& call) const;
   void _request(Bencode command, Reply reply);
 
-  // Strand-confined. Everything below runs on _strand, which is the only thread that
-  // touches the pending table.
+  // Everything below runs on _strand, the only thread that touches _pending.
   std::shared_ptr<boost::asio::ip::udp::socket> _current_socket() const;
   void _send(const std::shared_ptr<Pending>& pending);
   void _receive();
@@ -102,9 +91,7 @@ class RtpengineMediaEngine : public MediaEngine, public std::enable_shared_from_
   void _on_timeout(const std::string& cookie);
   void _fail_all(const std::string& reason);
 
-  // The tags that name a leg to rtpengine. The ng protocol addresses media by call id
-  // plus the tag of the end whose description is being passed in, which is the From tag
-  // of the dialog for one end and the To tag for the other (RFC 3261 12.1.1).
+  // The ng protocol names a leg by call id and dialog tag (RFC 3261 12.1.1).
   struct Tags {
     bool ok = false;
     std::string from;
@@ -113,7 +100,7 @@ class RtpengineMediaEngine : public MediaEngine, public std::enable_shared_from_
 
   static Tags _tags_for(const std::shared_ptr<Call>& call, const Flags& flags, bool answering);
 
-  // rtpengine answers every command with a result, and says why when it is not ok.
+  // Empty when the reply is ok, otherwise rtpengine's reason.
   static std::string _error_of(const std::optional<Bencode>& reply);
 
   std::string _idle_document(const std::shared_ptr<Call>& call, const Bencode& reply) const;
@@ -125,34 +112,27 @@ class RtpengineMediaEngine : public MediaEngine, public std::enable_shared_from_
   std::uint16_t _port = kDefaultPort;
   std::string _media_address;
 
-  // media_address, followed if it is a name (public_address.h).
+  // media_address, which may be a name (public_address.h).
   PublicAddress _public;
 
-  // What rtpengine is told to advertise to the leg a description is for: the local address
-  // the proxy gave a leg inside sip.localnet, otherwise media_address as it resolves now.
+  // The address rtpengine is told to advertise: flags.address when set, otherwise media_address as it resolves now.
   std::string _advertise_for(const Flags& flags) const;
 
-  // Per attempt, not for the whole operation. rtpengine answers in microseconds when it
-  // is there at all, so this is a bound on silence rather than on work; three attempts
-  // at half a second is well inside the thirty-two seconds timer B gives a transaction
-  // that a fork has to share.
+  // Per attempt. rtpengine answers in microseconds, so this bounds silence, and all attempts together must stay well
+  // inside the 32 seconds of timer B.
   unsigned _timeout_ms = 500;
   unsigned _attempts = 3;
 
   boost::asio::strand<boost::asio::io_context::executor_type> _strand;
 
-  // Held by shared_ptr and behind a mutex because close() is called from the shutdown
-  // path rather than from the strand, and a socket is not safe for two threads. The
-  // teardown hands the socket to the strand to be closed rather than reaching into it,
-  // which is the same rule the transport follows for a connection's stream.
+  // Behind a mutex because close() is called off the strand. close() hands the socket to the strand to be closed.
   mutable std::mutex _socket_mutex;
   std::shared_ptr<boost::asio::ip::udp::socket> _socket;
 
   boost::asio::ip::udp::endpoint _endpoint;
   boost::asio::ip::udp::endpoint _received_from;
 
-  // One datagram can carry a whole session description twice over, so this is sized for
-  // the largest a UDP payload can be rather than for the largest seen.
+  // Sized for the largest UDP payload.
   std::vector<char> _receive_buffer;
 
   std::unordered_map<std::string, std::shared_ptr<Pending>> _pending;

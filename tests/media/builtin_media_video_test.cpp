@@ -23,11 +23,8 @@ using namespace athenasip;
 using athenasip::media::BuiltinMediaEngine;
 using athenasip::media::Flags;
 
-// A call with video is two streams, and RFC 3264 is about streams: an answer has one
-// m-line for each the offer had, in the same order (section 6), each stream has a port of
-// its own, and a stream the answerer does not want is answered with port zero and stays in
-// its place. A relay that anchors a call has to do all of that for every stream, not for
-// the first one.
+// RFC 3264 6: an answer has one m-line per offered stream, in order; each stream has its own port, and a
+// declined stream is answered with port zero in its place. A relay does this for every stream.
 namespace {
 
 using udp = boost::asio::ip::udp;
@@ -50,8 +47,7 @@ std::shared_ptr<Call> make_call() {
   return call;
 }
 
-// Audio and video from one end, at two ports of its own. A video port of zero is the stream
-// declined.
+// Audio and video from one end, at two ports. A video port of zero is the stream declined.
 std::string description(const std::string& who, std::uint16_t audio, std::uint16_t video) {
   return "v=0\r\no=" + who + " 1 1 IN IP4 127.0.0.1\r\ns=-\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\n" + "m=audio " + std::to_string(audio) +
          " RTP/AVP 0\r\na=rtpmap:0 PCMU/8000\r\n" + "m=video " + std::to_string(video) + " RTP/AVP 96\r\na=rtpmap:96 VP8/90000\r\n";
@@ -71,8 +67,7 @@ std::string datagram(udp::socket& socket, std::chrono::milliseconds bound = std:
   return std::string();
 }
 
-// Two ends, each with a socket for its audio and one for its video, and a call set up
-// between them through the relay.
+// Two ends, each with an audio and a video socket, and a call set up between them through the relay.
 struct VideoCall {
   boost::asio::io_context io;
   udp::socket caller_audio{io, udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0)};
@@ -100,8 +95,7 @@ struct VideoCall {
 
 }  // namespace
 
-// Each stream of the offer is given a relay port of its own, in the offer's order, so the
-// callee sends its audio and its video to two different places on this node.
+// Each offered stream gets a relay port of its own, in the offer's order.
 TEST(BuiltinMediaVideoTest, EachStreamOfAnOfferGetsARelayPortOfItsOwn) {
   VideoCall v(25000);
 
@@ -126,8 +120,7 @@ TEST(BuiltinMediaVideoTest, EachStreamOfAnOfferGetsARelayPortOfItsOwn) {
   EXPECT_NE(video, 40002);
 }
 
-// And the video crosses, both ways, on its own ports: what is sent to the video relay comes
-// out at the other end's video socket and nowhere else.
+// Video crosses both ways on its own ports and nowhere else.
 TEST(BuiltinMediaVideoTest, VideoIsRelayedBothWaysBesideTheAudio) {
   VideoCall v(25100);
 
@@ -158,14 +151,12 @@ TEST(BuiltinMediaVideoTest, VideoIsRelayedBothWaysBesideTheAudio) {
   v.caller_audio.send_to(boost::asio::buffer("audio-from-caller", 17), VideoCall::relay(v.to_caller, 0));
   EXPECT_EQ(datagram(v.callee_audio), "audio-from-caller");
 
-  // And nothing leaked across: the audio sockets saw no video, and the reverse.
+  // Nothing leaked across: the audio sockets saw no video, and the reverse.
   EXPECT_EQ(datagram(v.callee_audio, std::chrono::milliseconds(100)), "");
   EXPECT_EQ(datagram(v.callee_video, std::chrono::milliseconds(100)), "");
 }
 
-// RFC 3264 section 6: a stream the answerer does not want is answered with port zero, in
-// its place. A phone with no camera answering a video call is exactly this, and the caller
-// has to be told the video was declined, not handed a relay port for a stream nobody sends.
+// RFC 3264 6: a declined stream is answered with port zero in its place, and gets no relay port.
 TEST(BuiltinMediaVideoTest, ADeclinedVideoStreamStaysDeclinedAndTheAudioStillCrosses) {
   VideoCall v(25200);
 
@@ -191,9 +182,7 @@ TEST(BuiltinMediaVideoTest, ADeclinedVideoStreamStaysDeclinedAndTheAudioStillCro
   EXPECT_EQ(datagram(v.callee_audio), "audio-from-caller");
 }
 
-// A call that starts as audio and has video added by a re-INVITE keeps its audio where it
-// was: the audio relay port does not move, or the far end's audio would stop while it found
-// out, and the video gets a port of its own.
+// Adding video by re-INVITE leaves the audio relay port where it was and gives the video its own.
 TEST(BuiltinMediaVideoTest, AddingVideoToACallLeavesItsAudioWhereItWas) {
   VideoCall v(25300);
 

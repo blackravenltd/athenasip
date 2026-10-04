@@ -16,14 +16,10 @@
 
 namespace athenasip::media {
 
-// The address a media engine advertises, which may be a name: a node behind NAT on a
-// dynamic address advertises the name a dynamic DNS updater keeps pointing at the site.
-// What goes into a description is an address, because phones do not resolve a name in a
-// c= line, so a name is looked up when the engine starts and every minute after, off the
-// call path, and media follows the name when the address changes.
+// The address a media engine advertises. It may be a name, for a node behind NAT on a dynamic address; SDP needs an
+// address, so a name is resolved at start and every minute after, off the call path.
 //
-// An address is used as it is. A name that resolves to nothing gives nothing, and the
-// engine declines rather than write the name.
+// An address is used as is. A name that does not resolve yields empty, and the engine declines.
 class PublicAddress {
  public:
   explicit PublicAddress(std::shared_ptr<loggers::Logger> logger);
@@ -33,13 +29,11 @@ class PublicAddress {
   void set(const std::string& configured);
   const std::string& configured() const { return _configured; }
 
-  // A name is resolved now, which blocks: this is the engine connecting, before the node
-  // serves anything. Then again every minute in the background.
+  // Resolves a name once, blocking (the engine is connecting; nothing is served yet), then every minute in the background.
   void start();
   void stop();
 
-  // What to write: the address, or what the name last resolved to. Empty when a name has
-  // not resolved, and when nothing was configured.
+  // The address to write. Empty when nothing is configured or a name has not resolved.
   std::string current() const;
 
   bool is_name() const;

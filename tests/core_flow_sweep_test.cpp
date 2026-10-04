@@ -24,8 +24,8 @@ using namespace athenasip;
 
 namespace {
 
-// A UDP flow is made by the first datagram from an address and has nothing to end it: no
-// socket, no close, and no error on the read. Everything here is about what forgets one.
+// A UDP flow is made by the first datagram from an address and nothing ends it; the flow sweep
+// forgets idle ones. This registers a flow with Core.
 std::shared_ptr<Channel> flow(CoreFixture& f, const std::string& transport, const std::string& address, std::uint16_t port, bool reliable) {
   auto connection = std::make_shared<MockConnection>(transport, address, port);
   connection->reliable = reliable;
@@ -52,8 +52,7 @@ TEST(CoreFlowSweepTest, AUdpFlowThatHasGoneQuietIsForgotten) {
 
   f.core->flow_sweep_start();
 
-  // Past the timeout, on the injectable clock. Measuring this against the real one would
-  // be five minutes of waiting.
+  // Past the timeout, on the injected clock.
   f.timers->advance(std::chrono::seconds(400));
   f.settle();
 
@@ -69,8 +68,7 @@ TEST(CoreFlowSweepTest, AUdpFlowStillInUseIsLeftAlone) {
 
   f.core->flow_sweep_start();
 
-  // Quiet for a while, then used, then quiet again for less than the timeout. Neither
-  // stretch on its own reaches it, and the flow is in use throughout.
+  // Two idle stretches, each shorter than the timeout, with activity between.
   f.timers->advance(std::chrono::seconds(200));
   f.settle();
   channel->touch();
@@ -81,9 +79,7 @@ TEST(CoreFlowSweepTest, AUdpFlowStillInUseIsLeftAlone) {
   EXPECT_NE(f.on_strand([&]() { return f.core->channel_find(flow_id); }), nullptr);
 }
 
-// A TCP, TLS or WebSocket flow ends when its socket does, and its silence means nothing: a
-// phone that registered an hour ago and has said nothing since is still reachable down that
-// socket, and closing it would take away the only path home a NATed client has.
+// A reliable flow ends with its socket and is never swept: it may be a NATed client's only path back.
 TEST(CoreFlowSweepTest, AReliableFlowIsNeverSweptHoweverQuiet) {
   CoreFixture f;
   f.config->sip_flow_idle_timeout = 300;
@@ -102,7 +98,6 @@ TEST(CoreFlowSweepTest, AReliableFlowIsNeverSweptHoweverQuiet) {
 TEST(CoreFlowSweepTest, ATimeoutOfZeroForgetsNothing) {
   CoreFixture f;
 
-  // What it did before this existed, for anyone who needs it back.
   f.config->sip_flow_idle_timeout = 0;
 
   auto channel = flow(f, "udp", "198.51.100.7", 5060, /*reliable=*/false);
@@ -116,9 +111,7 @@ TEST(CoreFlowSweepTest, ATimeoutOfZeroForgetsNothing) {
   EXPECT_NE(f.on_strand([&]() { return f.core->channel_find(flow_id); }), nullptr);
 }
 
-// The point of the whole thing. The map is keyed by a remote address a datagram can claim
-// to be from, so on a public listener an unbounded one is a way to grow a node's memory
-// from off the network.
+// Flows are keyed by a source address a datagram can spoof, so idle ones must not accumulate.
 TEST(CoreFlowSweepTest, ManyOneShotFlowsDoNotAccumulate) {
   CoreFixture f;
   f.config->sip_flow_idle_timeout = 300;
@@ -143,8 +136,7 @@ TEST(CoreFlowSweepTest, TheSweepKeepsRunning) {
 
   f.core->flow_sweep_start();
 
-  // A first pass that finds nothing must not be the last one: the flow below is made after
-  // it, and something has to come back for it.
+  // The sweep re-arms after a pass that finds nothing: the flow below is made after the first pass.
   f.timers->advance(std::chrono::seconds(400));
   f.settle();
 
@@ -157,9 +149,7 @@ TEST(CoreFlowSweepTest, TheSweepKeepsRunning) {
   EXPECT_EQ(f.on_strand([&]() { return f.core->channel_find(flow_id); }), nullptr);
 }
 
-// docs/events.md promises a `closed` for a channel that goes, and T.O.M.S was told the
-// channels topics carry registered and closed. Before this a UDP flow published
-// "registered" and never anything else, so a consumer watching them saw only openings.
+// A forgotten UDP flow publishes `closed` on its channels topic, as docs/events.md documents.
 TEST(CoreFlowSweepTest, ForgettingAFlowSaysSoOnTheBus) {
   auto logger = std::make_shared<MockLogger>();
   auto config = std::make_shared<Config>(logger);
@@ -202,15 +192,8 @@ TEST(CoreFlowSweepTest, ForgettingAFlowSaysSoOnTheBus) {
   EXPECT_TRUE(closed) << "a UDP flow that is forgotten has to say so, or a consumer counts openings for ever";
 }
 
-// Closing a flow has to reach the connection, and for UDP that nearly did not happen.
-// Channel::close() only tears a connection down if it says it is open, and UDPServer was
-// the one server that never called start() on the connections it made - so an inbound UDP
-// flow answered is_open() false for its whole life and was skipped. The flow left the
-// channel registry and stayed in the server's map, and the next datagram from that address
-// was handed to the closed connection instead of making a live one.
-//
-// Found by watching a live node rather than by reading: the sweep logged "Forgetting" and a
-// second datagram from the same address produced no new endpoint.
+// Forgetting a flow closes its connection as well as unregistering it. Channel::close() only tears
+// down a connection that reports is_open(), so a live UDP connection must be started.
 TEST(CoreFlowSweepTest, ForgettingAFlowClosesItsConnection) {
   CoreFixture f;
   f.config->sip_flow_idle_timeout = 300;
