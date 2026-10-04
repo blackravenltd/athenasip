@@ -7,6 +7,7 @@
 #include "registrar.h"
 
 #include <algorithm>
+#include <chrono>
 #include <ctime>
 #include <map>
 #include <optional>
@@ -582,6 +583,10 @@ void Registrar::_send_ok(const std::shared_ptr<transactions::TransactionBase>& t
 
     for (const auto& value : _push_capabilities(request, found.value)) response->header->add("Feature-Caps", std::make_shared<headers::StringHeader>(value));
 
+    for (const auto& value : _alternate_servers(request, expires_seconds)) {
+      response->header->add("AthenaSIP-Alternate-Server", std::make_shared<headers::StringHeader>(value));
+    }
+
     transaction->send(response);
   });
 }
@@ -627,6 +632,37 @@ std::vector<std::string> Registrar::_push_capabilities(const std::shared_ptr<SIP
     for (const auto& [name, indicator] : service->capabilities()) value += ";" + name + "=\"" + indicator + "\"";
     if (pnsreg) value += ";+sip.pnsreg=\"" + std::to_string(core->config->push_refresh) + "\"";
     values.push_back(std::move(value));
+  }
+  return values;
+}
+
+std::vector<std::string> Registrar::_alternate_servers(const std::shared_ptr<SIPMessage>& request, std::uint32_t expires_seconds) const {
+  auto core = _core.lock();
+  auto channel = request->channel.lock();
+  if (!core || !channel || !channel->_connection || expires_seconds == 0 || !supports(request->header, "athenasip-failover")) return {};
+
+  // Only where the transport authenticated this node to the client: anywhere else the header is a redirection
+  // whoever can forge a response could send.
+  const auto transport = Util::to_lower(channel->_connection->transport_name());
+  if (transport != "tls" && transport != "wss") return {};
+
+  const auto interval = core->config->events_status_interval;
+  const auto stale_after = interval == 0 ? std::chrono::seconds::max() : std::chrono::seconds(interval * 3);
+
+  // The discovery bus's answer, as /api/v1/nodes gives it: the other nodes that are up, on the same transport.
+  // The list is good for as long as the registration, and the client learns it afresh when it refreshes.
+  std::vector<std::string> values;
+  for (const auto& node : core->nodes()->list(stale_after)) {
+    if (node.id == core->config->sip_node_id || node.stale || node.status != "ok") continue;
+
+    for (const auto& entry : node.transports) {
+      if (!entry.is_object()) continue;
+      const auto* kind = entry.as_object().if_contains("transport");
+      const auto* uri = entry.as_object().if_contains("uri");
+      if (kind == nullptr || uri == nullptr || !kind->is_string() || !uri->is_string() || kind->as_string() != transport) continue;
+
+      values.push_back("<" + std::string(uri->as_string()) + ">;expires=" + std::to_string(expires_seconds));
+    }
   }
   return values;
 }
