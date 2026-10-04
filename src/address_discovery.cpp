@@ -14,6 +14,8 @@
 
 #include "channel.h"
 #include "core.h"
+#include "node_directory.h"
+#include "sip_message.h"
 #include "util.h"
 
 namespace athenasip {
@@ -152,6 +154,126 @@ void AddressDiscovery::answered(const stun::Mapped& mapped) {
   // The round is done: ask again after the interval.
   if (_timer) _timer->cancel();
   _ask(_servers.size());
+}
+
+void AddressDiscovery::review() {
+  auto core = _core.lock();
+  if (!core) return;
+
+  const auto interval = core->config->events_status_interval;
+  const auto stale_after = interval == 0 ? std::chrono::seconds::max() : std::chrono::seconds(interval * 3);
+  const auto& self_id = core->config->sip_node_id;
+  const auto now = core->now();
+
+  _verified_by.clear();
+  bool peers = false;
+
+  for (const auto& node : core->nodes()->list(stale_after)) {
+    if (node.id == self_id || node.stale || node.status != "ok") continue;
+    peers = true;
+
+    // Whether this peer got through to the address this node found.
+    for (const auto& [reached, address] : node.reaches) {
+      if (_finding && reached == self_id && address == _finding->address) _verified_by.push_back(node.id);
+    }
+
+    // Probe the peer's own finding, at its UDP listener's port.
+    if (node.discovered.empty()) continue;
+
+    std::uint16_t port = 0;
+    for (const auto& entry : node.transports) {
+      if (!entry.is_object()) continue;
+      const auto* kind = entry.as_object().if_contains("transport");
+      const auto* at = entry.as_object().if_contains("port");
+      if (kind != nullptr && kind->is_string() && kind->as_string() == "udp" && at != nullptr && at->is_int64())
+        port = static_cast<std::uint16_t>(at->as_int64());
+    }
+    if (port == 0) continue;
+
+    const auto probed = _probed.find(node.id);
+    if (probed != _probed.end() && probed->second.first == node.discovered && now - probed->second.second < std::chrono::minutes(10)) continue;
+
+    _probe(node.id, node.discovered, port);
+  }
+
+  if (_finding && _verified_by.empty() && peers && core->config->sip_public_address.empty() && _warned != _finding->address) {
+    _warned = _finding->address;
+    _logger->warn("No other node has reached this node at " + _finding->address + ", so it is not advertised; set sip.public_address");
+  }
+
+  _adopt();
+}
+
+void AddressDiscovery::_probe(const std::string& node, const std::string& address, std::uint16_t port) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  _probed[node] = {address, core->now()};
+  auto self = shared_from_this();
+
+  core->channel_connect("udp", address, port, [this, self, node, address, port](plugins::Result<std::shared_ptr<Channel>> opened) {
+    auto core = _core.lock();
+    if (!core || _stopped) return;
+
+    if (!opened.ok || !opened.value || !opened.value->_connection) {
+      _reached.erase(node);
+      return;
+    }
+
+    // RFC 3261 11.1: an OPTIONS for the node itself, which it answers (11.2).
+    const auto channel = opened.value;
+    const auto advertised = core->advertised_for(*channel);
+    const auto branch = std::string("z9hG4bK") + Util::generate_random_string("", 16);
+
+    std::string raw = "OPTIONS sip:" + address + ":" + std::to_string(port) + " SIP/2.0\r\n";
+    raw += "Via: SIP/2.0/UDP " + advertised.host + ":" + std::to_string(advertised.port) + ";branch=" + branch + ";rport\r\n";
+    raw += "Max-Forwards: 70\r\n";
+    raw += "From: <sip:athenasip@" + advertised.host + ">;tag=" + Util::generate_random_string("", 10) + "\r\n";
+    raw += "To: <sip:" + address + ":" + std::to_string(port) + ">\r\n";
+    raw += "Call-ID: " + Util::generate_random_string("", 20) + "@" + core->config->sip_node_id + "\r\n";
+    raw += "CSeq: 1 OPTIONS\r\n";
+    raw += "Content-Length: 0\r\n";
+
+    auto request = std::make_shared<SIPMessage>();
+    request->header = std::make_shared<SIPHeader>(raw);
+    request->branch = branch;
+
+    std::weak_ptr<AddressDiscovery> weak_self = weak_from_this();
+    core->client_transaction_start(
+        request, channel,
+        [weak_self, node, address](std::shared_ptr<SIPMessage> response) {
+          auto self = weak_self.lock();
+          if (!self || response->header->response_code < 200) return;
+          if (response->header->response_code < 300) {
+            self->_reached[node] = address;
+          } else {
+            self->_reached.erase(node);
+          }
+        },
+        [weak_self, node]() {
+          if (auto self = weak_self.lock()) self->_reached.erase(node);
+        });
+  });
+}
+
+void AddressDiscovery::_adopt() {
+  auto core = _core.lock();
+  if (!core || !core->config->sip_public_address.empty()) return;
+
+  const auto chosen = _finding && !_verified_by.empty() ? _finding->address : std::string();
+  if (chosen == core->config->public_address()) return;
+
+  core->config->discovered_address_set(chosen);
+
+  if (chosen.empty()) {
+    _logger->warn("No longer advertising a discovered address: no other node reaches it");
+    return;
+  }
+
+  _logger->warn("Advertising " + chosen + ", which " + _finding->source + " reported and node " + _verified_by.front() + " reached");
+
+  // A Route naming the new address is this node (RFC 3261 16.4).
+  for (const auto& transport : core->config->advertised_transports()) core->local_address_add(transport.address + ":" + std::to_string(transport.port));
 }
 
 }  // namespace athenasip

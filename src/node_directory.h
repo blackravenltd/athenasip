@@ -35,6 +35,11 @@ class NodeDirectory {
     std::string cluster_address;
     std::uint16_t cluster_port = 0;
 
+    // The address the node's STUN servers see it at, and the nodes' addresses it has reached with an OPTIONS
+    // (AddressDiscovery), as node id and address.
+    std::string discovered;
+    std::vector<std::pair<std::string, std::string>> reaches;
+
     std::chrono::steady_clock::time_point heard{};
 
     // Set by list() and find(): the last report is older than stale_after.

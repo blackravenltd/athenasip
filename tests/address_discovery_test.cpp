@@ -16,7 +16,9 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
+#include "events/topics.h"
 #include "helpers/core_fixture_helper.h"
 #include "servers/udp_server.h"
 #include "stun.h"
@@ -150,4 +152,110 @@ TEST(AddressDiscoveryTest, AServerThatDoesNotAnswerIsPassedOver) {
 
   ASSERT_TRUE(f.answer_one());
   EXPECT_TRUE(f.finding().has_value());
+}
+
+namespace {
+
+// What node-b says on the bus: that its STUN server sees it at `discovered`, its UDP listener's port, and whose
+// addresses it has reached.
+void hear_node_b(DiscoveryFixture& f, const std::string& discovered, std::uint16_t udp_port, const std::string& reaches = "") {
+  std::string report = R"({"status":"ok","node":"node-b","version":"1.0.0","at":"2026-10-04T10:00:00Z","transports":[)";
+  report += R"({"transport":"udp","address":")" + discovered + R"(","port":)" + std::to_string(udp_port) + "}]";
+  if (!discovered.empty()) report += R"(,"discovered":{"address":")" + discovered + R"(","port":1,"source":"stun:x"})";
+  report += R"(,"reaches":[)" + reaches + "]}";
+  f.on_strand([&f, report]() { f.core->nodes()->observe(events::topics::node_status("node-b"), report); });
+}
+
+// Answers one OPTIONS on `socket` with a 200 built from it (RFC 3261 8.2.6), and returns its Request-URI.
+std::string answer_options(udp::socket& socket, std::chrono::milliseconds bound = std::chrono::seconds(2)) {
+  const auto until = std::chrono::steady_clock::now() + bound;
+  while (std::chrono::steady_clock::now() < until) {
+    if (socket.available() > 0) {
+      std::string data(4096, '\0');
+      udp::endpoint sender;
+      data.resize(socket.receive_from(net::buffer(data), sender));
+
+      const auto first = data.substr(0, data.find("\r\n"));
+      std::string response = "SIP/2.0 200 OK\r\n";
+      for (const std::string name : {"Via:", "From:", "To:", "Call-ID:", "CSeq:"}) {
+        const auto at = data.find("\r\n" + name);
+        if (at == std::string::npos) continue;
+        const auto end = data.find("\r\n", at + 2);
+        response += data.substr(at + 2, end - at - 2) + (name == "To:" ? ";tag=b" : "") + "\r\n";
+      }
+      response += "Content-Length: 0\r\n\r\n";
+      socket.send_to(net::buffer(response), sender);
+      return first.substr(8, first.rfind(' ') - 8);
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  return "";
+}
+
+}  // namespace
+
+// A peer's discovered address is probed with an OPTIONS for that address, on its UDP port; answered, the peer is
+// listed as reached, which is how it learns its address is good.
+TEST(AddressDiscoveryTest, APeersDiscoveredAddressIsProbedAndReached) {
+  DiscoveryFixture f;
+  net::io_context peer_io;
+  udp::socket peer{peer_io, udp::endpoint(net::ip::make_address("127.0.0.1"), 0)};
+  hear_node_b(f, "127.0.0.1", peer.local_endpoint().port());
+
+  f.on_strand([&]() { f.core->address_discovery()->review(); });
+  EXPECT_EQ(answer_options(peer), "sip:127.0.0.1:" + std::to_string(peer.local_endpoint().port()));
+
+  for (int i = 0; i < 200 && f.on_strand([&]() { return f.core->address_discovery()->reached().empty(); }); ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+
+  const auto status = boost::json::parse(f.on_strand([&]() { return f.core->node_status_json("ok"); }));
+  ASSERT_EQ(status.at("reaches").as_array().size(), 1u);
+  EXPECT_EQ(status.at("reaches").as_array()[0].at("node").as_string(), "node-b");
+  EXPECT_EQ(status.at("reaches").as_array()[0].at("address").as_string(), "127.0.0.1");
+}
+
+// A finding a peer has reached is verified, and with no sip.public_address it is what this node advertises.
+TEST(AddressDiscoveryTest, AFindingAPeerReachedIsAdvertised) {
+  DiscoveryFixture f;
+  f.on_strand([&]() { f.core->address_discovery()->start(); });
+  ASSERT_TRUE(f.answer_one());
+  ASSERT_TRUE(f.finding().has_value());
+
+  hear_node_b(f, "", 5060, R"({"node":"test-node","address":"203.0.113.7"})");
+  f.on_strand([&]() { f.core->address_discovery()->review(); });
+
+  EXPECT_EQ(f.on_strand([&]() { return f.core->address_discovery()->verified_by(); }), std::vector<std::string>{"node-b"});
+  EXPECT_EQ(f.config->public_address(), "203.0.113.7");
+  EXPECT_EQ(f.config->advertised_transports().front().address, "203.0.113.7");
+
+  // A Route naming the address is this node's own (RFC 3261 16.4).
+  EXPECT_TRUE(f.on_strand([&]() { return f.core->is_local_address("203.0.113.7", f.config->advertised_transports().front().port); }));
+}
+
+// A finding no peer has reached is reported but never advertised.
+TEST(AddressDiscoveryTest, AFindingNoPeerReachedIsNotAdvertised) {
+  DiscoveryFixture f;
+  f.on_strand([&]() { f.core->address_discovery()->start(); });
+  ASSERT_TRUE(f.answer_one());
+  ASSERT_TRUE(f.finding().has_value());
+
+  hear_node_b(f, "", 5060);
+  f.on_strand([&]() { f.core->address_discovery()->review(); });
+
+  EXPECT_TRUE(f.config->public_address().empty());
+}
+
+// sip.public_address always wins over what was discovered.
+TEST(AddressDiscoveryTest, TheConfiguredAddressWins) {
+  DiscoveryFixture f;
+  f.config->sip_public_address = "198.51.100.1";
+  f.on_strand([&]() { f.core->address_discovery()->start(); });
+  ASSERT_TRUE(f.answer_one());
+  ASSERT_TRUE(f.finding().has_value());
+
+  hear_node_b(f, "", 5060, R"({"node":"test-node","address":"203.0.113.7"})");
+  f.on_strand([&]() { f.core->address_discovery()->review(); });
+
+  EXPECT_EQ(f.config->public_address(), "198.51.100.1");
 }

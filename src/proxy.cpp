@@ -1321,7 +1321,7 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
   }
 
   // A leg inside sip.localnet reaches the relay at the local address; others use the engine's public one.
-  if (outgoing && outgoing->_connection && !core->config->sip_public_address.empty() &&
+  if (outgoing && outgoing->_connection && !core->config->public_address().empty() &&
       core->config->in_localnet(outgoing->_connection->remote_endpoint().address())) {
     flags.address = core->advertised_for(*outgoing).host;
   }

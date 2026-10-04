@@ -139,6 +139,25 @@ Client failover, for a client that can use none of RFC 3263, RFC 5626 or a balan
   forge a response could send; a client should honour it only from a server whose
   certificate it verified.
 
+## The node's own address
+
+`sip.public_address`, when set, is always the answer. When it is not:
+
+- The node asks the `stun:` servers in `http.api.ice_servers`, and no others, from its SIP
+  UDP socket, every five minutes. What they say is in the node status as `discovered`, and
+  `athenasip --check` reports it, failing when it disagrees with a configured
+  `sip.public_address`.
+- Each node sends an OPTIONS to every other node's discovered address, on that node's UDP
+  port, and lists the ones that answer in its status as `reaches`.
+- A node whose discovered address another node has reached advertises it as if it were
+  `sip.public_address`. One that no node has reached is reported and never advertised, and
+  the node logs a warning saying so. A single node has nobody to reach it, so it reports
+  what STUN says and advertises its bind address as before.
+
+Every node answers an OPTIONS addressed to itself, its public or discovered address, or one
+of its realms with no user (RFC 3261 11.2), which is what the probe relies on and what a
+monitor or a trunk expects.
+
 ## Media
 
 `MediaEngine` advertises capabilities (`bridge`, `conference`, `record`, `transcode`) and
