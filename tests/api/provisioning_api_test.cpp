@@ -16,6 +16,7 @@
 #include <memory>
 #include <string>
 
+#include "../helpers/fake_push_service_helper.h"
 #include "../helpers/signed_in_users_helper.h"
 #include "../helpers/sync_datastore_helper.h"
 #include "../mocks/logger_mock.h"
@@ -634,6 +635,51 @@ TEST(ProvisioningApiTest, ABodyThatIsNotJsonIsRefused) {
 }
 
 // --- GET /client/config ---
+
+// Named, a realm says what it expects of a client registering in it: the lifetime it grants and the shortest it
+// takes (RFC 3261 10.3 step 7), and how many RFC 5626 flows to keep, one per node up to two (section 4.2).
+TEST(ProvisioningApiTest, ClientConfigSaysWhatARealmExpects) {
+  ApiFixture f;
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+  auto realm = f.store->realm_get_by_name("example.com");
+  realm->registration_timeout = 1800;
+  realm->registration_minimum = 60;
+  f.store->realm_update(realm);
+
+  auto response = f.get("/api/v1/client/config?realm=example.com", "client-token");
+  ASSERT_EQ(response.status, 200u);
+
+  const auto config = response.json();
+  const auto& expects = config.at("realm").as_object();
+  EXPECT_EQ(expects.at("name").as_string(), "example.com");
+  EXPECT_EQ(expects.at("registration").at("expires").to_number<std::uint64_t>(), 1800u);
+  EXPECT_EQ(expects.at("registration").at("minimum").to_number<std::uint64_t>(), 60u);
+  EXPECT_EQ(expects.at("outbound").at("flows").to_number<std::uint64_t>(), 1u);
+  EXPECT_TRUE(expects.at("push").as_array().empty());
+}
+
+// RFC 8599: the push services the node runs, with what a client needs before it can subscribe (the VAPID key for
+// webpush, 4.1.1) and the shortest registration push accepts (5.6.1.1).
+TEST(ProvisioningApiTest, ClientConfigListsThePushServices) {
+  ApiFixture f;
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+  f.provisioning->push_register({std::make_shared<FakePushService>("webpush", std::vector<std::pair<std::string, std::string>>{{"+sip.vapid", "BKey"}})});
+
+  const auto config = f.get("/api/v1/client/config?realm=example.com", "client-token").json();
+
+  const auto& push = config.at("realm").at("push").as_array();
+  ASSERT_EQ(push.size(), 1u);
+  EXPECT_EQ(push[0].at("service").as_string(), "webpush");
+  EXPECT_EQ(push[0].at("vapid").as_string(), "BKey");
+  EXPECT_EQ(push[0].at("minimum_expires").to_number<std::uint64_t>(), f.config->push_minimum_expiry());
+}
+
+// A realm this node does not serve is a 404, as everywhere else.
+TEST(ProvisioningApiTest, ClientConfigForAnUnknownRealmIs404) {
+  ApiFixture f;
+
+  EXPECT_EQ(f.get("/api/v1/client/config?realm=nowhere.example", "client-token").status, 404u);
+}
 
 // Everything a browser needs to place a call is fetchable over the API.
 TEST(ProvisioningApiTest, ClientConfigSaysWhereToSignalAndWhatToUseForIce) {

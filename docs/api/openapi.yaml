@@ -235,7 +235,16 @@ paths:
         coturn shared-secret scheme, which expires on its own. It carries none when the
         node has no `http.api.turn_shared_secret`. A `stun:` entry never carries one.
 
+        With `realm`, it adds what that realm expects of a client registering in it.
+
         Needs the same role as `/nodes`.
+      parameters:
+        - name: realm
+          in: query
+          required: false
+          description: A realm this node serves. Unknown is a 404.
+          schema:
+            type: string
       responses:
         "200":
           description: What to use
@@ -247,6 +256,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /realms:
     get:
@@ -1045,6 +1056,56 @@ components:
                 type: integer
                 format: int64
                 description: Unix seconds. The credential stops working by itself.
+        nodes:
+          type: array
+          description: The nodes to fail over to, this one first, then the others that are up.
+          items:
+            $ref: "#/components/schemas/Node"
+        websocket_uris:
+          type: array
+          description: Every node's secure WebSocket, in the order of `nodes`.
+          items:
+            type: string
+        realm:
+          type: object
+          description: Present when `realm` was asked for.
+          required: [name, registration, outbound, push]
+          properties:
+            name:
+              type: string
+            registration:
+              type: object
+              description: |
+                RFC 3261 10.3 step 7: the lifetime granted when a client asks for none, and the
+                shortest taken (0 for no minimum).
+              properties:
+                expires:
+                  type: integer
+                minimum:
+                  type: integer
+            outbound:
+              type: object
+              description: RFC 5626 4.2. How many flows to keep, each to a different node.
+              properties:
+                flows:
+                  type: integer
+            push:
+              type: array
+              description: RFC 8599. The push services this node runs; empty for none.
+              items:
+                type: object
+                required: [service, minimum_expires]
+                properties:
+                  service:
+                    type: string
+                    description: The `pn-provider` value
+                    example: webpush
+                  vapid:
+                    type: string
+                    description: For `webpush`, the VAPID public key to subscribe with (RFC 8292).
+                  minimum_expires:
+                    type: integer
+                    description: The shortest registration that is accepted with push.
 
     LoginRequest:
       type: object
