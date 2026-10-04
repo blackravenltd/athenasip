@@ -224,6 +224,10 @@ void Core::channel_connect(std::string transport, std::string host, std::uint16_
 
   transport = Util::to_lower(transport);
 
+  if (!config->sip_allow_unencrypted && transport != "tls" && transport != "wss") {
+    return handler(ChannelResult::failure("sip.allow_unencrypted is false: no outbound " + transport + " flow"));
+  }
+
   const auto key = channel_key(transport, host, port);
 
   if (auto existing = channel_find(transport, host, port)) return handler(ChannelResult::success(existing));

@@ -175,6 +175,17 @@ TEST(CoreConnectTest, RefusesToDialATransportWithNothingToDial) {
   EXPECT_FALSE(tls.ok);
 }
 
+// sip.allow_unencrypted: false: the node dials no plain transport.
+TEST(CoreConnectTest, RefusingUnencryptedSipDialsNoPlainTransport) {
+  Listener listener;
+  ConnectFixture fixture;
+  fixture.config->sip_allow_unencrypted = false;
+
+  const auto tcp = fixture.connect("tcp", "127.0.0.1", listener.port());
+  EXPECT_FALSE(tcp.ok);
+  EXPECT_EQ(fixture.find("tcp", "127.0.0.1", listener.port()), nullptr);
+}
+
 namespace {
 
 // A UDP listener and a peer socket, both on loopback ephemeral ports.
@@ -229,6 +240,16 @@ TEST(CoreConnectTest, AUdpFlowLeavesByTheListenersOwnSocket) {
   const auto received = fixture.receive();
   ASSERT_TRUE(received.has_value()) << "nothing arrived";
   EXPECT_EQ(received->second.port(), fixture.listener->local_endpoint().port());
+}
+
+// sip.allow_unencrypted: false: no UDP flow is dialled, even with a UDP socket to send from.
+TEST(CoreConnectTest, RefusingUnencryptedSipDialsNoUdpFlow) {
+  DatagramFixture fixture;
+  fixture.config->sip_allow_unencrypted = false;
+
+  const auto opened = fixture.connect("udp", "127.0.0.1", fixture.peer_port());
+  EXPECT_FALSE(opened.ok);
+  EXPECT_FALSE(fixture.receive(std::chrono::milliseconds(200)).has_value());
 }
 
 // The answer arrives on the dialled flow; the listener does not make a second channel for the peer.

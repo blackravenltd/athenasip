@@ -277,6 +277,15 @@ bool Config::load_from_yaml(const std::string& filename) {
     }
   }
 
+  if (!sip_allow_unencrypted) {
+    for (const auto& [name, plain] :
+         {std::pair<const char*, bool>{"udp", udp_enable}, {"tcp", tcp_enable}, {"websocket", websocket_enable && !websocket_tls}}) {
+      if (!plain) continue;
+      _logger->error(std::string("'sip.allow_unencrypted' is false but the plain '") + name + "' listener is enabled");
+      return false;
+    }
+  }
+
   // datastore
   YAML::Node datastore = config["datastore"];
   if (datastore) {

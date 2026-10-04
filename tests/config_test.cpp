@@ -159,6 +159,54 @@ TEST(ConfigTest, AListenerThatIsOnStillNeedsAPort) {
   EXPECT_FALSE(ok);
 }
 
+// sip.allow_unencrypted: false refuses every plain listener: udp, tcp and ws.
+TEST(ConfigTest, RefusingUnencryptedSipRefusesAPlainListener) {
+  for (const std::string listener :
+       {"udp:\n  enable: true\n  port: 5060\n", "tcp:\n  enable: true\n  port: 5060\n", "websocket:\n  enable: true\n  port: 9500\n"}) {
+    ConfigFile file("sip:\n  node_id: test-node\n  allow_unencrypted: false\n" + listener);
+
+    bool ok = true;
+    file.load(ok);
+
+    EXPECT_FALSE(ok) << listener;
+  }
+}
+
+// A plain WebSocket port beside a secure_port is still plain.
+TEST(ConfigTest, RefusingUnencryptedSipRefusesAPlainWebsocketBesideASecureOne) {
+  ConfigFile file(
+      "sip:\n  node_id: test-node\n  allow_unencrypted: false\n"
+      "websocket:\n"
+      "  enable: true\n"
+      "  port: 9500\n"
+      "  secure_port: 9501\n"
+      "  cert_pem_filename: \"../tls/snakeoil.cer\"\n"
+      "  key_pem_filename: \"../tls/snakeoil.key\"\n");
+
+  bool ok = true;
+  file.load(ok);
+
+  EXPECT_FALSE(ok);
+}
+
+// With sip.allow_unencrypted: false, a secure WebSocket listener is taken.
+TEST(ConfigTest, RefusingUnencryptedSipTakesASecureListener) {
+  ConfigFile file(
+      "sip:\n  node_id: test-node\n  allow_unencrypted: false\n"
+      "websocket:\n"
+      "  enable: true\n"
+      "  port: 9501\n"
+      "  tls: true\n"
+      "  cert_pem_filename: \"../tls/snakeoil.cer\"\n"
+      "  key_pem_filename: \"../tls/snakeoil.key\"\n");
+
+  bool ok = false;
+  auto config = file.load(ok);
+
+  ASSERT_TRUE(ok);
+  EXPECT_FALSE(config->sip_allow_unencrypted);
+}
+
 // A configuration that sets only the node id starts, on drivers that need no external service.
 TEST(ConfigTest, DefaultsNeedNoExternalService) {
   ConfigFile file("sip:\n  node_id: test-node\n");

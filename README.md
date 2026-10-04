@@ -39,7 +39,7 @@ on one process.
 
 Clustering works between two nodes and has not been tested under node failure.
 Conferencing and presence are not built. The example configuration enables plaintext UDP
-and TCP for evaluation; remove those listeners to accept TLS and WSS only.
+and TCP for evaluation; `sip.allow_unencrypted: false` limits a node to TLS and WSS.
 
 ## Documentation
 

@@ -24,7 +24,8 @@ sip:
   # also takes a public_port, for a router that forwards a different port to it.
   # localnet: ["192.168.0.0/16", "10.0.0.0/8"]
 
-  # Parsed but not enforced. To refuse plain SIP, leave out the udp, tcp and plain websocket listeners.
+  # Permit SIP over plain UDP, TCP and WS. When false, the node refuses to start with a plain
+  # listener enabled and dials only TLS.
   allow_unencrypted: true
 
   # Log every message in full rather than only its first line; credentials are redacted.

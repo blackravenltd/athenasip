@@ -46,7 +46,7 @@ FAIL  peer node-b          10.0.0.2:5062 - Connection refused
 | `node_id` | required | This node's name, unique across the cluster. Used on the event bus and in `GET /api/v1/nodes`. |
 | `public_address` | unset | The address written into `Via`, `Record-Route` and `Service-Route` and published in the node list. Set it when the node binds `0.0.0.0` in a container, behind a load balancer or behind NAT; leave it unset on a single-homed host. |
 | `localnet` | `[]` | Prefixes on the node's own side of the router, e.g. `["192.168.0.0/16", "10.0.0.0/8"]`. A peer inside one is given the node's local address and port instead of `public_address` (Asterisk's `localnet`). A bare address is a prefix of one. |
-| `allow_unencrypted` | `true` | Parsed and shown by `--print-config`, but not enforced: to refuse plain SIP, do not configure the `udp`, `tcp` and plain `websocket` listeners. |
+| `allow_unencrypted` | `true` | Permit SIP over plain UDP, TCP and WS. When `false`, the node refuses to start with a `udp`, `tcp` or plain `websocket` listener enabled (including a plain `websocket.port` beside `secure_port`), and dials only TLS. |
 | `log_messages` | `false` | Log every SIP message in full (headers and body) rather than its first line. Digest headers are logged as `<redacted>`. |
 | `connect_timeout_ms` | `4000` | How long to spend opening a connection to a next hop the node has no flow to (RFC 3261 16.6 step 7). |
 | `flow_idle_timeout` | `300` | Seconds a UDP flow may sit idle before the node forgets it. `0` never forgets. The peer's next datagram makes a new flow. |
