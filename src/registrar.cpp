@@ -8,9 +8,11 @@
 
 #include <algorithm>
 #include <ctime>
+#include <map>
 #include <optional>
 #include <sstream>
 #include <utility>
+#include <vector>
 
 #include "channel.h"
 #include "core.h"
@@ -20,6 +22,7 @@
 #include "headers/string_header.h"
 #include "headers/uint_header.h"
 #include "loggers/logger_scoped.h"
+#include "push/push_parameters.h"
 #include "qualifier.h"
 #include "util.h"
 
@@ -94,6 +97,17 @@ bool first_hop_supports_outbound(const std::shared_ptr<SIPMessage>& request) {
 
   const auto at = first.find(";ob");
   return at != std::string::npos && (at + 3 == first.size() || first[at + 3] == ';' || first[at + 3] == '>');
+}
+
+// RFC 8599 5.6.1.1: a Feature-Caps with +sip.pns means a proxy nearer the client will push, so this node does
+// not.
+bool pushed_by_another_proxy(const std::shared_ptr<SIPMessage>& request) {
+  if (!request->header->contains("Feature-Caps")) return false;
+
+  for (const auto& value : request->header->headers_map["Feature-Caps"]) {
+    if (value->to_string().find("+sip.pns=") != std::string::npos) return true;
+  }
+  return false;
 }
 
 // RFC 3261 10.3 step 7: an interval of an hour or more is never too brief.
@@ -256,6 +270,7 @@ void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared
 
   auto bindings = std::make_shared<std::vector<Binding>>();
   const auto qualify = realm ? realm->behaviour.qualify_over(core->config->behaviour_qualify_interval) : core->config->behaviour_qualify_interval;
+  const bool pushed_elsewhere = pushed_by_another_proxy(request);
 
   for (const auto& header : request->header->headers_map["Contact"]) {
     auto contact = header->as<SIPIdentityHeader>();
@@ -275,10 +290,39 @@ void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared
     // Step 7: the first contact that is too brief refuses the whole request.
     if (_is_too_brief(contact_requested, realm)) {
       _logger->info("REGISTER asked for " + std::to_string(contact_requested) + "s, below the realm minimum - 423");
-      return _send_interval_too_brief(transaction, request, realm);
+      return _send_interval_too_brief(transaction, request, realm ? realm->registration_minimum : 0);
     }
 
     Binding binding{contact->value->uri, _granted_expiry(contact_requested, realm), qualify};
+
+    // RFC 8599 5.6.1: a contact with a pn-provider asks for push, or with no pn-prid asks only whether it is
+    // supported. This node is the registrar and knows no other proxy pushes, so an unsupported service is a
+    // 555 rather than a silent registration without push.
+    if (const auto pn = push::notification_of(*contact->value->uri); pn && !pushed_elsewhere && contact_requested != 0) {
+      const auto service = core->push_service(pn->provider);
+
+      if (pn->prid.empty()) {
+        if (pn->provider.empty() ? core->push_services().empty() : service == nullptr) {
+          _logger->info("REGISTER asked whether push is supported for '" + pn->provider + "', and it is not - 555");
+          return _send_status(transaction, request, 555, "Push Notification Service Not Supported");
+        }
+      } else {
+        if (service == nullptr || !service->accepts(*pn)) {
+          _logger->info("REGISTER asked for " + pn->provider + " push, which is not served or lacks what it needs - 555");
+          return _send_status(transaction, request, 555, "Push Notification Service Not Supported");
+        }
+
+        // 5.6.1.1: a binding that would expire before its refresh push is too brief.
+        const auto minimum = core->config->push_minimum_expiry();
+        if (contact_requested < minimum) {
+          _logger->info("REGISTER asked for push with " + std::to_string(contact_requested) + "s, too brief to be woken in time - 423");
+          return _send_interval_too_brief(transaction, request, std::max(minimum, realm ? realm->registration_minimum : 0u));
+        }
+
+        // The realm may grant less than was asked; then the binding registers without push (5.6.1.1).
+        binding.push = binding.expires >= minimum;
+      }
+    }
 
     bool malformed = false;
     if (const auto outbound = outbound_of(request, *contact->value, malformed)) {
@@ -371,6 +415,7 @@ void Registrar::_store_binding(std::shared_ptr<SIPMessage> request, std::shared_
   if (binding.expires == 0) {
     // A failed removal does not stop the rest.
     core->qualifier()->forget(subscriber->identity->uri->to_string(), binding.contact);
+    core->push_refresher()->forget(subscriber->id, binding.contact);
     return core->subscriber_unregister(subscriber, binding.contact, channel, [next](plugins::Status) { next(); });
   }
 
@@ -382,13 +427,21 @@ void Registrar::_store_binding(std::shared_ptr<SIPMessage> request, std::shared_
           return _send_status(transaction, request, 500, "Server Internal Error");
         }
 
-        if (auto core = _core.lock(); core && channel) {
-          core->qualifier()->watch(subscriber->identity->uri->to_string(), binding.contact, channel->flow_id(), binding.qualify, binding.expires);
+        if (auto core = _core.lock()) {
+          if (channel) core->qualifier()->watch(subscriber->identity->uri->to_string(), binding.contact, channel->flow_id(), binding.qualify, binding.expires);
+
+          if (binding.push) {
+            core->push_refresher()->watch(subscriber->id, binding.contact, binding.expires);
+          } else {
+            core->push_refresher()->forget(subscriber->id, binding.contact);
+          }
+
+          core->binding_registered(subscriber->id, binding.contact);
         }
 
         next();
       },
-      binding.instance, binding.reg_id);
+      binding.instance, binding.reg_id, binding.push);
 }
 
 std::uint32_t Registrar::_requested_expiry(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<types::Realm>& realm) const {
@@ -527,8 +580,55 @@ void Registrar::_send_ok(const std::shared_ptr<transactions::TransactionBase>& t
     // flow; the client's own Contact is often unroutable.
     if (auto service_route = _service_route(request)) response->header->add("Service-Route", service_route);
 
+    for (const auto& value : _push_capabilities(request, found.value)) response->header->add("Feature-Caps", std::make_shared<headers::StringHeader>(value));
+
     transaction->send(response);
   });
+}
+
+std::vector<std::string> Registrar::_push_capabilities(const std::shared_ptr<SIPMessage>& request, const std::vector<types::Location>& bindings) const {
+  auto core = _core.lock();
+  if (!core || pushed_by_another_proxy(request) || !request->header->contains("Contact")) return {};
+
+  // Provider, and whether the client asked to refresh its binding itself (4.1.4).
+  std::map<std::string, bool> announced;
+
+  for (const auto& header : request->header->headers_map["Contact"]) {
+    auto contact = header->as<SIPIdentityHeader>();
+    if (contact == nullptr || contact->value == nullptr || contact->value->uri == nullptr) continue;
+
+    const auto pn = push::notification_of(*contact->value->uri);
+    if (!pn) continue;
+
+    // 5.6.1.2: a query is answered for the service named, or for every one when none is.
+    if (pn->prid.empty()) {
+      for (const auto& [provider, service] : core->push_services()) {
+        if (pn->provider.empty() || provider == pn->provider) announced.emplace(provider, false);
+      }
+      continue;
+    }
+
+    // 5.6.1.1: a request for push is answered only if the binding took it.
+    const auto uri = contact->value->uri->to_string();
+    for (const auto& binding : bindings) {
+      if (binding.push && binding.contact && binding.contact->to_string() == uri) {
+        announced[pn->provider] = announced[pn->provider] || contact->value->tags.count("+sip.pnsreg") > 0;
+      }
+    }
+  }
+
+  // 5.4: one Feature-Caps per service, its other indicators beside it.
+  std::vector<std::string> values;
+  for (const auto& [provider, pnsreg] : announced) {
+    const auto service = core->push_service(provider);
+    if (!service) continue;
+
+    std::string value = "*;+sip.pns=\"" + provider + "\"";
+    for (const auto& [name, indicator] : service->capabilities()) value += ";" + name + "=\"" + indicator + "\"";
+    if (pnsreg) value += ";+sip.pnsreg=\"" + std::to_string(core->config->push_refresh) + "\"";
+    values.push_back(std::move(value));
+  }
+  return values;
 }
 
 void Registrar::_send_status(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request, std::uint16_t code,
@@ -541,14 +641,14 @@ void Registrar::_send_status(const std::shared_ptr<transactions::TransactionBase
 }
 
 void Registrar::_send_interval_too_brief(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
-                                         const std::shared_ptr<types::Realm>& realm) {
+                                         std::uint32_t minimum) {
   auto response = request->generate_response();
   response->header->response_code = 423;
   response->header->response_message = "Interval Too Brief";
 
   // RFC 3261 10.3 step 7: a 423 must carry Min-Expires so the client knows what to retry
   // with.
-  response->header->add("Min-Expires", std::make_shared<UIntHeader>(realm ? realm->registration_minimum : 0));
+  response->header->add("Min-Expires", std::make_shared<UIntHeader>(minimum));
 
   transaction->send(response);
 }

@@ -207,6 +207,55 @@ TEST(ConfigTest, RefusingUnencryptedSipTakesASecureListener) {
   EXPECT_FALSE(config->sip_allow_unencrypted);
 }
 
+// push: the services, the bucket timer and the refresh lead (RFC 8599 5.5, 5.6.2).
+TEST(ConfigTest, ReadsThePushSection) {
+  ConfigFile file(
+      "sip:\n  node_id: test-node\n"
+      "push:\n  urls: [\"fcm://\", \"webpush://\"]\n  timeout: 8\n  refresh: 300\n");
+
+  bool ok = false;
+  auto config = file.load(ok);
+
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(config->push_urls, (std::vector<std::string>{"fcm://", "webpush://"}));
+  EXPECT_EQ(config->push_timeout, 8u);
+  EXPECT_EQ(config->push_refresh, 300u);
+  EXPECT_EQ(config->push_minimum_expiry(), 360u);
+}
+
+// Push is off unless a service is named.
+TEST(ConfigTest, PushIsOffByDefault) {
+  ConfigFile file("sip:\n  node_id: test-node\n");
+
+  bool ok = false;
+  auto config = file.load(ok);
+
+  ASSERT_TRUE(ok);
+  EXPECT_TRUE(config->push_urls.empty());
+}
+
+// RFC 8599 5.5 and 5.6.1.1: the refresh lead must be over 120 seconds, which +sip.pnsreg also carries.
+TEST(ConfigTest, ARefreshLeadOfTwoMinutesOrLessIsRefused) {
+  ConfigFile file("sip:\n  node_id: test-node\npush:\n  refresh: 120\n");
+
+  bool ok = true;
+  file.load(ok);
+
+  EXPECT_FALSE(ok);
+}
+
+// RFC 8599 5.6.2: the bucket timer must answer a non-INVITE request before timer F gives up on it.
+TEST(ConfigTest, ABucketTimerOutsideTimerFIsRefused) {
+  for (const std::string timeout : {"0", "31"}) {
+    ConfigFile file("sip:\n  node_id: test-node\npush:\n  timeout: " + timeout + "\n");
+
+    bool ok = true;
+    file.load(ok);
+
+    EXPECT_FALSE(ok) << timeout;
+  }
+}
+
 // A configuration that sets only the node id starts, on drivers that need no external service.
 TEST(ConfigTest, DefaultsNeedNoExternalService) {
   ConfigFile file("sip:\n  node_id: test-node\n");

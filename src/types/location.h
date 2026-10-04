@@ -38,6 +38,10 @@ struct Location {
   // and zero for an ordinary binding, which is identified by its contact.
   std::string instance;
   std::uint32_t reg_id = 0;
+
+  // RFC 8599: this node agreed to push to the client when a request is waiting for it. The pn-* parameters
+  // are on the contact.
+  bool push = false;
 };
 
 }  // namespace athenasip::types

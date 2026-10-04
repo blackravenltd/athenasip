@@ -16,6 +16,7 @@
 #include "transaction_user.h"
 #include "transactions/transaction_base.h"
 #include "types/authorization.h"
+#include "types/location.h"
 #include "types/realm.h"
 #include "types/subscriber.h"
 
@@ -57,6 +58,9 @@ class Registrar : public TransactionUser {
     // RFC 5626 outbound identity, when the client asked for outbound.
     std::string instance;
     std::uint32_t reg_id = 0;
+
+    // RFC 8599: this node will push to the client.
+    bool push = false;
   };
 
   void _write_bindings(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
@@ -95,7 +99,11 @@ class Registrar : public TransactionUser {
 
   // 423 with the required Min-Expires (RFC 3261 10.3 step 7, 10.2.8).
   void _send_interval_too_brief(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
-                                const std::shared_ptr<types::Realm>& realm);
+                                std::uint32_t minimum);
+
+  // RFC 8599 5.4: the Feature-Caps values for a 2xx to REGISTER, one per push service the client asked about
+  // or was granted.
+  std::vector<std::string> _push_capabilities(const std::shared_ptr<SIPMessage>& request, const std::vector<types::Location>& bindings) const;
 
   // 401 with a fresh nonce for the realm, if the realm is known.
   void _send_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,

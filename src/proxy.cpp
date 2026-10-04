@@ -22,6 +22,7 @@
 #include "headers/via_header.h"
 #include "loggers/logger_scoped.h"
 #include "media/media_engine.h"
+#include "push/push_parameters.h"
 #include "qualifier.h"
 #include "types/location.h"
 #include "util.h"
@@ -622,6 +623,18 @@ void Proxy::_forward_next(const std::shared_ptr<Context>& context) {
 
   // By value: the continuations below outlive this frame, and the target set may change.
   const Target target = context->targets[context->next++];
+
+  // RFC 8599 5.6.2: a request for a new dialog, or a standalone one, waits for a push binding's client to wake.
+  // An in-dialog request carries no pn-* parameters and is routed as usual.
+  if (target.push && tag_of(context->request, "To").empty()) return _push_and_wait(context, target);
+
+  _forward_target(context, target);
+}
+
+void Proxy::_forward_target(const std::shared_ptr<Context>& context, const Target& target) {
+  auto core = _core.lock();
+  if (!core) return;
+
   context->hops_left.clear();
   context->hop_target.reset();
   context->current = target;
@@ -920,6 +933,17 @@ void Proxy::_add_targets(const std::shared_ptr<Context>& context, std::vector<ty
   for (const auto& binding : bindings) {
     if (!binding.contact) continue;
 
+    // RFC 8599: any node can push, so a push binding is pushed from here wherever its flow was. A request from a
+    // peer is for the flows held here and is not pushed again.
+    if (core && binding.push && !from_peer) {
+      if (const auto pn = push::notification_of(*binding.contact); pn && core->push_service(pn->provider)) {
+        auto target = _target_for(binding);
+        target.push = binding;
+        context->targets.push_back(std::move(target));
+        continue;
+      }
+    }
+
     // Bindings are shared across the cluster; flows are not. A flow held by another node is reached through
     // that node, once per node.
     if (core && _held_elsewhere(*core, binding)) {
@@ -948,6 +972,126 @@ void Proxy::_add_targets(const std::shared_ptr<Context>& context, std::vector<ty
       others.push_back(std::move(target));
     }
   }
+}
+
+void Proxy::_push_and_wait(const std::shared_ptr<Context>& context, const Target& target) {
+  auto core = _core.lock();
+  if (!core || !target.push || !target.push->contact) return;
+
+  auto notification = push::notification_of(*target.push->contact);
+  auto service = notification ? core->push_service(notification->provider) : nullptr;
+  if (!service) {
+    auto plain = target;
+    plain.push.reset();
+    return _forward_target(context, plain);
+  }
+
+  // The bucket is found by a CANCEL like any branch in flight.
+  context->pushed = target;
+  context->current = target;
+  _contexts[context->server->id()] = context;
+
+  notification->reason = push::Notification::Reason::Request;
+  _logger->info("Pushing to " + push::without_push_parameters(*target.push->contact).to_string() + " through " + notification->provider +
+                " and holding the request");
+
+  auto self = shared_from_this();
+  service->send(core->strand(), *notification, [this, self, context](plugins::Status sent) {
+    auto core = _core.lock();
+    if (!core || context->answered || context->cancelled) return;
+
+    if (!sent.ok) {
+      _logger->info("The push to " + context->pushed->push->contact->to_string() + " failed - " + sent.error);
+      context->pushed.reset();
+      return _unreachable(context);
+    }
+
+    context->push_deadline = core->now() + std::chrono::seconds(core->config->push_timeout);
+    _push_waiting.push_back(context);
+    _push_poll(context);
+  });
+}
+
+// The store is polled as well as told: in a cluster, the client may re-register through another node.
+void Proxy::_push_poll(const std::shared_ptr<Context>& context) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  auto timers = core->timer_source();
+  if (!timers) return;
+
+  // The pending poll owns the context while the request is in the bucket: nothing else holds it until a branch
+  // is forwarded. _push_check cancels it, which breaks the cycle.
+  std::weak_ptr<TransactionUser> weak_self = weak_from_this();
+  auto strand = core->strand();
+
+  context->push_poll = timers->schedule(std::chrono::milliseconds(250), [weak_self, context, strand]() {
+    boost::asio::post(strand, [weak_self, context]() {
+      if (auto self = std::static_pointer_cast<Proxy>(weak_self.lock())) self->_push_check(context, "");
+    });
+  });
+}
+
+void Proxy::on_registered(std::uint64_t subscriber_id, const std::shared_ptr<SIPUri>& contact) {
+  if (!contact) return;
+
+  for (const auto& weak : std::vector<std::weak_ptr<Context>>(_push_waiting)) {
+    auto context = weak.lock();
+    if (context && context->pushed && context->pushed->push->subscriber_id == subscriber_id) _push_check(context, contact->to_string());
+  }
+}
+
+// `registered` is a contact the registrar has just stored, which counts as refreshed whatever the store's
+// one-second timestamps say.
+void Proxy::_push_check(const std::shared_ptr<Context>& context, const std::string& registered) {
+  auto core = _core.lock();
+  if (!core || !context->pushed) return;
+
+  auto finish = [this, context]() {
+    if (context->push_poll) context->push_poll->cancel();
+    context->push_poll.reset();
+    context->pushed.reset();
+    std::erase_if(_push_waiting, [&context](const std::weak_ptr<Context>& weak) {
+      auto waiting = weak.lock();
+      return !waiting || waiting == context;
+    });
+  };
+
+  if (context->answered || context->cancelled) return finish();
+
+  const auto pushed = *context->pushed->push;
+  auto self = shared_from_this();
+
+  core->location_list(pushed.subscriber_id, [this, self, context, pushed, registered, finish](plugins::Result<std::vector<types::Location>> found) {
+    auto core = _core.lock();
+    if (!core || !context->pushed || context->pushed->push->contact != pushed.contact) return;
+    if (context->answered || context->cancelled) return finish();
+
+    for (const auto& binding : found.ok ? found.value : std::vector<types::Location>{}) {
+      if (!binding.contact) continue;
+
+      // 5.3: the same push registration, or the same client instance if the service handed it a new prid.
+      const bool same = push::same_push_parameters(*binding.contact, *pushed.contact) || (!pushed.instance.empty() && binding.instance == pushed.instance);
+      const auto contact = binding.contact->to_string();
+      const bool refreshed = contact == registered || contact != pushed.contact->to_string() || binding.registered_at != pushed.registered_at ||
+                             binding.expires_at != pushed.expires_at;
+      if (!same || !refreshed) continue;
+
+      _logger->info(contact + " registered again - forwarding the request held for it");
+      finish();
+
+      std::optional<Target> woken;
+      if (_held_elsewhere(*core, binding)) woken = _peer_target(*core, binding.node_id, context->request);
+      if (!woken) woken = _target_for(binding);
+      return _forward_target(context, *woken);
+    }
+
+    if (core->now() < context->push_deadline) return _push_poll(context);
+
+    _logger->info(pushed.contact->to_string() + " did not register again within push.timeout - 480");
+    finish();
+    _unreachable(context);
+  });
 }
 
 // A binding whose flow was learned by another node and is not open here.

@@ -22,6 +22,7 @@
 #include "events/topics.h"
 #include "expiry_set.h"
 #include "proxy.h"
+#include "push/push_parameters.h"
 #include "qualifier.h"
 #include "registrar.h"
 #include "rtp/rtp_relay.h"
@@ -99,7 +100,8 @@ void Core::location_list(std::uint64_t subscriber_id, plugins::Handler<std::vect
 }
 
 void Core::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel,
-                               std::uint32_t expires_seconds, std::string path, plugins::StatusHandler handler, std::string instance, std::uint32_t reg_id) {
+                               std::uint32_t expires_seconds, std::string path, plugins::StatusHandler handler, std::string instance, std::uint32_t reg_id,
+                               bool push) {
   // RFC 3261 10.3 step 7: every successful REGISTER writes the binding. It records the
   // flow and the node holding it, the only way back to a client whose Contact is
   // unreachable (RFC 5626).
@@ -109,23 +111,24 @@ void Core::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shar
   binding.node_id = config->sip_node_id;
   binding.instance = std::move(instance);
   binding.reg_id = reg_id;
+  binding.push = push;
   if (channel) binding.flow_id = channel->flow_id();
 
   // The event waits for the write.
-  datastore->subscriber_register(
-      _strand, subscriber, std::move(binding), expires_seconds, [this, subscriber, contact, channel, handler](plugins::Status status) mutable {
-        if (!status.ok) {
-          _logger->error("Cannot register subscriber " + subscriber->identity->to_string() + " - " + status.error);
-          if (handler) handler(status);
-          return;
-        }
+  datastore->subscriber_register(_strand, subscriber, std::move(binding), expires_seconds,
+                                 [this, subscriber, contact, channel, handler](plugins::Status status) mutable {
+                                   if (!status.ok) {
+                                     _logger->error("Cannot register subscriber " + subscriber->identity->to_string() + " - " + status.error);
+                                     if (handler) handler(status);
+                                     return;
+                                   }
 
-        events->publish(
-            events::topics::subscriber_status(subscriber->identity->uri->to_string()),
-            "{\"contact\":\"" + contact->to_string() + "\",\"node\":\"" + config->sip_node_id + "\",\"registered\":\"" + Util::get_zulu_time() + "\"}");
+                                   events->publish(events::topics::subscriber_status(subscriber->identity->uri->to_string()),
+                                                   "{\"contact\":\"" + push::without_push_parameters(*contact).to_string() + "\",\"node\":\"" +
+                                                       config->sip_node_id + "\",\"registered\":\"" + Util::get_zulu_time() + "\"}");
 
-        if (handler) handler(status);
-      });
+                                   if (handler) handler(status);
+                                 });
 }
 
 void Core::subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel,
@@ -612,6 +615,24 @@ Core::Advertised Core::advertised_for(const Channel& channel) const {
   }
 
   return out;
+}
+
+void Core::push_register(std::shared_ptr<push::PushService> service) {
+  if (service) _push_services[service->name()] = std::move(service);
+}
+
+std::shared_ptr<push::PushService> Core::push_service(const std::string& provider) const {
+  const auto found = _push_services.find(provider);
+  return found == _push_services.end() ? nullptr : found->second;
+}
+
+void Core::binding_registered(std::uint64_t subscriber_id, const std::shared_ptr<SIPUri>& contact) {
+  if (_proxy) _proxy->on_registered(subscriber_id, contact);
+}
+
+std::shared_ptr<PushRefresher> Core::push_refresher() {
+  if (!_push_refresher) _push_refresher = std::make_shared<PushRefresher>(_logger->base_logger(), weak_from_this());
+  return _push_refresher;
 }
 
 std::shared_ptr<Qualifier> Core::qualifier() {

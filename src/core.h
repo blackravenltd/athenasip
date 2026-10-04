@@ -37,6 +37,8 @@
 #include "media/reoffers.h"
 #include "node_directory.h"
 #include "plugins/plugin.h"
+#include "push/push_service.h"
+#include "push_refresher.h"
 #include "rtp/rtp_relay_set.h"
 #include "servers/server.h"
 #include "sip_message.h"
@@ -103,10 +105,11 @@ class Core : public std::enable_shared_from_this<Core> {
 
   // Subscribers
   void subscriber_get(std::shared_ptr<SIPIdentity> identity, plugins::Handler<std::shared_ptr<Subscriber>> handler);
-  // instance and reg_id identify an RFC 5626 outbound binding; empty and zero otherwise.
+  // instance and reg_id identify an RFC 5626 outbound binding; empty and zero otherwise. push marks a binding
+  // this node agreed to push to (RFC 8599).
   void subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel,
-                           std::uint32_t expires_seconds, std::string path, plugins::StatusHandler handler, std::string instance = "",
-                           std::uint32_t reg_id = 0);
+                           std::uint32_t expires_seconds, std::string path, plugins::StatusHandler handler, std::string instance = "", std::uint32_t reg_id = 0,
+                           bool push = false);
   void subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel,
                              plugins::StatusHandler handler);
   void location_list(std::uint64_t subscriber_id, plugins::Handler<std::vector<types::Location>> handler);
@@ -234,6 +237,17 @@ class Core : public std::enable_shared_from_this<Core> {
   // Media engine
   void media_register(std::shared_ptr<media::MediaEngine> engine);
 
+  // RFC 8599 push notification services, filed by pn-provider. None unless push.urls names some.
+  void push_register(std::shared_ptr<push::PushService> service);
+  std::shared_ptr<push::PushService> push_service(const std::string& provider) const;
+  const std::map<std::string, std::shared_ptr<push::PushService>>& push_services() const { return _push_services; }
+
+  // Refresh pushes for push bindings (RFC 8599 5.5).
+  std::shared_ptr<PushRefresher> push_refresher();
+
+  // The registrar has stored a binding; a request held for that client's push goes now (RFC 8599 5.6.2).
+  void binding_registered(std::uint64_t subscriber_id, const std::shared_ptr<SIPUri>& contact);
+
   std::shared_ptr<Config> config;
   std::shared_ptr<datastores::Datastore> datastore;
   std::shared_ptr<events::EventSystem> events;
@@ -300,6 +314,8 @@ class Core : public std::enable_shared_from_this<Core> {
   std::shared_ptr<Registrar> _registrar;
   std::shared_ptr<Proxy> _proxy;
   std::shared_ptr<Qualifier> _qualifier;
+  std::shared_ptr<PushRefresher> _push_refresher;
+  std::map<std::string, std::shared_ptr<push::PushService>> _push_services;
   std::shared_ptr<dns::SipLocator> _locator;
   std::shared_ptr<Dialogs> _dialogs;
 

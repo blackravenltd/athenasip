@@ -510,6 +510,26 @@ TEST(ProvisioningApiTest, RegistrationsAreListedForViewClusterStatus) {
   EXPECT_EQ(registrations.as_array()[0].at("flow_id").as_string(), "tcp://192.0.2.10:5060");
 }
 
+// RFC 8599 section 13: a push binding is listed without its pn-* parameters; the token is the client's and this
+// node's, not the reader's.
+TEST(ProvisioningApiTest, RegistrationsAreListedWithoutPushTokens) {
+  ApiFixture f;
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+  ASSERT_EQ(f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice","password":"secret"})").status, 201u);
+
+  auto subscriber = f.store->subscriber_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
+  ASSERT_NE(subscriber, nullptr);
+
+  types::Location binding;
+  binding.contact = std::make_shared<types::SIPUri>("sip:alice@192.0.2.10:5060;transport=tcp;pn-provider=fcm;pn-param=project;pn-prid=secret-token");
+  binding.push = true;
+  ASSERT_TRUE(f.store->subscriber_register(subscriber, binding, 3600));
+
+  const auto registrations = f.get("/api/v1/registrations", "client-token").json();
+  ASSERT_EQ(registrations.as_array().size(), 1u);
+  EXPECT_EQ(registrations.as_array()[0].at("contact").as_string(), "sip:alice@192.0.2.10:5060;transport=tcp");
+}
+
 // The node list says where the realm is served from and which node is this one.
 TEST(ProvisioningApiTest, TheNodeListDescribesThisNode) {
   ApiFixture f;

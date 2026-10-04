@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "../loggers/logger_scoped.h"
+#include "../push/push_parameters.h"
 #include "../types/sip_identity.h"
 #include "../types/turn_credential.h"
 #include "../util.h"
@@ -797,7 +798,8 @@ boost::json::object ProvisioningAPI::_location_json(const types::Location& locat
   boost::json::object object;
   object["subscriber"] = uri;
   object["subscriber_id"] = location.subscriber_id;
-  object["contact"] = location.contact ? location.contact->to_string() : "";
+  // RFC 8599 section 13: a client's push token is for this node, not for whoever reads the registrations.
+  object["contact"] = location.contact ? push::without_push_parameters(*location.contact).to_string() : "";
   object["registered_at"] = static_cast<std::int64_t>(location.registered_at);
   object["expires_at"] = static_cast<std::int64_t>(location.expires_at);
   object["nat"] = location.nat;
