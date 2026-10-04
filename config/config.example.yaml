@@ -217,6 +217,18 @@ media:
 
 # Server-wide defaults where the standards leave a choice. A realm can override any of
 # these over the admin API.
+# Push notifications (RFC 8599) wake a phone or browser app the operating system has put to
+# sleep. Off with no urls. docs/configuration.md has what each service needs.
+push:
+  urls: []            # e.g. ["fcm://", "webpush://"]
+  timeout: 10         # seconds a call waits for the woken client to register again
+  refresh: 180        # seconds before a push binding expires that it is pushed to refresh
+  # fcm:
+  #   service_account: /etc/athenasip/firebase-service-account.json
+  # webpush:
+  #   vapid_private_key: /etc/athenasip/vapid.pem
+  #   subject: mailto:admin@example.com
+
 behaviour:
   # Put this node in the media path when a media engine is configured. false leaves session
   # descriptions untouched and media end to end, which does not work behind NAT.

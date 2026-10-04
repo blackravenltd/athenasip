@@ -1,13 +1,14 @@
 # AthenaSIP - Writing a Plugin
 
-The datastore, the event system and the media engine are plugins. The drivers in the tree
-use the same contract an external one does, and none is privileged.
+The datastore, the event system, the media engine and the push services are plugins. The
+drivers in the tree use the same contract an external one does, and none is privileged.
 
 | Kind | Interface | In tree |
 |---|---|---|
 | `datastore` | `datastores::Datastore` (`src/datastores/datastore.h`) | `memory://`, `redis://` |
 | `events` | `events::EventSystem` (`src/events/event_system.h`) | `local://`, `mqtt://` |
 | `media` | `media::MediaEngine` (`src/media/media_engine.h`) | `builtin://`, `rtpengine://` |
+| `push` | `push::PushService` (`src/push/push_service.h`) | `fcm://`, `webpush://` |
 
 A kind is a string, so a plugin can introduce a new one. Plugins are compiled into the
 server; there is no shared-library loader.
@@ -18,7 +19,7 @@ Every plugin derives from `plugins::Plugin` (`src/plugins/plugin.h`) through the
 for its kind:
 
 ```cpp
-std::string kind() const;           // "datastore", "events", "media"; set by the interface
+std::string kind() const;           // "datastore", "events", "media", "push"; set by the interface
 std::string name() const;           // the implementation: "redis", whatever scheme selected it
 std::string version() const;        // the driver's version, not the server's
 std::uint32_t api_version() const;  // the contract it was built against; do not override
@@ -131,6 +132,18 @@ is never on the call path, so callers do not wait on it. Use
 - `start_recording`, `stop_recording`, `join`, `leave` and `roster` default to a failure
   or an empty answer.
 - `packets_relayed()` feeds metrics and may return nothing.
+
+### PushService
+
+- A node runs several, one per [RFC 8599](https://www.rfc-editor.org/rfc/rfc8599) push
+  service, and `name()` is the service's `pn-provider` value: `apns`, `fcm`, `webpush`.
+- `accepts(notification)` says whether a Contact carries what the service needs (RFC 8599
+  sections 10 to 12). The registrar answers 555 when it does not.
+- `capabilities()` adds indicators beside `+sip.pns` in the REGISTER's 2xx, such as
+  `+sip.vapid`.
+- `send` succeeds when the service took the push, not when the client woke. The proxy
+  waits for the client to register again either way.
+- `connect` and `close` default to nothing; credentials are read in `configure`.
 
 Where a rule like these matters, it is stated at the operation's declaration: read the
 comment, not only the signature.

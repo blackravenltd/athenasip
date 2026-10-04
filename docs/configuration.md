@@ -222,6 +222,53 @@ the driver for what a URL cannot express. [Plugins](plugins.md) describes the co
 
 Whether media is anchored at all is [`behaviour.media_anchor`](#behaviour).
 
+## `push`
+
+Push notifications ([RFC 8599](https://www.rfc-editor.org/rfc/rfc8599)) wake a client that
+is asleep, as a phone's operating system puts a SIP app to sleep. A client asks for push
+by putting `pn-provider`, `pn-prid` and, for some services, `pn-param` on the Contact of
+its REGISTER. Off unless `urls` names a service.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `urls` | `[]` | The push services this node uses, one driver each: `fcm://`, `webpush://`. Each takes a section named after it, below. |
+| `timeout` | `10` | Seconds a call waits for the client to wake and register again before the next target is tried, or the caller gets 480. 1 to 30. |
+| `refresh` | `180` | Seconds before a push binding expires that the client is pushed to refresh it. Over 120. A client asking for push must register for at least `refresh` + 60 seconds, or it gets 423. |
+
+What the node does:
+
+- A REGISTER asking for a service this node runs is answered 200 with
+  `Feature-Caps: *;+sip.pns="<service>"`, and the binding is marked for push. A service it
+  does not run, or a Contact missing what the service needs, is 555.
+- A call or other new request for a push binding sends a push and holds the request until
+  the client registers again, then sends it down the new connection. Any node of a cluster
+  can do this, and the client may register again through any node.
+- The `pn-*` parameters are never shown in the admin API or on the event bus.
+
+`push.fcm`, for Android through [Firebase Cloud Messaging](https://firebase.google.com/docs/cloud-messaging).
+The client's `pn-param` is the Firebase project ID and `pn-prid` its registration token:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `service_account` | required | Path to the service-account JSON file the Firebase console gives you |
+| `ttl` | `60` | Seconds FCM keeps trying to deliver the push |
+| `api_base` | `https://fcm.googleapis.com` | Only to go through a proxy |
+| `ca_file` | system roots | Extra CA certificates to trust |
+
+`push.webpush`, for browsers ([RFC 8030](https://www.rfc-editor.org/rfc/rfc8030)). The
+client's `pn-prid` is its push subscription URL and it has no `pn-param`. The node signs
+each push with its VAPID key ([RFC 8292](https://www.rfc-editor.org/rfc/rfc8292)) and gives
+the public half to clients as `+sip.vapid`:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `vapid_private_key` | required | Path to a P-256 private key in PEM: `openssl ecparam -name prime256v1 -genkey -noout -out vapid.pem` |
+| `subject` | required | A `mailto:` or `https:` URI the push service can contact you at |
+| `ttl` | `60` | Seconds the push service keeps trying |
+| `ca_file` | system roots | Extra CA certificates to trust |
+
+iOS (APNs) is not supported yet.
+
 ## `behaviour`
 
 ```yaml
