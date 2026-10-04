@@ -41,7 +41,12 @@ COPY src ./src
 COPY packaging ./packaging
 COPY config ./config
 
-RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"$(nproc)"
+# One compiler per 1.5 GB of available memory, at most one per core: a release build of the
+# HTTPS and JSON code takes about a gigabyte per job, and a Docker VM is often 8 GB.
+RUN jobs=$(awk '/MemAvailable/ { print int($2 / 1500000) }' /proc/meminfo); \
+    [ "${jobs}" -ge 1 ] || jobs=1; \
+    [ "${jobs}" -le "$(nproc)" ] || jobs=$(nproc); \
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"${jobs}"
 
 FROM debian:trixie-slim AS runtime
 
