@@ -15,6 +15,7 @@
 #include "../call.h"
 #include "../core.h"
 #include "../loggers/logger_scoped.h"
+#include "../push/push_parameters.h"
 #include "../qualifier.h"
 #include "../types/user.h"
 #include "../util.h"
@@ -379,7 +380,7 @@ void CallsAPI::_qualify(RouteContext context) {
     for (const auto& probe : core->qualifier()->list()) {
       boost::json::object entry;
       entry["subscriber"] = probe.aor;
-      entry["contact"] = probe.contact ? boost::json::value(probe.contact->to_string()) : boost::json::value(nullptr);
+      entry["contact"] = probe.contact ? boost::json::value(push::without_push_parameters(*probe.contact).to_string()) : boost::json::value(nullptr);
       entry["interval"] = probe.interval;
       entry["answered_at"] = time_json(probe.answered_at);
       entry["unanswered"] = probe.unanswered;

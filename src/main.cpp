@@ -43,6 +43,8 @@
 #include "media/media_engine.h"
 #include "media/media_engine_drivers.h"
 #include "plugins/plugin.h"
+#include "push/push_service.h"
+#include "push/push_service_drivers.h"
 #include "rtp/rtp_relay.h"
 #include "servers/tcp_server.h"
 #include "servers/tls_server.h"
@@ -189,6 +191,7 @@ int main(int argc, char* argv[]) {
   register_builtin_datastores(logger);
   register_builtin_event_systems(logger);
   media::register_builtin_media_engines(logger);
+  push::register_builtin_push_services(logger);
 
   auto config = std::make_shared<Config>(logger);
 
@@ -375,8 +378,30 @@ int main(int argc, char* argv[]) {
     return -3;
   }
 
+  // RFC 8599 push services: a node with none configured registers push bindings as ordinary ones.
+  std::vector<std::shared_ptr<push::PushService>> push_services;
+  for (const auto& url : config->push_urls) {
+    auto service = push::PushService::create_driver(logger, url);
+    const bool ready =
+        service && configure_plugin(logger, service, config) &&
+        connect_and_wait([&service](plugins::Executor on, plugins::StatusHandler handler) { service->connect(std::move(on), std::move(handler)); }).ok;
+
+    if (!ready) {
+      logger->error(service ? "Push service " + url + " did not start" : "Unknown push scheme: " + url);
+      for (const auto& started : push_services) started->close();
+      media_engine->close();
+      datastore->close();
+      events->close();
+      return -2;
+    }
+
+    logger->info("Push Driver: " + service->describe());
+    push_services.push_back(service);
+  }
+
   auto core = std::make_shared<Core>(logger, config, datastore, events);
   core->media_register(media_engine);
+  for (const auto& service : push_services) core->push_register(service);
 
   // The HTTP listener: admin API and static files.
   std::shared_ptr<api::Router> api_router;
@@ -542,6 +567,7 @@ int main(int argc, char* argv[]) {
         core->node_status_stop();
 
         media_engine->close();
+        for (const auto& service : push_services) service->close();
         datastore->close();
         events->close();
 

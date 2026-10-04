@@ -316,6 +316,28 @@ bool Config::load_from_yaml(const std::string& filename) {
     if (media["url"]) media_url = media["url"].as<std::string>();
   }
 
+  // push
+  if (YAML::Node push = config["push"]) {
+    try {
+      if (push["urls"]) push_urls = push["urls"].as<std::vector<std::string>>();
+      if (push["timeout"]) push_timeout = push["timeout"].as<std::uint32_t>();
+      if (push["refresh"]) push_refresh = push["refresh"].as<std::uint32_t>();
+    } catch (const std::exception& e) {
+      _logger->error("Invalid 'push' section: " + std::string(e.what()));
+      return false;
+    }
+
+    if (push_timeout == 0 || push_timeout > 30) {
+      _logger->error("'push.timeout' is " + std::to_string(push_timeout) + ": it must be 1 to 30 seconds, inside timer F (RFC 8599 5.6.2)");
+      return false;
+    }
+
+    if (push_refresh <= 120) {
+      _logger->error("'push.refresh' is " + std::to_string(push_refresh) + ": it must be over 120 seconds (RFC 8599 5.5)");
+      return false;
+    }
+  }
+
   // public_port, for each listener.
   for (const auto& [name, field] : std::initializer_list<std::pair<const char*, std::uint16_t*>>{
            {"udp", &udp_public_port}, {"tcp", &tcp_public_port}, {"tls", &tls_public_port}, {"websocket", &websocket_public_port}}) {
@@ -689,6 +711,13 @@ std::string Config::effective_yaml() const {
   out << YAML::Key << "media" << YAML::Value << YAML::BeginMap;
   out << YAML::Key << "url" << YAML::Value << media_url;
   emit_plugin_sections(out, _root, "media", {"url"});
+  out << YAML::EndMap;
+
+  out << YAML::Key << "push" << YAML::Value << YAML::BeginMap;
+  out << YAML::Key << "urls" << YAML::Value << YAML::Flow << push_urls;
+  out << YAML::Key << "timeout" << YAML::Value << push_timeout;
+  out << YAML::Key << "refresh" << YAML::Value << push_refresh;
+  emit_plugin_sections(out, _root, "push", {"urls", "timeout", "refresh"});
   out << YAML::EndMap;
 
   out << YAML::Key << "cluster" << YAML::Value << YAML::BeginMap;

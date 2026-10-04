@@ -6,6 +6,7 @@
 //
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -40,6 +41,10 @@ class Core;
 class Proxy : public TransactionUser {
  public:
   Proxy(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<Core> core);
+
+  // The registrar has just stored this contact for a subscriber. A request waiting for that client's push is
+  // forwarded now rather than at the next poll.
+  void on_registered(std::uint64_t subscriber_id, const std::shared_ptr<SIPUri>& contact);
 
   void on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction) override;
 
@@ -78,6 +83,9 @@ class Proxy : public TransactionUser {
     // has gone, which fails the target; its Contact is not tried.
     std::string instance;
     bool dead = false;
+
+    // RFC 8599: a binding this node pushes to before forwarding. The pn-* parameters are on its contact.
+    std::optional<types::Location> push;
   };
 
   // The response context (16.7). Kept alive by the client transaction callbacks.
@@ -142,6 +150,12 @@ class Proxy : public TransactionUser {
     // fork moves on.
     std::vector<dns::Hop> hops_left;
     std::optional<Target> hop_target;
+
+    // RFC 8599 5.2: the target waiting in the push bucket for its client to re-register, the bucket timer's
+    // deadline, and the poll of the store.
+    std::optional<Target> pushed;
+    std::chrono::steady_clock::time_point push_deadline;
+    std::shared_ptr<Timer> push_poll;
   };
 
   // RFC 4028 8.1: enforces the minimum session interval. False when the request was answered 422.
@@ -178,6 +192,13 @@ class Proxy : public TransactionUser {
   // Forwards to the next untried target, opening a flow if needed; sends the best response when none are
   // left.
   void _forward_next(const std::shared_ptr<Context>& context);
+  void _forward_target(const std::shared_ptr<Context>& context, const Target& target);
+
+  // RFC 8599 5.6.2: pushes to a target's client and holds the request until it re-registers. A failed push or
+  // the bucket timer is a 480 for that target, and the fork moves on.
+  void _push_and_wait(const std::shared_ptr<Context>& context, const Target& target);
+  void _push_poll(const std::shared_ptr<Context>& context);
+  void _push_check(const std::shared_ptr<Context>& context, const std::string& registered);
   void _connect_hops(const std::shared_ptr<Context>& context, const Target& target, std::vector<dns::Hop> hops, std::size_t index);
   void _unreachable(const std::shared_ptr<Context>& context);
   bool _try_next_hop(const std::shared_ptr<Context>& context);
@@ -259,6 +280,9 @@ class Proxy : public TransactionUser {
   // Response contexts by server transaction id, so a CANCEL can find its INVITE's branch. Weak: a context is
   // owned by the callbacks in flight.
   std::unordered_map<std::string, std::weak_ptr<Context>> _contexts;
+
+  // Contexts with a request in the push bucket.
+  std::vector<std::weak_ptr<Context>> _push_waiting;
 };
 
 }  // namespace athenasip

@@ -326,6 +326,28 @@ TEST(RedisDatastoreTest, AnOutboundBindingKeepsItsInstanceAndRegId) {
   datastore->subscriber_delete(subscriber->identity);
 }
 
+// RFC 8599: whether this cluster pushes to a binding, and its pn-* parameters, survive the store, so any node can
+// push.
+TEST(RedisDatastoreTest, APushBindingKeepsItsPushParameters) {
+  REQUIRE_REDIS(datastore);
+  const auto realm = "pn-" + unique_suffix() + ".example";
+  auto subscriber = make_subscriber(5260, "sip:carol@" + realm);
+  ASSERT_TRUE(datastore->subscriber_create(subscriber));
+
+  types::Location binding;
+  binding.contact = std::make_shared<types::SIPUri>("sip:carol@192.0.2.10:5060;pn-provider=fcm;pn-param=project;pn-prid=token");
+  binding.push = true;
+  ASSERT_TRUE(datastore->subscriber_register(subscriber, binding, 3600));
+
+  const auto found = datastore->location_list(5260);
+  ASSERT_EQ(found.size(), 1u);
+  EXPECT_TRUE(found[0].push);
+  EXPECT_EQ(found[0].contact->parameter("pn-prid"), "token");
+  EXPECT_EQ(found[0].contact->parameter("pn-param"), "project");
+
+  datastore->subscriber_delete(subscriber->identity);
+}
+
 TEST(RedisDatastoreTest, RegistrationsAreListedFromTheLocationIndex) {
   REQUIRE_REDIS(datastore);
   const auto realm = "loc-" + unique_suffix() + ".example";

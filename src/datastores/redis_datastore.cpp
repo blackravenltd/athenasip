@@ -99,6 +99,7 @@ types::Location parse_location(const std::string& value) {
   if (obj.if_contains("path")) location.path = json_string(obj, "path");
   if (obj.if_contains("instance")) location.instance = json_string(obj, "instance");
   if (const auto* reg_id = obj.if_contains("reg_id"); reg_id != nullptr && reg_id->is_number()) location.reg_id = reg_id->to_number<std::uint32_t>();
+  if (const auto* push = obj.if_contains("push"); push != nullptr && push->is_bool()) location.push = push->as_bool();
 
   return location;
 }
@@ -717,6 +718,7 @@ void RedisDatastore::subscriber_register(plugins::Executor on, std::shared_ptr<t
   if (!binding.node_id.empty()) location["node_id"] = binding.node_id;
   if (!binding.instance.empty()) location["instance"] = binding.instance;
   if (binding.reg_id != 0) location["reg_id"] = binding.reg_id;
+  if (binding.push) location["push"] = true;
 
   const auto key = _location_key(subscriber->id, contact->user, contact->host, port);
   const auto index = _location_index_key(subscriber->id);

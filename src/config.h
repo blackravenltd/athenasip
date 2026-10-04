@@ -171,6 +171,20 @@ class Config {
   // media.url
   std::string media_url = "builtin://";  // or "rtpengine://host:port"
 
+  // push.urls: RFC 8599 push notification services, one driver each ("fcm://", "webpush://"). None by default.
+  std::vector<std::string> push_urls;
+
+  // push.timeout: seconds a request waits for the client to re-register after a push (RFC 8599 5.6.2). Kept
+  // well inside timer F, so a non-INVITE request is answered before its sender gives up.
+  std::uint32_t push_timeout = 10;
+
+  // push.refresh: seconds before a push binding expires that a push asks the client to refresh it (5.5). Over
+  // 120, which is also what +sip.pnsreg carries.
+  std::uint32_t push_refresh = 180;
+
+  // The shortest binding that can carry push: one that would expire before its refresh push is not accepted.
+  std::uint32_t push_minimum_expiry() const { return push_refresh + 60; }
+
   // http: the admin API and the file server.
   std::string http_address;
   uint16_t http_port = 0;
