@@ -89,7 +89,7 @@ fi
 # --- Against a live node ---------------------------------------------------------------
 
 export ATHENA_INTEROP_ADMIN_REPO="$ADMIN_REPO"
-[[ -f "$ADMIN_REPO/build/softphone.html" ]] && export ATHENA_INTEROP_ADMIN_DIR="$ADMIN_REPO/build"
+[[ -f "$ADMIN_REPO/build/index.html" ]] && export ATHENA_INTEROP_ADMIN_DIR="$ADMIN_REPO/build"
 
 for phase in direct relay; do
   echo

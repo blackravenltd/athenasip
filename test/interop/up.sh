@@ -184,7 +184,7 @@ No admin client to serve at ${ATHENA_INTEROP_ADMIN_DIR}
 
 Build it first:
 
-  (cd ../athenasip-admin && npm run build)
+  (cd ../athenasip-admin && VITE_ATHENASIP_LIVE=true npm run build)
 
 or point ATHENA_INTEROP_ADMIN_DIR at a directory that has one. Starting a node that
 serves nothing would only fail later and further away.
