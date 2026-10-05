@@ -181,6 +181,9 @@ class Config {
   // media.url
   std::string media_url = "builtin://";  // or "rtpengine://host:port"
 
+  // plugins.path: directories of plugin modules (.so, .dylib, .dll) loaded at start. None by default.
+  std::vector<std::string> plugins_path;
+
   // push.urls: RFC 8599 push notification services, one driver each ("apns://", "fcm://", "webpush://"). None by default.
   std::vector<std::string> push_urls;
 

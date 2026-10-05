@@ -50,7 +50,10 @@ class PluginRegistry {
 
   template <typename T, typename = std::enable_if_t<std::is_base_of_v<Plugin, T>>>
   std::shared_ptr<T> create_as(std::shared_ptr<loggers::Logger> logger, const std::string& kind, const std::string& url_string) const {
-    return std::dynamic_pointer_cast<T>(create(std::move(logger), kind, url_string));
+    // By kind, not dynamic_cast: a plugin built as a module carries its own copy of the interface's type
+    // information, which need not compare equal to the server's.
+    auto plugin = create(std::move(logger), kind, url_string);
+    return plugin && plugin->kind() == kind ? std::static_pointer_cast<T>(plugin) : nullptr;
   }
 
   // Everything registered, for diagnostics.
