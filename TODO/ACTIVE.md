@@ -433,13 +433,6 @@ authentication from session issue to the OpenAPI document, and the one-command s
       true; this is the pages that do not exist: a configuration reference generated
       from the config schema, "how a call works", a clustering guide, a TLS and
       certificates guide, a media engines guide, troubleshooting.
-- [ ] Plugins as shared libraries: `plugins.path` in config, scan for `.so`, `.dylib`
-      and `.dll`, `dlopen`, call an `extern "C"` describe/create entry point, register
-      through the contract, and refuse to load a plugin whose `api_version` does not
-      match. The rule is documented plainly: build against the SDK headers with the same
-      toolchain, because `YAML::Node` and `std::shared_ptr` cross the boundary. A pure C
-      ABI is more portable and much more work; not the starting point.
-      `athenasip plugins list` shows what loaded and why anything did not.
 - [ ] Packaging: Docker image, Debian package, Homebrew formula. In-tree plugins ship
       compiled in; the packages also carry the SDK headers.
 ---

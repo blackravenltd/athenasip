@@ -2711,3 +2711,11 @@ missed because its connection had silently died.
 - [x] **Redis listings in two round trips**: realms, users, subscribers, bindings and calls
       are read with SMEMBERS and one MGET instead of a GET per member in sequence; a member
       whose record has expired is still dropped from its index.
+- [x] **Plugins as shared libraries.** `plugins.path` (a directory or a list) is scanned for
+      `.so`, `.dylib` and `.dll`; a module declares itself with `ATHENASIP_PLUGIN_MODULE`
+      (`src/plugins/plugin_module.h`), which exports its contract version, name and a
+      register function; a version mismatch or a non-module is refused with the reason and
+      never fatal. `athenasip --list-plugins` (a flag, as the rest of the command line is)
+      shows the outcome and every driver. The server exports its symbols, a module must not
+      link `athena_core`, and `create_as` casts by kind, not `dynamic_cast`. Built and
+      loaded by the tests (`tests/modules/`). Windows loading is written but not built.
