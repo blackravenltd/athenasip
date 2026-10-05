@@ -2700,3 +2700,11 @@ missed because its connection had silently died.
       (`cluster_probes`); a node a peer tried and none reached marks itself
       `"reachable": false` and is not forwarded to, and recovers when one gets through.
       `--check` reports what peers found and fails on a listener none reaches.
+
+### Milestone 5 (2026-10-05)
+
+- [x] **`GET /api/v1/events`**: `nodes/#`, `subscribers/#` and `calls/#` as Server-Sent
+      Events, one event per message named by its topic, a keep-alive comment every fifteen
+      seconds, `view-cluster-status`, at most 32 streams a node (503 past that). The HTTP
+      session can now hold a response open: a route asks for it with
+      `RouteContext::stream`.
