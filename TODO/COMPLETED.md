@@ -2708,3 +2708,6 @@ missed because its connection had silently died.
       seconds, `view-cluster-status`, at most 32 streams a node (503 past that). The HTTP
       session can now hold a response open: a route asks for it with
       `RouteContext::stream`.
+- [x] **Redis listings in two round trips**: realms, users, subscribers, bindings and calls
+      are read with SMEMBERS and one MGET instead of a GET per member in sequence; a member
+      whose record has expired is still dropped from its index.
