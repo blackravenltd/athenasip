@@ -1,10 +1,75 @@
-# AthenaSIP - Certificates for a cluster
+# AthenaSIP - Certificates
 
-Nodes in a cluster talk SIP to each other over mutual TLS. Each node holds a certificate
-signed by the cluster's own certificate authority and trusts only what that authority
-signed. AthenaSIP makes both; no `openssl` commands are needed.
+A node uses certificates in two places:
 
-## Make the authority, once
+- **For clients**: phones on TLS, browsers on secure WebSocket, and the admin listener on
+  HTTPS. These need a certificate the clients already trust, from a public authority.
+- **For the cluster**: nodes talk SIP to each other over mutual TLS, under an authority
+  the cluster makes for itself.
+
+## Certificates for clients
+
+| Listener | Keys | Without its own |
+|---|---|---|
+| SIP over TLS | `tls.cert_pem_filename`, `tls.key_pem_filename` | Required when `tls` is enabled |
+| Secure WebSocket, `websocket.tls: true` | `websocket.cert_pem_filename`, `websocket.key_pem_filename` | Required |
+| Secure WebSocket, `websocket.secure_port` | `websocket.cert_pem_filename`, `websocket.key_pem_filename` | The `tls` section's |
+| Admin API and console over HTTPS (`http.tls.enable`) | `http.tls.cert_pem_filename`, `http.tls.key_pem_filename` | The `tls` section's |
+
+Each is a PEM file. The certificate file may hold the whole chain, the server certificate
+first, and must name the host name clients connect to.
+
+### From a public authority
+
+Clients, and browsers especially, accept only a certificate from an authority they
+already trust. [Let's Encrypt](https://letsencrypt.org/) issues them free. With
+[certbot](https://certbot.eff.org/), for `sip.example.com`:
+
+```sh
+certbot certonly --standalone -d sip.example.com
+```
+
+```yaml
+tls:
+  enable: true
+  port: 5061
+  cert_pem_filename: /etc/athenasip/tls/fullchain.pem
+  key_pem_filename: /etc/athenasip/tls/privkey.pem
+
+websocket:
+  port: 9443
+  tls: true
+  cert_pem_filename: /etc/athenasip/tls/fullchain.pem
+  key_pem_filename: /etc/athenasip/tls/privkey.pem
+
+http:
+  port: 8080
+  tls:
+    enable: true      # HTTPS on 8443, with the tls section's files
+```
+
+Use `fullchain.pem`, not `cert.pem`: without the intermediate certificate many clients
+refuse the connection. certbot keeps its files readable by root only, and the systemd unit
+runs the node as the `athenasip` user, so copy the two files somewhere that user can read
+them, as above, from a certbot deploy hook. The node reads certificates when it starts:
+restart it after each renewal.
+
+`athenasip --check` loads every certificate a listener needs and reports each.
+
+### The snakeoil certificate
+
+`tls/` holds a certificate and a certificate authority for trying TLS and WSS on a test
+machine. Their private keys are in the repository, so anyone can impersonate a node using
+them: never use them on a node others can reach. Clients refuse them unless told to
+trust `tls/ca/snakeca.crt`. `tls/generate.sh` makes them again.
+
+## Certificates for a cluster
+
+Each node holds a certificate signed by the cluster's own certificate authority and
+trusts only what that authority signed. AthenaSIP makes both; no `openssl` commands are
+needed. [Running a cluster](clustering.md) is the whole setup.
+
+### Make the authority, once
 
 ```sh
 athenasip --ca-init
@@ -15,7 +80,7 @@ holding `ca.key` can make a certificate every node will trust: keep it on one ma
 backed up. It is written readable by its owner only. `--ca-init` refuses to overwrite an
 existing authority, because that would orphan every certificate it signed.
 
-## Issue each node its certificate
+### Issue each node its certificate
 
 ```sh
 athenasip --ca-node node-a --san 10.35.1.20 --san node-a.example.com
@@ -27,7 +92,7 @@ existing certificate, to renew it or change its names.
 
 Copy `ca.crt`, `node-a.crt` and `node-a.key` to node A. `ca.key` stays where it is.
 
-## Use them
+### Use them
 
 ```yaml
 cluster:
@@ -51,7 +116,7 @@ node's certificate carries (`--san`). It defaults to `address`, or to
 
 `athenasip --check` verifies the certificates and tries the other nodes.
 
-## What is made
+### What is made
 
 | | Authority | Node |
 |---|---|---|

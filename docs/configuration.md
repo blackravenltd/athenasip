@@ -203,7 +203,7 @@ the driver for what a URL cannot express. [Plugins](plugins.md) describes the co
 | URL | Driver |
 |---|---|
 | `builtin://` (default) | Relays plain RTP from the node's own process. Declines offers that need ICE, DTLS or SRTP; the SDP then passes through untouched and media goes end to end. |
-| `rtpengine://host[:port]` | [rtpengine](https://github.com/sipwise/rtpengine) over its ng control port (2223 by default). Required for WebRTC, SRTP, recording and transcoding. |
+| `rtpengine://host[:port]` | [rtpengine](https://github.com/sipwise/rtpengine) over its ng control port (2223 by default). Required for WebRTC and SRTP. |
 
 `media.builtin`:
 
