@@ -167,7 +167,10 @@ void ProvisioningAPI::register_routes(Router& router) {
   router.add(http::verb::get, "/api/v1/registrations", {view_cluster_status}, [self](RouteContext c) { self->_registration_list(std::move(c)); });
 
   // The same role as /nodes: how to reach the realm, not who is on it.
-  router.add(http::verb::get, "/api/v1/client/config", {view_cluster_status}, [self](RouteContext c) { self->_client_config(std::move(c)); });
+  // A subscriber's own: authenticated with its SIP credentials, not a user's session.
+  router.add_subscriber(http::verb::get, "/api/v1/subscriber/{realm}/config", [self](RouteContext c) { self->_subscriber_config(std::move(c)); });
+  router.add_subscriber(http::verb::get, "/api/v1/subscriber/{realm}/registrations", [self](RouteContext c) { self->_subscriber_registrations(std::move(c)); });
+  router.add_subscriber(http::verb::put, "/api/v1/subscriber/{realm}/password", [self](RouteContext c) { self->_subscriber_password(std::move(c)); });
 }
 
 // Realms
@@ -580,7 +583,7 @@ void ProvisioningAPI::_health(RouteContext context) {
   context.done();
 }
 
-void ProvisioningAPI::_client_config(RouteContext context) {
+void ProvisioningAPI::_subscriber_config(RouteContext context) {
   boost::json::object out;
 
   // Every transport this node serves, the same list /nodes gives.
@@ -631,9 +634,9 @@ void ProvisioningAPI::_client_config(RouteContext context) {
     const bool needs_credential = server.url.rfind("turn:", 0) == 0 || server.url.rfind("turns:", 0) == 0;
 
     if (needs_credential) {
-      // The caller's name, so a relay session can be traced in the TURN server's log. It
-      // must be a plain key, not Caller::describe(): coturn answers 400 to prose here.
-      const auto asked_by = context.caller.user ? context.caller.user->key() : std::string("anonymous");
+      // The subscriber, so a relay session can be traced in the TURN server's log, as user_realm: coturn answers
+      // 400 to anything but letters, digits, '.', '-' and '_' here.
+      const auto asked_by = context.subscriber->identity->uri->user + "_" + context.parameter("realm");
 
       const auto credential = types::TurnCredential::issue(_config->turn_shared_secret, asked_by, now, _config->turn_credential_ttl);
 
@@ -649,16 +652,11 @@ void ProvisioningAPI::_client_config(RouteContext context) {
 
   out["ice_servers"] = std::move(ice);
 
-  const auto named = context.query.find("realm");
-  if (named == context.query.end()) {
-    write_json(context.response, http::status::ok, out);
-    return context.done();
-  }
-
   const auto flows = std::min<std::size_t>(2, out["nodes"].as_array().size());
   auto self = shared_from_this();
+  const auto realm_name = context.parameter("realm");
 
-  _with_realm(named->second, std::move(context), [this, self, out, flows](std::shared_ptr<types::Realm> realm, RouteContext context) mutable {
+  _with_realm(realm_name, std::move(context), [this, self, out, flows](std::shared_ptr<types::Realm> realm, RouteContext context) mutable {
     boost::json::object expects;
     expects["name"] = realm->name;
 
@@ -683,6 +681,54 @@ void ProvisioningAPI::_client_config(RouteContext context) {
 
     out["realm"] = std::move(expects);
     write_json(context.response, http::status::ok, out);
+    context.done();
+  });
+}
+
+void ProvisioningAPI::_subscriber_registrations(RouteContext context) {
+  const auto subscriber = context.subscriber;
+  const auto uri = subscriber->identity->uri->to_string();
+
+  _datastore->location_list(_executor, subscriber->id, [this, context, uri](plugins::Result<std::vector<types::Location>> found) mutable {
+    if (!found.ok) {
+      write_error(context.response, http::status::internal_server_error, "datastore_error", found.error);
+      return context.done();
+    }
+
+    boost::json::array out;
+    for (const auto& location : found.value) out.push_back(_location_json(location, uri));
+    write_json(context.response, http::status::ok, out);
+    context.done();
+  });
+}
+
+void ProvisioningAPI::_subscriber_password(RouteContext context) {
+  const auto body = parse_object(context.body);
+  if (!body) {
+    write_error(context.response, http::status::bad_request, "invalid_json", "the body is not a JSON object");
+    return context.done();
+  }
+
+  const auto password = string_field(*body, "password");
+  if (!password || password->empty()) {
+    write_error(context.response, http::status::bad_request, "invalid_request", "password is required");
+    return context.done();
+  }
+
+  // Both credentials, so a client answering either algorithm signs with the new password.
+  auto subscriber = context.subscriber;
+  const auto& user = subscriber->identity->uri->user;
+  const auto realm_name = context.parameter("realm");
+  subscriber->ha1 = ha1_of(user, realm_name, *password);
+  subscriber->ha1_sha256 = ha1_sha256_of(user, realm_name, *password);
+
+  _datastore->subscriber_update(_executor, subscriber, [context](plugins::Status status) mutable {
+    if (!status.ok) {
+      write_error(context.response, http::status::internal_server_error, "datastore_error", status.error);
+      return context.done();
+    }
+
+    context.response->result(http::status::no_content);
     context.done();
   });
 }

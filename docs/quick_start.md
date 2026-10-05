@@ -58,7 +58,7 @@ ATHENA_PUBLIC_ADDRESS=127.0.0.1 ATHENA_RTPENGINE_ADVERTISE=172.33.0.30 docker/up
 ```
 
 Clients on the host then have no direct media path and reach the engine only through
-TURN, so a client needs the `ice_servers` from `GET /api/v1/client/config`.
+TURN, so a client needs the `ice_servers` from `GET /api/v1/subscriber/{realm}/config`.
 
 Chrome reports the local candidate of a relayed pair as `prflx`, not `relay`. Check the
 local port is inside coturn's range instead.

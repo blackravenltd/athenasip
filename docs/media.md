@@ -73,7 +73,7 @@ control the media.
 
 Browsers behind strict NAT also need a TURN server to reach rtpengine. List STUN and TURN
 servers in `http.api.ice_servers`; the node hands them to web clients at
-`GET /api/v1/client/config`, with short-lived TURN credentials when `turn_shared_secret`
+`GET /api/v1/subscriber/{realm}/config`, with short-lived TURN credentials when `turn_shared_secret`
 is set ([Configuration](configuration.md#httpapi)). `docker/up.sh` brings up rtpengine and
 coturn already wired together ([Quick Start](quick_start.md)).
 

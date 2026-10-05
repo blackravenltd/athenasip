@@ -275,7 +275,7 @@ class Config {
   std::string http_tls_key() const { return http_tls_key_pem_filename.empty() ? tls_key_pem_filename : http_tls_key_pem_filename; }
 
   // http.api.ice_servers: the ICE servers a web client is told to use, served by
-  // `GET /api/v1/client/config`. It does not affect this node's own media.
+  // `GET /api/v1/subscriber/{realm}/config`. It does not affect this node's own media.
   struct IceServer {
     // stun:host:port or turn:host:port (RFC 7064, RFC 7065). Only turn: URLs get credentials.
     std::string url;

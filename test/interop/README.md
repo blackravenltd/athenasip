@@ -93,7 +93,7 @@ With `--rtpengine`:
   public address. `ATHENA_INTEROP_RTPENGINE_ADVERTISE` overrides what it advertises.
 - coturn runs on `ATHENA_INTEROP_TURN_PORT` (3478), relaying on
   `ATHENA_INTEROP_TURN_MIN` to `_MAX` (22300-22350), with a secret generated per run.
-  `GET /api/v1/client/config` then serves the STUN and TURN servers with a credential.
+  `GET /api/v1/subscriber/{realm}/config` then serves the STUN and TURN servers with a credential.
   Without `--rtpengine` it serves an empty `ice_servers`.
 
 Each leg is profiled from what it has said in a session description. For the first

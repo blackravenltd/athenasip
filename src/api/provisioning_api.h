@@ -43,7 +43,7 @@ class ProvisioningAPI : public std::enable_shared_from_this<ProvisioningAPI> {
     _node_heartbeat = heartbeat;
   }
 
-  // The push services this node runs (RFC 8599), for what /client/config tells a client.
+  // The push services this node runs (RFC 8599), for what /subscriber/{realm}/config tells a client.
   void push_register(std::vector<std::shared_ptr<push::PushService>> services) { _push_services = std::move(services); }
 
  private:
@@ -67,7 +67,10 @@ class ProvisioningAPI : public std::enable_shared_from_this<ProvisioningAPI> {
   void _health(RouteContext context);
 
   // What a web client needs to place a call: where to signal, and what to use for ICE.
-  void _client_config(RouteContext context);
+  // /api/v1/subscriber/{realm}/...: what a subscriber's softphone needs, its own bindings, and its own password.
+  void _subscriber_config(RouteContext context);
+  void _subscriber_registrations(RouteContext context);
+  void _subscriber_password(RouteContext context);
 
   // The cluster as this node knows it, which tells a client where else it could go.
   void _node_list(RouteContext context);

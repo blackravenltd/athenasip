@@ -376,7 +376,7 @@ Enabled when the section is present. Users sign in with `POST /api/v1/auth/login
 | `session_lifetime` | `43200` | Seconds a login lasts. Cannot be `0`. |
 | `session_idle` | `3600` | Seconds a login survives unused. `0` is off. |
 | `rate_limits` | see below | Request limits |
-| `ice_servers` | `[]` | STUN and TURN URLs handed to web clients by `GET /api/v1/client/config`, e.g. `- url: "stun:stun.example.com:3478"` |
+| `ice_servers` | `[]` | STUN and TURN URLs handed to web clients by `GET /api/v1/subscriber/{realm}/config`, e.g. `- url: "stun:stun.example.com:3478"` |
 | `turn_shared_secret` | unset | coturn `static-auth-secret`. The node mints time-limited TURN credentials under it. Without it a `turn:` URL is served with no credential, and the node warns at startup. |
 | `turn_credential_ttl` | `3600` | Seconds a minted TURN credential is valid. Cannot be `0`. |
 

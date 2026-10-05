@@ -10,6 +10,7 @@
 #include <chrono>
 #include <functional>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -21,6 +22,7 @@
 #include "rate_limiter.h"
 #include "response_stream.h"
 #include "sessions.h"
+#include "subscriber_auth.h"
 
 namespace athenasip::api {
 
@@ -43,6 +45,9 @@ struct RouteContext {
 
   // The peer address, which open routes are limited by.
   std::string remote;
+
+  // On a subscriber route, the subscriber the request authenticated as (SubscriberAuth).
+  std::shared_ptr<types::Subscriber> subscriber;
 
   std::shared_ptr<http::response<http::string_body>> response;
 
@@ -90,6 +95,19 @@ class Router {
   // A route that needs no credential: healthchecks, and the login that hands credentials out.
   void add_open(http::verb method, std::string pattern, Handler handler) { _routes.push_back(Route{method, _split(pattern), {}, true, std::move(handler)}); }
 
+  // A route for a subscriber, authenticated with its SIP credentials (SubscriberAuth). Every one lives under
+  // /api/v1/subscriber/{realm}/, and a subscriber's credentials open nothing else.
+  void add_subscriber(http::verb method, std::string pattern, Handler handler) {
+    if (pattern.rfind(kSubscriberPrefix, 0) != 0) throw std::logic_error("a subscriber route must be under " + std::string(kSubscriberPrefix) + ": " + pattern);
+    Route route{method, _split(pattern), {}, false, std::move(handler)};
+    route.subscriber = true;
+    _routes.push_back(std::move(route));
+  }
+
+  static constexpr char kSubscriberPrefix[] = "/api/v1/subscriber/{realm}/";
+
+  void subscriber_auth_register(std::shared_ptr<SubscriberAuth> auth) { _subscriber_auth = std::move(auth); }
+
   // The middleware for the chain. It answers everything under its prefix and passes the
   // rest along, so static files and the API can share a port.
   HttpMiddleware middleware(std::string prefix) {
@@ -108,6 +126,7 @@ class Router {
     std::vector<std::string> roles;
     bool open = false;
     Handler handler;
+    bool subscriber = false;
   };
 
   void _handle(const std::string& prefix, const http::request<http::string_body>& request, const std::string& remote,
@@ -140,6 +159,8 @@ class Router {
       context.response = response;
       context.done = [next]() { next(false); };
       context.stream = [streams = _streams, response](StreamStart start) { streams->add(response.get(), std::move(start)); };
+
+      if (route.subscriber) return _handle_subscriber(route, request, target, std::move(context), std::move(next));
 
       if (route.open) {
         if (const auto wait = _throttle->take(_source_key(remote), _throttle->limits().open)) {
@@ -309,6 +330,50 @@ class Router {
   std::shared_ptr<Throttle> _throttle;
   std::vector<Route> _routes;
   std::shared_ptr<StreamRegistry> _streams = std::make_shared<StreamRegistry>();
+  std::shared_ptr<SubscriberAuth> _subscriber_auth;
+
+  void _handle_subscriber(const Route& route, const http::request<http::string_body>& request, const std::string& target, RouteContext context,
+                          std::function<void(bool)> next) {
+    if (!_subscriber_auth) {
+      write_error(context.response, http::status::not_found, "not_found", "no such route");
+      return next(false);
+    }
+
+    const auto realm = context.parameter("realm");
+    const auto authorization = std::string(request[http::field::authorization]);
+
+    _subscriber_auth->check(
+        realm, std::string(http::to_string(request.method())), target, authorization,
+        [throttle = _throttle, context, handler = route.handler](SubscriberAuth::Outcome outcome) mutable {
+          switch (outcome.kind) {
+            case SubscriberAuth::Outcome::Kind::unavailable:
+              write_error(context.response, http::status::service_unavailable, "unavailable", "the server cannot check credentials at the moment");
+              return context.done();
+
+            case SubscriberAuth::Outcome::Kind::no_realm:
+              write_error(context.response, http::status::not_found, "not_found", "no such realm: " + context.parameter("realm"));
+              return context.done();
+
+            case SubscriberAuth::Outcome::Kind::challenge:
+              // Limited as an open route is, by source address, so a password cannot be guessed at speed.
+              if (const auto wait = throttle->take(_source_key(context.remote), throttle->limits().open)) {
+                write_too_many(context.response, *wait);
+                return context.done();
+              }
+              for (const auto& challenge : outcome.challenges) context.response->insert(http::field::www_authenticate, challenge);
+              write_error(context.response, http::status::unauthorized, "unauthorized", "a subscriber's Digest credentials are required");
+              return context.done();
+
+            case SubscriberAuth::Outcome::Kind::ok:
+              if (const auto wait = throttle->take("subscriber:" + outcome.subscriber->identity->uri->to_string(), throttle->limits().session)) {
+                write_too_many(context.response, *wait);
+                return context.done();
+              }
+              context.subscriber = std::move(outcome.subscriber);
+              return handler(std::move(context));
+          }
+        });
+  }
 };
 
 }  // namespace athenasip::api
