@@ -147,12 +147,22 @@ Client failover, for a client that can use none of RFC 3263, RFC 5626 or a balan
   UDP socket, every five minutes. What they say is in the node status as `discovered`, and
   `athenasip --check` reports it, failing when it disagrees with a configured
   `sip.public_address`.
+- A peer node's response says where it saw this node's request come from (RFC 3581
+  `received`). When no STUN server has answered, a public address there is a finding too;
+  a private one is ignored, since nodes on one LAN see each other's LAN addresses.
 - Each node sends an OPTIONS to every other node's discovered address, on that node's UDP
   port, and lists the ones that answer in its status as `reaches`.
 - A node whose discovered address another node has reached advertises it as if it were
   `sip.public_address`. One that no node has reached is reported and never advertised, and
   the node logs a warning saying so. A single node has nobody to reach it, so it reports
   what STUN says and advertises its bind address as before.
+
+Each node also tries every other node's inter-node listener every ten minutes and publishes
+the results as `cluster_probes`. A node that a peer has tried and none has reached marks its
+`cluster` entry `"reachable": false`, and peers stop forwarding to it: behind symmetric NAT
+or a connection-pinning balancer only the flows its own clients opened reach it. It keeps
+publishing its address, so it recovers when a peer gets through. `athenasip --check` reports
+what peers found, and fails on a listener none reaches.
 
 Every node answers an OPTIONS addressed to itself, its public or discovered address, or one
 of its realms with no user (RFC 3261 11.2), which is what the probe relies on and what a

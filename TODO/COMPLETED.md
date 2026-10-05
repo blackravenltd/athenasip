@@ -2694,3 +2694,9 @@ missed because its connection had silently died.
       VoIP binding is never pushed to refresh: iOS 13 stops PushKit delivery to an app that
       takes a VoIP push without ringing (`PushService::refreshes()`, contract version 17).
       Tested against a local nghttp2 server; not yet against Apple.
+- [x] **The rest of the node's own address.** A public address a peer node stamps as
+      `received` on this node's Via (RFC 3581) is a finding when STUN has none; a private
+      one is ignored. Each node tries every peer's inter-node listener every ten minutes
+      (`cluster_probes`); a node a peer tried and none reached marks itself
+      `"reachable": false` and is not forwarded to, and recovers when one gets through.
+      `--check` reports what peers found and fails on a listener none reaches.

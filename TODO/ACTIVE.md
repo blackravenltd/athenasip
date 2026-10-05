@@ -30,7 +30,7 @@ for want of credentials. 1141 unit tests (one skipped without a resolver) at the
 with rtpengine 12 of 12, two nodes 15 of 15. That covers RFC 6026 and `allow_unencrypted`;
 push is after it and has no scenario yet.
 
-**Next:** what is left of the node's own address, under Milestone 4.
+**Next:** Milestone 4's open item, the intermittent `across-cancel-ringing`; then Milestone 5.
 
 **Once things are stable, video calling is a primary feature** (Tom, 2026-10-03), not a
 later extra: principle 6 already says so, and this is the reminder that it is next in line
@@ -389,17 +389,7 @@ Done (`COMPLETED.md`). What remains of client failover is the node's own address
 
 ### The node's own address
 
-Discovery from STUN, verification by peers and advertising a verified address are in
-(`COMPLETED.md`, `docs/architecture.md`). What is left:
-
-- [ ] From peers, for nothing: read `received` and `rport` off the top Via of responses to
-      inter-node requests (RFC 3581), a per-transport observation STUN cannot give, and
-      use it beside STUN as a finding.
-- [ ] The honest failure case: a node behind symmetric NAT or a connection-pinning balancer
-      that no peer reaches must not advertise itself as a routable cluster peer either
-      (`cluster.advertise`), only take flows clients opened.
-- [ ] `athenasip --check` reports what peers have verified, not only what STUN says; today it
-      cannot, because it runs without the bus subscription the node has.
+Done (`COMPLETED.md`, `docs/architecture.md`).
 
 ### The second node
 
