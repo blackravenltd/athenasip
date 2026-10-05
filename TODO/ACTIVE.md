@@ -444,6 +444,11 @@ authentication from session issue to the OpenAPI document, and the one-command s
       would forward each to the other two, which works and is not mixing.
 - [ ] Presence: SUBSCRIBE/NOTIFY (RFC 6665), `presence` (RFC 3856) and `dialog` packages
       for BLF, `message-summary` for MWI, backed by MQTT fan-out.
+- [ ] RFC 6080 client configuration (SUBSCRIBE to `ua-profile`, NOTIFY pointing at
+      `/api/v1/subscriber/{realm}/config`), once the local UA can be a notifier for
+      presence. Little before then: it needs a SUBSCRIBE/NOTIFY UAS, and the profile format
+      is each vendor's, so only our own clients would read it (Tom, 2026-10-05: if it costs
+      little).
 - [ ] SIP MESSAGE relay.
 - [ ] Push, RFC 8599, what is left (`COMPLETED.md` has what shipped): proving each service
       for real (Waiting on Tom, 1); a sipp scenario with a fake provider; and section 6,
