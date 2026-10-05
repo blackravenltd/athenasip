@@ -327,4 +327,36 @@ void AddressDiscovery::_probe_cluster(const std::string& node, const std::string
   });
 }
 
+bool AddressDiscovery::is_public(const boost::asio::ip::address& address) {
+  if (address.is_unspecified() || address.is_loopback() || address.is_multicast()) return false;
+
+  if (address.is_v6()) {
+    const auto v6 = address.to_v6();
+    if (v6.is_v4_mapped()) return is_public(boost::asio::ip::make_address_v4(boost::asio::ip::v4_mapped, v6));
+    if (v6.is_link_local() || v6.is_site_local()) return false;
+    return (v6.to_bytes()[0] & 0xFE) != 0xFC;  // fc00::/7, unique local (RFC 4193)
+  }
+
+  const auto bytes = address.to_v4().to_bytes();
+  if (bytes[0] == 10) return false;                              // RFC 1918
+  if (bytes[0] == 172 && (bytes[1] & 0xF0) == 16) return false;  // RFC 1918
+  if (bytes[0] == 192 && bytes[1] == 168) return false;          // RFC 1918
+  if (bytes[0] == 100 && (bytes[1] & 0xC0) == 64) return false;  // RFC 6598, carrier-grade NAT
+  if (bytes[0] == 169 && bytes[1] == 254) return false;          // RFC 3927, link-local
+  return true;
+}
+
+void AddressDiscovery::observed(const std::string& peer, const std::string& address) {
+  boost::system::error_code ec;
+  const auto parsed = boost::asio::ip::make_address(address, ec);
+  if (ec || !is_public(parsed)) return;
+
+  // A STUN answer, asked from the SIP socket itself, is the better observation.
+  if (_finding && _finding->source.rfind("stun:", 0) == 0) return;
+
+  const Finding finding{parsed.to_string(), 0, "peer:" + peer};
+  if (!_finding || _finding->address != finding.address) _logger->info("Node " + peer + " sees this node at " + finding.address);
+  _finding = finding;
+}
+
 }  // namespace athenasip
