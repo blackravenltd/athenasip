@@ -8,6 +8,7 @@
 | [Interop fixture](#the-interop-fixture) | does a particular SIP client work, on every transport | Docker |
 | [Browser call](#the-browser-call) | does a browser agree, with media through rtpengine | Docker, `../athenasip-admin` |
 | [Live call](#the-live-call) | did a person hear it | a device |
+| [The whole suite](#the-whole-suite) | do the node, the console and AthenaPhone agree | Docker, the sibling repositories |
 
 Everything runs on a developer machine. There is no hosted CI.
 
@@ -25,7 +26,28 @@ cmake --preset tsan && cmake --build build-tsan -j8 && ./build-tsan/athenasip_te
 
 test/e2e/run.sh
 test/e2e/run.sh --rtpengine
+test/suite/run.sh
 ```
+
+## The whole suite
+
+```bash
+test/suite/run.sh              # everything that runs unattended
+test/suite/run.sh --no-sipp    # without the sipp harnesses
+test/suite/run.sh --device     # also what needs a phone and a person
+```
+
+It runs the unit tests and the sipp harnesses, then brings the interop fixture up twice,
+with direct media and relayed through coturn, and runs each sibling project's suite against
+it: `npm run test:athenasip` in `../athenasip-admin` and `../athenaphone`
+(`ATHENA_SUITE_ADMIN_REPO` and `ATHENA_SUITE_PHONE_REPO` move them). Results, with each
+project's `summary.json`, are under `test/suite/results/`.
+
+A project's script reads the fixture from `ATHENA_INTEROP_*` (`generated/fixture.env`),
+the phase from `ATHENA_SUITE_PHASE` and where to write from `ATHENA_SUITE_RESULTS`; it
+never starts or stops a container, except the node through `ATHENA_SUITE_RESTART_CMD`; and
+it runs device tests only when `ATHENA_SUITE_DEVICE=1`. A project without the script is
+reported, not failed.
 
 ## Unit tests
 
