@@ -62,6 +62,10 @@ tags:
     description: Logging in, logging out, and asking who you are
   - name: users
     description: The users that administer this node, which are not subscribers
+  - name: subscriber
+    description: |
+      A subscriber's own routes, under `/subscriber/{realm}/`, signed with its SIP
+      credentials (HTTP Digest) rather than a user's session
   - name: status
     description: What this node is and whether it is serving
   - name: realms
@@ -251,32 +255,25 @@ paths:
         "503":
           description: This node is already serving its limit of streams
 
-  /client/config:
+  /subscriber/{realm}/config:
     get:
-      tags: [status]
-      operationId: getClientConfig
-      summary: Everything a web client needs that it cannot be told by hand
+      tags: [subscriber]
+      operationId: getSubscriberConfig
+      summary: What a subscriber's softphone needs that it cannot be told by hand
       description: |
-        What a browser needs to place a call: where to signal and what to use for ICE.
+        Where to signal, what to use for ICE, and what the realm expects of a client.
 
-        `websocket_uri` is the secure WebSocket listener. It is **absent** when this node
-        has no `wss` listener, because a page served over https cannot open `ws://`.
+        `websocket_uri` is the secure WebSocket listener, **absent** when this node has
+        none, because a page served over https cannot open `ws://`.
 
         `ice_servers` is shaped as `RTCIceServer` and can be handed to `RTCPeerConnection`
         unchanged. A `turn:` entry carries a credential minted for this request under the
-        coturn shared-secret scheme, which expires on its own. It carries none when the
-        node has no `http.api.turn_shared_secret`. A `stun:` entry never carries one.
-
-        With `realm`, it adds what that realm expects of a client registering in it.
-
-        Needs the same role as `/nodes`.
+        coturn shared-secret scheme, named `<expiry>:<user>_<realm>`, which expires on its
+        own. It carries none when the node has no `http.api.turn_shared_secret`.
+      security:
+        - subscriberDigest: []
       parameters:
-        - name: realm
-          in: query
-          required: false
-          description: A realm this node serves. Unknown is a 404.
-          schema:
-            type: string
+        - $ref: "#/components/parameters/Realm"
       responses:
         "200":
           description: What to use
@@ -285,9 +282,63 @@ paths:
               schema:
                 $ref: "#/components/schemas/ClientConfig"
         "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
+          $ref: "#/components/responses/SubscriberUnauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /subscriber/{realm}/registrations:
+    get:
+      tags: [subscriber]
+      operationId: listOwnRegistrations
+      summary: The subscriber's own bindings
+      security:
+        - subscriberDigest: []
+      parameters:
+        - $ref: "#/components/parameters/Realm"
+      responses:
+        "200":
+          description: Its bindings, shaped as in `/registrations`
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Registration"
+        "401":
+          $ref: "#/components/responses/SubscriberUnauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /subscriber/{realm}/password:
+    put:
+      tags: [subscriber]
+      operationId: changeOwnPassword
+      summary: Change the subscriber's own password
+      description: |
+        The new password is the one the subscriber registers with and signs these routes
+        with from then on, under either Digest algorithm.
+      security:
+        - subscriberDigest: []
+      parameters:
+        - $ref: "#/components/parameters/Realm"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password:
+                  type: string
+                  minLength: 1
+      responses:
+        "204":
+          description: Changed
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/SubscriberUnauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -960,6 +1011,15 @@ paths:
 
 components:
   securitySchemes:
+    subscriberDigest:
+      type: http
+      scheme: digest
+      description: |
+        RFC 7616 HTTP Digest with a subscriber's SIP username and password, only for the
+        routes under `/subscriber/{realm}/`. The HTTP realm is the SIP realm, so the
+        credentials are those the subscriber registers with. `qop=auth`, SHA-256 or MD5.
+        A user's session token opens none of these routes, and these credentials open no
+        other.
     bearerAuth:
       type: http
       scheme: bearer
@@ -1000,6 +1060,17 @@ components:
   responses:
     BadRequest:
       description: The request was not one this API understands
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    SubscriberUnauthorized:
+      description: No Digest credentials, or wrong ones, or a nonce that has expired (stale=true)
+      headers:
+        WWW-Authenticate:
+          description: Two Digest challenges for the realm, SHA-256 then MD5, each with qop="auth"
+          schema:
+            type: string
       content:
         application/json:
           schema:
@@ -1380,7 +1451,7 @@ components:
           type: object
           description: |
             Where a peer node reaches this one's inter-node listener. Absent for this node,
-            for a node that is not in a cluster, and in the list `/client/config` gives a
+            for a node that is not in a cluster, and in the list `/subscriber/{realm}/config` gives a
             client.
           properties:
             address:

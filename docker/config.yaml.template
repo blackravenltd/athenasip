@@ -78,7 +78,7 @@ http:
     session_lifetime: 43200
     session_idle: 3600
 
-    # Handed to web clients by GET /api/v1/client/config: the coturn in this stack, at
+    # Handed to web clients by GET /api/v1/subscriber/{realm}/config: the coturn in this stack, at
     # the host's address.
     ice_servers:
       - url: "stun:@PUBLIC_ADDRESS@:3478"

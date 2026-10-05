@@ -22,10 +22,13 @@
 #include "../mocks/logger_mock.h"
 #include "api/admin_api.h"
 #include "api/router.h"
+#include "api/subscriber_auth.h"
 #include "config.h"
 #include "datastores/memory_datastore.h"
 #include "node_directory.h"
+#include "types/authorization.h"
 #include "types/url.h"
+#include "util.h"
 
 using namespace athenasip;
 
@@ -37,6 +40,9 @@ namespace http = boost::beast::http;
 struct Response {
   unsigned status = 0;
   std::string body;
+
+  // Every WWW-Authenticate value, in order.
+  std::vector<std::string> challenges;
 
   boost::json::value json() const {
     boost::system::error_code ec;
@@ -76,6 +82,7 @@ struct ApiFixture {
     router = std::make_shared<api::Router>(bearer);
     provisioning = std::make_shared<api::ProvisioningAPI>(logger, datastore, admin->executor(), config, "0.0.0-test");
     provisioning->register_routes(*router);
+    router->subscriber_auth_register(std::make_shared<api::SubscriberAuth>(logger, datastore, admin->executor()));
 
     admin->middlewares.push_back(router->middleware("/api/"));
     admin->start();
@@ -85,7 +92,8 @@ struct ApiFixture {
   ~ApiFixture() { admin->stop(); }
 
   // One request, one connection: the API answers and closes the socket.
-  Response request(http::verb method, const std::string& target, const std::string& token = "admin-token", const std::string& body = "") {
+  Response request(http::verb method, const std::string& target, const std::string& token = "admin-token", const std::string& body = "",
+                   const std::string& authorization = "") {
     boost::asio::io_context io_context;
     boost::asio::ip::tcp::socket socket(io_context);
 
@@ -94,6 +102,7 @@ struct ApiFixture {
     http::request<http::string_body> request{method, target, 11};
     request.set(http::field::host, "127.0.0.1");
     if (!token.empty()) request.set(http::field::authorization, "Bearer " + signed_in.presented(token));
+    if (!authorization.empty()) request.set(http::field::authorization, authorization);
     if (!body.empty()) {
       request.set(http::field::content_type, "application/json");
       request.body() = body;
@@ -109,7 +118,36 @@ struct ApiFixture {
 
     socket.close(ec);
 
-    return Response{response.result_int(), response.body()};
+    Response out{response.result_int(), response.body(), {}};
+    const auto challenges = response.equal_range(http::field::www_authenticate);
+    for (auto field = challenges.first; field != challenges.second; ++field) out.challenges.emplace_back(field->value());
+    return out;
+  }
+
+  // As a subscriber's softphone would: ask, take the challenge for `algorithm`, answer it with qop=auth (RFC 7616
+  // 3.4) and ask again.
+  Response as_subscriber(http::verb method, const std::string& target, const std::string& user, const std::string& password, const std::string& body = "",
+                         const std::string& algorithm = "MD5") {
+    const auto first = request(method, target, "", body);
+    if (first.status != 401) return first;
+
+    std::string realm;
+    std::string nonce;
+    for (const auto& challenge : first.challenges) {
+      if (challenge.find("algorithm=" + algorithm) == std::string::npos) continue;
+      types::Authorization parsed(challenge);
+      realm = parsed.fields["realm"];
+      nonce = parsed.fields["nonce"];
+    }
+    if (nonce.empty()) return first;
+
+    const auto hash = [&algorithm](const std::string& input) { return algorithm == "SHA-256" ? Util::sha256(input) : Util::md5(input); };
+    const auto ha1 = hash(user + ":" + realm + ":" + password);
+    const auto response = hash(ha1 + ":" + nonce + ":00000001:0a4f113b:auth:" + hash(std::string(http::to_string(method)) + ":" + target));
+
+    return request(method, target, "", body,
+                   "Digest username=\"" + user + "\", realm=\"" + realm + "\", nonce=\"" + nonce + "\", uri=\"" + target + "\", algorithm=" + algorithm +
+                       ", qop=auth, nc=00000001, cnonce=\"0a4f113b\", response=\"" + response + "\"");
   }
 
   Response post(const std::string& target, const std::string& body, const std::string& token = "admin-token") {
@@ -122,6 +160,18 @@ struct ApiFixture {
 
   Response get(const std::string& target, const std::string& token = "admin-token") { return request(http::verb::get, target, token); }
 };
+
+}  // namespace
+
+namespace {
+
+// Alice, a subscriber in example.com with the password "secret", made through the API as an operator would.
+void seed_alice(ApiFixture& f) {
+  if (!f.store->realm_get_by_name("example.com")) ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+  ASSERT_EQ(f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice","password":"secret"})").status, 201u);
+}
+
+Response alice_config(ApiFixture& f) { return f.as_subscriber(http::verb::get, "/api/v1/subscriber/example.com/config", "alice", "secret"); }
 
 }  // namespace
 
@@ -588,7 +638,7 @@ TEST(ProvisioningApiTest, TheNodeListIncludesWhatTheOtherNodesSaid) {
 
 // The browser bootstrap lists where a client can go: this node first, then the others that are up, with their
 // secure WebSocket URIs in that order. A node that is down or stale is not listed.
-TEST(ProvisioningApiTest, ClientConfigListsTheNodesAClientCanUse) {
+TEST(ProvisioningApiTest, SubscriberConfigListsTheNodesAClientCanUse) {
   ApiFixture f;
   f.config->websocket_enable = true;
   f.config->websocket_tls = true;
@@ -604,7 +654,8 @@ TEST(ProvisioningApiTest, ClientConfigListsTheNodesAClientCanUse) {
   directory->observe("nodes/node-b/status", R"({"status":"ok","node":"node-b","transports":)" + wss("198.51.100.7") + "}");
   directory->observe("nodes/node-c/status", R"({"status":"down","node":"node-c","transports":)" + wss("198.51.100.8") + "}");
 
-  auto response = f.get("/api/v1/client/config", "client-token");
+  seed_alice(f);
+  auto response = alice_config(f);
   ASSERT_EQ(response.status, 200u) << response.body;
   const auto body = response.json();
 
@@ -634,19 +685,21 @@ TEST(ProvisioningApiTest, ABodyThatIsNotJsonIsRefused) {
   EXPECT_EQ(response.json().at("error").at("code").as_string(), "invalid_json");
 }
 
-// --- GET /client/config ---
+// --- GET /subscriber/{realm}/config ---
+
 
 // Named, a realm says what it expects of a client registering in it: the lifetime it grants and the shortest it
 // takes (RFC 3261 10.3 step 7), and how many RFC 5626 flows to keep, one per node up to two (section 4.2).
-TEST(ProvisioningApiTest, ClientConfigSaysWhatARealmExpects) {
+TEST(ProvisioningApiTest, SubscriberConfigSaysWhatARealmExpects) {
   ApiFixture f;
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
   auto realm = f.store->realm_get_by_name("example.com");
   realm->registration_timeout = 1800;
   realm->registration_minimum = 60;
   f.store->realm_update(realm);
+  seed_alice(f);
 
-  auto response = f.get("/api/v1/client/config?realm=example.com", "client-token");
+  auto response = alice_config(f);
   ASSERT_EQ(response.status, 200u);
 
   const auto config = response.json();
@@ -660,12 +713,13 @@ TEST(ProvisioningApiTest, ClientConfigSaysWhatARealmExpects) {
 
 // RFC 8599: the push services the node runs, with what a client needs before it can subscribe (the VAPID key for
 // webpush, 4.1.1) and the shortest registration push accepts (5.6.1.1).
-TEST(ProvisioningApiTest, ClientConfigListsThePushServices) {
+TEST(ProvisioningApiTest, SubscriberConfigListsThePushServices) {
   ApiFixture f;
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
   f.provisioning->push_register({std::make_shared<FakePushService>("webpush", std::vector<std::pair<std::string, std::string>>{{"+sip.vapid", "BKey"}})});
+  seed_alice(f);
 
-  const auto config = f.get("/api/v1/client/config?realm=example.com", "client-token").json();
+  const auto config = alice_config(f).json();
 
   const auto& push = config.at("realm").at("push").as_array();
   ASSERT_EQ(push.size(), 1u);
@@ -675,14 +729,14 @@ TEST(ProvisioningApiTest, ClientConfigListsThePushServices) {
 }
 
 // A realm this node does not serve is a 404, as everywhere else.
-TEST(ProvisioningApiTest, ClientConfigForAnUnknownRealmIs404) {
+TEST(ProvisioningApiTest, SubscriberConfigForAnUnknownRealmIs404) {
   ApiFixture f;
 
-  EXPECT_EQ(f.get("/api/v1/client/config?realm=nowhere.example", "client-token").status, 404u);
+  EXPECT_EQ(f.as_subscriber(http::verb::get, "/api/v1/subscriber/nowhere.example/config", "alice", "secret").status, 404u);
 }
 
 // Everything a browser needs to place a call is fetchable over the API.
-TEST(ProvisioningApiTest, ClientConfigSaysWhereToSignalAndWhatToUseForIce) {
+TEST(ProvisioningApiTest, SubscriberConfigSaysWhereToSignalAndWhatToUseForIce) {
   ApiFixture f;
   f.config->websocket_enable = true;
   f.config->websocket_address = "0.0.0.0";
@@ -691,8 +745,9 @@ TEST(ProvisioningApiTest, ClientConfigSaysWhereToSignalAndWhatToUseForIce) {
   f.config->ice_servers = {{"stun:stun.example.com:3478"}, {"turn:turn.example.com:3478"}};
   f.config->turn_shared_secret = "a shared secret";
   f.config->turn_credential_ttl = 600;
+  seed_alice(f);
 
-  auto response = f.get("/api/v1/client/config", "client-token");
+  auto response = alice_config(f);
   ASSERT_EQ(response.status, 200u);
 
   const auto body = response.json();
@@ -714,26 +769,28 @@ TEST(ProvisioningApiTest, ClientConfigSaysWhereToSignalAndWhatToUseForIce) {
   EXPECT_GT(ice.at(1).at("expires_at").as_int64(), std::time(nullptr));
 }
 
-TEST(ProvisioningApiTest, ClientConfigMintsAFreshCredentialEachTime) {
+TEST(ProvisioningApiTest, SubscriberConfigMintsAFreshCredentialEachTime) {
   ApiFixture f;
   f.config->ice_servers = {{"turn:turn.example.com:3478"}};
   f.config->turn_shared_secret = "a shared secret";
   f.config->turn_credential_ttl = 600;
 
-  const auto first = f.get("/api/v1/client/config", "client-token").json();
+  seed_alice(f);
+  const auto first = alice_config(f).json();
 
   // The username is the expiry, so each request gives a credential good from when it was asked for. The name
-  // after the colon is the signed-in user's and must be protocol-safe: coturn refuses a username with a space.
+  // after the colon is the subscriber's and must be protocol-safe: coturn refuses a username with a space.
   const auto username = std::string(first.at("ice_servers").at(0).at("username").as_string());
-  EXPECT_EQ(username, std::to_string(first.at("ice_servers").at(0).at("expires_at").as_int64()) + ":test-status");
+  EXPECT_EQ(username, std::to_string(first.at("ice_servers").at(0).at("expires_at").as_int64()) + ":alice_example.com");
   EXPECT_EQ(username.find(' '), std::string::npos);
 }
 
-TEST(ProvisioningApiTest, ClientConfigWithNoTurnSecretHandsOutNoCredential) {
+TEST(ProvisioningApiTest, SubscriberConfigWithNoTurnSecretHandsOutNoCredential) {
   ApiFixture f;
   f.config->ice_servers = {{"turn:turn.example.com:3478"}};
+  seed_alice(f);
 
-  auto response = f.get("/api/v1/client/config", "client-token");
+  auto response = alice_config(f);
   ASSERT_EQ(response.status, 200u);
 
   // The configured URL is still reported; a credential that could not work is not.
@@ -742,14 +799,15 @@ TEST(ProvisioningApiTest, ClientConfigWithNoTurnSecretHandsOutNoCredential) {
   EXPECT_EQ(server.find("username"), server.end());
 }
 
-TEST(ProvisioningApiTest, ClientConfigOffersNoWebsocketUriWhenThereIsNoSecureListener) {
+TEST(ProvisioningApiTest, SubscriberConfigOffersNoWebsocketUriWhenThereIsNoSecureListener) {
   ApiFixture f;
   f.config->websocket_enable = true;
   f.config->websocket_address = "0.0.0.0";
   f.config->websocket_port = 9500;
   f.config->websocket_tls = false;
+  seed_alice(f);
 
-  auto response = f.get("/api/v1/client/config", "client-token");
+  auto response = alice_config(f);
   ASSERT_EQ(response.status, 200u);
 
   // A page served over https cannot open ws://, so a browser is told there is no WebSocket URI.
@@ -760,8 +818,89 @@ TEST(ProvisioningApiTest, ClientConfigOffersNoWebsocketUriWhenThereIsNoSecureLis
   EXPECT_EQ(body.at("transports").as_array().at(0).at("transport").as_string(), "udp");
 }
 
-TEST(ProvisioningApiTest, ClientConfigNeedsACredentialLikeEverythingElse) {
+// RFC 7616 3.3: without credentials the answer is 401 with a Digest challenge for the realm, SHA-256 first, with
+// qop=auth.
+TEST(ProvisioningApiTest, ASubscriberRouteChallengesWithDigestForItsRealm) {
   ApiFixture f;
+  seed_alice(f);
 
-  EXPECT_EQ(f.get("/api/v1/client/config", "").status, 401u);
+  auto response = f.get("/api/v1/subscriber/example.com/config", "");
+
+  ASSERT_EQ(response.status, 401u);
+  ASSERT_EQ(response.challenges.size(), 2u);
+  EXPECT_NE(response.challenges[0].find("Digest realm=\"example.com\""), std::string::npos) << response.challenges[0];
+  EXPECT_NE(response.challenges[0].find("algorithm=SHA-256"), std::string::npos);
+  EXPECT_NE(response.challenges[0].find("qop=\"auth\""), std::string::npos);
+  EXPECT_NE(response.challenges[1].find("algorithm=MD5"), std::string::npos);
+}
+
+// The subscriber's SIP credentials sign it, under either algorithm.
+TEST(ProvisioningApiTest, ASubscribersSipCredentialsOpenItsRoutes) {
+  ApiFixture f;
+  seed_alice(f);
+
+  EXPECT_EQ(f.as_subscriber(http::verb::get, "/api/v1/subscriber/example.com/config", "alice", "secret", "", "MD5").status, 200u);
+  EXPECT_EQ(f.as_subscriber(http::verb::get, "/api/v1/subscriber/example.com/config", "alice", "secret", "", "SHA-256").status, 200u);
+}
+
+// A wrong password is challenged again, as is a subscriber that does not exist, so neither can be told apart.
+TEST(ProvisioningApiTest, AWrongPasswordOrAnUnknownSubscriberIsChallengedAgain) {
+  ApiFixture f;
+  seed_alice(f);
+
+  EXPECT_EQ(f.as_subscriber(http::verb::get, "/api/v1/subscriber/example.com/config", "alice", "wrong").status, 401u);
+  EXPECT_EQ(f.as_subscriber(http::verb::get, "/api/v1/subscriber/example.com/config", "mallory", "secret").status, 401u);
+}
+
+// A user's session opens no subscriber route, and a subscriber's credentials open no other route.
+TEST(ProvisioningApiTest, SubscriberAndUserCredentialsDoNotCross) {
+  ApiFixture f;
+  seed_alice(f);
+
+  EXPECT_EQ(f.get("/api/v1/subscriber/example.com/config", "admin-token").status, 401u);
+  EXPECT_EQ(f.as_subscriber(http::verb::get, "/api/v1/realms", "alice", "secret").status, 401u);
+}
+
+// --- GET /subscriber/{realm}/registrations, PUT /subscriber/{realm}/password ---
+
+// A subscriber sees its own bindings, and nobody else's.
+TEST(ProvisioningApiTest, ASubscriberSeesItsOwnRegistrations) {
+  ApiFixture f;
+  seed_alice(f);
+  ASSERT_EQ(f.post("/api/v1/realms/example.com/subscribers", R"({"user":"bob","password":"other"})").status, 201u);
+
+  for (const auto& [user, port] : {std::pair<std::string, int>{"alice", 5060}, {"bob", 5070}}) {
+    auto subscriber = f.store->subscriber_get(std::make_shared<types::SIPIdentity>("sip:" + user + "@example.com"));
+    types::Location binding;
+    binding.contact = std::make_shared<types::SIPUri>("sip:" + user + "@192.0.2.10:" + std::to_string(port));
+    ASSERT_TRUE(f.store->subscriber_register(subscriber, binding, 3600));
+  }
+
+  auto response = f.as_subscriber(http::verb::get, "/api/v1/subscriber/example.com/registrations", "alice", "secret");
+
+  ASSERT_EQ(response.status, 200u) << response.body;
+  const auto registrations = response.json().as_array();
+  ASSERT_EQ(registrations.size(), 1u);
+  EXPECT_EQ(registrations[0].at("contact").as_string(), "sip:alice@192.0.2.10:5060");
+}
+
+// A subscriber changes its own password: the new one opens its routes and the old one no longer does.
+TEST(ProvisioningApiTest, ASubscriberChangesItsOwnPassword) {
+  ApiFixture f;
+  seed_alice(f);
+
+  auto changed = f.as_subscriber(http::verb::put, "/api/v1/subscriber/example.com/password", "alice", "secret", R"({"password":"a new one"})");
+  ASSERT_EQ(changed.status, 204u) << changed.body;
+
+  EXPECT_EQ(f.as_subscriber(http::verb::get, "/api/v1/subscriber/example.com/config", "alice", "secret").status, 401u);
+  EXPECT_EQ(f.as_subscriber(http::verb::get, "/api/v1/subscriber/example.com/config", "alice", "a new one").status, 200u);
+  EXPECT_EQ(f.as_subscriber(http::verb::get, "/api/v1/subscriber/example.com/config", "alice", "a new one", "", "SHA-256").status, 200u);
+}
+
+// An empty password is refused.
+TEST(ProvisioningApiTest, AnEmptyPasswordIsRefused) {
+  ApiFixture f;
+  seed_alice(f);
+
+  EXPECT_EQ(f.as_subscriber(http::verb::put, "/api/v1/subscriber/example.com/password", "alice", "secret", R"({"password":""})").status, 400u);
 }

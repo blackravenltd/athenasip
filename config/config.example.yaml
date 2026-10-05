@@ -307,7 +307,7 @@ http:
     session_lifetime: 43200
     session_idle: 3600
 
-    # STUN and TURN servers handed to web clients by GET /api/v1/client/config. Empty by
+    # STUN and TURN servers handed to web clients by GET /api/v1/subscriber/{realm}/config. Empty by
     # default. This does not change what the node does with media.
     # ice_servers:
     #   - url: "stun:stun.example.com:3478"

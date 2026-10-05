@@ -29,6 +29,20 @@ every call. The Digest arithmetic is in `src/digest.h`.
 
 Subscribers are provisioned at `/api/v1/realms/{realm}/subscribers`.
 
+### Over HTTP
+
+A subscriber's softphone reaches its own routes, all under `/api/v1/subscriber/{realm}/`,
+with HTTP Digest (RFC 7616) and the same username and password it registers with: the HTTP
+realm is the SIP realm, so the stored HA1 is the key and nothing else is kept. The node
+answers 401 with two challenges, SHA-256 then MD5, each with `qop="auth"`; a nonce that has
+expired is challenged again with `stale=true`. A wrong password and an unknown subscriber
+get the same 401, and failures are rate limited by source address like an open route.
+
+These credentials open nothing outside that prefix, and a user's session opens nothing
+inside it. The routes: `config` (where to signal, ICE servers with a minted TURN
+credential, what the realm expects), `registrations` (the subscriber's own bindings) and
+`password` (change its own).
+
 ## Users
 
 Stored in the datastore, so a cluster shares one set.
@@ -79,11 +93,12 @@ reference.
 |---|---|
 | `GET /health`, `POST /auth/login`, `POST /auth/logout` | Open |
 | `GET /session`, `POST /users/{user}/password` | Any signed-in user |
-| `GET /nodes`, `/registrations`, `/calls`, `/calls/{call}`, `/call-records`, `/media`, `/media/reoffers`, `/qualify`, `/client/config`, `GET /metrics` | `view-cluster-status` |
+| `GET /nodes`, `/registrations`, `/calls`, `/calls/{call}`, `/call-records`, `/media`, `/media/reoffers`, `/qualify`, `/events`, `GET /metrics` | `view-cluster-status` |
 | `GET /realms`, `GET /realms/{realm}` | `manage-realms` or `manage-realm-subscribers` |
 | `POST /realms`, `PUT`/`DELETE /realms/{realm}` | `manage-realms` |
 | `/realms/{realm}/subscribers[/{user}]` | `manage-realm-subscribers` |
 | `/users[/{user}]`, `DELETE /users/{user}/sessions` | `manage-admin-users` |
+| `GET /subscriber/{realm}/config`, `GET /subscriber/{realm}/registrations`, `PUT /subscriber/{realm}/password` | The subscriber itself, with Digest (below) |
 
 Refusals:
 

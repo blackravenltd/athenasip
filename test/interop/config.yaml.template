@@ -86,7 +86,7 @@ http:
     # No tokens: up.sh and the browser spec sign in as the fixture's user, which the node
     # creates as it starts (docker-compose.yml).
 
-    # ICE servers for GET /api/v1/client/config. Rendered by up.sh: empty unless coturn is
+    # ICE servers for GET /api/v1/subscriber/{realm}/config. Rendered by up.sh: empty unless coturn is
     # in the fixture.
 @ICE_SERVERS@
     turn_shared_secret: "@TURN_SECRET@"

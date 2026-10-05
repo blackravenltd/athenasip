@@ -25,6 +25,7 @@
 #include "api/router.h"
 #include "api/sessions.h"
 #include "api/static_middleware.h"
+#include "api/subscriber_auth.h"
 #include "api/users_api.h"
 #include "build_version.h"
 #include "cli.h"
@@ -450,6 +451,9 @@ int main(int argc, char* argv[]) {
       api_router = std::make_shared<api::Router>(bearer, std::make_shared<api::Throttle>(limits));
       provisioning = std::make_shared<api::ProvisioningAPI>(logger, datastore, adminAPI->executor(), config, version->to_string());
       provisioning->register_routes(*api_router);
+
+      // /api/v1/subscriber/{realm}/...: a subscriber's own routes, signed with its SIP credentials (RFC 7616).
+      api_router->subscriber_auth_register(std::make_shared<api::SubscriberAuth>(logger, datastore, adminAPI->executor()));
       provisioning->nodes_register(core->nodes(), std::chrono::seconds(config->events_status_interval));
       provisioning->push_register(push_services);
 

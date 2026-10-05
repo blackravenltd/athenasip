@@ -153,7 +153,7 @@ Dated, and not reopened without asking.
   no dialog replication; every node therefore needs a client-reachable address of its
   own as well as the shared one. RFC 3263 SRV is the failover mechanism for SIP
   endpoints and needs no balancer; browsers cannot use it, so they get a balancer or a
-  provisioned list from `GET /api/v1/client/config`.
+  provisioned list from `GET /api/v1/subscriber/{realm}/config`.
 - (2026-09-21) Client failover without infrastructure. A realm should survive a node
   dying without the operator running DNS they control, which is what principle 3 asks
   for and what RFC 3263 alone does not give. The answer is the standard mechanisms
@@ -170,12 +170,12 @@ Dated, and not reopened without asking.
   Neither is created from the other in either direction and neither credential works as
   the other. The resource became `/realms/{realm}/subscribers` on 2026-10-03, and the
   type `Subscriber`.
-- (2026-10-04) A subscriber's browser is configured with no HTTP API: the `wss://` address
-  and `stun:` URL ship with the page, the person types their SIP credentials, and TURN
-  takes those same credentials, because a TURN long-term key (RFC 8489) is
-  MD5(username:realm:password), the HA1 already stored. The node keeps coturn's user
-  database in step with the subscribers. The TURN realm must then be the SIP realm, so it is
-  one coturn realm per SIP realm. The admin console keeps `/api/v1/client/config`.
+- (2026-10-05, replacing the 2026-10-03 and 2026-10-04 decisions on browsers) A subscriber
+  reaches its own API routes, all under `/api/v1/subscriber/{realm}/`, with HTTP Digest
+  (RFC 7616) and its SIP credentials: the HTTP realm is the SIP realm, so the stored HA1 is
+  the key. A softphone gets its ICE servers and a minted TURN credential there, so coturn
+  stays in shared-secret mode (it cannot also take long-term users: tested 2026-10-05).
+  `/client/config` moved there with no alias, and the console follows.
 - (2026-10-04) nghttp2 is a dependency, for APNs, which speaks only HTTP/2.
 - (2026-10-04) A node asks the `stun:` servers already in `http.api.ice_servers` for its own
   address, and no others: no public STUN server by default.
@@ -194,9 +194,6 @@ Dated, and not reopened without asking.
     appropriately.
   - **The admin interface does not need HTTPS yet**, unless it is really easy, in which
     case it is done to get it out of the way.
-  - **A browser that is only a subscriber reaches no HTTP endpoint**, `/client/config`
-    included. If it needs configuration, that comes a SIP-idiomatic, standards way, or is
-    talked about first; decided 2026-10-04 (see above).
   - **No role is defined before it has routes to permit.** `manage-cluster` waits for M4
     and M5.
   - **`status_interval`** is in the node status payload, for monitors such as T.O.M.S to
@@ -453,13 +450,8 @@ authentication from session issue to the OpenAPI document, and the one-command s
       `pn-purr` for long-lived dialogs, which nothing needs yet. The client side is
       AthenaPhone's.
 - [ ] Web client repository: video calling and conferencing, JsSIP over WSS, served by
-      AthenaSIP, configured as decided on 2026-10-04 (no HTTP API; TURN with the
-      subscriber's own credentials).
-- [ ] TURN with subscribers' credentials, the server half of that decision: write each
-      subscriber's HA1 into coturn's Redis user database
-      (`turn/realm/<realm>/user/<user>/key`) on create, password change and delete, and
-      reconcile at startup; prove a browser relaying through coturn with only its SIP
-      credentials in the interop fixture.
+      AthenaSIP, configured from `/api/v1/subscriber/{realm}/config` with the subscriber's
+      own credentials.
 - [ ] The local UA, the fourth transaction user in the Architecture diagram. Its first
       use is tearing a lapsed call down towards both ends: on expiry this node discards
       its state, which is what RFC 4028 section 8 asks of a proxy, and a node that
