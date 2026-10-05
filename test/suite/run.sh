@@ -112,7 +112,7 @@ for phase in direct relay; do
   export ATHENA_SUITE_PHASE="$phase"
 
   # A project may restart the node mid-suite, to test registering again; only through this.
-  export ATHENA_SUITE_RESTART_CMD="docker restart ${ATHENA_INTEROP_NAME:-athenasip-interop}"
+  export ATHENA_SUITE_RESTART_CMD="$ROOT/test/interop/up.sh restart"
 
   step "smoke, every transport (${phase})" test/interop/smoke.py --host "$ATHENA_INTEROP_PUBLIC_ADDRESS" --realm "$ATHENA_INTEROP_REALM" --user 1001 \
     --password "$ATHENA_INTEROP_PASSWORD" --sip-port "$ATHENA_INTEROP_SIP_PORT" --tls-port "$ATHENA_INTEROP_TLS_PORT" --ws-port "$ATHENA_INTEROP_WS_PORT" \
