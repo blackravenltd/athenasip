@@ -442,11 +442,6 @@ authentication from session issue to the OpenAPI document, and the one-command s
       `athenasip plugins list` shows what loaded and why anything did not.
 - [ ] Packaging: Docker image, Debian package, Homebrew formula. In-tree plugins ship
       compiled in; the packages also carry the SDK headers.
-- [ ] Pipelining in `RedisDatastore`: the listing operations walk their index one key at
-      a time because each step starts the next from its own completion. Correct, and
-      slower than one MGET would be. Worth doing when a node has enough bindings for it
-      to show, which the M4 chaos test is the first thing likely to produce.
-
 ---
 
 ## Milestone 6 - Conferencing, presence, web client
