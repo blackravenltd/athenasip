@@ -46,12 +46,13 @@ tls:
   cert_pem_filename: "/tls/snakeoil.cer"
   key_pem_filename: "/tls/snakeoil.key"
 
-# Plain ws only, on the port Asterisk serves ws on.
+# ws and wss on the ports Asterisk serves them on; wss with the tls section's certificate.
 websocket:
   enable: true
   address: 0.0.0.0
   port: @WS_PORT@
   tls: false
+  secure_port: @WSS_PORT@
 
 datastore:
   url: "memory://"
