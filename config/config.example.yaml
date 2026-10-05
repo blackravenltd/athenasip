@@ -4,117 +4,44 @@
 # Copyright (C) 2025 Tom Cully <mail@tomcully.com>
 # Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 #
-# Settings are shown with their defaults unless a comment says otherwise. A working
-# configuration is much shorter: a node_id, one listener and the driver URLs will run.
-#
-# The full reference is docs/configuration.md.
+# A working first node. Anything left out takes its default; docs/configuration.md has
+# every setting.
 #
 
 sip:
-  # Unique across the cluster: it names this node on the event bus and in GET /api/v1/nodes.
-  node_id: sip-0001
-
-  # The address peers reach this node on, written into Via, Record-Route and Service-Route.
-  # Set it in a container, behind a load balancer or behind NAT; a single-homed host
-  # does not need it.
-  # public_address: 203.0.113.5
-
-  # Prefixes on this node's own side of the router. A peer inside them is given the local
-  # address and port instead of the public one (Asterisk's localnet). Each listener section
-  # also takes a public_port, for a router that forwards a different port to it.
-  # localnet: ["192.168.0.0/16", "10.0.0.0/8"]
-
-  # A REGISTER for a domain this node does not serve is forwarded to it for this node's
-  # own subscribers (subscribers), or refused (never).
+  node_id: sip-0001               # unique in the cluster
+  # public_address: 203.0.113.5   # needed in a container, behind NAT or a balancer
+  # localnet: ["192.168.0.0/16"]
   forward_register: subscribers
-
-  # Permit SIP over plain UDP, TCP and WS. When false, the node refuses to start with a plain
-  # listener enabled and dials only TLS.
-  allow_unencrypted: true
-
-  # Log every message in full rather than only its first line; credentials are redacted.
-  # Useful for reading session descriptions, expensive under load.
-  # log_messages: false
-
-  # Milliseconds to spend opening a connection to a next hop (RFC 3261 16.6 step 7).
+  allow_unencrypted: true         # false refuses to start with udp, tcp or plain websocket on
   connect_timeout_ms: 4000
+  flow_idle_timeout: 300          # keep above 32 (64 * T1), or UDP transactions lose their flow
 
-  # Seconds a UDP flow may sit idle before it is forgotten; 0 never forgets. Bounds the
-  # memory a public listener can be made to use. Keep it above 32, the longest RFC 3261
-  # transaction timer.
-  flow_idle_timeout: 300
-
-  # --------------------------------------------------------------------------------
-  # Deciding a call is over
-  #
-  # An endpoint that loses power sends no BYE, so the node needs another way to release
-  # the call's state and relay ports:
-  #
-  #   media_timeout          any call this node anchors; misses end-to-end media.
-  #   session_expires        any call whose far end implements RFC 4028.
-  #   max_call_duration      every call, but cannot tell a live one from a dead one.
-  #   require_session_timer  forces a timer; calls to endpoints without RFC 4028 fail.
-  #
-  # The first two cover most deployments. The node releases the call silently: a proxy
-  # MUST NOT send a BYE (RFC 4028 section 8.3).
-  # --------------------------------------------------------------------------------
-
-  # Seconds an anchored call may carry no RTP or RTCP before it is released; 0 disables.
-  # Keep it in minutes: a call on hold still sends RTCP, but being wrong cuts a live call.
-  media_timeout: 300
-
-  # Session interval, in seconds, offered to a call that asked for none (RFC 4028
-  # section 8.1); 0 offers none. Minimum 90; 1800 is recommended. A callee without session
-  # timers simply answers without one.
+  # No BYE comes from an endpoint that lost power. These end such calls; the node never
+  # sends a BYE itself (RFC 4028 8.3).
+  media_timeout: 300              # too short cuts calls on hold
   session_expires: 1800
-
-  # Shortest session interval accepted, in seconds; minimum 90 (RFC 4028 section 8.1).
-  # A caller asking for less is answered 422 with this in Min-SE if it supports timers,
-  # and otherwise has its interval raised to this.
   session_min_se: 90
+  max_call_duration: 0            # cuts live calls too
+  require_session_timer: false    # true fails every call to a client without RFC 4028
 
-  # Longest any call is held open, in seconds; 0 is no cap. It cuts live calls too, so set
-  # it only where call lengths are known.
-  max_call_duration: 0
+  timers:                         # leave alone; a to k are multiples of T1 or T4, not ms
+    t1_rtt_ms: 500
+    t2_max_retransmit_interval_ms: 4000
+    t4_network_propagation_ms: 5000
+    a_invite_initial: 1
+    b_invite_timeout: 64
+    d_invite_duration: 64
+    e_non_invite_initial: 1
+    f_non_invite_timeout: 64
+    k_non_invite_duration: 1
+    g_server_invite_initial: 1
+    h_server_invite_timeout: 64
+    i_server_invite_duration: 1
+    j_server_non_invite_duration: 64
+    c_invite_proxy_ms: 240000     # milliseconds, and over 180000 (RFC 3261 16.6 step 11)
 
-  # Add Require: timer when the caller did not advertise support. NOT RECOMMENDED by
-  # RFC 4028 section 8.1: an endpoint without the extension answers 420 and the call fails.
-  # Suits a closed fleet of known handsets only.
-  require_session_timer: false
-
-  # --------------------------------------------------------------------------------
-  # RFC 3261 section 17 transaction timers. Almost nobody should change these.
-  # --------------------------------------------------------------------------------
-  timers:
-    # Base units, in milliseconds. The lettered timers below are multiples of T1 or T4.
-    t1_rtt_ms: 500                        # round-trip estimate
-    t2_max_retransmit_interval_ms: 4000   # retransmission ceiling
-    t4_network_propagation_ms: 5000       # longest a message lingers in the network
-
-    # INVITE client transaction
-    a_invite_initial: 1                   # A = 1 * T1, retransmit interval
-    b_invite_timeout: 64                  # B = 64 * T1, give up with no response at all
-    d_invite_duration: 64                 # D = 64 * T1, absorb response retransmissions
-
-    # Non-INVITE client transaction
-    e_non_invite_initial: 1               # E = 1 * T1
-    f_non_invite_timeout: 64              # F = 64 * T1
-    k_non_invite_duration: 1              # K = 1 * T4
-
-    # INVITE server transaction
-    g_server_invite_initial: 1            # G = 1 * T1, retransmit the final response
-    h_server_invite_timeout: 64           # H = 64 * T1, give up waiting for the ACK
-    i_server_invite_duration: 1           # I = 1 * T4, absorb ACK retransmissions
-
-    # Non-INVITE server transaction
-    j_server_non_invite_duration: 64      # J = 64 * T1
-
-    # Timer C, in milliseconds (RFC 3261 16.6 step 11): gives up on a callee that answers
-    # 180 and then goes quiet. Must be more than 3 minutes.
-    c_invite_proxy_ms: 240000             # 4 minutes
-
-# Transports. Each section is optional; a transport with no section is not listened on.
-
+# A transport with no section is not listened on.
 udp:
   enable: true
   address: 0.0.0.0
@@ -129,109 +56,52 @@ tls:
   enable: false
   address: 0.0.0.0
   port: 5061
-  cert_pem_filename: "../tls/snakeoil.cer"
+  cert_pem_filename: "../tls/snakeoil.cer"   # snakeoil: for testing only
   key_pem_filename: "../tls/snakeoil.key"
 
 websocket:
   enable: true
   address: 0.0.0.0
   port: 9500
+  tls: false                      # a page served over https can only use wss
+  # secure_port: 9443             # wss beside ws, with the tls section's certificate
 
-  # Serve wss:// (RFC 7118 over TLS) on the port above. A page served over https can only
-  # use wss://. Needs both files below.
-  tls: false
-  # cert_pem_filename: "../tls/snakeoil.cer"
-  # key_pem_filename: "../tls/snakeoil.key"
-
-  # Or keep ws:// above and add a wss:// listener on a second port. It uses the
-  # certificate named here, or the tls section's. 0 is none.
-  # secure_port: 9443
-
-# The inter-node listener: SIP between nodes over mutual TLS under the cluster's own CA.
-# athenasip --ca-init and --ca-node make the files (docs/certificates.md). A cluster also
-# shares a redis:// datastore and an mqtt:// broker.
-cluster:
+cluster:                          # needs a redis:// datastore and an mqtt:// bus
   enable: false
   address: 0.0.0.0
   port: 5062
-
-  # What peers dial; this node's certificate must name it. Unset, it is the bind address,
-  # or sip.public_address when bound to 0.0.0.0.
-  # advertise: node-a.example.com
-
-  # Required when enabled.
+  # advertise: node-a.example.com # the node's certificate must name it
   # ca: /etc/athenasip/cluster/ca.crt
   # cert: /etc/athenasip/cluster/node-a.crt
   # key: /etc/athenasip/cluster/node-a.key
 
-# The three plugin kinds. Each is a URL whose scheme picks the driver, plus an optional
-# section named after the driver. The URL alone is a working configuration.
-
 datastore:
-  # memory:// needs no external service and keeps nothing across a restart.
-  # redis://host:port persists registrations and is what a cluster needs.
-  url: "memory://"
+  url: "memory://"                # keeps nothing over a restart, and serves one node only
 
 events:
-  # The event bus carries observability, presence and node discovery, never call setup.
-  # local:// stays inside this process; mqtt://host:port publishes to a broker, which is
-  # how nodes find each other.
-  url: "local://"
-
-  # Seconds between publications of this node's retained status; 0 publishes once at
-  # startup. A monitor's staleness threshold should be a small multiple of this.
+  url: "local://"                 # nodes find each other only over mqtt://
   status_interval: 30
-
   mqtt:
-    # Must be unique on the broker. Defaults to this node's id; usually leave it unset.
-    # client_id: athenasip-sip-0001
-
     keep_alive: 30
-
-    # Milliseconds to wait for the broker at startup before reporting a failure.
     connect_timeout_ms: 5000
-
-    # Topic prefix for everything this node publishes and subscribes to, so clusters can
-    # share a broker. A trailing separator is added if missing.
     prefix: "athenasip/"
 
 media:
-  # builtin:// relays plain RTP from this process. rtpengine://host:port (rtpengine's ng
-  # control port) is the production engine and the only one that does WebRTC (ICE, DTLS,
-  # SRTP).
-  url: "builtin://"
-
+  url: "builtin://"               # WebRTC (ICE, DTLS, SRTP) needs rtpengine://host:2223
   builtin:
-    # Where the relay binds, and the address it writes into session descriptions.
-    # public_address defaults to 0.0.0.0, which no endpoint can send to: set it to an
-    # address endpoints reach. Behind NAT, forward the whole port range to this host.
     bind_address: 0.0.0.0
-    public_address: 127.0.0.1
+    public_address: 127.0.0.1     # not the default: 0.0.0.0, which no endpoint can reach
     port_min: 22000
     port_max: 23000
-
   rtpengine:
-    # The ng protocol is UDP, so a lost request is retried. timeout_ms bounds one attempt.
     timeout_ms: 500
     attempts: 3
-
-    # The address rtpengine advertises in session descriptions. Unset, rtpengine's own
-    # interface configuration decides, which is usually right.
     # media_address: 203.0.113.9
 
-# Server-wide defaults where the standards leave a choice. A realm can override any of
-# these over the admin API.
-# Plugin modules (shared libraries) to load at start, from a directory or a list of them.
-# athenasip --list-plugins shows what loaded. docs/plugins.md has how to build one.
-# plugins:
-#   path: /usr/local/lib/athenasip/plugins
-
-# Push notifications (RFC 8599) wake a phone or browser app the operating system has put to
-# sleep. Off with no urls. docs/configuration.md has what each service needs.
-push:
-  urls: []            # e.g. ["apns://", "fcm://", "webpush://"]
-  timeout: 10         # seconds a call waits for the woken client to register again
-  refresh: 180        # seconds before a push binding expires that it is pushed to refresh
+push:                             # off with no urls
+  urls: []                        # e.g. ["apns://", "fcm://", "webpush://"]
+  timeout: 10
+  refresh: 180                    # a push binding must then ask for at least 240 seconds
   # apns:
   #   key_file: /etc/athenasip/AuthKey_ABC123DEFG.p8
   #   key_id: ABC123DEFG
@@ -242,91 +112,43 @@ push:
   #   vapid_private_key: /etc/athenasip/vapid.pem
   #   subject: mailto:admin@example.com
 
-behaviour:
-  # Put this node in the media path when a media engine is configured. false leaves session
-  # descriptions untouched and media end to end, which does not work behind NAT.
-  media_anchor: true
-
-  # What the engine produces for a leg:
-  #   mirror           offer the callee what the caller offered
-  #   transport        ws and wss legs are WebRTC, everything else plain RTP
-  #   rtp|webrtc|srtp  every leg is that
-  # A leg that has already said what it speaks is always answered in kind.
+behaviour:                        # a realm can override each over the API
+  media_anchor: true              # false leaves media end to end, which fails behind NAT
   media_profile: mirror
-
-  # Seconds between OPTIONS to each registered client (Asterisk's qualify): 0 for never,
-  # otherwise 5 to 86400. Keeps a NAT mapping open; GET /api/v1/qualify shows who answered.
   qualify_interval: 0
-
-  # Rewrite the Contact of forwarded messages to the address and port they came from
-  # (Asterisk's rewrite_contact, Kamailio's fix_nated_contact). WebSocket clients are
-  # never rewritten.
   rewrite_contact: false
 
-log:
-  level: debug    # debug, info, warn or error
-  format: text    # text, or json: one object a line with at, level, scope and message
+# plugins:
+#   path: /usr/local/lib/athenasip/plugins
 
-# Seconds an ended call's record is kept in the datastore (GET /api/v1/call-records);
-# 0 keeps them for ever. The default is thirty days.
+log:
+  level: debug
+  format: text
+
 calls:
   history_retention: 2592000
 
 http:
   address: 0.0.0.0
   port: 8080
-
-  # HTTPS beside the plain listener, serving the same thing. Browsers give a page no
-  # microphone without it (except on localhost), so the admin console's softphone needs
-  # it. Uses the tls section's certificate unless cert_pem_filename and key_pem_filename
-  # are set here.
-  tls:
+  tls:                            # browsers give a page no microphone over plain http
     enable: false
     port: 8443
-
   api:
-    enable: true
-
-    # Requests a caller may make at once (burst) and per minute after that. 0 turns a limit
-    # off. A refused request is answered 429 with Retry-After.
-    #   open          no or invalid credential, or an unknown endpoint: by source address
-    #   login_source  logins, in addition: by source address
-    #   login_user    logins, in addition: by username
-    #   session       a signed-in caller: by session
+    enable: true                  # no tokens: make the first admin with athenasip --add-user
     rate_limits:
       open: { burst: 30, per_minute: 30 }
       login_source: { burst: 10, per_minute: 5 }
       login_user: { burst: 5, per_minute: 1 }
       session: { burst: 60, per_minute: 300 }
-
-    # API users sign in with POST /api/v1/auth/login; there are no tokens to configure.
-    # Create the first administrator, or recover access, on this host with
-    # `athenasip --add-user NAME`.
-
-    # Seconds a login lasts (cannot be 0), and seconds it survives unused (0 disables).
     session_lifetime: 43200
     session_idle: 3600
-
-    # STUN and TURN servers handed to web clients by GET /api/v1/subscriber/{realm}/config. Empty by
-    # default. This does not change what the node does with media.
     # ice_servers:
     #   - url: "stun:stun.example.com:3478"
     #   - url: "turn:turn.example.com:3478"
-
-    # coturn's static-auth-secret (use-auth-secret). The node mints TURN credentials under
-    # it and coturn verifies them. Required if a turn: URL is listed above; without it no
-    # credential is issued and startup logs a warning.
-    # turn_shared_secret: ""
-
-    # Seconds a minted TURN credential is valid.
+    # turn_shared_secret: ""      # coturn's static-auth-secret; a turn: URL gets no credential without it
     turn_credential_ttl: 3600
-
-  # Static files, served from the same listener. /api/v1 is routed first.
   files:
     enable: true
     path: "../admin/"
-
-    # Single-page application mode: an unknown path without a file extension is answered
-    # with index.html, so client-side routes survive a reload. /api/ paths still 404.
-    # Set false for an ordinary document root.
     spa: true
