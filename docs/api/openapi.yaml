@@ -219,6 +219,38 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /events:
+    get:
+      tags: [status]
+      operationId: streamEvents
+      summary: The event bus, as Server-Sent Events
+      description: |
+        A `text/event-stream` response that stays open. Every message on `nodes/#`,
+        `subscribers/#` and `calls/#` is one event, named by its topic, with the message as
+        its data. A comment every fifteen seconds keeps intermediaries from closing an idle
+        stream. A node serves at most 32 at once; past that it answers 503
+        `too_many_streams`.
+
+        Needs the same role as `/nodes`.
+      responses:
+        "200":
+          description: The stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                retry: 5000
+
+                event: calls/3848276298@192.0.2.10/state
+                data: {"state":"answered"}
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: This node is already serving its limit of streams
+
   /client/config:
     get:
       tags: [status]

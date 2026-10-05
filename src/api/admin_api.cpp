@@ -6,6 +6,7 @@
 //
 #include "admin_api.h"
 
+#include <array>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ssl.hpp>
 #include <boost/asio/steady_timer.hpp>
@@ -14,6 +15,7 @@
 #include <boost/beast/version.hpp>
 #include <boost/json.hpp>
 #include <chrono>
+#include <deque>
 #include <iostream>
 #include <memory>
 #include <thread>
@@ -50,8 +52,14 @@ class HttpSession : public std::enable_shared_from_this<HttpSession<Stream>> {
   http::request<http::string_body> _req;
   std::string _remote;
 
-  // Bounds the TLS handshake at ten seconds, as the SIP TLS listener does.
+  // Bounds the TLS handshake at ten seconds, as the SIP TLS listener does; a stream's keep-alive after that.
   net::steady_timer _deadline{_server._io_context};
+
+  // A stream's state, on the listener's one thread.
+  std::shared_ptr<ResponseStream> _out;
+  std::deque<std::string> _queued;
+  bool _writing = false;
+  std::array<char, 512> _discard{};
 
   void _start(tcp::socket&) { do_read(); }
 
@@ -99,15 +107,99 @@ class HttpSession : public std::enable_shared_from_this<HttpSession<Stream>> {
         if (continueChain) {
           process_middleware_chain(index + 1, res);
         } else {
-          res->prepare_payload();
-          do_write(res);
+          respond(res);
         }
       };
       _server.middlewares[index](_req, _remote, res, next);
     } else {
-      res->prepare_payload();
-      do_write(res);
+      respond(res);
     }
+  }
+
+  void respond(std::shared_ptr<http::response<http::string_body>> res) {
+    if (_server._streams) {
+      if (auto start = _server._streams->take(res.get())) return do_stream(res, std::move(start));
+    }
+    res->prepare_payload();
+    do_write(res);
+  }
+
+  // Server-Sent Events: the headers with no length, then the body as the handler writes it, until the client
+  // goes. A comment every fifteen seconds finds a client that went without closing.
+  void do_stream(std::shared_ptr<http::response<http::string_body>> res, StreamStart start) {
+    auto self = this->shared_from_this();
+
+    auto header = std::make_shared<http::response<http::empty_body>>(res->result(), res->version());
+    for (const auto& field : *res) header->set(field.name_string(), field.value());
+    header->set(http::field::content_type, "text/event-stream");
+    header->set(http::field::cache_control, "no-cache");
+    header->set(http::field::connection, "close");
+    header->chunked(false);
+
+    auto serializer = std::make_shared<http::response_serializer<http::empty_body>>(*header);
+    http::async_write_header(_stream, *serializer, [this, self, header, serializer, start](boost::system::error_code ec, std::size_t) {
+      if (ec) return;
+
+      _out = std::make_shared<ResponseStream>();
+      std::weak_ptr<HttpSession> weak = this->shared_from_this();
+      _out->attach([weak, executor = _stream.get_executor()](std::string data) {
+        net::post(executor, [weak, data = std::move(data)]() mutable {
+          if (auto session = weak.lock()) session->_enqueue(std::move(data));
+        });
+      });
+
+      _watch_close();
+      _keep_alive();
+      start(_out);
+    });
+  }
+
+  void _enqueue(std::string data) {
+    if (!_out || !_out->open()) return;
+    _queued.push_back(std::move(data));
+    if (!_writing) _write_next();
+  }
+
+  void _write_next() {
+    if (_queued.empty()) {
+      _writing = false;
+      return;
+    }
+    _writing = true;
+    auto self = this->shared_from_this();
+    auto data = std::make_shared<std::string>(std::move(_queued.front()));
+    _queued.pop_front();
+    net::async_write(_stream, net::buffer(*data), [this, self, data](boost::system::error_code ec, std::size_t) {
+      if (ec) return _end_stream();
+      _write_next();
+    });
+  }
+
+  // The client sends nothing more; a read that ends is the client going.
+  void _watch_close() {
+    auto self = this->shared_from_this();
+    _stream.async_read_some(net::buffer(_discard), [this, self](boost::system::error_code ec, std::size_t) {
+      if (ec) return _end_stream();
+      _watch_close();
+    });
+  }
+
+  void _keep_alive() {
+    auto self = this->shared_from_this();
+    _deadline.expires_after(std::chrono::seconds(15));
+    _deadline.async_wait([this, self](boost::system::error_code ec) {
+      if (ec || !_out || !_out->open()) return;
+      _enqueue(": keep-alive\n\n");
+      _keep_alive();
+    });
+  }
+
+  void _end_stream() {
+    if (!_out || !_out->open()) return;
+    _deadline.cancel();
+    _out->close();
+    boost::system::error_code ignored;
+    beast::get_lowest_layer(_stream).close(ignored);
   }
 
   void do_write(std::shared_ptr<http::response<http::string_body>> res) {

@@ -20,6 +20,7 @@
 #include "api/admin_api.h"
 #include "api/auth_api.h"
 #include "api/calls_api.h"
+#include "api/events_api.h"
 #include "api/provisioning_api.h"
 #include "api/router.h"
 #include "api/sessions.h"
@@ -453,6 +454,11 @@ int main(int argc, char* argv[]) {
       // Live calls, the media engine and /metrics, read from Core on its strand.
       auto calls = std::make_shared<api::CallsAPI>(logger, core, adminAPI->executor());
       calls->register_routes(*api_router);
+
+      // The event bus as Server-Sent Events, on a response the listener holds open.
+      auto events_api = std::make_shared<api::EventsAPI>(logger, events, adminAPI->executor());
+      events_api->register_routes(*api_router);
+      adminAPI->streams_register(api_router->streams());
 
       adminAPI->middlewares.push_back(api_router->middleware("/api/"));
       adminAPI->middlewares.push_back(api_router->middleware("/metrics"));

@@ -19,6 +19,7 @@
 #include "api_json.h"
 #include "bearer_auth.h"
 #include "rate_limiter.h"
+#include "response_stream.h"
 #include "sessions.h"
 
 namespace athenasip::api {
@@ -47,6 +48,10 @@ struct RouteContext {
 
   // Sends the response. Call exactly once, on any thread.
   std::function<void()> done;
+
+  // Makes the response a stream that stays open after its headers (Server-Sent Events): `start` is given the
+  // stream once the headers are out. Call before done().
+  std::function<void(StreamStart)> stream;
 
   // Returns by value: callers read a parameter and move the context in the same call, and
   // a reference would dangle.
@@ -93,6 +98,9 @@ class Router {
                        std::function<void(bool)> next) { _handle(prefix, request, remote, std::move(response), std::move(next)); };
   }
 
+  // Where streaming routes leave their streams; the listener the router serves on takes them (AdminAPI).
+  std::shared_ptr<StreamRegistry> streams() const { return _streams; }
+
  private:
   struct Route {
     http::verb method;
@@ -131,6 +139,7 @@ class Router {
       context.remote = remote;
       context.response = response;
       context.done = [next]() { next(false); };
+      context.stream = [streams = _streams, response](StreamStart start) { streams->add(response.get(), std::move(start)); };
 
       if (route.open) {
         if (const auto wait = _throttle->take(_source_key(remote), _throttle->limits().open)) {
@@ -299,6 +308,7 @@ class Router {
   std::shared_ptr<BearerAuth> _auth;
   std::shared_ptr<Throttle> _throttle;
   std::vector<Route> _routes;
+  std::shared_ptr<StreamRegistry> _streams = std::make_shared<StreamRegistry>();
 };
 
 }  // namespace athenasip::api

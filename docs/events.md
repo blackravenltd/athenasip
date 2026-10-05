@@ -85,6 +85,12 @@ MQTT wildcards apply: `+` matches one level; `#` matches the rest and must come 
 Use the narrowest filter that works: `#` under a prefix delivers every payload shape below
 it.
 
+## Watching from a browser
+
+`GET /api/v1/events` serves `nodes/#`, `subscribers/#` and `calls/#` as Server-Sent Events,
+one event per message named by its topic, for a console that would rather watch than poll.
+It needs the `view-cluster-status` role, and is in the [API description](api/openapi.yaml).
+
 ## MQTT
 
 ```yaml
