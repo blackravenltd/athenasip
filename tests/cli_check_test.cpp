@@ -11,6 +11,8 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/udp.hpp>
 #include <chrono>
+#include <cstdlib>
+#include <future>
 #include <memory>
 #include <string>
 #include <thread>
@@ -19,6 +21,8 @@
 #include "config.h"
 #include "datastores/datastore_drivers.h"
 #include "events/event_system_drivers.h"
+#include "events/topics.h"
+#include "global_io_context.h"
 #include "media/media_engine_drivers.h"
 #include "mocks/logger_mock.h"
 #include "stun.h"
@@ -202,4 +206,48 @@ TEST(CliCheckTest, APublicAddressTheStunServerDisagreesWithFails) {
   const auto* address = CheckFixture::find(lines, "public address");
   ASSERT_NE(address, nullptr);
   EXPECT_FALSE(address->ok) << address->detail;
+}
+
+// What peers found when they tried this node is reported: a listener none can reach fails, since peers will not
+// forward to it. Runs against a real broker, which keeps the peer's status retained; skips without
+// ATHENA_TEST_MQTT_URL.
+TEST(CliCheckTest, SaysWhetherPeersReachThisNode) {
+  const char* broker = std::getenv("ATHENA_TEST_MQTT_URL");
+  if (broker == nullptr) GTEST_SKIP() << "ATHENA_TEST_MQTT_URL is not set";
+
+  CheckFixture f;
+  const auto url = std::string(broker) + "?prefix=check-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "/";
+
+  auto publisher = events::EventSystem::create_driver(f.logger, url);
+  ASSERT_NE(publisher, nullptr);
+  f.config->sip_node_id = "node-b-publisher";
+  ASSERT_TRUE(publisher->configure(f.config->plugin_root("events", "mqtt"), *f.config));
+  f.config->sip_node_id = "test-node";
+  std::promise<plugins::Status> connecting;
+  auto connected_future = connecting.get_future();
+  publisher->connect(detail::get_global_io_context().get_executor(), [&connecting](plugins::Status status) { connecting.set_value(std::move(status)); });
+  const auto connected = connected_future.get();
+  ASSERT_TRUE(connected.ok) << connected.error;
+  publisher->publish_state(events::topics::node_status("node-b"),
+                           R"({"status":"ok","node":"node-b","version":"1.0.0","at":"2026-10-04T10:00:00Z","transports":[],)"
+                           R"("cluster_probes":[{"node":"test-node","reached":false}]})");
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  publisher->close();
+
+  f.config->events_url = url;
+  f.config->cluster_enable = true;
+
+  // As main runs it: a driver that keeps working after connecting, as MQTT does, needs an executor that outlives
+  // the connect.
+  const auto lines = cli::check(f.logger, f.config, [](const std::function<void(plugins::Executor, plugins::StatusHandler)>& start) {
+    std::promise<plugins::Status> promise;
+    auto future = promise.get_future();
+    start(detail::get_global_io_context().get_executor(), [&promise](plugins::Status status) { promise.set_value(std::move(status)); });
+    return future.get();
+  });
+
+  const auto* reached = CheckFixture::find(lines, "reached by peers");
+  ASSERT_NE(reached, nullptr) << cli::report(lines);
+  EXPECT_FALSE(reached->ok);
+  EXPECT_NE(reached->detail.find("node-b"), std::string::npos) << reached->detail;
 }

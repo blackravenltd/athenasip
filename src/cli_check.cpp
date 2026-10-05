@@ -221,6 +221,36 @@ std::vector<CheckLine> check(std::shared_ptr<loggers::Logger> logger, std::share
 
     // Not a failure: the first node of a cluster has no peers.
     if (peers == 0) lines.push_back(line(true, "peers", "no other node has said it is up on the event bus"));
+
+    // What the other nodes have found when they tried this one: its inter-node listener, and the address its
+    // STUN servers see. A listener no peer reaches is not forwarded to, which is a failure; an address no peer
+    // reached is only not advertised.
+    std::vector<std::string> reached_listener;
+    std::vector<std::string> missed_listener;
+    std::vector<std::string> reached_address;
+    for (const auto& node : nodes->list(std::chrono::seconds::max())) {
+      if (node.id == config->sip_node_id) continue;
+      for (const auto& [target, reached] : node.cluster_probes) {
+        if (target == config->sip_node_id) (reached ? reached_listener : missed_listener).push_back(node.id);
+      }
+      for (const auto& [target, address] : node.reaches) {
+        if (target == config->sip_node_id) reached_address.push_back(node.id + " at " + address);
+      }
+    }
+
+    const auto joined = [](const std::vector<std::string>& items) {
+      std::string out;
+      for (const auto& item : items) out += (out.empty() ? "" : ", ") + item;
+      return out;
+    };
+
+    if (!reached_listener.empty()) {
+      lines.push_back(line(true, "reached by peers", joined(reached_listener) + " reach this node's inter-node listener"));
+    } else if (!missed_listener.empty()) {
+      lines.push_back(line(false, "reached by peers", joined(missed_listener) + " tried this node's inter-node listener and could not reach it"));
+    }
+
+    if (!reached_address.empty()) lines.push_back(line(true, "address verified", "reached by " + joined(reached_address)));
   }
 
   lines.push_back(check_address(*config));
