@@ -137,6 +137,19 @@ TEST(ProxyClusterForwardingTest, NothingIsForwardedToANodeThatIsNotUp) {
   EXPECT_EQ(ProxyFixture::request_with(f.peer_connection, "INVITE"), nullptr);
 }
 
+// A node that has found no peer reaches its inter-node listener is not forwarded to, as if it were down.
+TEST(ProxyClusterForwardingTest, NothingIsForwardedToANodeNoPeerCanReach) {
+  ClusterFixture f;
+  const auto report = R"({"status":"ok","node":"node-b","version":"1.0.0","at":"2026-10-03T10:00:00Z","transports":[],)"
+                      R"("cluster":{"address":"198.51.100.80","port":5062,"reachable":false}})";
+  f.on_strand([&f, report]() { f.core->nodes()->observe(events::topics::node_status("node-b"), report); });
+  f.bind_bob_on("node-b");
+
+  f.receive(f.caller, f.invite());
+
+  EXPECT_EQ(ProxyFixture::request_with(f.peer_connection, "INVITE"), nullptr);
+}
+
 // The Record-Route towards a peer names this node's inter-node listener, where the peer can reach
 // it for the ACK and BYE, not the ephemeral source of the outbound connection.
 TEST(ProxyClusterForwardingTest, TheRecordRouteTowardsAPeerNamesTheInterNodeListener) {

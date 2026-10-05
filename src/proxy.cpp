@@ -1137,7 +1137,7 @@ std::optional<Proxy::Target> Proxy::_peer_target(Core& core, const std::string& 
   const auto stale_after = interval == 0 ? std::chrono::seconds::max() : std::chrono::seconds(interval * 3);
 
   const auto node = core.nodes()->find(node_id, stale_after);
-  if (!node || node->stale || node->status != "ok" || node->cluster_address.empty() || node->cluster_port == 0) return std::nullopt;
+  if (!node || node->stale || node->status != "ok" || !node->cluster_reachable || node->cluster_address.empty() || node->cluster_port == 0) return std::nullopt;
 
   auto hop = std::make_shared<SIPUri>();
   hop->valid = true;

@@ -35,10 +35,16 @@ class NodeDirectory {
     std::string cluster_address;
     std::uint16_t cluster_port = 0;
 
+    // False when the node has found no peer can reach its inter-node listener: it is not forwarded to.
+    bool cluster_reachable = true;
+
     // The address the node's STUN servers see it at, and the nodes' addresses it has reached with an OPTIONS
     // (AddressDiscovery), as node id and address.
     std::string discovered;
     std::vector<std::pair<std::string, std::string>> reaches;
+
+    // The other nodes' inter-node listeners this node has tried, and whether it got through: node id and result.
+    std::vector<std::pair<std::string, bool>> cluster_probes;
 
     std::chrono::steady_clock::time_point heard{};
 
