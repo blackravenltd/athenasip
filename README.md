@@ -37,7 +37,8 @@ on one process.
 
 ## Limits
 
-Clustering works between two nodes and has not been tested under node failure.
+Clustering works between two nodes, including a node dying and its clients registering
+again through the other; larger clusters are untested.
 Conferencing and presence are not built. The example configuration enables plaintext UDP
 and TCP for evaluation; `sip.allow_unencrypted: false` limits a node to TLS and WSS.
 
@@ -47,9 +48,13 @@ and TCP for evaluation; `sip.allow_unencrypted: false` limits a node to TLS and 
 * [Installation](docs/installation.md) - the binary, the configuration and the systemd unit
 * [Compiling](docs/compiling.md) - dependencies and build presets
 * [Configuration](docs/configuration.md)
+* [How a call works](docs/how-a-call-works.md) - one call through a node, step by step
+* [Media](docs/media.md) - the builtin relay and rtpengine, ports and addresses
+* [Running a cluster](docs/clustering.md) - two nodes, step by step
+* [Troubleshooting](docs/troubleshooting.md) - from the symptom to the cause
 * [Behaviour](docs/behaviour.md) - the choices SIP servers differ on
 * [Authentication](docs/authentication.md) - SIP Digest and the admin plane
-* [Certificates](docs/certificates.md) - the cluster's certificate authority
+* [Certificates](docs/certificates.md) - TLS for clients and the cluster's certificate authority
 * [Architecture](docs/architecture.md)
 * [Writing a plugin](docs/plugins.md)
 * [Events](docs/events.md) - the topic scheme
