@@ -9,7 +9,6 @@
 
 sip:
   node_id: node-a
-  event_prefix: athenasip
   public_address: 172.31.0.10
   allow_unencrypted: true
 
@@ -27,8 +26,6 @@ sip:
     h_server_invite_timeout: 64
     i_server_invite_duration: 1
     j_server_non_invite_duration: 64
-    retransmit_max_interval: 8
-    retransmit_max_attempts: 7
 
 udp:
   enable: true
@@ -48,9 +45,6 @@ websocket:
   address: 0.0.0.0
   port: 9500
   tls: false
-
-rtprelay:
-  enable: false
 
 # The inter-node listener. cluster.sh makes the certificates with --ca-init and --ca-node.
 cluster:
