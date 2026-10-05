@@ -2719,3 +2719,9 @@ missed because its connection had silently died.
       shows the outcome and every driver. The server exports its symbols, a module must not
       link `athena_core`, and `create_as` casts by kind, not `dynamic_cast`. Built and
       loaded by the tests (`tests/modules/`). Windows loading is written but not built.
+- [x] **Guides for a reader without a telecoms background**: how a call works, clustering,
+      media engines, troubleshooting, and certificates for clients.
+- [x] **Found while writing them, and fixed**: the callee's 100 Trying is no longer forwarded
+      (RFC 3261 16.7 step 5); SIGTERM, which `systemctl stop` sends, shuts the node down
+      cleanly and publishes "stopped" instead of killing it; the harness configs lose keys
+      nothing reads.

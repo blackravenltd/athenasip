@@ -429,10 +429,8 @@ authentication from session issue to the OpenAPI document, and the one-command s
       hand-written and speaks the whole documented API, with a contract test against
       `docs/api/openapi.yaml` passing. Generation is what is left, and every operation in
       the document now carries an `operationId` for it.
-- [ ] Docs for the reader without a telecoms background. The M2 audit made every page
-      true; this is the pages that do not exist: a configuration reference generated
-      from the config schema, "how a call works", a clustering guide, a TLS and
-      certificates guide, a media engines guide, troubleshooting.
+- [ ] A configuration reference generated from a schema of the configuration. The guides
+      are written (`COMPLETED.md`); this needs the schema first.
 - [ ] Packaging: Docker image, Debian package, Homebrew formula. In-tree plugins ship
       compiled in; the packages also carry the SDK headers.
 ---
