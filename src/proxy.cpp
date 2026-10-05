@@ -891,7 +891,8 @@ void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::sha
     // 9.1: a held CANCEL is sent once the branch has answered provisionally.
     if (context->cancelled) return _cancel_branch(context);
 
-    if (!context->answered) _forward_response(context, response);
+    // 16.7 step 5: a 100 is hop-by-hop, and the caller has had this node's own.
+    if (!context->answered && code != 100) _forward_response(context, response);
     return;
   }
 

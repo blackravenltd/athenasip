@@ -192,6 +192,15 @@ struct CoreFixture {
     return messages;
   }
 
+  // Every response with this code, in the order written.
+  static std::vector<std::shared_ptr<athenasip::SIPMessage>> responses_with(const std::shared_ptr<MockConnection>& connection, int code) {
+    std::vector<std::shared_ptr<athenasip::SIPMessage>> found;
+    for (const auto& message : written(connection)) {
+      if (message->header->type == athenasip::SIPHeader::Type::Response && message->header->response_code == code) found.push_back(message);
+    }
+    return found;
+  }
+
   // The first response with this code, or nullptr.
   static std::shared_ptr<athenasip::SIPMessage> response_with(const std::shared_ptr<MockConnection>& connection, int code) {
     for (const auto& message : written(connection)) {
