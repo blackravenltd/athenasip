@@ -1024,6 +1024,17 @@ std::string Core::node_status_json(const std::string& status) const {
     report["discovered"] = nullptr;
   }
 
+  // Whether peers reach this node's inter-node listener, and which of theirs this node reaches.
+  if (_address_discovery && _address_discovery->cluster_unreachable()) {
+    if (auto* peer = report.if_contains("cluster"); peer != nullptr && peer->is_object()) peer->as_object()["reachable"] = false;
+  }
+
+  boost::json::array cluster_probes;
+  if (_address_discovery) {
+    for (const auto& [node, reached] : _address_discovery->cluster_probes()) cluster_probes.push_back({{"node", node}, {"reached", reached}});
+  }
+  report["cluster_probes"] = std::move(cluster_probes);
+
   // The other nodes' discovered addresses this node has reached, which is how they learn theirs are good.
   boost::json::array reaches;
   if (_address_discovery) {

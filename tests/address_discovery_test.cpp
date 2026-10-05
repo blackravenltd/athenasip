@@ -259,3 +259,77 @@ TEST(AddressDiscoveryTest, TheConfiguredAddressWins) {
 
   EXPECT_EQ(f.config->public_address(), "198.51.100.1");
 }
+
+namespace {
+
+// node-b, in a cluster, with what it found when it tried this node's inter-node listener.
+void hear_cluster_peer(DiscoveryFixture& f, const std::string& probes, const std::string& cluster_port = "1") {
+  const auto report = R"({"status":"ok","node":"node-b","version":"1.0.0","at":"2026-10-04T10:00:00Z","transports":[],)"
+                      R"("cluster":{"address":"127.0.0.1","port":)" +
+                      cluster_port + R"(},"cluster_probes":[)" + probes + "]}";
+  f.on_strand([&f, report]() { f.core->nodes()->observe(events::topics::node_status("node-b"), report); });
+}
+
+void in_a_cluster(DiscoveryFixture& f) {
+  f.config->cluster_enable = true;
+  f.config->cluster_address = "192.0.2.1";
+  f.config->cluster_port = 5062;
+}
+
+}  // namespace
+
+// Each peer's inter-node listener is tried as forwarding would try it, and the result published.
+TEST(AddressDiscoveryTest, APeersInterNodeListenerIsTriedAndTheResultPublished) {
+  DiscoveryFixture f;
+  in_a_cluster(f);
+  hear_cluster_peer(f, "");
+
+  f.on_strand([&]() { f.core->address_discovery()->review(); });
+
+  for (int i = 0; i < 400 && f.on_strand([&]() { return f.core->address_discovery()->cluster_probes().empty(); }); ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+
+  // This fixture has no cluster certificates, so the attempt fails, and says so.
+  const auto status = boost::json::parse(f.on_strand([&]() { return f.core->node_status_json("ok"); }));
+  ASSERT_EQ(status.at("cluster_probes").as_array().size(), 1u);
+  EXPECT_EQ(status.at("cluster_probes").as_array()[0].at("node").as_string(), "node-b");
+  EXPECT_FALSE(status.at("cluster_probes").as_array()[0].at("reached").as_bool());
+}
+
+// A peer that tried this node's inter-node listener and failed, with none succeeding, marks it unreachable, and
+// the status says so for peers to stop forwarding.
+TEST(AddressDiscoveryTest, AListenerNoPeerReachesIsMarkedUnreachable) {
+  DiscoveryFixture f;
+  in_a_cluster(f);
+  hear_cluster_peer(f, R"({"node":"test-node","reached":false})");
+
+  f.on_strand([&]() { f.core->address_discovery()->review(); });
+
+  EXPECT_TRUE(f.on_strand([&]() { return f.core->address_discovery()->cluster_unreachable(); }));
+  const auto status = boost::json::parse(f.on_strand([&]() { return f.core->node_status_json("ok"); }));
+  EXPECT_FALSE(status.at("cluster").at("reachable").as_bool());
+  EXPECT_EQ(status.at("cluster").at("address").as_string(), "192.0.2.1");
+}
+
+// One peer getting through is enough.
+TEST(AddressDiscoveryTest, AListenerAPeerReachesIsNotMarked) {
+  DiscoveryFixture f;
+  in_a_cluster(f);
+  hear_cluster_peer(f, R"({"node":"test-node","reached":true})");
+
+  f.on_strand([&]() { f.core->address_discovery()->review(); });
+
+  EXPECT_FALSE(f.on_strand([&]() { return f.core->address_discovery()->cluster_unreachable(); }));
+}
+
+// Before any peer has tried, nothing is concluded.
+TEST(AddressDiscoveryTest, NothingIsConcludedBeforeAPeerHasTried) {
+  DiscoveryFixture f;
+  in_a_cluster(f);
+  hear_cluster_peer(f, "");
+
+  f.on_strand([&]() { f.core->address_discovery()->review(); });
+
+  EXPECT_FALSE(f.on_strand([&]() { return f.core->address_discovery()->cluster_unreachable(); }));
+}

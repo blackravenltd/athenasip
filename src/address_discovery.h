@@ -60,6 +60,13 @@ class AddressDiscovery : public std::enable_shared_from_this<AddressDiscovery> {
   // The nodes that have reached this node's finding.
   const std::vector<std::string>& verified_by() const { return _verified_by; }
 
+  // The other nodes' inter-node listeners this node has tried, and whether it got through.
+  std::map<std::string, bool> cluster_probes() const;
+
+  // True once a peer has tried this node's inter-node listener and none has got through: behind symmetric NAT or
+  // a connection-pinning balancer, only flows clients opened reach it, and peers must not forward to it.
+  bool cluster_unreachable() const { return _cluster_unreachable; }
+
   // The stun: servers in http.api.ice_servers, as host and port (RFC 7064; 3478 by default).
   static std::vector<std::pair<std::string, std::uint16_t>> servers_from(const std::vector<std::string>& urls);
 
@@ -67,6 +74,7 @@ class AddressDiscovery : public std::enable_shared_from_this<AddressDiscovery> {
   void _ask(std::size_t index);
   void _probe(const std::string& node, const std::string& address, std::uint16_t port);
   void _adopt();
+  void _probe_cluster(const std::string& node, const std::string& address, std::uint16_t port);
 
   std::shared_ptr<loggers::LoggerScoped> _logger;
   std::weak_ptr<Core> _core;
@@ -84,6 +92,14 @@ class AddressDiscovery : public std::enable_shared_from_this<AddressDiscovery> {
   std::map<std::string, std::pair<std::string, std::chrono::steady_clock::time_point>> _probed;
   std::map<std::string, std::string> _reached;
   std::vector<std::string> _verified_by;
+
+  struct ClusterProbe {
+    std::string at;  // address:port
+    std::chrono::steady_clock::time_point when;
+    std::optional<bool> reached;
+  };
+  std::map<std::string, ClusterProbe> _cluster_probed;
+  bool _cluster_unreachable = false;
   std::string _warned;
 };
 

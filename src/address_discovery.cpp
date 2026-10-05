@@ -167,14 +167,30 @@ void AddressDiscovery::review() {
 
   _verified_by.clear();
   bool peers = false;
+  bool probed = false;
+  bool reached_cluster = false;
 
   for (const auto& node : core->nodes()->list(stale_after)) {
     if (node.id == self_id || node.stale || node.status != "ok") continue;
     peers = true;
 
-    // Whether this peer got through to the address this node found.
+    // Whether this peer got through to the address this node found, and to its inter-node listener.
     for (const auto& [reached, address] : node.reaches) {
       if (_finding && reached == self_id && address == _finding->address) _verified_by.push_back(node.id);
+    }
+    for (const auto& [target, reached] : node.cluster_probes) {
+      if (target != self_id) continue;
+      probed = true;
+      reached_cluster = reached_cluster || reached;
+    }
+
+    // Try the peer's inter-node listener, as forwarding would, every ten minutes.
+    if (core->config->cluster_enable && !node.cluster_address.empty() && node.cluster_port != 0) {
+      const auto at = node.cluster_address + ":" + std::to_string(node.cluster_port);
+      const auto previous = _cluster_probed.find(node.id);
+      if (previous == _cluster_probed.end() || previous->second.at != at || now - previous->second.when >= std::chrono::minutes(10)) {
+        _probe_cluster(node.id, node.cluster_address, node.cluster_port);
+      }
     }
 
     // Probe the peer's own finding, at its UDP listener's port.
@@ -194,6 +210,16 @@ void AddressDiscovery::review() {
     if (probed != _probed.end() && probed->second.first == node.discovered && now - probed->second.second < std::chrono::minutes(10)) continue;
 
     _probe(node.id, node.discovered, port);
+  }
+
+  const bool unreachable = core->config->cluster_enable && probed && !reached_cluster;
+  if (unreachable != _cluster_unreachable) {
+    _cluster_unreachable = unreachable;
+    if (unreachable) {
+      _logger->warn("No other node can reach this node's inter-node listener; it is marked unreachable and is not forwarded to");
+    } else {
+      _logger->warn("Another node reaches this node's inter-node listener again");
+    }
   }
 
   if (_finding && _verified_by.empty() && peers && core->config->sip_public_address.empty() && _warned != _finding->address) {
@@ -274,6 +300,31 @@ void AddressDiscovery::_adopt() {
 
   // A Route naming the new address is this node (RFC 3261 16.4).
   for (const auto& transport : core->config->advertised_transports()) core->local_address_add(transport.address + ":" + std::to_string(transport.port));
+}
+
+std::map<std::string, bool> AddressDiscovery::cluster_probes() const {
+  std::map<std::string, bool> out;
+  for (const auto& [node, probe] : _cluster_probed) {
+    if (probe.reached) out[node] = *probe.reached;
+  }
+  return out;
+}
+
+// The mutual TLS flow forwarding would use (Core::channel_connect); a flow already open counts.
+void AddressDiscovery::_probe_cluster(const std::string& node, const std::string& address, std::uint16_t port) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  auto& probe = _cluster_probed[node];
+  probe.at = address + ":" + std::to_string(port);
+  probe.when = core->now();
+
+  auto self = shared_from_this();
+  core->channel_connect("tls", address, port, [this, self, node, at = probe.at](plugins::Result<std::shared_ptr<Channel>> opened) {
+    auto found = _cluster_probed.find(node);
+    if (found == _cluster_probed.end() || found->second.at != at) return;
+    found->second.reached = opened.ok && opened.value != nullptr;
+  });
 }
 
 }  // namespace athenasip
