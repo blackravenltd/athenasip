@@ -396,7 +396,7 @@ int main(int argc, char* argv[]) {
     return -3;
   }
 
-  // RFC 8599 push services: a node with none configured registers push bindings as ordinary ones.
+  // RFC 8599 push services. With none, a REGISTER asking for push is answered 555.
   std::vector<std::shared_ptr<push::PushService>> push_services;
   for (const auto& url : config->push_urls) {
     auto service = push::PushService::create_driver(logger, url);
@@ -569,9 +569,9 @@ int main(int argc, char* argv[]) {
   // Ask the stun: servers in http.api.ice_servers where this node is, for --check and the node status.
   core->post([core]() { core->address_discovery()->start(); });
 
-  // SIGINT shuts the node down. SIGHUP is logged and ignored.
+  // SIGINT and SIGTERM (what systemctl stop sends) shut the node down cleanly. SIGHUP is logged and ignored.
   boost::asio::io_context signal_wait_context;
-  boost::asio::signal_set signals(signal_wait_context, SIGINT, SIGHUP);
+  boost::asio::signal_set signals(signal_wait_context, SIGINT, SIGTERM, SIGHUP);
   wait_for_signal(signals, [&](int signal_number) {
     switch (signal_number) {
       case SIGHUP:
@@ -579,7 +579,8 @@ int main(int argc, char* argv[]) {
         break;
 
       case SIGINT:
-        logger->debug("Received Signal SIGINT");
+      case SIGTERM:
+        logger->info(std::string("Received ") + (signal_number == SIGTERM ? "SIGTERM" : "SIGINT") + " - shutting down");
 
         // Strand-confined state, reached from the main thread.
         core->call_on_strand([&core]() {
