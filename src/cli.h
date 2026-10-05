@@ -26,6 +26,10 @@ struct Options {
   // and exit. Nothing is started.
   bool check = false;
 
+  // Load the plugin modules in plugins.path, say which loaded and why any did not, and the
+  // drivers there are for each kind, and exit.
+  bool list_plugins = false;
+
   // Create an administrator in the datastore and exit, without starting a listener. The way
   // back in when the API is unreachable or every admin password is lost.
   std::string add_user;
@@ -93,6 +97,8 @@ inline Options parse(int argc, char* argv[]) {
       options.print_config = true;
     } else if (argument == "--check") {
       options.check = true;
+    } else if (argument == "--list-plugins") {
+      options.list_plugins = true;
     } else if (takes("--config", "a path", options.config) || takes("-c", "a path", options.config)) {
       // Handled; any error is already recorded.
     } else if (takes("--reset-password", "a username", options.reset_password)) {
@@ -131,6 +137,8 @@ inline std::string usage() {
          "  --check               try the datastore, the event bus, the media engine, the\n"
          "                        certificates and the cluster's other nodes, say which\n"
          "                        of them answered, and exit; nothing is started\n"
+         "  --list-plugins        load the modules in plugins.path, say which loaded and\n"
+         "                        why any did not, list every driver, and exit\n"
          "  --add-user NAME       create an administrator in the configured datastore and\n"
          "                        exit; with memory://, which keeps nothing once this\n"
          "                        process exits, create it and carry on as the node\n"

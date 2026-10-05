@@ -43,7 +43,9 @@
 #include "loggers/logger_stdio.h"
 #include "media/media_engine.h"
 #include "media/media_engine_drivers.h"
+#include "plugins/module_loader.h"
 #include "plugins/plugin.h"
+#include "plugins/plugin_registry.h"
 #include "push/push_service.h"
 #include "push/push_service_drivers.h"
 #include "rtp/rtp_relay.h"
@@ -177,7 +179,7 @@ int main(int argc, char* argv[]) {
 
   // An administrative command logs at WARN so its answer is the whole output. A node logs
   // at DEBUG until the configuration sets the level.
-  const auto administering = !options.add_user.empty() || !options.reset_password.empty() || options.print_config || options.check;
+  const auto administering = !options.add_user.empty() || !options.reset_password.empty() || options.print_config || options.check || options.list_plugins;
 
   auto logger = std::make_shared<loggers::LoggerStdIO>(administering ? LogLevel::WARN : LogLevel::DEBUG);
 
@@ -231,6 +233,21 @@ int main(int argc, char* argv[]) {
     std::cout << "#\n";
     std::cout << "# What this node would run on.\n";
     std::cout << config->effective_yaml() << "\n";
+    return 0;
+  }
+
+  // Plugin modules register beside the drivers built in, before anything is constructed.
+  const auto modules = plugins::load_modules(logger, config->plugins_path);
+
+  if (options.list_plugins) {
+    for (const auto& module : modules) {
+      std::cout << (module.loaded ? "loaded   " : "refused  ") << module.path << (module.name.empty() ? "" : " (" + module.name + ")") << ": " << module.detail
+                << "\n";
+    }
+    if (modules.empty()) std::cout << "No plugin modules" << (config->plugins_path.empty() ? " (plugins.path is not set)" : "") << "\n";
+
+    std::cout << "\nDrivers:\n";
+    for (const auto& registration : plugins::PluginRegistry::instance().list()) std::cout << "  " << registration.kind << " " << registration.scheme << "://\n";
     return 0;
   }
 

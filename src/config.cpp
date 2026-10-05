@@ -322,6 +322,20 @@ bool Config::load_from_yaml(const std::string& filename) {
     if (media["url"]) media_url = media["url"].as<std::string>();
   }
 
+  // plugins
+  if (YAML::Node plugins = config["plugins"]; plugins && plugins["path"]) {
+    try {
+      if (plugins["path"].IsSequence()) {
+        plugins_path = plugins["path"].as<std::vector<std::string>>();
+      } else {
+        plugins_path = {plugins["path"].as<std::string>()};
+      }
+    } catch (const std::exception& e) {
+      _logger->error("Invalid 'plugins.path': " + std::string(e.what()));
+      return false;
+    }
+  }
+
   // push
   if (YAML::Node push = config["push"]) {
     try {
@@ -718,6 +732,10 @@ std::string Config::effective_yaml() const {
   out << YAML::Key << "media" << YAML::Value << YAML::BeginMap;
   out << YAML::Key << "url" << YAML::Value << media_url;
   emit_plugin_sections(out, _root, "media", {"url"});
+  out << YAML::EndMap;
+
+  out << YAML::Key << "plugins" << YAML::Value << YAML::BeginMap;
+  out << YAML::Key << "path" << YAML::Value << YAML::Flow << plugins_path;
   out << YAML::EndMap;
 
   out << YAML::Key << "push" << YAML::Value << YAML::BeginMap;

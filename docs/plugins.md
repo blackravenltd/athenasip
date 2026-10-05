@@ -10,8 +10,9 @@ drivers in the tree use the same contract an external one does, and none is priv
 | `media` | `media::MediaEngine` (`src/media/media_engine.h`) | `builtin://`, `rtpengine://` |
 | `push` | `push::PushService` (`src/push/push_service.h`) | `apns://`, `fcm://`, `webpush://` |
 
-A kind is a string, so a plugin can introduce a new one. Plugins are compiled into the
-server; there is no shared-library loader.
+A kind is a string, so a plugin can introduce a new one. A plugin is either compiled into
+the server or built as a module (a shared library) the server loads at start: see
+[Building a module](#building-a-module).
 
 ## The base contract
 
@@ -42,8 +43,9 @@ Datastore::register_driver<MyDatastore>(logger, "mystore");
 The key is `(kind, scheme)`, so one scheme can name a driver of each kind. Registering a
 pair again replaces the driver. A driver may be registered under several schemes. The
 built-ins are registered from `main()` by the `register_builtin_*` functions in
-`src/datastores/datastore_drivers.h`, `src/events/event_system_drivers.h` and
-`src/media/media_engine_drivers.h`; add yours there.
+`src/datastores/datastore_drivers.h`, `src/events/event_system_drivers.h`,
+`src/media/media_engine_drivers.h` and `src/push/push_service_drivers.h`; add yours there,
+or build it as a module.
 
 `Datastore::create_driver(logger, url)` constructs the driver for a URL.
 
@@ -147,6 +149,42 @@ is never on the call path, so callers do not wait on it. Use
 
 Where a rule like these matters, it is stated at the operation's declaration: read the
 comment, not only the signature.
+
+## Building a module
+
+A module is a shared library (`.so`, `.dylib` or `.dll`) in a directory named by
+[`plugins.path`](configuration.md#plugins). At start the server loads each one, registers
+what it declares beside the built-in drivers, and refuses, with the reason in the log, a file
+that is not a module or one built against another contract version.
+
+```cpp
+#include "plugins/plugin_module.h"
+#include "datastores/datastore.h"
+
+class AcmeDatastore : public athenasip::datastores::Datastore { /* ... */ };
+
+void register_acme(athenasip::plugins::ModuleHost& host) {
+  host.add<AcmeDatastore>(athenasip::plugins::kinds::datastore, "acme");
+}
+
+ATHENASIP_PLUGIN_MODULE("acme", register_acme)
+```
+
+Rules:
+
+- Build against the server's `src/` headers with the same compiler, standard library and
+  Boost, yaml-cpp and OpenSSL versions, because `std::shared_ptr`, `YAML::Node` and Boost
+  executors cross the boundary.
+- Do not link `athena_core`: the module would get a registry of its own. Leave the
+  server's symbols undefined and let them resolve against the running server, which
+  exports them (`-undefined dynamic_lookup` on macOS; the default on Linux).
+- The contract version is exported by `ATHENASIP_PLUGIN_MODULE`; a module built against
+  another is refused before any of its code runs.
+- A loaded module stays loaded for the life of the process.
+
+`athenasip --list-plugins` loads the modules, says which loaded and why any did not, and
+lists every driver by kind and scheme. `tests/modules/sample_module.cpp` is a complete
+module, built and loaded by the test suite.
 
 ## Versioning
 

@@ -161,6 +161,9 @@ target_link_libraries(athena_core
 add_executable(athenasip "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
 
 target_link_libraries(athenasip PRIVATE athena_core)
+
+# Plugin modules (plugins.path) use the server's own code, so it exports its symbols.
+set_target_properties(athenasip PROPERTIES ENABLE_EXPORTS ON)
 target_compile_features(athenasip PRIVATE cxx_std_20)
 
 if(MSVC AND TARGET OpenSSL::applink)
@@ -177,7 +180,25 @@ if(ATHENA_BUILD_TESTING)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp"
     )
 
+    # The test modules are shared libraries of their own, loaded by the tests.
+    list(FILTER ATHENA_TEST_SOURCES EXCLUDE REGEX "/tests/modules/")
+
     add_executable(athenasip_tests ${ATHENA_TEST_SOURCES})
+    set_target_properties(athenasip_tests PROPERTIES ENABLE_EXPORTS ON)
+
+    # Each in a directory of its own, as plugins.path would name them. They are built against the headers and
+    # never link athena_core, which would give them a registry of their own.
+    foreach(module sample_module mismatched_module not_a_module)
+        add_library(${module} MODULE "${CMAKE_CURRENT_SOURCE_DIR}/tests/modules/${module}.cpp")
+        target_include_directories(${module} PRIVATE $<TARGET_PROPERTY:athena_core,INTERFACE_INCLUDE_DIRECTORIES>)
+        target_compile_features(${module} PRIVATE cxx_std_20)
+        set_target_properties(${module} PROPERTIES PREFIX "" LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-modules/${module}")
+        if(APPLE)
+            target_link_options(${module} PRIVATE "-undefined" "dynamic_lookup")
+        endif()
+        add_dependencies(athenasip_tests ${module})
+    endforeach()
+    target_compile_definitions(athenasip_tests PRIVATE ATHENA_TEST_MODULE_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-modules")
 
     target_link_libraries(athenasip_tests PRIVATE athena_core)
 

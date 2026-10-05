@@ -223,6 +223,12 @@ the driver for what a URL cannot express. [Plugins](plugins.md) describes the co
 
 Whether media is anchored at all is [`behaviour.media_anchor`](#behaviour).
 
+## `plugins`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `path` | unset | A directory, or a list of them, holding plugin modules (`.so`, `.dylib`, `.dll`) to load at start. See [Building a module](plugins.md#building-a-module); `athenasip --list-plugins` shows what loaded. |
+
 ## `push`
 
 Push notifications ([RFC 8599](https://www.rfc-editor.org/rfc/rfc8599)) wake a client that

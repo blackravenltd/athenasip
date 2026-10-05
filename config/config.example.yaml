@@ -221,6 +221,11 @@ media:
 
 # Server-wide defaults where the standards leave a choice. A realm can override any of
 # these over the admin API.
+# Plugin modules (shared libraries) to load at start, from a directory or a list of them.
+# athenasip --list-plugins shows what loaded. docs/plugins.md has how to build one.
+# plugins:
+#   path: /usr/local/lib/athenasip/plugins
+
 # Push notifications (RFC 8599) wake a phone or browser app the operating system has put to
 # sleep. Off with no urls. docs/configuration.md has what each service needs.
 push:
