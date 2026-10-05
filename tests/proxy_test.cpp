@@ -392,3 +392,18 @@ TEST(ProxyTest, ARetransmittedTwoHundredReachesTheCallerToo) {
   }
   EXPECT_EQ(forwarded, 2);
 }
+
+// RFC 3261 16.7 step 5: every provisional response but 100 is forwarded. The callee's 100 is hop-by-hop; the
+// caller has had this node's own.
+TEST(ProxyTest, TheCalleesTryingIsNotForwarded) {
+  ProxyFixture f;
+  f.bind_bob();
+  f.receive(f.caller, f.invite());
+
+  const auto trying_before = ProxyFixture::responses_with(f.caller_connection, 100).size();
+  f.receive(f.callee, f.response_from_callee(100, "Trying", ""));
+  f.receive(f.callee, f.response_from_callee(180, "Ringing"));
+
+  EXPECT_EQ(ProxyFixture::responses_with(f.caller_connection, 100).size(), trying_before);
+  EXPECT_NE(ProxyFixture::response_with(f.caller_connection, 180), nullptr);
+}
