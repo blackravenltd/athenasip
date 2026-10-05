@@ -112,6 +112,12 @@ class RedisDatastore : public Datastore {
   using StringCallback = std::function<void(RedisError error, std::optional<std::string> value)>;
   using IntegerCallback = std::function<void(RedisError error, std::int64_t value)>;
   using StringsCallback = std::function<void(RedisError error, std::vector<std::string> value)>;
+  using ValuesCallback = std::function<void(RedisError error, std::vector<std::optional<std::string>> values)>;
+
+  // An index's members and the record each names, read with one SMEMBERS and one MGET. A member whose record
+  // has gone (it expired) is dropped from the index and not returned.
+  using RecordsCallback = std::function<void(RedisError error, std::vector<std::pair<std::string, std::string>> records)>;
+  void _read_index(std::string index, std::function<std::string(const std::string&)> key_of, RecordsCallback callback);
 
   void _apply_url(std::shared_ptr<types::URL> url);
 
@@ -132,6 +138,7 @@ class RedisDatastore : public Datastore {
   void _async_sadd(std::string key, std::string member, BoolCallback callback);
   void _async_srem(std::string key, std::string member, BoolCallback callback);
   void _async_smembers(std::string key, StringsCallback callback);
+  void _async_mget(std::vector<std::string> keys, ValuesCallback callback);
   void _async_strings(std::string operation, boost::redis::request request, StringsCallback callback);
 
   void _async_ok(std::string operation, boost::redis::request request, BoolCallback callback);
@@ -145,6 +152,7 @@ class RedisDatastore : public Datastore {
   static std::string _user_key(const std::string& username);
   static std::string _session_key(const std::string& token_hash);
   static std::string _call_key(const std::string& call_id);
+  static std::shared_ptr<types::Subscriber> _parse_subscriber(const std::string& value, std::shared_ptr<types::SIPIdentity> identity);
 
   static std::string _realm_index_key();
   static std::string _subscriber_index_key(const std::string& realm_name);
