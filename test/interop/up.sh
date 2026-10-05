@@ -11,6 +11,8 @@
 #   test/interop/up.sh --rtpengine  the same, with rtpengine on the media path
 #   test/interop/up.sh --admin      also serve the admin client, whose softphone is the
 #                                   browser end of the browser-call test
+#   test/interop/up.sh restart      restart the node and provision it again, as memory://
+#                                   keeps nothing over a restart
 #   test/interop/up.sh down         take it down
 #
 # The builtin relay is plain RTP, which suits an ordinary softphone. A browser needs
@@ -37,10 +39,55 @@ for argument in "$@"; do
   case "$argument" in
     --rtpengine) ENGINE="rtpengine" ;;
     --admin) SERVE_ADMIN="yes" ;;
-    up|down) ACTION="$argument" ;;
+    up|down|restart) ACTION="$argument" ;;
     *) echo "Unknown argument: $argument" >&2; exit 1 ;;
   esac
 done
+
+# The realm and its subscribers, over the admin API; the entrypoint makes the user.
+provision() {
+  local token
+  token="$(curl -fsS -X POST "$API/auth/login" -H "Content-Type: application/json" \
+    -d "{\"username\":\"${ATHENA_INTEROP_API_USER}\",\"password\":\"${ATHENA_INTEROP_API_PASSWORD}\"}" | sed -n 's/.*"token":"\([0-9a-f]*\)".*/\1/p')"
+
+  if [[ -z "$token" ]]; then
+    echo "Could not sign in as ${ATHENA_INTEROP_API_USER}" >&2
+    exit 1
+  fi
+
+  echo "Provisioning realm ${REALM}..."
+  curl -fsS -X POST "$API/realms" \
+    -H "Authorization: Bearer $token" \
+    -H "Content-Type: application/json" \
+    -d "{\"name\":\"${REALM}\",\"registration_timeout\":3600}" > /dev/null
+
+  local username password
+  while IFS=, read -r username password; do
+    [[ "$username" == "username" || -z "$username" ]] && continue
+
+    echo "  subscriber ${username}@${REALM}"
+    curl -fsS -X POST "$API/realms/${REALM}/subscribers" \
+      -H "Authorization: Bearer $token" \
+      -H "Content-Type: application/json" \
+      -d "{\"user\":\"${username}\",\"password\":\"${password}\"}" > /dev/null
+  done < "$HERE/subscribers.csv"
+}
+
+if [[ "$ACTION" == "restart" ]]; then
+  set -a
+  source "$HERE/generated/fixture.env"
+  set +a
+  API="http://127.0.0.1:${ATHENA_INTEROP_API_PORT}/api/v1"
+  REALM="$ATHENA_INTEROP_REALM"
+
+  docker restart "$ATHENA_INTEROP_NAME" > /dev/null
+  for _ in $(seq 1 60); do
+    curl -fsS "$API/health" > /dev/null 2>&1 && break
+    sleep 1
+  done
+  provision
+  exit 0
+fi
 
 export ATHENA_INTEROP_SIP_PORT="${ATHENA_INTEROP_SIP_PORT:-5060}"
 export ATHENA_INTEROP_TLS_PORT="${ATHENA_INTEROP_TLS_PORT:-5061}"
@@ -238,29 +285,7 @@ sed -e "s|@PUBLIC_ADDRESS@|${PUBLIC_ADDRESS}|g" \
 echo "Building and starting..."
 compose up -d --build --wait
 
-ADMIN_TOKEN="$(curl -fsS -X POST "$API/auth/login" -H "Content-Type: application/json" \
-  -d "{\"username\":\"${ATHENA_INTEROP_API_USER}\",\"password\":\"${ATHENA_INTEROP_API_PASSWORD}\"}" | sed -n 's/.*"token":"\([0-9a-f]*\)".*/\1/p')"
-
-if [[ -z "$ADMIN_TOKEN" ]]; then
-  echo "Could not sign in as ${ATHENA_INTEROP_API_USER}" >&2
-  exit 1
-fi
-
-echo "Provisioning realm ${REALM}..."
-curl -fsS -X POST "$API/realms" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d "{\"name\":\"${REALM}\",\"registration_timeout\":3600}" > /dev/null
-
-while IFS=, read -r username password; do
-  [[ "$username" == "username" || -z "$username" ]] && continue
-
-  echo "  subscriber ${username}@${REALM}"
-  curl -fsS -X POST "$API/realms/${REALM}/subscribers" \
-    -H "Authorization: Bearer $ADMIN_TOKEN" \
-    -H "Content-Type: application/json" \
-    -d "{\"user\":\"${username}\",\"password\":\"${password}\"}" > /dev/null
-done < "$HERE/subscribers.csv"
+provision
 
 # The fixture's effective values, for anything that talks to it. Read these rather than
 # working them out again: the LAN address is detected.
@@ -306,7 +331,7 @@ Ready. The node is listening on ${PUBLIC_ADDRESS}:
 Media is ${ENGINE}, on ${PUBLIC_ADDRESS}:${ATHENA_INTEROP_RTP_MIN}-${ATHENA_INTEROP_RTP_MAX}.
 ${ADMIN_NOTE}
 
-Subscribers are 1001, 1002 and 1003 in realm ${REALM}, password athenaphone.
+Subscribers are $(tail -n +2 "$HERE/subscribers.csv" | cut -d, -f1 | paste -sd, - | sed "s/,/, /g") in realm ${REALM}, password athenaphone.
 
   test/interop/smoke.py --host ${PUBLIC_ADDRESS}   prove it before blaming a client
   docker logs -f ${ATHENA_INTEROP_NAME}     every message in and out, bodies included
