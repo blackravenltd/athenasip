@@ -8,10 +8,12 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cstdlib>
 #include <ctime>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "../helpers/sync_datastore_helper.h"
@@ -344,6 +346,48 @@ TEST(RedisDatastoreTest, APushBindingKeepsItsPushParameters) {
   EXPECT_TRUE(found[0].push);
   EXPECT_EQ(found[0].contact->parameter("pn-prid"), "token");
   EXPECT_EQ(found[0].contact->parameter("pn-param"), "project");
+
+  datastore->subscriber_delete(subscriber->identity);
+}
+
+// RFC 3261 16.5 needs every binding: fifty come back from one listing.
+TEST(RedisDatastoreTest, ManyBindingsAreListedTogether) {
+  REQUIRE_REDIS(datastore);
+  const auto realm = "many-" + unique_suffix() + ".example";
+  auto subscriber = make_subscriber(5270, "sip:dave@" + realm);
+  ASSERT_TRUE(datastore->subscriber_create(subscriber));
+
+  for (int i = 0; i < 50; ++i) {
+    types::Location binding;
+    binding.contact = std::make_shared<types::SIPUri>("sip:dave@192.0.2.10:" + std::to_string(20000 + i));
+    ASSERT_TRUE(datastore->subscriber_register(subscriber, binding, 3600));
+  }
+
+  EXPECT_EQ(datastore->location_list(5270).size(), 50u);
+
+  datastore->subscriber_delete(subscriber->identity);
+}
+
+// A binding Redis has expired is not listed, though its key is still in the index.
+TEST(RedisDatastoreTest, AnExpiredBindingIsNotListed) {
+  REQUIRE_REDIS(datastore);
+  const auto realm = "expired-" + unique_suffix() + ".example";
+  auto subscriber = make_subscriber(5280, "sip:erin@" + realm);
+  ASSERT_TRUE(datastore->subscriber_create(subscriber));
+
+  types::Location lasting;
+  lasting.contact = std::make_shared<types::SIPUri>("sip:erin@192.0.2.10:5060");
+  ASSERT_TRUE(datastore->subscriber_register(subscriber, lasting, 3600));
+
+  types::Location brief;
+  brief.contact = std::make_shared<types::SIPUri>("sip:erin@192.0.2.11:5060");
+  ASSERT_TRUE(datastore->subscriber_register(subscriber, brief, 1));
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+
+  const auto found = datastore->location_list(5280);
+  ASSERT_EQ(found.size(), 1u);
+  EXPECT_EQ(found[0].contact->host, "192.0.2.10");
 
   datastore->subscriber_delete(subscriber->identity);
 }

@@ -324,28 +324,21 @@ void RedisDatastore::_realm_delete_record(plugins::Executor on, plugins::StatusH
 void RedisDatastore::realm_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::Realm>>> handler) {
   using Answer = plugins::Result<std::vector<std::shared_ptr<types::Realm>>>;
 
-  _async_smembers(_realm_index_key(), [this, on, handler](RedisError error, std::vector<std::string> names) mutable {
-    if (error) return _complete(on, handler, Answer::failure(error.message()));
+  _read_index(
+      _realm_index_key(), [](const std::string& name) { return _realm_key(name); },
+      [this, on, handler](RedisError error, std::vector<std::pair<std::string, std::string>> records) mutable {
+        if (error) return _complete(on, handler, Answer::failure(error.message()));
 
-    auto realms = std::make_shared<std::vector<std::shared_ptr<types::Realm>>>();
-
-    run_sequence(
-        std::move(names),
-        [this, realms](std::string name, std::function<void()> next) {
-          _async_get(_realm_key(name), [this, realms, next](RedisError error, std::optional<std::string> value) mutable {
-            if (!error && value) {
-              try {
-                realms->push_back(_parse_realm(*value));
-              } catch (const std::exception& ex) {
-                _logger->error("realm_list: " + std::string(ex.what()));
-              }
-            }
-
-            next();
-          });
-        },
-        [this, on, handler, realms]() { _complete(on, handler, Answer::success(std::move(*realms))); });
-  });
+        std::vector<std::shared_ptr<types::Realm>> realms;
+        for (const auto& [name, value] : records) {
+          try {
+            realms.push_back(_parse_realm(value));
+          } catch (const std::exception& ex) {
+            _logger->error("realm_list: skipping " + name + ": " + std::string(ex.what()));
+          }
+        }
+        _complete(on, handler, Answer::success(std::move(realms)));
+      });
 }
 
 void RedisDatastore::user_get(plugins::Executor on, std::string username, plugins::Handler<std::shared_ptr<types::User>> handler) {
@@ -429,33 +422,21 @@ void RedisDatastore::user_delete(plugins::Executor on, std::string username, plu
 void RedisDatastore::user_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::User>>> handler) {
   using Answer = plugins::Result<std::vector<std::shared_ptr<types::User>>>;
 
-  const auto index = _user_index_key();
+  _read_index(
+      _user_index_key(), [](const std::string& name) { return _user_key(name); },
+      [this, on, handler](RedisError error, std::vector<std::pair<std::string, std::string>> records) mutable {
+        if (error) return _complete(on, handler, Answer::failure(error.message()));
 
-  _async_smembers(index, [this, on, handler, index](RedisError error, std::vector<std::string> names) mutable {
-    if (error) return _complete(on, handler, Answer::failure(error.message()));
-
-    auto users = std::make_shared<std::vector<std::shared_ptr<types::User>>>();
-
-    run_sequence(
-        std::move(names),
-        [this, users, index](std::string name, std::function<void()> next) {
-          _async_get(_user_key(name), [this, users, index, name, next](RedisError error, std::optional<std::string> value) mutable {
-            if (error) return next();
-
-            // An index member whose record is gone is stale; remove it and move on.
-            if (!value) return _async_srem(index, name, [next](RedisError, bool) mutable { next(); });
-
-            try {
-              users->push_back(_parse_user(*value));
-            } catch (const std::exception& ex) {
-              _logger->error("user_list: skipping " + name + ": " + std::string(ex.what()));
-            }
-
-            next();
-          });
-        },
-        [this, on, handler, users]() { _complete(on, handler, Answer::success(std::move(*users))); });
-  });
+        std::vector<std::shared_ptr<types::User>> users;
+        for (const auto& [name, value] : records) {
+          try {
+            users.push_back(_parse_user(value));
+          } catch (const std::exception& ex) {
+            _logger->error("user_list: skipping " + name + ": " + std::string(ex.what()));
+          }
+        }
+        _complete(on, handler, Answer::success(std::move(users)));
+      });
 }
 
 // Creating over a held hash replaces the record, which is how last_seen_at moves: the
@@ -551,6 +532,21 @@ void RedisDatastore::_session_delete_all_for(std::string key, std::function<void
   });
 }
 
+std::shared_ptr<types::Subscriber> RedisDatastore::_parse_subscriber(const std::string& value, std::shared_ptr<types::SIPIdentity> identity) {
+  const auto parsed = boost::json::parse(value);
+  const auto& obj = parsed.as_object();
+
+  auto subscriber = std::make_shared<types::Subscriber>();
+  subscriber->id = json_uint64(obj, "id");
+  subscriber->identity = std::move(identity);
+  subscriber->ha1 = json_string(obj, "ha1");
+
+  // Optional: a subscriber imported as a bare MD5 hash has no SHA-256 credential.
+  if (obj.if_contains("ha1_sha256")) subscriber->ha1_sha256 = json_string(obj, "ha1_sha256");
+  if (obj.contains("media_profile")) subscriber->media_profile = types::MediaPolicy::parse_profiles(json_string(obj, "media_profile"));
+  return subscriber;
+}
+
 void RedisDatastore::subscriber_get(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity,
                                     plugins::Handler<std::shared_ptr<types::Subscriber>> handler) {
   using Answer = plugins::Result<std::shared_ptr<types::Subscriber>>;
@@ -563,18 +559,7 @@ void RedisDatastore::subscriber_get(plugins::Executor on, std::shared_ptr<types:
                if (!value) return _complete(on, handler, Answer::success(nullptr));
 
                try {
-                 const auto parsed = boost::json::parse(*value);
-                 const auto& obj = parsed.as_object();
-
-                 auto subscriber = std::make_shared<types::Subscriber>();
-                 subscriber->id = json_uint64(obj, "id");
-                 subscriber->identity = std::move(identity);
-                 subscriber->ha1 = json_string(obj, "ha1");
-
-                 // Optional: a subscriber imported as a bare MD5 hash has no SHA-256 credential.
-                 if (obj.if_contains("ha1_sha256")) subscriber->ha1_sha256 = json_string(obj, "ha1_sha256");
-                 if (obj.contains("media_profile")) subscriber->media_profile = types::MediaPolicy::parse_profiles(json_string(obj, "media_profile"));
-                 _complete(on, handler, Answer::success(std::move(subscriber)));
+                 _complete(on, handler, Answer::success(_parse_subscriber(*value, std::move(identity))));
                } catch (const std::exception& ex) {
                  _logger->error("subscriber_get: " + std::string(ex.what()));
                  _complete(on, handler, Answer::failure(ex.what()));
@@ -668,23 +653,21 @@ void RedisDatastore::subscriber_delete(plugins::Executor on, std::shared_ptr<typ
 void RedisDatastore::subscriber_list(plugins::Executor on, std::string realm_name, plugins::Handler<std::vector<std::shared_ptr<types::Subscriber>>> handler) {
   using Answer = plugins::Result<std::vector<std::shared_ptr<types::Subscriber>>>;
 
-  _async_smembers(_subscriber_index_key(realm_name), [this, on, handler, realm_name](RedisError error, std::vector<std::string> users) mutable {
-    if (error) return _complete(on, handler, Answer::failure(error.message()));
+  _read_index(
+      _subscriber_index_key(realm_name), [realm_name](const std::string& user) { return _subscriber_key(realm_name, user); },
+      [this, on, handler, realm_name](RedisError error, std::vector<std::pair<std::string, std::string>> records) mutable {
+        if (error) return _complete(on, handler, Answer::failure(error.message()));
 
-    auto subscribers = std::make_shared<std::vector<std::shared_ptr<types::Subscriber>>>();
-
-    run_sequence(
-        std::move(users),
-        [this, on, subscribers, realm_name](std::string user, std::function<void()> next) {
-          auto identity = std::make_shared<types::SIPIdentity>("sip:" + user + "@" + realm_name);
-
-          subscriber_get(on, std::move(identity), [subscribers, next](plugins::Result<std::shared_ptr<types::Subscriber>> found) mutable {
-            if (found.ok && found.value) subscribers->push_back(found.value);
-            next();
-          });
-        },
-        [this, on, handler, subscribers]() { _complete(on, handler, Answer::success(std::move(*subscribers))); });
-  });
+        std::vector<std::shared_ptr<types::Subscriber>> subscribers;
+        for (const auto& [user, value] : records) {
+          try {
+            subscribers.push_back(_parse_subscriber(value, std::make_shared<types::SIPIdentity>("sip:" + user + "@" + realm_name)));
+          } catch (const std::exception& ex) {
+            _logger->error("subscriber_list: skipping " + user + ": " + std::string(ex.what()));
+          }
+        }
+        _complete(on, handler, Answer::success(std::move(subscribers)));
+      });
 }
 
 void RedisDatastore::subscriber_register(plugins::Executor on, std::shared_ptr<types::Subscriber> subscriber, types::Location binding,
@@ -754,36 +737,23 @@ void RedisDatastore::subscriber_unregister(plugins::Executor on, std::shared_ptr
 void RedisDatastore::location_list(plugins::Executor on, std::uint64_t subscriber_id, plugins::Handler<std::vector<types::Location>> handler) {
   using Answer = plugins::Result<std::vector<types::Location>>;
 
-  const auto index = _location_index_key(subscriber_id);
+  // The index holds the binding keys themselves; an expired binding leaves it here.
+  _read_index(
+      _location_index_key(subscriber_id), [](const std::string& key) { return key; },
+      [this, on, handler](RedisError error, std::vector<std::pair<std::string, std::string>> records) mutable {
+        if (error) return _complete(on, handler, Answer::failure(error.message()));
 
-  _async_smembers(index, [this, on, handler, index](RedisError error, std::vector<std::string> keys) mutable {
-    if (error) return _complete(on, handler, Answer::failure(error.message()));
-
-    auto locations = std::make_shared<std::vector<types::Location>>();
-
-    run_sequence(
-        std::move(keys),
-        [this, locations, index](std::string key, std::function<void()> next) {
-          _async_get(key, [this, locations, index, key, next](RedisError error, std::optional<std::string> value) mutable {
-            if (error) return next();
-
-            // The binding expired and Redis dropped it: tidy the index.
-            if (!value) {
-              return _async_srem(index, key, [next](RedisError, bool) mutable { next(); });
-            }
-
-            try {
-              locations->push_back(parse_location(*value));
-            } catch (const std::exception& ex) {
-              // One unreadable binding must not hide the others (RFC 3261 16.5).
-              _logger->error("location_list: skipping " + key + ": " + std::string(ex.what()));
-            }
-
-            next();
-          });
-        },
-        [this, on, handler, locations]() { _complete(on, handler, Answer::success(std::move(*locations))); });
-  });
+        std::vector<types::Location> locations;
+        for (const auto& [key, value] : records) {
+          try {
+            locations.push_back(parse_location(value));
+          } catch (const std::exception& ex) {
+            // One unreadable binding must not hide the others (RFC 3261 16.5).
+            _logger->error("location_list: skipping " + key + ": " + std::string(ex.what()));
+          }
+        }
+        _complete(on, handler, Answer::success(std::move(locations)));
+      });
 }
 
 void RedisDatastore::nonce_create(plugins::Executor on, std::string nonce, std::time_t expires_at, plugins::StatusHandler handler) {
@@ -868,34 +838,21 @@ void RedisDatastore::call_get(plugins::Executor on, std::string id, plugins::Han
 void RedisDatastore::call_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<Call>>> handler) {
   using Answer = plugins::Result<std::vector<std::shared_ptr<Call>>>;
 
-  const auto index = _call_index_key();
+  _read_index(
+      _call_index_key(), [](const std::string& id) { return _call_key(id); },
+      [this, on, handler](RedisError error, std::vector<std::pair<std::string, std::string>> records) mutable {
+        if (error) return _complete(on, handler, Answer::failure(error.message()));
 
-  _async_smembers(index, [this, on, handler, index](RedisError error, std::vector<std::string> ids) mutable {
-    if (error) return _complete(on, handler, Answer::failure(error.message()));
-
-    auto calls = std::make_shared<std::vector<std::shared_ptr<Call>>>();
-
-    run_sequence(
-        std::move(ids),
-        [this, calls, index](std::string id, std::function<void()> next) {
-          _async_get(_call_key(id), [this, calls, index, id, next](RedisError error, std::optional<std::string> value) mutable {
-            if (error) return next();
-
-            if (!value) {
-              return _async_srem(index, id, [next](RedisError, bool) mutable { next(); });
-            }
-
-            try {
-              calls->push_back(_parse_call(*value));
-            } catch (const std::exception& ex) {
-              _logger->error("call_list: skipping " + id + ": " + std::string(ex.what()));
-            }
-
-            next();
-          });
-        },
-        [this, on, handler, calls]() { _complete(on, handler, Answer::success(std::move(*calls))); });
-  });
+        std::vector<std::shared_ptr<Call>> calls;
+        for (const auto& [id, value] : records) {
+          try {
+            calls.push_back(_parse_call(value));
+          } catch (const std::exception& ex) {
+            _logger->error("call_list: skipping " + id + ": " + std::string(ex.what()));
+          }
+        }
+        _complete(on, handler, Answer::success(std::move(calls)));
+      });
 }
 
 void RedisDatastore::_async_sadd(std::string key, std::string member, BoolCallback callback) {
@@ -1402,6 +1359,66 @@ void RedisDatastore::_async_strings(std::string operation, boost::redis::request
 
           callback(RedisError{}, result.value());
         });
+  });
+}
+
+void RedisDatastore::_async_mget(std::vector<std::string> keys, ValuesCallback callback) {
+  if (!_connection) {
+    callback(_not_connected_error(), {});
+    return;
+  }
+  if (keys.empty()) {
+    callback(RedisError{}, {});
+    return;
+  }
+
+  auto logger = _logger;
+  auto conn = _connection;
+  auto req = std::make_shared<boost::redis::request>();
+  req->push_range("MGET", keys);
+  auto resp = std::make_shared<boost::redis::response<std::vector<std::optional<std::string>>>>();
+
+  // boost::redis::connection is not thread safe: every operation starts on its executor.
+  boost::asio::post(_io_context, [conn, req, resp, logger, callback = std::move(callback)]() mutable {
+    conn->async_exec(*req, *resp, [logger, req, resp, callback = std::move(callback)](boost::system::error_code ec, std::size_t) mutable {
+      if (ec) {
+        logger->error("Error during: MGET: " + ec.message());
+        return callback(RedisError(ec), {});
+      }
+
+      auto& result = std::get<0>(*resp);
+      if (!result.has_value()) {
+        auto error = make_redis_response_error(result.error().diagnostic);
+        logger->error("Error during: MGET: " + error.message());
+        return callback(std::move(error), {});
+      }
+
+      callback(RedisError{}, std::move(result.value()));
+    });
+  });
+}
+
+void RedisDatastore::_read_index(std::string index, std::function<std::string(const std::string&)> key_of, RecordsCallback callback) {
+  _async_smembers(index, [this, index, key_of = std::move(key_of), callback = std::move(callback)](RedisError error, std::vector<std::string> members) mutable {
+    if (error) return callback(std::move(error), {});
+
+    std::vector<std::string> keys;
+    keys.reserve(members.size());
+    for (const auto& member : members) keys.push_back(key_of(member));
+
+    _async_mget(keys, [this, index, members, callback = std::move(callback)](RedisError error, std::vector<std::optional<std::string>> values) mutable {
+      if (error) return callback(std::move(error), {});
+
+      std::vector<std::pair<std::string, std::string>> records;
+      for (std::size_t i = 0; i < members.size() && i < values.size(); ++i) {
+        if (values[i]) {
+          records.emplace_back(members[i], std::move(*values[i]));
+        } else {
+          _async_srem(index, members[i], [](RedisError, bool) {});
+        }
+      }
+      callback(RedisError{}, std::move(records));
+    });
   });
 }
 
