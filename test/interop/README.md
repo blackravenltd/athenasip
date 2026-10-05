@@ -42,10 +42,11 @@ is published on loopback unless `--rtpengine` is given.
 | UDP, TCP | 5060 | `ATHENA_INTEROP_SIP_PORT` | |
 | TLS | 5061 | `ATHENA_INTEROP_TLS_PORT` | Verify against `tls/ca/snakeca.crt` |
 | WS | 8088 | `ATHENA_INTEROP_WS_PORT` | Any path |
+| WSS | 8089 | `ATHENA_INTEROP_WSS_PORT` | Any path; verify against `tls/ca/snakeca.crt` |
 | Admin API | 8080 | `ATHENA_INTEROP_API_PORT` | Sign in as `ATHENA_INTEROP_API_USER` with `ATHENA_INTEROP_API_PASSWORD`, both in `generated/fixture.env` |
 | Media | 22000-22100 UDP | `ATHENA_INTEROP_RTP_MIN`, `_MAX` | |
 
-Subscribers `1001`, `1002` and `1003` (`subscribers.csv`) have the password
+Subscribers `1001` to `1004` (`subscribers.csv`, and `ATHENA_INTEROP_SUBSCRIBERS` in `fixture.env`) have the password
 `athenaphone`. The realm is the address the fixture advertises, `127.0.0.1` by default,
 because the registrar finds a realm by the host in the address of record (RFC 3261
 10.3). `ATHENA_INTEROP_REALM` overrides it.
