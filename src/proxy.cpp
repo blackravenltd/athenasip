@@ -853,6 +853,15 @@ void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::sha
   // RFC 3261 16.7 step 3: remove this node's Via.
   if (response->header->contains("Via")) {
     auto top = response->header->headers_map["Via"][0];
+
+    // RFC 3581: a peer node stamped where it saw this node's request come from, which is this node's address as
+    // the rest of the network sees it.
+    if (auto via = top->as<ViaHeader>(); via != nullptr && via->parameters.count("received") != 0) {
+      if (auto channel = response->channel.lock(); channel && !channel->peer_node().empty()) {
+        if (auto core = _core.lock()) core->address_discovery()->observed(channel->peer_node(), via->parameters["received"]);
+      }
+    }
+
     response->header->remove_value("Via", [&top](std::shared_ptr<headers::Header> header) { return header == top; });
   }
 

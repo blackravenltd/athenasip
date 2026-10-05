@@ -46,6 +46,14 @@ class AddressDiscovery : public std::enable_shared_from_this<AddressDiscovery> {
   // A Binding success response that arrived on the SIP UDP socket.
   void answered(const stun::Mapped& mapped);
 
+  // Where a peer node saw a request from this node come from: the received parameter it put on this node's Via
+  // (RFC 3581), read off its response. Taken only when it is a public address and no STUN server has answered;
+  // two nodes on one LAN see each other's private addresses, which are no answer to where the node is.
+  void observed(const std::string& peer, const std::string& address);
+
+  // Not private, shared, loopback, link-local or multicast: an address the world could use.
+  static bool is_public(const boost::asio::ip::address& address);
+
   std::optional<Finding> finding() const { return _finding; }
 
   // Run on each status publication. Probes each other node's discovered address with an OPTIONS to its UDP port,

@@ -137,6 +137,24 @@ TEST(ProxyClusterForwardingTest, NothingIsForwardedToANodeThatIsNotUp) {
   EXPECT_EQ(ProxyFixture::request_with(f.peer_connection, "INVITE"), nullptr);
 }
 
+// RFC 3581: the response from a peer carries, on this node's Via, where the peer saw the request come from; a
+// public address there is where this node is.
+TEST(ProxyClusterForwardingTest, WhereAPeerSawThisNodeIsAFinding) {
+  ClusterFixture f;
+  f.bind_bob_on("node-b");
+  f.receive(f.caller, f.invite());
+
+  auto response = ClusterFixture::response_to_latest_on(f.peer_connection, 486, "Busy Here");
+  ASSERT_FALSE(response.empty());
+  const auto at = response.find(";branch=");
+  response.insert(at, ";received=203.0.113.50");
+  f.receive(f.peer, response);
+
+  const auto found = f.on_strand([&f]() { return f.core->address_discovery()->finding(); });
+  ASSERT_TRUE(found.has_value());
+  EXPECT_EQ(found->address, "203.0.113.50");
+}
+
 // A node that has found no peer reaches its inter-node listener is not forwarded to, as if it were down.
 TEST(ProxyClusterForwardingTest, NothingIsForwardedToANodeNoPeerCanReach) {
   ClusterFixture f;

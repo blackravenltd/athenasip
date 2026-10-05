@@ -333,3 +333,41 @@ TEST(AddressDiscoveryTest, NothingIsConcludedBeforeAPeerHasTried) {
 
   EXPECT_FALSE(f.on_strand([&]() { return f.core->address_discovery()->cluster_unreachable(); }));
 }
+
+// RFC 3581: a public address a peer saw this node's request come from is a finding when no STUN server has
+// answered.
+TEST(AddressDiscoveryTest, APublicAddressAPeerSawIsAFinding) {
+  DiscoveryFixture f;
+
+  f.on_strand([&]() { f.core->address_discovery()->observed("node-b", "203.0.113.50"); });
+
+  const auto found = f.finding();
+  ASSERT_TRUE(found.has_value());
+  EXPECT_EQ(found->address, "203.0.113.50");
+  EXPECT_EQ(found->source, "peer:node-b");
+}
+
+// Nodes on one LAN see each other's private addresses, which say nothing about where the node is.
+TEST(AddressDiscoveryTest, APrivateAddressAPeerSawIsNot) {
+  DiscoveryFixture f;
+
+  f.on_strand([&]() {
+    for (const auto* address : {"10.35.1.20", "172.20.0.5", "192.168.1.2", "100.64.0.1", "169.254.1.1", "127.0.0.1", "fd00::1", "fe80::1"}) {
+      f.core->address_discovery()->observed("node-b", address);
+    }
+  });
+
+  EXPECT_FALSE(f.on_strand([&]() { return f.core->address_discovery()->finding(); }).has_value());
+}
+
+// A STUN answer, asked from the SIP socket itself, stands over what a peer saw.
+TEST(AddressDiscoveryTest, AStunAnswerStandsOverWhatAPeerSaw) {
+  DiscoveryFixture f;
+  f.on_strand([&]() { f.core->address_discovery()->start(); });
+  ASSERT_TRUE(f.answer_one());
+  ASSERT_TRUE(f.finding().has_value());
+
+  f.on_strand([&]() { f.core->address_discovery()->observed("node-b", "198.51.100.9"); });
+
+  EXPECT_EQ(f.finding()->address, "203.0.113.7");
+}
