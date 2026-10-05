@@ -19,6 +19,7 @@
 
 #include "../loggers/logger.h"
 #include "../loggers/logger_scoped.h"
+#include "response_stream.h"
 
 namespace athenasip::api {
 
@@ -58,6 +59,10 @@ class AdminAPI {
   // The executor the API runs on. It is not the Core strand; datastore answers for API
   // requests come back here, off the call path.
   net::any_io_executor executor() { return _io_context.get_executor(); }
+
+  // Where a route leaves a response that stays open (Router::streams).
+  void streams_register(std::shared_ptr<StreamRegistry> streams) { _streams = std::move(streams); }
+  std::shared_ptr<StreamRegistry> _streams;
 
   // Middleware that sends a fixed response and stops the chain.
   static HttpMiddleware send_status_end(uint16_t code, std::string message);
