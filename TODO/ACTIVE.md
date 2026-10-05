@@ -419,11 +419,9 @@ configuration search path, the heartbeat and its will, SPA mode as a choice, the
 `corvus-fi-1`, both datastores holding users and sessions, the whole of admin
 authentication from session issue to the OpenAPI document, and the one-command stack.
 
-- [ ] Admin API, part 2, what is left of it. `/api/v1/calls`, `/api/v1/calls/{call}`,
-      `/api/v1/media` and `/metrics` landed on 2026-10-01. Left: hanging up a call
-      (`DELETE /api/v1/calls/{call}`), which needs the node to send BYEs itself and so waits
-      for the local UA in M6; and `/api/v1/events`, an SSE stream bridging `nodes/#`,
-      `subscribers/#` and `calls/#`. Call history is in (`/api/v1/call-records`).
+- [ ] Admin API, part 2, what is left of it: hanging up a call (`DELETE
+      /api/v1/calls/{call}`), which needs the node to send BYEs itself and so waits for the
+      local UA in M6. `/api/v1/events` is in (`COMPLETED.md`).
 - [ ] athenasip-admin: replace the empty `src/lib/API.js` with a client generated from
       the OpenAPI document; pages for realms, subscribers, registrations, live calls,
       nodes, media engines, and the JsSIP test phone pointed at the server's own WSS.
