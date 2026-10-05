@@ -28,10 +28,20 @@ std::string verify(const types::Subscriber& subscriber, types::Authorization& cr
   // answer with the other one.
   if (stored.empty()) return "no " + algorithm + " credential for the subscriber";
 
-  // RFC 2617: response = H(HA1:nonce:HA2), HA2 = H(method:uri). HA1 is what is stored.
+  // RFC 2617: response = H(HA1:nonce:HA2), HA2 = H(method:uri). HA1 is what is stored. With qop=auth (RFC 2617
+  // 3.2.2.1, RFC 7616 3.4.1) the client's nc, cnonce and qop go between the nonce and HA2; auth-int, which would
+  // need the body, is not offered.
   const auto hash = [&algorithm](const std::string& input) { return algorithm == "SHA-256" ? Util::sha256(input) : Util::md5(input); };
+  const auto ha2 = hash(method + ":" + credentials.fields["uri"]);
 
-  const auto expected = Util::to_lower(hash(stored + ":" + credentials.fields["nonce"] + ":" + hash(method + ":" + credentials.fields["uri"])));
+  std::string expected;
+  if (credentials.contains_field("qop")) {
+    if (Util::to_lower(credentials.fields["qop"]) != "auth") return "an unsupported Digest qop " + credentials.fields["qop"];
+    expected = hash(stored + ":" + credentials.fields["nonce"] + ":" + credentials.fields["nc"] + ":" + credentials.fields["cnonce"] + ":auth:" + ha2);
+  } else {
+    expected = hash(stored + ":" + credentials.fields["nonce"] + ":" + ha2);
+  }
+  expected = Util::to_lower(expected);
 
   if (expected != Util::to_lower(credentials.fields["response"])) return "a Digest response that does not match";
 
