@@ -299,6 +299,33 @@ relayed_before=$(relayed_total)
 run_pair media          uas_media.xml   bob.csv   bob   invite_media.xml     alice.csv          alice 40s
 assert_media_relayed
 
+# The node ends a call over the admin API: both ends must be sent a BYE. Asked until the
+# call is answered; a ringing call is a 409. From inside the node's container, because a
+# sipp-uac container for curl would take the caller's address.
+node_api() {
+  docker exec athenasip-e2e curl -fsS -H "Authorization: Bearer ${ADMIN_TOKEN}" "$@"
+}
+
+hang_up_when_answered() {
+  for _ in $(seq 1 30); do
+    id=$(node_api "http://127.0.0.1:8080/api/v1/calls" 2>/dev/null | grep -o '"id":"hung-up-[^"]*"' | head -1 | sed 's/"id":"//; s/"$//')
+    if [ -n "${id}" ] && node_api -X DELETE "http://127.0.0.1:8080/api/v1/calls/$(printf '%s' "${id}" | sed 's/@/%40/g')" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+case "hung-up" in
+  *${FILTER}*)
+    hang_up_when_answered &
+    hanger=$!
+    run_pair hung-up uas.xml bob.csv bob invite_hung_up.xml alice.csv alice 40s
+    wait "${hanger}" || echo "    the DELETE never succeeded"
+    ;;
+esac
+
 run_pair delayed-offer  uas_delayed_offer.xml bob.csv bob invite_delayed_offer.xml alice.csv alice 30s
 run_pair hold-resume    uas_hold.xml          bob.csv bob invite_hold.xml          alice.csv alice 30s
 

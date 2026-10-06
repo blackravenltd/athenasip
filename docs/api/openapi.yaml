@@ -662,6 +662,33 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: hangUpCall
+      tags: [calls]
+      summary: End a call
+      description: |
+        Sends each end of the call a BYE. Takes `manage-cluster`. The call ends as the ends
+        answer, and its record is written then. A call not yet answered cannot be sent a BYE;
+        its caller ends it with a CANCEL.
+      responses:
+        "202":
+          description: The BYEs are on their way
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id]
+                properties:
+                  id:
+                    type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
 
   /media:
     get:

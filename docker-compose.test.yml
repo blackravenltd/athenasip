@@ -23,7 +23,7 @@ services:
       - >-
         printf '%s\n' "$$ATHENA_E2E_ADMIN_PASSWORD" > /tmp/admin-password &&
         exec /usr/local/bin/athenasip --add-user e2e-admin
-        --role manage-realms --role manage-realm-subscribers --role view-cluster-status
+        --role manage-realms --role manage-realm-subscribers --role view-cluster-status --role manage-cluster
         < /tmp/admin-password
     environment:
       ATHENA_E2E_ADMIN_PASSWORD: e2e-admin-password

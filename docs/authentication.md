@@ -82,7 +82,7 @@ do nothing.
 | `manage-admin-users` | Create, change and remove users and their roles. Its holder can grant itself any role. |
 | `manage-realms` | Create, change and remove realms |
 | `manage-realm-subscribers` | Create, change and remove subscribers in a realm |
-| `manage-cluster` | Defined; no route requires it yet |
+| `manage-cluster` | End live calls |
 
 ### Routes and roles
 
@@ -98,6 +98,7 @@ reference.
 | `POST /realms`, `PUT`/`DELETE /realms/{realm}` | `manage-realms` |
 | `/realms/{realm}/subscribers[/{user}]` | `manage-realm-subscribers` |
 | `/users[/{user}]`, `DELETE /users/{user}/sessions` | `manage-admin-users` |
+| `DELETE /calls/{call}` | `manage-cluster` |
 | `GET /subscriber/{realm}/config`, `GET /subscriber/{realm}/registrations`, `PUT /subscriber/{realm}/password` | The subscriber itself, with Digest (below) |
 
 Refusals:

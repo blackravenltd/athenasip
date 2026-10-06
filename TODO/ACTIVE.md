@@ -268,6 +268,12 @@ Dated, and not reopened without asking.
   serving something checked in, which is preferred to a copied bundle going stale. The
   Playwright spec lives beside the page in that repository and this side brings the
   node, rtpengine and the subscribers up for it.
+- (2026-10-06) The node sends a BYE to each end when it ends a call by its own policy
+  (`sip.media_timeout`, `sip.max_call_duration`) or for an administrator
+  (`DELETE /api/v1/calls/{call}`, `manage-cluster`), as Kamailio's dialog module does. It
+  never does on an RFC 4028 lapse, after which a proxy "MUST NOT send a BYE" (8.3). The BYE
+  is the one the far end would send, entering the proxy like any in-dialog request.
+
 
 ## Architecture
 
@@ -281,8 +287,8 @@ udp/tcp/tls/ws/wss servers -> Connection -> Channel     transport   s18, RFC 358
                                               |
                     +-------------+-----------+-----------+
                 Registrar       Proxy       Dialogs       UA        transaction users
-               s10, 3327,      s16, 3263   s12, 4028     (local
-               5626 flows      loose route              responses)
+               s10, 3327,      s16, 3263   s12, 4028     (BYE to
+               5626 flows      loose route              both ends)
                     |             |
                 Datastore    MediaEngine       Events: observability only, never the call path
                 (async)
@@ -294,8 +300,8 @@ Everything below the transaction users is a plugin: datastores, event systems an
 engines today, routing policy and others later. They hang off the TU layer and register
 through one contract, so adding a kind or an implementation touches nothing above it.
 
-The tree matches the diagram, checked on 2026-09-30, with one box not yet built: the local UA,
-which is what would let a node send a BYE to both ends of a call it decided was over.
+The tree matches the diagram. The local UA (`src/local_ua.*`) is the fourth transaction user:
+it sends a BYE to both ends of a call this node ends, through the proxy.
 `docs/architecture.md` describes the shape for a reader; this section is the target.
 
 ### Known deviations from the standards
@@ -412,9 +418,6 @@ configuration search path, the heartbeat and its will, SPA mode as a choice, the
 `corvus-fi-1`, both datastores holding users and sessions, the whole of admin
 authentication from session issue to the OpenAPI document, and the one-command stack.
 
-- [ ] Admin API, part 2, what is left of it: hanging up a call (`DELETE
-      /api/v1/calls/{call}`), which needs the node to send BYEs itself and so waits for the
-      local UA in M6. `/api/v1/events` is in (`COMPLETED.md`).
 - [ ] athenasip-admin: replace the empty `src/lib/API.js` with a client generated from
       the OpenAPI document; pages for realms, subscribers, registrations, live calls,
       nodes, media engines, and the JsSIP test phone pointed at the server's own WSS.
@@ -426,6 +429,7 @@ authentication from session issue to the OpenAPI document, and the one-command s
       are written (`COMPLETED.md`); this needs the schema first.
 - [ ] Packaging: Docker image, Debian package, Homebrew formula. In-tree plugins ship
       compiled in; the packages also carry the SDK headers.
+
 ---
 
 ## Milestone 6 - Conferencing, presence, web client
@@ -453,10 +457,6 @@ authentication from session issue to the OpenAPI document, and the one-command s
 - [ ] Web client repository: video calling and conferencing, JsSIP over WSS, served by
       AthenaSIP, configured from `/api/v1/subscriber/{realm}/config` with the subscriber's
       own credentials.
-- [ ] The local UA, the fourth transaction user in the Architecture diagram. Its first
-      use is tearing a lapsed call down towards both ends: on expiry this node discards
-      its state, which is what RFC 4028 section 8 asks of a proxy, and a node that
-      anchored media would rather tell both ends than leave them to their own timers.
 
 ---
 
