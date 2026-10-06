@@ -60,6 +60,8 @@ media:
   url: "rtpengine://172.31.0.30:22222"
 
   rtpengine:
+    engines: ["172.31.0.31:22222"]
+    ping_interval: 2
     # The engine is on the same bridge, so this only bounds silence.
     timeout_ms: 500
     attempts: 3

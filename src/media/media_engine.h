@@ -126,8 +126,9 @@ class MediaEngine : public plugins::Plugin {
   // Releases everything held for the call. Safe for a call the engine never saw.
   virtual void release(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) = 0;
 
-  // What the engine holds for the call, as a JSON object, for the admin API. Optional fields: `idle_seconds` (how long all
-  // of the call's media has been silent) and `legs`, one object per end per stream with cumulative "packets_in",
+  // What the engine holds for the call, as a JSON object, for the admin API. Optional fields: `held` (false when the
+  // engine holds nothing for the call, which is how a node tells media that has gone from media it cannot see),
+  // `idle_seconds` (how long all of the call's media has been silent) and `legs`, one object per end per stream with cumulative "packets_in",
   // "bytes_in" (from that end), "packets_out" and "bytes_out" (to it), measured at the engine.
   virtual void query(plugins::Executor on, std::shared_ptr<Call> call, plugins::Handler<std::string> handler) = 0;
 

@@ -10,10 +10,12 @@
 #include <yaml-cpp/yaml.h>
 
 #include <boost/json.hpp>
+#include <chrono>
 #include <ctime>
 #include <memory>
 #include <set>
 #include <string>
+#include <thread>
 
 #include "../helpers/fake_rtpengine_helper.h"
 #include "../helpers/sync_media_engine_helper.h"
@@ -645,6 +647,276 @@ TEST(RtpengineMediaEngineTest, AMediaAddressThatIsANameIsGivenAsTheAddressItReso
   flags.participant = 0;
   ASSERT_TRUE(engine->offer(call, kOffer, flags).ok);
   EXPECT_EQ(fake.last("offer")->string_at("media-address"), "127.0.0.1");
+
+  engine->close();
+}
+
+// --- A pool of engines -------------------------------------------------------------------
+
+namespace {
+
+Bencode pong() { return Bencode::dictionary({{"result", Bencode(std::string("pong"))}}); }
+
+std::string engine_name(const FakeRtpengine& fake) { return "rtpengine://127.0.0.1:" + std::to_string(fake.port()); }
+
+// Two engines: the URL names the first, rtpengine.engines adds the second.
+std::shared_ptr<SyncMediaEngine> make_pool(const FakeRtpengine& first, const FakeRtpengine& second,
+                                           const std::string& settings = "timeout_ms: 50\nattempts: 2") {
+  auto logger = std::make_shared<MockLogger>();
+  auto url = std::make_shared<types::URL>(engine_name(first));
+
+  auto engine = std::make_shared<SyncMediaEngine>(std::make_shared<RtpengineMediaEngine>(logger, url));
+  EXPECT_TRUE(engine->configure(YAML::Load(settings + "\nengines: [\"127.0.0.1:" + std::to_string(second.port()) + "\"]"), Config(logger)));
+
+  return engine;
+}
+
+std::shared_ptr<Call> make_call_with_id(const std::string& id) {
+  auto call = make_call();
+  call->id = id;
+  for (auto& participant : call->participants) participant.dialog->call_id = id;
+  return call;
+}
+
+std::size_t offers_to(const FakeRtpengine& fake) {
+  std::size_t count = 0;
+  for (const auto& request : fake.requests()) count += request.string_at("command") == "offer" ? 1 : 0;
+  return count;
+}
+
+}  // namespace
+
+// The engine that anchored a call is recorded on it, so every later request for the call, from any node, goes to
+// the engine that holds its ports.
+TEST(RtpengineMediaEngineTest, ACallIsRecordedOnTheEngineThatAnchoredItAndStaysThere) {
+  FakeRtpengine first;
+  FakeRtpengine second;
+  for (auto* fake : {&first, &second}) {
+    fake->answer("ping", pong());
+    fake->answer("offer", ok_with_sdp(kOffer));
+    fake->answer("answer", ok_with_sdp(kOffer));
+  }
+
+  auto engine = make_pool(first, second);
+  ASSERT_TRUE(engine->connect());
+
+  auto call = make_call();
+  Flags flags;
+  flags.participant = 0;
+  ASSERT_TRUE(engine->offer(call, kOffer, flags).ok);
+
+  const auto& holder = call->media_engine == engine_name(first) ? first : second;
+  const auto& other = &holder == &first ? second : first;
+  ASSERT_TRUE(call->media_engine == engine_name(first) || call->media_engine == engine_name(second)) << call->media_engine;
+
+  Flags answering;
+  answering.participant = 1;
+  ASSERT_TRUE(engine->answer(call, kOffer, answering).ok);
+  EXPECT_TRUE(engine->release(call));
+
+  EXPECT_TRUE(holder.last("answer").has_value());
+  EXPECT_TRUE(holder.last("delete").has_value());
+  EXPECT_FALSE(other.last("answer").has_value());
+  EXPECT_FALSE(other.last("delete").has_value());
+
+  engine->close();
+}
+
+// A node that never saw the call, reading it from the datastore, reaches the same engine.
+TEST(RtpengineMediaEngineTest, ACallRecordedOnAnEngineIsReleasedThereByAnyNode) {
+  FakeRtpengine first;
+  FakeRtpengine second;
+  first.answer("ping", pong());
+  second.answer("ping", pong());
+
+  auto engine = make_pool(first, second);
+  ASSERT_TRUE(engine->connect());
+
+  auto call = make_call();
+  call->media_engine = engine_name(second);
+  EXPECT_TRUE(engine->release(call));
+
+  EXPECT_TRUE(second.last("delete").has_value());
+  EXPECT_FALSE(first.last("delete").has_value());
+
+  engine->close();
+}
+
+// New calls are spread over the engines, and the choice depends on the call alone, so it is the same on every node.
+TEST(RtpengineMediaEngineTest, NewCallsAreSpreadOverEveryEngine) {
+  FakeRtpengine first;
+  FakeRtpengine second;
+  for (auto* fake : {&first, &second}) {
+    fake->answer("ping", pong());
+    fake->answer("offer", ok_with_sdp(kOffer));
+  }
+
+  auto engine = make_pool(first, second);
+  ASSERT_TRUE(engine->connect());
+
+  Flags flags;
+  flags.participant = 0;
+  for (int i = 0; i < 20; ++i) ASSERT_TRUE(engine->offer(make_call_with_id("spread-" + std::to_string(i) + "@example.com"), kOffer, flags).ok);
+
+  EXPECT_GT(offers_to(first), 0u);
+  EXPECT_GT(offers_to(second), 0u);
+  EXPECT_EQ(offers_to(first) + offers_to(second), 20u);
+
+  engine->close();
+}
+
+// An engine that stops answering costs the call it was asked about one timeout; that call and every later one go
+// to an engine that answers.
+TEST(RtpengineMediaEngineTest, AnEngineThatStopsAnsweringIsPassedOverForNewCalls) {
+  FakeRtpengine first;
+  FakeRtpengine second;
+  for (auto* fake : {&first, &second}) {
+    fake->answer("ping", pong());
+    fake->answer("offer", ok_with_sdp(kOffer));
+  }
+
+  auto engine = make_pool(first, second);
+  ASSERT_TRUE(engine->connect());
+
+  first.swallow(1000);
+
+  Flags flags;
+  flags.participant = 0;
+  for (int i = 0; i < 10; ++i) {
+    auto call = make_call_with_id("over-" + std::to_string(i) + "@example.com");
+    ASSERT_TRUE(engine->offer(call, kOffer, flags).ok) << i;
+    EXPECT_EQ(call->media_engine, engine_name(second));
+  }
+
+  // Asked once, for attempts datagrams, and not again.
+  EXPECT_LE(offers_to(first), 2u);
+  EXPECT_TRUE(engine->is_connected());
+
+  engine->close();
+}
+
+// A call already anchored cannot move: its ports are on the engine that went quiet.
+TEST(RtpengineMediaEngineTest, ACallOnAnEngineThatStoppedAnsweringIsNotMoved) {
+  FakeRtpengine first;
+  FakeRtpengine second;
+  for (auto* fake : {&first, &second}) {
+    fake->answer("ping", pong());
+    fake->answer("offer", ok_with_sdp(kOffer));
+  }
+
+  auto engine = make_pool(first, second);
+  ASSERT_TRUE(engine->connect());
+
+  first.swallow(1000);
+
+  auto call = make_call();
+  call->media_engine = engine_name(first);
+
+  Flags flags;
+  flags.participant = 0;
+  EXPECT_FALSE(engine->offer(call, kOffer, flags).ok);
+  EXPECT_EQ(call->media_engine, engine_name(first));
+  EXPECT_EQ(offers_to(second), 0u);
+
+  engine->close();
+}
+
+// The pool is pinged, and an engine that answers again takes calls again.
+TEST(RtpengineMediaEngineTest, AnEngineThatAnswersAgainTakesCallsAgain) {
+  FakeRtpengine first;
+  FakeRtpengine second;
+  for (auto* fake : {&first, &second}) {
+    fake->answer("ping", pong());
+    fake->answer("offer", ok_with_sdp(kOffer));
+  }
+
+  auto engine = make_pool(first, second, "timeout_ms: 50\nattempts: 2\nping_interval: 1");
+  ASSERT_TRUE(engine->connect());
+
+  // Down: every new call goes to the second.
+  first.swallow(1000);
+  Flags flags;
+  flags.participant = 0;
+  for (int i = 0; i < 10; ++i) ASSERT_TRUE(engine->offer(make_call_with_id("back-" + std::to_string(i) + "@example.com"), kOffer, flags).ok);
+  const auto while_down = offers_to(first);
+
+  first.swallow(0);
+  std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+
+  for (int i = 0; i < 10; ++i) ASSERT_TRUE(engine->offer(make_call_with_id("back-" + std::to_string(i) + "@example.com"), kOffer, flags).ok);
+  EXPECT_GT(offers_to(first), while_down);
+
+  engine->close();
+}
+
+// One engine answering is enough to serve; the rest are tried again by the pings.
+TEST(RtpengineMediaEngineTest, ConnectSucceedsWhileAnyEngineAnswers) {
+  FakeRtpengine first;
+  FakeRtpengine second;
+  first.swallow(1000);
+  second.answer("ping", pong());
+
+  auto engine = make_pool(first, second);
+  EXPECT_TRUE(engine->connect());
+  EXPECT_TRUE(engine->is_connected());
+
+  engine->close();
+}
+
+TEST(RtpengineMediaEngineTest, ConnectFailsWhenNoEngineAnswers) {
+  FakeRtpengine first;
+  FakeRtpengine second;
+  first.swallow(1000);
+  second.swallow(1000);
+
+  auto engine = make_pool(first, second);
+  EXPECT_FALSE(engine->connect());
+  EXPECT_FALSE(engine->is_connected());
+}
+
+// rtpengine.engines alone is a pool; the URL needs no host then.
+TEST(RtpengineMediaEngineTest, EnginesAloneNeedNoHostInTheUrl) {
+  auto logger = std::make_shared<MockLogger>();
+  auto engine = std::make_shared<RtpengineMediaEngine>(logger, std::make_shared<types::URL>("rtpengine://"));
+
+  EXPECT_TRUE(engine->configure(YAML::Load("engines: [\"10.0.0.5:2223\", \"10.0.0.6\"]"), Config(logger)));
+}
+
+// A call recorded on an engine this node does not have is not guessed at: another engine would delete nothing,
+// or the wrong call's ports.
+TEST(RtpengineMediaEngineTest, ACallRecordedOnAnEngineOutsideThePoolIsRefused) {
+  FakeRtpengine fake;
+  fake.answer("ping", pong());
+
+  auto engine = make_engine(fake);
+  ASSERT_TRUE(engine->connect());
+
+  auto call = make_call();
+  call->media_engine = "rtpengine://192.0.2.77:2223";
+
+  EXPECT_FALSE(engine->release(call));
+  EXPECT_FALSE(engine->query_result(call).ok);
+  EXPECT_FALSE(fake.last("delete").has_value());
+
+  engine->close();
+}
+
+// An engine that holds nothing for the call says so, which is how a node tells a call whose media has gone from one
+// it cannot see.
+TEST(RtpengineMediaEngineTest, AQueryForACallTheEngineDoesNotHoldSaysSo) {
+  FakeRtpengine fake;
+  fake.answer("ping", pong());
+  fake.answer("query", Bencode::dictionary({{"result", Bencode(std::string("error"))}, {"error-reason", Bencode(std::string("Unknown call-id"))}}));
+
+  auto engine = make_engine(fake);
+  ASSERT_TRUE(engine->connect());
+
+  auto held = engine->query_result(make_call());
+  ASSERT_TRUE(held.ok) << held.error;
+
+  const auto document = boost::json::parse(held.value).as_object();
+  ASSERT_TRUE(document.contains("held"));
+  EXPECT_FALSE(document.at("held").as_bool());
 
   engine->close();
 }

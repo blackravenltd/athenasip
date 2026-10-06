@@ -1632,7 +1632,8 @@ components:
         media_engine:
           type: string
           nullable: true
-          description: The engine that anchored the media; null when nothing did
+          description: The engine that anchored the media, null when nothing did. With rtpengine, the engine of the pool that holds the call, as rtpengine://host:port.
+          example: rtpengine://10.0.0.5:2223
 
     Subscriber:
       type: object
@@ -1775,6 +1776,9 @@ components:
         engine:
           type: string
           example: rtpengine
+        held:
+          type: boolean
+          description: False when the engine holds nothing for the call
         idle_seconds:
           type: integer
           nullable: true

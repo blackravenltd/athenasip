@@ -1361,9 +1361,10 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
       // Only an offer the engine produced counts as this node's for a re-offer.
       if (context && offered) context->offered = offered;
 
-      // Record which engine carried the call.
+      // Record which engine carried the call, unless the driver has named the instance itself.
       if (auto core = _core.lock(); core && core->media) {
-        if (auto anchored = core->call_get(value_of(message, "Call-ID"))) anchored->media_engine = core->media->describe();
+        auto anchored = core->call_get(value_of(message, "Call-ID"));
+        if (anchored && anchored->media_engine.empty()) anchored->media_engine = core->media->describe();
       }
 
       message->body = std::move(result.sdp);

@@ -203,7 +203,7 @@ the driver for what a URL cannot express. [Plugins](plugins.md) describes the co
 | URL | Driver |
 |---|---|
 | `builtin://` (default) | Relays plain RTP from the node's own process. Declines offers that need ICE, DTLS or SRTP; the SDP then passes through untouched and media goes end to end. |
-| `rtpengine://host[:port]` | [rtpengine](https://github.com/sipwise/rtpengine) over its ng control port (2223 by default). Required for WebRTC and SRTP. |
+| `rtpengine://host[:port]` | [rtpengine](https://github.com/sipwise/rtpengine) over its ng control port (2223 by default). Required for WebRTC and SRTP. With `media.rtpengine.engines` the host may be left out. |
 
 `media.builtin`:
 
@@ -217,8 +217,10 @@ the driver for what a URL cannot express. [Plugins](plugins.md) describes the co
 
 | Key | Default | Meaning |
 |---|---|---|
+| `engines` | none | More engines, as `host[:port]`, making a pool with the URL's. See [Media](media.md#more-than-one-engine). |
 | `timeout_ms` | `500` | Wait for one ng reply before asking again |
-| `attempts` | `3` | Total tries per request |
+| `attempts` | `3` | Total tries per request. An engine that gives no answer in all of them is taken out of the pool until it answers a ping. |
+| `ping_interval` | `10` | Seconds between pings of every engine |
 | `media_address` | unset | Address rtpengine should advertise. Leave unset to let rtpengine's interface configuration decide. May be a host name. A leg inside `sip.localnet` is given the node's local address instead. |
 
 Whether media is anchored at all is [`behaviour.media_anchor`](#behaviour).
