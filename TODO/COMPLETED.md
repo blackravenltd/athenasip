@@ -2747,3 +2747,16 @@ missed because its connection had silently died.
       every transport, the console 260 and 5, AthenaPhone 88 with werift calls carrying
       RTP both ways, direct and through TURN.
 
+### The local UA (2026-10-06)
+
+- [x] **The fourth transaction user** (`src/local_ua.*`). `LocalUA::hang_up` sends each end
+      of a confirmed dialog the BYE its peer would send (RFC 3261 12.2.1.1, 15.1.1): the
+      end's remote target, the peer's tag in From, one past the peer's CSeq, and the route set
+      from this node's own entries onward. It enters the proxy at `Core::local_request` as if
+      the peer had sent it, through a server transaction that keeps the answer, so flow
+      tokens reach a browser's flow and dialog tracking ends the call as for any BYE.
+- [x] **Ending calls by policy says so.** `sip.media_timeout` and `sip.max_call_duration`
+      send each end a BYE; an RFC 4028 lapse still sends none (8.3).
+- [x] **`DELETE /api/v1/calls/{call}`**, under `manage-cluster`: 202 with the BYEs on their
+      way, 404 for no live call, 409 for one not yet answered.
+

@@ -14,6 +14,7 @@
 
 #include "../call.h"
 #include "../core.h"
+#include "../local_ua.h"
 #include "../loggers/logger_scoped.h"
 #include "../push/push_parameters.h"
 #include "../qualifier.h"
@@ -65,12 +66,16 @@ CallsAPI::CallsAPI(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<Core
     : _logger(std::make_shared<loggers::LoggerScoped>("calls_api", std::move(logger))), _core(core), _executor(std::move(executor)) {}
 
 void CallsAPI::register_routes(Router& router) {
+  using types::roles::manage_cluster;
   using types::roles::view_cluster_status;
   auto self = shared_from_this();
 
   // Live state takes the status role, as registrations do.
   router.add(http::verb::get, "/api/v1/calls", {view_cluster_status}, [self](RouteContext c) { self->_list(std::move(c)); });
   router.add(http::verb::get, "/api/v1/calls/{call}", {view_cluster_status}, [self](RouteContext c) { self->_get(std::move(c)); });
+
+  // Ending a call changes the cluster's state, so reading calls is not enough.
+  router.add(http::verb::delete_, "/api/v1/calls/{call}", {manage_cluster}, [self](RouteContext c) { self->_hang_up(std::move(c)); });
   router.add(http::verb::get, "/api/v1/call-records", {view_cluster_status}, [self](RouteContext c) { self->_records(std::move(c)); });
   router.add(http::verb::get, "/api/v1/media", {view_cluster_status}, [self](RouteContext c) { self->_media(std::move(c)); });
   router.add(http::verb::get, "/api/v1/media/reoffers", {view_cluster_status}, [self](RouteContext c) { self->_reoffers(std::move(c)); });
@@ -195,6 +200,35 @@ void CallsAPI::_get(RouteContext context) {
 
     self->_describe({call}, [context](boost::json::array calls) mutable {
       write_json(context.response, http::status::ok, calls.empty() ? boost::json::value(nullptr) : calls[0]);
+      context.done();
+    });
+  });
+}
+
+// The node sends each end of the call a BYE (LocalUA). 202: they are on their way, and the
+// call ends as the ends answer.
+void CallsAPI::_hang_up(RouteContext context) {
+  auto core = _core.lock();
+  if (!core) {
+    write_error(context.response, http::status::service_unavailable, "unavailable", "the node is shutting down");
+    return context.done();
+  }
+
+  const auto id = context.parameter("call");
+  auto self = shared_from_this();
+
+  core->post([self, core, context, id]() mutable {
+    const bool live = core->call_get(id) != nullptr;
+    const bool sent = live && core->local_ua()->hang_up(id, "ended over the admin API");
+
+    boost::asio::post(self->_executor, [context, id, live, sent]() mutable {
+      if (!live) {
+        write_error(context.response, http::status::not_found, "not_found", "no live call with that Call-ID");
+      } else if (!sent) {
+        write_error(context.response, http::status::conflict, "not_answered", "the call has not been answered; the caller ends it with a CANCEL");
+      } else {
+        write_json(context.response, http::status::accepted, boost::json::object{{"id", id}});
+      }
       context.done();
     });
   });
