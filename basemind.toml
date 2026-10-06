@@ -1,7 +1,7 @@
-# basemind configuration - https://github.com/Goldziher/basemind
+# basemind configuration — https://github.com/Goldziher/basemind
 # Lives at the repo root and is meant to be committed. The index (blobs + Fjall) is derived state
 # kept in the machine-global cache under ~/.local/share/basemind/ (override BASEMIND_DATA_HOME),
-# keyed by workspace and wiped on schema bumps - nothing is written into the repo, so there is
+# keyed by workspace and wiped on schema bumps — nothing is written into the repo, so there is
 # nothing to gitignore. Never put durable config in the cache.
 # Every value below is the built-in default; uncomment and edit only what you want to change.
 "$schema" = "v1"
@@ -16,7 +16,7 @@
 # Honor .gitignore / .git/info/exclude while walking. Leave on unless you deliberately want
 # ignored files indexed.
 # respect_gitignore = true
-# Follow symlinks during the walk. Off by default - symlinks often escape the repo (e.g. Bazel's
+# Follow symlinks during the walk. Off by default — symlinks often escape the repo (e.g. Bazel's
 # bazel-* convenience symlinks). Turn on for repos that symlink real source into place.
 # follow_symlinks = false
 # Skip files larger than this many bytes (prevents minified-bundle stalls).
@@ -54,14 +54,14 @@
 [documents]
 # Document RAG tier (PDF / Office / HTML / email / images). Requires a `documents` build.
 # enabled = true
-# Embed documents for semantic search. ON by default - embeddings pay off on real prose / OCR.
+# Embed documents for semantic search. ON by default — embeddings pay off on real prose / OCR.
 # embed = true
 # Embedding model preset. Changing it forces a FULL RE-EMBED of the corpus (time + CPU): every
 # document is re-encoded at the new model's dimension.
-#   fast        - smallest / fastest, lowest quality
-#   balanced    - default; 768-dim, good quality/cost tradeoff
-#   quality     - larger model, best English quality, slower
-#   multilingual - multilingual model for non-English corpora
+#   fast        — smallest / fastest, lowest quality
+#   balanced    — default; 768-dim, good quality/cost tradeoff
+#   quality     — larger model, best English quality, slower
+#   multilingual— multilingual model for non-English corpora
 # embedding_preset = "balanced"
 # Globs for documents that are still extracted + indexed but NOT embedded (keyword-only).
 # embed_exclude = []
@@ -72,7 +72,7 @@
 [code_search]
 # Semantic code-search tier. Requires a `code-search` build.
 # enabled = true
-# Embed source code for VECTOR search. OFF by default - local embeddings on code aren't worth the
+# Embed source code for VECTOR search. OFF by default — local embeddings on code aren't worth the
 # cost (code is embedded with a general English model, and NL→symbol is already served by the BM25
 # keyword lane over the same text). Chunking + BM25 keyword search work regardless. Turn on only if
 # you specifically want vector search over code (downloads an ONNX model, re-embeds on preset change).
