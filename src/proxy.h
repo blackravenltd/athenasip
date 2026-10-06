@@ -53,6 +53,9 @@ class Proxy : public TransactionUser {
 
   void on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction) override;
 
+  // Whether a URI, as a Route or Record-Route, names this node.
+  bool names_this_node(const SIPUri& uri) const { return _names_this_node(uri); }
+
   // RFC 3261 9.2, 16.10: answers the CANCEL 200 and the INVITE it names 487, and cancels the branch in
   // flight.
   void on_cancel(std::shared_ptr<SIPMessage> cancel, std::shared_ptr<transactions::TransactionBase> cancel_transaction,

@@ -129,8 +129,9 @@ TEST(CoreMediaSweepTest, ACallWhoseMediaHasStoppedIsLetGo) {
   EXPECT_GT(f.engine->releases.load(), 0);
 }
 
-// RFC 4028 section 8.3: a proxy may drop call state and free resources but MUST NOT send a BYE.
-TEST(CoreMediaSweepTest, NoByeIsSentToEitherEnd) {
+// Media that has stopped is this node's own policy, not an RFC 4028 expiry (whose 8.3 forbids a proxy's BYE): the
+// node tells both ends rather than leave them holding a dead call.
+TEST(CoreMediaSweepTest, EachEndIsSentABye) {
   SweepFixture f;
   f.config->sip_media_timeout = 60;
 
@@ -142,8 +143,8 @@ TEST(CoreMediaSweepTest, NoByeIsSentToEitherEnd) {
 
   ASSERT_EQ(f.dialogs().size(), 0u);
 
-  EXPECT_TRUE(ProxyFixture::requests_with(f.caller_connection, "BYE").empty());
-  EXPECT_TRUE(ProxyFixture::requests_with(f.callee_connection, "BYE").empty());
+  EXPECT_EQ(ProxyFixture::requests_with(f.caller_connection, "BYE").size(), 1u);
+  EXPECT_EQ(ProxyFixture::requests_with(f.callee_connection, "BYE").size(), 1u);
 }
 
 // sip_media_timeout: 0 turns the media timeout off.
@@ -224,8 +225,8 @@ TEST(CoreMediaSweepTest, AMaximumOfZeroNeverEndsACall) {
   EXPECT_EQ(f.dialogs().size(), 1u);
 }
 
-// RFC 4028 section 8.3 holds for the duration cap too: no BYE to either end.
-TEST(CoreMediaSweepTest, TheMaximumSendsNoByeEither) {
+// The duration cap is policy too, and ends the call the same way.
+TEST(CoreMediaSweepTest, TheMaximumSendsEachEndABye) {
   SweepFixture f;
   f.config->sip_media_timeout = 0;
   f.config->sip_max_call_duration = 60;
@@ -235,6 +236,6 @@ TEST(CoreMediaSweepTest, TheMaximumSendsNoByeEither) {
 
   ASSERT_EQ(f.dialogs().size(), 0u);
 
-  EXPECT_TRUE(ProxyFixture::requests_with(f.caller_connection, "BYE").empty());
-  EXPECT_TRUE(ProxyFixture::requests_with(f.callee_connection, "BYE").empty());
+  EXPECT_EQ(ProxyFixture::requests_with(f.caller_connection, "BYE").size(), 1u);
+  EXPECT_EQ(ProxyFixture::requests_with(f.callee_connection, "BYE").size(), 1u);
 }

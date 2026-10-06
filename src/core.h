@@ -59,6 +59,7 @@ namespace athenasip {
 
 class Proxy;
 class Qualifier;
+class LocalUA;
 class Registrar;
 
 // The composition root. Core owns one strand, the registries (channels, transactions,
@@ -220,6 +221,16 @@ class Core : public std::enable_shared_from_this<Core> {
   // OPTIONS to registered clients, where their realm asks for it. See Qualifier.
   std::shared_ptr<Qualifier> qualifier();
 
+  // Requests this node sends as a user agent of its own. See LocalUA.
+  std::shared_ptr<LocalUA> local_ua();
+
+  // A request this node originates, routed by the proxy as if it had arrived. Its answer comes back to on_final
+  // rather than going anywhere. On the strand.
+  void local_request(std::shared_ptr<SIPMessage> request, transactions::TransactionBase::SendFn on_final);
+
+  // Whether a URI, as a Route or Record-Route, names this node.
+  bool names_this_node(const SIPUri& uri) const;
+
   // Calls
   bool call_register(std::shared_ptr<Call> call);
   bool call_unregister(std::string callId);
@@ -324,6 +335,7 @@ class Core : public std::enable_shared_from_this<Core> {
   std::shared_ptr<Registrar> _registrar;
   std::shared_ptr<Proxy> _proxy;
   std::shared_ptr<Qualifier> _qualifier;
+  std::shared_ptr<LocalUA> _local_ua;
   std::shared_ptr<PushRefresher> _push_refresher;
   std::shared_ptr<AddressDiscovery> _address_discovery;
   std::map<std::string, std::shared_ptr<push::PushService>> _push_services;
@@ -374,8 +386,8 @@ class Core : public std::enable_shared_from_this<Core> {
   void _flow_sweep_schedule();
   void _flow_sweep();
 
-  // Drops this node's state for a call it has decided is over. RFC 4028 section 8.3: a
-  // proxy may free the call's resources and MUST NOT send a BYE.
+  // Ends a call this node's own policy has decided is over (media silence, the duration
+  // cap), with a BYE to each end. An RFC 4028 lapse is the Dialogs sweep's and sends none.
   void _end_held_call(const std::string& call_id, const std::string& reason);
 };
 

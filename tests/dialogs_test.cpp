@@ -356,6 +356,23 @@ TEST(DialogsTest, AnUnrefreshedSessionLapses) {
   EXPECT_EQ(f.dialogs().size(), 0u);
 }
 
+// RFC 4028 section 8.3: on a lapse a proxy discards its state but "MUST NOT send a BYE"; the ends run their own
+// timers.
+TEST(DialogsTest, ALapsedSessionIsNotSentABye) {
+  Fixture f;
+  f.bind_bob();
+
+  f.receive(f.caller, f.invite("z9hG4bK-invite"));
+  f.receive(f.callee, f.response_from_callee(200, "OK", "bob", "sip:bob@192.0.2.20:5060", "Session-Expires: 1800;refresher=uas\r\n"));
+
+  f.on_strand([&f]() { f.timers->advance(std::chrono::seconds(1801)); });
+  f.settle();
+  ASSERT_EQ(f.dialogs().size(), 0u);
+
+  EXPECT_TRUE(ProxyFixture::requests_with(f.caller_connection, "BYE").empty());
+  EXPECT_TRUE(ProxyFixture::requests_with(f.callee_connection, "BYE").empty());
+}
+
 // RFC 4028 section 7: a re-INVITE or UPDATE inside the dialog refreshes the session.
 TEST(DialogsTest, ARefreshInsideTheDialogPostponesTheLapse) {
   Fixture f;
