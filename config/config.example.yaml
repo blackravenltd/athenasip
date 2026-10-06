@@ -94,6 +94,7 @@ media:
     port_min: 22000
     port_max: 23000
   rtpengine:
+    # engines: ["10.0.0.6:2223"]  # a pool with the url's engine; a call stays on the one it started on
     timeout_ms: 500
     attempts: 3
     # media_address: 203.0.113.9

@@ -4,7 +4,8 @@
 # Copyright (C) 2026 Tom Cully <mail@tomcully.com>
 # Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 #
-# An overlay that puts rtpengine on the media path instead of the builtin relay.
+# An overlay that puts rtpengine on the media path instead of the builtin relay: two
+# engines, as a pool.
 #
 #   test/e2e/run.sh --rtpengine
 #
@@ -36,9 +37,35 @@ services:
       retries: 30
       start_period: 2s
 
+  rtpengine-b:
+    image: drachtio/rtpengine:latest
+    container_name: athenasip-e2e-rtpengine-b
+    command:
+      - rtpengine
+      - --interface=172.31.0.31
+      - --listen-ng=172.31.0.31:22222
+      - --port-min=23300
+      - --port-max=23500
+      - --foreground
+      - --log-stderr
+      - --log-level=7
+      - --delete-delay=0
+    networks:
+      e2e:
+        ipv4_address: 172.31.0.31
+    healthcheck:
+      # ng is UDP only, so check that the control port is bound.
+      test: ["CMD-SHELL", "ss -lun | grep -q 22222 || netstat -lun | grep -q 22222"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+      start_period: 2s
+
   athenasip:
     volumes:
       - ./test/e2e/config-rtpengine:/root/.athenasip:ro
     depends_on:
       rtpengine:
+        condition: service_healthy
+      rtpengine-b:
         condition: service_healthy

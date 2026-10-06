@@ -33,9 +33,16 @@ namespace athenasip::media {
 //   media:
 //     url: rtpengine://203.0.113.9:2223
 //     rtpengine:
+//       engines: ["203.0.113.10:2223"]
 //       timeout_ms: 500
 //       attempts: 3
+//       ping_interval: 10
 //       media_address: 203.0.113.9
+//
+// The URL's engine and those in engines are a pool. A new call goes to an engine chosen from its Call-ID among
+// those answering, and the engine is recorded on the call (Call::media_engine) so that every later request for it,
+// from any node, goes where its ports are. An engine that stops answering gets no new calls until it answers a
+// ping again; a call already on it stays there, since its media cannot move.
 //
 // An ng message is a UDP datagram of "<cookie> <bencoded dictionary>", answered in the same shape. rtpengine caches
 // its answer against the cookie, so retransmitting the same datagram is safe, and this driver does so on silence.
@@ -68,10 +75,24 @@ class RtpengineMediaEngine : public MediaEngine, public std::enable_shared_from_
   static constexpr std::uint16_t kDefaultPort = 2223;
 
  private:
+  // One engine of the pool. Touched only on _strand once connect() has begun.
+  struct Engine {
+    std::string host;
+    std::uint16_t port = kDefaultPort;
+    boost::asio::ip::udp::endpoint endpoint;
+    bool resolved = false;
+    bool up = false;
+
+    // What Call::media_engine holds for a call on this engine.
+    std::string name() const { return "rtpengine://" + host + ":" + std::to_string(port); }
+  };
+
   // One outstanding request. The datagram is kept whole: a retransmission must carry the same cookie and bytes.
   struct Pending {
     std::string cookie;
     std::string datagram;
+    std::size_t engine = 0;
+    bool ping = false;
     std::function<void(std::optional<Bencode>)> handler;
     unsigned attempts_left = 0;
     std::shared_ptr<boost::asio::steady_timer> timer;
@@ -79,9 +100,34 @@ class RtpengineMediaEngine : public MediaEngine, public std::enable_shared_from_
 
   using Reply = std::function<void(std::optional<Bencode>)>;
 
-  // _command builds the dictionary; _request sends it and hands back the reply, or nothing on failure.
+  // A request about a call: the reply, the engine that gave it, or why there is none.
+  struct Answered {
+    std::optional<Bencode> reply;
+    std::string engine;
+    std::string error;
+  };
+
+  using CallReply = std::function<void(Answered)>;
+
+  // _command builds the dictionary; _request sends it to one engine and hands back the reply, or nothing on failure.
   Bencode _command(const std::string& name, const std::shared_ptr<Call>& call) const;
-  void _request(Bencode command, Reply reply);
+  void _request(Bencode command, std::size_t engine, Reply reply);
+
+  // Sends a command about a call to the engine recorded on it, or, for a call on none yet, to one chosen from its
+  // Call-ID. A chosen engine that does not answer is marked down and the next is tried, so a new call costs one
+  // timeout when an engine dies. Runs on _strand.
+  void _call_request(Bencode command, std::string recorded, std::string call_id, CallReply reply);
+  void _try_engines(std::shared_ptr<Bencode> command, std::string call_id, std::shared_ptr<std::vector<bool>> tried, CallReply reply);
+
+  // The engine of that name, or of the call's Call-ID among those answering and not yet tried.
+  std::optional<std::size_t> _engine_named(const std::string& name) const;
+  std::optional<std::size_t> _choose(const std::string& call_id, const std::vector<bool>& tried) const;
+
+  void _mark(std::size_t engine, bool up);
+
+  // Pings every engine; schedules the next round.
+  void _ping_all(std::function<void()> done);
+  void _ping_schedule();
 
   // Everything below runs on _strand, the only thread that touches _pending.
   std::shared_ptr<boost::asio::ip::udp::socket> _current_socket() const;
@@ -108,8 +154,8 @@ class RtpengineMediaEngine : public MediaEngine, public std::enable_shared_from_
   std::shared_ptr<loggers::Logger> _logger;
   std::shared_ptr<types::URL> _url;
 
-  std::string _host;
-  std::uint16_t _port = kDefaultPort;
+  std::vector<Engine> _engines;
+  std::atomic<std::size_t> _up{0};
   std::string _media_address;
 
   // media_address, which may be a name (public_address.h).
@@ -123,21 +169,22 @@ class RtpengineMediaEngine : public MediaEngine, public std::enable_shared_from_
   unsigned _timeout_ms = 500;
   unsigned _attempts = 3;
 
+  // Seconds between pings of the pool.
+  unsigned _ping_interval = 10;
+  std::shared_ptr<boost::asio::steady_timer> _ping_timer;
+
   boost::asio::strand<boost::asio::io_context::executor_type> _strand;
 
   // Behind a mutex because close() is called off the strand. close() hands the socket to the strand to be closed.
   mutable std::mutex _socket_mutex;
   std::shared_ptr<boost::asio::ip::udp::socket> _socket;
 
-  boost::asio::ip::udp::endpoint _endpoint;
   boost::asio::ip::udp::endpoint _received_from;
 
   // Sized for the largest UDP payload.
   std::vector<char> _receive_buffer;
 
   std::unordered_map<std::string, std::shared_ptr<Pending>> _pending;
-
-  std::atomic<bool> _connected{false};
 };
 
 }  // namespace athenasip::media

@@ -58,6 +58,7 @@ cleanup() {
   # And the engine's: its counters are the only evidence that it anchored a call.
   if [ "${ENGINE}" = "rtpengine" ]; then
     docker logs athenasip-e2e-rtpengine >"${RESULTS}/rtpengine.log" 2>&1 || true
+    docker logs athenasip-e2e-rtpengine-b >"${RESULTS}/rtpengine-b.log" 2>&1 || true
   fi
 
   ${COMPOSE} --profile e2e down --remove-orphans >/dev/null 2>&1 || true
@@ -232,6 +233,11 @@ relayed_total() {
     awk '/^athenasip_media_packets_relayed_total /{print $2}'
 }
 
+# What one rtpengine says it relayed, and rejected, over its life.
+engine_stats() { docker logs "$1" 2>&1 | grep -E '^\[.*Port .*<>.*[0-9]+ p,' || true; }
+engine_relayed() { engine_stats "$1" | awk -F'SSRC [^,]*, ' '{print $2}' | awk -F' p,' '{s+=$1} END {print s+0}'; }
+engine_errors() { engine_stats "$1" | awk -F'b, ' '{print $2}' | awk -F' e,' '{s+=$1} END {print s+0}'; }
+
 assert_media_relayed() {
   case "media" in
     *${FILTER}*) ;;
@@ -256,10 +262,9 @@ assert_media_relayed() {
     return 0
   fi
 
-  stats=$(docker logs athenasip-e2e-rtpengine 2>&1 | grep -E '^\[.*Port .*<>.*[0-9]+ p,' || true)
-
-  relayed=$(echo "${stats}" | awk -F'SSRC [^,]*, ' '{print $2}' | awk -F' p,' '{s+=$1} END {print s+0}')
-  errors=$(echo "${stats}" | awk -F'b, ' '{print $2}' | awk -F' e,' '{s+=$1} END {print s+0}')
+  # Either engine of the pool may have taken the call.
+  relayed=$(( $(engine_relayed athenasip-e2e-rtpengine) + $(engine_relayed athenasip-e2e-rtpengine-b) ))
+  errors=$(( $(engine_errors athenasip-e2e-rtpengine) + $(engine_errors athenasip-e2e-rtpengine-b) ))
 
   echo "  media-relayed (${relayed} packets, ${errors} errors)"
 
@@ -296,6 +301,29 @@ assert_media_relayed
 
 run_pair delayed-offer  uas_delayed_offer.xml bob.csv bob invite_delayed_offer.xml alice.csv alice 30s
 run_pair hold-resume    uas_hold.xml          bob.csv bob invite_hold.xml          alice.csv alice 30s
+
+# The pool: with the first engine gone, a new call is anchored by the second, after one
+# timeout at most.
+if [ "${ENGINE}" = "rtpengine" ]; then
+  case "engine-failover" in
+    *${FILTER}*)
+      docker stop athenasip-e2e-rtpengine >/dev/null
+      before=$(engine_relayed athenasip-e2e-rtpengine-b)
+      run_pair engine-failover uas_media.xml bob.csv bob invite_media.xml alice.csv alice 40s
+      sleep 2
+      after=$(engine_relayed athenasip-e2e-rtpengine-b)
+      echo "  engine-failover-relayed ($((after - before)) packets through the second engine)"
+      if [ "$((after - before))" -gt 0 ]; then
+        passed=$((passed + 1))
+      else
+        failed=$((failed + 1))
+        failures="${failures} engine-failover-relayed"
+        echo "    failed - the second engine relayed nothing, so the call did not move to it"
+      fi
+      docker start athenasip-e2e-rtpengine >/dev/null
+      ;;
+  esac
+fi
 
 # Last, because timer B is 64*T1 and this one waits it out.
 run_pair invite-timeout uas_silent.xml  carol.csv carol invite_timeout.xml   alice-to-carol.csv alice 60s

@@ -77,6 +77,29 @@ servers in `http.api.ice_servers`; the node hands them to web clients at
 is set ([Configuration](configuration.md#httpapi)). `docker/up.sh` brings up rtpengine and
 coturn already wired together ([Quick Start](quick_start.md)).
 
+### More than one engine
+
+```yaml
+media:
+  url: "rtpengine://10.0.0.5:2223"
+  rtpengine:
+    engines: ["10.0.0.6:2223"]
+```
+
+The engines are a pool. Each new call goes to one chosen from its Call-ID among the engines
+that are answering, so calls spread across the pool, and every node sharing the pool makes
+the same choice. The engine is recorded on the call (`media_engine` in
+`GET /api/v1/calls/{call}`), and every later request for that call goes to it, from
+whichever node asks.
+
+The node pings every engine every `ping_interval` seconds. An engine that stops answering
+gets no new calls, and the call that found it out costs one timeout
+(`timeout_ms` times `attempts`) before it moves to another. Calls already on that engine
+stay there: their media cannot move. The engine takes calls again once it answers a ping.
+
+Give every node in a cluster the same pool. A call recorded on an engine a node does not
+have is left alone by that node rather than sent to another engine.
+
 ## Ports to open
 
 | Engine | Open, or forward from the router, to the media host |

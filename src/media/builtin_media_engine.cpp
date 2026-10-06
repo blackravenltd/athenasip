@@ -410,8 +410,8 @@ std::string BuiltinMediaEngine::_query(std::shared_ptr<Call> call) {
   }
   legs += "]";
 
-  return "{\"call_id\":\"" + call->id + "\",\"engine\":\"builtin\",\"relay_sets\":" + std::to_string(count) + ",\"idle_seconds\":" + idle_seconds +
-         ",\"legs\":" + legs + "}";
+  return "{\"call_id\":\"" + call->id + "\",\"engine\":\"builtin\",\"held\":" + (it == _allocated.end() ? "false" : "true") +
+         ",\"relay_sets\":" + std::to_string(count) + ",\"idle_seconds\":" + idle_seconds + ",\"legs\":" + legs + "}";
 }
 
 std::optional<std::uint64_t> BuiltinMediaEngine::packets_relayed() const {
