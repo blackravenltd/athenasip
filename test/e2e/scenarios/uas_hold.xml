@@ -41,7 +41,7 @@
   <recv request="INVITE">
     <action>
       <ereg regexp="a=sendonly" search_in="body" check_it="true" assign_to="hold_offered"/>
-      <ereg regexp="c=IN IP4 172\.31\.0\.(10|30)" search_in="body" check_it="true" assign_to="hold_anchored"/>
+      <ereg regexp="c=IN IP4 172\.31\.0\.(10|30|31)" search_in="body" check_it="true" assign_to="hold_anchored"/>
     </action>
   </recv>
 
@@ -75,7 +75,7 @@
   <recv request="INVITE">
     <action>
       <ereg regexp="a=sendrecv" search_in="body" check_it="true" assign_to="resume_offered"/>
-      <ereg regexp="c=IN IP4 172\.31\.0\.(10|30)" search_in="body" check_it="true" assign_to="resume_anchored"/>
+      <ereg regexp="c=IN IP4 172\.31\.0\.(10|30|31)" search_in="body" check_it="true" assign_to="resume_anchored"/>
     </action>
   </recv>
 

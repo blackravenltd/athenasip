@@ -105,7 +105,7 @@
   <recv response="200" rtd="true" rrs="true">
     <action>
       <!-- The offer must name the relay, not the callee at 172.31.0.20. -->
-      <ereg regexp="c=IN IP4 172\.31\.0\.(10|30)" search_in="body" check_it="true" assign_to="offer_anchored"/>
+      <ereg regexp="c=IN IP4 172\.31\.0\.(10|30|31)" search_in="body" check_it="true" assign_to="offer_anchored"/>
       <ereg regexp="m=audio [0-9]+ RTP/AVP" search_in="body" check_it="true" assign_to="offer_media"/>
     </action>
   </recv>
