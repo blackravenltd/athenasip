@@ -60,7 +60,7 @@
 
   <recv request="ACK" rtd="true" crlf="true">
     <action>
-      <ereg regexp="c=IN IP4 172\.31\.0\.(10|30)" search_in="body" check_it="true" assign_to="answer_anchored"/>
+      <ereg regexp="c=IN IP4 172\.31\.0\.(10|30|31)" search_in="body" check_it="true" assign_to="answer_anchored"/>
     </action>
   </recv>
 
