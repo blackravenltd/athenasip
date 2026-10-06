@@ -85,8 +85,10 @@ such a call:
 | `max_call_duration` | Every call | Cannot tell a live call from a dead one |
 | `require_session_timer` | Every call that is set up | Fails calls to endpoints without RFC 4028 |
 
-The first two cover most deployments. When any of them fires the node releases its state
-and sends nothing: a proxy must not send BYE (RFC 4028 8.3).
+The first two cover most deployments. When `media_timeout` or `max_call_duration` fires,
+the node sends each end a BYE and releases the call. When a session timer lapses it releases
+the call and sends nothing: RFC 4028 8.3 forbids a proxy's BYE there, and the ends run their
+own timers.
 
 A caller that asks for an interval below `session_min_se` and advertises
 `Supported: timer` is answered 422 with `Min-SE`. One that does not advertise it has its

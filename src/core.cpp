@@ -21,6 +21,7 @@
 #include "channel.h"
 #include "events/topics.h"
 #include "expiry_set.h"
+#include "local_ua.h"
 #include "proxy.h"
 #include "push/push_parameters.h"
 #include "qualifier.h"
@@ -667,6 +668,24 @@ std::shared_ptr<Qualifier> Core::qualifier() {
   if (!_qualifier) _qualifier = std::make_shared<Qualifier>(_logger->base_logger(), weak_from_this());
   return _qualifier;
 }
+
+std::shared_ptr<LocalUA> Core::local_ua() {
+  if (!_local_ua) _local_ua = std::make_shared<LocalUA>(_logger->base_logger(), weak_from_this());
+  return _local_ua;
+}
+
+void Core::local_request(std::shared_ptr<SIPMessage> request, transactions::TransactionBase::SendFn on_final) {
+  // A server transaction like any other, except that its answer stays here. It has no transport, so no
+  // retransmissions to absorb, and it is not filed: nothing arrives for it.
+  const auto key = TransactionMatcher::key(request);
+  auto transaction = std::make_shared<NonInviteServerTransaction>(_logger->base_logger(), key, true, Timers::from_config(*config), _timer_source,
+                                                                  std::move(on_final), nullptr);
+  transaction->start(request);
+
+  _deliver_to_tu(request, transaction);
+}
+
+bool Core::names_this_node(const SIPUri& uri) const { return _proxy && _proxy->names_this_node(uri); }
 
 void Core::_deliver_to_tu(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction) {
   _ensure_transaction_users();
@@ -1323,10 +1342,12 @@ void Core::_close_orphan(const std::shared_ptr<Call>& call, const std::string& r
 }
 
 void Core::_end_held_call(const std::string& call_id, const std::string& reason) {
-  _logger->info("Call " + call_id + " " + reason + " - letting it go");
+  _logger->info("Call " + call_id + " " + reason + " - ending it");
 
-  // Terminating the dialogs is enough: _on_dialog_change writes the record and releases the
-  // media. No BYE is sent (RFC 4028 section 8.3).
+  // This node's own policy, not an RFC 4028 lapse, so both ends are told. Their BYEs end the
+  // dialogs, which writes the record and releases the media (_on_dialog_change).
+  if (local_ua()->hang_up(call_id, reason)) return;
+
   for (const auto& dialog : dialogs()->all()) {
     if (dialog && dialog->call_id == call_id) dialogs()->terminate(dialog);
   }

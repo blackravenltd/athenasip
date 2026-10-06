@@ -10,9 +10,9 @@ udp/tcp/tls/ws/wss Server -> Connection -> Channel     transport          s18, R
                                               |
                                       Transaction layer   matcher + 4 machines   s17
                                               |
-                    +-------------+-----------+-----------+
-                Registrar       Proxy       Dialogs    Qualifier   transaction users
-               s10, 3327,      s16, 3263   s12, 4028   (OPTIONS)
+                    +-------------+-----------+-----------+-----------+
+                Registrar       Proxy       Dialogs    Qualifier    LocalUA    transaction users
+               s10, 3327,      s16, 3263   s12, 4028   (OPTIONS)    (BYE)
                5626            6026
                     |             |
                 Datastore    MediaEngine       EventSystem: observability only
@@ -31,7 +31,7 @@ Core = composition root + the strand
 | `src/servers/` | One `Server` and `Connection` type per transport |
 | `src/channel.*` | `Channel`: SIP framing and parsing over one connection |
 | `src/transactions/` | The four RFC 3261 17 state machines and the matcher |
-| `src/registrar.*`, `src/proxy.*`, `src/dialogs.*`, `src/qualifier.*` | Transaction users |
+| `src/registrar.*`, `src/proxy.*`, `src/dialogs.*`, `src/qualifier.*`, `src/local_ua.*` | Transaction users. `LocalUA` ends a call with a BYE to each end, sent through the proxy as the far end would send it. |
 | `src/dns/` | RFC 3263 server location: NAPTR, SRV, A/AAAA |
 | `src/datastores/`, `src/events/`, `src/media/` | Plugin interfaces and the in-tree drivers |
 | `src/plugins/` | The plugin base class and registry |
