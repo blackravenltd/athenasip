@@ -38,6 +38,17 @@ PHONE_REPO="${ATHENA_SUITE_PHONE_REPO:-$ROOT/../athenaphone}"
 RESULTS="$ROOT/test/suite/results/$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$RESULTS"
 
+# The machine's load through the run, every ten seconds: a test that hangs may have been starved.
+(
+  while true; do
+    echo "=== $(date +%H:%M:%S) $(uptime | sed 's/.*load/load/')"
+    docker stats --no-stream --format '{{.Name}} cpu={{.CPUPerc}} mem={{.MemUsage}}' 2>/dev/null
+    sleep 10
+  done
+) >"$RESULTS/load.log" 2>&1 &
+LOAD_SAMPLER=$!
+trap 'kill $LOAD_SAMPLER 2>/dev/null' EXIT
+
 declare -a NAMES=() OUTCOMES=()
 record() { NAMES+=("$1"); OUTCOMES+=("$2"); echo "  -> $1: $2"; }
 
