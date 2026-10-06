@@ -2725,3 +2725,25 @@ missed because its connection had silently died.
       (RFC 3261 16.7 step 5); SIGTERM, which `systemctl stop` sends, shuts the node down
       cleanly and publishes "stopped" instead of killing it; the harness configs lose keys
       nothing reads.
+
+### The rtpengine pool, and calls a dead node left (2026-10-06)
+
+- [x] **A pool of rtpengine engines.** `media.rtpengine.engines` adds engines to the URL's.
+      A new call goes to one chosen from its Call-ID among those answering, the same on every
+      node, and the engine is recorded on the call (`Call::media_engine`,
+      `rtpengine://host:port`), so every later request for it goes there from any node. An
+      engine that gives no answer is out of the pool until it answers a ping
+      (`ping_interval`); the call that found it out moves to another after one timeout, and a
+      call already on it stays. Proven by `test/e2e/run.sh --rtpengine`, which now runs two
+      engines and stops the first mid-run (`engine-failover`), 14 of 14.
+- [x] **Call records a gone or restarted node left behind.** The live node with the lowest
+      id closes them (`Core::_orphan_sweep`): at once when the media was not anchored, and
+      for anchored media once the engine holds nothing for the call or it has been silent
+      for `sip.media_timeout`. A node judges others only after three status intervals.
+      Engines now say `held: false` for a call they hold nothing for. Proven in
+      `test/e2e/cluster.sh` (`failover-orphan-closed`). `docs/clustering.md` no longer
+      claims phones hang up when a node dies: with rtpengine the media carries on.
+- [x] **The whole suite green in both phases** (`20261006-113507`): unit 1268, smoke on
+      every transport, the console 260 and 5, AthenaPhone 88 with werift calls carrying
+      RTP both ways, direct and through TURN.
+
