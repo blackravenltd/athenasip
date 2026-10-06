@@ -41,7 +41,7 @@ It runs the unit tests and the sipp harnesses, then brings the interop fixture u
 with direct media and relayed through coturn, and runs each sibling project's suite against
 it: `npm run test:athenasip` in `../athenasip-admin` and `../athenaphone`
 (`ATHENA_SUITE_ADMIN_REPO` and `ATHENA_SUITE_PHONE_REPO` move them). Results, with each
-project's `summary.json`, are under `test/suite/results/`.
+project's `summary.json` and the machine's load every ten seconds (`load.log`), are under `test/suite/results/`.
 
 A project's script reads the fixture from `ATHENA_INTEROP_*` (`generated/fixture.env`),
 the phase from `ATHENA_SUITE_PHASE` and where to write from `ATHENA_SUITE_RESULTS`; it
