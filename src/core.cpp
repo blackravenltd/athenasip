@@ -66,6 +66,21 @@ std::optional<std::uint32_t> idle_seconds_of(const std::string& document) {
   }
 }
 
+// Whether the engine says it holds anything for the call; nullopt when it does not say.
+std::optional<bool> held_of(const std::string& document) {
+  try {
+    const auto parsed = boost::json::parse(document);
+    if (!parsed.is_object()) return std::nullopt;
+
+    const auto* value = parsed.as_object().if_contains("held");
+    if (value == nullptr || !value->is_bool()) return std::nullopt;
+
+    return value->as_bool();
+  } catch (const std::exception&) {
+    return std::nullopt;
+  }
+}
+
 }  // namespace
 
 Core::Core(std::shared_ptr<Logger> logger, std::shared_ptr<Config> _config, std::shared_ptr<athenasip::datastores::Datastore> _datastore,
@@ -1161,14 +1176,15 @@ void Core::_call_sweep_schedule() {
   const auto media_timeout = media ? config->sip_media_timeout : 0;
   const auto max_duration = config->sip_max_call_duration;
 
-  if (media_timeout == 0 && max_duration == 0) return;
+  if (!_watching_since) _watching_since = _timer_source->now();
 
   // Every quarter of the shorter bound, and at most every fifteen seconds: each pass
-  // queries the engine once per live call.
+  // queries the engine once per live call. With neither, the pass only looks for calls
+  // left by a node that has gone, once a minute.
   std::uint32_t shortest = media_timeout;
   if (max_duration > 0 && (shortest == 0 || max_duration < shortest)) shortest = max_duration;
 
-  const auto interval = std::max<std::uint32_t>(shortest / 4, 15);
+  const auto interval = shortest == 0 ? 60 : std::max<std::uint32_t>(shortest / 4, 15);
 
   std::weak_ptr<Core> weak_self = weak_from_this();
 
@@ -1225,7 +1241,85 @@ void Core::_call_sweep() {
     });
   }
 
+  _orphan_sweep();
   _call_sweep_schedule();
+}
+
+void Core::_orphan_sweep() {
+  const auto interval = config->events_status_interval;
+  if (!datastore || interval == 0 || !_watching_since) return;
+
+  // A node that has just started has heard nobody, and every other node would look gone.
+  const auto watch = std::chrono::seconds(interval * 3);
+  if (_timer_source->now() - *_watching_since < watch) return;
+
+  const auto& self_id = config->sip_node_id;
+
+  std::set<std::string> live{self_id};
+  for (const auto& node : _nodes->list(watch)) {
+    if (!node.stale && node.status == "ok") live.insert(node.id);
+  }
+
+  // One node does it, so the engine is asked once per call.
+  if (*live.begin() != self_id) return;
+
+  std::weak_ptr<Core> weak_self = weak_from_this();
+
+  datastore->call_list(_strand, [weak_self, live](plugins::Result<std::vector<std::shared_ptr<Call>>> listed) {
+    auto self = weak_self.lock();
+    if (!self || !listed.ok) return;
+
+    for (const auto& call : listed.value) {
+      if (!call || call->state == Call::State::Closed || call->node.empty()) continue;
+
+      // This node's own calls from before it restarted have lost their dialogs too.
+      const bool orphan =
+          call->node == self->config->sip_node_id ? !self->call_get(call->id) && call->created_at < self->_constructed_at : live.count(call->node) == 0;
+      if (orphan) self->_settle_orphan(call);
+    }
+  });
+}
+
+void Core::_settle_orphan(const std::shared_ptr<Call>& call) {
+  // Media end to end never touched the node, and no node can see it.
+  if (call->media_engine.empty()) return _close_orphan(call, "its node has gone and its media was not anchored", false);
+
+  if (!media || !media->is_connected()) return;
+
+  const auto media_timeout = config->sip_media_timeout;
+  std::weak_ptr<Core> weak_self = weak_from_this();
+
+  // Anchored media outlives the node that set it up, so the call is over only when the media is.
+  media->query(_strand, call, [weak_self, call, media_timeout](plugins::Result<std::string> held) {
+    auto self = weak_self.lock();
+    if (!self || !held.ok) return;
+
+    if (held_of(held.value) == false) return self->_close_orphan(call, "its node has gone and the engine holds nothing for it", false);
+
+    const auto idle = idle_seconds_of(held.value);
+    if (media_timeout > 0 && idle && *idle >= media_timeout) {
+      self->_close_orphan(call, "its node has gone and it has carried no media for " + std::to_string(*idle) + "s", true);
+    }
+  });
+}
+
+void Core::_close_orphan(const std::shared_ptr<Call>& call, const std::string& reason, bool release) {
+  _logger->info("Closing call " + call->id + " of node " + call->node + ": " + reason);
+
+  if (release && media) {
+    media->release(_strand, call, [this, self = shared_from_this(), call](plugins::Status status) {
+      if (!status.ok) _logger->warn("Cannot release the media for call " + call->id + " - " + status.error);
+    });
+  }
+
+  call->state = Call::State::Closed;
+  call->ended_at = std::time(nullptr);
+
+  datastore->call_update(_strand, call, [this, self = shared_from_this(), call](plugins::Status status) {
+    if (!status.ok) _logger->error("Cannot close call " + call->id + " - " + status.error);
+  });
+
+  events->publish(events::topics::call_state(call->id), Call::state_to_string(call->state));
 }
 
 void Core::_end_held_call(const std::string& call_id, const std::string& reason) {

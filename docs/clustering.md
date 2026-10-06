@@ -144,8 +144,16 @@ there; use whichever your clients support:
   over TLS or WSS gets the other live nodes listed in the REGISTER's 200, and can move to
   one of them. See [Architecture](architecture.md#clustering).
 
-Calls that were up through the dead node are lost; the phones notice when the media stops
-and hang up.
+A call that was up through the dead node loses its signalling: a BYE or re-INVITE has
+nowhere to go. Its media does not depend on the node when rtpengine anchors it, so the call
+carries on until a phone hangs up. With `builtin://` the media dies with the node.
+
+Calls the dead node held stay in the datastore as they were. Once a node has gone, the live
+node with the lowest `node_id` closes their records: at once for a call whose media was not
+anchored, and for an anchored one when its engine says the media has stopped for
+`sip.media_timeout` or no longer holds the call, releasing its ports. A node that restarts
+closes its own calls from before the restart the same way. Nodes judge another gone only
+after hearing the cluster for three `events.status_interval` periods.
 
 ## The node's own address
 
