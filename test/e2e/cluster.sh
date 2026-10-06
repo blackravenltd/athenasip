@@ -361,7 +361,8 @@ run_pair across-invite-timeout "${NODE_B}" uas_silent.xml "${NODE_A}" invite_tim
 
 # Last, because it kills node A. Bob registers through node A, node A dies mid-registration,
 # Bob registers again through node B as an RFC 3263 client would, and a new call through
-# node B reaches him well inside his registration interval.
+# node B reaches him well inside his registration interval. A call node A was still setting
+# up when it died is closed in the store by node B.
 case "failover" in
   *${FILTER}*)
     echo "  failover"
@@ -377,8 +378,31 @@ case "failover" in
       -m 1 -r 1 -timeout 20s -timeout_error \
       -nostdin "${NODE_A}:5060" >"${RESULTS}/cluster-failover-register-a.log" 2>&1
 
+    # Carol answers nothing, so node A's call to her is still being set up when it dies.
+    allocate_port
+    carol_port="${next_port}"
+    allocate_port
+    orphan_port="${next_port}"
+
+    ${COMPOSE} run --rm sipp-uas \
+      -sf /e2e/scenarios/register.xml -inf /e2e/carol.csv -au carol -ap carol-secret \
+      -p "${carol_port}" -cid_str "failover-orphan-reg-%u-%p@%s" \
+      -m 1 -r 1 -timeout 20s -timeout_error \
+      -nostdin "${NODE_B}:5060" >"${RESULTS}/cluster-failover-orphan-register.log" 2>&1
+    ${COMPOSE} run -d --name cluster-uas-orphan sipp-uas \
+      -sf /e2e/scenarios/uas_silent.xml -inf /e2e/carol.csv -au carol -ap carol-secret \
+      -p "${carol_port}" -m 1 -r 1 -timeout 60s -nostdin "${NODE_B}:5060" >/dev/null 2>&1
+    ${COMPOSE} run -d --name cluster-uac-orphan sipp-uac \
+      -sf /e2e/scenarios/invite_timeout.xml -inf /e2e/alice-to-carol.csv -au alice -ap alice-secret \
+      -p "${orphan_port}" -cid_str "failover-orphan-%u-%p@%s" \
+      -m 1 -r 1 -timeout 60s -nostdin "${NODE_A}:5060" >/dev/null 2>&1
+    sleep 3
+
     docker kill athenasip-cluster-node-a >/dev/null 2>&1
     killed_at=$(date +%s)
+
+    # Their record stays open; the addresses they hold are the next sipp runs'.
+    docker rm -f cluster-uas-orphan cluster-uac-orphan >/dev/null 2>&1 || true
 
     ${COMPOSE} run --rm sipp-uas \
       -sf /e2e/scenarios/register.xml -inf /e2e/bob.csv -au bob -ap bob-secret \
@@ -416,6 +440,25 @@ case "failover" in
       failed=$((failed + 1))
       failures="${failures} failover"
       echo "    failed - see ${RESULTS}/cluster-failover*.log"
+    fi
+
+    # The call sweep runs every 75 seconds with the default sip.media_timeout.
+    echo "  failover-orphan-closed"
+    closed=1
+    for _ in $(seq 1 40); do
+      if api "http://${NODE_B}:8080/api/v1/call-records?limit=1000" 2>/dev/null | grep -q '"id":"failover-orphan-'; then
+        closed=0
+        break
+      fi
+      sleep 5
+    done
+
+    if [ "${closed}" -eq 0 ]; then
+      passed=$((passed + 1))
+    else
+      failed=$((failed + 1))
+      failures="${failures} failover-orphan-closed"
+      echo "    failed - node B never closed the record of the call node A was setting up"
     fi
     ;;
 esac

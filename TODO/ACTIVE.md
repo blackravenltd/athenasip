@@ -357,14 +357,6 @@ The trunk scenario waits on trunks existing.
 - [ ] A harness scenario for a trunk, once a trunk is something the node can be
       configured with: an authenticated subscriber calling a number that leaves by it, and
       a call arriving from it. Today an off-node call goes wherever its Request-URI says.
-- [ ] **Prove the rtpengine pool against real engines.** Built and unit tested: a pool
-      from `media.rtpengine.engines`, each call recorded on its engine
-      (`Call::media_engine`, `src/media/rtpengine_media_engine.cpp`), pings every
-      `ping_interval`, and the live node with the lowest id closing a gone node's call
-      records (`Core::_orphan_sweep`, `src/core.cpp`). `test/e2e/run.sh --rtpengine` now
-      runs two engines and an `engine-failover` scenario that stops the first; it has not
-      run yet (Docker Desktop was paused on 2026-10-06). Run it, then the two-node harness
-      with a node killed mid-call against rtpengine, before moving this to `COMPLETED.md`.
 - [ ] The phone's media across the internet: AthenaPhone on mobile data to
       macnessa.athenasip.org. The 2026-10-04 run's phone leg went over the link between
       the two sites.
