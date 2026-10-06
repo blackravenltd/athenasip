@@ -12,6 +12,7 @@
 #include <boost/asio/post.hpp>
 #include <boost/asio/ssl.hpp>
 #include <boost/asio/strand.hpp>
+#include <ctime>
 #include <future>
 #include <iostream>
 #include <map>
@@ -349,6 +350,16 @@ class Core : public std::enable_shared_from_this<Core> {
 
   void _call_sweep_schedule();
   void _call_sweep();
+
+  // Closes the records of calls whose node has gone, or that this node held before it restarted. Run by the live
+  // node with the lowest id; an anchored call is closed only once its engine says its media has stopped.
+  void _orphan_sweep();
+  void _settle_orphan(const std::shared_ptr<Call>& call);
+  void _close_orphan(const std::shared_ptr<Call>& call, const std::string& reason, bool release);
+
+  // When the sweep began, by the timer source: a node judges another gone only after three status intervals.
+  std::optional<std::chrono::steady_clock::time_point> _watching_since;
+  std::time_t _constructed_at = std::time(nullptr);
 
   // channel_connect's TLS half: the client side of the cluster's mutual TLS.
   void _secure_flow(std::shared_ptr<boost::asio::ip::tcp::socket> socket, std::shared_ptr<boost::asio::ssl::context> context, const std::string& host,
