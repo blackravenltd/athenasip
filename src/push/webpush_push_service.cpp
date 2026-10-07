@@ -37,6 +37,17 @@ WebpushPushService::WebpushPushService(std::shared_ptr<loggers::Logger> logger, 
 
 std::string WebpushPushService::name() const { return "webpush"; }
 
+plugins::Settings WebpushPushService::settings() {
+  using namespace plugins::define;
+  return {
+      section("webpush", "Web Push (RFC 8030) with VAPID (RFC 8292), for webpush:// in push.urls."),
+      required(text("webpush.vapid_private_key", "", "A P-256 private key, PEM: openssl ecparam -name prime256v1 -genkey -noout -out vapid.pem.")),
+      required(text("webpush.subject", "", "A mailto: or https: URI a push service can reach you at.")),
+      integer("webpush.ttl", "60", "Seconds the push service keeps trying.", 0),
+      text("webpush.ca_file", "", "More CA certificates to trust, beside the system's."),
+  };
+}
+
 std::string WebpushPushService::version() const { return "0.0.1"; }
 
 bool WebpushPushService::configure(const YAML::Node& own_root, const Config& system) {

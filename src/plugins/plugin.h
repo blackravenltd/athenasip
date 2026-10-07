@@ -24,7 +24,7 @@ namespace athenasip::plugins {
 // The plugin contract version. A plugin reports the version it was built against and the
 // registry refuses a mismatch. Bump it whenever anything in this file, or in an interface
 // derived from Plugin, changes shape.
-inline constexpr std::uint32_t API_VERSION = 17;
+inline constexpr std::uint32_t API_VERSION = 18;
 
 // The kinds AthenaSIP registers. A kind is a string, not an enum, so a plugin can
 // introduce its own.

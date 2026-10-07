@@ -20,6 +20,9 @@ namespace athenasip {
 // (docs/configuration.schema.json) and the warning for a misspelt key all come from this.
 const plugins::Settings& config_settings();
 
+// Those and every registered driver's section, each after the rest of its kind's.
+plugins::Settings all_config_settings();
+
 // The configuration as a JSON Schema (draft 2020-12), for an editor to check a file against
 // as it is written: `athenasip --print-schema`.
 std::string config_schema_json(const plugins::Settings& settings);

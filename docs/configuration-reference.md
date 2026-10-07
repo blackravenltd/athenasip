@@ -129,6 +129,19 @@ The event bus: observability, presence and discovery. Each driver may have a sec
 | `events.url` | text | required | local:// stays in this process; nodes find each other over mqtt://. |
 | `events.status_interval` | integer | `30` | Seconds between this node's status reports on the bus. 0 reports once. |
 
+### `events.mqtt`
+
+The mqtt:// event bus. The URL names the broker; this says how to talk to it.
+
+| Setting | Takes | Default | |
+|---|---|---|---|
+| `events.mqtt.client_id` | text | none | The MQTT client identifier, unique on the broker. Empty is athenasip-<sip.node_id>. |
+| `events.mqtt.keep_alive` | integer, 1 to 65535 | `30` | MQTT keep-alive, in seconds. |
+| `events.mqtt.connect_timeout_ms` | integer, 1 or more | `5000` | How long startup waits for the broker before failing, in milliseconds. |
+| `events.mqtt.username` | text | none | The broker username, if not in the URL. |
+| `events.mqtt.password` | text | none | The broker password, if not in the URL. |
+| `events.mqtt.prefix` | text | `athenasip/` | Put before every topic, so clusters can share a broker. |
+
 ## `media`
 
 The media engine that relays calls. Each driver may have a section of its own here.
@@ -136,6 +149,29 @@ The media engine that relays calls. Each driver may have a section of its own he
 | Setting | Takes | Default | |
 |---|---|---|---|
 | `media.url` | text | `builtin://` | builtin:// relays RTP; WebRTC (ICE, DTLS, SRTP) needs rtpengine://host:port. |
+
+### `media.builtin`
+
+The builtin:// relay: plain RTP from the node's own process.
+
+| Setting | Takes | Default | |
+|---|---|---|---|
+| `media.builtin.bind_address` | text | `0.0.0.0` | Where the relay binds. |
+| `media.builtin.public_address` | text | `0.0.0.0` | The address written into SDP, which endpoints must reach: on a host behind NAT, the public one. May be a host name, resolved at start and every minute. |
+| `media.builtin.port_min` | integer, 0 to 65535 | `22000` | The bottom of the RTP port range. Behind NAT, forward the whole range. |
+| `media.builtin.port_max` | integer, 0 to 65535 | `23000` | The top of the RTP port range. Above port_min, or both take their defaults. |
+
+### `media.rtpengine`
+
+The rtpengine:// media engine, over its ng control port.
+
+| Setting | Takes | Default | |
+|---|---|---|---|
+| `media.rtpengine.engines` | list | `[]` | More engines, as host or host:port, making a pool with the URL's. A call stays on the engine it started on. |
+| `media.rtpengine.timeout_ms` | integer, 1 or more | `500` | How long to wait for one ng reply before asking again, in milliseconds. |
+| `media.rtpengine.attempts` | integer, 1 or more | `3` | Tries per request. An engine that answers none of them leaves the pool until it answers a ping. |
+| `media.rtpengine.ping_interval` | integer, 1 or more | `10` | Seconds between pings of every engine. |
+| `media.rtpengine.media_address` | text | none | The address rtpengine advertises. Empty leaves it to rtpengine's interfaces. A leg inside sip.localnet is given the node's local address. |
 
 ## `plugins`
 
@@ -154,6 +190,42 @@ RFC 8599 push notifications. Off with no urls. Each driver may have a section of
 | `push.urls` | list | `[]` | One push service per entry: apns://, fcm://, webpush://. |
 | `push.timeout` | integer, 1 to 30 | `10` | Seconds a request waits for the client to re-register after a push (RFC 8599 5.6.2). |
 | `push.refresh` | integer, 121 or more | `180` | Seconds before a push binding expires that a push asks the client to refresh it (RFC 8599 5.5). A push binding must then ask for at least this plus 60. |
+
+### `push.apns`
+
+Apple Push Notification service, for apns:// in push.urls.
+
+| Setting | Takes | Default | |
+|---|---|---|---|
+| `push.apns.key_file` | text | required | The APNs key Apple issues (AuthKey_<key ID>.p8). |
+| `push.apns.key_id` | text | required | The key's ten-character ID. |
+| `push.apns.team_id` | text | required | The developer team's ten-character ID. |
+| `push.apns.environment` | one of `production`, `sandbox` | `production` | sandbox for an app built for development. |
+| `push.apns.ttl` | integer, 0 or more | `60` | Seconds APNs keeps trying to deliver the push. 0 is now or not at all. |
+| `push.apns.api_base` | text | none | Only to go through a proxy: an https URL. Empty follows environment. |
+| `push.apns.ca_file` | text | none | More CA certificates to trust, beside the system's. |
+
+### `push.fcm`
+
+Firebase Cloud Messaging, for fcm:// in push.urls.
+
+| Setting | Takes | Default | |
+|---|---|---|---|
+| `push.fcm.service_account` | text | required | The service-account JSON file the Firebase console gives you. |
+| `push.fcm.ttl` | integer, 0 or more | `60` | Seconds FCM keeps trying to deliver the push. |
+| `push.fcm.api_base` | text | `https://fcm.googleapis.com` | Only to go through a proxy. |
+| `push.fcm.ca_file` | text | none | More CA certificates to trust, beside the system's. |
+
+### `push.webpush`
+
+Web Push (RFC 8030) with VAPID (RFC 8292), for webpush:// in push.urls.
+
+| Setting | Takes | Default | |
+|---|---|---|---|
+| `push.webpush.vapid_private_key` | text | required | A P-256 private key, PEM: openssl ecparam -name prime256v1 -genkey -noout -out vapid.pem. |
+| `push.webpush.subject` | text | required | A mailto: or https: URI a push service can reach you at. |
+| `push.webpush.ttl` | integer, 0 or more | `60` | Seconds the push service keeps trying. |
+| `push.webpush.ca_file` | text | none | More CA certificates to trust, beside the system's. |
 
 ## `behaviour`
 

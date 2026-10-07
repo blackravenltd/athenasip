@@ -18,6 +18,7 @@
 #include "../loggers/logger.h"
 #include "../types/url.h"
 #include "plugin.h"
+#include "setting.h"
 
 namespace athenasip::plugins {
 
@@ -34,14 +35,22 @@ class PluginRegistry {
 
   static PluginRegistry& instance();
 
-  void add(std::shared_ptr<loggers::Logger> logger, std::string kind, std::string scheme, Factory factory);
+  // settings: the driver's own section, if it describes one (see Setting::key).
+  void add(std::shared_ptr<loggers::Logger> logger, std::string kind, std::string scheme, Factory factory, Settings settings = {});
 
+  // A driver describes its section with a static `plugins::Settings settings()`, which is
+  // optional.
   template <typename T, typename = std::enable_if_t<std::is_base_of_v<Plugin, T>>>
   void add(std::shared_ptr<loggers::Logger> logger, std::string kind, std::string scheme) {
-    add(std::move(logger), std::move(kind), std::move(scheme),
+    Settings settings;
+    if constexpr (requires { T::settings(); }) settings = T::settings();
+
+    add(
+        std::move(logger), std::move(kind), std::move(scheme),
         [](std::shared_ptr<loggers::Logger> logger, std::shared_ptr<types::URL> url) -> std::shared_ptr<Plugin> {
           return std::static_pointer_cast<Plugin>(std::make_shared<T>(std::move(logger), std::move(url)));
-        });
+        },
+        std::move(settings));
   }
 
   // Constructs the driver registered for this kind and the URL's scheme. Returns nullptr
@@ -60,12 +69,17 @@ class PluginRegistry {
   std::vector<Registration> list() const;
   std::vector<std::string> schemes(const std::string& kind) const;
 
+  // What every registered driver says of its section, keyed from the top of the file
+  // ("media.rtpengine.timeout_ms"). A driver reached by more than one scheme says it once.
+  Settings settings() const;
+
   // For tests that register drivers of their own.
   void clear();
 
  private:
   mutable std::mutex _mutex;
   std::map<std::pair<std::string, std::string>, Factory> _factories;
+  std::map<std::pair<std::string, std::string>, Settings> _settings;
 };
 
 }  // namespace athenasip::plugins

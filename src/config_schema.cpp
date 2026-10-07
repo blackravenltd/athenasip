@@ -11,80 +11,15 @@
 #include <map>
 #include <sstream>
 
+#include "plugins/plugin_registry.h"
+
 namespace athenasip {
 
 using plugins::Setting;
 using plugins::Settings;
+using namespace plugins::define;
 
 namespace {
-
-Setting section(std::string key, std::string description, bool open = false) {
-  Setting setting;
-  setting.key = std::move(key);
-  setting.type = Setting::Type::Section;
-  setting.description = std::move(description);
-  setting.open = open;
-  return setting;
-}
-
-Setting boolean(std::string key, std::string fallback, std::string description) {
-  Setting setting;
-  setting.key = std::move(key);
-  setting.type = Setting::Type::Boolean;
-  setting.fallback = std::move(fallback);
-  setting.description = std::move(description);
-  return setting;
-}
-
-Setting integer(std::string key, std::string fallback, std::string description, std::optional<std::int64_t> minimum = std::nullopt,
-                std::optional<std::int64_t> maximum = std::nullopt, bool or_zero = false) {
-  Setting setting;
-  setting.key = std::move(key);
-  setting.type = Setting::Type::Integer;
-  setting.fallback = std::move(fallback);
-  setting.description = std::move(description);
-  setting.minimum = minimum;
-  setting.maximum = maximum;
-  setting.or_zero = or_zero;
-  return setting;
-}
-
-Setting port(std::string key, std::string fallback, std::string description) {
-  return integer(std::move(key), std::move(fallback), std::move(description), 0, 65535);
-}
-
-Setting text(std::string key, std::string fallback, std::string description) {
-  Setting setting;
-  setting.key = std::move(key);
-  setting.type = Setting::Type::String;
-  setting.fallback = std::move(fallback);
-  setting.description = std::move(description);
-  return setting;
-}
-
-Setting list(std::string key, std::string description) {
-  Setting setting;
-  setting.key = std::move(key);
-  setting.type = Setting::Type::List;
-  setting.fallback = "[]";
-  setting.description = std::move(description);
-  return setting;
-}
-
-Setting choice(std::string key, std::string fallback, std::vector<std::string> choices, std::string description) {
-  Setting setting;
-  setting.key = std::move(key);
-  setting.type = Setting::Type::Choice;
-  setting.fallback = std::move(fallback);
-  setting.choices = std::move(choices);
-  setting.description = std::move(description);
-  return setting;
-}
-
-Setting required(Setting setting) {
-  setting.required = true;
-  return setting;
-}
 
 // udp, tcp, tls and websocket share these.
 void add_listener(Settings& settings, const std::string& name, const std::string& description) {
@@ -473,7 +408,10 @@ void unknown_in(const YAML::Node& node, const std::string& prefix, const std::ma
     std::size_t nearest = 3;
     for (const auto& setting : settings) {
       if (parent_of(setting.key) != prefix) continue;
-      const auto distance = edit_distance(name, last_of(setting.key));
+      // A key cut short or run on ("timeout" for "timeout_ms") is as near as a typo.
+      const auto candidate = last_of(setting.key);
+      const bool truncated = candidate.rfind(name, 0) == 0 || name.rfind(candidate, 0) == 0;
+      const auto distance = truncated ? 1 : edit_distance(name, candidate);
       if (distance < nearest) {
         nearest = distance;
         meant = setting.key;
@@ -498,6 +436,23 @@ void unknown_in(const YAML::Node& node, const std::string& prefix, const std::ma
 const Settings& config_settings() {
   static const Settings settings = build();
   return settings;
+}
+
+Settings all_config_settings() {
+  Settings all = config_settings();
+
+  for (auto& setting : plugins::PluginRegistry::instance().settings()) {
+    const auto kind = setting.key.substr(0, setting.key.find('.'));
+
+    // After the last setting of its kind, so its section follows the kind's own keys.
+    auto at = all.end();
+    for (auto it = all.begin(); it != all.end(); ++it) {
+      if (it->key == kind || it->key.rfind(kind + ".", 0) == 0) at = it + 1;
+    }
+    all.insert(at, std::move(setting));
+  }
+
+  return all;
 }
 
 std::string config_schema_json(const Settings& settings) {

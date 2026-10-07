@@ -81,6 +81,17 @@ FcmPushService::FcmPushService(std::shared_ptr<loggers::Logger> logger, std::sha
 
 std::string FcmPushService::name() const { return "fcm"; }
 
+plugins::Settings FcmPushService::settings() {
+  using namespace plugins::define;
+  return {
+      section("fcm", "Firebase Cloud Messaging, for fcm:// in push.urls."),
+      required(text("fcm.service_account", "", "The service-account JSON file the Firebase console gives you.")),
+      integer("fcm.ttl", "60", "Seconds FCM keeps trying to deliver the push.", 0),
+      text("fcm.api_base", "https://fcm.googleapis.com", "Only to go through a proxy."),
+      text("fcm.ca_file", "", "More CA certificates to trust, beside the system's."),
+  };
+}
+
 std::string FcmPushService::version() const { return "0.0.1"; }
 
 bool FcmPushService::configure(const YAML::Node& own_root, const Config& system) {

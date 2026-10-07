@@ -478,6 +478,43 @@
           "description": "Seconds between this node's status reports on the bus. 0 reports once.",
           "type": "integer",
           "default": 30
+        },
+        "mqtt": {
+          "description": "The mqtt:// event bus. The URL names the broker; this says how to talk to it.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "client_id": {
+              "description": "The MQTT client identifier, unique on the broker. Empty is athenasip-<sip.node_id>.",
+              "type": "string"
+            },
+            "keep_alive": {
+              "description": "MQTT keep-alive, in seconds.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 30
+            },
+            "connect_timeout_ms": {
+              "description": "How long startup waits for the broker before failing, in milliseconds.",
+              "type": "integer",
+              "minimum": 1,
+              "default": 5000
+            },
+            "username": {
+              "description": "The broker username, if not in the URL.",
+              "type": "string"
+            },
+            "password": {
+              "description": "The broker password, if not in the URL.",
+              "type": "string"
+            },
+            "prefix": {
+              "description": "Put before every topic, so clusters can share a broker.",
+              "type": "string",
+              "default": "athenasip/"
+            }
+          }
         }
       },
       "required": [
@@ -495,6 +532,74 @@
           "description": "builtin:// relays RTP; WebRTC (ICE, DTLS, SRTP) needs rtpengine://host:port.",
           "type": "string",
           "default": "builtin://"
+        },
+        "builtin": {
+          "description": "The builtin:// relay: plain RTP from the node's own process.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "bind_address": {
+              "description": "Where the relay binds.",
+              "type": "string",
+              "default": "0.0.0.0"
+            },
+            "public_address": {
+              "description": "The address written into SDP, which endpoints must reach: on a host behind NAT, the public one. May be a host name, resolved at start and every minute.",
+              "type": "string",
+              "default": "0.0.0.0"
+            },
+            "port_min": {
+              "description": "The bottom of the RTP port range. Behind NAT, forward the whole range.",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535,
+              "default": 22000
+            },
+            "port_max": {
+              "description": "The top of the RTP port range. Above port_min, or both take their defaults.",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535,
+              "default": 23000
+            }
+          }
+        },
+        "rtpengine": {
+          "description": "The rtpengine:// media engine, over its ng control port.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "engines": {
+              "description": "More engines, as host or host:port, making a pool with the URL's. A call stays on the engine it started on.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "timeout_ms": {
+              "description": "How long to wait for one ng reply before asking again, in milliseconds.",
+              "type": "integer",
+              "minimum": 1,
+              "default": 500
+            },
+            "attempts": {
+              "description": "Tries per request. An engine that answers none of them leaves the pool until it answers a ping.",
+              "type": "integer",
+              "minimum": 1,
+              "default": 3
+            },
+            "ping_interval": {
+              "description": "Seconds between pings of every engine.",
+              "type": "integer",
+              "minimum": 1,
+              "default": 10
+            },
+            "media_address": {
+              "description": "The address rtpengine advertises. Empty leaves it to rtpengine's interfaces. A leg inside sip.localnet is given the node's local address.",
+              "type": "string"
+            }
+          }
         }
       }
     },
@@ -547,6 +652,110 @@
           "type": "integer",
           "minimum": 121,
           "default": 180
+        },
+        "apns": {
+          "description": "Apple Push Notification service, for apns:// in push.urls.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "key_file": {
+              "description": "The APNs key Apple issues (AuthKey_<key ID>.p8).",
+              "type": "string"
+            },
+            "key_id": {
+              "description": "The key's ten-character ID.",
+              "type": "string"
+            },
+            "team_id": {
+              "description": "The developer team's ten-character ID.",
+              "type": "string"
+            },
+            "environment": {
+              "description": "sandbox for an app built for development.",
+              "enum": [
+                "production",
+                "sandbox"
+              ],
+              "default": "production"
+            },
+            "ttl": {
+              "description": "Seconds APNs keeps trying to deliver the push. 0 is now or not at all.",
+              "type": "integer",
+              "minimum": 0,
+              "default": 60
+            },
+            "api_base": {
+              "description": "Only to go through a proxy: an https URL. Empty follows environment.",
+              "type": "string"
+            },
+            "ca_file": {
+              "description": "More CA certificates to trust, beside the system's.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "key_file",
+            "key_id",
+            "team_id"
+          ]
+        },
+        "fcm": {
+          "description": "Firebase Cloud Messaging, for fcm:// in push.urls.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "service_account": {
+              "description": "The service-account JSON file the Firebase console gives you.",
+              "type": "string"
+            },
+            "ttl": {
+              "description": "Seconds FCM keeps trying to deliver the push.",
+              "type": "integer",
+              "minimum": 0,
+              "default": 60
+            },
+            "api_base": {
+              "description": "Only to go through a proxy.",
+              "type": "string",
+              "default": "https://fcm.googleapis.com"
+            },
+            "ca_file": {
+              "description": "More CA certificates to trust, beside the system's.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "service_account"
+          ]
+        },
+        "webpush": {
+          "description": "Web Push (RFC 8030) with VAPID (RFC 8292), for webpush:// in push.urls.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "vapid_private_key": {
+              "description": "A P-256 private key, PEM: openssl ecparam -name prime256v1 -genkey -noout -out vapid.pem.",
+              "type": "string"
+            },
+            "subject": {
+              "description": "A mailto: or https: URI a push service can reach you at.",
+              "type": "string"
+            },
+            "ttl": {
+              "description": "Seconds the push service keeps trying.",
+              "type": "integer",
+              "minimum": 0,
+              "default": 60
+            },
+            "ca_file": {
+              "description": "More CA certificates to trust, beside the system's.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "vapid_private_key",
+            "subject"
+          ]
         }
       }
     },

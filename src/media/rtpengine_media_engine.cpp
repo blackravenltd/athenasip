@@ -127,6 +127,20 @@ RtpengineMediaEngine::~RtpengineMediaEngine() { close(); }
 
 std::string RtpengineMediaEngine::name() const { return "rtpengine"; }
 
+plugins::Settings RtpengineMediaEngine::settings() {
+  using namespace plugins::define;
+  return {
+      section("rtpengine", "The rtpengine:// media engine, over its ng control port."),
+      list("rtpengine.engines", "More engines, as host or host:port, making a pool with the URL's. A call stays on the engine it started on."),
+      integer("rtpengine.timeout_ms", "500", "How long to wait for one ng reply before asking again, in milliseconds.", 1),
+      integer("rtpengine.attempts", "3", "Tries per request. An engine that answers none of them leaves the pool until it answers a ping.", 1),
+      integer("rtpengine.ping_interval", "10", "Seconds between pings of every engine.", 1),
+      text("rtpengine.media_address", "",
+           "The address rtpengine advertises. Empty leaves it to rtpengine's interfaces. A leg inside sip.localnet is given the "
+           "node's local address."),
+  };
+}
+
 std::string RtpengineMediaEngine::version() const { return "0.0.1"; }
 
 bool RtpengineMediaEngine::configure(const YAML::Node& own_root, const Config& system) {

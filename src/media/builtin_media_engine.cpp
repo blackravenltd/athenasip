@@ -55,6 +55,19 @@ BuiltinMediaEngine::~BuiltinMediaEngine() { close(); }
 
 std::string BuiltinMediaEngine::name() const { return "builtin"; }
 
+plugins::Settings BuiltinMediaEngine::settings() {
+  using namespace plugins::define;
+  return {
+      section("builtin", "The builtin:// relay: plain RTP from the node's own process."),
+      text("builtin.bind_address", "0.0.0.0", "Where the relay binds."),
+      text("builtin.public_address", "0.0.0.0",
+           "The address written into SDP, which endpoints must reach: on a host behind NAT, the public one. May be a host name, "
+           "resolved at start and every minute."),
+      port("builtin.port_min", "22000", "The bottom of the RTP port range. Behind NAT, forward the whole range."),
+      port("builtin.port_max", "23000", "The top of the RTP port range. Above port_min, or both take their defaults."),
+  };
+}
+
 std::string BuiltinMediaEngine::version() const { return "0.0.1"; }
 
 void BuiltinMediaEngine::_apply_url(const std::shared_ptr<types::URL>& url) {

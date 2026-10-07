@@ -120,6 +120,19 @@ MQTTEventSystem::~MQTTEventSystem() { close_without_callback(); }
 
 std::string MQTTEventSystem::name() const { return "mqtt"; }
 
+plugins::Settings MQTTEventSystem::settings() {
+  using namespace plugins::define;
+  return {
+      section("mqtt", "The mqtt:// event bus. The URL names the broker; this says how to talk to it."),
+      text("mqtt.client_id", "", "The MQTT client identifier, unique on the broker. Empty is athenasip-<sip.node_id>."),
+      integer("mqtt.keep_alive", "30", "MQTT keep-alive, in seconds.", 1, 65535),
+      integer("mqtt.connect_timeout_ms", "5000", "How long startup waits for the broker before failing, in milliseconds.", 1),
+      text("mqtt.username", "", "The broker username, if not in the URL."),
+      text("mqtt.password", "", "The broker password, if not in the URL."),
+      text("mqtt.prefix", "athenasip/", "Put before every topic, so clusters can share a broker."),
+  };
+}
+
 std::string MQTTEventSystem::version() const { return "0.0.1"; }
 
 void MQTTEventSystem::connect(plugins::Executor on, plugins::StatusHandler handler) {

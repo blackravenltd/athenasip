@@ -43,6 +43,10 @@ class ApnsPushService final : public PushService, public std::enable_shared_from
   ApnsPushService(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<types::URL> url);
 
   std::string name() const override;
+
+  // The section named after this driver, for the reference and the misspelt-key check.
+
+  static plugins::Settings settings();
   std::string version() const override;
 
   bool configure(const YAML::Node& own_root, const Config& system) override;
