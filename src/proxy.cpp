@@ -203,83 +203,67 @@ void Proxy::_proceed(const std::shared_ptr<SIPMessage>& request, const std::shar
   _preprocess_routes(request);
 
   auto self = shared_from_this();
-  _authorize(request, transaction, [this, self, request, transaction, token]() { _determine_targets(request, transaction, token); });
+  _authorize(request, transaction, false, [this, self, request, transaction, token]() { _determine_targets(request, transaction, token); });
 }
 
-// This node is not an open relay. A caller claiming one of this node's realms must authenticate; any other
-// caller may only reach this node's realms.
-void Proxy::_authorize(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
+std::shared_ptr<policy::RequestView> Proxy::_view(const std::shared_ptr<SIPMessage>& request, bool relay) const {
+  auto view = std::make_shared<policy::RequestView>();
+  view->message = request;
+  view->relay = relay;
+  view->has_route = request->header->contains("Route");
+
+  if (const auto channel = request->channel.lock(); channel && !channel->peer_node().empty()) view->from_peer = true;
+  if (auto core = _core.lock(); core && !request->flow_token.empty()) view->valid_flow_token = !core->flow_tokens().open(request->flow_token).empty();
+
+  return view;
+}
+
+void Proxy::_authorize(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction, bool relay,
                        std::function<void()> then) {
   auto core = _core.lock();
   if (!core) return;
 
-  // RFC 3261 22.1: ACK and CANCEL cannot be challenged.
-  const auto& method = request->header->request_method;
-  if (method == "ACK" || method == "CANCEL") return then();
+  auto self = shared_from_this();
+  core->policy()->authorize(core->strand(), _view(request, relay), [this, self, request, transaction, then](plugins::Result<policy::AuthDecision> decided) {
+    if (!decided.ok) {
+      _logger->error("The policy could not authorise " + request->header->request_method + " to " + request->header->request_uri->to_string() + " - " +
+                     decided.error);
+      return _send_status(transaction, request, 500, "Server Internal Error");
+    }
 
-  // A peer node, admitted by the inter-node listener on a cluster certificate, has already authorized the
-  // caller. Trust comes from the certificate, never from a Via or a Route.
-  if (const auto channel = request->channel.lock(); channel && !channel->peer_node().empty()) return then();
+    const auto& decision = decided.value;
+    switch (decision.kind) {
+      case policy::AuthDecision::Kind::Accept:
+        return then();
+      case policy::AuthDecision::Kind::Reject:
+        return _send_status(transaction, request, decision.code, decision.reason);
+      case policy::AuthDecision::Kind::Digest:
+        if (!decision.realm) return _authenticate_any(request, transaction, then);
+        return _authenticate(request, transaction, decision.realm, decision.from_must_match, then);
+    }
+  });
+}
 
-  // In-dialog requests of an authorized call pass. The dialog table decides; a To tag alone proves nothing.
-  if (!tag_of(request, "To").empty() && request->in_known_dialog) return then();
-
-  // A request routed back through a Path or Record-Route this node wrote passes: the flow token in it is sealed
-  // by this node (FlowTokens), so nobody else could have made it.
-  if (!request->flow_token.empty() && !core->flow_tokens().open(request->flow_token).empty()) return then();
+// RFC 3261 22.3: authenticates a caller in a realm this node serves.
+void Proxy::_authenticate(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
+                          const std::shared_ptr<types::Realm>& realm, bool from_must_match, std::function<void()> then) {
+  auto core = _core.lock();
+  if (!core) return;
 
   auto from = request->header->contains("From") ? request->header->headers_map["From"][0]->as<SIPIdentityHeader>() : nullptr;
-  if (from == nullptr || from->value == nullptr || from->value->uri == nullptr) {
+  auto caller = from != nullptr && from->value != nullptr ? from->value->uri : nullptr;
+  if (caller == nullptr) {
     _logger->info("Request with no usable From - 400");
     return _send_status(transaction, request, 400, "Bad Request");
   }
 
-  auto caller = from->value->uri;
-  auto self = shared_from_this();
-
-  core->realm_get_by_name(Util::to_lower(caller->host), [this, self, request, transaction, caller, then](plugins::Result<std::shared_ptr<types::Realm>> found) {
-    auto core = _core.lock();
-    if (!core) return;
-
-    if (!found.ok) {
-      _logger->error("Could not read the realm of the caller " + caller->to_string() + " - " + found.error);
-      return _send_status(transaction, request, 500, "Server Internal Error");
-    }
-
-    if (found.value) return _authenticate(request, transaction, found.value, caller, then);
-
-    // An unknown caller may not route a request off this node.
-    if (request->header->contains("Route")) {
-      _logger->info("Request from " + caller->to_string() + " routed off this node - 403");
-      return _send_status(transaction, request, 403, "Forbidden");
-    }
-
-    core->realm_get_by_name(Util::to_lower(request->header->request_uri->host), [this, self, request, transaction, caller,
-                                                                                 then](plugins::Result<std::shared_ptr<types::Realm>> target) {
-      if (!target.ok) {
-        _logger->error("Could not read the realm for " + request->header->request_uri->to_string() + " - " + target.error);
-        return _send_status(transaction, request, 500, "Server Internal Error");
-      }
-
-      // Anybody may call into this node's realms.
-      if (target.value) return then();
-
-      _logger->info("Request from " + caller->to_string() + " to " + request->header->request_uri->to_string() + ", neither of them here - 403");
-      _send_status(transaction, request, 403, "Forbidden");
-    });
-  });
-}
-
-// RFC 3261 22.3: authenticates a caller whose From is in a realm this node serves.
-void Proxy::_authenticate(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
-                          const std::shared_ptr<types::Realm>& realm, const std::shared_ptr<SIPUri>& caller, std::function<void()> then) {
-  auto core = _core.lock();
-  if (!core) return;
-
-  // A reliable connection that a REGISTER authenticated over is trusted for that subscriber. A UDP source
-  // address is not.
+  // A reliable connection that a REGISTER authenticated over is trusted for that subscriber, or for anybody when
+  // the From need not match. A UDP source address is not.
   auto channel = request->channel.lock();
-  if (channel && channel->_connection && channel->_connection->is_reliable() && channel->is_authenticated_as(caller->to_string())) return then();
+  if (channel && channel->_connection && channel->_connection->is_reliable() &&
+      (from_must_match ? channel->is_authenticated_as(caller->to_string()) : channel->is_authenticated())) {
+    return then();
+  }
 
   // Only this realm's credentials; those for other proxies are left in place (22.3).
   std::shared_ptr<headers::Header> answered;
@@ -304,54 +288,54 @@ void Proxy::_authenticate(const std::shared_ptr<SIPMessage>& request, const std:
 
   auto self = shared_from_this();
 
-  core->nonce_check(
-      credentials->fields["nonce"], [this, self, request, transaction, realm, caller, credentials, answered, then](plugins::Result<bool> checked) {
-        auto core = _core.lock();
-        if (!core) return;
+  core->nonce_check(credentials->fields["nonce"],
+                    [this, self, request, transaction, realm, caller, credentials, answered, from_must_match, then](plugins::Result<bool> checked) {
+                      auto core = _core.lock();
+                      if (!core) return;
 
-        if (!checked.ok) {
-          _logger->error("Could not check a nonce - " + checked.error);
-          return _send_status(transaction, request, 500, "Server Internal Error");
-        }
+                      if (!checked.ok) {
+                        _logger->error("Could not check a nonce - " + checked.error);
+                        return _send_status(transaction, request, 500, "Server Internal Error");
+                      }
 
-        if (!checked.value) {
-          _logger->info("Request from " + caller->to_string() + " with a nonce that is unknown or expired - challenging");
-          return _send_proxy_challenge(transaction, request, realm);
-        }
+                      if (!checked.value) {
+                        _logger->info("Request from " + caller->to_string() + " with a nonce that is unknown or expired - challenging");
+                        return _send_proxy_challenge(transaction, request, realm);
+                      }
 
-        // Verify the credentials first, then that they match the From, so each failure gets its own answer.
-        auto claimed = std::make_shared<SIPIdentity>("sip:" + credentials->fields["username"] + "@" + realm->name);
+                      // Verify the credentials first, then that they match the From, so each failure gets its own answer.
+                      auto claimed = std::make_shared<SIPIdentity>("sip:" + credentials->fields["username"] + "@" + realm->name);
 
-        core->subscriber_get(
-            claimed, [this, self, request, transaction, realm, caller, credentials, answered, then](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
-              if (!found.ok) {
-                _logger->error("Could not read a subscriber - " + found.error);
-                return _send_status(transaction, request, 500, "Server Internal Error");
-              }
+                      core->subscriber_get(claimed, [this, self, request, transaction, realm, caller, credentials, answered, from_must_match,
+                                                     then](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
+                        if (!found.ok) {
+                          _logger->error("Could not read a subscriber - " + found.error);
+                          return _send_status(transaction, request, 500, "Server Internal Error");
+                        }
 
-              // Challenged like a wrong password, so subscribers cannot be enumerated.
-              if (!found.value) {
-                _logger->info("Request from " + caller->to_string() + " with credentials for no subscriber - challenging");
-                return _send_proxy_challenge(transaction, request, realm);
-              }
+                        // Challenged like a wrong password, so subscribers cannot be enumerated.
+                        if (!found.value) {
+                          _logger->info("Request from " + caller->to_string() + " with credentials for no subscriber - challenging");
+                          return _send_proxy_challenge(transaction, request, realm);
+                        }
 
-              if (const auto why = digest::verify(*found.value, *credentials, request->header->request_method); !why.empty()) {
-                _logger->info("Request from " + caller->to_string() + " with " + why + " - challenging");
-                return _send_proxy_challenge(transaction, request, realm);
-              }
+                        if (const auto why = digest::verify(*found.value, *credentials, request->header->request_method); !why.empty()) {
+                          _logger->info("Request from " + caller->to_string() + " with " + why + " - challenging");
+                          return _send_proxy_challenge(transaction, request, realm);
+                        }
 
-              if (credentials->fields["username"] != caller->user) {
-                _logger->info("Request from " + caller->to_string() + " authenticated as " + credentials->fields["username"] + " - 403");
-                return _send_status(transaction, request, 403, "Forbidden");
-              }
+                        if (from_must_match && credentials->fields["username"] != caller->user) {
+                          _logger->info("Request from " + caller->to_string() + " authenticated as " + credentials->fields["username"] + " - 403");
+                          return _send_status(transaction, request, 403, "Forbidden");
+                        }
 
-              // Remove the used credentials: they are replayable while the nonce lives.
-              request->header->remove_value("Proxy-Authorization", [&answered](std::shared_ptr<headers::Header> value) { return value == answered; });
-              request->authenticated = true;
+                        // Remove the used credentials: they are replayable while the nonce lives.
+                        request->header->remove_value("Proxy-Authorization", [&answered](std::shared_ptr<headers::Header> value) { return value == answered; });
+                        request->authenticated = true;
 
-              then();
-            });
-      });
+                        then();
+                      });
+                    });
 }
 
 void Proxy::_send_proxy_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
@@ -521,83 +505,123 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
     }
   }
 
-  const auto host = Util::to_lower(request->header->request_uri->host);
+  // RFC 3261 16.5: the policy names the targets.
   auto self = shared_from_this();
-
-  // RFC 3261 16.5: a Request-URI outside this node's realms is itself the only target.
-  core->realm_get_by_name(host, [this, self, context](plugins::Result<std::shared_ptr<types::Realm>> found) {
+  core->policy()->route(core->strand(), _view(request, false), [this, self, context](plugins::Result<policy::RouteDecision> decided) {
     auto core = _core.lock();
     if (!core) return;
 
     const auto& request = context->request;
 
-    if (!found.ok) {
-      _logger->error("Could not read the realm for " + request->header->request_uri->to_string() + " - " + found.error);
+    if (!decided.ok) {
+      _logger->error("The policy could not route " + request->header->request_method + " to " + request->header->request_uri->to_string() + " - " +
+                     decided.error);
       return _send_status(context->server, request, 500, "Server Internal Error");
     }
 
-    if (!found.value) {
-      Target target;
-      target.uri = request->header->request_uri;
-      target.next_hop = request->header->request_uri;
-      target.flow = _flow_to(*request->header->request_uri);
+    auto& decision = decided.value;
+    if (decision.kind == policy::RouteDecision::Kind::Reply) return _send_status(context->server, request, decision.code, decision.reason);
 
-      context->targets.push_back(target);
-      return _forward_next(context);
+    // Read once here rather than per message with a body, and kept on the call for in-dialog requests, which ask
+    // the policy nothing.
+    if (decision.media) context->media_policy = *decision.media;
+    if (decision.rewrite_contact) {
+      context->rewrite_contact = *decision.rewrite_contact;
+      if (auto call = core->call_get(value_of(request, "Call-ID"))) call->rewrite_contact = context->rewrite_contact;
     }
 
-    // The realm is in hand here, so its media policy is read once rather than per message with a body.
-    context->media_policy = found.value->behaviour.over(core->config->behaviour);
-    context->rewrite_contact = found.value->behaviour.rewrite_contact.value_or(core->config->behaviour_rewrite_contact);
-
-    // Kept on the call for in-dialog requests, which look no realm up.
-    if (auto call = core->call_get(value_of(request, "Call-ID"))) call->rewrite_contact = context->rewrite_contact;
-
-    // The Request-URI is an address of record in this realm; its bindings are the target set.
-    auto identity = std::make_shared<SIPIdentity>(request->header->request_uri->to_string());
-
-    core->subscriber_get(identity, [this, self, context](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
-      auto core = _core.lock();
-      if (!core) return;
-
-      const auto& request = context->request;
-
-      if (!found.ok) {
-        _logger->error("Could not read the subscriber for " + request->header->request_uri->to_string() + " - " + found.error);
-        return _send_status(context->server, request, 500, "Server Internal Error");
+    auto into = std::make_shared<std::vector<Target>>();
+    _expand(context, std::move(decision.targets), 0, into, [this, self, context, into]() {
+      if (into->empty()) {
+        _logger->info("No target for " + context->request->header->request_uri->to_string() + " - 480");
+        return _send_status(context->server, context->request, 480, "Temporarily Unavailable");
       }
 
-      if (!found.value) {
-        _logger->info("No subscriber for " + request->header->request_uri->to_string() + " - 404");
-        return _send_status(context->server, request, 404, "Not Found");
-      }
-
-      auto subscriber = found.value;
-      context->callee_profile = subscriber->media_profile;
-
-      core->location_list(subscriber->id, [this, self, context, subscriber](plugins::Result<std::vector<types::Location>> bindings) {
-        auto core = _core.lock();
-        if (!core) return;
-
-        const auto& request = context->request;
-
-        if (!bindings.ok) {
-          _logger->error("Could not read the bindings for " + request->header->request_uri->to_string() + " - " + bindings.error);
-          return _send_status(context->server, request, 500, "Server Internal Error");
-        }
-
-        if (bindings.value.empty()) {
-          _logger->info("No bindings for " + request->header->request_uri->to_string() + " - 480");
-          return _send_status(context->server, request, 480, "Temporarily Unavailable");
-        }
-
-        // RFC 5626: each binding is reached down the flow it registered over.
-        _add_targets(context, std::move(bindings.value));
-
-        _read_caller_profile(context, [this, self, context]() { _forward_next(context); });
-      });
+      context->targets = std::move(*into);
+      _read_caller_profile(context, [this, self, context]() { _forward_next(context); });
     });
   });
+}
+
+void Proxy::_expand(const std::shared_ptr<Context>& context, std::vector<policy::Target> specs, std::size_t index, std::shared_ptr<std::vector<Target>> into,
+                    std::function<void()> then) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  if (index >= specs.size()) return then();
+
+  auto spec = specs[index];
+
+  if (spec.kind == policy::Target::Kind::Uri) {
+    if (spec.uri) {
+      Target target;
+      target.uri = spec.uri;
+      target.next_hop = spec.next_hop ? spec.next_hop : spec.uri;
+      target.flow = _flow_to(*target.next_hop);
+      into->push_back(std::move(target));
+    }
+    return _expand(context, std::move(specs), index + 1, std::move(into), std::move(then));
+  }
+
+  if (!spec.subscriber) return _expand(context, std::move(specs), index + 1, std::move(into), std::move(then));
+
+  // The first subscriber's profile is the callee's, for what the engine offers it.
+  if (!context->callee_profile) context->callee_profile = spec.subscriber->media_profile;
+
+  // RFC 5626: each binding is reached down the flow it registered over.
+  if (spec.bindings) {
+    _add_targets(context, std::move(*spec.bindings), *into);
+    return _expand(context, std::move(specs), index + 1, std::move(into), std::move(then));
+  }
+
+  auto self = shared_from_this();
+  const auto id = spec.subscriber->id;
+  core->location_list(
+      id, [this, self, context, specs = std::move(specs), index, into, then = std::move(then)](plugins::Result<std::vector<types::Location>> bindings) mutable {
+        if (!bindings.ok) {
+          _logger->error("Could not read the bindings for " + context->request->header->request_uri->to_string() + " - " + bindings.error);
+        } else {
+          _add_targets(context, std::move(bindings.value), *into);
+        }
+        _expand(context, std::move(specs), index + 1, std::move(into), std::move(then));
+      });
+}
+
+// RFC 3261 16.7 step 4 leaves to the proxy whether a failed branch is followed by another.
+void Proxy::_after_failure(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  policy::ForkState state;
+  state.tried = context->next;
+  state.remaining = context->targets.size() - std::min(context->next, context->targets.size());
+  state.best = context->best ? static_cast<std::uint16_t>(context->best->header->response_code) : 0;
+
+  auto self = shared_from_this();
+  core->policy()->on_failure(core->strand(), _view(context->request, false), response, state,
+                             [this, self, context](plugins::Result<policy::FailureDecision> decided) {
+                               // A policy that cannot decide is taken to say go on: a broken failure handler must not turn
+                               // a busy into a server error.
+                               if (!decided.ok) {
+                                 _logger->error("The policy could not decide after a failed branch - " + decided.error);
+                                 return _forward_next(context);
+                               }
+
+                               auto& decision = decided.value;
+                               if (decision.kind == policy::FailureDecision::Kind::Stop) {
+                                 context->next = context->targets.size();
+                                 return _forward_next(context);
+                               }
+
+                               if (decision.first.empty()) return _forward_next(context);
+
+                               auto into = std::make_shared<std::vector<Target>>();
+                               _expand(context, std::move(decision.first), 0, into, [this, self, context, into]() {
+                                 const auto at = context->targets.begin() + static_cast<std::ptrdiff_t>(std::min(context->next, context->targets.size()));
+                                 context->targets.insert(at, into->begin(), into->end());
+                                 _forward_next(context);
+                               });
+                             });
 }
 
 // Where the realm asks for it, rewrites each Contact's host and port to the message's source address, for
@@ -949,13 +973,13 @@ void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::sha
     _report_reoffer(context, false);
   }
 
-  _forward_next(context);
+  _after_failure(context, response);
 }
 
 // Builds the target set for an address of record (RFC 3261 16.5). RFC 5626 5.3: an instance's flows form one
 // target, most recently registered first, with the rest held back in other_flows. An ordinary binding is a
 // target of its own.
-void Proxy::_add_targets(const std::shared_ptr<Context>& context, std::vector<types::Location> bindings) const {
+void Proxy::_add_targets(const std::shared_ptr<Context>& context, std::vector<types::Location> bindings, std::vector<Target>& into) const {
   std::stable_sort(bindings.begin(), bindings.end(), [](const types::Location& a, const types::Location& b) {
     return a.registered_at != b.registered_at ? a.registered_at > b.registered_at : a.reg_id > b.reg_id;
   });
@@ -978,7 +1002,7 @@ void Proxy::_add_targets(const std::shared_ptr<Context>& context, std::vector<ty
       if (const auto pn = push::notification_of(*binding.contact); pn && core->push_service(pn->provider)) {
         auto target = _target_for(binding);
         target.push = binding;
-        context->targets.push_back(std::move(target));
+        into.push_back(std::move(target));
         continue;
       }
     }
@@ -989,7 +1013,7 @@ void Proxy::_add_targets(const std::shared_ptr<Context>& context, std::vector<ty
       if (from_peer) continue;
 
       if (auto peer = _peer_target(*core, binding.node_id, context->request)) {
-        if (forwarded_to.insert(binding.node_id).second) context->targets.push_back(std::move(*peer));
+        if (forwarded_to.insert(binding.node_id).second) into.push_back(std::move(*peer));
         continue;
       }
 
@@ -998,7 +1022,7 @@ void Proxy::_add_targets(const std::shared_ptr<Context>& context, std::vector<ty
 
     auto target = _target_for(binding);
     if (target.instance.empty()) {
-      context->targets.push_back(std::move(target));
+      into.push_back(std::move(target));
       continue;
     }
 
@@ -1006,7 +1030,7 @@ void Proxy::_add_targets(const std::shared_ptr<Context>& context, std::vector<ty
     auto& others = context->other_flows[target.instance];
 
     if (first_of_instance) {
-      context->targets.push_back(std::move(target));
+      into.push_back(std::move(target));
     } else {
       others.push_back(std::move(target));
     }
@@ -1879,14 +1903,14 @@ void Proxy::forward_register(std::shared_ptr<SIPMessage> request, std::shared_pt
   _preprocess_routes(request);
 
   auto self = shared_from_this();
-  _authorize_relay(request, transaction, [this, self, request, transaction, token]() {
+  _authorize(request, transaction, true, [this, self, request, transaction, token]() {
     _logger->info("Forwarding a REGISTER for " + request->header->request_uri->to_string() + " (RFC 3261 10.3 step 1)");
     _determine_targets(request, transaction, token);
   });
 }
 
-void Proxy::_authorize_relay(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
-                             std::function<void()> then) {
+void Proxy::_authenticate_any(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
+                              std::function<void()> then) {
   auto core = _core.lock();
   if (!core) return;
 

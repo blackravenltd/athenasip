@@ -22,6 +22,7 @@
 #include "events/topics.h"
 #include "expiry_set.h"
 #include "local_ua.h"
+#include "policy/builtin_policy.h"
 #include "proxy.h"
 #include "push/push_parameters.h"
 #include "qualifier.h"
@@ -631,6 +632,50 @@ Core::Advertised Core::advertised_for(const Channel& channel) const {
   }
 
   return out;
+}
+
+namespace {
+
+// What a policy decides with: the datastore through the strand, and the node's own addresses and configuration.
+class CorePolicyHost final : public policy::Host {
+ public:
+  explicit CorePolicyHost(std::weak_ptr<Core> core) : _core(std::move(core)) {}
+
+  void realm(std::string name, plugins::Handler<std::shared_ptr<Realm>> handler) override {
+    if (auto core = _core.lock()) core->realm_get_by_name(std::move(name), std::move(handler));
+  }
+
+  void subscriber(std::shared_ptr<SIPIdentity> identity, plugins::Handler<std::shared_ptr<Subscriber>> handler) override {
+    if (auto core = _core.lock()) core->subscriber_get(std::move(identity), std::move(handler));
+  }
+
+  void locations(std::uint64_t subscriber_id, plugins::Handler<std::vector<types::Location>> handler) override {
+    if (auto core = _core.lock()) core->location_list(subscriber_id, std::move(handler));
+  }
+
+  bool names_this_node(const std::string& host, std::uint16_t port) const override {
+    auto core = _core.lock();
+    return core && core->is_local_address(host, port);
+  }
+
+  // The Core owns the policy, so it is alive whenever the policy asks.
+  const Config& config() const override { return *_core.lock()->config; }
+
+ private:
+  std::weak_ptr<Core> _core;
+};
+
+}  // namespace
+
+void Core::policy_register(std::shared_ptr<policy::Policy> policy) {
+  if (!policy) return;
+  policy->attach(std::make_shared<CorePolicyHost>(weak_from_this()));
+  _policy = std::move(policy);
+}
+
+std::shared_ptr<policy::Policy> Core::policy() {
+  if (!_policy) policy_register(std::make_shared<policy::BuiltinPolicy>(_logger, nullptr));
+  return _policy;
 }
 
 void Core::push_register(std::shared_ptr<push::PushService> service) {

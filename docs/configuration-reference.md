@@ -173,6 +173,14 @@ The rtpengine:// media engine, over its ng control port.
 | `media.rtpengine.ping_interval` | integer, 1 or more | `10` | Seconds between pings of every engine. |
 | `media.rtpengine.media_address` | text | none | The address rtpengine advertises. Empty leaves it to rtpengine's interfaces. A leg inside sip.localnet is given the node's local address. |
 
+## `policy`
+
+Who may call, and where a request goes. Each driver may have a section of its own here.
+
+| Setting | Takes | Default | |
+|---|---|---|---|
+| `policy.url` | text | `builtin://` | builtin:// serves this node's realms and nothing more, with no script. |
+
 ## `plugins`
 
 Plugin modules, loaded at start.

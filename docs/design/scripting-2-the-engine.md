@@ -178,7 +178,7 @@ binding: `contact`, `node_id`, `flow_id`, `registered_at`, `expires_at`, `instan
 `reg_id`, `push`. A trunk: part 1's record, without the password.
 
 `route` returns one of `a.route.forward`, `a.route.reply` or `nil`. A `nil` means the node
-does what it would with no targets: 480 for an INVITE, 404 otherwise. A target list may
+does what it does with no targets: 480. A target list may
 also be returned bare and is wrapped in `a.route.forward`.
 
 `on_failure(request, response, state)` gets `response.code`, `response.reason`,
@@ -214,17 +214,8 @@ local a = athenasip
 local std = {}
 
 -- proxy.cpp:211-271. An out-of-dialog request, or a REGISTER being relayed.
--- proxy.cpp:175-191: an OPTIONS with no user part addressed to this node.
-local function options_for_node(request)
-  return request.method == "OPTIONS" and not request.uri.user
-     and (a.node.names(request.uri.host, request.uri.port)
-          or request.uri.host == a.node.public_address
-          or a.store.realm(request.uri.host:lower()) ~= nil)
-end
-
 function std.authorize(request)
   if request.method == "ACK" or request.method == "CANCEL" then return a.auth.accept() end
-  if options_for_node(request) then return a.auth.accept() end           -- answered before authorisation today: :175
   if request.source.peer_node then return a.auth.accept() end            -- a cluster peer: :222
   if request.in_dialog then return a.auth.accept() end                   -- :225
   if request.has_flow_token then return a.auth.accept() end              -- :229
@@ -245,9 +236,9 @@ function std.authorize(request)
   return a.auth.reject(403, "Forbidden")                                 -- :268
 end
 
--- proxy.cpp:175-191 and :457-601. An authorised initial request with no Route and no flow token.
+-- proxy.cpp:457-601. An authorised initial request with no Route and no flow token. An OPTIONS for the node
+-- itself never gets here: the node answers it (RFC 3261 11.2).
 function std.route(request)
-  if options_for_node(request) then return a.route.reply(200, "OK") end  -- :175-191; Max-Forwards 0 is answered natively
 
   local realm = a.store.realm(request.uri.host:lower())                  -- :527
   if not realm then                                                      -- :539-547: forwarded as it is

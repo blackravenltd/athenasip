@@ -440,19 +440,9 @@ Digest response for the carrier's realm cannot be made from anything less.
 
 ### The seam
 
-- [ ] The `policy` plugin kind: `Policy` with `authorize`, `route`, `on_failure`,
-      `register_` and the decision structs (`AuthDecision`, `RouteDecision`, `TargetSpec`,
-      `FailureDecision`, `RegisterDecision`), `RequestView` as the read-mostly view of a
-      request, and `builtin://` holding what today is `Proxy::_authorize`
-      (`src/proxy.cpp:211-271`), the lookups in `_determine_targets` (`:457-601`),
-      `_authorize_relay` (`:1888`), and the registrar's realm, unserved and expiry steps
-      (`src/registrar.cpp:145-188`, `:482-518`). No behaviour changes. Contract version
-      bumps.
-- [ ] Fix found while mapping: an off-node call gets a default `MediaPolicy` (anchor,
-      mirror) because `_determine_targets :539-547` sets none and `Core::_on_dialog_change`
-      creates the call without one, so `behaviour.media_anchor: false` is ignored for
-      exactly the calls a trunk makes. The route decision carries the policy; a unit test
-      pins it.
+Done (`COMPLETED.md`, 2026-10-08): the `policy` kind, `builtin://`, the question after a
+failed branch, and the off-node media policy.
+
 - [ ] Close before any outbound TLS to a non-peer exists: `Channel::peer_node()` is the
       verified peer certificate's CN (`servers/tls_connection.h:83-91`) and `_authorize`
       trusts any channel with one. Set `peer_identity` only when the chain ends at the

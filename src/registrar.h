@@ -36,17 +36,24 @@ class Registrar : public TransactionUser {
   void on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction) override;
 
  private:
-  // The steps of RFC 3261 10.3. Each stage resumes after a datastore round trip and is named
-  // for what it has just learned.
-  void _on_unserved(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::shared_ptr<types::SIPIdentity> aor);
+  // What the policy granted a REGISTER it accepted: the lifetimes and the qualify interval.
+  struct Terms {
+    std::uint32_t max_expires = 0;
+    std::uint32_t min_expires = 0;
+    std::uint32_t qualify_interval = 0;
+  };
+
+  // The steps of RFC 3261 10.3, once the policy has accepted the REGISTER into a realm. Each stage resumes after
+  // a datastore round trip and is named for what it has just learned.
   void _on_realm(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::shared_ptr<types::SIPIdentity> aor,
-                 std::shared_ptr<types::Realm> realm);
+                 std::shared_ptr<types::Realm> realm, Terms terms);
   void _on_nonce_checked(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
-                         std::shared_ptr<types::SIPIdentity> aor, std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Authorization> auth);
+                         std::shared_ptr<types::SIPIdentity> aor, std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Authorization> auth, Terms terms);
   void _on_subscriber(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::shared_ptr<types::SIPIdentity> aor,
-                      std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Authorization> auth, std::shared_ptr<types::Subscriber> subscriber);
-  void _apply_bindings(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::shared_ptr<types::Realm> realm,
-                       std::shared_ptr<types::Subscriber> subscriber);
+                      std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Authorization> auth, std::shared_ptr<types::Subscriber> subscriber,
+                      Terms terms);
+  void _apply_bindings(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
+                       std::shared_ptr<types::Subscriber> subscriber, Terms terms);
 
   // Bindings are written one at a time; the response waits for the last.
   struct Binding {
@@ -74,14 +81,14 @@ class Registrar : public TransactionUser {
                     std::size_t index, std::function<void()> then);
 
   // The lifetime the client asked for: the Contact's expires parameter, else the Expires
-  // header, else the realm default (RFC 3261 10.3 step 7).
-  std::uint32_t _requested_expiry(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<types::Realm>& realm) const;
+  // header, else the longest granted (RFC 3261 10.3 step 7).
+  std::uint32_t _requested_expiry(const std::shared_ptr<SIPMessage>& request, const Terms& terms) const;
 
-  // The lifetime granted: the request capped at the realm's registration_timeout.
-  std::uint32_t _granted_expiry(std::uint32_t requested, const std::shared_ptr<types::Realm>& realm) const;
+  // The lifetime granted: the request capped at the longest the policy grants.
+  std::uint32_t _granted_expiry(std::uint32_t requested, const Terms& terms) const;
 
-  // Whether 10.3 step 7 lets this realm refuse the interval.
-  bool _is_too_brief(std::uint32_t requested, const std::shared_ptr<types::Realm>& realm) const;
+  // Whether 10.3 step 7 lets the policy's minimum refuse the interval.
+  bool _is_too_brief(std::uint32_t requested, const Terms& terms) const;
 
   // RFC 3327: every Path header, in order, as one field value.
   std::string _path_of(const std::shared_ptr<SIPMessage>& request) const;
