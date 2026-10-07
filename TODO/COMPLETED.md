@@ -14,6 +14,15 @@ week, under Milestone 1. Everything after that is dated as it landed.
 
 Newest first. The detail is below, oldest first.
 
+- **0.9.0** (2026-10-07): a second node that takes over, and phones woken for a call.
+  A client whose node dies registers again through the other; an rtpengine pool keeps
+  media going when an engine dies; the node ends dead calls itself with a BYE, and an
+  administrator can hang one up. RFC 8599 push through `apns://`, `fcm://` and
+  `webpush://`, tested against local stand-ins only. Plugins can be shared libraries;
+  every setting is described once, giving `--print-schema`, a generated reference and a
+  warning naming the key a misspelt one meant. The README loses its alpha banner and
+  gains a quick-start guide for each way in. The sipp harnesses were not run on the tagged
+  tree (Docker was paused).
 - **0.8.0** (2026-10-03): a cluster that carries a call, and a console that can make one.
   A node forwards a call to the node holding the subscriber's flow, over mutual TLS from
   the cluster's own CA, and a call crossed two real nodes over UDP, TCP and WebSocket.
