@@ -33,10 +33,16 @@ Core = composition root + the strand
 | `src/transactions/` | The four RFC 3261 17 state machines and the matcher |
 | `src/registrar.*`, `src/proxy.*`, `src/dialogs.*`, `src/qualifier.*`, `src/local_ua.*` | Transaction users. `LocalUA` ends a call with a BYE to each end, sent through the proxy as the far end would send it. |
 | `src/dns/` | RFC 3263 server location: NAPTR, SRV, A/AAAA |
-| `src/datastores/`, `src/events/`, `src/media/` | Plugin interfaces and the in-tree drivers |
-| `src/plugins/` | The plugin base class and registry |
-| `src/api/` | The admin HTTP API |
-| `src/config.*`, `src/cli*.h`, `src/main.cpp` | Configuration, command line, startup |
+| `src/datastores/`, `src/events/`, `src/media/`, `src/push/` | Plugin interfaces and the in-tree drivers. `src/push/` also holds the HTTP/2 and HTTPS clients and the JWT signing the push services use. |
+| `src/push_refresher.*` | Pushes a sleeping client to refresh its registration before it lapses (RFC 8599) |
+| `src/plugins/` | The plugin base class, the registry, the module loader and the description of a driver's settings |
+| `src/node_directory.*`, `src/address_discovery.*`, `src/stun.*` | The cluster's node list, and the node finding its own public address |
+| `src/cluster_ca.*` | The cluster certificate authority behind `--ca-init` and `--ca-node` |
+| `src/flow_tokens.*` | Flow tokens in Path and Record-Route (RFC 5626) |
+| `src/api/` | The admin HTTP API, and the subscriber's own routes under `/api/v1/subscriber/{realm}/`, which take Digest |
+| `src/config.*`, `src/config_schema.*` | The configuration file, and the description of every setting that the reference, the editor schema and the misspelt-key warning come from |
+| `src/cli*`, `src/main.cpp` | Command line and startup |
+| `src/types/`, `src/headers/`, `src/sdp.h` | Realms, subscribers, bindings and calls; SIP headers; session descriptions |
 | `tests/` | GoogleTest, mirroring `src/` ([Testing](testing.md)) |
 
 ## Threading
@@ -72,17 +78,19 @@ a web client.
 
 ## Plugins
 
-`Datastore`, `EventSystem` and `MediaEngine` are plugin kinds in one registry keyed by
-`(kind, URL scheme)`.
+`Datastore`, `EventSystem`, `MediaEngine` and `PushService` are plugin kinds in one
+registry keyed by `(kind, URL scheme)`.
 
 | Kind | No external service | For a cluster or production |
 |---|---|---|
 | `datastore` | `memory://` | `redis://` |
 | `events` | `local://` | `mqtt://` |
-| `media` | `builtin://` | `rtpengine://` |
+| `media` | `builtin://` | `rtpengine://`, one engine or a pool |
+| `push` | (off) | `apns://`, `fcm://`, `webpush://` |
 
 None is privileged; anything else is a plugin written against the same versioned, async
-contract, with its own YAML section. [Plugins](plugins.md) is the contract.
+contract, with its own YAML section, compiled in or loaded as a shared library at start.
+[Plugins](plugins.md) is the contract.
 
 ## Clustering
 
@@ -173,6 +181,8 @@ monitor or a trunk expects.
 `MediaEngine` advertises capabilities (`bridge`, `conference`, `record`, `transcode`) and
 the media profiles it can produce. A `Call` holds a list of participants rather than two
 fixed legs. Whether and how a call's media is anchored is [Behaviour](behaviour.md).
+`rtpengine://` can be a pool of engines, each call placed on one by its Call-ID and kept
+there ([Media](media.md#more-than-one-engine)).
 
 ## Versions
 

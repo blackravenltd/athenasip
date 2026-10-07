@@ -64,8 +64,8 @@ not a terminal. No option takes a password.
 
 | Command | Does | Exit |
 |---|---|---|
-| `athenasip --add-user NAME [--display-name N] [--role R ...]` | Creates a user. Without `--role` it holds `manage-admin-users`. | 0; 3 if the name is taken; 1 otherwise |
-| `athenasip --reset-password NAME` | Sets a new password and ends every session the user held | 0; 3 if there is no such user; 1 otherwise |
+| `athenasip --add-user NAME [--display-name N] [--role R ...]` | Creates a user. Without `--role` it holds `manage-admin-users`. | 0; 2 if no password was given; 3 if the name is taken; 1 otherwise |
+| `athenasip --reset-password NAME` | Sets a new password and ends every session the user held | 0; 2 if no password was given; 3 if there is no such user; 1 otherwise |
 
 With `redis://` the command writes the user and exits, and is safe beside a running node.
 With `memory://` a separate process cannot reach a running node's memory, so `--add-user`
@@ -78,7 +78,7 @@ do nothing.
 
 | Role | Permits |
 |---|---|
-| `view-cluster-status` | Read nodes, registrations, calls, call records, media, qualify state, metrics and the client config |
+| `view-cluster-status` | Read nodes, registrations, calls, call records, media, qualify state, metrics and the event stream (`/events`) |
 | `manage-admin-users` | Create, change and remove users and their roles. Its holder can grant itself any role. |
 | `manage-realms` | Create, change and remove realms |
 | `manage-realm-subscribers` | Create, change and remove subscribers in a realm |

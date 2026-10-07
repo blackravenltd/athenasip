@@ -8,7 +8,7 @@ Where a term is the standards' own, the RFC is given.
 | Term | Meaning |
 |---|---|
 | **Realm** | The SIP domain subscribers belong to: the part after `@` in `sip:alice@example.com`. Has its own subscribers, Digest secret and behaviour. Deleting a realm deletes everything in it. |
-| **Subscriber** | A phone, softphone or browser registered on one realm to make and receive calls. Authenticates by Digest. Cannot use the admin API. |
+| **Subscriber** | A phone, softphone or browser registered on one realm to make and receive calls. Authenticates by Digest. Cannot sign in to the admin API, but reads its own configuration and registrations under `/api/v1/subscriber/{realm}/` with the same Digest credentials. |
 | **User** | A person or system that signs in to the admin API or console, with a username, password and roles. Belongs to no realm and cannot register or call. Also, as in the standards, the part of a SIP address before the `@`. |
 | **Account** | Not a term. Nothing in AthenaSIP is an account, except the operating system's service account. |
 | **Role** | What a user may do. A route names the roles that admit it. No role implies another. |
@@ -37,6 +37,7 @@ A subscriber and a user are never created from each other; see
 | **Transaction** | One request and its responses; the layer that handles retransmission and timeouts (RFC 3261 17). |
 | **Dialog** | The relationship between two endpoints that an answered INVITE sets up and a BYE ends (RFC 3261 12). |
 | **Proxy** | The part of the node that forwards a request towards its destination. The node routes calls; it does not answer them. |
+| **Local UA** | The part of the node that ends a call itself, sending each end a BYE: when its media stops, when it reaches `sip.max_call_duration`, or when an administrator hangs it up. It never starts or answers one. |
 | **Registrar** | The part of the node that accepts registrations. |
 | **Offer and answer** | How two endpoints agree on media, in SDP (RFC 3264). |
 | **Re-offer** | A second offer the node makes to a callee, in the other media profile, after a 488. Made once. |
@@ -46,6 +47,7 @@ A subscriber and a user are never created from each other; see
 | Term | Meaning |
 |---|---|
 | **Media engine** | The plugin that relays, and where needed converts, a call's audio and video. `builtin` relays plain RTP; `rtpengine` relays and converts. |
+| **Push service** | The plugin that wakes a sleeping phone for a call (RFC 8599): `apns` for iOS, `fcm` for Android, `webpush` for browsers. |
 | **Media profile** | The kind of media a leg is offered: `rtp`, `webrtc`, `srtp`, `transport` (decided by how it connected) or `mirror` (what the caller offered). |
 | **Anchoring** | Routing a call's media through the media engine instead of end to end. |
 | **Qualify** | Sending OPTIONS to registered devices on an interval to see whether they are still there. |
@@ -64,8 +66,9 @@ A subscriber and a user are never created from each other; see
 
 | Term | Meaning |
 |---|---|
-| **Plugin** | An implementation of a pluggable kind (datastore, event system, media engine), registered under a URL scheme and selected by a URL in the config. |
+| **Plugin** | An implementation of a pluggable kind (datastore, event system, media engine, push service), registered under a URL scheme and selected by a URL in the config. |
 | **Driver** | A particular plugin: "the Redis driver". |
+| **Module** | A shared library holding one or more drivers, loaded at start from `plugins.path`. |
 | **Datastore** | Where realms, subscribers, bindings, users, sessions and call records are kept: `memory` or `redis`. |
 | **Event system, event bus** | Where a node publishes what is happening: `local` or `mqtt`. Observability and discovery only; no call waits on it. |
 | **Topic** | The name an event is published under, such as `nodes/<id>/status`. |

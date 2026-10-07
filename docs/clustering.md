@@ -81,7 +81,8 @@ http:
 
 Node B is the same with `node-b` in place of `node-a` and its own addresses. Everything
 else, including `behaviour` and the media engine, should match, so a subscriber is treated
-the same whichever node it reaches.
+the same whichever node it reaches. With an rtpengine pool, list the same engines in the
+same order on every node ([Media](media.md#more-than-one-engine)).
 
 Make the first administrator once, on either node. With `redis://` it is written to the
 shared store and the command exits:
@@ -146,7 +147,9 @@ there; use whichever your clients support:
 
 A call that was up through the dead node loses its signalling: a BYE or re-INVITE has
 nowhere to go. Its media does not depend on the node when rtpengine anchors it, so the call
-carries on until a phone hangs up. With `builtin://` the media dies with the node.
+carries on until a phone hangs up. With `builtin://` the media dies with the node. An
+rtpengine pool keeps new calls going when an engine dies
+([Media](media.md#more-than-one-engine)); calls already on that engine end with it.
 
 Calls the dead node held stay in the datastore as they were. Once a node has gone, the live
 node with the lowest `node_id` closes their records: at once for a call whose media was not

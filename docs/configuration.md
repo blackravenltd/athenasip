@@ -1,10 +1,10 @@
 # AthenaSIP - Configuration
 
-One YAML file. With no `--config`, the first of these that exists is read:
+One YAML file. With no `--config`, the node reads:
 
-1. `$ATHENASIP_CONFIG`
-2. `/etc/athenasip/config.yaml`
-3. `~/.athenasip/config.yaml`
+1. `$ATHENASIP_CONFIG`, when it is set
+2. otherwise `/etc/athenasip/config.yaml`, when it exists
+3. otherwise `~/.athenasip/config.yaml`
 
 [`config/config.example.yaml`](../config/config.example.yaml) shows the settings in place,
 and the [reference](configuration-reference.md) lists every one with its default and limits.
@@ -48,7 +48,7 @@ admin API and console need an [`http`](#http) section.
 |---|---|
 | `athenasip --print-config` | Prints the effective configuration (file, search path and defaults resolved) as YAML, names the file it came from, and exits. Plugin sections are copied through as written. The output is itself a configuration: saved and loaded, it runs the same node. |
 | `athenasip --print-schema` | Prints every setting with its type, default and limits as a JSON Schema; `--print-schema=markdown` prints the [reference](configuration-reference.md). Reads no file. |
-| `athenasip --check` | Tries the datastore, event bus, media engine, each certificate a listener needs and, in a cluster, a mutual-TLS handshake with each node that reports itself up. Prints `ok` or `FAIL` per item; exits 0 if all passed, 1 otherwise. Starts and changes nothing, so it is safe beside a running node. Passwords in URLs are masked. |
+| `athenasip --check` | Tries the datastore, event bus, media engine, each certificate a listener needs and, in a cluster, a mutual-TLS handshake with each node that reports itself up. Prints `ok` or `FAIL` per item; exits 0 if all passed, 1 otherwise. With a `stun:` server in `http.api.ice_servers`, also asks it what address the node is seen from and compares that with `sip.public_address`. Push services are not tried. Starts and changes nothing, so it is safe beside a running node. Passwords in URLs are masked. |
 
 ```
 ok    configuration        /etc/athenasip/config.yaml
@@ -394,7 +394,7 @@ Enabled when the section is present. Users sign in with `POST /api/v1/auth/login
 
 | Key | Default | Meaning |
 |---|---|---|
-| `enable` | `true` | Serve `/api/v1` |
+| `enable` | `true` | Serve `/api/v1`, and `/metrics` in the Prometheus text format ([Media](media.md#is-media-flowing)) |
 | `session_lifetime` | `43200` | Seconds a login lasts. Cannot be `0`. |
 | `session_idle` | `3600` | Seconds a login survives unused. `0` is off. |
 | `rate_limits` | see below | Request limits |
@@ -421,7 +421,7 @@ Enabled when the section is present.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `enable` | `true` | Serve static files from the admin listener. `/api/` is routed first. |
+| `enable` | `true` | Serve static files from the admin listener. `/api/` and `/metrics` are routed first. |
 | `path` | unset | Document root: the built console |
 | `spa` | `true` | Answer a `GET` or `HEAD` for a path with nothing behind it with `index.html`, so client-side routes survive a reload. Never applied under `/api/` or to a path with a file extension. |
 

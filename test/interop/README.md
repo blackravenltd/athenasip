@@ -6,6 +6,7 @@ A node to point a real SIP client at.
 test/interop/up.sh                      # build, start, provision
 test/interop/up.sh --rtpengine          # the same, with rtpengine and coturn
 test/interop/up.sh --rtpengine --admin  # and serve the admin client's softphone
+test/interop/up.sh restart              # restart the node and provision it again
 test/interop/up.sh down                 # stop
 ```
 
@@ -51,8 +52,8 @@ Subscribers `1001` to `1004` (`subscribers.csv`, and `ATHENA_INTEROP_SUBSCRIBERS
 because the registrar finds a realm by the host in the address of record (RFC 3261
 10.3). `ATHENA_INTEROP_REALM` overrides it.
 
-The API password is generated on each run. The fixture serves `ws` only; for `wss`, add
-`websocket.secure_port` and the certificate filenames to `config.yaml.template`.
+The API password is generated on each run. `restart` provisions again because
+`memory://` keeps nothing over a restart.
 
 ## Running it beside another fixture
 

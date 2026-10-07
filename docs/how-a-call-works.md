@@ -28,7 +28,8 @@ Alice                         AthenaSIP                          Bob
   |<----------------------- 200 --|<------------------------ 200 --|
 ```
 
-The node is a proxy: it forwards requests and responses, it never answers a call itself.
+The node is a proxy: it forwards requests and responses, and never answers a call itself.
+It can end one, by sending each end a BYE ([Hanging up](#hanging-up)).
 
 ## Registration
 
@@ -110,9 +111,11 @@ Alice hangs up. Her phone sends a BYE, which follows the Record-Route through th
 Bob, and Bob's 200 comes back the same way. The node releases the media ports, ends the
 call and writes a call record (`GET /api/v1/call-records`).
 
-A phone that loses power sends no BYE. The node lets such a call go when its media stops
-(`sip.media_timeout`) or its session timer lapses; see
-[Ending dead calls](configuration.md#ending-dead-calls).
+A phone that loses power sends no BYE. When the call's media stops (`sip.media_timeout`)
+or it reaches `sip.max_call_duration`, the node sends each end a BYE itself and releases
+the call. When a session timer lapses it releases the call and sends nothing, as RFC 4028
+8.3 requires. An administrator ends a call the same way with
+`DELETE /api/v1/calls/{call}`. See [Ending dead calls](configuration.md#ending-dead-calls).
 
 Hanging up before Bob answers is a CANCEL instead of a BYE. The node stops Bob's ringing
 device and answers Alice's INVITE with `487 Request Terminated`.

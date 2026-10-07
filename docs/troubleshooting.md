@@ -17,8 +17,8 @@ as the node writes them; `<...>` stands for the part that varies.
 | `GET /api/v1/nodes` | The nodes this node knows of, and their status |
 | `GET /api/v1/media`, `/api/v1/media/reoffers` | The media engine; callees that refused the first media offer |
 
-The API endpoints need a session with the `view-cluster-status` role
-([Authentication](authentication.md)).
+The status endpoints need a session with the `view-cluster-status` role; looking up a
+realm or its subscribers needs the realm roles ([Authentication](authentication.md)).
 
 ## Cannot register
 
@@ -83,7 +83,9 @@ media engine. [Media](media.md#is-media-flowing) has the other tools.
   ([Certificates](certificates.md#certificates-for-clients)). The node logs
   `TLS handshake failed: <reason>` for each refused attempt.
 - **The certificate files must load.** `athenasip --check` shows a `websocket certificate`
-  line. At start, `Cannot load WebSocket TLS certificates` stops the node.
+  line. At start, `Cannot load WebSocket TLS certificates` (with `websocket.tls`) or
+  `Cannot load the certificates for 'websocket.secure_port': set them in the websocket
+  section or the tls section` stops the node.
 - **The console's softphone** also needs the admin listener on HTTPS (`http.tls`), because
   a browser grants no microphone to a plain HTTP page.
 - **It registers but there is no audio.** Browsers send WebRTC media, which the builtin
