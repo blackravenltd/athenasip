@@ -30,9 +30,7 @@ using athenasip::media::MediaEngine;
 
 namespace {
 
-// A port range of its own per test, so two tests never contend for the same UDP ports.
-// The contract is async; these tests are statements about what the engine did with an
-// SDP, so they drive it through the blocking test view.
+// A port range per test, so two tests never contend for the same UDP ports. Driven through the blocking test view.
 std::shared_ptr<SyncMediaEngine> make_engine(std::uint16_t port_min, std::uint16_t port_max) {
   auto logger = std::make_shared<MockLogger>();
   auto url = std::make_shared<types::URL>("builtin://?bind_address=127.0.0.1&public_address=203.0.113.5&port_min=" + std::to_string(port_min) +
@@ -72,8 +70,7 @@ const char* kOffer =
 
 }  // namespace
 
-// The URL is the selector and stays a one-liner; anything richer comes from the
-// driver's own section of the config, and what it sets wins over the URL query.
+// The URL selects the driver; the driver's own config section overrides the URL query.
 TEST(BuiltinMediaEngineTest, TheConfigSectionOverridesTheUrlQuery) {
   auto logger = std::make_shared<MockLogger>();
   auto url = std::make_shared<types::URL>("builtin://?bind_address=127.0.0.1&public_address=203.0.113.5&port_min=23700&port_max=23740");
@@ -100,8 +97,7 @@ TEST(BuiltinMediaEngineTest, TheConfigSectionOverridesTheUrlQuery) {
   engine->close();
 }
 
-// A driver with no section of its own is configured with an empty node and must not
-// mind: datastore: { url: memory:// } has to keep working.
+// A driver with no config section is configured with an empty node and must accept it.
 TEST(BuiltinMediaEngineTest, AcceptsAnAbsentConfigSection) {
   auto logger = std::make_shared<MockLogger>();
   auto url = std::make_shared<types::URL>("builtin://?bind_address=127.0.0.1&public_address=203.0.113.5&port_min=23800&port_max=23840");
@@ -134,8 +130,7 @@ TEST(BuiltinMediaEngineTest, ConnectsAndReportsItself) {
   EXPECT_FALSE(engine->is_connected());
 }
 
-// The builtin engine bridges and nothing else. A caller needing conference, recording
-// or transcoding has to pick a different driver, and can tell in advance.
+// The builtin engine advertises bridge only: no conference, recording or transcoding.
 TEST(BuiltinMediaEngineTest, AdvertisesBridgeOnly) {
   auto engine = make_engine(23150, 23190);
   const auto capabilities = engine->capabilities();
@@ -159,8 +154,7 @@ TEST(BuiltinMediaEngineTest, CapabilityCheckIsUsableByCallers) {
   EXPECT_FALSE(engine.supports_all_of(needs_conference));
 }
 
-// The engine puts itself in the media path: the connection address and the media port
-// both become ours, so RTP arrives here rather than going end to end.
+// The connection address and the media port both become this node's, so RTP arrives here.
 TEST(BuiltinMediaEngineTest, OfferRewritesTheMediaPathToThisNode) {
   auto engine = make_engine(23200, 23240);
   auto call = make_call();
@@ -193,9 +187,8 @@ TEST(BuiltinMediaEngineTest, OfferRewritesTheRtcpAttribute) {
   EXPECT_NE(result.sdp.find("IN IP4 203.0.113.5"), std::string::npos);
 }
 
-// A leg on the node's own LAN is given the address that reaches the relay from there, which
-// the caller knows and the engine's one public address does not: the public address only
-// works for that leg if the router hairpins.
+// A leg on the node's own LAN is given the address that reaches the relay from there: the public address
+// works for it only if the router hairpins.
 TEST(BuiltinMediaEngineTest, AnAddressForTheLegReplacesThePublicOne) {
   auto engine = make_engine(23295, 23299);
   auto call = make_call();
@@ -244,8 +237,7 @@ TEST(BuiltinMediaEngineTest, RepeatedOfferReusesTheSameRelay) {
   EXPECT_EQ(a.media()[0].description.port, b.media()[0].description.port);
 }
 
-// Plain RTP only: anything needing ICE, DTLS or SRTP is rtpengine's job, and the
-// engine has to say so rather than quietly producing a broken answer.
+// Plain RTP only: the engine declines ICE, DTLS and SRTP rather than produce a broken answer.
 TEST(BuiltinMediaEngineTest, DeclinesWebRtcFlags) {
   auto engine = make_engine(23400, 23440);
   auto call = make_call();
@@ -304,7 +296,7 @@ TEST(BuiltinMediaEngineTest, QueryReportsWhatIsHeld) {
   EXPECT_NE(engine->query(call).find("\"relay_sets\":0"), std::string::npos);
 }
 
-// A bridge-only driver must decline the conference operations rather than pretend.
+// A bridge-only driver declines the conference operations.
 TEST(BuiltinMediaEngineTest, ConferenceOperationsAreDeclined) {
   auto engine = make_engine(23600, 23640);
   auto call = make_call();
@@ -325,10 +317,8 @@ TEST(BuiltinMediaEngineTest, ResolvesThroughTheDriverRegistry) {
   EXPECT_EQ(MediaEngine::create_driver(logger, "nosuchscheme://host"), nullptr);
 }
 
-// RFC 3605. The relay's RTCP port comes out of the same pool as its RTP port and is not
-// reliably the one above it, so an endpoint left to assume the convention would send its
-// receiver reports into somebody else's call. The attribute is written whether or not
-// the far end offered one.
+// RFC 3605: the relay's RTCP port is not reliably RTP+1, so a=rtcp is always written, whether or not the far
+// end offered one.
 TEST(BuiltinMediaEngineTest, AlwaysNamesTheRtcpPortItListensOn) {
   auto engine = make_engine(23850, 23890);
   auto call = make_call();
@@ -364,16 +354,12 @@ TEST(BuiltinMediaEngineTest, AlwaysNamesTheRtcpPortItListensOn) {
   engine->release(call);
 }
 
-// What a bridge is for. Each leg is told where to send by the description it is given
-// back, and a packet one leg sends has to come out at the other. Nothing here assumes
-// how the relay is arranged - only that the two ports the two legs were handed carry
-// media between them.
+// Each leg sends to the port in the description it was given, and a packet from one leg comes out at the other.
 TEST(BuiltinMediaEngineTest, BridgesMediaBetweenTheTwoLegs) {
   auto engine = make_engine(23900, 23940);
   auto call = make_call();
 
-  // The caller's offer goes on to the callee, so the port in what comes back is where
-  // the callee sends.
+  // The caller's offer goes on to the callee, so the port in the result is where the callee sends.
   Flags from_caller;
   from_caller.participant = 0;
 
@@ -407,9 +393,8 @@ TEST(BuiltinMediaEngineTest, BridgesMediaBetweenTheTwoLegs) {
   const boost::asio::ip::udp::endpoint caller_sends_to(boost::asio::ip::make_address("127.0.0.1"), caller_side.media()[0].description.port);
   const boost::asio::ip::udp::endpoint callee_sends_to(boost::asio::ip::make_address("127.0.0.1"), callee_side.media()[0].description.port);
 
-  // A relay learns where a leg is from the first packet it sends, so the first packet
-  // each way is what registers the leg rather than what crosses. Real RTP behaves the
-  // same: the first few packets are lost while both ends latch.
+  // A relay learns where a leg is from its first packet, so the first packet each way registers the leg and may
+  // not cross.
   auto pump = [&]() {
     caller.send_to(boost::asio::buffer("from-caller", 11), caller_sends_to);
     callee.send_to(boost::asio::buffer("from-callee", 11), callee_sends_to);
@@ -468,11 +453,8 @@ void drain(boost::asio::ip::udp::socket& socket) {
 
 }  // namespace
 
-// A leg that only listens - muted with silence suppression, an IVR, a recorder, the echo in
-// the sipp harness - never sends first. A relay that waited to hear from both ends before
-// forwarding anything carried nothing to it, ever. Each end starts at the address its own
-// description gave, so media flows to it before it has said a word (RFC 8866 5.7 and 5.14:
-// that is where it said to send).
+// A leg that only listens (an IVR, a recorder, a muted phone) never sends first. Each end starts at the
+// address its own description gave (RFC 8866 5.7, 5.14), so media reaches it before it has sent anything.
 TEST(BuiltinMediaEngineTest, MediaReachesALegThatHasNotSentAnything) {
   auto engine = make_engine(24000, 24040);
   auto call = make_call();
@@ -500,7 +482,7 @@ TEST(BuiltinMediaEngineTest, MediaReachesALegThatHasNotSentAnything) {
 
   EXPECT_EQ(datagram(callee), "one-way") << "nothing reached the leg that had not sent";
 
-  // And the counters show it for what it is: out to the callee, nothing in from it.
+  // The counters show it: out to the callee, nothing in from it.
   const auto document = boost::json::parse(engine->query(call)).as_object();
   std::int64_t silent_ends = 0;
   for (const auto& leg : document.at("legs").as_array()) {
@@ -512,9 +494,8 @@ TEST(BuiltinMediaEngineTest, MediaReachesALegThatHasNotSentAnything) {
   engine->release(call);
 }
 
-// Behind a NAT an end's packets come from somewhere other than the address it described.
-// Once it is heard from, that is where it is: media goes there and no longer to the address
-// in its description, which nothing outside its LAN can reach (symmetric latching).
+// Symmetric latching: once an end is heard from, media goes to where its packets come from, not to the
+// address in its description.
 TEST(BuiltinMediaEngineTest, AnEndIsFollowedToWhereItsPacketsComeFrom) {
   auto engine = make_engine(24050, 24090);
   auto call = make_call();
@@ -555,9 +536,8 @@ TEST(BuiltinMediaEngineTest, AnEndIsFollowedToWhereItsPacketsComeFrom) {
   engine->release(call);
 }
 
-// The relay says how much it carried, per sending end and in total, so a harness and an
-// operator can tell a relayed call from one whose description was declined and whose media
-// went end to end - which from outside look exactly alike.
+// The relay counts what it carried, per sending end and in total, so a relayed call can be told from one whose
+// media went end to end.
 TEST(BuiltinMediaEngineTest, CountsWhatItCarries) {
   auto engine = make_engine(23950, 23990);
   auto call = make_call();
@@ -569,7 +549,7 @@ TEST(BuiltinMediaEngineTest, CountsWhatItCarries) {
   boost::asio::ip::udp::socket caller(io, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0));
   boost::asio::ip::udp::socket callee(io, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0));
 
-  // Each end describes the socket it really sends from, as an endpoint not behind a NAT does.
+  // Each end describes the socket it really sends from, as an endpoint not behind NAT does.
   Flags from_caller;
   from_caller.participant = 0;
   const auto to_callee = engine->offer(call, description_at(caller.local_endpoint().port(), "caller"), from_caller);
@@ -600,9 +580,8 @@ TEST(BuiltinMediaEngineTest, CountsWhatItCarries) {
   const auto& legs = document.at("legs").as_array();
   ASSERT_EQ(legs.size(), 2u) << boost::json::serialize(document);
 
-  // Split by direction at the relay, which is what shows one-way audio: in is what the
-  // end sent, out what the relay sent it. Both ends were known from their descriptions, so
-  // every packet each sent was passed on to the other - none was lost to latching.
+  // Split by direction: in is what the end sent, out what the relay sent it. Both ends were known from their
+  // descriptions, so no packet was lost to latching.
   std::int64_t out_total = 0;
   for (const auto& leg : legs) {
     const auto& end = leg.as_object();
@@ -619,9 +598,7 @@ TEST(BuiltinMediaEngineTest, CountsWhatItCarries) {
   engine->release(call);
 }
 
-// What an offer needs is in the offer. Reading it from the transport would be wrong in
-// both directions: a browser reaches a node over WSS and a desk phone can too, and the
-// same browser offer relayed in over UDP by another proxy still wants ICE and DTLS.
+// What an offer needs is read from the offer, not the transport it arrived on.
 TEST(MediaFlagsTest, ReadsWhatAWebRtcOfferAsksFor) {
   const char* webrtc =
       "v=0\r\n"
@@ -652,9 +629,7 @@ TEST(MediaFlagsTest, PlainRtpAsksForNothing) {
   EXPECT_FALSE(flags.rtcp_mux);
 }
 
-// RFC 4568: SDES puts the keys in the description and the profile is a plain secure one.
-// There is no DTLS and no ICE in it, and saying otherwise would send the offer to the
-// wrong engine.
+// RFC 4568: SDES puts the keys in the description under a plain secure profile, with no DTLS and no ICE.
 TEST(MediaFlagsTest, TheSecureProfileAloneIsEnoughToSaySrtp) {
   const char* sdes =
       "v=0\r\n"
@@ -672,8 +647,7 @@ TEST(MediaFlagsTest, TheSecureProfileAloneIsEnoughToSaySrtp) {
   EXPECT_FALSE(flags.dtls);
 }
 
-// Nothing readable claims nothing. The engine that is handed the description is what
-// refuses it, and guessing here would have it refuse for the wrong reason.
+// An unreadable description claims nothing; the engine handed it is what refuses it.
 TEST(MediaFlagsTest, AnUnreadableDescriptionClaimsNothing) {
   const auto flags = Flags::from_sdp("this is not a session description");
 
@@ -683,16 +657,8 @@ TEST(MediaFlagsTest, AnUnreadableDescriptionClaimsNothing) {
   EXPECT_FALSE(flags.rtcp_mux);
 }
 
-// RFC 8866 section 5.2: the o= line gives "an address of the machine from which the
-// session was created". A node anchoring media so that neither end learns the other's
-// address was handing one of them away in it regardless - every c= and m= was rewritten
-// and the o= was not.
-//
-// The RFC allows the substitution outright: "For privacy reasons, it is sometimes
-// desirable to obfuscate the username and IP address of the session originator. If this
-// is a concern, an arbitrary <username> and private <unicast-address> MAY be chosen to
-// populate the o= line, provided that these are selected in a manner that does not
-// affect the global uniqueness of the field."
+// RFC 8866 5.2: the o= line carries the originator's address, and permits substituting it for privacy. An
+// anchoring node rewrites it with its own, so neither end learns the other's address.
 TEST(BuiltinMediaEngineTest, TheOriginAddressIsThisNodeAndNotTheEndpoint) {
   auto engine = make_engine(23900, 23940);
   auto call = make_call();
@@ -708,17 +674,15 @@ TEST(BuiltinMediaEngineTest, TheOriginAddressIsThisNodeAndNotTheEndpoint) {
   EXPECT_EQ(origin.nettype, "IN");
   EXPECT_EQ(origin.addrtype, "IP4");
 
-  // The endpoint's address appears nowhere at all now, which is the whole point.
+  // The endpoint's address appears nowhere.
   EXPECT_EQ(result.sdp.find("198.51.100.1"), std::string::npos);
 
   engine->release(call);
   engine->close();
 }
 
-// The same paragraph's condition: the substitution must not "affect the global
-// uniqueness of the field". Uniqueness is the tuple of username, session id, nettype,
-// addrtype and address, so replacing the address alone leaves the endpoint's username
-// and session id to carry it - two calls through this node stay distinguishable.
+// RFC 8866 5.2: the substitution must not affect the field's global uniqueness, so the endpoint's username
+// and session id are kept.
 TEST(BuiltinMediaEngineTest, TheOriginKeepsWhatMakesItUnique) {
   auto engine = make_engine(23950, 23990);
   auto call = make_call();
@@ -733,27 +697,15 @@ TEST(BuiltinMediaEngineTest, TheOriginKeepsWhatMakesItUnique) {
   EXPECT_EQ(origin.username, "alice");
   EXPECT_EQ(origin.sessionId, "2890844526");
 
-  // The version is the endpoint's as well. RFC 3264 section 8's rule for incrementing it
-  // when this node changes a re-offer is its own item, and is not this.
+  // The version is the endpoint's too.
   EXPECT_EQ(origin.sessionVersion, "2890844526");
 
   engine->release(call);
   engine->close();
 }
 
-// A phone that loses power sends no BYE. Nothing in the signalling plane will ever say
-// the call ended, so a proxy holding relay ports for it holds them until it restarts -
-// and the ports are a finite pool. The media plane knows what the signalling plane
-// cannot: whether anything is still crossing the relay.
-//
-// query() carries it, because it is already the contract's diagnostics call and a new
-// field in its document costs no version of the plugin contract.
-// RFC 3264 section 8: "the version number in the o= line MUST be incremented by one
-// from the previous SDP" when the description changes, and must not be when it has
-// not. The rule is about what this node emits, not about what it was given: the
-// addresses and the ports in what comes out are this node's, so passing the
-// endpoint's version through would tell the far end nothing had changed when the
-// ports had.
+// RFC 3264 8: the o= version MUST be incremented when the description changes and must not be when it has
+// not. The rule applies to what this node emits, whose addresses and ports are its own.
 TEST(BuiltinMediaEngineTest, ARepeatedOfferKeepsTheVersionItWasGiven) {
   auto engine = make_engine(24600, 24620);
   auto call = make_call();
@@ -772,7 +724,7 @@ TEST(BuiltinMediaEngineTest, ARepeatedOfferKeepsTheVersionItWasGiven) {
   ASSERT_TRUE(one.parse(first.sdp));
   ASSERT_TRUE(two.parse(again.sdp));
 
-  // The same stream, the same relay ports, so nothing about the description changed.
+  // The same stream and relay ports: nothing changed.
   EXPECT_EQ(one.origin().sessionVersion, two.origin().sessionVersion);
   EXPECT_EQ(first.sdp, again.sdp);
 
@@ -789,8 +741,7 @@ TEST(BuiltinMediaEngineTest, AnOfferThatChangesTheDescriptionCarriesAHigherVersi
   const auto first = engine->offer(call, kOffer, flags);
   ASSERT_TRUE(first.ok) << first.error;
 
-  // A second stream: this is the re-offer that adds video, and the far end has to be
-  // told that something changed.
+  // A re-offer that adds video changes the description.
   const std::string with_video = std::string(kOffer) + "m=video 51372 RTP/AVP 96\r\na=rtpmap:96 VP8/90000\r\n";
 
   const auto second = engine->offer(call, with_video, flags);
@@ -806,8 +757,7 @@ TEST(BuiltinMediaEngineTest, AnOfferThatChangesTheDescriptionCarriesAHigherVersi
   engine->close();
 }
 
-// The first description keeps the endpoint's own version, so a call that never
-// re-offers looks exactly as it did before this rule existed.
+// The first description keeps the endpoint's own version.
 TEST(BuiltinMediaEngineTest, TheFirstDescriptionKeepsTheEndpointsVersion) {
   auto engine = make_engine(24660, 24680);
   auto call = make_call();
@@ -829,8 +779,7 @@ TEST(BuiltinMediaEngineTest, TheFirstDescriptionKeepsTheEndpointsVersion) {
   engine->close();
 }
 
-// The two legs of a call are two descriptions and each has its own version. Sharing
-// one counter would have an answer's version jump because an offer had changed.
+// Each leg's description has its own version counter.
 TEST(BuiltinMediaEngineTest, EachLegHasAVersionOfItsOwn) {
   auto engine = make_engine(24690, 24710);
   auto call = make_call();
@@ -851,8 +800,7 @@ TEST(BuiltinMediaEngineTest, EachLegHasAVersionOfItsOwn) {
   SDP given;
   ASSERT_TRUE(given.parse(kAnswer));
 
-  // Bob's first description, so it is still Bob's version rather than one carried over
-  // from Alice's leg.
+  // Bob's first description, so still Bob's version, not one carried over from Alice's leg.
   EXPECT_EQ(produced.origin().sessionVersion, given.origin().sessionVersion);
 
   engine->close();
@@ -862,25 +810,20 @@ TEST(BuiltinMediaEngineTest, QueryReportsHowLongTheMediaHasBeenSilent) {
   auto engine = make_engine(24000, 24040);
   auto call = make_call();
 
-  // A call the engine holds nothing for has no media to be idle, and says so rather than
-  // reporting a number a caller might act on.
+  // A call the engine holds nothing for reports null, not a number.
   EXPECT_NE(engine->query(call).find("\"idle_seconds\":null"), std::string::npos);
 
   ASSERT_TRUE(engine->offer(call, kOffer, Flags{}).ok);
 
-  // Freshly allocated, and measured from allocation rather than from zero: a call whose
-  // media has not begun yet reads as young, not as infinitely idle.
+  // Idle is measured from allocation, so a call whose media has not begun reads as young.
   EXPECT_NE(engine->query(call).find("\"idle_seconds\":0"), std::string::npos);
 
   engine->release(call);
   EXPECT_NE(engine->query(call).find("\"idle_seconds\":null"), std::string::npos);
 }
 
-// The reading is what a packet arriving resets, and any relay of the call still carrying
-// keeps the call live: the figure is the shortest idle of all of them. RTCP is relayed
-// through a set of its own and counts the same, which is what stops a call on hold or one
-// whose codec suppresses silence from reading as dead (RFC 3550 section 6: reports are
-// sent for the life of the session whether or not there is anything to carry).
+// A packet arriving resets the reading, and the figure is the shortest idle of all the call's relays. RTCP
+// counts too, which keeps a call on hold or with silence suppression alive (RFC 3550 6).
 TEST(BuiltinMediaEngineTest, APacketArrivingIsWhatSaysTheCallIsAlive) {
   auto engine = make_engine(24050, 24090);
   auto call = make_call();
@@ -899,8 +842,7 @@ TEST(BuiltinMediaEngineTest, APacketArrivingIsWhatSaysTheCallIsAlive) {
 
   leg.send_to(boost::asio::buffer("packet", 6), relay);
 
-  // The relay reads on the global io_context thread, so the store lands a moment after
-  // the send returns.
+  // The relay reads on the global io_context thread, so the store lands a moment after the send returns.
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
   bool seen = false;
 
@@ -912,4 +854,46 @@ TEST(BuiltinMediaEngineTest, APacketArrivingIsWhatSaysTheCallIsAlive) {
   EXPECT_TRUE(seen) << "query said " << engine->query(call);
 
   engine->release(call);
+}
+
+// A public address may be a name, as behind dynamic DNS. The engine resolves it and writes the address in
+// c=, because phones do not resolve a name there.
+TEST(BuiltinMediaEngineTest, APublicAddressThatIsANameIsWrittenAsTheAddressItResolvesTo) {
+  auto logger = std::make_shared<MockLogger>();
+  auto url = std::make_shared<types::URL>("builtin://?bind_address=127.0.0.1&public_address=localhost&port_min=26100&port_max=26120");
+  auto engine = std::make_shared<SyncMediaEngine>(std::make_shared<BuiltinMediaEngine>(logger, url));
+  engine->connect();
+
+  auto call = make_call();
+  Flags flags;
+  flags.participant = 0;
+
+  const auto offered = engine->offer(call, kOffer, flags);
+  ASSERT_TRUE(offered.ok) << offered.error;
+
+  SDP sdp;
+  ASSERT_TRUE(sdp.parse(offered.sdp));
+  EXPECT_EQ(sdp.connection().address, "127.0.0.1") << offered.sdp;
+  EXPECT_EQ(offered.sdp.find("localhost"), std::string::npos) << offered.sdp;
+
+  engine->release(call);
+  engine->close();
+}
+
+// A name that does not resolve is not written: the engine declines and the description travels on unchanged.
+TEST(BuiltinMediaEngineTest, APublicNameThatDoesNotResolveIsDeclinedRatherThanWritten) {
+  auto logger = std::make_shared<MockLogger>();
+  auto url = std::make_shared<types::URL>("builtin://?bind_address=127.0.0.1&public_address=nowhere.invalid&port_min=26130&port_max=26150");
+  auto engine = std::make_shared<SyncMediaEngine>(std::make_shared<BuiltinMediaEngine>(logger, url));
+  engine->connect();
+
+  auto call = make_call();
+  Flags flags;
+  flags.participant = 0;
+
+  const auto offered = engine->offer(call, kOffer, flags);
+  EXPECT_FALSE(offered.ok);
+  EXPECT_NE(offered.error.find("nowhere.invalid"), std::string::npos) << offered.error;
+
+  engine->close();
 }

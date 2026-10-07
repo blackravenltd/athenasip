@@ -73,8 +73,7 @@ std::string names_of(X509* certificate) {
 
 }  // namespace
 
-// The cluster's own authority: a key nobody else can read and a certificate that is a CA,
-// signed by itself.
+// init writes a self-signed CA certificate and a key readable by its owner only.
 TEST(ClusterCaTest, InitMakesACertificateAuthority) {
   TempDir dir;
 
@@ -91,8 +90,7 @@ TEST(ClusterCaTest, InitMakesACertificateAuthority) {
   EXPECT_EQ(key.st_mode & 0777, 0600) << "the CA key is readable by its owner only";
 }
 
-// A second init would replace the authority every node certificate hangs from, so it is
-// refused and nothing is touched.
+// A second init is refused: replacing the CA would orphan every node certificate.
 TEST(ClusterCaTest, InitNeverReplacesAnAuthority) {
   TempDir dir;
   ASSERT_TRUE(ca::init(dir.path.string()).ok);
@@ -105,8 +103,8 @@ TEST(ClusterCaTest, InitNeverReplacesAnAuthority) {
   EXPECT_EQ(std::filesystem::last_write_time(dir.path / "ca.key"), before);
 }
 
-// A node's certificate is signed by the cluster CA, names the node and every address and
-// name it is reached by, and is good for both ends of a mutual TLS connection.
+// A node certificate is signed by the CA, carries the node id and every SAN, and is valid as both
+// TLS server and client.
 TEST(ClusterCaTest, ANodeCertificateIsSignedByTheClusterAndNamesTheNode) {
   TempDir dir;
   ASSERT_TRUE(ca::init(dir.path.string()).ok);
@@ -134,7 +132,7 @@ TEST(ClusterCaTest, ANodeCertificateIsSignedByTheClusterAndNamesTheNode) {
   EXPECT_EQ(key.st_mode & 0777, 0600);
 }
 
-// Re-issuing is asked for, not stumbled into; and a node needs an authority to be issued by.
+// Issuing needs a CA, re-issuing needs --replace, and a node id cannot be a path.
 TEST(ClusterCaTest, ANodeCertificateIsReplacedOnlyWhenAskedAndNeedsAnAuthority) {
   TempDir dir;
 

@@ -17,14 +17,10 @@ namespace athenasip::types {
 
 // RFC 3261 19.1: sip:user:password@host:port;uri-parameters?headers
 //
-// Parameters and headers are structured rather than kept as the raw text after the ';'
-// and the '?'. The proxy has to read them: lr decides whether a Route is loose (16.12),
-// transport and maddr decide where a request goes (16.6), and none of that is possible
-// against an opaque string.
+// Parameters and headers are structured because the proxy reads them: lr decides whether a Route is loose (16.12),
+// transport and maddr where a request goes (16.6).
 //
-// Values are held unescaped. The escaping in 19.1.2 and 25.1 is a transport encoding,
-// so it is undone on the way in and put back by to_string(); a caller comparing a user
-// part should never have to think about it.
+// Values are held unescaped; the escaping of 19.1.2 and 25.1 is undone on the way in and put back by to_string().
 class SIPUri {
  public:
   SIPUri();
@@ -34,19 +30,16 @@ class SIPUri {
   std::string user;
   std::optional<std::string> password;
 
-  // The host of the URI (19.1.1). Not a realm: a realm is the Digest protection domain
-  // (22.1) and a different concept that happens to be spelled the same way.
+  // The host of the URI (19.1.1). Not a realm, which is the Digest protection domain (22.1).
   std::string host;
 
   std::optional<std::uint16_t> port;
 
-  // Whether the URI parsed. An unparseable one keeps the original text in host so that
-  // it can still be logged and compared, which is what "*" in a Contact relies on.
+  // Whether the URI parsed. An unparseable one keeps the original text in host, so it can still be logged and compared.
   bool valid;
 
-  // Parameters and headers, in the order they were seen so that a URI we did not create
-  // round-trips as it arrived. Names are matched case-insensitively (19.1.1) but kept
-  // as they were written.
+  // Parameters and headers in the order seen, so a URI round-trips as it arrived. Names are matched
+  // case-insensitively (19.1.1) but kept as written.
   using Fields = std::vector<std::pair<std::string, std::string>>;
 
   const Fields& parameters() const { return _parameters; }
@@ -61,8 +54,7 @@ class SIPUri {
   std::string header(std::string_view name) const;
   void set_header(std::string name, std::string value);
 
-  // RFC 3261 19.1.4. Not operator==: this is the RFC's equivalence, which is neither
-  // string equality nor a total order, and a reader should be made to notice that.
+  // RFC 3261 19.1.4 equivalence, which is neither string equality nor a total order, hence not operator==.
   bool equivalent_to(const SIPUri& other) const;
 
   std::string to_string() const;

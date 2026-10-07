@@ -22,11 +22,10 @@ using athenasip::headers::UIntHeader;
 
 namespace {
 
-// RFC 2617: HA1 is MD5(user:realm:password), and it is what the datastore stores.
+// RFC 2617: HA1 is MD5(user:realm:password), as the datastore stores it.
 const std::string kHa1 = Util::md5("alice:example.com:secret");
 
-// RFC 8760: the same credential under SHA-256, which is a different hash of the same
-// password rather than anything derivable from the first.
+// RFC 8760: the same credential under SHA-256.
 const std::string kHa1Sha256 = Util::sha256("alice:example.com:secret");
 
 std::string digest_response(const std::string& ha1, const std::string& nonce, const std::string& method, const std::string& uri) {
@@ -67,7 +66,7 @@ struct Fixture : CoreFixture {
            digest_response(kHa1, nonce, "REGISTER", uri) + "\"";
   }
 
-  // What a client that read the SHA-256 challenge sends back.
+  // The credentials a client sends in answer to the SHA-256 challenge.
   std::string credentials_sha256(const std::string& nonce, const std::string& uri = "sip:example.com") {
     return "Digest username=\"alice\", realm=\"example.com\", nonce=\"" + nonce + "\", uri=\"" + uri + "\", algorithm=SHA-256, response=\"" +
            digest_response_sha256(kHa1Sha256, nonce, "REGISTER", uri) + "\"";
@@ -78,8 +77,7 @@ struct Fixture : CoreFixture {
     return mint_nonce(realm);
   }
 
-  // RFC 3261 10.3 step 7's registrar-configured minimum. It is off on a new realm, so a
-  // test that wants one has to say so.
+  // The registrar minimum of RFC 3261 10.3 step 7. A new realm has none.
   void set_registration_minimum(std::uint32_t minimum) {
     auto realm = store->realm_get_by_name("example.com");
     realm->registration_minimum = minimum;
@@ -89,8 +87,8 @@ struct Fixture : CoreFixture {
 
 }  // namespace
 
-// RFC 3261 22.2: a REGISTER with no credentials is challenged, and the challenge has to
-// carry a nonce or the client has nothing to compute with.
+// RFC 3261 22.2: a REGISTER without credentials is challenged, and the challenge
+// carries a nonce.
 TEST(RegistrarTest, AnUnauthenticatedRegisterIsChallenged) {
   Fixture f;
 
@@ -107,7 +105,7 @@ TEST(RegistrarTest, AnUnauthenticatedRegisterIsChallenged) {
   EXPECT_FALSE(challenge->value->fields["nonce"].empty());
 }
 
-// A nonce this node never issued, or one that has expired, is not a credential.
+// A nonce this node did not issue, or an expired one, is challenged again.
 TEST(RegistrarTest, AnUnknownNonceIsChallenged) {
   Fixture f;
 
@@ -131,7 +129,7 @@ TEST(RegistrarTest, AWrongDigestResponseIsChallenged) {
 }
 
 // RFC 3261 10.3 step 5: an address of record in a domain this registrar does not serve
-// is a 404, not a challenge. There is nothing here to authenticate against.
+// is a 404, not a challenge.
 TEST(RegistrarTest, ARegisterForAnUnservedDomainIs404) {
   Fixture f;
 
@@ -140,8 +138,8 @@ TEST(RegistrarTest, ARegisterForAnUnservedDomainIs404) {
   EXPECT_NE(f.response_with(f.connection, 404), nullptr);
 }
 
-// A subscriber that does not exist inside a realm we do serve is challenged rather than
-// refused, so a REGISTER sweep cannot tell an absent subscriber from a wrong password.
+// An unknown subscriber in a served realm is challenged, not refused, so a REGISTER
+// sweep cannot tell an absent subscriber from a wrong password.
 TEST(RegistrarTest, AnUnknownSubscriberInAServedRealmIsChallenged) {
   Fixture f;
 
@@ -153,8 +151,7 @@ TEST(RegistrarTest, AnUnknownSubscriberInAServedRealmIsChallenged) {
   EXPECT_EQ(f.response_with(f.connection, 404), nullptr);
 }
 
-// RFC 3261 10.3 step 7: a successful REGISTER writes the binding. Without it the
-// registrar has nothing for target determination to find.
+// RFC 3261 10.3 step 7: a successful REGISTER stores the binding.
 TEST(RegistrarTest, AnAuthenticatedRegisterStoresTheBinding) {
   Fixture f;
 
@@ -168,9 +165,7 @@ TEST(RegistrarTest, AnAuthenticatedRegisterStoresTheBinding) {
   EXPECT_EQ(locations[0].contact->host, "192.0.2.10");
 }
 
-// RFC 3261 10.3 step 8: the 200 OK lists every current binding with the time it has
-// left, and carries an Expires, so a client that lost track can resynchronise from the
-// response alone.
+// RFC 3261 10.3 step 8: the 200 lists every current binding with its remaining expiry.
 TEST(RegistrarTest, TheOkListsTheBindingsWithTheirExpiry) {
   Fixture f;
 
@@ -192,8 +187,7 @@ TEST(RegistrarTest, TheOkListsTheBindingsWithTheirExpiry) {
   EXPECT_GT(std::stoul(contact->value->tags["expires"]), 0u);
 }
 
-// RFC 3261 10.2.1: a registrar never grants more than it is configured to, whatever the
-// client asks for.
+// RFC 3261 10.2.1: the granted expiry is capped by the realm's maximum.
 TEST(RegistrarTest, TheGrantedExpiryIsCappedByTheRealm) {
   Fixture f;
 
@@ -207,7 +201,7 @@ TEST(RegistrarTest, TheGrantedExpiryIsCappedByTheRealm) {
   EXPECT_EQ(expires->value, 3600u);
 }
 
-// RFC 3261 10.2.1.3: an expiry of zero removes the binding rather than refreshing it.
+// RFC 3261 10.2.1.3: an expiry of zero removes the binding.
 TEST(RegistrarTest, ExpiresZeroRemovesTheBinding) {
   Fixture f;
 
@@ -219,7 +213,7 @@ TEST(RegistrarTest, ExpiresZeroRemovesTheBinding) {
   EXPECT_TRUE(f.store->location_list(7).empty());
 }
 
-// RFC 3261 10.2.2: a lone Contact of "*" with Expires 0 removes every binding at once.
+// RFC 3261 10.2.2: a lone Contact of "*" with Expires 0 removes every binding.
 TEST(RegistrarTest, StarContactWithExpiresZeroRemovesEveryBinding) {
   Fixture f;
 
@@ -241,8 +235,7 @@ TEST(RegistrarTest, StarContactWithANonZeroExpiryIs400) {
   EXPECT_NE(f.response_with(f.connection, 400), nullptr);
 }
 
-// RFC 3261 10.2.4: a REGISTER with no Contact asks what the bindings are and must not
-// change them.
+// RFC 3261 10.2.4: a REGISTER with no Contact is a query and changes nothing.
 TEST(RegistrarTest, ARegisterWithNoContactIsAQuery) {
   Fixture f;
 
@@ -267,8 +260,7 @@ TEST(RegistrarTest, ARegisterWithNoContactIsAQuery) {
   EXPECT_TRUE(response->header->contains("Contact"));
 }
 
-// RFC 3327: the Path the request travelled is recorded on the binding, so a later hop
-// knows the route back to a contact it cannot reach directly.
+// RFC 3327: the Path the request carried is recorded on the binding.
 TEST(RegistrarTest, PathIsRecordedOnTheBinding) {
   Fixture f;
 
@@ -290,9 +282,7 @@ TEST(RegistrarTest, PathIsRecordedOnTheBinding) {
   EXPECT_NE(locations[0].path.find("edge.example.com"), std::string::npos);
 }
 
-// RFC 8760 section 2.1: one challenge per algorithm, most preferred first. A client
-// that can do better than MD5 has to be offered the chance, and one that cannot has to
-// still find something it understands.
+// RFC 8760 2.1: one challenge per algorithm, most preferred first: SHA-256, then MD5.
 TEST(RegistrarTest, TheChallengeOffersSha256ThenMd5) {
   Fixture f;
 
@@ -313,13 +303,12 @@ TEST(RegistrarTest, TheChallengeOffersSha256ThenMd5) {
   EXPECT_EQ(Util::to_upper(first->value->fields["algorithm"]), "SHA-256");
   EXPECT_EQ(Util::to_upper(second->value->fields["algorithm"]), "MD5");
 
-  // Both carry a nonce, because a client answering either has to have one.
+  // Both carry a nonce.
   EXPECT_FALSE(first->value->fields["nonce"].empty());
   EXPECT_FALSE(second->value->fields["nonce"].empty());
 }
 
-// RFC 3261 25.1: algorithm is a token. Quoting it is malformed, and a client that
-// checks will refuse the challenge.
+// RFC 3261 25.1: algorithm is a token, not a quoted string.
 TEST(RegistrarTest, TheAlgorithmIsSentAsATokenNotAQuotedString) {
   Fixture f;
 
@@ -330,7 +319,7 @@ TEST(RegistrarTest, TheAlgorithmIsSentAsATokenNotAQuotedString) {
   EXPECT_EQ(f.connection->written.find("algorithm=\"SHA-256\""), std::string::npos);
 }
 
-// The point of offering it: a subscriber with a SHA-256 credential authenticates with one.
+// A subscriber with a SHA-256 credential authenticates with it.
 TEST(RegistrarTest, ASha256ResponseAuthenticates) {
   Fixture f;
 
@@ -346,9 +335,8 @@ TEST(RegistrarTest, ASha256ResponseAuthenticates) {
   EXPECT_EQ(f.store->location_list(7).size(), 1u);
 }
 
-// A subscriber imported as a bare MD5 hash has no SHA-256 credential. Answering the
-// SHA-256 challenge cannot be checked against nothing, so it is challenged again rather
-// than let in or answered 500.
+// A subscriber imported as a bare MD5 hash has no SHA-256 credential; a SHA-256 response
+// from it is challenged again, not accepted or answered 500.
 TEST(RegistrarTest, ASha256ResponseFromAnMd5OnlySubscriberIsChallenged) {
   Fixture f;
 
@@ -358,8 +346,7 @@ TEST(RegistrarTest, ASha256ResponseFromAnMd5OnlySubscriberIsChallenged) {
   EXPECT_TRUE(f.store->location_list(7).empty());
 }
 
-// MD5 is what nearly every SIP client speaks and it keeps working, with or without the
-// algorithm parameter the client may now send back.
+// An MD5 response authenticates, with or without the algorithm parameter.
 TEST(RegistrarTest, AnMd5ResponseStillAuthenticates) {
   Fixture f;
 
@@ -369,10 +356,8 @@ TEST(RegistrarTest, AnMd5ResponseStillAuthenticates) {
   EXPECT_EQ(f.store->location_list(7).size(), 1u);
 }
 
-// RFC 3608: the 200 OK tells the client where to send everything that follows. Without
-// it a client with an unroutable Contact - a browser's always is - has nowhere to send
-// its next request but the address it happened to be configured with, and a client that
-// re-registers on another node keeps talking to the one it left.
+// RFC 3608: the 200 carries a Service-Route naming this node, which is where the client
+// sends its later requests.
 TEST(RegistrarTest, TheOkCarriesAServiceRouteForThisNode) {
   Fixture f;
 
@@ -388,15 +373,14 @@ TEST(RegistrarTest, TheOkCarriesAServiceRouteForThisNode) {
   ASSERT_NE(route->value, nullptr);
   ASSERT_NE(route->value->uri, nullptr);
 
-  // The node as the flow reached it, and loose routing: a Service-Route without lr
-  // would have the next hop rewrite the Request-URI on the way through.
+  // The node as the flow reached it, with lr so the next hop does not rewrite the
+  // Request-URI.
   EXPECT_EQ(route->value->uri->host, "192.0.2.1");
   EXPECT_TRUE(route->value->uri->has_parameter("lr"));
 }
 
-// A UDP listener is bound to the wildcard, so the address the flow arrived on is
-// 0.0.0.0 and a Service-Route built from it is a route the client cannot use. Found by
-// the sipp harness, which received exactly that.
+// A listener bound to the wildcard has local address 0.0.0.0, so the Service-Route uses
+// the advertised address.
 TEST(RegistrarTest, TheServiceRouteUsesTheAdvertisedAddress) {
   Fixture f;
   f.config->sip_public_address = "203.0.113.5";
@@ -412,9 +396,8 @@ TEST(RegistrarTest, TheServiceRouteUsesTheAdvertisedAddress) {
   EXPECT_EQ(route->value->uri->host, "203.0.113.5");
 }
 
-// RFC 3261 17.2.2: the transaction absorbs a retransmitted REGISTER and answers it from
-// what it last sent. The registrar must not see it twice, or it would write the binding
-// again and issue a second challenge.
+// RFC 3261 17.2.2: the transaction answers a retransmitted REGISTER from what it last
+// sent; the registrar does not see it twice.
 TEST(RegistrarTest, ARetransmittedRegisterIsAnsweredWithoutReachingTheRegistrarAgain) {
   Fixture f;
 
@@ -432,8 +415,7 @@ TEST(RegistrarTest, ARetransmittedRegisterIsAnsweredWithoutReachingTheRegistrarA
   auto responses = f.written(connection);
   ASSERT_EQ(responses.size(), 2u);
 
-  // The same 401, with the same nonce: a fresh pass through the registrar would have
-  // issued a new one.
+  // The same 401 with the same nonce; the registrar would have issued a new one.
   auto first = responses[0]->header->headers_map["WWW-Authenticate"][0]->as<AuthorizationHeader>();
   auto second = responses[1]->header->headers_map["WWW-Authenticate"][0]->as<AuthorizationHeader>();
 
@@ -442,11 +424,8 @@ TEST(RegistrarTest, ARetransmittedRegisterIsAnsweredWithoutReachingTheRegistrarA
   EXPECT_EQ(first->value->fields["nonce"], second->value->fields["nonce"]);
 }
 
-// RFC 3261 10.3 step 7: a registrar may refuse an interval shorter than it is willing to
-// honour, and the refusal "MUST contain a Min-Expires header field that states the
-// minimum expiration interval the registrar is willing to honor". Capping the expiry
-// silently, which is what this did before, is legal but leaves a client that wanted a
-// short registration with no way to learn what it may ask for.
+// RFC 3261 10.3 step 7: an interval below the realm minimum is refused with 423 and a
+// Min-Expires stating that minimum.
 TEST(RegistrarTest, AnIntervalBelowTheRealmMinimumIsRefusedWithMinExpires) {
   Fixture f;
   f.set_registration_minimum(120);
@@ -462,12 +441,11 @@ TEST(RegistrarTest, AnIntervalBelowTheRealmMinimumIsRefusedWithMinExpires) {
   ASSERT_NE(minimum, nullptr);
   EXPECT_EQ(minimum->value, 120u);
 
-  // "It then skips the remaining steps": the binding is not written.
+  // The remaining steps are skipped: no binding is written.
   EXPECT_TRUE(f.store->location_list(7).empty());
 }
 
-// The interval can also arrive on the Contact rather than in an Expires header, and step
-// 7 reads that one first.
+// RFC 3261 10.3 step 7: a Contact expires parameter is read before the Expires header.
 TEST(RegistrarTest, AContactExpiresParameterBelowTheMinimumIsRefusedToo) {
   Fixture f;
   f.set_registration_minimum(120);
@@ -478,9 +456,7 @@ TEST(RegistrarTest, AContactExpiresParameterBelowTheMinimumIsRefusedToo) {
   EXPECT_TRUE(f.store->location_list(7).empty());
 }
 
-// "If and only if the requested expiration interval is greater than zero AND smaller
-// than one hour AND less than a registrar-configured minimum". An hour is long enough
-// however the realm is configured.
+// RFC 3261 10.3 step 7: only an interval under one hour can be refused as too brief.
 TEST(RegistrarTest, AnIntervalOfAnHourIsNeverTooBrief) {
   Fixture f;
   f.set_registration_minimum(7200);
@@ -491,8 +467,7 @@ TEST(RegistrarTest, AnIntervalOfAnHourIsNeverTooBrief) {
   EXPECT_EQ(f.store->location_list(7).size(), 1u);
 }
 
-// Zero is a removal (10.2.1.3), not a registration that is too short to be worth
-// keeping, and refusing it would leave a client unable to unregister.
+// RFC 3261 10.2.1.3: zero is a removal and is never refused as too brief.
 TEST(RegistrarTest, AZeroExpiryIsNeverTooBrief) {
   Fixture f;
   f.set_registration_minimum(120);
@@ -506,8 +481,7 @@ TEST(RegistrarTest, AZeroExpiryIsNeverTooBrief) {
   EXPECT_TRUE(f.store->location_list(7).empty());
 }
 
-// The RFC's own advice is that a registrar should accept brief registrations, so a realm
-// that has not been given a minimum honours whatever it is asked for.
+// A realm with no minimum grants whatever interval is asked for.
 TEST(RegistrarTest, WithNoMinimumABriefRegistrationIsGranted) {
   Fixture f;
 
@@ -521,8 +495,8 @@ TEST(RegistrarTest, WithNoMinimumABriefRegistrationIsGranted) {
   EXPECT_EQ(expires->value, 30u);
 }
 
-// Step 6 skips to the last step when there is no Contact, so step 7 never runs: a query
-// for the current bindings carries an Expires that is nobody's registration.
+// RFC 3261 10.3 step 6: with no Contact, step 7 is skipped, so a query's Expires is not
+// checked against the minimum.
 TEST(RegistrarTest, AQueryIsNotRefusedAsTooBrief) {
   Fixture f;
   f.set_registration_minimum(120);
@@ -559,9 +533,8 @@ std::string with_header(std::string raw, const std::string& header) {
 
 }  // namespace
 
-// A client that supports outbound and registers a flow with an instance and a reg-id is told
-// the registrar did so: Require: outbound in the 200. The binding keeps both, because they
-// are what identifies it from now on.
+// RFC 5626 6: an outbound registration is acknowledged with Require: outbound, and the
+// binding keeps the instance and reg-id that identify it.
 TEST(RegistrarTest, AnOutboundRegistrationIsHonouredAndSaidToBe) {
   Fixture f;
 
@@ -573,7 +546,7 @@ TEST(RegistrarTest, AnOutboundRegistrationIsHonouredAndSaidToBe) {
   ASSERT_TRUE(ok->header->contains("Require"));
   EXPECT_NE(ok->header->headers_map["Require"][0]->to_string().find("outbound"), std::string::npos);
 
-  // And the Contact it lists back carries them (section 6).
+  // The Contact listed back carries them too.
   const auto listed = ok->header->headers_map["Contact"][0]->to_string();
   EXPECT_NE(listed.find("reg-id=1"), std::string::npos) << listed;
   EXPECT_NE(listed.find("+sip.instance"), std::string::npos) << listed;
@@ -584,9 +557,8 @@ TEST(RegistrarTest, AnOutboundRegistrationIsHonouredAndSaidToBe) {
   EXPECT_EQ(bindings[0].reg_id, 1u);
 }
 
-// Section 6: a binding with an instance and a reg-id is that pair, not its Contact. The same
-// client registering the same reg-id again - from a new flow after its connection dropped,
-// with a new port in its Contact - replaces the binding rather than adding a dead one.
+// RFC 5626 6: a binding is identified by instance and reg-id, not Contact. Registering
+// the same pair again, from a new flow or with a new Contact, replaces it.
 TEST(RegistrarTest, AnOutboundFlowRegisteredAgainReplacesTheOldOne) {
   Fixture f;
 
@@ -605,8 +577,7 @@ TEST(RegistrarTest, AnOutboundFlowRegisteredAgainReplacesTheOldOne) {
   EXPECT_EQ(bindings[0].flow_id, second->flow_id());
 }
 
-// A second reg-id is a second flow from the same client, which is the point of outbound: two
-// flows, to two nodes or one, so losing one loses nothing.
+// A second reg-id is a second flow from the same client.
 TEST(RegistrarTest, ASecondRegIdIsASecondFlow) {
   Fixture f;
 
@@ -617,8 +588,7 @@ TEST(RegistrarTest, ASecondRegIdIsASecondFlow) {
   EXPECT_EQ(f.store->location_list(7).size(), 2u);
 }
 
-// Removing the flow is by the same identity: expires=0 for the instance and reg-id removes it
-// whatever Contact the client now writes.
+// expires=0 removes the flow by instance and reg-id, whatever the Contact says.
 TEST(RegistrarTest, AnOutboundFlowIsRemovedByItsIdentity) {
   Fixture f;
 
@@ -630,8 +600,8 @@ TEST(RegistrarTest, AnOutboundFlowIsRemovedByItsIdentity) {
   EXPECT_TRUE(f.store->location_list(7).empty());
 }
 
-// Without Supported: outbound the client has not asked, and a reg-id is just a parameter: no
-// Require in the answer and an ordinary binding (section 6).
+// RFC 5626 6: without Supported: outbound a reg-id is ignored: no Require in the answer
+// and an ordinary binding.
 TEST(RegistrarTest, ARegIdWithoutSupportedOutboundIsAnOrdinaryBinding) {
   Fixture f;
 
@@ -646,9 +616,8 @@ TEST(RegistrarTest, ARegIdWithoutSupportedOutboundIsAnOrdinaryBinding) {
   EXPECT_EQ(bindings[0].reg_id, 0u);
 }
 
-// Section 6: an outbound registration that reached the registrar through an edge proxy whose
-// Path entry lacks the "ob" parameter went through a first hop that will not keep the flow,
-// and is refused with 439 First Hop Lacks Outbound Support.
+// RFC 5626 6: an outbound registration through an edge proxy whose Path lacks "ob" is
+// refused with 439 First Hop Lacks Outbound Support.
 TEST(RegistrarTest, AnOutboundRegistrationThroughAnEdgeWithoutObIsRefused) {
   Fixture f;
 
@@ -659,7 +628,7 @@ TEST(RegistrarTest, AnOutboundRegistrationThroughAnEdgeWithoutObIsRefused) {
   EXPECT_NE(f.response_with(f.connection, 439), nullptr);
   EXPECT_TRUE(f.store->location_list(7).empty());
 
-  // The same through an edge that says ob is fine.
+  // Through an edge that says ob, it is accepted.
   auto through_ob = with_header(f.register_request(f.credentials(f.fresh_nonce()), "", outbound_contact("192.0.2.10:5060", 1), "z9hG4bK-reg-ob"),
                                 "Supported: outbound, path");
   through_ob = with_header(through_ob, "Path: <sip:edge.example.com;lr;ob>");

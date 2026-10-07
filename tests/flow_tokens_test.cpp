@@ -12,10 +12,8 @@
 
 using namespace athenasip;
 
-// RFC 5626 section 5.2: the token in the Record-Route is how an in-dialog request finds its
-// way back to the flow it names. A UDP flow is the pair of addresses and nothing more, so
-// it outlives this node forgetting it - and the token has to be able to say which flow it
-// was even then.
+// RFC 5626 section 5.2: the Record-Route token names the flow an in-dialog request returns to. It
+// carries the flow id itself, so it still opens after the node has forgotten a UDP flow.
 TEST(FlowTokensTest, ASealedFlowOpensToTheFlowItNamed) {
   FlowTokens tokens;
 
@@ -30,8 +28,7 @@ TEST(FlowTokensTest, AnIpv6FlowSurvivesTheRoundTrip) {
   EXPECT_EQ(tokens.open(tokens.seal("udp://2001:db8::7:40000")), "udp://2001:db8::7:40000");
 }
 
-// The Record-Route goes to both ends of a call this node anchors, and the flow id is the
-// far end's address. A token that spelled it out would hand each end the other's.
+// The Record-Route reaches both ends of a call, so the token must not reveal the flow's address.
 TEST(FlowTokensTest, TheTokenDoesNotSayWhereAnybodyIs) {
   FlowTokens tokens;
 
@@ -42,8 +39,7 @@ TEST(FlowTokensTest, TheTokenDoesNotSayWhereAnybodyIs) {
   EXPECT_EQ(token.find("40000"), std::string::npos) << token;
 }
 
-// It sits in the user part of a SIP URI (RFC 3261 25.1), so it is made of characters that
-// need no escaping there.
+// The token is the user part of a SIP URI (RFC 3261 25.1) and uses only characters that need no escaping.
 TEST(FlowTokensTest, TheTokenIsSafeInTheUserPartOfAUri) {
   FlowTokens tokens;
 
@@ -53,17 +49,15 @@ TEST(FlowTokensTest, TheTokenIsSafeInTheUserPartOfAUri) {
   for (const char c : token) EXPECT_TRUE((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) << token;
 }
 
-// Two flows, two tokens, and the same flow sealed twice is not recognisable as the same
-// flow from outside.
+// Sealing the same flow twice gives different tokens.
 TEST(FlowTokensTest, NoTwoSealsAreAlike) {
   FlowTokens tokens;
 
   EXPECT_NE(tokens.seal("udp://203.0.113.7:40000"), tokens.seal("udp://203.0.113.7:40000"));
 }
 
-// The token comes back in a Route anybody on the path can write. One this node did not
-// seal, or one somebody has altered, names nothing - it must not name an address of the
-// writer's choosing.
+// A Route is writable by anybody on the path: a token that was altered, or that this node did not
+// seal, opens to nothing.
 TEST(FlowTokensTest, AnAlteredTokenOpensToNothing) {
   FlowTokens tokens;
 

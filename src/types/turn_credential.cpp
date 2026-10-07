@@ -18,9 +18,7 @@ namespace {
 
 const char* kBase64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-// Standard base64 with padding, which is what the scheme specifies and what every TURN
-// server implementing it expects. Not the URL-safe alphabet: the value travels in a JSON
-// body and in a WebRTC configuration object, never in a path.
+// Standard base64 with padding, as the scheme specifies; not the URL-safe alphabet.
 std::string base64_encode(const std::vector<unsigned char>& input) {
   std::string out;
   out.reserve(((input.size() + 2) / 3) * 4);
@@ -40,15 +38,9 @@ std::string base64_encode(const std::vector<unsigned char>& input) {
   return out;
 }
 
-// A name that is safe in a TURN username. coturn parses the username as
-// <expiry>[:<name>] and refuses the whole credential when the name is not one it accepts:
-// a space in it is answered 401 "wrong username" and then 400, which looks from the client
-// side exactly like a bad secret and is not.
-//
-// So the name is filtered here rather than trusted, because the alternative is a caller
-// passing something human-readable - which is what happened - and a relay that fails with
-// a misleading error. Anything left out is only decoration: coturn does not look at the
-// name, and it is here so a relay session can be tied back to whoever asked in a log.
+// A name that is safe in a TURN username. coturn parses the username as <expiry>[:<name>] and refuses the whole
+// credential if the name has, say, a space in it, with an error that looks like a bad secret. The name is only for
+// tying a relay session to its requester in a log, so unsafe characters are dropped.
 std::string safe_name(const std::string& name) {
   std::string out;
 
@@ -67,16 +59,13 @@ std::string safe_name(const std::string& name) {
 TurnCredential TurnCredential::issue(const std::string& secret, const std::string& name, std::time_t now, std::uint32_t ttl) {
   TurnCredential credential;
 
-  // No secret is not an error here. A deployment with no TURN server has nothing to
-  // authenticate to, and the endpoint above says so by handing back no credentials rather
-  // than by failing.
+  // No secret means TURN is not configured: an empty credential, not an error.
   if (secret.empty() || ttl == 0) return credential;
 
   credential.expires_at = now + static_cast<std::time_t>(ttl);
   credential.username = std::to_string(credential.expires_at);
 
-  // Filtered rather than trusted - see safe_name. Nothing left after filtering means no
-  // name at all, which is a valid credential, rather than a colon with nothing after it.
+  // Nothing left after filtering means no name, which is still a valid credential.
   const auto suffix = safe_name(name);
   if (!suffix.empty()) credential.username += ":" + suffix;
 

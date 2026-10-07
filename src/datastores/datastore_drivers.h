@@ -15,8 +15,7 @@
 
 namespace athenasip::datastores {
 
-// Two implementations: one built-in for a zero-config single node, one canonical for
-// production. The SQL drivers are gone; a memory:// driver replaces them.
+// memory:// for a zero-config single node, Redis for production.
 inline void register_builtin_datastores(std::shared_ptr<loggers::Logger> logger) {
   Datastore::register_driver<MemoryDatastore>(logger, "memory");
 

@@ -20,8 +20,7 @@ using athenasip::AsyncQueue;
 
 namespace {
 
-// Delivery is a post onto the global io_context, which runs on its own thread, so a
-// test waits for it rather than expecting it to have happened already.
+// Delivery is posted to the global io_context, which runs on another thread, so tests poll for it.
 template <typename Predicate>
 bool eventually(Predicate done, std::chrono::milliseconds limit = std::chrono::seconds(5)) {
   const auto deadline = std::chrono::steady_clock::now() + limit;
@@ -36,9 +35,8 @@ bool eventually(Predicate done, std::chrono::milliseconds limit = std::chrono::s
 
 }  // namespace
 
-// This is the queue between a UDP datagram arriving on the server's thread and the
-// channel asking to read on the Core strand. Those are two different threads, and
-// everything below is a statement about what the queue owes them.
+// AsyncQueue sits between the UDP server's thread, which pushes datagrams, and the Core strand,
+// where a channel registers its reads.
 
 TEST(AsyncQueueTest, AnItemWaitingIsGivenToTheNextReaderToAsk) {
   AsyncQueue<int> queue;
@@ -60,8 +58,7 @@ TEST(AsyncQueueTest, AReaderWaitingIsGivenTheNextItemToArrive) {
   EXPECT_TRUE(eventually([&]() { return got.load() == 9; }));
 }
 
-// Datagrams are not interchangeable and neither are the requests in them. A queue that
-// reordered would deliver a CANCEL before the INVITE it cancels.
+// Delivery is FIFO: reordering would put a CANCEL ahead of its INVITE.
 TEST(AsyncQueueTest, ItemsComeOutInTheOrderTheyWentIn) {
   AsyncQueue<int> queue;
 
@@ -88,9 +85,7 @@ TEST(AsyncQueueTest, ItemsComeOutInTheOrderTheyWentIn) {
   EXPECT_EQ(seen, (std::vector<int>{1, 2, 3}));
 }
 
-// One reader takes one item. The name says once and the caller depends on it: a channel
-// asks again from inside its own completion, so a second delivery would be a second
-// read nobody started.
+// on_item_once delivers exactly one item; the channel re-registers from its completion handler.
 TEST(AsyncQueueTest, OneReaderTakesOneItem) {
   AsyncQueue<int> queue;
   std::atomic<int> deliveries{0};
@@ -133,10 +128,7 @@ TEST(AsyncQueueTest, ItemsWithNobodyToTakeThemWaitRatherThanBeingDropped) {
   EXPECT_EQ(seen, (std::vector<std::string>{"first", "second"}));
 }
 
-// The whole point of this queue is that the two ends are on different threads: a
-// datagram is pushed from the UDP server's thread and a read is registered from the
-// Core strand. Every item has to come out exactly once, and neither queue may be
-// touched by two threads at a time.
+// Pushing and reading from different threads delivers every item exactly once.
 TEST(AsyncQueueTest, NothingIsLostOrDuplicatedUnderConcurrentPushAndRead) {
   constexpr int kThreads = 4;
   constexpr int kPerThread = 100;
@@ -176,7 +168,6 @@ TEST(AsyncQueueTest, NothingIsLostOrDuplicatedUnderConcurrentPushAndRead) {
 
   ASSERT_EQ(seen.size(), static_cast<std::size_t>(kTotal));
 
-  // Every value once and no value twice, which is what "lost or duplicated" means.
   const std::set<int> unique(seen.begin(), seen.end());
   EXPECT_EQ(unique.size(), static_cast<std::size_t>(kTotal));
   EXPECT_EQ(*unique.begin(), 0);

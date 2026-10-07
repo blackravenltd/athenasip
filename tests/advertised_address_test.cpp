@@ -17,8 +17,7 @@ using namespace athenasip;
 
 namespace {
 
-// A node at 192.168.1.2 on its LAN, reached from outside at 203.0.113.5 through a router
-// forwarding public UDP 5080 to local 5060.
+// A node at 192.168.1.2 behind a router that forwards public 203.0.113.5:5080/UDP to local 5060.
 struct AdvertisedFixture : CoreFixture {
   AdvertisedFixture() {
     config->sip_public_address = "203.0.113.5";
@@ -41,8 +40,7 @@ struct AdvertisedFixture : CoreFixture {
 
 }  // namespace
 
-// Outside the localnet the node is what the router makes it: the public address and the
-// port forwarded to this listener, which is not the port it is bound to.
+// A peer outside the localnet is given the public address and the forwarded port.
 TEST(AdvertisedAddressTest, AFarEndOutsideTheLanIsGivenThePublicAddressAndPort) {
   AdvertisedFixture f;
 
@@ -51,8 +49,7 @@ TEST(AdvertisedAddressTest, AFarEndOutsideTheLanIsGivenThePublicAddressAndPort) 
   EXPECT_EQ(seen.port, 5080);
 }
 
-// Inside it, the public address only works if the router hairpins, and plenty do not, so a
-// client on the same LAN is given the node's own address (Asterisk's localnet).
+// A peer inside the localnet is given the local address: the public one needs a hairpinning router.
 TEST(AdvertisedAddressTest, AFarEndOnTheLanIsGivenTheLocalAddressAndPort) {
   AdvertisedFixture f;
 
@@ -61,8 +58,7 @@ TEST(AdvertisedAddressTest, AFarEndOnTheLanIsGivenTheLocalAddressAndPort) {
   EXPECT_EQ(seen.port, 5060);
 }
 
-// A listener bound to the wildcard knows no address of its own, and 0.0.0.0 in a Via is a
-// route nobody can use. The address it would send to that peer from is the one to give.
+// A wildcard bind advertises the source address that reaches the peer, never 0.0.0.0.
 TEST(AdvertisedAddressTest, AWildcardBindIsResolvedToTheInterfaceThatReachesThePeer) {
   AdvertisedFixture f;
   f.config->sip_localnet = {"127.0.0.0/8"};
@@ -72,8 +68,7 @@ TEST(AdvertisedAddressTest, AWildcardBindIsResolvedToTheInterfaceThatReachesTheP
   EXPECT_EQ(seen.host, "127.0.0.1");
 }
 
-// With no public address configured there is nothing to choose between, and the node is what
-// it is bound as, as before.
+// With no public address configured, the bound address is advertised.
 TEST(AdvertisedAddressTest, WithNoPublicAddressTheLocalOneIsUsed) {
   AdvertisedFixture f;
   f.config->sip_public_address.clear();
@@ -83,7 +78,7 @@ TEST(AdvertisedAddressTest, WithNoPublicAddressTheLocalOneIsUsed) {
   EXPECT_EQ(seen.port, 5060);
 }
 
-// A port nobody forwarded differently is the bound port.
+// With no public port configured, the bound port is advertised.
 TEST(AdvertisedAddressTest, WithNoPublicPortTheBoundPortIsUsed) {
   AdvertisedFixture f;
   f.config->udp_public_port = 0;
@@ -91,9 +86,8 @@ TEST(AdvertisedAddressTest, WithNoPublicPortTheBoundPortIsUsed) {
   EXPECT_EQ(f.advertised(f.channel_from("198.51.100.9")).port, 5060);
 }
 
-// In a call each end is told the address that reaches the node from where it is: the
-// callee on the LAN the local one in the Via and in the Record-Route facing it, and the
-// caller outside the public one in the Record-Route facing it (RFC 5658 section 3).
+// Double Record-Route (RFC 5658 section 3): the Via and the Record-Route facing the LAN callee carry
+// the local address, the Record-Route facing the outside caller the public one.
 TEST(AdvertisedAddressTest, EachEndOfACallIsGivenTheAddressThatReachesItsSide) {
   ProxyFixture f("203.0.113.5");
   f.config->udp_public_port = 5080;

@@ -27,9 +27,7 @@ using udp = boost::asio::ip::udp;
 
 namespace {
 
-// Somewhere to dial. A listener that accepts and holds the connection open is all a flow
-// needs on the far side; what travels over it is the transaction layer's business and is
-// tested there.
+// A loopback TCP listener that accepts connections and holds them open.
 struct Listener {
   net::io_context io;
   tcp::acceptor acceptor{io, tcp::endpoint(net::ip::make_address("127.0.0.1"), 0)};
@@ -59,9 +57,7 @@ struct Listener {
 };
 
 struct ConnectFixture : CoreFixture {
-  // A flow this node opens, waited on from the test thread. Production callers are the
-  // handler and never wait; the contract is async because it is a name lookup and a
-  // handshake.
+  // Blocks the test thread on the asynchronous channel_connect.
   plugins::Result<std::shared_ptr<Channel>> connect(const std::string& transport, const std::string& host, std::uint16_t port) {
     std::promise<plugins::Result<std::shared_ptr<Channel>>> promise;
     auto future = promise.get_future();
@@ -80,9 +76,7 @@ struct ConnectFixture : CoreFixture {
 
 }  // namespace
 
-// RFC 3261 16.6 step 7. Until this existed a next hop with no live flow was answered
-// 480, because nothing in the tree opened a connection rather than accepting one - which
-// meant a trunk or a peer node could not be reached at all.
+// RFC 3261 16.6 step 7: a next hop with no live flow is dialled.
 TEST(CoreConnectTest, OpensAFlowToAHopItHasNoneTo) {
   Listener listener;
   ConnectFixture fixture;
@@ -95,8 +89,7 @@ TEST(CoreConnectTest, OpensAFlowToAHopItHasNoneTo) {
   EXPECT_EQ(opened.value->_connection->remote_endpoint().port(), listener.port());
 }
 
-// A flow is worth having because it is reused. Dialling the same hop twice must answer
-// the connection already open, or a node would hold one socket per request.
+// Dialling the same hop twice returns the flow already open.
 TEST(CoreConnectTest, ReusesAFlowItAlreadyHas) {
   Listener listener;
   ConnectFixture fixture;
@@ -110,8 +103,7 @@ TEST(CoreConnectTest, ReusesAFlowItAlreadyHas) {
   EXPECT_EQ(first.value, second.value);
 }
 
-// The flow is filed where a later request will look for it, which is what makes the
-// reuse above work for a caller that never asked to open one.
+// A dialled flow is registered where channel_find looks for it.
 TEST(CoreConnectTest, TheFlowIsFiledUnderTheHopItReached) {
   Listener listener;
   ConnectFixture fixture;
@@ -124,9 +116,8 @@ TEST(CoreConnectTest, TheFlowIsFiledUnderTheHopItReached) {
   EXPECT_EQ(fixture.find("tcp", "127.0.0.1", listener.port()), opened.value);
 }
 
-// A closed flow leaves nothing behind. The channel is filed under the address it reached
-// and under the name it was dialled by, and a stale entry either way is a route to a
-// socket that is gone.
+// A flow is registered under both the name it was dialled by and the address it reached; closing
+// it removes both.
 TEST(CoreConnectTest, ClosingAFlowTakesEveryNameOfItAway) {
   Listener listener;
   ConnectFixture fixture;
@@ -134,11 +125,9 @@ TEST(CoreConnectTest, ClosingAFlowTakesEveryNameOfItAway) {
   const auto opened = fixture.connect("tcp", "localhost", listener.port());
   ASSERT_TRUE(opened.ok) << opened.error;
 
-  // Which address "localhost" resolves to is the machine's business, so the second name
-  // is read from the connection rather than assumed.
+  // What "localhost" resolves to is machine-dependent, so read the address from the connection.
   const auto reached = opened.value->_connection->remote_endpoint().address().to_string();
 
-  // Dialled by name, reached by address: both find it.
   EXPECT_EQ(fixture.find("tcp", "localhost", listener.port()), opened.value);
   EXPECT_EQ(fixture.find("tcp", reached, listener.port()), opened.value);
 
@@ -149,17 +138,14 @@ TEST(CoreConnectTest, ClosingAFlowTakesEveryNameOfItAway) {
   EXPECT_EQ(fixture.find("tcp", reached, listener.port()), nullptr);
 }
 
-// A hop that does not answer has to give up long before the operating system would. The
-// whole transaction has thirty-two seconds (Timer B) and a fork with several bindings
-// has to have room to try more than the first.
+// A connect is bounded by sip_connect_timeout_ms, well inside Timer B, so a fork can try other bindings.
 TEST(CoreConnectTest, GivesUpOnAHopThatDoesNotAnswer) {
   ConnectFixture fixture;
   fixture.config->sip_connect_timeout_ms = 250;
 
   const auto started = std::chrono::steady_clock::now();
 
-  // TEST-NET-1 (RFC 5737): reserved for documentation, so nothing answers and nothing
-  // refuses either - the attempt hangs until something bounds it.
+  // TEST-NET-1 (RFC 5737): nothing answers or refuses, so only the timeout ends the attempt.
   const auto opened = fixture.connect("tcp", "192.0.2.1", 5060);
   const auto elapsed = std::chrono::steady_clock::now() - started;
 
@@ -167,8 +153,7 @@ TEST(CoreConnectTest, GivesUpOnAHopThatDoesNotAnswer) {
   EXPECT_LT(elapsed, std::chrono::seconds(10));
 }
 
-// A name that resolves to nothing is not reachable, and saying so at once is better than
-// waiting out a timeout for an answer that will not come.
+// A name that does not resolve fails the connect.
 TEST(CoreConnectTest, ANameThatDoesNotResolveIsNotReachable) {
   ConnectFixture fixture;
 
@@ -178,24 +163,32 @@ TEST(CoreConnectTest, ANameThatDoesNotResolveIsNotReachable) {
   EXPECT_EQ(opened.value, nullptr);
 }
 
-// A datagram to a host this node has never heard from has to leave by a listener's own
-// socket, so with no UDP listener there is nothing to send it from. Saying so beats
-// pretending.
+// UDP is sent from a listener's socket, so with no UDP listener the connect fails.
 TEST(CoreConnectTest, RefusesToDialATransportWithNothingToDial) {
   ConnectFixture fixture;
 
   const auto udp = fixture.connect("udp", "127.0.0.1", 5060);
   EXPECT_FALSE(udp.ok);
 
-  // Outbound TLS waits for the trust configuration the cluster CA brings, and guessing at
-  // it would be worse than refusing.
+  // TLS is dialled only with the cluster's trust configuration, and this node has none.
   const auto tls = fixture.connect("tls", "127.0.0.1", 5061);
   EXPECT_FALSE(tls.ok);
 }
 
+// sip.allow_unencrypted: false: the node dials no plain transport.
+TEST(CoreConnectTest, RefusingUnencryptedSipDialsNoPlainTransport) {
+  Listener listener;
+  ConnectFixture fixture;
+  fixture.config->sip_allow_unencrypted = false;
+
+  const auto tcp = fixture.connect("tcp", "127.0.0.1", listener.port());
+  EXPECT_FALSE(tcp.ok);
+  EXPECT_EQ(fixture.find("tcp", "127.0.0.1", listener.port()), nullptr);
+}
+
 namespace {
 
-// A UDP listener on an ephemeral port, and a peer on another, both on loopback.
+// A UDP listener and a peer socket, both on loopback ephemeral ports.
 struct DatagramFixture : ConnectFixture {
   std::shared_ptr<servers::UDPServer> listener;
 
@@ -232,10 +225,8 @@ struct DatagramFixture : ConnectFixture {
 
 }  // namespace
 
-// RFC 3261 18.1.1 and RFC 3581: the far end answers to the port a request came from, so a
-// request this node starts over UDP leaves by the socket it listens on. A socket of its own
-// would have the answer arrive somewhere nothing is reading, and a NAT in front of the far
-// end would not recognise the source at all.
+// RFC 3261 18.1.1, RFC 3581: a UDP request leaves from the listening socket, since the far end
+// answers to its source port.
 TEST(CoreConnectTest, AUdpFlowLeavesByTheListenersOwnSocket) {
   DatagramFixture fixture;
 
@@ -251,17 +242,24 @@ TEST(CoreConnectTest, AUdpFlowLeavesByTheListenersOwnSocket) {
   EXPECT_EQ(received->second.port(), fixture.listener->local_endpoint().port());
 }
 
-// And it is the same flow the answer arrives on. A listener that did not know about the flow
-// it had opened would make a second one for the first datagram back, and two channels would
-// be reading for one peer.
+// sip.allow_unencrypted: false: no UDP flow is dialled, even with a UDP socket to send from.
+TEST(CoreConnectTest, RefusingUnencryptedSipDialsNoUdpFlow) {
+  DatagramFixture fixture;
+  fixture.config->sip_allow_unencrypted = false;
+
+  const auto opened = fixture.connect("udp", "127.0.0.1", fixture.peer_port());
+  EXPECT_FALSE(opened.ok);
+  EXPECT_FALSE(fixture.receive(std::chrono::milliseconds(200)).has_value());
+}
+
+// The answer arrives on the dialled flow; the listener does not make a second channel for the peer.
 TEST(CoreConnectTest, TheAnswerToADialledUdpFlowArrivesOnIt) {
   DatagramFixture fixture;
 
   const auto opened = fixture.connect("udp", "127.0.0.1", fixture.peer_port());
   ASSERT_TRUE(opened.ok) << opened.error;
 
-  // The flow's clock is the injectable one; moving it is how the stamp from the answer is
-  // told apart from the one the flow was opened with.
+  // Advance the injected clock so the answer's activity stamp differs from the opening one.
   const auto before = opened.value->last_activity();
   fixture.timers->advance(std::chrono::seconds(1));
 
@@ -278,8 +276,7 @@ TEST(CoreConnectTest, TheAnswerToADialledUdpFlowArrivesOnIt) {
   EXPECT_EQ(fixture.find("udp", "127.0.0.1", fixture.peer_port()), opened.value);
 }
 
-// A forgotten flow is not a dead one. Dialling the peer again once the sweep has closed
-// the first flow opens a fresh one rather than handing back the closed connection.
+// Dialling a peer whose flow has been closed opens a fresh flow, not the closed connection.
 TEST(CoreConnectTest, AUdpFlowCanBeDialledAgainAfterItIsForgotten) {
   DatagramFixture fixture;
 

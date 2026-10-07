@@ -26,22 +26,20 @@ Flags Flags::from_sdp(const std::string& sdp_text) {
 
   SDP sdp;
 
-  // Nothing readable says nothing, and the engine that is handed the description is
-  // what refuses it. Guessing here would be worse than saying so.
+  // An unreadable description sets nothing; the engine handed it is what refuses it.
   if (!sdp.parse(sdp_text)) return flags;
 
   flags.readable = true;
 
   auto read = [&flags](const std::vector<std::string>& attributes) {
     for (const auto& attribute : attributes) {
-      // RFC 8839. Either half of the ICE credentials is enough to say the far end
-      // expects connectivity checks rather than the address in the c= line.
+      // RFC 8839: any ICE attribute means the far end expects connectivity checks.
       if (starts_with(attribute, "ice-ufrag:") || starts_with(attribute, "ice-pwd:") || starts_with(attribute, "candidate:")) flags.ice = true;
 
-      // RFC 8122: a fingerprint is the DTLS handshake being announced.
+      // RFC 8122: a fingerprint announces DTLS.
       if (starts_with(attribute, "fingerprint:")) flags.dtls = true;
 
-      // RFC 4568: SDES keys in the description itself.
+      // RFC 4568: SDES keys.
       if (starts_with(attribute, "crypto:")) flags.srtp = true;
 
       // RFC 5761.
@@ -54,22 +52,19 @@ Flags Flags::from_sdp(const std::string& sdp_text) {
   for (const auto& media : sdp.media()) {
     read(media.attributes());
 
-    // RFC 3711 and RFC 5764: SAVP is SRTP and SAVPF is SRTP with feedback, whichever way
-    // the keys were agreed. The profile is the statement, not the attributes under it.
+    // RFC 3711, RFC 5764: an SAVP or SAVPF profile is SRTP however the keys are agreed.
     if (media.description.proto.find("SAVP") != std::string::npos) flags.srtp = true;
 
-    // RFC 5764 section 8 and RFC 7850: UDP/TLS/RTP/SAVP(F) and TCP/DTLS/RTP/SAVPF are
-    // DTLS-SRTP by name, so the m-line says DTLS whether or not a fingerprint has been
-    // written yet - a capability description in an OPTIONS 200 has no session to have one.
+    // RFC 5764 section 8, RFC 7850: UDP/TLS/RTP/SAVP(F) and TCP/DTLS/RTP/SAVPF are DTLS-SRTP by name, fingerprint or not
+    // (a capability description in an OPTIONS 200 has none).
     if (media.description.proto.find("TLS/RTP/SAVP") != std::string::npos) flags.dtls = true;
   }
 
   return flags;
 }
 
-// DTLS is the WebRTC handshake (RFC 8122, RFC 5764) and nothing else announces one;
-// keys in the description are the desk phone's SRTP (RFC 4568); anything else is plain
-// RTP. ICE on its own is not WebRTC - RFC 8839 predates it and stands alone.
+// DTLS means WebRTC (RFC 8122, RFC 5764), SDES keys mean SRTP (RFC 4568), anything else is plain RTP. ICE alone
+// (RFC 8839) is not WebRTC.
 std::optional<Flags::Profile> Flags::stated() const {
   if (!readable) return std::nullopt;
   if (dtls) return Profile::WebRtc;

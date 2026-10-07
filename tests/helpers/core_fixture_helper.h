@@ -24,22 +24,18 @@
 #include "sync_event_system_helper.h"
 #include "timer_source.h"
 
-// A Core with a memory datastore, a local event system and a manual clock, driven the
-// way a transport drives it: raw SIP in through a Channel, raw SIP out through the
-// connection underneath it. Nothing here reaches past process_message, so the tests
-// exercise the transaction layer and the transaction users together, as a node does.
+// A Core with a memory datastore, a local event system and a manual clock, driven as a transport drives it:
+// raw SIP in through a Channel, raw SIP out through the connection under it.
 struct CoreFixture {
   std::shared_ptr<MockLogger> logger = std::make_shared<MockLogger>();
   std::shared_ptr<athenasip::Config> config;
   std::shared_ptr<athenasip::datastores::MemoryDatastore> datastore;
 
-  // Assertions about what the store holds go through this: the datastore contract is
-  // async, and a test is not on the Core strand.
+  // Blocking view for assertions: the datastore contract is async and a test is not on the Core strand.
   std::shared_ptr<SyncDatastore> store;
   std::shared_ptr<athenasip::events::LocalEventSystem> event_system;
 
-  // The bus contract is async for the same reason the datastore's is, so connecting it
-  // goes through the same kind of blocking view.
+  // Blocking view of the bus, for the same reason.
   std::shared_ptr<SyncEventSystem> bus;
   std::shared_ptr<athenasip::ManualTimerSource> timers = std::make_shared<athenasip::ManualTimerSource>();
   std::shared_ptr<athenasip::Core> core;
@@ -66,9 +62,7 @@ struct CoreFixture {
     return core->call_on_strand(std::forward<Fn>(fn));
   }
 
-  // Core's datastore-facing calls answer through a handler on the strand. A test wants
-  // the answer before its next assertion, so it starts the call on the strand and waits
-  // here. Production callers are the handler; they never wait.
+  // Starts a handler-answered Core call on the strand and blocks for the answer.
   template <typename Start>
   athenasip::plugins::Status await_on_strand(Start start) {
     std::promise<athenasip::plugins::Status> promise;
@@ -132,8 +126,7 @@ struct CoreFixture {
     return realm;
   }
 
-  // ha1_sha256 is empty by default, which is a subscriber that can only answer an MD5
-  // challenge - exactly what a subscriber imported as a bare MD5 hash looks like.
+  // An empty ha1_sha256 is a subscriber that can only answer an MD5 challenge.
   std::shared_ptr<athenasip::types::Subscriber> seed_subscriber(std::uint64_t id, const std::string& uri, const std::string& ha1,
                                                                 const std::string& ha1_sha256 = "") {
     auto subscriber = std::make_shared<athenasip::types::Subscriber>();
@@ -145,7 +138,7 @@ struct CoreFixture {
     return subscriber;
   }
 
-  // Raw SIP in, exactly as the read loop hands it over.
+  // Raw SIP in, as the read loop hands it over.
   void receive(const std::shared_ptr<athenasip::Channel>& channel, const std::string& raw) {
     const auto split = raw.find("\r\n\r\n");
 
@@ -161,25 +154,16 @@ struct CoreFixture {
     settle();
   }
 
-  // Nothing may still be in flight when the fixture goes: the chain holds the channel
-  // and the connection the test is about to destroy.
+  // Nothing may be in flight at destruction: the chain holds the channel and the connection.
   ~CoreFixture() { settle(); }
 
-  // A transaction user's work is a chain of strand hops now: the datastore answers
-  // through a handler, and that handler starts the next read. Handing a message in only
-  // starts the chain, so a test that asserts on what was written has to wait for it to
-  // run out.
-  //
-  // Each round trip through the strand drains everything queued ahead of it, and
-  // anything a handler queued while it ran is caught by the next one. A REGISTER is
-  // about six hops deep; the bound is generous and each trip costs nothing when the
-  // queue is already empty.
+  // A transaction user's work is a chain of strand hops, and handing a message in only starts it. Each round
+  // drains the strand; a REGISTER is about six hops deep, and a round on an empty queue costs nothing.
   void settle(int rounds = 32) {
     for (int i = 0; i < rounds; ++i) core->call_on_strand([]() {});
   }
 
-  // Raw SIP out, parsed back. Content-Length is what separates one message from the next,
-  // which is the same rule the far end applies.
+  // Raw SIP out, parsed back and split on Content-Length.
   static std::vector<std::shared_ptr<athenasip::SIPMessage>> written(const std::shared_ptr<MockConnection>& connection) {
     std::vector<std::shared_ptr<athenasip::SIPMessage>> messages;
 
@@ -206,6 +190,15 @@ struct CoreFixture {
     }
 
     return messages;
+  }
+
+  // Every response with this code, in the order written.
+  static std::vector<std::shared_ptr<athenasip::SIPMessage>> responses_with(const std::shared_ptr<MockConnection>& connection, int code) {
+    std::vector<std::shared_ptr<athenasip::SIPMessage>> found;
+    for (const auto& message : written(connection)) {
+      if (message->header->type == athenasip::SIPHeader::Type::Response && message->header->response_code == code) found.push_back(message);
+    }
+    return found;
   }
 
   // The first response with this code, or nullptr.

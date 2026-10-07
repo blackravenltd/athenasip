@@ -109,9 +109,7 @@ void Bencode::_encode_into(std::string& out) const {
       return;
 
     case Type::Dictionary:
-      // Already in key order: dictionary() sorts and set() inserts in place, which is
-      // what canonical bencode asks for and what makes an encoded request comparable
-      // byte for byte in a test.
+      // Already in key order, as canonical bencode requires: dictionary() sorts and set() inserts in place.
       out += 'd';
       for (const auto& [key, value] : _dictionary) {
         out += std::to_string(key.size());
@@ -130,19 +128,15 @@ std::optional<Bencode> Bencode::decode(std::string_view text) {
   auto value = _decode_value(text, at, 0);
   if (!value) return std::nullopt;
 
-  // A datagram may be padded; anything else after the value means the two ends do not
-  // agree about what was sent, and guessing which part to believe is worse than saying
-  // so.
+  // A datagram may be padded; anything else after the value is malformed.
   while (at < text.size() && is_padding(text[at])) ++at;
   if (at != text.size()) return std::nullopt;
 
   return value;
 }
 
-// A bencode integer, and the length prefix of a string, are the same grammar read to a
-// different terminator. Leading zeros and "-0" are rejected: the canonical form is the
-// only one rtpengine emits, and accepting two spellings of one number in a protocol
-// keyed by exact bytes invites a mismatch nobody can see.
+// An integer and a string's length prefix share this grammar, differing in terminator. Leading zeros and "-0" are
+// rejected: only the canonical form is accepted.
 std::optional<std::int64_t> Bencode::_decode_number(std::string_view text, std::size_t& at, char terminator) {
   const std::size_t start = at;
   bool negative = false;
@@ -158,8 +152,7 @@ std::optional<std::int64_t> Bencode::_decode_number(std::string_view text, std::
   while (at < text.size() && text[at] >= '0' && text[at] <= '9') {
     const int digit = text[at] - '0';
 
-    // Bounded before it overflows rather than after: a length field is attacker-facing
-    // and signed overflow is undefined, not merely wrong.
+    // Bounded before it can overflow: the input is untrusted and signed overflow is undefined.
     if (value > (std::numeric_limits<std::int64_t>::max() - digit) / 10) {
       at = start;
       return std::nullopt;
@@ -235,8 +228,7 @@ std::optional<Bencode> Bencode::_decode_value(std::string_view text, std::size_t
     if (at >= text.size()) return std::nullopt;
     ++at;
 
-    // Sorted on the way in rather than trusted to arrive that way, so find() answers
-    // the same whatever the far end did, and a re-encode is canonical.
+    // Sorted on the way in, so find() works and a re-encode is canonical whatever order the far end sent.
     return dictionary(std::move(entries));
   }
 

@@ -14,7 +14,7 @@ using namespace athenasip;
 
 namespace {
 
-// RFC 8866 section 5: a minimal session description.
+// RFC 8866 5: a minimal session description.
 const char* kMinimal =
     "v=0\r\n"
     "o=alice 2890844526 2890844526 IN IP4 198.51.100.1\r\n"
@@ -24,8 +24,7 @@ const char* kMinimal =
     "m=audio 49170 RTP/AVP 0\r\n"
     "a=rtpmap:0 PCMU/8000\r\n";
 
-// The shape a browser actually sends: BUNDLE, rtcp-mux, ICE and DTLS, two media
-// sections. A proxy must hand every one of these lines on untouched.
+// A browser's offer: BUNDLE, rtcp-mux, ICE and DTLS, two media sections.
 const char* kWebRtc =
     "v=0\r\n"
     "o=- 4611731400430051336 2 IN IP4 127.0.0.1\r\n"
@@ -59,8 +58,7 @@ TEST(SDPTest, ParsesAMinimalSession) {
   EXPECT_TRUE(sdp.is_valid());
 }
 
-// RFC 8866 section 5: v=, o=, s= and t= are mandatory. A description missing any of
-// them is not a session description, and the parser has to say so.
+// RFC 8866 5: v=, o=, s= and t= are mandatory; a description missing one is rejected.
 TEST(SDPTest, RejectsAMissingMandatoryField) {
   SDP no_version;
   EXPECT_FALSE(no_version.parse(
@@ -87,8 +85,7 @@ TEST(SDPTest, RejectsRubbish) {
   EXPECT_FALSE(sdp.parse(""));
 }
 
-// The M2 requirement: every attribute round-trips untouched. A proxy that drops lines
-// it does not model breaks ICE, DTLS and BUNDLE.
+// Every line round-trips unchanged; dropping one would break ICE, DTLS or BUNDLE.
 TEST(SDPTest, RoundTripsEveryLineOfARealOffer) {
   SDP sdp;
   ASSERT_TRUE(sdp.parse(kWebRtc));
@@ -109,8 +106,7 @@ TEST(SDPTest, RoundTripIsByteIdenticalWhenNothingIsChanged) {
   EXPECT_EQ(sdp.to_string(), std::string(kWebRtc));
 }
 
-// RFC 8866 section 5.13: a parser must ignore line types it does not understand. A
-// proxy has to pass them on rather than silently delete them.
+// RFC 8866 5.13: unknown line types are preserved, not deleted.
 TEST(SDPTest, PreservesUnknownLineTypes) {
   const std::string with_unknown =
       "v=0\r\n"
@@ -130,7 +126,7 @@ TEST(SDPTest, PreservesUnknownLineTypes) {
   EXPECT_TRUE(contains(out, "y=another-one"));
 }
 
-// RFC 8866 section 5.9: there may be more than one time description.
+// RFC 8866 5.9: there may be more than one time description.
 TEST(SDPTest, PreservesMultipleTimeDescriptions) {
   const std::string two_times =
       "v=0\r\n"
@@ -154,8 +150,7 @@ TEST(SDPTest, PreservesMultipleTimeDescriptions) {
   EXPECT_TRUE(contains(out, "r=604800 3600 0 90000"));
 }
 
-// RFC 8866 section 5.14: the port may carry a count, "m=<media> <port>/<n> <proto>".
-// Reading the port with a plain integer parse takes the proto with it.
+// RFC 8866 5.14: the port may carry a count, "m=<media> <port>/<n> <proto>".
 TEST(SDPTest, ParsesAPortCount) {
   const std::string with_count =
       "v=0\r\n"
@@ -186,14 +181,13 @@ TEST(SDPTest, SeparatesMediaSections) {
   EXPECT_EQ(sdp.media()[0].description.media, "audio");
   EXPECT_EQ(sdp.media()[1].description.media, "video");
 
-  // Media attributes belong to their own section, not to the session or each other.
+  // Media attributes belong to their own section.
   EXPECT_EQ(sdp.media()[0].mid(), "audio");
   EXPECT_EQ(sdp.media()[1].mid(), "video");
   EXPECT_TRUE(contains(sdp.media()[0].attributes()[0], "rtcp:9"));
 }
 
-// Rewriting the media path is the one thing the builtin engine does. Everything else
-// has to come out the far side unchanged.
+// Rewriting the connection address and port leaves every other line unchanged.
 TEST(SDPTest, RewritingConnectionAndPortLeavesTheRestAlone) {
   SDP sdp;
   ASSERT_TRUE(sdp.parse(kWebRtc));
@@ -212,7 +206,6 @@ TEST(SDPTest, RewritingConnectionAndPortLeavesTheRestAlone) {
   EXPECT_TRUE(contains(out, "m=audio 22000 UDP/TLS/RTP/SAVPF 111 103"));
   EXPECT_TRUE(contains(out, "c=IN IP4 203.0.113.5"));
 
-  // Untouched, all of it.
   EXPECT_TRUE(contains(out, "a=ice-ufrag:4ZcD"));
   EXPECT_TRUE(contains(out, "a=fingerprint:sha-256 4A:AD:B9:B1:3F:82:18:3B:54:02:12:DF:3E:5D:49:6B"));
   EXPECT_TRUE(contains(out, "a=group:BUNDLE audio video"));

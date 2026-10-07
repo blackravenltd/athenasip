@@ -10,9 +10,8 @@
 #include <set>
 #include <string>
 
-// docs/api/openapi.yaml is what the admin console builds against: its contract test checks
-// every request it makes appears there. A document that does not parse, or that names one
-// operation twice, breaks a build in another repository, so this one checks it first.
+// docs/api/openapi.yaml is the contract the admin console builds against, so it must parse and name no
+// operation twice.
 namespace {
 
 YAML::Node document() { return YAML::LoadFile(std::string(ATHENA_TEST_SOURCE_DIR) + "/docs/api/openapi.yaml"); }
@@ -38,7 +37,7 @@ TEST(OpenApiDocumentTest, ParsesAndEveryOperationIdIsUnique) {
   }
 }
 
-// The live state the node serves, by the operationIds the console was told.
+// The live-state routes, by operationId.
 TEST(OpenApiDocumentTest, DescribesTheLiveStateRoutes) {
   const auto doc = document();
 
@@ -51,7 +50,6 @@ TEST(OpenApiDocumentTest, DescribesTheLiveStateRoutes) {
   // Outside /api/v1, so it overrides the server.
   EXPECT_TRUE(doc["paths"]["/metrics"]["servers"].IsSequence());
 
-  // The console types the state.
   const auto states = doc["components"]["schemas"]["Call"]["properties"]["state"]["enum"];
   ASSERT_TRUE(states.IsSequence());
   EXPECT_EQ(states.size(), 6u);

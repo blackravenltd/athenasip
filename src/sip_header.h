@@ -27,9 +27,9 @@ using namespace athenasip::headers;
 
 namespace athenasip {
 
-// RFC 3261 7.3.1: field names are case-insensitive, so the lookup map compares them
-// that way. Compact forms are expanded to their long name before storage instead,
-// because "v" and "Via" are the same field and must land in the same bucket.
+// RFC 3261 7.3.1: field names are case-insensitive, so the lookup map hashes and compares
+// them that way. Compact forms are expanded before storage, so "v" and "Via" share a
+// bucket.
 struct FieldNameHash {
   std::size_t operator()(const std::string& value) const {
     std::size_t hash = 14695981039346656037ULL;
@@ -59,14 +59,13 @@ class SIPHeader {
   // Unknown fields keep the spelling they arrived with.
   static std::string canonical_field_name(const std::string& field_name);
 
-  // True for fields whose grammar is a comma-separated list (RFC 3261 7.3.1). The
-  // credential fields are excluded: their commas separate parameters, not values.
+  // True for fields whose grammar is a comma-separated list (RFC 3261 7.3.1). Credential
+  // fields are excluded: their commas separate parameters, not values.
   static bool is_list_valued(const std::string& canonical_field_name);
 
   // Splits a field value on commas that are outside quoted strings and angle brackets.
   static std::vector<std::string> split_field_value(const std::string& value);
 
-  // A header field holding its key and parsed value.
   struct HeaderField {
     std::string key;
     std::shared_ptr<headers::Header> value;
@@ -81,21 +80,20 @@ class SIPHeader {
   };
   Type type = Type::Request;
 
-  // For requests
+  // Requests
   std::string request_method;
   std::shared_ptr<SIPUri> request_uri;
 
-  // For responses
+  // Responses
   uint16_t response_code = 0;
   std::string response_message;
 
-  // Common SIP version
   std::string sip_version = "SIP/2.0";
 
-  // Primary storage for headers (preserves order and duplicates).
+  // Every header field, in order, duplicates included.
   std::vector<HeaderField> headers;
 
-  // Map from header name to vector of values (for quick lookup). Case-insensitive.
+  // The same values by field name, case-insensitive, for lookup.
   std::unordered_map<std::string, std::vector<std::shared_ptr<headers::Header>>, FieldNameHash, FieldNameEqual> headers_map;
 
   void add(const std::string& field_name, std::shared_ptr<headers::Header> value);
@@ -108,17 +106,14 @@ class SIPHeader {
   std::string to_string() const;
   std::string first_line() const;
 
-  // What arrived, for a log line. first_line() is for serialisation and throws on a
-  // request whose start line did not parse, and a log line is not allowed to be the
-  // thing that kills a node: the read handler that would carry that exception has the
-  // process's only stack under it.
+  // The start line for logging. Unlike first_line(), it never throws on a request whose
+  // start line did not parse.
   std::string summary() const;
 
-  // Returns true if there is at least one header with the given field name.
   bool contains(const std::string& field) const;
 
-  // False when parse() could not make sense of the start line or a header line. A
-  // request that is not valid gets a 400 Bad Request (RFC 3261 8.2.1, 16.3).
+  // False when parse() could not read the start line or a header line. An invalid request
+  // gets a 400 (RFC 3261 8.2.1, 16.3).
   bool is_valid() const { return _valid; }
 
   friend std::string operator+(const SIPHeader& header, const std::string& str);

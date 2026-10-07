@@ -9,20 +9,18 @@
 using namespace athenasip::headers;
 
 bool CSeqHeader::parse(const std::string& val) {
-  // The expected format is: "171 REGISTER"
+  // "171 REGISTER"
   std::istringstream iss(val);
 
-  // Extract the numeric sequence first.
   if (!(iss >> sequence)) {
     return false;
   }
 
-  // Extract the method.
   if (!(iss >> method)) {
     return false;
   }
 
-  // Optionally, ensure there are no extra tokens.
+  // Nothing may follow the method.
   std::string extra;
   if (iss >> extra) {
     return false;

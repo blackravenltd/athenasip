@@ -15,9 +15,7 @@ using namespace athenasip;
 
 namespace {
 
-// Bob, registered twice: a desk phone on one connection and a second device on another.
-// Which is the ordinary case for one person, and the case a single flow per subscriber gets
-// wrong.
+// Bob registered twice: a desk phone and a second device, each on its own connection.
 struct TwoDeviceFixture : ProxyFixture {
   std::shared_ptr<MockConnection> desk_connection;
   std::shared_ptr<athenasip::Channel> desk;
@@ -36,21 +34,14 @@ struct TwoDeviceFixture : ProxyFixture {
 
 }  // namespace
 
-// RFC 5626: a binding is reached over the flow it was registered on. The node kept one
-// flow per subscriber instead - the last one to register - so a user with a desk phone and a
-// browser had two bindings and one connection, and the fork sent both attempts to
-// whichever device had registered most recently. One device rang twice and the other
-// never rang at all.
-//
-// The invariant, stated so that it holds whichever order the bindings come back in: every
-// INVITE written to a connection names, in its Request-URI, the device on the other end of
-// that connection. Sending one device's branch down another device's flow breaks it.
+// RFC 5626: a binding is reached over the flow it registered on. Every INVITE written to
+// a connection names, in its Request-URI, the device at the other end of that connection.
 TEST(ProxyFlowRoutingTest, EveryBranchGoesDownTheFlowOfTheBindingItIsFor) {
   TwoDeviceFixture f;
 
   f.receive(f.caller, f.invite());
 
-  // Drive the whole fork, so both bindings are tried rather than only the first.
+  // Drive the whole fork so both bindings are tried.
   const bool desk_first = !ProxyFixture::requests_with(f.desk_connection, "INVITE").empty();
   auto& first = desk_first ? f.desk : f.mobile;
   auto& first_connection = desk_first ? f.desk_connection : f.mobile_connection;
@@ -78,13 +69,12 @@ TEST(ProxyFlowRoutingTest, EveryBranchGoesDownTheFlowOfTheBindingItIsFor) {
   EXPECT_TRUE(names_its_own_connection(f.desk_connection, "192.0.2.30"));
   EXPECT_TRUE(names_its_own_connection(f.mobile_connection, "192.0.2.40"));
 
-  // And both were actually tried, or the invariant above is satisfied by doing nothing.
+  // Both were tried, so the invariant is not satisfied by doing nothing.
   EXPECT_EQ(ProxyFixture::requests_with(f.desk_connection, "INVITE").size(), 1u);
   EXPECT_EQ(ProxyFixture::requests_with(f.mobile_connection, "INVITE").size(), 1u);
 }
 
-// The second branch has to reach the other device, which is the other half of the same
-// bug: with one flow for the subscriber, the second attempt went back to the first device.
+// The second branch goes to the other device, not back to the first.
 TEST(ProxyFlowRoutingTest, TheSecondBranchReachesTheOtherDevice) {
   TwoDeviceFixture f;
 
@@ -113,10 +103,8 @@ TEST(ProxyFlowRoutingTest, TheSecondBranchReachesTheOtherDevice) {
   EXPECT_EQ(ProxyFixture::requests_with(first_connection, "INVITE").size(), 1u) << "the first device must not be asked twice";
 }
 
-// A binding whose flow has closed is a binding whose client has gone. There is nothing
-// left but the Contact, which is right for a desk phone with a routable address and
-// hopeless for a browser - and either way the branch fails and the fork moves on rather
-// than the request being dropped.
+// A binding whose flow has closed falls back to its Contact; if that fails, the fork
+// moves on.
 TEST(ProxyFlowRoutingTest, ABindingWhoseFlowHasClosedFallsBackToItsContact) {
   TwoDeviceFixture f;
 
@@ -125,9 +113,7 @@ TEST(ProxyFlowRoutingTest, ABindingWhoseFlowHasClosedFallsBackToItsContact) {
 
   f.receive(f.caller, f.invite());
 
-  // The desk phone is still reachable, so it gets an attempt. The point is that the node
-  // did not send the mobile's branch down the desk's connection to make up for the flow
-  // it had lost.
+  // The mobile's branch is not sent down the desk's connection.
   auto to_desk = ProxyFixture::requests_with(f.desk_connection, "INVITE");
   ASSERT_LE(to_desk.size(), 1u);
 

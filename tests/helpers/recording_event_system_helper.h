@@ -15,9 +15,7 @@
 
 #include "events/event_system.h"
 
-// A bus that delivers nothing and remembers everything, including which publishes were
-// state and what the broker was told to say if this node vanished. What a test about
-// the node's own announcements needs is the record, not the delivery.
+// A bus that delivers nothing and records every publish, including which were state, and the will.
 class RecordingEventSystem : public athenasip::events::EventSystem {
  public:
   using Entry = std::pair<std::string, std::string>;
@@ -45,9 +43,7 @@ class RecordingEventSystem : public athenasip::events::EventSystem {
     _record(_published, std::move(event_name), std::move(message));
   }
 
-  // Refused once connected, exactly as a broker refuses it: a will is taken when the
-  // session opens and never afterwards. A double that accepted one at any time would
-  // let a caller set it too late and still pass.
+  // Refused once connected, as a broker refuses it: a will is taken only when the session opens.
   void will_set(std::string event_name, std::string message) override {
     std::lock_guard<std::mutex> lock(_mutex);
     if (_connected) return;

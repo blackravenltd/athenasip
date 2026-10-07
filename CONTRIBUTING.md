@@ -2,20 +2,17 @@
 
 ## Branches
 
-- `main` is the last stable state. Nothing is committed to it directly.
-- `develop` is where work happens. Branch from it, merge back into it.
-- Feature work that needs isolation branches off `develop` as `feature/<short-name>`
-  and merges back into `develop`.
-- Stable states reach `main` by merging `develop` into it.
-- There is no `master`. If one ever appears, rename it to `main`.
+- `main` is the last stable state. Nothing is committed to it directly; stable states
+  reach it by merging `develop`.
+- `develop` is where work happens.
+- Work that needs isolation branches off `develop` as `feature/<short-name>` and merges
+  back into `develop`.
 
-## Tags
+## Tags and releases
 
-- Tags are exactly `x.y.z` semver: annotated, no `v` prefix, no suffix.
-- Tags are cut from `main`.
-- The tag, the CMake `project(... VERSION ...)` and what the binary reports are the
-  same number. `src/build_version.h.in` is configured by CMake into the build tree, so
-  the binary cannot drift from the build system.
+- Tags are exactly `x.y.z` semver: annotated, no `v` prefix, no suffix, cut from `main`.
+- The tag, the CMake `project(... VERSION ...)` and `athenasip --version` are the same
+  number. CMake configures `src/build_version.h.in`, so the binary follows the build.
 
 A release is: bump the version in `CMakeLists.txt`, merge `develop` into `main`, tag
 `x.y.z` on `main`.
@@ -24,90 +21,49 @@ A release is: bump the version in `CMakeLists.txt`, merge `develop` into `main`,
 
 - Subjects are short imperative prose. No emoji, no ticket prefixes.
 - Keep unrelated changes in separate commits: a rename, a bug fix and a feature are
-  three commits, not one.
-- A commit message ends with its last line of prose. No trailers announcing the tool
-  that wrote it.
+  three commits.
+- A commit message ends with its last line of prose. No tool attribution trailers.
 
-## Building
+## Building and testing
 
-```
-cmake --preset debug && cmake --build build -j8
-```
-
-Presets are defined in `CMakePresets.json`:
-
-| Preset | Build dir | What it is |
-| --- | --- | --- |
-| `debug` | `build` | Debug, the default for local work |
-| `release` | `build-release` | Release |
-| `tests` | `build-tests` | Debug with `ATHENA_BUILD_TESTING=ON` |
-| `asan` | `build-asan` | AddressSanitizer and UndefinedBehaviourSanitizer |
-| `tsan` | `build-tsan` | ThreadSanitizer |
-
-## Testing
+[docs/compiling.md](docs/compiling.md) has the dependencies and presets.
+[docs/testing.md](docs/testing.md) has every test layer. The short form:
 
 ```
 cmake --preset tests && cmake --build build-tests -j8
 ./build-tests/athenasip_tests
 ```
 
-Tests are GoogleTest under `tests/`, mirroring the `src/` layout. Run the binary
-directly rather than through ctest where you can: ctest starts a process per test and
-takes about eleven minutes to do what the binary does in eleven seconds. `ctest
---preset tests` is still there for a per-test report.
+Run the test binary, not `ctest`. Everything runs on a developer machine; there is no
+hosted CI.
 
-Two suites skip themselves unless pointed at something real, so a machine without them
-still runs green and a machine with them tests the canonical drivers:
+Write tests from the RFC, not from the current behaviour: write the test for what the
+standard requires, watch it fail, then fix the code.
 
-```
-redis-server --port 6399 --save '' --daemonize yes
-mosquitto -p 1883 -d
+## Dependencies
 
-ATHENA_TEST_REDIS_URL=redis://127.0.0.1:6399 \
-ATHENA_TEST_MQTT_URL=mqtt://127.0.0.1:1883 ./build-tests/athenasip_tests
-```
-
-Run the `asan` and `tsan` presets before anything that touches the transaction, channel
-or media paths.
-
-### End to end
-
-```
-test/e2e/run.sh                 the sipp scenarios, in-process relay
-test/e2e/run.sh --rtpengine     the same, with a real rtpengine on the media path
-```
-
-Principle 2 says compliance is proven rather than asserted, and this is where that
-happens. The rtpengine run also asserts that the engine relayed the media rather than
-declining it, which the built-in run cannot: a declined description travels on untouched
-and the two ends reach each other directly, so the call completes either way.
-
-### Interop
-
-```
-test/interop/up.sh              a node for a real SIP client to be pointed at
-test/interop/smoke.py           registers on UDP, TCP, TLS and WS
-```
-
-Run the smoke test before blaming a client. If it passes and the client does not, the
-difference is in the client; if it fails, the fixture is not serving what it claims and
-nothing else is worth debugging. `test/interop/README.md` has the rest.
+Boost, OpenSSL, yaml-cpp and nghttp2 (only because APNs speaks nothing but HTTP/2), plus
+GoogleTest for the test build. Prefer writing
+something by hand over adding a library.
 
 ## Style
 
-- Formatting is `.clang-format` (Google base, 160 columns), applied by `clang-format -i`
-  on the files you changed. Two-space indent, `#pragma once`, braces on the same line.
-- `snake_case` for functions, methods, variables and files. `PascalCase` for types.
-  Private and protected members are prefixed with `_`. Namespaces are
+- Formatting is `.clang-format` (Google base, 160 columns): run `clang-format -i` on the
+  files you changed. Two-space indent, `#pragma once`, braces on the same line.
+- `snake_case` for functions, methods, variables and files; `PascalCase` for types;
+  private and protected members prefixed with `_`. Namespaces are
   `athenasip::<subsystem>`.
-- Every source file starts with the AthenaSIP header block: name, copyright, GPLv3 link.
-  Copy it from any existing file.
+- Every source file starts with the AthenaSIP header block. Copy it from an existing file.
 - No emoji anywhere: code, comments, logs, docs, commit messages.
-- Dependency injection over globals. Components take their collaborators in their
+- Dependency injection over globals: components take their collaborators in their
   constructors. The only process global is `detail::get_global_io_context()`.
+- Each component logs through its own `LoggerScoped`.
+- Pluggable subsystems register through `register_driver<T>(logger, scheme)` and
+  `create_driver(logger, url)`, or from a shared library through
+  `ATHENASIP_PLUGIN_MODULE`; see [docs/plugins.md](docs/plugins.md).
 - Comments are sparse and explain intent, not mechanics.
 
 ## Plan
 
 `TODO/ACTIVE.md` is the plan and `TODO/COMPLETED.md` is the record. Move items across
-as they land and keep the `file:line` references current.
+as they land.

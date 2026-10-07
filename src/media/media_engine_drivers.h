@@ -15,8 +15,7 @@
 
 namespace athenasip::media {
 
-// Two implementations, as with the datastores and event systems: one built in for a
-// zero-config single node, one canonical for production.
+// The in-tree engines: builtin needs no configuration, rtpengine is for production.
 inline void register_builtin_media_engines(std::shared_ptr<loggers::Logger> logger) {
   MediaEngine::register_driver<BuiltinMediaEngine>(logger, "builtin");
   MediaEngine::register_driver<RtpengineMediaEngine>(logger, "rtpengine");

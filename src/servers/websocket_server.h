@@ -18,13 +18,8 @@
 namespace athenasip {
 namespace servers {
 
-// RFC 7118, over a plain socket or over TLS. One listener class rather than two: the
-// only difference is a handshake before the HTTP upgrade, and a node that ran two
-// near-identical listeners would drift between them.
-//
-// WSS is not a hardening option for a web client, it is the only way in - a page served
-// over https may not open an insecure WebSocket - so ws:// is for local development and
-// wss:// is what a browser actually uses.
+// RFC 7118 over a plain socket or TLS; the only difference is a TLS handshake before the HTTP upgrade. A page served
+// over https may only open wss://, so ws:// is for local development.
 class WebsocketServer : public Server {
  public:
   WebsocketServer(std::shared_ptr<Logger> logger, std::shared_ptr<Core> core, const std::string& bind_address, short port);
@@ -32,14 +27,11 @@ class WebsocketServer : public Server {
   void start() override;
   void stop() override;
 
-  // Turns this listener into a wss:// one. Called before start(); false when the
-  // certificate or the key will not load, which the caller treats as fatal rather than
-  // quietly falling back to ws://.
+  // Makes this a wss:// listener. Call before start(). False when the certificate or key will not load, which the
+  // caller treats as fatal.
   bool set_certificates(std::string cert, std::string key);
 
-  // The port actually being listened on. Not the configured one when that was zero and
-  // the operating system chose, which is how a test binds without picking a number that
-  // something else on the machine may already hold.
+  // The port being listened on, which is the operating system's choice when zero was configured.
   std::uint16_t port() const { return _acceptor.local_endpoint().port(); }
 
  protected:

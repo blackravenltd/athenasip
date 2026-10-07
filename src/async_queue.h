@@ -17,17 +17,13 @@
 
 namespace athenasip {
 
-// A handover between two threads: on the UDP path a datagram is pushed from the
-// server's own io_context thread and a read is registered from the Core strand. Items
-// wait for readers, readers wait for items, and each item goes to exactly one reader in
-// the order the items arrived.
+// Hands items from one thread to readers on another: each item goes to exactly one reader,
+// in arrival order. On the UDP path the server's io_context thread pushes and the Core
+// strand reads.
 //
-// One mutex covers both queues, and it is held across the pairing and the post. Holding
-// it that long is deliberate: the order handlers are queued in is the order the
-// datagrams arrived in, and a drain that paired under the lock and posted outside it
-// would let two threads interleave their posts and deliver a CANCEL before its INVITE.
-// asio::post never runs a handler inline, so nothing re-enters this class while the
-// lock is held.
+// One mutex is held across both the pairing and the post, so handlers are queued in arrival
+// order; posting outside the lock could deliver a CANCEL before its INVITE. asio::post never
+// runs a handler inline, so nothing re-enters while the lock is held.
 template <typename T>
 class AsyncQueue {
   using CallbackFn = std::function<void(T item)>;
@@ -45,20 +41,15 @@ class AsyncQueue {
   void on_item_once(CallbackFn callback) {
     std::lock_guard<std::mutex> lock(_mutex);
 
-    // Nothing more will arrive, so a reader would wait for ever and hold whatever it
-    // captured for just as long.
+    // A reader registered after close would wait for ever, holding whatever it captured.
     if (_closed) return;
 
     _callbacks.push(std::move(callback));
     _pair_up();
   }
 
-  // No more items, and let go of the readers waiting for them.
-  //
-  // A pending callback owns what it captured, which on the UDP path is a shared_ptr to the
-  // channel that registered the read. Nothing completes that read - a UDP connection has no
-  // socket to error out - so without this the channel outlives its own close for as long as
-  // the process runs, whatever else has let go of it.
+  // Stops delivery and drops the waiting readers. A pending callback owns its captures (on
+  // the UDP path, a shared_ptr to the channel), and nothing else would ever release them.
   void close() {
     std::queue<CallbackFn> callbacks;
     std::queue<T> items;
@@ -68,8 +59,7 @@ class AsyncQueue {
 
       _closed = true;
 
-      // Swapped out under the lock and destroyed outside it: a callback's destructor can
-      // run arbitrary code, and running it here would do so with the lock held.
+      // Destroyed outside the lock: a callback's destructor can run arbitrary code.
       callbacks.swap(_callbacks);
       items.swap(_items);
     }

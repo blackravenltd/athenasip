@@ -2,9 +2,8 @@
 <!DOCTYPE scenario SYSTEM "sipp.dtd">
 
 <!--
-  The caller's half of the 486: the failure comes back as it was given, and the caller
-  ACKs it (RFC 3261 17.1.1.2 - a failure response to an INVITE is acknowledged by the
-  transaction, not by a new one).
+  The caller's half of the 486: the failure comes back unchanged and the caller's
+  transaction ACKs it (RFC 3261 17.1.1.3).
 -->
 <scenario name="Caller: hears 486">
 
@@ -72,9 +71,8 @@
     ]]>
   </send>
 
-  <!-- RFC 3261 22.3: a subscriber proves who it is to the proxy as well as to the
-       registrar, and on UDP nothing else can prove it. The 407 is acknowledged as any
-       final non-2xx is (17.1.1.3) and the INVITE sent again with credentials. -->
+  <!-- RFC 3261 22.3: the proxy challenges the INVITE. The 407 is ACKed (17.1.1.3) and the
+       INVITE sent again with credentials. -->
   <recv response="100" optional="true"/>
   <recv response="407" auth="true"/>
 

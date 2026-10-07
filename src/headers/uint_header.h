@@ -23,7 +23,6 @@ class UIntHeader : public Header {
   uint64_t value = 0;
 };
 
-// Register this field type
 struct UIntHeaderRegister {
   UIntHeaderRegister() {
     auto reg = []() { return std::make_shared<UIntHeader>(); };
@@ -31,8 +30,7 @@ struct UIntHeaderRegister {
     Header::register_factory("Expires", reg);
     Header::register_factory("Max-Forwards", reg);
 
-    // RFC 3261 20.23: delta-seconds, and only ever on a 423. The registrar writes it;
-    // a client reading one of ours is the M3 outbound work.
+    // RFC 3261 20.23: delta-seconds, only on a 423.
     Header::register_factory("Min-Expires", reg);
   }
 };

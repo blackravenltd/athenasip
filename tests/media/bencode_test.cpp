@@ -12,9 +12,7 @@
 
 using athenasip::media::Bencode;
 
-// Bencode has four types and one spelling of each. These are written from that grammar
-// rather than from the encoder, because the far end of this is rtpengine and what it
-// accepts is the specification, not what this code happens to emit.
+// Written from the bencode grammar, not from the encoder: the far end is rtpengine.
 
 TEST(BencodeTest, IntegersAreSpelledBetweenIAndE) {
   EXPECT_EQ(Bencode(static_cast<std::int64_t>(0)).encode(), "i0e");
@@ -26,8 +24,7 @@ TEST(BencodeTest, StringsCarryTheirOwnLength) {
   EXPECT_EQ(Bencode(std::string("offer")).encode(), "5:offer");
   EXPECT_EQ(Bencode(std::string()).encode(), "0:");
 
-  // A length, not a terminator: the bytes that follow are taken as they come, which is
-  // what lets an SDP with colons, newlines and nulls through untouched.
+  // Length-prefixed, so colons, newlines and nulls in an SDP pass through untouched.
   EXPECT_EQ(Bencode(std::string("a:b\r\nc")).encode(), "6:a:b\r\nc");
 }
 
@@ -41,9 +38,7 @@ TEST(BencodeTest, ListsAndDictionariesNest) {
   EXPECT_EQ(dictionary.encode(), "d7:command5:offer7:replacel6:origini1eee");
 }
 
-// Canonical bencode puts dictionary keys in byte order. rtpengine does not insist, but
-// a request that encodes the same way every time is one a test can compare and a
-// retransmission cannot accidentally change.
+// Canonical bencode puts dictionary keys in byte order, so a request encodes the same way every time.
 TEST(BencodeTest, DictionaryKeysAreEmittedInByteOrder) {
   auto dictionary = Bencode::dictionary({{"sdp", Bencode(std::string("v=0"))}, {"command", Bencode(std::string("offer"))}});
   dictionary.set("call-id", Bencode(std::string("x")));
@@ -87,19 +82,16 @@ TEST(BencodeTest, AnAbsentOrWronglyTypedFieldReadsAsMissing) {
   EXPECT_EQ(dictionary.find("sdp"), nullptr);
   EXPECT_EQ(dictionary.string_at("sdp"), "");
 
-  // A field that is there but is not a number is not a number. Answering 0 would have
-  // a caller act on a value nobody sent.
+  // A field that is present but not a number yields the fallback, not 0.
   EXPECT_EQ(dictionary.integer_at("result", -1), -1);
 }
 
-// Everything below is a datagram off a socket. The decoder's job on all of it is to
-// say no rather than to guess.
+// The input is a datagram off a socket: anything malformed is refused, not guessed at.
 TEST(BencodeTest, MalformedInputIsRefused) {
   EXPECT_FALSE(Bencode::decode("").has_value());
   EXPECT_FALSE(Bencode::decode("x").has_value());
 
-  // A length that runs past the end of the buffer, which is the one that reads other
-  // people's memory when it is believed.
+  // A length that runs past the end of the buffer.
   EXPECT_FALSE(Bencode::decode("10:short").has_value());
 
   EXPECT_FALSE(Bencode::decode("i42").has_value());
@@ -110,12 +102,12 @@ TEST(BencodeTest, MalformedInputIsRefused) {
   // A dictionary key has to be a string.
   EXPECT_FALSE(Bencode::decode("di1e3:abce").has_value());
 
-  // Two spellings of one number in a protocol keyed by exact bytes.
+  // A number has one spelling: no leading zeros.
   EXPECT_FALSE(Bencode::decode("i007e").has_value());
   EXPECT_FALSE(Bencode::decode("i-0e").has_value());
   EXPECT_FALSE(Bencode::decode("03:abc").has_value());
 
-  // Something after the value that is not padding.
+  // Trailing data that is not padding.
   EXPECT_FALSE(Bencode::decode("i1ei2e").has_value());
 }
 
@@ -124,16 +116,14 @@ TEST(BencodeTest, AnIntegerTooLargeToHoldIsRefusedRatherThanWrapped) {
   EXPECT_FALSE(Bencode::decode("99999999999999999999:x").has_value());
 }
 
-// A datagram may arrive padded. Trailing nulls and whitespace are not a disagreement
-// about what was sent.
+// A datagram may arrive padded with trailing nulls or whitespace.
 TEST(BencodeTest, TrailingPaddingIsAccepted) {
   auto decoded = Bencode::decode(std::string("d6:result2:oke\0\0", 16));
   ASSERT_TRUE(decoded.has_value());
   EXPECT_EQ(decoded->string_at("result"), "ok");
 }
 
-// Recursion the input drives has to be bounded, or a datagram of nothing but "l" walks
-// the stack off the end.
+// Nesting depth is bounded, so a datagram of nothing but "l" cannot exhaust the stack.
 TEST(BencodeTest, NestingDeeperThanTheLimitIsRefused) {
   const std::string bomb(Bencode::kMaxDepth + 8, 'l');
   EXPECT_FALSE(Bencode::decode(bomb).has_value());
@@ -142,14 +132,13 @@ TEST(BencodeTest, NestingDeeperThanTheLimitIsRefused) {
   deep += std::string(Bencode::kMaxDepth + 8, 'e');
   EXPECT_FALSE(Bencode::decode(deep).has_value());
 
-  // One that is within the limit still parses, so the bound is a bound and not a ban.
+  // Within the limit still parses.
   std::string fine(4, 'l');
   fine += std::string(4, 'e');
   EXPECT_TRUE(Bencode::decode(fine).has_value());
 }
 
-// The shape rtpengine actually answers a query with, reduced to the fields this driver
-// reads. If the decoder cannot walk this, the media timeout cannot see a call.
+// The shape of an rtpengine query reply, reduced to the fields this driver reads.
 TEST(BencodeTest, DecodesTheShapeOfAnRtpengineQuery) {
   auto stream =
       Bencode::dictionary({{"local port", Bencode(static_cast<std::int64_t>(30000))}, {"last packet", Bencode(static_cast<std::int64_t>(1700000042))}});

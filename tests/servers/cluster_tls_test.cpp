@@ -27,8 +27,7 @@ using tcp = boost::asio::ip::tcp;
 
 namespace {
 
-// A cluster of two, node-a and node-b, and an outsider with a certificate from an authority
-// of its own.
+// A cluster of two, node-a and node-b, and an outsider with a certificate from its own authority.
 struct Certificates {
   std::filesystem::path root;
   std::filesystem::path cluster;
@@ -59,8 +58,7 @@ struct ClusterFixture : CoreFixture {
   Certificates certificates;
   std::shared_ptr<servers::TLSServer> server;
 
-  // The inter-node listener: node-a's certificate, and a peer has to show one from the
-  // cluster CA.
+  // The inter-node listener: node-a's certificate, and a peer must show one from the cluster CA.
   explicit ClusterFixture(const std::string& server_dir = "cluster", const std::string& server_node = "node-a") {
     seed_realm("example.com");
 
@@ -94,9 +92,8 @@ struct ClusterFixture : CoreFixture {
     boost::system::error_code error;
     stream.handshake(ssl::stream_base::client, error);
 
-    // TLS 1.3 sends the client's certificate after the client considers the handshake done,
-    // so a refusal arrives on the first read. A member is answered: a REGISTER with no
-    // credentials is challenged.
+    // TLS 1.3 sends the client's certificate after the client considers the handshake done, so a refusal arrives
+    // on the first read. A member is answered: a REGISTER with no credentials is challenged.
     if (!error) {
       std::string request = "REGISTER sip:example.com SIP/2.0\r\n";
       request += "Via: SIP/2.0/TLS 127.0.0.1:9;branch=z9hG4bK-cluster\r\n";
@@ -136,17 +133,15 @@ TEST(ClusterTlsTest, APeerWithAClusterCertificateIsLetIn) {
   EXPECT_FALSE(f.handshake_as(f.certificates.cluster, "node-b")) << "node-b is a member of the cluster";
 }
 
-// And one that shows none, or one from another authority, is not: the inter-node listener
-// is for nodes, and the certificate is what says something is one.
+// A peer that shows no certificate, or one from another authority, is refused.
 TEST(ClusterTlsTest, APeerWithoutOneIsRefused) {
   ClusterFixture f;
   EXPECT_TRUE(f.handshake_as(f.certificates.cluster, "")) << "no certificate";
   EXPECT_TRUE(f.handshake_as(f.certificates.outsider, "node-x")) << "another authority's certificate";
 }
 
-// The other direction: this node opens TLS to a peer node, showing its own certificate and
-// checking the peer's against the cluster CA and the address it dialled. The channel says
-// which node is at the other end.
+// Outbound: this node shows its own certificate and checks the peer's against the cluster CA and the address
+// it dialled. The channel says which node is at the other end.
 TEST(ClusterTlsTest, ANodeOpensTlsToAPeerAndKnowsWhoItIs) {
   ClusterFixture f;
   f.on_strand([&f]() {
@@ -159,7 +154,7 @@ TEST(ClusterTlsTest, ANodeOpensTlsToAPeerAndKnowsWhoItIs) {
   EXPECT_EQ(opened.value->peer_node(), "node-a");
 }
 
-// A server that cannot prove it is a member is not one, whatever it answers.
+// A server that cannot prove it is a member is refused.
 TEST(ClusterTlsTest, ANodeRefusesAPeerFromAnotherAuthority) {
   ClusterFixture f("outsider", "node-x");
   f.on_strand([&f]() {

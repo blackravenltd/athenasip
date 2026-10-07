@@ -23,7 +23,6 @@ std::string Util::to_hex(const uint8_t arr[], uint16_t len) {
   std::ostringstream oss;
   oss << std::hex << std::setfill('0');
   for (uint16_t i = 0; i < len; i++) {
-    // Cast to unsigned int to ensure numeric interpretation
     oss << std::setw(2) << static_cast<uint>(arr[i]);
   }
   return oss.str();
@@ -41,7 +40,6 @@ std::string Util::to_lower(const std::string& input) {
   return result;
 }
 
-// Trim leading and trailing whitespace
 std::string Util::trim(const std::string& str) { return trim(str, " \t\r\n"); }
 
 std::string Util::trim(const std::string& str, const std::string& trimmable) {
@@ -52,14 +50,10 @@ std::string Util::trim(const std::string& str, const std::string& trimmable) {
 
 namespace {
 
-// One body for both digests: the only thing that differs is which EVP_MD is asked for,
-// and duplicating the context handling twice is how the two drift apart.
 std::string digest_hex(const EVP_MD* algorithm, const std::string& input) {
-  // Buffer to hold the digest. EVP_MAX_MD_SIZE is guaranteed to be large enough.
   unsigned char digest[EVP_MAX_MD_SIZE];
   unsigned int digest_len = 0;
 
-  // Create a new digest context.
   EVP_MD_CTX* ctx = EVP_MD_CTX_new();
   if (!ctx) throw std::runtime_error("EVP_MD_CTX_new failed");
 
@@ -68,22 +62,18 @@ std::string digest_hex(const EVP_MD* algorithm, const std::string& input) {
     throw std::runtime_error("EVP_DigestInit_ex failed");
   }
 
-  // Update the digest with the input data.
   if (EVP_DigestUpdate(ctx, input.data(), input.size()) != 1) {
     EVP_MD_CTX_free(ctx);
     throw std::runtime_error("EVP_DigestUpdate failed");
   }
 
-  // Finalize the digest and get the result.
   if (EVP_DigestFinal_ex(ctx, digest, &digest_len) != 1) {
     EVP_MD_CTX_free(ctx);
     throw std::runtime_error("EVP_DigestFinal_ex failed");
   }
 
-  // Clean up the digest context.
   EVP_MD_CTX_free(ctx);
 
-  // Convert the binary digest to a hexadecimal string.
   std::ostringstream oss;
   oss << std::hex << std::setfill('0');
   for (unsigned int i = 0; i < digest_len; ++i) {
@@ -101,7 +91,7 @@ std::string Util::sha256(const std::string& input) { return digest_hex(EVP_sha25
 std::filesystem::path Util::expand_path(const std::string& path) {
   std::filesystem::path p(path);
 
-  // Handle ~ (Home Directory Expansion)
+  // Expand a leading ~ to the home directory.
   if (!path.empty() && path[0] == '~') {
     const char* home = std::getenv("HOME");
     if (!home) {
@@ -118,7 +108,6 @@ std::filesystem::path Util::expand_path(const std::string& path) {
     }
   }
 
-  // Convert to absolute path
   return std::filesystem::absolute(p);
 }
 
@@ -129,7 +118,6 @@ bool Util::is_ipv4_private(const std::string& ipv4) {
   std::string token;
   while (std::getline(iss, token, '.')) {
     if (i >= 4) {
-      // More than 4 parts, invalid IPv4
       return false;
     }
     try {
@@ -142,15 +130,14 @@ bool Util::is_ipv4_private(const std::string& ipv4) {
       return false;
     }
   }
-  // Must have exactly 4 parts
   if (i != 4) {
     return false;
   }
 
-  // Check for private IP ranges
+  // RFC 1918 private ranges.
   // 10.0.0.0/8
   if (parts[0] == 10) return true;
-  // 172.16.0.0/12 (172.16.0.0 - 172.31.255.255)
+  // 172.16.0.0/12
   if (parts[0] == 172 && (parts[1] >= 16 && parts[1] <= 31)) return true;
   // 192.168.0.0/16
   if (parts[0] == 192 && parts[1] == 168) return true;
@@ -166,9 +153,7 @@ bool Util::is_ipv4(const std::string& ip) {
 std::string Util::to_iso8601(const std::chrono::system_clock::time_point& tp) { return Util::to_iso8601(std::chrono::system_clock::to_time_t(tp)); }
 
 std::string Util::to_iso8601(const std::time_t& t) {
-  // Convert to UTC broken-down time.
   std::tm tm = *std::gmtime(&t);
-  // Format as ISO8601 (e.g., "2025-03-15T12:34:56Z")
   std::ostringstream oss;
   oss << std::put_time(&tm, "%Y-%m-%dT%H:%M:%SZ");
   return oss.str();
@@ -184,8 +169,7 @@ std::uint64_t Util::stable_id(const std::string& name) {
     hash *= 1099511628211ULL;
   }
 
-  // Never zero: zero is what an id nobody set looks like, and a binding pointing at
-  // subscriber zero would be indistinguishable from a binding pointing at nothing.
+  // Never zero: zero means the id was never set.
   return hash == 0 ? 1 : hash;
 }
 

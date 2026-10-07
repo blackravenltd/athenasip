@@ -17,7 +17,7 @@ using athenasip::headers::SIPIdentityHeader;
 
 namespace {
 
-// What a phone behind a NAT writes: the address on its own side of it.
+// Sets the Contact, e.g. to the private address a phone behind NAT writes.
 std::string with_contact(std::string raw, const std::string& contact) {
   const auto start = raw.find("Contact: ");
   const auto end = raw.find("\r\n", start);
@@ -42,8 +42,7 @@ struct RewriteFixture : ProxyFixture {
 
 }  // namespace
 
-// A proxy forwards what an endpoint said about itself (RFC 3261 16.6), so by default the
-// Contact goes on as it was written, private address and all.
+// RFC 3261 16.6: by default the Contact is forwarded as written.
 TEST(ProxyContactRewriteTest, TheContactIsLeftAloneByDefault) {
   RewriteFixture f;
 
@@ -52,21 +51,19 @@ TEST(ProxyContactRewriteTest, TheContactIsLeftAloneByDefault) {
   EXPECT_EQ(contact_of(f.request_with(f.callee_connection, "INVITE")), "sip:alice@10.0.0.9:5060");
 }
 
-// Asterisk's rewrite_contact, Kamailio's fix_nated_contact: the Contact is rewritten to
-// where the message actually came from, so the far end's in-dialog requests reach the
-// NAT's mapping rather than an address on somebody else's LAN.
+// With rewrite_contact on, the Contact becomes the address the message came from, so
+// in-dialog requests reach the NAT mapping.
 TEST(ProxyContactRewriteTest, TurnedOnTheContactBecomesWhereTheRequestCameFrom) {
   RewriteFixture f;
   f.config->behaviour_rewrite_contact = true;
 
   f.receive(f.caller, with_contact(f.invite(), "sip:alice@10.0.0.9:5070;transport=udp"));
 
-  // The user and the parameters are the endpoint's; only the address it could not know is
-  // replaced.
+  // Only host and port change; the user and parameters are kept.
   EXPECT_EQ(contact_of(f.request_with(f.callee_connection, "INVITE")), "sip:alice@192.0.2.10:5060;transport=udp");
 }
 
-// And a response's Contact, which is the callee's remote target for the caller.
+// A response's Contact is rewritten too.
 TEST(ProxyContactRewriteTest, TheAnswersContactIsRewrittenToo) {
   RewriteFixture f;
   f.config->behaviour_rewrite_contact = true;
@@ -77,7 +74,7 @@ TEST(ProxyContactRewriteTest, TheAnswersContactIsRewrittenToo) {
   EXPECT_EQ(contact_of(f.response_with(f.caller_connection, 200)), "sip:bob@192.0.2.20:5060");
 }
 
-// A realm says otherwise for its own calls.
+// A realm setting overrides the node default.
 TEST(ProxyContactRewriteTest, ARealmCanTurnItOff) {
   RewriteFixture f;
   f.config->behaviour_rewrite_contact = true;
@@ -88,9 +85,8 @@ TEST(ProxyContactRewriteTest, ARealmCanTurnItOff) {
   EXPECT_EQ(contact_of(f.request_with(f.callee_connection, "INVITE")), "sip:alice@10.0.0.9:5060");
 }
 
-// A WebSocket client's Contact names nothing reachable by design (RFC 7118), and the flow
-// token is how it is reached. An address and port for its connection would be worse than
-// what it wrote.
+// RFC 7118: a WebSocket client's Contact is unroutable by design and it is reached by
+// its flow, so the Contact is left alone.
 TEST(ProxyContactRewriteTest, AWebSocketClientsContactIsLeftAlone) {
   RewriteFixture f;
   f.config->behaviour_rewrite_contact = true;

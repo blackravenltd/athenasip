@@ -7,6 +7,7 @@
 #include <functional>
 #include <lua.hpp>
 #include <string>
+#include <utility>
 
 #include "../loggers/logger_scoped.h"
 #include "../util.h"
@@ -16,7 +17,7 @@ using namespace athenasip::loggers;
 
 namespace athenasip::script {
 
-// Each logging function: they expect a string as the first argument.
+// Each logging function takes the message as its first argument.
 int LuaScriptEngine::lua_log_info(lua_State* L) {
   auto logger = LuaScriptEngine::get_script_engine(L)->_logger;
   const char* msg = luaL_checkstring(L, 1);
@@ -45,31 +46,20 @@ int LuaScriptEngine::lua_log_error(lua_State* L) {
   return 0;
 }
 
-// This function registers the global "log" object.
+// Registers the global "log" table.
 void LuaScriptEngine::_register_logger_object() {
-  // Create a new table.
   lua_newtable(_current);  // table is at stack index -1
 
-  // Push our logger pointer as a lightuserdata upvalue.
-  lua_pushlightuserdata(_current, this);
+  // Each closure takes the engine pointer as its upvalue (get_script_engine).
+  for (const auto& [name, fn] : {std::pair<const char*, lua_CFunction>{"info", LuaScriptEngine::lua_log_info},
+                                 {"debug", LuaScriptEngine::lua_log_debug},
+                                 {"warn", LuaScriptEngine::lua_log_warn},
+                                 {"error", LuaScriptEngine::lua_log_error}}) {
+    lua_pushlightuserdata(_current, this);
+    lua_pushcclosure(_current, fn, 1);
+    lua_setfield(_current, -2, name);
+  }
 
-  // Now, push each logging function with the logger pointer as its upvalue.
-  lua_pushcclosure(_current, LuaScriptEngine::lua_log_info, 1);
-  lua_setfield(_current, -2, "info");
-
-  lua_pushlightuserdata(_current, _logger.get());
-  lua_pushcclosure(_current, LuaScriptEngine::lua_log_debug, 1);
-  lua_setfield(_current, -2, "debug");
-
-  lua_pushlightuserdata(_current, _logger.get());
-  lua_pushcclosure(_current, LuaScriptEngine::lua_log_warn, 1);
-  lua_setfield(_current, -2, "warn");
-
-  lua_pushlightuserdata(_current, _logger.get());
-  lua_pushcclosure(_current, LuaScriptEngine::lua_log_error, 1);
-  lua_setfield(_current, -2, "error");
-
-  // Set the table as a global variable called "log".
   lua_setglobal(_current, "log");
 }
 

@@ -25,9 +25,8 @@ std::string status(const std::string& node, const std::string& state) {
 
 }  // namespace
 
-// The retained nodes/<id>/status messages are the cluster's list of itself (the 2026-09-21
-// decision): each node says what it is and where it listens, and every node that hears it
-// knows.
+// The retained nodes/<id>/status messages are the cluster's directory: each says what a node is and
+// where it listens.
 TEST(NodeDirectoryTest, AStatusMessageIsANodeAndWhereItListens) {
   NodeDirectory directory;
 
@@ -42,9 +41,8 @@ TEST(NodeDirectoryTest, AStatusMessageIsANodeAndWhereItListens) {
   EXPECT_EQ(nodes[0].transports[0].at("uri").as_string(), "sips:198.51.100.7:5061;transport=tls");
 }
 
-// The latest word stands, including the will the broker publishes for a node that
-// vanished: a node that is down is listed as down, not dropped, so a client can tell
-// "gone" from "never heard of".
+// The latest report stands, including the broker's will for a vanished node: it is listed as down,
+// not dropped.
 TEST(NodeDirectoryTest, TheLatestReportStands) {
   NodeDirectory directory;
 
@@ -56,7 +54,7 @@ TEST(NodeDirectoryTest, TheLatestReportStands) {
   EXPECT_EQ(nodes[0].status, "down");
 }
 
-// Anything that is not a node's status is not one, and is not guessed at.
+// Messages that are not a node status are ignored.
 TEST(NodeDirectoryTest, WhatIsNotAStatusIsIgnored) {
   NodeDirectory directory;
 
@@ -68,8 +66,7 @@ TEST(NodeDirectoryTest, WhatIsNotAStatusIsIgnored) {
   EXPECT_TRUE(directory.list(std::chrono::seconds(90)).empty());
 }
 
-// A report nobody has repeated for several intervals is stale: the node may be gone in a
-// way the broker never noticed, and saying "ok" for it would be the directory lying.
+// A report not repeated for several intervals is stale: the node may have gone without the broker noticing.
 TEST(NodeDirectoryTest, AReportNotRepeatedIsStale) {
   NodeDirectory directory;
   const auto then = std::chrono::steady_clock::now();
@@ -80,7 +77,7 @@ TEST(NodeDirectoryTest, AReportNotRepeatedIsStale) {
   EXPECT_TRUE(directory.list(std::chrono::seconds(90), then + std::chrono::seconds(91))[0].stale);
 }
 
-// And a node hears every node's status, its own included, once its heartbeat starts.
+// Once its heartbeat starts, a node hears every node's status, its own included.
 TEST(NodeDirectoryTest, ANodeListensForTheOthers) {
   CoreFixture f;
   f.on_strand([&f]() { f.core->node_status_start(); });
@@ -95,9 +92,7 @@ TEST(NodeDirectoryTest, ANodeListensForTheOthers) {
   EXPECT_TRUE(found);
 }
 
-// Where a peer is reached for inter-node SIP, which is not where a client reaches it: the
-// mutual-TLS listener, as the node itself gives it. It is what a node forwards to when a
-// binding's flow is held elsewhere.
+// A status carries the node's mutual-TLS cluster listener, where peers forward requests for flows it holds.
 TEST(NodeDirectoryTest, ANodeSaysWhereItsPeersReachIt) {
   NodeDirectory directory;
 
@@ -111,7 +106,7 @@ TEST(NodeDirectoryTest, ANodeSaysWhereItsPeersReachIt) {
   EXPECT_EQ(b->cluster_address, "10.0.0.2");
   EXPECT_EQ(b->cluster_port, 5062);
 
-  // A node that is not in a cluster says nothing, and is not a peer anybody can forward to.
+  // A node outside a cluster advertises no listener and is not a forwarding target.
   const auto c = directory.find("node-c", std::chrono::seconds(90));
   ASSERT_TRUE(c.has_value());
   EXPECT_TRUE(c->cluster_address.empty());

@@ -11,10 +11,9 @@
 #include <string>
 #include <vector>
 
+#include "../mocks/logger_mock.h"
 #include "transactions/invite_server_transaction.h"
 #include "transactions/non_invite_server_transaction.h"
-
-#include "../mocks/logger_mock.h"
 
 using namespace athenasip;
 using namespace athenasip::transactions;
@@ -101,8 +100,7 @@ TEST(InviteServerTransactionTest, StartsInProceedingAndPassesTheRequestUp) {
   EXPECT_EQ(h.to_tu[0], invite);
 }
 
-// 17.2.1: if the TU has not answered within 200ms the transaction sends 100 Trying
-// itself, so the far end stops retransmitting.
+// RFC 3261 17.2.1: if the TU has not answered within 200ms the transaction sends 100 Trying itself.
 TEST(InviteServerTransactionTest, SendsOneHundredTryingWhenTheTuIsSlow) {
   Harness h;
   auto transaction = make_ist(h, false);
@@ -129,8 +127,7 @@ TEST(InviteServerTransactionTest, DoesNotSendOneHundredWhenTheTuAlreadyResponded
   EXPECT_EQ(h.sent_count(180), 1);
 }
 
-// A retransmitted INVITE must be answered by the transaction, and must not reach the
-// TU a second time.
+// A retransmitted INVITE is answered by the transaction and does not reach the TU again.
 TEST(InviteServerTransactionTest, AbsorbsRetransmittedInvites) {
   Harness h;
   auto invite = request("INVITE");
@@ -145,9 +142,8 @@ TEST(InviteServerTransactionTest, AbsorbsRetransmittedInvites) {
   EXPECT_EQ(h.sent_count(180), 3) << "each retransmission should get the 180 back";
 }
 
-// 17.2.1: a 2xx leaves the transaction at once. The 2xx and its ACK are end to end and
-// belong to the TU, not to this transaction.
-TEST(InviteServerTransactionTest, TwoHundredTerminatesImmediately) {
+// RFC 6026 7.1, replacing RFC 3261 17.2.1: a 2xx moves the transaction to Accepted rather than ending it.
+TEST(InviteServerTransactionTest, TwoHundredGoesToAccepted) {
   Harness h;
   auto invite = request("INVITE");
   auto transaction = make_ist(h, false);
@@ -155,8 +151,41 @@ TEST(InviteServerTransactionTest, TwoHundredTerminatesImmediately) {
 
   transaction->send(response(invite, 200, "OK"));
 
-  EXPECT_EQ(transaction->state(), State::Terminated);
+  EXPECT_EQ(transaction->state(), State::Accepted);
   EXPECT_EQ(h.sent_count(200), 1);
+}
+
+// In Accepted the TU's 2xx retransmissions go out through the transaction, and a retransmitted INVITE is
+// absorbed.
+TEST(InviteServerTransactionTest, AcceptedSendsTheTusTwoHundredsAndAbsorbsTheInvite) {
+  Harness h;
+  auto invite = request("INVITE");
+  auto transaction = make_ist(h, true);
+  transaction->start(invite);
+  const auto passed_up = h.to_tu.size();
+
+  transaction->send(response(invite, 200, "OK"));
+  transaction->send(response(invite, 200, "OK"));
+  EXPECT_EQ(h.sent_count(200), 2);
+
+  transaction->receive(invite);
+  EXPECT_EQ(h.to_tu.size(), passed_up);
+  EXPECT_EQ(h.sent_count(200), 2) << "the transaction does not retransmit a 2xx itself";
+}
+
+// Timer L, 64*T1, ends Accepted.
+TEST(InviteServerTransactionTest, TimerLEndsAccepted) {
+  Harness h;
+  auto invite = request("INVITE");
+  auto transaction = make_ist(h, true);
+  transaction->start(invite);
+  transaction->send(response(invite, 200, "OK"));
+
+  h.timers->advance(h.values().l - 1ms);
+  EXPECT_EQ(transaction->state(), State::Accepted);
+
+  h.timers->advance(1ms);
+  EXPECT_EQ(transaction->state(), State::Terminated);
   ASSERT_EQ(h.terminated.size(), 1u);
 }
 
@@ -284,8 +313,7 @@ TEST(NonInviteServerTransactionTest, StartsInTryingAndPassesTheRequestUp) {
   ASSERT_EQ(h.to_tu.size(), 1u);
 }
 
-// 17.2.2: in Trying there is nothing to send, so a retransmission is simply dropped.
-// The TU must not see the request twice.
+// RFC 3261 17.2.2: in Trying a retransmission is dropped and the TU does not see the request twice.
 TEST(NonInviteServerTransactionTest, DropsRetransmissionsWhileTrying) {
   Harness h;
   auto register_request = request("REGISTER");

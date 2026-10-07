@@ -21,7 +21,7 @@ namespace {
 
 const std::string kHa1 = Util::md5("alice:example.com:secret");
 
-// What a WebRTC client answers an OPTIONS with when it says what it takes (RFC 3261 11.2).
+// A WebRTC client's answer to an OPTIONS, describing what it takes (RFC 3261 11.2).
 const std::string kWebRtcCapabilities =
     "v=0\r\n"
     "o=- 1 1 IN IP4 0.0.0.0\r\n"
@@ -80,7 +80,7 @@ struct Fixture : CoreFixture {
     return found;
   }
 
-  // The client's answer to the latest probe, as a UAS builds one (RFC 3261 8.2.6).
+  // The client's answer to the latest probe (RFC 3261 8.2.6).
   std::string answer(int code, const std::string& sdp = "") {
     const auto sent = probes();
     if (sent.empty()) return "";
@@ -108,8 +108,7 @@ struct Fixture : CoreFixture {
 
 }  // namespace
 
-// RFC 3261 does not ask a registrar to probe anybody, so nothing is sent unless the
-// operator has said how often.
+// Probing is not required by RFC 3261, so nothing is sent unless an interval is set.
 TEST(QualifierTest, NothingIsProbedByDefault) {
   Fixture f;
 
@@ -120,9 +119,9 @@ TEST(QualifierTest, NothingIsProbedByDefault) {
   EXPECT_TRUE(f.probes().empty());
 }
 
-// Asterisk's qualify: an OPTIONS down the flow the client registered on, straight after
-// it registers and then on the realm's interval. RFC 3261 11.1: addressed to the contact,
-// To the address of record, asking for a session description in Accept.
+// A registered client is sent OPTIONS down its flow on registering and then on the
+// realm's interval. RFC 3261 11.1: Request-URI the contact, To the address of record,
+// Accept asking for a session description.
 TEST(QualifierTest, ARegisteredClientIsProbedOnItsRealmsInterval) {
   Fixture f(30);
 
@@ -150,12 +149,12 @@ TEST(QualifierTest, ARegisteredClientIsProbedOnItsRealmsInterval) {
   sent = f.probes();
   ASSERT_EQ(sent.size(), 2u);
 
-  // One conversation: the same Call-ID, the CSeq counting up.
+  // One conversation: the same Call-ID, CSeq counting up.
   EXPECT_EQ(sent[0]->header->headers_map["Call-ID"][0]->to_string(), sent[1]->header->headers_map["Call-ID"][0]->to_string());
   EXPECT_NE(sent[0]->header->headers_map["CSeq"][0]->to_string(), sent[1]->header->headers_map["CSeq"][0]->to_string());
 }
 
-// The server's default applies to a realm that says nothing, and a realm can turn it off.
+// The server default applies unless the realm sets its own; a realm can turn it off.
 TEST(QualifierTest, TheServerDefaultAppliesUnlessTheRealmTurnsItOff) {
   Fixture inherits(std::nullopt, 60);
   inherits.receive(inherits.channel, inherits.register_request());
@@ -168,8 +167,7 @@ TEST(QualifierTest, TheServerDefaultAppliesUnlessTheRealmTurnsItOff) {
   EXPECT_TRUE(off.probes().empty());
 }
 
-// RFC 3261 11.2: the 200 may carry the description the client would have offered, and
-// that is the client saying what media it takes.
+// RFC 3261 11.2: a session description in the 200 states what media the client takes.
 TEST(QualifierTest, TheDescriptionInTheAnswerIsWhatTheClientSaid) {
   Fixture f(30);
 
@@ -180,15 +178,14 @@ TEST(QualifierTest, TheDescriptionInTheAnswerIsWhatTheClientSaid) {
   f.receive(f.channel, f.answer(200, kWebRtcCapabilities));
   EXPECT_EQ(f.said(), media::Profile::WebRtc);
 
-  // A later answer with no description says nothing about media, which does not undo what
-  // was said.
+  // A later answer without a description does not undo that.
   f.tick(std::chrono::seconds(30));
   f.receive(f.channel, f.answer(200));
   EXPECT_EQ(f.said(), media::Profile::WebRtc);
 }
 
-// Any final answer means something is listening: a client that does not implement OPTIONS
-// answers 405 (RFC 3261 8.2.1), which is as alive as a 200.
+// Any final answer counts as alive, including the 405 of a client without OPTIONS
+// (RFC 3261 8.2.1).
 TEST(QualifierTest, AnyFinalAnswerCountsAsThere) {
   Fixture f(30);
 
@@ -202,8 +199,7 @@ TEST(QualifierTest, AnyFinalAnswerCountsAsThere) {
   EXPECT_NE(probes[0].answered_at, 0);
 }
 
-// Silence is counted and the probing goes on: a client that is briefly unreachable is not
-// dropped by this, and the count is what an operator reads.
+// Silence is counted and probing continues; the binding is not dropped.
 TEST(QualifierTest, SilenceIsCountedAndTheProbingGoesOn) {
   Fixture f(30);
 
@@ -221,7 +217,7 @@ TEST(QualifierTest, SilenceIsCountedAndTheProbingGoesOn) {
   EXPECT_GE(f.probes().size(), 2u) << "probed again after the silence";
 }
 
-// A binding the client removes stops being probed (RFC 3261 10.2.2).
+// RFC 3261 10.2.2: a binding the client removes is no longer probed.
 TEST(QualifierTest, ARemovedBindingIsNoLongerProbed) {
   Fixture f(30);
 

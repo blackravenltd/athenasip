@@ -11,24 +11,17 @@
 
 namespace athenasip::types {
 
-// What a user holds after logging in.
-//
-// The token itself is never stored. What is stored is its SHA-256, so a dump of the
-// datastore does not hand over live sessions; the token is 32 random bytes, so there is
-// nothing to salt against and no dictionary to build. The caller hashes before it asks,
-// and the store never sees the token at all.
+// A logged-in user's session. Only the SHA-256 of the token is stored, so a datastore dump holds no live sessions.
+// The token is 32 random bytes, so no salt is needed. The caller hashes before asking; the store never sees the token.
 struct Session {
   std::string token_hash;
 
-  // Who this session is, by User::key(). The roles are not copied here: they are read
-  // from the user on each request, so a role removed takes effect on the next request
-  // rather than at the next login.
+  // The user, by User::key(). Roles are read from the user on each request, so removing one takes effect at once.
   std::string username;
 
   std::time_t created_at = 0;
 
-  // The two ways a session ends by itself. Absolute is how long a login is good for at
-  // all; idle is how long it survives without being used.
+  // A session ends at an absolute expiry, or after going unused for the idle period.
   std::time_t expires_at = 0;
   std::time_t last_seen_at = 0;
 

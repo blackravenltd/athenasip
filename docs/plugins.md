@@ -1,104 +1,105 @@
 # AthenaSIP - Writing a Plugin
 
-Almost everything AthenaSIP talks to is a plugin: the datastore that holds realms,
-subscribers and bindings; the event system it publishes to; the media engine that
-anchors RTP. Routing policy and others follow. They all register through one contract,
-and the ones that ship in the tree use exactly the contract an external plugin uses.
+The datastore, the event system, the media engine and the push services are plugins. The
+drivers in the tree use the same contract an external one does, and none is privileged.
 
-That is deliberate. `memory` + `redis`, `local` + `mqtt` and `builtin` + `rtpengine` are
-what AthenaSIP tests and ships, but the architecture privileges none of them. DynamoDB,
-NATS, Kafka or an SFU nobody has written yet are plugins someone can write, not roadmap
-items the core has to carry.
-
-## The shape
-
-A plugin is a class deriving from `athenasip::plugins::Plugin` (`src/plugins/plugin.h`)
-and from the interface for its kind:
-
-| Kind | Interface | Ships in tree |
+| Kind | Interface | In tree |
 |---|---|---|
-| `datastore` | `athenasip::datastores::Datastore` | `memory://`, `redis://` |
-| `events` | `athenasip::events::EventSystem` | `local://`, `mqtt://` |
-| `media` | `athenasip::media::MediaEngine` | `builtin://`, `rtpengine://` |
+| `datastore` | `datastores::Datastore` (`src/datastores/datastore.h`) | `memory://`, `redis://` |
+| `events` | `events::EventSystem` (`src/events/event_system.h`) | `local://`, `mqtt://` |
+| `media` | `media::MediaEngine` (`src/media/media_engine.h`) | `builtin://`, `rtpengine://` |
+| `push` | `push::PushService` (`src/push/push_service.h`) | `apns://`, `fcm://`, `webpush://` |
 
-A kind is a string, not an enum, so a plugin can introduce a kind the core was not built
-knowing about.
+A kind is a string, so a plugin can introduce a new one. A plugin is either compiled into
+the server or built as a module (a shared library) the server loads at start: see
+[Building a module](#building-a-module).
 
-`Plugin` is what every plugin has whatever it plugs into:
+## The base contract
+
+Every plugin derives from `plugins::Plugin` (`src/plugins/plugin.h`) through the interface
+for its kind:
 
 ```cpp
-std::string kind() const;           // "datastore", "events", "media", or your own
-std::string name() const;           // "redis" - the implementation, not the scheme
+std::string kind() const;           // "datastore", "events", "media", "push"; set by the interface
+std::string name() const;           // the implementation: "redis", whatever scheme selected it
 std::string version() const;        // the driver's version, not the server's
-std::uint32_t api_version() const;  // the contract it was built against
-bool configure(const YAML::Node& own_root, const Config& system);
-bool health() const;
+std::uint32_t api_version() const;  // the contract it was built against; do not override
+bool configure(const YAML::Node& own_root, const Config& system);  // optional
+bool health() const;                // what the driver already knows; no round trip
 ```
 
-`name()` is the implementation, not the URL scheme it was reached by. `RedisDatastore`
-answers `redis` whether it was selected as `redis://`, `rediss://` or `redis+ssl://`.
-
-## Registering
-
-Registration is by `(kind, scheme)`:
-
-```cpp
-Datastore::register_driver<MyDatastore>(logger, "mystore");
-```
-
-which is a typed way of writing
-
-```cpp
-PluginRegistry::instance().add<MyDatastore>(logger, kinds::datastore, "mystore");
-```
-
-The key is the pair, not the scheme alone: `memory://` is a datastore and, separately,
-an event system, and the registry has to keep them apart. Registering the same
-`(kind, scheme)` twice replaces the driver, so a plugin can deliberately override a
-built-in.
-
-Your constructor takes the logger and the parsed URL:
+The constructor takes the logger and the parsed URL:
 
 ```cpp
 MyDatastore(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<types::URL> url);
 ```
 
-## Configuration
+## Registering
 
-The URL is the selector and stays a one-liner:
-
-```yaml
-datastore:
-  url: "memory://"
+```cpp
+Datastore::register_driver<MyDatastore>(logger, "mystore");
 ```
 
-Anything a URL cannot reasonably express comes from the section named after the driver,
-inside the section for its kind:
+The key is `(kind, scheme)`, so one scheme can name a driver of each kind. Registering a
+pair again replaces the driver. A driver may be registered under several schemes. The
+built-ins are registered from `main()` by the `register_builtin_*` functions in
+`src/datastores/datastore_drivers.h`, `src/events/event_system_drivers.h`,
+`src/media/media_engine_drivers.h` and `src/push/push_service_drivers.h`; add yours there,
+or build it as a module.
+
+`Datastore::create_driver(logger, url)` constructs the driver for a URL.
+
+## Configuration
+
+The URL selects the driver. Anything a URL cannot express goes in a section named after
+the driver's `name()`, inside the section for its kind:
 
 ```yaml
 media:
-  url: "rtpengine://10.0.0.5:22222"
-  rtpengine:
-    pool:
-      - "10.0.0.5:22222"
-      - "10.0.0.6:22222"
-    health_check_interval: 5
+  url: "builtin://"
+  builtin:
+    public_address: 203.0.113.5
+    port_min: 22000
+    port_max: 23000
 ```
 
 `configure(own_root, system)` is called once, before `connect()`. `own_root` is that
-section and is empty when there is none, so a driver that needs nothing else can ignore
-it. `system` is the whole server configuration, for what a driver cannot be told twice:
-the node id, the SIP timers. Returning `false` refuses the configuration and stops
-startup, which is the right answer when a driver has been handed something that cannot
-work.
+section, undefined when absent. `system` is the whole server configuration (node id,
+timers). Returning `false` stops startup.
 
-The section is keyed on `name()`, not the scheme, so a driver reachable under several
-schemes has one section rather than three.
+A driver can describe its section with a static `settings()`. The registry picks it up
+when the driver registers, compiled in or from a module, and the section then joins the
+[reference](configuration-reference.md), the editor schema from `athenasip --print-schema`,
+and the warning for a misspelt key. A module's section is checked once the module has
+loaded; `--print-schema` loads no modules, so it describes the built-in drivers only. Keys start at the section's own name; the registry
+puts them under the kind's section:
 
-## Async is the contract
+```cpp
+static plugins::Settings settings() {
+  using namespace plugins::define;
+  return {
+      section("acme", "The acme:// media engine."),
+      required(text("acme.api_key_file", "", "The key the Acme console issues.")),
+      integer("acme.timeout_ms", "500", "How long to wait for an answer, in milliseconds.", 1),
+  };
+}
+```
 
-`Datastore`, `EventSystem` and `MediaEngine` operations do not return values. Every one
-of them takes the caller's executor and a handler:
+Without it the section is still handed to the driver, and the node leaves its keys alone.
+
+## Lifecycle
+
+```
+construct(logger, url) -> configure(own_root, system) -> connect(on, handler) -> ... -> close()
+```
+
+`connect()` is asynchronous and must make a real round trip to the far end. `close()` is
+synchronous and safe to call twice.
+
+## Async rules
+
+`Core` runs on one strand, so a blocking plugin call would stall every call on the node.
+Every operation therefore takes the caller's executor and a handler:
 
 ```cpp
 void realm_get_by_name(plugins::Executor on, std::string realm_name,
@@ -107,114 +108,133 @@ void realm_create(plugins::Executor on, std::shared_ptr<types::Realm> realm,
                   plugins::StatusHandler handler);
 ```
 
-This is not decoration. `Core` runs on a single strand, so a blocking read there stops
-every call on the node rather than only the one that asked. It was in the contract from
-the first version because it could not be added later: making a returning interface
-async breaks every plugin written against it.
+- Run the handler on `on`, never on your own I/O thread.
+- Never call the handler inline, even when the answer is already known. Post it.
+  `Plugin::_complete(on, handler, value)` does both.
+- An operation needing several round trips chains them from each completion.
 
-There is one deliberate exception. `EventSystem::publish(event_name, message)` answers
-nothing at all. The bus carries observability, presence and discovery and is never on
-the call setup path, so a node announcing a channel or a transaction does not wait to
-hear whether the broker took it - and must not, or the broker would be on the path of
-the call that caused the event. A caller that does care uses
-`publish(on, event_name, message, handler)` and hears the answer like any other
-operation.
+Results are `plugins::Status {ok, error}` and `plugins::Result<T> {ok, error, value}`.
+A read that finds nothing succeeds with an empty value; a read that could not happen
+fails with an error. The API maps the first to 404 and the second to a 5xx, so a driver
+must not conflate them.
 
-Two rules follow, and a driver that breaks either is broken:
+The one fire-and-forget operation is `EventSystem::publish(event_name, message)`: the bus
+is never on the call path, so callers do not wait on it. Use
+`publish(on, event_name, message, handler)` to hear the outcome.
 
-- **The handler runs on `on`, the executor the caller passed.** Never on your own I/O
-  thread. `Plugin::_complete` does this for you.
-- **The handler is never called inline.** Even when you already know the answer, post
-  it. `MemoryDatastore` is a few hash maps and could answer immediately; it posts
-  anyway, because code written against the fast driver has to work against the slow one.
+## Kind-specific notes
 
-Results distinguish two things that are not the same:
+### Datastore
+
+- `user_*` and `session_*` default to a failure such as `memory does not support
+  user_get`. Implement them if the store should hold admin users
+  ([Authentication](authentication.md)).
+- `realm_create`, `user_create` and `subscriber_create` fail if the record exists;
+  the matching `*_update` fails if it does not. The API tells "already exists" from
+  "not found" by which failed.
+- `session_delete` succeeds whether or not the hash was held.
+- `realm_delete` also deletes the realm's subscribers and their bindings.
+- A session's absolute expiry and a binding's `expires_seconds` are the store's to
+  enforce.
+
+### EventSystem
+
+- `publish_state` publishes a retained message; `will_set` registers a message for the
+  broker to publish if the node vanishes, and is called before `connect()`. Both have
+  defaults for a bus with neither concept.
+- `subscribe` accepts MQTT-style filters (`+`, `#`); `TopicFilter` implements the
+  matching. [Events](events.md) lists the topics.
+
+### MediaEngine
+
+- `capabilities()` reports `bridge`, `conference`, `record` and `transcode`;
+  `produces(profile)` reports which media profiles the engine can generate.
+- `offer`, `answer`, `release` and `query` are required. An engine that cannot carry an
+  offer returns a failed `media::Result`; the SDP then passes through untouched.
+- `start_recording`, `stop_recording`, `join`, `leave` and `roster` default to a failure
+  or an empty answer.
+- `packets_relayed()` feeds metrics and may return nothing.
+
+### PushService
+
+- A node runs several, one per [RFC 8599](https://www.rfc-editor.org/rfc/rfc8599) push
+  service, and `name()` is the service's `pn-provider` value: `apns`, `fcm`, `webpush`.
+- `accepts(notification)` says whether a Contact carries what the service needs (RFC 8599
+  sections 10 to 12). The registrar answers 555 when it does not.
+- `capabilities()` adds indicators beside `+sip.pns` in the REGISTER's 2xx, such as
+  `+sip.vapid`.
+- `send` succeeds when the service took the push, not when the client woke. The proxy
+  waits for the client to register again either way.
+- `connect` and `close` default to nothing; credentials are read in `configure`.
+
+Where a rule like these matters, it is stated at the operation's declaration: read the
+comment, not only the signature.
+
+## Building a module
+
+A module is a shared library (`.so`, `.dylib` or `.dll`) in a directory named by
+[`plugins.path`](configuration.md#plugins). At start the server loads each one, registers
+what it declares beside the built-in drivers, and refuses, with the reason in the log, a file
+that is not a module or one built against another contract version.
 
 ```cpp
-struct Status { bool ok; std::string error; };
-template <typename T> struct Result { bool ok; std::string error; T value; };
+#include "plugins/plugin_module.h"
+#include "datastores/datastore.h"
+
+class AcmeDatastore : public athenasip::datastores::Datastore { /* ... */ };
+
+void register_acme(athenasip::plugins::ModuleHost& host) {
+  host.add<AcmeDatastore>(athenasip::plugins::kinds::datastore, "acme");
+}
+
+ATHENASIP_PLUGIN_MODULE("acme", register_acme)
 ```
 
-A read that finds nothing **succeeds** with an empty value. A read that could not happen
-**fails** with an error. "No such subscriber" is a 404 and "Redis is unreachable" is a
-500, and a driver that reports them the same way makes that distinction impossible
-upstream.
+The kinds are named in `plugins::kinds` (`datastore`, `events`, `media`), and the push
+service's in `push::kind`.
 
-With no blocking primitive left, an operation that needs several round trips chains
-them: each step starts the next from its own completion. `RedisDatastore::realm_create`
-is `EXISTS`, then `SET`, then `SADD`, written as three nested handlers, and
-`location_list` walks the index one key at a time. It reads longer than the blocking
-version did. That is what the blocking version was hiding.
+Rules:
 
-## Lifecycle
+- Build against the server's `src/` headers with the same compiler, standard library and
+  Boost, yaml-cpp and OpenSSL versions, because `std::shared_ptr`, `YAML::Node` and Boost
+  executors cross the boundary.
+- Do not link `athena_core`: the module would get a registry of its own. Leave the
+  server's symbols undefined and let them resolve against the running server, which
+  exports them (`-undefined dynamic_lookup` on macOS; the default on Linux).
+- The contract version is exported by `ATHENASIP_PLUGIN_MODULE`; a module built against
+  another is refused before any of its code runs.
+- A loaded module stays loaded for the life of the process.
 
-```
-construct(logger, url) -> configure(own_root, system) -> connect(on, handler) -> ... -> close()
-```
-
-`connect()` is a round trip and is async. `close()` is teardown: synchronous, and safe
-to call twice. `health()` reports what the driver already knows and does not go and ask
-the far end.
-
-Startup waits for `connect()` on the main thread, which is fine: main is not the Core
-strand. Nothing else in the server ever waits.
+`athenasip --list-plugins` loads the modules, says which loaded and why any did not, and
+lists every driver by kind and scheme. `tests/modules/sample_module.cpp` is a complete
+module, built and loaded by the test suite.
 
 ## Versioning
 
-`API_VERSION` in `src/plugins/plugin.h` is the contract version. Every plugin reports
-the version it was built against, and the registry refuses to construct one that does
-not match:
+`plugins::API_VERSION` in `src/plugins/plugin.h` is the contract version, bumped whenever
+`Plugin` or an interface derived from it changes shape. The registry refuses to construct
+a plugin whose `api_version()` differs:
 
 ```
 Plugin acme 1.0.0 was built against contract version 1, this server speaks 2
 ```
 
-For a plugin compiled into the server that check can never fail. It exists for what
-comes next: plugins loaded from shared libraries, where a mismatch is a crash rather
-than a warning. The version is bumped whenever `Plugin`, or any interface derived from
-it, changes shape.
+The version tracks shape only. A change of meaning under the same signatures, such as an
+operation that now succeeds where it failed, does not move it, and is stated at the
+declaration instead.
 
-Not every operation is pure virtual. An operation added to an interface after the fact is
-defaulted to a failure that says which one is missing:
+An operation added to an interface is given a failing default rather than made pure
+virtual, so existing drivers keep compiling.
 
-```
-memory does not support user_get
-```
+## Testing
 
-A driver written against an earlier contract therefore keeps compiling, and says plainly
-what it cannot hold rather than failing to build or, worse, quietly succeeding. The
-`user_*` and `session_*` operations on `Datastore` are the first of these: a datastore
-only has to implement them if the deployment wants admin logins out of it, and
-`docs/authentication.md` says what they mean. A driver that leaves one defaulted is not
-broken; a driver that implements one and gets the create/update split wrong is, because
-the admin API tells "already exists" from "changed" by which of the two failed.
+Tests are GoogleTest under `tests/`, mirroring `src/`; see [Testing](testing.md).
 
-The version tracks shape, and shape is not the whole contract: what an operation is
-allowed to report can matter as much as what it is called. `session_delete` is the example
-in the tree - it succeeds whether or not that hash was held, because a session is named by
-a secret the caller presented and an answer that distinguishes the two is a way to ask
-whether a token is real. A driver that reported the difference would compile, load and
-pass the version check, and would turn a logout into a guessing game. `realm_delete` is the
-other: it takes the realm's subscribers and their bindings with it, and a driver that deleted
-only the realm record would pass every check and leave subscribers nobody can reach. Read
-the comment on the operation, not only its signature; where behaviour like that is load-bearing it is
-written at the declaration.
+| Helper | Use |
+|---|---|
+| `tests/helpers/sync_datastore_helper.h`, `sync_event_system_helper.h`, `sync_media_engine_helper.h` | Blocking views of a driver, for asserting on what it holds |
+| `tests/helpers/fake_push_service_helper.h` | A push service that records what it was asked to send |
+| `tests/plugins/plugin_registry_test.cpp`, `module_loader_test.cpp` | The registry's and the module loader's own tests |
 
-## Testing a plugin
-
-Tests are GoogleTest under `tests/`, mirroring `src/`. `tests/plugins/plugin_registry_test.cpp`
-covers the registry itself.
-
-A test is not on the Core strand, so it may wait where production code may not.
-`tests/helpers/sync_datastore_helper.h` is a blocking view of a datastore for exactly
-that: it turns each async call back into a return value so an assertion can be a
-statement about what the store holds. `sync_event_system_helper.h` and
-`sync_media_engine_helper.h` do the same for the other two kinds. Anything testing the
-async behaviour itself - that the handler runs on the executor it was given, that a
-failure is reported rather than swallowed - calls the driver directly instead.
-
-## What is not here yet
-
-- **Plugins are compiled in.** Shared-library loading with `plugins.path`, an
-  `extern "C"` entry point and `athenasip plugins list` is Milestone 5. The contract
-  here is the one that loader will use, which is why it is worth getting right now.
+Test the async rules themselves (handler on the given executor, never inline, failures
+reported) by calling the driver directly.

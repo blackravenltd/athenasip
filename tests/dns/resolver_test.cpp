@@ -32,11 +32,11 @@ std::vector<std::uint8_t> from_hex(const std::string& hex) {
   return bytes;
 }
 
-// The real answer 1.1.1.1 gave for _sip._udp.iptel.org SRV; see message_test.
+// A captured answer for _sip._udp.iptel.org SRV; see message_test.
 const char* kIptelSrv =
     "bc1181800001000100000000045f736970045f75647005697074656c036f72670000210001c00c002100010000025800150000001913c40373697005697074656c036f726700";
 
-// A nameserver on loopback, on its own thread, doing whatever a test tells it to.
+// A nameserver on loopback, on its own thread, scripted by the test.
 struct FakeNameserver {
   enum class Mode { Answer, Silent, WrongIdFirst, Truncate, ServFail, DropFirst };
 
@@ -51,7 +51,7 @@ struct FakeNameserver {
   std::atomic<int> asked_over_tcp{0};
 
   FakeNameserver() {
-    // TCP on the same port number, which is where a resolver goes when UDP was truncated.
+    // TCP on the same port number, where a resolver goes when UDP was truncated.
     acceptor.open(tcp::v4());
     acceptor.set_option(tcp::acceptor::reuse_address(true));
     acceptor.bind(tcp::endpoint(net::ip::make_address("127.0.0.1"), socket.local_endpoint().port()));
@@ -157,7 +157,7 @@ plugins::Result<std::vector<Record>> ask(const std::shared_ptr<UdpResolver>& res
   auto executor = detail::get_global_io_context().get_executor();
   resolver->query(executor, name, type, [&promise](plugins::Result<std::vector<Record>> result) { promise.set_value(std::move(result)); });
 
-  // The global io_context has a thread of its own, which is what the resolver runs on.
+  // The resolver runs on the global io_context's own thread.
   if (future.wait_for(std::chrono::seconds(10)) != std::future_status::ready) {
     ADD_FAILURE() << "the resolver never answered";
     return plugins::Result<std::vector<Record>>::failure("never answered");
@@ -183,8 +183,7 @@ TEST(DnsResolverTest, AnAnswerIsTheRecordsOfTheTypeAsked) {
   EXPECT_EQ(answer.value[0].srv.port, 5060);
 }
 
-// RFC 5452: a reply whose id is not the one sent is not an answer, however well-formed. The
-// resolver keeps listening and takes the real one.
+// RFC 5452: a reply with the wrong id is ignored, and the resolver keeps listening for the real one.
 TEST(DnsResolverTest, AReplyWithTheWrongIdIsIgnored) {
   FakeNameserver server;
   server.mode = FakeNameserver::Mode::WrongIdFirst;
@@ -197,9 +196,7 @@ TEST(DnsResolverTest, AReplyWithTheWrongIdIsIgnored) {
   EXPECT_EQ(answer.value[0].srv.port, 5060) << "the forged reply was taken";
 }
 
-// resolv.conf(5): "attempts" defaults to 2. A datagram lost once is asked for again, or a
-// machine with one nameserver loses a whole answer to one dropped packet - which is what a
-// run against the real DNS did, and how this was found.
+// resolv.conf(5): "attempts" defaults to 2, so a query lost once is asked again.
 TEST(DnsResolverTest, ALostQueryIsAskedAgain) {
   FakeNameserver server;
   server.mode = FakeNameserver::Mode::DropFirst;
@@ -211,8 +208,7 @@ TEST(DnsResolverTest, ALostQueryIsAskedAgain) {
   EXPECT_EQ(answer.value.size(), 1u);
 }
 
-// RFC 1035 7.4 and RFC 2308: an answer is good for its TTL - 600 seconds in this one - and
-// asking again inside it costs a call setup a round trip to the network for nothing.
+// RFC 1035 7.4 and RFC 2308: an answer is kept for its TTL, 600 seconds here.
 TEST(DnsResolverTest, AnAnswerIsKeptForItsTtl) {
   FakeNameserver server;
   auto resolver = resolver_for({server.endpoint()});
@@ -226,7 +222,7 @@ TEST(DnsResolverTest, AnAnswerIsKeptForItsTtl) {
   EXPECT_EQ(server.asked.load(), 1) << "DNS names are case-insensitive and the trailing dot is the root (RFC 4343, RFC 1034)";
 }
 
-// A different question is a different answer.
+// The cache is keyed by name and type.
 TEST(DnsResolverTest, TheCacheIsByNameAndType) {
   FakeNameserver server;
   auto resolver = resolver_for({server.endpoint()});
@@ -237,7 +233,7 @@ TEST(DnsResolverTest, TheCacheIsByNameAndType) {
   EXPECT_EQ(server.asked.load(), 2);
 }
 
-// Not hearing back is not an answer, and is not kept.
+// A timeout is not an answer and is not cached.
 TEST(DnsResolverTest, NoAnswerIsNotKept) {
   FakeNameserver server;
   server.mode = FakeNameserver::Mode::Silent;
@@ -251,7 +247,7 @@ TEST(DnsResolverTest, NoAnswerIsNotKept) {
   EXPECT_EQ(later.value.size(), 1u);
 }
 
-// A server that says nothing is a server to move on from, within the bound.
+// A silent server is passed over for the next, within the bound.
 TEST(DnsResolverTest, ASilentServerIsPassedOverForTheNext) {
   FakeNameserver silent;
   silent.mode = FakeNameserver::Mode::Silent;
@@ -275,8 +271,7 @@ TEST(DnsResolverTest, AServerThatFailsIsPassedOverForTheNext) {
   EXPECT_EQ(answer.value.size(), 1u);
 }
 
-// No answer from anybody is a failure, and it comes back in bounded time rather than when
-// the operating system gives up.
+// No answer from any server is a failure, in bounded time.
 TEST(DnsResolverTest, NoAnswerFromAnyServerIsAFailureInBoundedTime) {
   FakeNameserver one;
   one.mode = FakeNameserver::Mode::Silent;

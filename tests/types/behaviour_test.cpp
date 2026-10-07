@@ -11,10 +11,8 @@
 using athenasip::types::Behaviour;
 using athenasip::types::MediaPolicy;
 
-// The 2026-10-01 decision: the shipped default is what the standards say, apart from one
-// deliberate and recorded deviation - anchoring media, as most servers fronting rtpengine
-// do. Within that, a leg's description passes through as the leg wrote it: no profile is
-// imposed on a callee that has not asked for one.
+// The shipped default follows the standards except that it anchors media. A leg's description passes through
+// as written: no profile is imposed on a callee that has not asked for one.
 TEST(BehaviourTest, TheShippedDefaultAnchorsAndPassesEachLegsProfileThrough) {
   const MediaPolicy shipped;
 
@@ -22,8 +20,7 @@ TEST(BehaviourTest, TheShippedDefaultAnchorsAndPassesEachLegsProfileThrough) {
   EXPECT_EQ(shipped.profiles, MediaPolicy::Profiles::Mirror);
 }
 
-// A realm that says nothing takes the server's default for everything, so changing the
-// server's default changes every realm that has not chosen otherwise.
+// A realm that sets nothing inherits the server's default for everything.
 TEST(BehaviourTest, ARealmThatSaysNothingIsTheServerDefault) {
   MediaPolicy server;
   server.anchor = false;
@@ -36,7 +33,7 @@ TEST(BehaviourTest, ARealmThatSaysNothingIsTheServerDefault) {
   EXPECT_EQ(effective.profiles, MediaPolicy::Profiles::FromTransport);
 }
 
-// And a realm that sets one setting overrides that one and inherits the rest.
+// A realm that sets one setting overrides that one and inherits the rest.
 TEST(BehaviourTest, ARealmOverridesOnlyWhatItSets) {
   MediaPolicy server;
   server.anchor = true;
@@ -51,8 +48,7 @@ TEST(BehaviourTest, ARealmOverridesOnlyWhatItSets) {
   EXPECT_EQ(effective.profiles, MediaPolicy::Profiles::WebRtc) << "overridden";
 }
 
-// The probe interval is decided at registration, where the realm is in hand, so it is
-// resolved on its own rather than kept on a call.
+// The qualify interval is resolved on its own, at registration, where the realm is in hand.
 TEST(BehaviourTest, ARealmsQualifyIntervalOverridesTheServers) {
   Behaviour silent;
   EXPECT_EQ(silent.qualify_over(60), 60u);
@@ -72,8 +68,7 @@ TEST(BehaviourTest, ARealmsQualifyIntervalOverridesTheServers) {
   EXPECT_FALSE(Behaviour::valid_qualify_interval(86401));
 }
 
-// A name in a config file or an API body is either one of these or a mistake, and a
-// mistake is reported rather than read as something else.
+// An unknown profile name is an error, never read as something else.
 TEST(BehaviourTest, AProfileNameIsReadStrictly) {
   EXPECT_EQ(MediaPolicy::parse_profiles("mirror"), MediaPolicy::Profiles::Mirror);
   EXPECT_EQ(MediaPolicy::parse_profiles("transport"), MediaPolicy::Profiles::FromTransport);

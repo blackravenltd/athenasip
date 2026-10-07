@@ -29,9 +29,8 @@ using namespace athenasip::events;
 
 namespace athenasip {
 
-// A Channel is strand-confined: every method below hands over to the Core strand, and
-// everything it owns is touched only from there. Servers, and the connection's own
-// io_context thread, reach it only through that hand-off.
+// One flow to a peer. Strand-confined: every public method hands over to the Core strand,
+// and all state is touched only there.
 class Channel : public std::enable_shared_from_this<Channel> {
  public:
   Channel(std::shared_ptr<Logger>, std::shared_ptr<Core>, std::shared_ptr<Connection>);
@@ -43,42 +42,31 @@ class Channel : public std::enable_shared_from_this<Channel> {
     Closed,
   };
 
-  // Raw bytes out, in the order they were given. For what is already a SIP message -
-  // a serialised response, or a test driving the transport - where send() is for a
-  // SIPMessage this channel still has to stamp and serialise.
+  // Queues raw bytes, in order. For text that is already serialised; send() takes a
+  // SIPMessage and serialises it.
   void write(std::string message);
 
   void start();
   void close();
 
-  // The name this flow is known by, everywhere: the key the registry files it under,
-  // the key channel_find answers to, and the flow id a binding learned over this
-  // channel records (RFC 5626). Taken once at construction, because close() gives up
-  // the connection and a closing channel still has to say which flow it was.
+  // The flow's name: its Core::channel_key, and the flow id a binding records (RFC 5626).
+  // Fixed at construction, so it outlives the connection.
   const std::string& flow_id() const { return _flow_id; }
 
-  // An opaque name for this flow, for the Record-Route this node writes (RFC 5626
-  // section 5.1 puts a flow token in the user part for exactly this). It is random
-  // rather than derived, because the flow id is the far end's address and a token that
-  // spelled it out would hand one end of an anchored call the other end's address in
-  // the route set - the thing anchoring the media is there to prevent.
-  //
-  // It lives as long as the channel does, which is as long as it is any use: a token
-  // naming a flow that has closed names nothing, and the socket does not survive a
-  // restart either.
+  // The opaque flow token for the user part of this node's Record-Route (RFC 5626 5.1).
+  // Sealed by FlowTokens, so the route set does not reveal the far end's address.
   const std::string& flow_token() const { return _flow_token; }
 
-  // The subscribers that have proved who they are over this flow, by a REGISTER the
-  // registrar authenticated on it. Only meaningful on a connection - TCP, TLS or a
-  // WebSocket - which belongs to the one client at the other end of it; a UDP flow is a
-  // source address, which anybody can write on a datagram, and the proxy ignores this on
-  // one. It lasts as long as the flow does.
+  // Records a subscriber whose REGISTER was authenticated on this flow, for the life of the
+  // flow. Only trusted on connection transports: a UDP source address can be spoofed.
   void authenticated_as(const std::string& aor);
 
-  // The cluster node at the other end, when this flow is mutual TLS with one: the node id
-  // its cluster certificate names. Empty for every client flow.
+  // The node id from the peer's cluster certificate on a mutual TLS flow. Empty for a client.
   std::string peer_node() const { return _connection ? _connection->peer_identity() : std::string(); }
   bool is_authenticated_as(const std::string& aor) const;
+
+  // Whether a REGISTER has authenticated anyone over this connection.
+  bool is_authenticated() const { return !_authenticated.empty(); }
 
   State state = State::Normal;
 
@@ -103,13 +91,8 @@ class Channel : public std::enable_shared_from_this<Channel> {
   // CRLFs seen since the last message, for the keep-alive ping of RFC 5626 4.4.1.
   int _crlf_run = 0;
 
-  // What is waiting to go out, and how much of the front one already has. Both are
-  // strand state: a message is queued on the strand and the queue is advanced on the
-  // strand, so only the write itself happens on the connection's executor.
-  //
-  // One write is in flight at a time. Two outstanding writes on one socket interleave
-  // their bytes, which for SIP means two messages arriving as neither, and beast's
-  // WebSocket stream refuses the second outright.
+  // Pending writes, and how much of the front one has gone. One write is in flight at a
+  // time: concurrent writes on one socket interleave, and beast's WebSocket refuses them.
   std::deque<std::shared_ptr<std::string>> _write_queue;
   std::size_t _write_offset = 0;
   bool _writing = false;
@@ -118,27 +101,21 @@ class Channel : public std::enable_shared_from_this<Channel> {
   void _schedule_async_write(std::string message);
 
  public:
-  // When this flow last carried anything, either way.
-  //
-  // It exists for UDP. A TCP, TLS or WebSocket flow ends when its socket does, and the
-  // read completing with an error is what tears the channel down. UDP has no socket per
-  // peer and no close to wait for, so a flow made by one datagram would otherwise live
-  // as long as the process - see Core::_flow_sweep.
+  // When the flow last carried anything, either way. Core::_flow_sweep uses it to expire
+  // UDP flows, which have no close of their own.
   std::chrono::steady_clock::time_point last_activity() const { return _last_activity; }
 
-  // Defined where Core is a complete type. It reads Core's clock rather than steady_clock
-  // so that the stamp and the sweep that reads it are the same clock.
+  // Stamps last_activity from Core::now(), the clock the sweep reads.
   void touch();
 
  private:
   std::chrono::steady_clock::time_point _last_activity = std::chrono::steady_clock::now();
 
-  // Strand-confined: start the next write, or stop when there is nothing left.
   void _write_next();
   void _on_write(boost::system::error_code ec, std::size_t length);
 
-  // RFC 3261 18.3, which is two rules and not one: a stream is framed by Content-Length
-  // across as many reads as it takes, and a datagram is one whole message or nothing.
+  // RFC 3261 18.3: a stream is framed by Content-Length across reads; a datagram is one
+  // whole message or nothing.
   void _frame();
   void _frame_stream();
   void _take_keep_alives();
@@ -146,7 +123,6 @@ class Channel : public std::enable_shared_from_this<Channel> {
 
   bool _append_body();
 
-  // Strand-confined bodies behind the public hand-offs.
   void _send_on_strand(std::shared_ptr<SIPMessage> message);
   void _stamp_via(const std::shared_ptr<SIPMessage>& message);
   void _on_read(boost::system::error_code ec, std::size_t length);

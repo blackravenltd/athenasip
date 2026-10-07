@@ -16,12 +16,8 @@
 
 namespace athenasip::types {
 
-// What this server knows about somebody who may register.
-//
-// The password is never held. What is held is HA1 - the hash of user, realm and
-// password (RFC 2617) - once per algorithm this subscriber can authenticate with, because
-// the two hashes are computed from the password and cannot be derived from each other.
-// A subscriber provisioned with a password has both; one imported as a bare MD5 HA1 has
+// Somebody who may register. The password is never held, only HA1 (RFC 2617), once per algorithm, since one cannot
+// be derived from the other. A subscriber provisioned with a password has both; one imported as a bare MD5 HA1 has
 // only that, and is challenged for MD5 alone.
 class Subscriber {
  public:
@@ -34,10 +30,9 @@ class Subscriber {
   // SHA-256 (RFC 8760), empty when this subscriber has no credential for it.
   std::string ha1_sha256;
 
-  // What this subscriber's endpoint is, where the operator knows and nothing else can say:
-  // Asterisk's webrtc=yes. It decides the first description produced towards the leg,
-  // above the realm and the transport and below what the leg itself has said. Empty takes
-  // the realm's behaviour.
+  // What this subscriber's endpoint is, when the operator knows (Asterisk's webrtc=yes). It decides the first
+  // description produced towards the leg, above the realm and the transport and below what the leg itself has said.
+  // Empty takes the realm's behaviour.
   std::optional<MediaPolicy::Profiles> media_profile;
 };
 }  // namespace athenasip::types

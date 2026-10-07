@@ -21,11 +21,9 @@ class Call;
 
 namespace athenasip::api {
 
-// What the node is doing now, rather than what it is configured with: the live calls and
-// what the media engine carried for each, the engine itself, and the counters a monitoring
-// system scrapes. Everything here is read from Core's own state, which belongs to the Core
-// strand, so each request snapshots there and answers on the API's executor - an admin
-// reading calls never holds up a call being set up.
+// The node's live state: calls and their media, the media engine, and the counters a
+// monitoring system scrapes. Core's state belongs to the Core strand, so each request
+// snapshots there and answers on the API's executor.
 class CallsAPI : public std::enable_shared_from_this<CallsAPI> {
  public:
   CallsAPI(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<Core> core, plugins::Executor executor);
@@ -36,13 +34,14 @@ class CallsAPI : public std::enable_shared_from_this<CallsAPI> {
   void _list(RouteContext context);
   void _records(RouteContext context);
   void _get(RouteContext context);
+  void _hang_up(RouteContext context);
   void _media(RouteContext context);
   void _reoffers(RouteContext context);
   void _qualify(RouteContext context);
   void _metrics(RouteContext context);
 
-  // The calls given, each with its media as the engine reports it, in the order given.
-  // Runs on the strand and answers on the executor.
+  // The given calls, in order, each with its media as the engine reports it. Runs on the
+  // strand and answers on the executor.
   void _describe(std::vector<std::shared_ptr<Call>> calls, std::function<void(boost::json::array)> then);
 
   static boost::json::object _record_json(const Call& call);

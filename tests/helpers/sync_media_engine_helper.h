@@ -17,14 +17,12 @@
 #include "media/media_engine.h"
 #include "plugins/plugin.h"
 
-// A blocking view of a media engine, for tests only, and for the same reason as
-// SyncDatastore: the contract is async because a production caller is on the Core
-// strand and must not wait there. A test is not on the strand.
+// A blocking view of a media engine, for tests only (see SyncDatastore).
 class SyncMediaEngine {
  public:
   explicit SyncMediaEngine(std::shared_ptr<athenasip::media::MediaEngine> engine) : _engine(std::move(engine)) {}
 
-  // Straight through: these were never async.
+  // Synchronous in the contract.
   std::string name() const { return _engine->name(); }
   std::string version() const { return _engine->version(); }
   bool is_connected() const { return _engine->is_connected(); }

@@ -14,7 +14,9 @@
 
 #include "../call.h"
 #include "../core.h"
+#include "../local_ua.h"
 #include "../loggers/logger_scoped.h"
+#include "../push/push_parameters.h"
 #include "../qualifier.h"
 #include "../types/user.h"
 #include "../util.h"
@@ -40,7 +42,7 @@ boost::json::value profile_json(const std::optional<media::Profile>& profile) {
   return nullptr;
 }
 
-// A profile in the words the behaviour settings use, so what is reported can be set as is.
+// A profile as the behaviour settings name it, so a reported value can be set as is.
 boost::json::value setting_json(const std::optional<media::Profile>& profile) {
   if (!profile) return nullptr;
 
@@ -52,7 +54,7 @@ boost::json::value time_json(std::time_t when) {
   return boost::json::string(Util::to_iso8601(when));
 }
 
-// One Prometheus metric, text exposition format 0.0.4: a TYPE line and its samples.
+// The HELP and TYPE lines of one Prometheus metric (text exposition format 0.0.4).
 void metric(std::string& out, const std::string& name, const std::string& type, const std::string& help) {
   out += "# HELP " + name + " " + help + "\n";
   out += "# TYPE " + name + " " + type + "\n";
@@ -64,20 +66,22 @@ CallsAPI::CallsAPI(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<Core
     : _logger(std::make_shared<loggers::LoggerScoped>("calls_api", std::move(logger))), _core(core), _executor(std::move(executor)) {}
 
 void CallsAPI::register_routes(Router& router) {
+  using types::roles::manage_cluster;
   using types::roles::view_cluster_status;
   auto self = shared_from_this();
 
-  // Status, the role registrations take: who is on a call is what is going on, not
-  // something being provisioned.
+  // Live state takes the status role, as registrations do.
   router.add(http::verb::get, "/api/v1/calls", {view_cluster_status}, [self](RouteContext c) { self->_list(std::move(c)); });
   router.add(http::verb::get, "/api/v1/calls/{call}", {view_cluster_status}, [self](RouteContext c) { self->_get(std::move(c)); });
+
+  // Ending a call changes the cluster's state, so reading calls is not enough.
+  router.add(http::verb::delete_, "/api/v1/calls/{call}", {manage_cluster}, [self](RouteContext c) { self->_hang_up(std::move(c)); });
   router.add(http::verb::get, "/api/v1/call-records", {view_cluster_status}, [self](RouteContext c) { self->_records(std::move(c)); });
   router.add(http::verb::get, "/api/v1/media", {view_cluster_status}, [self](RouteContext c) { self->_media(std::move(c)); });
   router.add(http::verb::get, "/api/v1/media/reoffers", {view_cluster_status}, [self](RouteContext c) { self->_reoffers(std::move(c)); });
   router.add(http::verb::get, "/api/v1/qualify", {view_cluster_status}, [self](RouteContext c) { self->_qualify(std::move(c)); });
 
-  // On the admin port and outside /api/v1, where Prometheus expects it. Behind the same
-  // credential as everything else: what a node is carrying is not for anybody who asks.
+  // Outside /api/v1, where Prometheus expects it, behind the same credential.
   router.add(http::verb::get, "/metrics", {view_cluster_status}, [self](RouteContext c) { self->_metrics(std::move(c)); });
 }
 
@@ -97,9 +101,8 @@ void CallsAPI::_list(RouteContext context) {
   });
 }
 
-// The calls that are over, from the datastore, so any node of a cluster gives the same
-// list: newest first, as many as were asked for. A call still up is on /calls, on the node
-// carrying it.
+// Ended calls, from the datastore, so every node of a cluster gives the same list: newest
+// first, up to `limit`. Live calls are on /calls, on the node carrying them.
 void CallsAPI::_records(RouteContext context) {
   auto core = _core.lock();
   if (!core || !core->datastore) {
@@ -145,7 +148,7 @@ boost::json::object CallsAPI::_record_json(const Call& call) {
   out["answered_at"] = time_json(call.answered_at);
   out["ended_at"] = time_json(call.ended_at);
 
-  // Seconds in conversation, which is nothing for a call nobody answered.
+  // Seconds in conversation; zero for a call nobody answered.
   out["duration"] = call.answered_at != 0 && call.ended_at >= call.answered_at ? static_cast<std::int64_t>(call.ended_at - call.answered_at) : 0;
 
   out["caller"] = nullptr;
@@ -180,8 +183,8 @@ void CallsAPI::_get(RouteContext context) {
     return context.done();
   }
 
-  // Percent-decoded by the router after the path was split, so a Call-ID holding a "/"
-  // (RFC 3261 25.1 allows one) arrives here whole.
+  // The router percent-decodes after splitting the path, so a Call-ID containing "/"
+  // (RFC 3261 25.1) arrives whole.
   const auto id = context.parameter("call");
   auto self = shared_from_this();
 
@@ -202,11 +205,40 @@ void CallsAPI::_get(RouteContext context) {
   });
 }
 
+// The node sends each end of the call a BYE (LocalUA). 202: they are on their way, and the
+// call ends as the ends answer.
+void CallsAPI::_hang_up(RouteContext context) {
+  auto core = _core.lock();
+  if (!core) {
+    write_error(context.response, http::status::service_unavailable, "unavailable", "the node is shutting down");
+    return context.done();
+  }
+
+  const auto id = context.parameter("call");
+  auto self = shared_from_this();
+
+  core->post([self, core, context, id]() mutable {
+    const bool live = core->call_get(id) != nullptr;
+    const bool sent = live && core->local_ua()->hang_up(id, "ended over the admin API");
+
+    boost::asio::post(self->_executor, [context, id, live, sent]() mutable {
+      if (!live) {
+        write_error(context.response, http::status::not_found, "not_found", "no live call with that Call-ID");
+      } else if (!sent) {
+        write_error(context.response, http::status::conflict, "not_answered", "the call has not been answered; the caller ends it with a CANCEL");
+      } else {
+        write_json(context.response, http::status::accepted, boost::json::object{{"id", id}});
+      }
+      context.done();
+    });
+  });
+}
+
 void CallsAPI::_describe(std::vector<std::shared_ptr<Call>> calls, std::function<void(boost::json::array)> then) {
   auto core = _core.lock();
 
-  // Gathered as the engine answers, which is on the executor and may be in any order, and
-  // handed on once every call has its media.
+  // The engine answers on the executor in any order; `then` runs once every call has its
+  // media.
   struct Gather {
     std::mutex mutex;
     boost::json::array calls;
@@ -217,7 +249,7 @@ void CallsAPI::_describe(std::vector<std::shared_ptr<Call>> calls, std::function
   auto gather = std::make_shared<Gather>();
   gather->then = std::move(then);
 
-  // Read on the strand, which is where a Call is written.
+  // A Call is written on the strand, so it is read there.
   for (const auto& call : calls) gather->calls.push_back(_call_json(*call));
 
   auto engine = core ? core->media : nullptr;
@@ -261,15 +293,15 @@ boost::json::object CallsAPI::_call_json(const Call& call) {
   }
   out["participants"] = std::move(participants);
 
-  // Until the engine says otherwise: a call nothing anchors has no media to describe.
+  // Null unless the engine anchors the call and describes its media.
   out["media"] = nullptr;
   return out;
 }
 
-// The engine's own query document, cut down to what the API promises. A leg's counts pass
-// through as the engine gave them, so a direction it did not report stays absent rather
-// than reading as zero; "participant" is null because a relay knows an end by the address
-// its packets come from, which behind a NAT is not one any participant described.
+// The engine's query document, cut down to what the API promises. Counts pass through as
+// given, so a direction the engine did not report is absent rather than zero.
+// "participant" is null: a relay knows a leg by its packets' source address, which behind
+// NAT matches no participant.
 boost::json::value CallsAPI::_media_json(const std::string& document, const std::string& engine) {
   boost::json::object out;
   out["engine"] = engine;
@@ -314,8 +346,7 @@ void CallsAPI::_media(RouteContext context) {
     boost::json::object out;
     auto engine = core->media;
 
-    // The engine's name and what it can do, never its URL: that carries an address and,
-    // for some drivers, credentials.
+    // The engine's name and capabilities, never its URL, which may carry credentials.
     out["engine"] = engine ? boost::json::value(engine->name()) : boost::json::value(nullptr);
     out["connected"] = engine && engine->is_connected();
 
@@ -336,9 +367,8 @@ void CallsAPI::_media(RouteContext context) {
   });
 }
 
-// The subscribers this node offered the other profile after a 488, and what came of it. The node
-// suggests and the operator decides: the suggestion is the value the subscriber's behaviour
-// would take, and nothing sets it.
+// The subscribers this node re-offered another profile to after a 488, and the outcome.
+// suggested_media_profile is advice for the operator; nothing sets it.
 void CallsAPI::_reoffers(RouteContext context) {
   auto core = _core.lock();
   if (!core) {
@@ -368,8 +398,8 @@ void CallsAPI::_reoffers(RouteContext context) {
   });
 }
 
-// The registered clients this node is sending OPTIONS to, and what each has answered. Per
-// node: only the node holding a client's flow can probe it.
+// The registered clients this node probes with OPTIONS, and what each answered. Per node:
+// only the node holding a client's flow can probe it.
 void CallsAPI::_qualify(RouteContext context) {
   auto core = _core.lock();
   if (!core) {
@@ -384,7 +414,7 @@ void CallsAPI::_qualify(RouteContext context) {
     for (const auto& probe : core->qualifier()->list()) {
       boost::json::object entry;
       entry["subscriber"] = probe.aor;
-      entry["contact"] = probe.contact ? boost::json::value(probe.contact->to_string()) : boost::json::value(nullptr);
+      entry["contact"] = probe.contact ? boost::json::value(push::without_push_parameters(*probe.contact).to_string()) : boost::json::value(nullptr);
       entry["interval"] = probe.interval;
       entry["answered_at"] = time_json(probe.answered_at);
       entry["unanswered"] = probe.unanswered;
@@ -424,8 +454,7 @@ void CallsAPI::_metrics(RouteContext context) {
     metric(body, "athenasip_transactions_active", "gauge", "SIP transactions in progress.");
     body += "athenasip_transactions_active " + std::to_string(core->transaction_count()) + "\n";
 
-    // Only from an engine that can count. A zero from one that cannot would read as a
-    // node that carried nothing.
+    // Omitted for an engine that cannot count, rather than reported as zero.
     if (core->media) {
       if (const auto relayed = core->media->packets_relayed()) {
         metric(body, "athenasip_media_packets_relayed_total", "counter", "Media packets the engine has sent on since it started.");

@@ -12,25 +12,21 @@
 namespace athenasip::detail {
 
 inline boost::asio::io_context& get_global_io_context() {
-  // The io_context for the entire process
+  // The process-wide io_context, run by one thread for the life of the process.
   static boost::asio::io_context io_context;
 
-  // The static work guard so the io_context.run() never stops by itself
+  // Keeps run() from returning when idle.
   static auto work_guard = boost::asio::make_work_guard(io_context);
 
-  // A single static thread calling io_context.run()
-  // Created once, destroyed on program exit
   static struct RunThread {
     RunThread() {
       t = std::thread([&]() { io_context.run(); });
     }
     ~RunThread() {
-      // Release the work guard so run() eventually stops
       work_guard.reset();
 
-      // Releasing the guard is not enough: a pending timer is work in its own right, and
-      // a registration expiry an hour out would hold run() open for an hour. By the time
-      // this runs the process is leaving, so abandon them rather than wait.
+      // Pending timers also keep run() going (a registration expiry may be an hour out), so
+      // stop the context rather than wait for them.
       io_context.stop();
 
       if (t.joinable()) {

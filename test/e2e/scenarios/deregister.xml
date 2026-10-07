@@ -2,14 +2,9 @@
 <!DOCTYPE scenario SYSTEM "sipp.dtd">
 
 <!--
-  RFC 3261 10.2.2: a single Contact of "*" with Expires 0 removes every binding an
-  address of record has, whatever address each one points at.
-
-  The harness needs this because every scenario gives its callee a port of its own, and
-  a REGISTER from a new port is a new binding rather than a replacement. Without it the
-  second scenario to run leaves the node forking to the first scenario's port, which
-  nothing is listening on any more, and the call fails on a timeout that has nothing to
-  do with what was being tested.
+  RFC 3261 10.2.2: a Contact of "*" with Expires 0 removes every binding of an address of
+  record. The harness runs it before each call so the node does not fork to a previous
+  scenario's port.
 -->
 <scenario name="Remove every binding">
 

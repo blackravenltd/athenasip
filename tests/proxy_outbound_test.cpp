@@ -17,8 +17,8 @@ namespace {
 
 const std::string kInstance = "<urn:uuid:00000000-0000-1000-8000-000A95A0E128>";
 
-// Bob is one client holding two outbound flows, as RFC 5626 has a client do so losing one
-// loses nothing: reg-id 1 and reg-id 2, each over its own TCP connection.
+// Bob is one client holding two RFC 5626 outbound flows, reg-id 1 and 2, each on its own
+// TCP connection.
 struct OutboundFixture : ProxyFixture {
   std::shared_ptr<MockConnection> first_connection;
   std::shared_ptr<Channel> first;
@@ -51,9 +51,8 @@ struct OutboundFixture : ProxyFixture {
 
 }  // namespace
 
-// RFC 5626 section 5.3: "The proxy MUST NOT populate the target set with more than one
-// contact with the same AOR and instance-id at a time." Two flows from one client are two
-// ways to one phone, and ringing it down both is ringing it twice.
+// RFC 5626 5.3: the target set holds at most one contact per AOR and instance-id, so a
+// client with two flows rings once.
 TEST(ProxyOutboundTest, OneClientIsReachedDownOneFlowAtATime) {
   OutboundFixture f;
 
@@ -62,8 +61,7 @@ TEST(ProxyOutboundTest, OneClientIsReachedDownOneFlowAtATime) {
   EXPECT_EQ(f.invites_on(f.first_connection) + f.invites_on(f.second_connection), 1u);
 }
 
-// A 430 Flow Failed from that flow is the flow failing, not the client refusing, and the
-// same client is tried down its other flow.
+// RFC 5626 5.3: a 430 Flow Failed moves on to the same client's other flow.
 TEST(ProxyOutboundTest, AFailedFlowIsReplacedByTheClientsOtherFlow) {
   OutboundFixture f;
 
@@ -79,9 +77,8 @@ TEST(ProxyOutboundTest, AFailedFlowIsReplacedByTheClientsOtherFlow) {
   EXPECT_EQ(f.response_with(f.caller_connection, 430), nullptr) << "430 is between proxies, never the caller's";
 }
 
-// "If the proxy receives a final response from a branch other than a 408 or a 430, the proxy
-// MUST NOT forward the same request to another target representing the same AOR and
-// instance-id." Busy down one flow is the phone being busy.
+// RFC 5626 5.3: any final response other than 408 or 430 is the client's answer, and its
+// other flow is not tried.
 TEST(ProxyOutboundTest, AnyOtherAnswerIsTheClientsAnswer) {
   OutboundFixture f;
 
@@ -97,9 +94,8 @@ TEST(ProxyOutboundTest, AnyOtherAnswerIsTheClientsAnswer) {
   EXPECT_NE(f.response_with(f.caller_connection, 486), nullptr);
 }
 
-// An outbound binding is reached down its flow and nothing else: its Contact is the client's
-// idea of itself and the flow is what the client registered to be reached by (section 5.3).
-// A flow that has gone is a failed flow, and the client's other flow is used.
+// RFC 5626 5.3: an outbound binding is reached only down its flow, never at its Contact.
+// A closed flow is a failed flow and the client's other flow is used.
 TEST(ProxyOutboundTest, AClosedFlowIsNotReplacedByItsContact) {
   OutboundFixture f;
 
@@ -113,8 +109,7 @@ TEST(ProxyOutboundTest, AClosedFlowIsNotReplacedByItsContact) {
   auto third = f.make_channel("192.0.2.20", &third_connection, "tcp", 40003);
   f.register_outbound(f.bob, std::make_shared<types::SIPUri>("sip:bob@192.0.2.20:40003;transport=tcp"), third, kInstance, 3);
 
-  // Whichever of the three is tried first, only the live one is reached, and no new
-  // connection is opened to either dead flow's Contact.
+  // Only the live flow is reached, and no connection is opened to a dead flow's Contact.
   f.receive(f.caller, f.invite());
 
   EXPECT_EQ(f.invites_on(third_connection), 1u);

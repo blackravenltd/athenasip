@@ -8,9 +8,7 @@
 #
 #   test/e2e/run.sh
 #
-# runs it. The node uses memory:// and local://, so the harness needs no Redis and no
-# broker: what is being tested is RFC 3261 behaviour, and a datastore that survives a
-# restart is not part of it.
+# runs it. The node uses memory:// and local://, so it needs no Redis and no broker.
 
 services:
   athenasip:
@@ -18,15 +16,14 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: athenasip-e2e
-    # The harness's administrator, made as the node starts. memory:// keeps nothing once a
-    # process exits, so --add-user on it creates the user in the node's own datastore and
-    # carries on serving. The password goes in on stdin, from a file, never on a command line.
+    # Creates the harness's administrator as the node starts: on memory://, --add-user
+    # creates the user and carries on serving. The password goes in on stdin.
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >-
         printf '%s\n' "$$ATHENA_E2E_ADMIN_PASSWORD" > /tmp/admin-password &&
         exec /usr/local/bin/athenasip --add-user e2e-admin
-        --role manage-realms --role manage-realm-subscribers --role view-cluster-status
+        --role manage-realms --role manage-realm-subscribers --role view-cluster-status --role manage-cluster
         < /tmp/admin-password
     environment:
       ATHENA_E2E_ADMIN_PASSWORD: e2e-admin-password
@@ -36,17 +33,15 @@ services:
       e2e:
         ipv4_address: 172.31.0.10
     healthcheck:
-      # The API's own answer, which is 503 until the datastore is connected, so the
-      # scenarios cannot start against a node that is not serving yet.
+      # Health is 503 until the datastore is connected, so no scenario starts early.
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/v1/health"]
       interval: 1s
       timeout: 2s
       retries: 30
       start_period: 2s
 
-  # Two of them, because a call needs two ends and each has to be registered at an
-  # address the node can route back to. They are started by test/e2e/run.sh with the
-  # scenario as their arguments, never by "compose up", which is what the profile does.
+  # A call needs two ends, each registered at an address the node can route back to.
+  # Started by test/e2e/run.sh with the scenario as arguments, never by "compose up".
   sipp-uas:
     build:
       context: ./test/e2e
@@ -82,6 +77,5 @@ networks:
     driver: bridge
     ipam:
       config:
-        # Fixed addresses, because a UAS has to be registered at an address the node can
-        # route back to and a scenario cannot ask what the bridge decided.
+        # Fixed addresses: a UAS registers at an address the node must route back to.
         - subnet: 172.31.0.0/24

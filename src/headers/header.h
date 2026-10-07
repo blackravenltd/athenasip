@@ -14,12 +14,11 @@
 
 namespace athenasip::headers {
 
-// Abstract plus factory
+// A parsed header field. Field types register a factory by name; unregistered fields are StringHeader.
 class Header {
  public:
   virtual ~Header() = default;
 
-  // Pure virtual interface.
   virtual bool parse(const std::string& value) = 0;
   virtual std::string to_string() const = 0;
 
@@ -28,14 +27,12 @@ class Header {
     return dynamic_cast<T*>(this);
   }
 
-  // Factory method: creates an instance for a given field name and parses the provided value.
+  // Builds the registered type for the field name and parses the value into it.
   static std::shared_ptr<Header> create(const std::string& fieldName, const std::string& value);
 
-  // Registration method: associates a field name with a factory function.
   static void register_factory(const std::string& fieldName, std::function<std::shared_ptr<Header>()> factory);
 
  protected:
-  // Accessor for the static registry map.
   static std::unordered_map<std::string, std::function<std::shared_ptr<Header>()>>& get_registry();
 };
 

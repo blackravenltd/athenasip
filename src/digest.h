@@ -15,15 +15,15 @@
 
 namespace athenasip::digest {
 
-// RFC 3261 22: the registrar asks with 401 and WWW-Authenticate, a proxy with 407 and
-// Proxy-Authenticate, and the arithmetic underneath is the same. Both use these.
+// RFC 3261 22 Digest authentication, shared by the registrar (401, WWW-Authenticate) and
+// the proxy (407, Proxy-Authenticate).
 
-// Whether the credentials carry everything a check needs. Anything less is answered with a
-// fresh challenge rather than a refusal: the client may simply not have been asked yet.
+// Whether the credentials carry everything verify needs. If not, challenge again rather
+// than refuse.
 bool is_complete(const std::shared_ptr<types::Authorization>& credentials);
 
-// Empty when the credentials verify against the subscriber's stored HA1 for the request
-// method, or why they did not. The nonce is the caller's to have checked first.
+// Returns empty when the credentials match the subscriber's stored HA1 for the method,
+// otherwise the reason. The caller checks the nonce first.
 std::string verify(const types::Subscriber& subscriber, types::Authorization& credentials, const std::string& method);
 
 // RFC 8760 section 2.1: one challenge per algorithm, most preferred first, into `field`.

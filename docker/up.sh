@@ -10,14 +10,11 @@
 #   docker/up.sh             bring the stack up, seed it, say what to do next
 #   docker/up.sh --console   also serve the admin console, built in its own repository
 #   docker/up.sh down        take it down, keeping the data
-#   docker/up.sh --reset     take it down and forget the data too
+#   docker/up.sh --reset     take it down and delete the data too
 #
-# It renders docker/config.yaml from the template, because the node has to be told an
-# address a client can come back to and a container's own address is not one; brings the
-# stack up and waits for the node to report healthy; then creates the first administrator
-# with `athenasip --add-user`, signs in as it and provisions a realm and two subscribers over
-# the admin API, which is the same path an operator uses and a second check that the API
-# works.
+# Renders docker/generated/config.yaml with an address clients can reach, starts the
+# stack and waits for health, creates the first administrator with `athenasip --add-user`,
+# then provisions a realm and two subscribers over the admin API.
 #
 set -euo pipefail
 
@@ -50,9 +47,7 @@ if [[ "$ACTION" == "down" ]]; then
   exit 0
 fi
 
-# The address this host has on the network a client is on. Loopback is right for a
-# softphone on this machine and no use at all to a phone on the LAN or to a browser being
-# told where to send its media, so a stack meant for either needs the real one.
+# This host's address on its network. Loopback only serves clients on this machine.
 lan_address() {
   local interface
   if interface="$(route -n get default 2>/dev/null | awk '/interface:/{print $2}')" && [[ -n "$interface" ]]; then
@@ -71,8 +66,7 @@ fi
 
 export ATHENA_PUBLIC_ADDRESS="$PUBLIC_ADDRESS"
 
-# The realm is the domain a client puts in its From and To. A realm named anything else is
-# one the registrar will not find (RFC 3261 10.3 step 2).
+# The realm is the domain clients put in From and To (RFC 3261 10.3 step 2).
 REALM="${ATHENA_REALM:-$PUBLIC_ADDRESS}"
 
 export ATHENA_SIP_PORT="${ATHENA_SIP_PORT:-5060}"
@@ -80,14 +74,11 @@ export ATHENA_TLS_PORT="${ATHENA_TLS_PORT:-5061}"
 export ATHENA_WSS_PORT="${ATHENA_WSS_PORT:-9443}"
 export ATHENA_API_PORT="${ATHENA_API_PORT:-8080}"
 
-# rtpengine's address on the compose network, fixed so the node can be configured with it
-# rather than with a name that would not resolve if the engine ever moved off this bridge.
+# rtpengine's fixed address on the compose network.
 export ATHENA_RTPENGINE_ADDRESS="${ATHENA_RTPENGINE_ADDRESS:-172.33.0.30}"
 
-# What rtpengine writes into the session description, which is the address a client sends
-# media to. The public address unless told otherwise; the engine's own bridge address is how
-# a relay-only call is exercised on a loopback stack, because TURN only needs the TURN server
-# to reach the peer.
+# The address rtpengine writes into session descriptions. Set it to the engine's bridge
+# address to exercise a relay-only (TURN) call on a loopback stack.
 export ATHENA_RTPENGINE_ADVERTISE="${ATHENA_RTPENGINE_ADVERTISE:-$PUBLIC_ADDRESS}"
 export ATHENA_RTP_MIN="${ATHENA_RTP_MIN:-25000}"
 export ATHENA_RTP_MAX="${ATHENA_RTP_MAX:-25050}"
@@ -99,20 +90,16 @@ API="http://127.0.0.1:${ATHENA_API_PORT}/api/v1"
 ADMIN_USER="${ATHENA_ADMIN_USER:-admin}"
 ADMIN_PASSWORD="${ATHENA_ADMIN_PASSWORD:-}"
 
-# A password nobody chose is not one to print and walk away from, so one is generated per
-# stack rather than shipped in the repository for everybody to share.
+# Generated per stack unless ATHENA_ADMIN_PASSWORD is set.
 if [[ -z "$ADMIN_PASSWORD" ]]; then
-  # openssl rather than tr reading /dev/urandom into head: head closing the pipe kills
-  # tr with SIGPIPE, and pipefail turns that into a script that exits 141 having printed
-  # nothing at all.
+  # Not tr < /dev/urandom | head: head closing the pipe fails the script under pipefail.
   ADMIN_PASSWORD="$(openssl rand -hex 10)"
   GENERATED_PASSWORD="yes"
 else
   GENERATED_PASSWORD="no"
 fi
 
-# The console lives in its own repository. Mounted when it has been built, and never
-# checked in here, because a built bundle in this tree is a copy that goes stale.
+# The console is built in its own repository and mounted when present.
 export ATHENA_CONSOLE_DIR="${ATHENA_CONSOLE_DIR:-$ROOT/../athenasip-admin/build}"
 
 if [[ "$SERVE_CONSOLE" == "yes" ]]; then
@@ -130,17 +117,15 @@ MSG
     exit 1
   fi
 else
-  # Nothing to serve, and a mount that still has to resolve: this directory exists in
-  # every case and is never served, because files are switched off.
+  # The mount must still resolve: this directory always exists, and file serving is off.
   ATHENA_CONSOLE_DIR="$HERE/generated"
 fi
 
 SERVE_CONSOLE_YAML="false"
 [[ "$SERVE_CONSOLE" == "yes" ]] && SERVE_CONSOLE_YAML="true"
 
-# Anything left from a previous run goes first, so that bringing the stack up twice works
-# and the check below does not find this stack's own ports. The volumes stay, so the
-# realm, the subscribers and the administrator survive; --reset is how you start over.
+# Remove a previous run so the port check does not find this stack's own ports. The
+# volumes, and so the provisioned data, stay; --reset deletes them.
 compose down --remove-orphans >/dev/null 2>&1 || true
 
 taken=()
@@ -164,8 +149,7 @@ MSG
   exit 1
 fi
 
-# Rendered fresh each run. Anything left from an older layout - a config at a path that is
-# no longer mounted, say - is worse than absent: it reads as the live one.
+# Rendered fresh each run, so no stale generated file is mistaken for the live one.
 rm -f "$HERE/generated/config.yaml" "$HERE/generated/turnserver.conf" "$HERE/generated/coturn/turnserver.conf"
 mkdir -p "$HERE/generated"
 
@@ -182,11 +166,8 @@ mkdir -p "$HERE/generated/coturn"
 sed -e "s|@PUBLIC_ADDRESS@|${PUBLIC_ADDRESS}|g" \
     "$HERE/turnserver.conf" > "$HERE/generated/coturn/turnserver.conf"
 
-# The checked-in certificate names loopback and nothing else, so a stack advertising this
-# machine's own address serves one that does not name what the client dialled - which
-# fails verification however good the chain is. A second certificate for this address,
-# signed by the same CA, means a client that already trusts tls/ca/snakeca.crt needs
-# nothing new.
+# The checked-in certificate names only loopback. For any other address, sign a second
+# one with the same CA, so a client trusting tls/ca/snakeca.crt needs nothing new.
 export ATHENA_TLS_DIR="./tls"
 
 case "$PUBLIC_ADDRESS" in
@@ -198,8 +179,7 @@ case "$PUBLIC_ADDRESS" in
     ;;
 esac
 
-# A loopback stack cannot relay, and the failure is silent and a long way from the cause:
-# coturn is asked to send to 127.0.0.1, which inside its own container is coturn.
+# A loopback stack cannot relay: coturn would send to 127.0.0.1, which is itself.
 case "$PUBLIC_ADDRESS" in
   127.*|localhost)
     if grep -q '^use-auth-secret' "$HERE/turnserver.conf" 2>/dev/null && [[ "$ATHENA_RTPENGINE_ADVERTISE" == "$PUBLIC_ADDRESS" ]]; then
@@ -224,9 +204,8 @@ esac
 echo "Building and starting..."
 compose up -d --build --wait
 
-# The first administrator, made inside the container with --add-user, the only way an
-# administrator is ever made from nothing. The password goes in on stdin. Already there on
-# a second run, and that is not a failure: --reset is how you start over.
+# The first administrator, created inside the container; the password goes in on stdin.
+# Exit 3 means it already exists, which is fine on a second run.
 echo "Creating administrator ${ADMIN_USER}..."
 set +e
 printf '%s\n' "$ADMIN_PASSWORD" | compose exec -T athenasip athenasip --add-user "$ADMIN_USER" --display-name "Quickstart Administrator" \
@@ -237,8 +216,7 @@ set -e
 case "$added" in
   0) echo "  ${ADMIN_USER}" ;;
   3)
-    # The password generated a moment ago is not the one that works, and saying so beats
-    # printing something that will not log in.
+    # The generated password is not the one in force, so it is not printed.
     echo "  ${ADMIN_USER} - already there, keeping the password it has"
     [[ "$GENERATED_PASSWORD" == "yes" ]] && GENERATED_PASSWORD="kept"
     ;;
@@ -248,19 +226,15 @@ case "$added" in
     ;;
 esac
 
-# Provisioning signs in as that administrator. On a second run with a password nobody
-# gave, there is nothing to sign in with - and the realm and subscribers are already in Redis
-# from the first, so they are left as they are.
+# Provisioning signs in as the administrator. With a kept, unknown password there is
+# nothing to sign in with, and the realm and subscribers are already in Redis.
 ADMIN_TOKEN=""
 if [[ "$GENERATED_PASSWORD" != "kept" ]]; then
   ADMIN_TOKEN="$(curl -s -X POST "$API/auth/login" -H "Content-Type: application/json" \
     -d "{\"username\":\"${ADMIN_USER}\",\"password\":\"${ADMIN_PASSWORD}\"}" | sed -n 's/.*"token":"\([0-9a-f]*\)".*/\1/p')"
 fi
 
-# Provisioning is idempotent, because the data outlives the containers: a second run
-# finds the realm and the subscribers already there and that is the right answer rather than
-# a failure. 409 is what the API says to "it already exists", and the only other
-# acceptable answer is the one that created it.
+# Idempotent, because the data outlives the containers: 409 means already there.
 provision() {
   local what="$1" path="$2" body="$3"
   local status

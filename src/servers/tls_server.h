@@ -23,14 +23,12 @@ class TLSServer : public Server {
   void start() override;
   void stop() override;
 
-  // The port actually being listened on. Not the configured one when that was zero and
-  // the operating system chose, which is what a test binds and what a node logs.
+  // The port being listened on, which is the operating system's choice when zero was configured.
   std::uint16_t port() const { return _acceptor.local_endpoint().port(); }
 
   bool set_certificates(std::string cert, std::string key);
 
-  // Make this the inter-node listener: a peer has to show a certificate the cluster CA
-  // signed (see tls_context.h).
+  // Makes this the inter-node listener: a peer must present a certificate signed by the cluster CA (tls_context.h).
   bool require_peer_certificates(const std::string& ca);
 
  protected:

@@ -23,17 +23,13 @@ namespace {
 // resolv.conf(5)'s default for "attempts".
 constexpr std::size_t kAttempts = 2;
 
-// How long "nothing of that type here" is believed. RFC 2308 takes it from the SOA, which
-// this resolver does not keep; half a minute is short enough not to matter when a zone
-// changes and long enough to spare a call setup the same empty question twice.
+// How long an empty answer is cached. RFC 2308 takes this from the SOA, which this resolver does not keep.
 constexpr std::chrono::seconds kNegativeTtl{30};
 
-// Enough for every trunk and peer a node talks to many times over. Past it the expired go,
-// and if that is not enough, everything does - a cache is an optimisation, not a store.
+// Past this the expired entries go, and if that is not enough, all of them.
 constexpr std::size_t kCacheLimit = 4096;
 
-// RFC 5452 section 4: the id is the one thing an off-path attacker has to guess, so it is
-// random rather than counted.
+// RFC 5452 section 4: a random id, because it is what an off-path attacker has to guess.
 std::uint16_t random_id() {
   std::uint16_t id = 0;
   if (RAND_bytes(reinterpret_cast<unsigned char*>(&id), sizeof(id)) != 1) id = static_cast<std::uint16_t>(std::rand());
@@ -43,8 +39,7 @@ std::uint16_t random_id() {
 }  // namespace
 
 struct UdpResolver::Attempt {
-  // Everything about one query runs here: its timer and its socket would otherwise answer
-  // on whichever thread of the shared io_context got to them first.
+  // Everything about one query runs on this strand: the io_context is shared between threads.
   boost::asio::any_io_executor strand;
 
   plugins::Executor on;
@@ -162,11 +157,8 @@ void UdpResolver::_ask(std::shared_ptr<Attempt> attempt) {
             const std::vector<std::uint8_t> message(attempt->buffer.begin(), attempt->buffer.begin() + static_cast<std::ptrdiff_t>(length));
             const auto response = decode_response(message);
 
-            // RFC 5452: the source has to be the server asked and the id
-            // the one sent; the port this socket was given is fresh per
-            // query, which is the other half of what a forger has to
-            // guess. Anything else is ignored and the socket keeps
-            // listening for the real answer.
+            // RFC 5452: the reply must come from the server asked and carry the id sent; the socket's port is fresh
+            // per query. Anything else is ignored and the socket keeps listening.
             const auto& server = self->_servers[attempt->server];
             if (attempt->from != server || !response || response->id != attempt->id) return (*listen)();
 
@@ -175,8 +167,7 @@ void UdpResolver::_ask(std::shared_ptr<Attempt> attempt) {
 
             if (response->truncated) return self->_ask_tcp(attempt);
 
-            // 2 is SERVFAIL and 5 REFUSED: this server cannot answer,
-            // and the next one might.
+            // 2 is SERVFAIL and 5 REFUSED: the next server might answer.
             if (response->rcode == 2 || response->rcode == 5) {
               return self->_next(attempt, "server said rcode " + std::to_string(response->rcode));
             }
@@ -186,7 +177,7 @@ void UdpResolver::_ask(std::shared_ptr<Attempt> attempt) {
               if (record.type == attempt->type) records.push_back(record);
             }
 
-            // 0 with answers or without, and 3 NXDOMAIN: both are answers.
+            // 0, with or without answers, and 3 NXDOMAIN are both answers.
             self->_finish(attempt, plugins::Result<std::vector<Record>>::success(std::move(records)));
           });
     };
@@ -271,8 +262,7 @@ void UdpResolver::_next(std::shared_ptr<Attempt> attempt, const std::string& why
   attempt->socket.reset();
   attempt->stream.reset();
 
-  // resolv.conf(5): every server in turn, then round again, "attempts" times in all. A
-  // datagram can simply be lost, and with one server that would be the whole answer.
+  // resolv.conf(5): every server in turn, then round again, kAttempts times in all.
   if (++attempt->server >= _servers.size()) {
     attempt->server = 0;
     if (++attempt->round >= kAttempts) {
@@ -287,7 +277,7 @@ void UdpResolver::_finish(std::shared_ptr<Attempt> attempt, plugins::Result<std:
   if (attempt->done) return;
   attempt->done = true;
 
-  // An answer is kept; not hearing back is not an answer.
+  // Only an answer is cached, never a failure.
   if (result.ok) _keep(_cache_key(attempt->name, attempt->type), result.value);
 
   if (attempt->timer) attempt->timer->cancel();
@@ -299,8 +289,7 @@ void UdpResolver::_finish(std::shared_ptr<Attempt> attempt, plugins::Result<std:
   boost::asio::post(attempt->on, [handler = attempt->handler, result = std::move(result)]() mutable { handler(std::move(result)); });
 }
 
-// RFC 4343: names compare without regard to case. And "name." is "name", the dot being the
-// root every name ends in anyway.
+// RFC 4343: names compare case-insensitively. A trailing dot is dropped.
 std::string UdpResolver::_cache_key(const std::string& name, Type type) {
   auto key = Util::to_lower(name);
   if (!key.empty() && key.back() == '.') key.pop_back();
@@ -323,7 +312,7 @@ bool UdpResolver::_cached(const std::string& key, std::vector<Record>& out) {
 }
 
 void UdpResolver::_keep(const std::string& key, const std::vector<Record>& records) {
-  // The shortest TTL in the set is how long the set is good for. Zero means do not keep.
+  // The set is good for its shortest TTL. Zero means do not keep.
   std::chrono::seconds ttl = kNegativeTtl;
   if (!records.empty()) {
     std::uint32_t shortest = records.front().ttl;

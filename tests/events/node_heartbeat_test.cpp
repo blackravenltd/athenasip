@@ -14,7 +14,10 @@
 
 #include "../helpers/core_fixture_helper.h"
 #include "../helpers/recording_event_system_helper.h"
+#include "../mocks/logger_mock.h"
 #include "events/topics.h"
+#include "media/builtin_media_engine.h"
+#include "types/url.h"
 
 using namespace athenasip;
 
@@ -34,8 +37,7 @@ struct HeartbeatFixture : CoreFixture {
     core->events = bus_record;
     core->version_set("9.9.9");
 
-    // The order a node starts in, and the order main starts it in: the will goes in
-    // while the bus is still closed, because that is the only time a broker takes one,
+    // The order main starts a node in: the will is set while the bus is closed, the only time a broker takes one,
     // and the heartbeat starts once the bus is up.
     bus_record->will_set(events::topics::node_status("test-node"), Core::node_status_json("down", "test-node", "9.9.9", "memory 0.0.1", 0, interval_seconds));
     bus_record->connect(core->strand(), [](plugins::Status) {});
@@ -67,9 +69,7 @@ struct HeartbeatFixture : CoreFixture {
 
 }  // namespace
 
-// A monitor asks "is it alive", and the only honest answer is one the node keeps
-// giving. A message published once at startup says a node started, which is a
-// different question and one nobody is asking an hour later.
+// Liveness is a status the node keeps repeating, not one message at startup.
 TEST(NodeHeartbeatTest, TheNodeSaysItIsAliveOnAnInterval) {
   HeartbeatFixture f(30);
 
@@ -86,8 +86,7 @@ TEST(NodeHeartbeatTest, TheNodeSaysItIsAliveOnAnInterval) {
   EXPECT_EQ(f.statuses().size(), at_start + 3);
 }
 
-// And it says the same things the HTTP health endpoint says, because a monitor that
-// reads one and a monitor that reads the other should not disagree about the node.
+// The heartbeat says what the HTTP health endpoint says.
 TEST(NodeHeartbeatTest, TheHeartbeatSaysWhatTheNodeIs) {
   HeartbeatFixture f(30);
 
@@ -98,15 +97,12 @@ TEST(NodeHeartbeatTest, TheHeartbeatSaysWhatTheNodeIs) {
   EXPECT_EQ(status.at("version").as_string(), "9.9.9");
   EXPECT_TRUE(status.contains("datastore"));
 
-  // What a monitor needs beyond identity: when this was said, and how long the node has
-  // been up. A timestamp is what makes a retained message readable as "still alive"
-  // rather than "alive at some point".
+  // A timestamp and the uptime, so a retained message reads as "still alive", not "alive at some point".
   EXPECT_TRUE(status.contains("at"));
   EXPECT_TRUE(status.contains("uptime"));
 }
 
-// Retained, or a monitor that connects after the node did learns nothing at all until
-// the next interval - and with a long interval that is a long time to look dead.
+// Retained, so a monitor that connects later learns the status at once.
 TEST(NodeHeartbeatTest, TheHeartbeatIsPublishedAsState) {
   HeartbeatFixture f(30);
 
@@ -116,7 +112,7 @@ TEST(NodeHeartbeatTest, TheHeartbeatIsPublishedAsState) {
   EXPECT_EQ(states.back().first, events::topics::node_status("test-node"));
 }
 
-// Zero turns it off, for somebody whose broker is not theirs to fill with traffic.
+// An interval of zero turns the heartbeat off.
 TEST(NodeHeartbeatTest, ZeroTurnsItOff) {
   HeartbeatFixture f(0);
 
@@ -126,8 +122,7 @@ TEST(NodeHeartbeatTest, ZeroTurnsItOff) {
   EXPECT_EQ(f.statuses().size(), at_start);
 }
 
-// A node that dies does not get to publish anything, so the broker has to say it for
-// us.
+// A node that dies cannot publish, so the broker holds a will.
 TEST(NodeHeartbeatTest, TheBrokerIsToldWhatToSayIfTheNodeVanishes) {
   HeartbeatFixture f(30);
 
@@ -141,10 +136,7 @@ TEST(NodeHeartbeatTest, TheBrokerIsToldWhatToSayIfTheNodeVanishes) {
   EXPECT_EQ(body.at("node").as_string(), "test-node");
 }
 
-// And it is only a will if the broker was told before the session opened. Setting one
-// afterwards is silently too late - the node runs, the heartbeat works, and the thing
-// that was supposed to report its death never fires. That is exactly what happened the
-// first time this was deployed.
+// A broker takes a will only before the session opens, so setting one afterwards is refused rather than lost.
 TEST(NodeHeartbeatTest, AWillSetAfterConnectingIsRefusedRatherThanSilentlyLost) {
   HeartbeatFixture f(30);
 
@@ -155,9 +147,8 @@ TEST(NodeHeartbeatTest, AWillSetAfterConnectingIsRefusedRatherThanSilentlyLost) 
   EXPECT_EQ(f.bus_record->will()->first, before->first) << "a bus that is already connected cannot take a new will";
 }
 
-// Where the node listens is in what it says, so that every node hearing it can tell a
-// client where else to go (the 2026-09-21 decision). The advertised address, as the
-// node list gives it: a client cannot dial a wildcard.
+// The status carries the advertised address the node listens on, so other nodes can tell a client where else
+// to go. A client cannot dial a wildcard.
 TEST(NodeHeartbeatTest, TheStatusSaysWhereTheNodeListens) {
   HeartbeatFixture f(30);
 
@@ -172,8 +163,7 @@ TEST(NodeHeartbeatTest, TheStatusSaysWhereTheNodeListens) {
   }
 }
 
-// How often the node promises to repeat itself, so a monitor can derive its own staleness
-// threshold rather than hardcoding one that happens to match this node's configuration.
+// The status carries its repeat interval, so a monitor can derive a staleness threshold.
 TEST(NodeHeartbeatTest, TheStatusSaysHowOftenItWillBeRepeated) {
   HeartbeatFixture f(45);
 
@@ -199,4 +189,34 @@ TEST(NodeHeartbeatTest, TheStatusSaysWhereAPeerDialsWhenTheNodeIsInACluster) {
   ASSERT_TRUE(status.contains("cluster")) << boost::json::serialize(status);
   EXPECT_EQ(status.at("cluster").at("address").as_string(), "10.0.0.1");
   EXPECT_EQ(status.at("cluster").at("port").as_int64(), 5062);
+}
+
+// The status carries the media engine, its capabilities and the profiles it can produce. A node with no engine
+// says null, so "none" is not mistaken for "not said".
+TEST(NodeHeartbeatTest, TheStatusSaysWhatTheNodeCanDoWithMedia) {
+  HeartbeatFixture f(30);
+
+  const auto without = f.latest_status();
+  ASSERT_TRUE(without.contains("media")) << boost::json::serialize(without);
+  EXPECT_TRUE(without.at("media").is_null());
+
+  auto logger = std::make_shared<MockLogger>();
+  auto engine = std::make_shared<media::BuiltinMediaEngine>(
+      logger, std::make_shared<types::URL>("builtin://?bind_address=127.0.0.1&public_address=127.0.0.1&port_min=26000&port_max=26010"));
+  f.on_strand([&f, engine]() { f.core->media_register(engine); });
+  f.advance(std::chrono::seconds(30));
+
+  const auto status = f.latest_status();
+  ASSERT_TRUE(status.at("media").is_object()) << boost::json::serialize(status);
+
+  const auto& media = status.at("media").as_object();
+  EXPECT_NE(std::string(media.at("engine").as_string()).find("builtin"), std::string::npos);
+
+  const auto& capabilities = media.at("capabilities").as_array();
+  ASSERT_EQ(capabilities.size(), 1u);
+  EXPECT_EQ(capabilities[0].as_string(), "bridge");
+
+  const auto& produces = media.at("produces").as_array();
+  ASSERT_EQ(produces.size(), 1u);
+  EXPECT_EQ(produces[0].as_string(), "rtp");
 }

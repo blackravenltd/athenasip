@@ -42,8 +42,7 @@ TEST(ProxyTest, AnInviteForAUserWithNoBindingsIs480) {
   EXPECT_NE(f.response_with(f.caller_connection, 480), nullptr);
 }
 
-// RFC 3261 16.6 step 2: the Request-URI becomes the binding being tried, not the address
-// of record. The callee's own Contact is the only thing that reaches it.
+// RFC 3261 16.6 step 2: the forwarded Request-URI is the binding, not the address of record.
 TEST(ProxyTest, TheForwardedRequestUriIsTheBinding) {
   Fixture f;
   f.bind_bob();
@@ -56,8 +55,7 @@ TEST(ProxyTest, TheForwardedRequestUriIsTheBinding) {
   EXPECT_EQ(forwarded->header->request_uri->host, "192.0.2.20");
 }
 
-// RFC 3261 16.6 step 8: the proxy adds its own Via on top, with a branch of its own, and
-// leaves the caller's beneath it. Without that the response cannot retrace the hops.
+// RFC 3261 16.6 step 8: the proxy adds its own Via, with its own branch, above the caller's.
 TEST(ProxyTest, TheProxyAddsItsOwnViaAboveTheCallers) {
   Fixture f;
   f.bind_bob();
@@ -75,16 +73,15 @@ TEST(ProxyTest, TheProxyAddsItsOwnViaAboveTheCallers) {
   ASSERT_NE(top, nullptr);
   ASSERT_NE(below, nullptr);
 
-  // RFC 3261 8.1.1.7: the branch is this node's own and carries the magic cookie.
+  // RFC 3261 8.1.1.7: the branch carries the magic cookie.
   EXPECT_EQ(top->parameters["branch"].rfind("z9hG4bK", 0), 0u);
   EXPECT_NE(top->parameters["branch"], "z9hG4bK-invite");
 
-  // The caller's Via survives underneath, untouched.
+  // The caller's Via is untouched beneath it.
   EXPECT_EQ(below->parameters["branch"], "z9hG4bK-invite");
 }
 
-// RFC 3261 18.1.1: the Via transport is the one the request actually goes out on, which
-// is a property of the outbound flow, not of the flow it arrived on.
+// RFC 3261 18.1.1: the Via transport is that of the outbound flow, not the inbound one.
 TEST(ProxyTest, TheViaTransportIsTheOutboundOne) {
   Fixture f;
 
@@ -102,8 +99,7 @@ TEST(ProxyTest, TheViaTransportIsTheOutboundOne) {
   EXPECT_EQ(top->version, "SIP/2.0/TLS");
 }
 
-// RFC 3261 16.6 step 3: every hop decrements Max-Forwards, which is what stops a routing
-// loop running forever.
+// RFC 3261 16.6 step 3: Max-Forwards is decremented on forward.
 TEST(ProxyTest, MaxForwardsIsDecrementedOnForward) {
   Fixture f;
   f.bind_bob();
@@ -119,8 +115,7 @@ TEST(ProxyTest, MaxForwardsIsDecrementedOnForward) {
   EXPECT_EQ(max_forwards->value, 69u);
 }
 
-// RFC 3261 16.3 rule 3: a request that has run out of hops is refused rather than
-// forwarded one more time.
+// RFC 3261 16.3 rule 3: Max-Forwards of zero is answered 483 and not forwarded.
 TEST(ProxyTest, MaxForwardsZeroIs483AndIsNotForwarded) {
   Fixture f;
   f.bind_bob();
@@ -131,8 +126,7 @@ TEST(ProxyTest, MaxForwardsZeroIs483AndIsNotForwarded) {
   EXPECT_EQ(f.request_with(f.callee_connection, "INVITE"), nullptr);
 }
 
-// RFC 3261 16.6: a request arriving without Max-Forwards gets the default rather than
-// travelling with no loop protection at all.
+// RFC 3261 16.6 step 3: a missing Max-Forwards is added with the default.
 TEST(ProxyTest, AMissingMaxForwardsIsSuppliedOnForward) {
   Fixture f;
   f.bind_bob();
@@ -145,8 +139,7 @@ TEST(ProxyTest, AMissingMaxForwardsIsSuppliedOnForward) {
   EXPECT_EQ(forwarded->header->headers_map["Max-Forwards"][0]->as<UIntHeader>()->value, 70u);
 }
 
-// RFC 3261 16.7 step 3: the proxy's own Via comes off the response, so the caller sees
-// the chain it sent and nothing more.
+// RFC 3261 16.7 step 3: the proxy removes its own Via from the response.
 TEST(ProxyTest, TheProxyStripsItsOwnViaFromTheResponse) {
   Fixture f;
   f.bind_bob();
@@ -174,8 +167,8 @@ TEST(ProxyTest, A200TravelsBackToTheCaller) {
   EXPECT_NE(f.response_with(f.caller_connection, 200), nullptr);
 }
 
-// RFC 3261 17.2.1: a retransmitted INVITE is absorbed by the server transaction, which
-// answers it from what it last sent. Reaching the TU again would forward the call twice.
+// RFC 3261 17.2.1: the server transaction absorbs a retransmitted INVITE; it is not
+// forwarded twice.
 TEST(ProxyTest, ARetransmittedInviteIsNotForwardedTwice) {
   Fixture f;
   f.bind_bob();
@@ -184,8 +177,7 @@ TEST(ProxyTest, ARetransmittedInviteIsNotForwardedTwice) {
   auto caller = f.make_channel("192.0.2.11", &caller_connection);
   caller_connection->reliable = false;
 
-  // On UDP Alice answers a challenge rather than leaning on a connection, and the
-  // retransmission is the same datagram again, credentials and all.
+  // On UDP Alice answers a challenge, and the retransmission carries the same credentials.
   const auto invite = f.with_credentials(f.invite("z9hG4bK-twice"), "alice", "alice-ha1");
 
   f.receive(caller, invite);
@@ -199,8 +191,7 @@ TEST(ProxyTest, ARetransmittedInviteIsNotForwardedTwice) {
   EXPECT_EQ(forwarded, 1);
 }
 
-// RFC 3261 9.2: the CANCEL is answered 200 on its own transaction, and the INVITE it
-// names ends 487 so the caller stops waiting.
+// RFC 3261 9.2: the CANCEL is answered 200 and the INVITE it names ends with 487.
 TEST(ProxyTest, ACancelAnswers200AndEndsTheInviteWith487) {
   Fixture f;
   f.bind_bob();
@@ -238,10 +229,7 @@ std::string cancel_for(const std::string& request_uri, const std::string& branch
 
 }  // namespace
 
-// RFC 3261 16.10: a proxy with no response context for a CANCEL "MUST statelessly
-// forward" it, because the request it names may have been forwarded statelessly too.
-// Answering it 200 and dropping it told the caller the branch had been cancelled when
-// nothing downstream had been told anything.
+// RFC 3261 16.10: a CANCEL with no response context is forwarded statelessly.
 TEST(ProxyTest, ACancelWithNoContextIsForwardedOnwards) {
   Fixture f;
 
@@ -250,22 +238,18 @@ TEST(ProxyTest, ACancelWithNoContextIsForwardedOnwards) {
   auto forwarded = ProxyFixture::request_with(f.callee_connection, "CANCEL");
   ASSERT_NE(forwarded, nullptr);
 
-  // This node's Via is on top, so the answer can find its way back (16.7 step 1).
+  // RFC 3261 16.7 step 1: this node's Via is on top, so the answer finds its way back.
   ASSERT_EQ(forwarded->header->headers_map["Via"].size(), 2u);
   EXPECT_EQ(forwarded->header->headers_map["Via"][0]->as<ViaHeader>()->host.rfind("192.0.2.1", 0), 0u);
 
   EXPECT_EQ(forwarded->header->headers_map["Max-Forwards"][0]->as<UIntHeader>()->value, 69u);
 
-  // And this node did not answer it itself: the answer is the one that comes back.
+  // This node does not answer it itself.
   EXPECT_EQ(f.response_with(f.caller_connection, 200), nullptr);
 }
 
-// The far end sees the CANCEL once however many times the caller sends it. The
-// CANCEL has a server transaction of its own, so a retransmission is absorbed there
-// (RFC 3261 17.2.2) and never reaches the forwarding above. The branch the forward
-// computes is derived from the request rather than random for the same reason 16.11
-// asks it of a stateless proxy: it must not depend on how many times the request
-// arrived.
+// RFC 3261 17.2.2: the CANCEL's own server transaction absorbs retransmissions, so it is
+// forwarded once. Its forwarded branch is derived from the request, not random (16.11).
 TEST(ProxyTest, ARetransmittedCancelIsForwardedOnce) {
   Fixture f;
 
@@ -277,9 +261,7 @@ TEST(ProxyTest, ARetransmittedCancelIsForwardedOnce) {
   EXPECT_EQ(ProxyFixture::requests_with(f.callee_connection, "CANCEL").size(), 1u);
 }
 
-// Where there is no context and nowhere to forward it either, RFC 3261 9.2's answer
-// for a CANCEL that matches nothing is 481, which is true of this node in a way that
-// 200 was not.
+// RFC 3261 9.2: a CANCEL with no context and nowhere to forward it is answered 481.
 TEST(ProxyTest, ACancelWithNoContextAndNowhereToGoIs481) {
   Fixture f;
 
@@ -289,8 +271,8 @@ TEST(ProxyTest, ACancelWithNoContextAndNowhereToGoIs481) {
   EXPECT_EQ(f.response_with(f.caller_connection, 200), nullptr);
 }
 
-// RFC 3261 16.6: with more than one binding the proxy tries them in turn, and a failure
-// on one is not the answer to the caller while another is untried.
+// RFC 3261 16.6: bindings are tried in turn; one failing is not the caller's answer
+// while another is untried.
 TEST(ProxyTest, SerialForkingTriesTheNextBindingOnAFailure) {
   Fixture f;
   f.bind_bob("sip:bob@192.0.2.20:5060");
@@ -298,7 +280,7 @@ TEST(ProxyTest, SerialForkingTriesTheNextBindingOnAFailure) {
 
   f.receive(f.caller, f.invite());
 
-  // Both bindings are on the one registered flow until RFC 5626 gives each its own.
+  // Both bindings share the one registered flow.
   ASSERT_NE(f.request_with(f.callee_connection, "INVITE"), nullptr);
 
   f.receive(f.callee, f.response_from_callee(486, "Busy Here"));
@@ -310,15 +292,13 @@ TEST(ProxyTest, SerialForkingTriesTheNextBindingOnAFailure) {
 
   EXPECT_EQ(forwarded, 2);
 
-  // The caller has not been answered yet: the second branch is still open.
+  // The second branch is still open, so the caller is not answered yet.
   EXPECT_EQ(f.response_with(f.caller_connection, 486), nullptr);
 }
 
-// RFC 3261 17.2.1: the ACK for a non-2xx is a transaction-level acknowledgement. The
-// INVITE server transaction absorbs it and the proxy never sees it, so it is not passed
-// on. The one ACK the callee does get is the proxy's own client transaction
-// acknowledging the 486 it received (17.1.1.3), which is a different ACK on a different
-// branch.
+// RFC 3261 17.2.1: the server transaction absorbs the caller's ACK for a non-2xx. The
+// one ACK the callee gets is the proxy's client transaction acknowledging the 486
+// (17.1.1.3), on a different branch.
 TEST(ProxyTest, TheAckForANonTwoHundredIsAbsorbedAndNotPassedOn) {
   Fixture f;
   f.bind_bob();
@@ -336,8 +316,8 @@ TEST(ProxyTest, TheAckForANonTwoHundredIsAbsorbedAndNotPassedOn) {
 
   f.receive(f.callee, f.response_from_callee(486, "Busy Here"));
 
-  // One binding, so the search is over and the caller gets the 486. The client
-  // transaction has already acknowledged it towards the callee.
+  // One binding, so the caller gets the 486; the client transaction has already
+  // acknowledged it towards the callee.
   ASSERT_NE(f.response_with(f.caller_connection, 486), nullptr);
   ASSERT_EQ(acks_to_callee(), 1);
 
@@ -354,11 +334,8 @@ TEST(ProxyTest, TheAckForANonTwoHundredIsAbsorbedAndNotPassedOn) {
   EXPECT_EQ(acks_to_callee(), 1);
 }
 
-// A UDP listener binds the wildcard, so its local endpoint is 0.0.0.0. Building the Via
-// and the Record-Route from that put 0.0.0.0 in both, which is an address no endpoint can
-// come back to - the BYE and every re-INVITE in the dialog are routed by the
-// Record-Route, and the response is routed by the Via. The sipp harness showed it: four
-// call scenarios could not complete on a node that had been told its own address.
+// A listener bound to the wildcard has local endpoint 0.0.0.0. The Via and Record-Route
+// carry the advertised address instead, since responses and in-dialog requests route by them.
 TEST(ProxyTest, TheViaAndRecordRouteNameTheAddressThisNodeAdvertises) {
   ProxyFixture f("203.0.113.5");
   f.bind_bob();
@@ -379,10 +356,8 @@ TEST(ProxyTest, TheViaAndRecordRouteNameTheAddressThisNodeAdvertises) {
   EXPECT_EQ(record_route->value->uri->host, "203.0.113.5");
 }
 
-// The other half of the same change, and the one that would bite silently. A node that
-// writes 203.0.113.5 into a Record-Route gets it back as a Route on the BYE, and has to
-// know itself in it: RFC 3261 16.4 says a proxy removes a Route naming itself. Without
-// that it forwards the request to itself and 16.3.4 catches the loop as a 482.
+// RFC 3261 16.4: a Route carrying the advertised address names this node and is removed.
+// Otherwise the request is forwarded to itself and refused as a loop (16.3.4).
 TEST(ProxyTest, TheAdvertisedAddressIsRecognisedAsThisNode) {
   ProxyFixture f("203.0.113.5");
   f.bind_bob();
@@ -396,4 +371,39 @@ TEST(ProxyTest, TheAdvertisedAddressIsRecognisedAsThisNode) {
 
   const auto port = record_route->value->uri->port.value_or(5060);
   EXPECT_TRUE(f.core->is_local_address("203.0.113.5", port));
+}
+
+// RFC 6026 8.4, RFC 3261 16.7 step 5: every 2xx to an INVITE is forwarded, retransmissions
+// included, down the connection the INVITE arrived on.
+TEST(ProxyTest, ARetransmittedTwoHundredReachesTheCallerToo) {
+  ProxyFixture f;
+  f.bind_bob();
+
+  f.receive(f.caller, f.invite());
+  ASSERT_NE(ProxyFixture::request_with(f.callee_connection, "INVITE"), nullptr);
+
+  const auto ok = f.response_from_callee(200, "OK");
+  f.receive(f.callee, ok);
+  f.receive(f.callee, ok);
+
+  int forwarded = 0;
+  for (const auto& message : CoreFixture::written(f.caller_connection)) {
+    if (message->header->type == athenasip::SIPHeader::Type::Response && message->header->response_code == 200) forwarded++;
+  }
+  EXPECT_EQ(forwarded, 2);
+}
+
+// RFC 3261 16.7 step 5: every provisional response but 100 is forwarded. The callee's 100 is hop-by-hop; the
+// caller has had this node's own.
+TEST(ProxyTest, TheCalleesTryingIsNotForwarded) {
+  ProxyFixture f;
+  f.bind_bob();
+  f.receive(f.caller, f.invite());
+
+  const auto trying_before = ProxyFixture::responses_with(f.caller_connection, 100).size();
+  f.receive(f.callee, f.response_from_callee(100, "Trying", ""));
+  f.receive(f.callee, f.response_from_callee(180, "Ringing"));
+
+  EXPECT_EQ(ProxyFixture::responses_with(f.caller_connection, 100).size(), trying_before);
+  EXPECT_NE(ProxyFixture::response_with(f.caller_connection, 180), nullptr);
 }

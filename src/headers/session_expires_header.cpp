@@ -17,8 +17,7 @@ bool SessionExpiresHeader::parse(const std::string& value) {
   const auto text = Util::trim(value);
   if (text.empty()) return false;
 
-  // delta-seconds first, then the parameters. A ';' cannot appear inside delta-seconds,
-  // so the split needs nothing cleverer than finding it.
+  // delta-seconds, then the parameters.
   const auto semicolon = text.find(';');
   const auto seconds = Util::trim(semicolon == std::string::npos ? text : text.substr(0, semicolon));
 
@@ -27,8 +26,7 @@ bool SessionExpiresHeader::parse(const std::string& value) {
   try {
     delta_seconds = static_cast<std::uint32_t>(std::stoul(seconds));
   } catch (const std::exception&) {
-    // Longer than a 32-bit count of seconds, which is not a session interval anyone
-    // meant. Treat it as unparseable rather than wrapping to something small.
+    // Too large for 32 bits: unparseable, rather than wrapped to something small.
     delta_seconds = 0;
     return false;
   }
@@ -47,8 +45,7 @@ bool SessionExpiresHeader::parse(const std::string& value) {
     const auto equals = parameter.find('=');
     if (equals == std::string::npos) continue;
 
-    // Only refresher is read. The rest are generic-param, which travel with the header
-    // and mean nothing here.
+    // Only refresher is read; the rest are generic-param.
     if (Util::to_lower(Util::trim(parameter.substr(0, equals))) == "refresher") {
       refresher = Util::to_lower(Util::trim(parameter.substr(equals + 1)));
     }

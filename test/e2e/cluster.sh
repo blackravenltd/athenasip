@@ -12,10 +12,9 @@
 #   test/e2e/cluster.sh            every scenario
 #   test/e2e/cluster.sh across     only those whose name contains "across"
 #
-# What it proves that run.sh cannot: a node reads a binding whose flow another node holds,
-# forwards the call over mutual TLS, and the ACK and the BYE cross back the same way. The
-# first scenario is the control - both ends on one node of the cluster - so that when a
-# call across the two fails, what failed is the crossing and not the cluster's plumbing.
+# It checks that a node reads a binding whose flow another node holds, forwards the call
+# over mutual TLS, and that the ACK and BYE cross back. The first scenario is the control:
+# both ends on one node of the cluster. The last kills node A and calls through node B.
 
 set -u
 
@@ -40,8 +39,8 @@ passed=0
 failed=0
 failures=""
 
-# A port of its own for every sipp run, for the reason run.sh gives: sipp derives its
-# branch from the call number, so two runs from one port are one transaction.
+# Every sipp run gets its own port, as in run.sh: two runs from one port are one
+# transaction.
 next_port=5100
 allocate_port() { next_port=$((next_port + 2)); }
 
@@ -56,15 +55,16 @@ curl_in() { ${COMPOSE} run --rm --no-deps --entrypoint curl sipp-uac -fsS "$@"; 
 
 api() { curl_in -H "Authorization: Bearer ${ADMIN_TOKEN}" -H "Content-Type: application/json" "$@"; }
 
+# Node A first: node B is the same image, and building both at once runs two full compiles
+# side by side, which a Docker VM with 8 GB does not survive.
 echo "Building..."
-${COMPOSE} --profile e2e build >"${RESULTS}/cluster-build.log" 2>&1 || {
+{ ${COMPOSE} build node-a && ${COMPOSE} --profile e2e build; } >"${RESULTS}/cluster-build.log" 2>&1 || {
   echo "The build failed - see ${RESULTS}/cluster-build.log"
   exit 1
 }
 
-# The cluster's own authority and a certificate for each node, made the way an operator
-# makes them (docs/certificates.md). Fresh every run: the authority refuses to be made over
-# an existing one.
+# The cluster's authority and a certificate for each node (docs/certificates.md). Fresh
+# every run: --ca-init refuses to overwrite an existing authority.
 echo "Making the cluster's certificates..."
 rm -rf "${CERTIFICATES}"
 mkdir -p "${CERTIFICATES}"
@@ -80,8 +80,8 @@ ca --ca-init >"${RESULTS}/cluster-ca.log" 2>&1 &&
 echo "Starting Redis and the broker..."
 ${COMPOSE} up -d redis mosquitto >/dev/null 2>&1
 
-# The first administrator, made on the host as it has to be. With redis:// the command
-# writes the user and exits, and both nodes then read it from the store they share.
+# The first administrator. With redis://, --add-user writes the user and exits, and both
+# nodes read it from the shared store.
 echo "Making the administrator..."
 ${COMPOSE} run --rm --entrypoint /bin/sh node-a -c \
   "printf '%s\n' '${ADMIN_PASSWORD}' | /usr/local/bin/athenasip --add-user ${ADMIN_USER} --role manage-realms --role manage-realm-subscribers --role view-cluster-status" \
@@ -116,8 +116,8 @@ if [ -z "${ADMIN_TOKEN}" ]; then
   exit 1
 fi
 
-# Each node has to have heard the other say where its peers reach it, or there is nobody
-# to forward to. The session made on node A is good on node B: one store, one set of users.
+# Each node must have learned where to reach the other before it can forward. A session
+# made on node A is valid on node B: the store is shared.
 echo "Waiting for the nodes to find each other..."
 knows() { api "http://$1:8080/api/v1/nodes" 2>/dev/null | grep -q "\"id\":\"$2\".*\"cluster\""; }
 attempt=0
@@ -212,9 +212,8 @@ run_pair() {
   docker rm -f "cluster-uas-${name}" >/dev/null 2>&1 || true
 }
 
-# The callee holds a connection to one node and is reachable only down it; the caller calls
-# through another. This is what forwarding is for: a UDP callee's Contact is an address any
-# node could send to, and a connection is not.
+# The callee holds a connection to one node and is reachable only down it; the caller
+# calls through another node, which must forward.
 run_flow() {
   name="$1"
   transport="$2"
@@ -243,7 +242,7 @@ run_flow() {
   ${COMPOSE} run -d --name "cluster-callee-${name}" flow-callee \
     --host "${callee_node}" --transport "${transport}" --user bob --password bob-secret >/dev/null 2>&1
 
-  # Registered, as the node the caller will ask sees it: the binding is in the shared store.
+  # Wait for the binding to be visible from the caller's node.
   attempt=0
   until api "http://${caller_node}:8080/api/v1/registrations" 2>/dev/null | grep -q "\"flow_id\":\"${transport}://172.31.0.22"; do
     attempt=$((attempt + 1))
@@ -266,8 +265,8 @@ run_flow() {
     -trace_err -error_file "/results/cluster-${name}.err" \
     -nostdin "${caller_node}:5060" >"${RESULTS}/cluster-${name}.log" 2>&1 || caller_ok=1
 
-  # The callee exits when it has seen the BYE, or when thirty seconds pass with nothing
-  # arriving on its connection, and says whether it saw the whole call.
+  # The callee exits on BYE, or after thirty idle seconds, with a status saying whether
+  # it saw the whole call.
   callee_status=$(docker wait "cluster-callee-${name}" 2>/dev/null || echo 1)
   docker logs "cluster-callee-${name}" >"${RESULTS}/cluster-${name}-callee.log" 2>&1 || true
   docker rm -f "cluster-callee-${name}" >/dev/null 2>&1 || true
@@ -293,11 +292,11 @@ run_pair one-node-invite-bye "${NODE_A}" uas.xml "${NODE_A}" invite_bye.xml 30s
 # Bob is held by node B, and Alice calls through node A.
 run_pair across-invite-bye "${NODE_B}" uas.xml "${NODE_A}" invite_bye.xml 30s
 
-# And the other way about, so neither node is only ever the first or only ever the second.
+# And the reverse, so each node is both first and second hop.
 run_pair across-reversed-invite-bye "${NODE_A}" uas.xml "${NODE_B}" invite_bye.xml 30s
 
-# Media across the two. The first node anchors it and the second leaves the call alone, so
-# node A's relay carries the packets and node B's carries none.
+# Media across the two: the first node anchors and the second does not, so node A's relay
+# carries the packets and node B's carries none.
 case "across-media" in
   *${FILTER}*)
     a_before=$(relayed_total "${NODE_A}")
@@ -320,24 +319,22 @@ case "across-media" in
     ;;
 esac
 
-# The rest of what the single-node harness asks, with the callee held by the other node:
-# a call cancelled while it rings, a callee that is busy, an INVITE with no offer, hold and
-# resume, and a callee that never answers. Each crosses the inter-node link in both
-# directions, and the CANCEL and the timeout are the ones a forwarding proxy gets wrong.
+# The single-node scenarios with the callee on the other node: cancel while ringing,
+# busy, an INVITE with no offer, hold and resume, and no answer.
 run_pair across-cancel-ringing "${NODE_B}" uas_ringing.xml       "${NODE_A}" cancel_after_180.xml     30s
 run_pair across-busy           "${NODE_B}" uas_busy.xml          "${NODE_A}" invite_busy.xml          30s
 run_pair across-delayed-offer  "${NODE_B}" uas_delayed_offer.xml "${NODE_A}" invite_delayed_offer.xml 30s
 run_pair across-hold-resume    "${NODE_B}" uas_hold.xml          "${NODE_A}" invite_hold.xml          30s
 
-# A callee on a connection. First on the caller's own node, as the control, then held by
-# the other node, for each of the two transports that are a connection.
+# A callee on a connection: on the caller's own node as the control, then on the other
+# node, over TCP and over WebSocket.
 run_flow one-node-tcp-flow  tcp "${NODE_A}" "${NODE_A}"
 run_flow across-tcp-flow    tcp "${NODE_B}" "${NODE_A}"
 run_flow one-node-ws-flow   ws  "${NODE_A}" "${NODE_A}"
 run_flow across-ws-flow     ws  "${NODE_B}" "${NODE_A}"
 
-# The call records: one per call, written by the node the caller reached and read from the
-# shared store, so both nodes give the same list, and a call that crossed names both nodes.
+# Call records: one per call, written by the caller's node to the shared store, so both
+# nodes list the same records and a call that crossed names both nodes.
 case "across-call-records" in
   *${FILTER}*)
     from_a=$(api "http://${NODE_A}:8080/api/v1/call-records?limit=1000" 2>/dev/null)
@@ -359,8 +356,112 @@ case "across-call-records" in
     ;;
 esac
 
-# Last, because timer B is 64*T1 and this one waits it out.
+# Timer B is 64*T1 and this one waits it out.
 run_pair across-invite-timeout "${NODE_B}" uas_silent.xml "${NODE_A}" invite_timeout.xml 60s carol.csv carol alice-to-carol.csv
+
+# Last, because it kills node A. Bob registers through node A, node A dies mid-registration,
+# Bob registers again through node B as an RFC 3263 client would, and a new call through
+# node B reaches him well inside his registration interval. A call node A was still setting
+# up when it died is closed in the store by node B.
+case "failover" in
+  *${FILTER}*)
+    echo "  failover"
+
+    allocate_port
+    bob_port="${next_port}"
+    allocate_port
+    uac_port="${next_port}"
+
+    ${COMPOSE} run --rm sipp-uas \
+      -sf /e2e/scenarios/register.xml -inf /e2e/bob.csv -au bob -ap bob-secret \
+      -p "${bob_port}" -cid_str "failover-reg-a-%u-%p@%s" \
+      -m 1 -r 1 -timeout 20s -timeout_error \
+      -nostdin "${NODE_A}:5060" >"${RESULTS}/cluster-failover-register-a.log" 2>&1
+
+    # Carol answers nothing, so node A's call to her is still being set up when it dies.
+    allocate_port
+    carol_port="${next_port}"
+    allocate_port
+    orphan_port="${next_port}"
+
+    ${COMPOSE} run --rm sipp-uas \
+      -sf /e2e/scenarios/register.xml -inf /e2e/carol.csv -au carol -ap carol-secret \
+      -p "${carol_port}" -cid_str "failover-orphan-reg-%u-%p@%s" \
+      -m 1 -r 1 -timeout 20s -timeout_error \
+      -nostdin "${NODE_B}:5060" >"${RESULTS}/cluster-failover-orphan-register.log" 2>&1
+    ${COMPOSE} run -d --name cluster-uas-orphan sipp-uas \
+      -sf /e2e/scenarios/uas_silent.xml -inf /e2e/carol.csv -au carol -ap carol-secret \
+      -p "${carol_port}" -m 1 -r 1 -timeout 60s -nostdin "${NODE_B}:5060" >/dev/null 2>&1
+    ${COMPOSE} run -d --name cluster-uac-orphan sipp-uac \
+      -sf /e2e/scenarios/invite_timeout.xml -inf /e2e/alice-to-carol.csv -au alice -ap alice-secret \
+      -p "${orphan_port}" -cid_str "failover-orphan-%u-%p@%s" \
+      -m 1 -r 1 -timeout 60s -nostdin "${NODE_A}:5060" >/dev/null 2>&1
+    sleep 3
+
+    docker kill athenasip-cluster-node-a >/dev/null 2>&1
+    killed_at=$(date +%s)
+
+    # Their record stays open; the addresses they hold are the next sipp runs'.
+    docker rm -f cluster-uas-orphan cluster-uac-orphan >/dev/null 2>&1 || true
+
+    ${COMPOSE} run --rm sipp-uas \
+      -sf /e2e/scenarios/register.xml -inf /e2e/bob.csv -au bob -ap bob-secret \
+      -p "${bob_port}" -cid_str "failover-reg-b-%u-%p@%s" \
+      -m 1 -r 1 -timeout 20s -timeout_error \
+      -nostdin "${NODE_B}:5060" >"${RESULTS}/cluster-failover-register-b.log" 2>&1
+    registered=$?
+
+    ${COMPOSE} run -d --name cluster-uas-failover sipp-uas \
+      -sf /e2e/scenarios/uas.xml -inf /e2e/bob.csv -au bob -ap bob-secret \
+      -p "${bob_port}" -cid_str "failover-uas-%u-%p@%s" \
+      -m 1 -r 1 -timeout 30s -timeout_error \
+      -trace_err -error_file "/results/cluster-failover-uas.err" \
+      -nostdin "${NODE_B}:5060" >/dev/null 2>&1
+    sleep 2
+
+    ${COMPOSE} run --rm sipp-uac \
+      -sf /e2e/scenarios/invite_bye.xml -inf /e2e/alice.csv -au alice -ap alice-secret \
+      -p "${uac_port}" -cid_str "failover-%u-%p@%s" \
+      -m 1 -r 1 -timeout 30s -timeout_error \
+      -trace_err -error_file "/results/cluster-failover.err" \
+      -nostdin "${NODE_B}:5060" >"${RESULTS}/cluster-failover.log" 2>&1
+    called=$?
+    elapsed=$(($(date +%s) - killed_at))
+
+    docker logs cluster-uas-failover >"${RESULTS}/cluster-failover-uas.log" 2>&1 || true
+    docker rm -f cluster-uas-failover >/dev/null 2>&1 || true
+
+    echo "    node A killed; Bob registered through node B and was called ${elapsed}s later"
+
+    # register.xml asks for 3600 seconds; a minute is the bound that means something.
+    if [ "${registered}" -eq 0 ] && [ "${called}" -eq 0 ] && [ "${elapsed}" -lt 60 ]; then
+      passed=$((passed + 1))
+    else
+      failed=$((failed + 1))
+      failures="${failures} failover"
+      echo "    failed - see ${RESULTS}/cluster-failover*.log"
+    fi
+
+    # The call sweep runs every 75 seconds with the default sip.media_timeout.
+    echo "  failover-orphan-closed"
+    closed=1
+    for _ in $(seq 1 40); do
+      if api "http://${NODE_B}:8080/api/v1/call-records?limit=1000" 2>/dev/null | grep -q '"id":"failover-orphan-'; then
+        closed=0
+        break
+      fi
+      sleep 5
+    done
+
+    if [ "${closed}" -eq 0 ]; then
+      passed=$((passed + 1))
+    else
+      failed=$((failed + 1))
+      failures="${failures} failover-orphan-closed"
+      echo "    failed - node B never closed the record of the call node A was setting up"
+    fi
+    ;;
+esac
 
 echo
 echo "${passed} passed, ${failed} failed"

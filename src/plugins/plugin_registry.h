@@ -18,16 +18,12 @@
 #include "../loggers/logger.h"
 #include "../types/url.h"
 #include "plugin.h"
+#include "setting.h"
 
 namespace athenasip::plugins {
 
-// One registry for every kind of plugin, keyed by (kind, scheme). There were three
-// copy-pasted template registries before this, one per interface, which was fine for
-// three kinds and the wrong shape for a server whose plugin contract is the product:
-// adding a kind meant adding a registry.
-//
-// A built-in driver registers here exactly as an external one will. The only
-// difference is link time against load time.
+// The one registry for every kind of plugin, keyed by (kind, scheme). Built-in drivers
+// register here exactly as external ones do.
 class PluginRegistry {
  public:
   using Factory = std::function<std::shared_ptr<Plugin>(std::shared_ptr<loggers::Logger>, std::shared_ptr<types::URL>)>;
@@ -39,36 +35,51 @@ class PluginRegistry {
 
   static PluginRegistry& instance();
 
-  void add(std::shared_ptr<loggers::Logger> logger, std::string kind, std::string scheme, Factory factory);
+  // settings: the driver's own section, if it describes one (see Setting::key).
+  void add(std::shared_ptr<loggers::Logger> logger, std::string kind, std::string scheme, Factory factory, Settings settings = {});
 
+  // A driver describes its section with a static `plugins::Settings settings()`, which is
+  // optional.
   template <typename T, typename = std::enable_if_t<std::is_base_of_v<Plugin, T>>>
   void add(std::shared_ptr<loggers::Logger> logger, std::string kind, std::string scheme) {
-    add(std::move(logger), std::move(kind), std::move(scheme),
+    Settings settings;
+    if constexpr (requires { T::settings(); }) settings = T::settings();
+
+    add(
+        std::move(logger), std::move(kind), std::move(scheme),
         [](std::shared_ptr<loggers::Logger> logger, std::shared_ptr<types::URL> url) -> std::shared_ptr<Plugin> {
           return std::static_pointer_cast<Plugin>(std::make_shared<T>(std::move(logger), std::move(url)));
-        });
+        },
+        std::move(settings));
   }
 
-  // Construct the driver registered for this kind and the URL's scheme. Returns
-  // nullptr when no driver is registered, or when the one that is was built against a
-  // different contract version.
+  // Constructs the driver registered for this kind and the URL's scheme. Returns nullptr
+  // when none is registered or its contract version does not match.
   std::shared_ptr<Plugin> create(std::shared_ptr<loggers::Logger> logger, const std::string& kind, const std::string& url_string) const;
 
   template <typename T, typename = std::enable_if_t<std::is_base_of_v<Plugin, T>>>
   std::shared_ptr<T> create_as(std::shared_ptr<loggers::Logger> logger, const std::string& kind, const std::string& url_string) const {
-    return std::dynamic_pointer_cast<T>(create(std::move(logger), kind, url_string));
+    // By kind, not dynamic_cast: a plugin built as a module carries its own copy of the interface's type
+    // information, which need not compare equal to the server's.
+    auto plugin = create(std::move(logger), kind, url_string);
+    return plugin && plugin->kind() == kind ? std::static_pointer_cast<T>(plugin) : nullptr;
   }
 
-  // Everything registered, for diagnostics and for `athenasip plugins list` later.
+  // Everything registered, for diagnostics.
   std::vector<Registration> list() const;
   std::vector<std::string> schemes(const std::string& kind) const;
 
-  // Tests register drivers of their own; this puts the registry back.
+  // What every registered driver says of its section, keyed from the top of the file
+  // ("media.rtpengine.timeout_ms"). A driver reached by more than one scheme says it once.
+  Settings settings() const;
+
+  // For tests that register drivers of their own.
   void clear();
 
  private:
   mutable std::mutex _mutex;
   std::map<std::pair<std::string, std::string>, Factory> _factories;
+  std::map<std::pair<std::string, std::string>, Settings> _settings;
 };
 
 }  // namespace athenasip::plugins

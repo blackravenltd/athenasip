@@ -187,8 +187,7 @@ TEST(CallsApiTest, NoCallsIsAnEmptyList) {
   EXPECT_TRUE(response.json().as_array().empty());
 }
 
-// RFC 3261 25.1 lets a Call-ID hold a "/", so one arrives percent-encoded in the path and
-// has to be matched as one segment and decoded only after.
+// RFC 3261 25.1 lets a Call-ID hold a "/", so it arrives percent-encoded and is matched as one segment before decoding.
 TEST(CallsApiTest, OneCallByItsIdEvenWithASlashInIt) {
   CallsFixture f;
   f.add_call("a/b@example.com");
@@ -224,10 +223,8 @@ TEST(CallsApiTest, WithNoEngineThereIsNoMedia) {
   EXPECT_TRUE(response.json().as_array()[0].as_object().at("media").is_null());
 }
 
-// What is on a call is status, not provisioning: the same role as registrations, and
-// nothing without a credential.
-// Call records (Milestone 4): the calls that are over, from the datastore, newest first,
-// each saying who called whom, for how long, and which nodes and engine carried it.
+// Call records: the calls that are over, from the datastore, newest first, each saying who called whom, for how
+// long, and which nodes and engine carried it.
 TEST(CallsApiTest, CallRecordsListTheCallsThatHaveEndedNewestFirst) {
   CallsFixture f;
 
@@ -304,9 +301,8 @@ TEST(CallsApiTest, NoMediaEngineIsSaidPlainly) {
   EXPECT_FALSE(response.json().as_object().at("connected").as_bool());
 }
 
-// What the node had to re-offer, for the operator to act on: which subscriber, what it
-// refused, what it took and so what its profile would be set to. In the setting's own
-// words, so the suggestion is a value the subscriber API takes.
+// What the node had to re-offer: which subscriber, what it refused, what it took, and the profile to set, as a
+// value the subscriber API takes.
 TEST(CallsApiTest, ReoffersSayWhichSubscribersNeededTheOtherProfile) {
   CallsFixture f;
   f.on_strand([&]() {
@@ -330,7 +326,7 @@ TEST(CallsApiTest, ReoffersSayWhichSubscribersNeededTheOtherProfile) {
   EXPECT_EQ(phone.at("suggested_media_profile").as_string(), "webrtc");
   EXPECT_FALSE(phone.at("last_at").as_string().empty());
 
-  // Refused both: there is nothing to suggest, and that is said rather than guessed.
+  // Refused both: there is nothing to suggest.
   const auto& fax = list[1].as_object();
   EXPECT_TRUE(fax.at("took").is_null());
   EXPECT_TRUE(fax.at("suggested_media_profile").is_null());
@@ -338,8 +334,7 @@ TEST(CallsApiTest, ReoffersSayWhichSubscribersNeededTheOtherProfile) {
   EXPECT_EQ(f.get("/api/v1/media/reoffers", "").status, 401u);
 }
 
-// Which clients the node is qualifying and what they last said, in the words the settings
-// use.
+// Which clients the node is qualifying and what they last said.
 TEST(CallsApiTest, QualifyListsTheProbedClients) {
   CallsFixture f;
   std::shared_ptr<MockConnection> connection;
@@ -384,8 +379,7 @@ TEST(CallsApiTest, MetricsAreInPrometheusTextFormat) {
   EXPECT_NE(body.find("# TYPE athenasip_media_packets_relayed_total counter\nathenasip_media_packets_relayed_total 123\n"), std::string::npos) << body;
 }
 
-// An engine that cannot count says nothing, rather than a zero that reads as "carried
-// nothing".
+// An engine that cannot count is omitted, rather than reported as zero.
 TEST(CallsApiTest, AnEngineThatCannotCountIsLeftOutOfTheMetrics) {
   CallsFixture f(/*with_engine=*/false);
 

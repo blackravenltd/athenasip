@@ -11,10 +11,6 @@
 #   test/e2e/run.sh              every scenario
 #   test/e2e/run.sh register     only the ones whose name contains "register"
 #   test/e2e/run.sh --rtpengine  the same, with rtpengine on the media path
-#
-# Principle 2 says compliance is proven rather than asserted, and this is where that
-# happens: the unit tests say the code does what the RFC says, and this says a real
-# client on a real socket agrees.
 
 set -eu
 
@@ -23,9 +19,8 @@ cd "$(dirname "$0")/../.."
 COMPOSE="docker compose -f docker-compose.test.yml"
 ENGINE="builtin"
 
-# The media engine is an overlay rather than a second harness: the scenarios, the
-# provisioning and the node are the same, so a scenario that passes against one engine
-# and fails against the other has found something in the engine.
+# The media engine is a compose overlay: the scenarios, provisioning and node are the
+# same, so a scenario that passes on one engine and fails on the other is an engine fault.
 if [ "${1:-}" = "--rtpengine" ]; then
   COMPOSE="${COMPOSE} -f docker-compose.rtpengine.yml"
   ENGINE="rtpengine"
@@ -34,8 +29,7 @@ fi
 
 NODE="172.31.0.10"
 API="http://${NODE}:8080/api/v1"
-# The administrator the node creates as it starts (docker-compose.test.yml). Signed in
-# once below; the session token is what every API call presents.
+# The administrator the node creates as it starts (docker-compose.test.yml).
 ADMIN_USER="e2e-admin"
 ADMIN_PASSWORD="e2e-admin-password"
 ADMIN_TOKEN=""
@@ -49,38 +43,29 @@ passed=0
 failed=0
 failures=""
 
-# Every scenario gets a port of its own. sipp runs as PID 1 in a container and derives
-# its branch from the pid and the call number, so two scenarios in a row produce the
-# same branch from the same address - which is a retransmission as far as RFC 3261
-# 17.2.3 is concerned, and the node correctly replays its last answer instead of
-# treating it as a new request. A different source port is a different sent-by, and the
-# transactions stop colliding.
+# Every sipp run gets its own port. sipp derives its branch from the pid and call number,
+# so two runs from one port send the same branch and sent-by, which the node rightly
+# treats as a retransmission (RFC 3261 17.2.3).
 next_port=5100
 
-# Not a function that echoes: $(...) is a subshell, and a counter incremented in one
-# stays there. Every scenario would have come back with the same port, which is the
-# collision this exists to avoid.
+# Not a function that echoes: $(...) is a subshell, and the counter would not advance.
 allocate_port() { next_port=$((next_port + 2)); }
 
 cleanup() {
-  # The node's own log, before the containers go. Without it a failing scenario is two
-  # sipp traces and a guess about what the node in the middle made of them.
+  # The node's log, saved before the containers go.
   docker logs athenasip-e2e >"${RESULTS}/node.log" 2>&1 || true
 
-  # And the engine's, when there is one of its own. A media scenario passes whether the
-  # engine anchored the call or declined it - a declined description travels on
-  # untouched and the two ends reach each other directly - so the only thing that says
-  # which happened is what the engine has to say for itself.
+  # And the engine's: its counters are the only evidence that it anchored a call.
   if [ "${ENGINE}" = "rtpengine" ]; then
     docker logs athenasip-e2e-rtpengine >"${RESULTS}/rtpengine.log" 2>&1 || true
+    docker logs athenasip-e2e-rtpengine-b >"${RESULTS}/rtpengine-b.log" 2>&1 || true
   fi
 
   ${COMPOSE} --profile e2e down --remove-orphans >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
-# curl from inside the network, because the node is not published to the host: the
-# harness tests what a client on the same network sees.
+# curl from inside the network: the node is not published to the host.
 api() {
   ${COMPOSE} run --rm --no-deps --entrypoint curl sipp-uac \
     -fsS -H "Authorization: Bearer ${ADMIN_TOKEN}" -H "Content-Type: application/json" "$@"
@@ -120,9 +105,8 @@ api -X POST "${API}/realms/example.com/subscribers" -d '{"user":"carol","passwor
 
 # One end only: a scenario that registers and asserts on what came back.
 #
-# The credentials go on the command line rather than into the scenario. sipp expands a
-# [field] before it reads the [authentication] keyword around it, so the nested form
-# produces a header line that is not a header line at all.
+# Credentials go on the command line: sipp expands a [field] before it reads the
+# [authentication] keyword around it, so they cannot be nested in the scenario.
 run_one() {
   name="$1"
   scenario="$2"
@@ -180,21 +164,14 @@ run_pair() {
   allocate_port
   uac_port="${next_port}"
 
-  # A port of its own for the deregistration. It shares nothing with the UAS run but the
-  # subscriber, and sharing the port would make them the same transaction: sipp derives its
-  # branch from the call number and message index, so two runs in a row send
-  # z9hG4bK-1-1-0, and branch plus sent-by plus method is exactly what RFC 3261 17.2.3
-  # matches on. The second REGISTER came back answered with the first one's response.
-  # The star Contact removes every binding whatever address it was made from (10.2.2),
-  # so this run has no reason to be on the UAS port.
+  # A port of its own, so the deregistration is not matched to the UAS run's transaction
+  # (RFC 3261 17.2.3).
   allocate_port
   dereg_port="${next_port}"
 
-  # Every scenario gives its callee a port of its own, and a REGISTER from a new port is
-  # a new binding rather than a replacement (RFC 3261 10.3 step 7). Left alone, the second
-  # scenario to run has the node forking to the first one's port, which nothing is
-  # listening on any more, and the call fails on a timeout that has nothing to do with
-  # what was being tested. A Contact of "*" with Expires 0 clears the lot (10.2.2).
+  # Clear the callee's bindings first with Contact: * and Expires: 0 (RFC 3261 10.2.2).
+  # Each scenario registers from a new port, which adds a binding rather than replacing
+  # one (10.3 step 7), and the node would fork to the dead ones.
   ${COMPOSE} run --rm sipp-uas \
     -sf "/e2e/scenarios/deregister.xml" -inf "/e2e/${uas_csv}" \
     -au "${uas_user}" -ap "${uas_user}-secret" \
@@ -203,10 +180,8 @@ run_pair() {
     -nostdin "${NODE}:5060" >"${RESULTS}/${name}-uas-deregister.log" 2>&1 || true
 
   # The callee registers in a run of its own, on the port the UAS run then listens on.
-  # It cannot be part of the UAS scenario: sipp binds a scenario to a single call, so the
-  # INVITE - which arrives with the caller's Call-ID - could not be mapped to the call
-  # that sent the REGISTER, and sipp discarded it as unmappable. That is what kept every
-  # two-ended scenario failing.
+  # sipp binds a scenario to one call, so a scenario that sent the REGISTER could not
+  # accept the INVITE, which arrives with the caller's Call-ID.
   ${COMPOSE} run --rm sipp-uas \
     -sf "/e2e/scenarios/register.xml" -inf "/e2e/${uas_csv}" \
     -au "${uas_user}" -ap "${uas_user}-secret" \
@@ -248,17 +223,20 @@ run_pair() {
   docker rm -f "e2e-uas-${name}" >/dev/null 2>&1 || true
 }
 
-# A media scenario passes whether the engine relayed the call or declined it: a
-# declined description travels on untouched and the two sipp containers reach each
-# other directly, so the call completes and nothing says the engine did anything. The
-# engine's own counters are the only thing that does.
-#
-# rtpengine's counters are in its log; the builtin relay's total is on /metrics.
+# A media scenario passes whether or not the engine relayed the call, because declined
+# media flows directly between the two sipp containers. Only the engine's counters tell:
+# rtpengine's are in its log, the builtin relay's total is on /metrics.
+
 # The builtin relay's running total, from /metrics. Empty when the node does not say.
 relayed_total() {
   ${COMPOSE} run --rm --no-deps --entrypoint curl sipp-uac -fsS -H "Authorization: Bearer ${ADMIN_TOKEN}" "http://${NODE}:8080/metrics" 2>/dev/null |
     awk '/^athenasip_media_packets_relayed_total /{print $2}'
 }
+
+# What one rtpengine says it relayed, and rejected, over its life.
+engine_stats() { docker logs "$1" 2>&1 | grep -E '^\[.*Port .*<>.*[0-9]+ p,' || true; }
+engine_relayed() { engine_stats "$1" | awk -F'SSRC [^,]*, ' '{print $2}' | awk -F' p,' '{s+=$1} END {print s+0}'; }
+engine_errors() { engine_stats "$1" | awk -F'b, ' '{print $2}' | awk -F' e,' '{s+=$1} END {print s+0}'; }
 
 assert_media_relayed() {
   case "media" in
@@ -266,8 +244,7 @@ assert_media_relayed() {
     *) return 0 ;;
   esac
 
-  # The builtin relay counts what it sends on, and /metrics carries the total: the same
-  # question rtpengine's counters answer below, asked of the relay that has no log to read.
+  # The builtin relay's packet count is on /metrics.
   if [ "${ENGINE}" = "builtin" ]; then
     after=$(relayed_total)
     relayed=$(( ${after:-0} - ${relayed_before:-0} ))
@@ -285,10 +262,9 @@ assert_media_relayed() {
     return 0
   fi
 
-  stats=$(docker logs athenasip-e2e-rtpengine 2>&1 | grep -E '^\[.*Port .*<>.*[0-9]+ p,' || true)
-
-  relayed=$(echo "${stats}" | awk -F'SSRC [^,]*, ' '{print $2}' | awk -F' p,' '{s+=$1} END {print s+0}')
-  errors=$(echo "${stats}" | awk -F'b, ' '{print $2}' | awk -F' e,' '{s+=$1} END {print s+0}')
+  # Either engine of the pool may have taken the call.
+  relayed=$(( $(engine_relayed athenasip-e2e-rtpengine) + $(engine_relayed athenasip-e2e-rtpengine-b) ))
+  errors=$(( $(engine_errors athenasip-e2e-rtpengine) + $(engine_errors athenasip-e2e-rtpengine-b) ))
 
   echo "  media-relayed (${relayed} packets, ${errors} errors)"
 
@@ -323,8 +299,58 @@ relayed_before=$(relayed_total)
 run_pair media          uas_media.xml   bob.csv   bob   invite_media.xml     alice.csv          alice 40s
 assert_media_relayed
 
+# The node ends a call over the admin API: both ends must be sent a BYE. Asked until the
+# call is answered; a ringing call is a 409. From inside the node's container, because a
+# sipp-uac container for curl would take the caller's address.
+node_api() {
+  docker exec athenasip-e2e curl -fsS -H "Authorization: Bearer ${ADMIN_TOKEN}" "$@"
+}
+
+hang_up_when_answered() {
+  for _ in $(seq 1 30); do
+    id=$(node_api "http://127.0.0.1:8080/api/v1/calls" 2>/dev/null | grep -o '"id":"hung-up-[^"]*"' | head -1 | sed 's/"id":"//; s/"$//')
+    if [ -n "${id}" ] && node_api -X DELETE "http://127.0.0.1:8080/api/v1/calls/$(printf '%s' "${id}" | sed 's/@/%40/g')" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+case "hung-up" in
+  *${FILTER}*)
+    hang_up_when_answered &
+    hanger=$!
+    run_pair hung-up uas.xml bob.csv bob invite_hung_up.xml alice.csv alice 40s
+    wait "${hanger}" || echo "    the DELETE never succeeded"
+    ;;
+esac
+
 run_pair delayed-offer  uas_delayed_offer.xml bob.csv bob invite_delayed_offer.xml alice.csv alice 30s
 run_pair hold-resume    uas_hold.xml          bob.csv bob invite_hold.xml          alice.csv alice 30s
+
+# The pool: with the first engine gone, a new call is anchored by the second, after one
+# timeout at most.
+if [ "${ENGINE}" = "rtpengine" ]; then
+  case "engine-failover" in
+    *${FILTER}*)
+      docker stop athenasip-e2e-rtpengine >/dev/null
+      before=$(engine_relayed athenasip-e2e-rtpengine-b)
+      run_pair engine-failover uas_media.xml bob.csv bob invite_media.xml alice.csv alice 40s
+      sleep 2
+      after=$(engine_relayed athenasip-e2e-rtpengine-b)
+      echo "  engine-failover-relayed ($((after - before)) packets through the second engine)"
+      if [ "$((after - before))" -gt 0 ]; then
+        passed=$((passed + 1))
+      else
+        failed=$((failed + 1))
+        failures="${failures} engine-failover-relayed"
+        echo "    failed - the second engine relayed nothing, so the call did not move to it"
+      fi
+      docker start athenasip-e2e-rtpengine >/dev/null
+      ;;
+  esac
+fi
 
 # Last, because timer B is 64*T1 and this one waits it out.
 run_pair invite-timeout uas_silent.xml  carol.csv carol invite_timeout.xml   alice-to-carol.csv alice 60s

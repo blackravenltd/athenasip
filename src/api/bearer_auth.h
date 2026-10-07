@@ -22,16 +22,13 @@ namespace athenasip::api {
 
 namespace http = boost::beast::http;
 
-// Who is calling, and what they may do.
-//
-// One kind of credential reaches this node: a session token, held by a user who logged in.
-// The roles are the user's, read on every request so one taken away takes effect at once.
-// Configured tokens were removed on 2026-10-01; the first administrator is made with
-// `athenasip --add-user` on the host, and everything after that is a user.
+// Who is calling, and what they may do. The only credential is a session token held by a
+// user who logged in. Roles are read on every request, so a change takes effect at once.
+// The first administrator is made with `athenasip --add-user` on the host.
 class BearerAuth {
  public:
-  // The caller, resolved. A route decides on the roles; the user is here because there are
-  // routes where who you are decides what you may do to yourself.
+  // The resolved caller. Routes decide on the roles; the user is here for routes where who
+  // you are decides what you may do to yourself.
   struct Caller {
     enum class Kind {
       none,  // nothing presented, or nothing that resolved: 401
@@ -41,18 +38,18 @@ class BearerAuth {
     Kind kind = Kind::none;
     std::vector<std::string> roles;
 
-    // Set for Kind::user only: the user, and when the session it presented runs out.
+    // Kind::user only: the user, and when the presented session expires.
     std::shared_ptr<types::User> user;
     std::time_t expires_at = 0;
 
-    // The store could not be asked, which is not a refusal: 503, not 401.
+    // The store could not be asked: 503, not 401.
     bool unavailable = false;
 
     bool authenticated() const { return kind != Kind::none; }
 
     bool has_role(const std::string& role) const { return std::find(roles.begin(), roles.end(), role) != roles.end(); }
 
-    // Any of them admits, which is what a route's role set means.
+    // Any one of the wanted roles admits.
     bool has_any(const std::vector<std::string>& wanted) const {
       return std::any_of(wanted.begin(), wanted.end(), [this](const std::string& role) { return has_role(role); });
     }
@@ -67,12 +64,11 @@ class BearerAuth {
 
   BearerAuth() = default;
 
-  // Where session tokens are resolved. A node whose datastore cannot hold users has no way
-  // in to its API at all, which every request is told with a 401.
+  // Where session tokens are resolved. Without it every request is answered 401.
   void sessions_register(std::shared_ptr<Sessions> sessions) { _sessions = std::move(sessions); }
 
-  // The caller behind a presented token. Answers on the executor Sessions was given, or
-  // inline when no store had to be asked.
+  // Resolves a presented token to its caller. Answers on the executor Sessions was given,
+  // or inline when no store had to be asked.
   void resolve(const std::string& presented, std::function<void(Caller)> handler) const {
     if (presented.empty()) return handler(Caller{});
 
@@ -97,8 +93,7 @@ class BearerAuth {
     });
   }
 
-  // How a bearer token is read off a request: one answer for the router, for this class,
-  // and for a handler that needs the token itself rather than a verdict on it.
+  // The bearer token on a request, empty when there is none.
   static std::string presented_token(const http::request<http::string_body>& request) {
     const auto header = request[http::field::authorization];
     if (header.empty()) return {};
