@@ -19,13 +19,10 @@
 
 namespace athenasip::api {
 
-// Token buckets keyed by whatever the caller is limited as: a source address, a session, a
-// username. A key gets `burst` requests at once and then `per_minute` a minute, and a
-// refusal says how long until the next one would be let through, for a Retry-After.
-//
-// Held in memory, per node. A limit that has to agree across a cluster would be a datastore
-// round trip on every request, and a node that is being hammered is the one that needs to
-// say no without asking anybody.
+// Token buckets keyed by what the caller is limited as: a source address, a session, a
+// username. A key gets `burst` requests at once and then `per_minute` a minute; a refusal
+// says how long to wait, for Retry-After. Held in memory, per node, so limiting needs no
+// datastore round trip.
 class RateLimiter {
  public:
   using Clock = std::chrono::steady_clock;
@@ -34,18 +31,16 @@ class RateLimiter {
     std::uint32_t burst = 0;
     std::uint32_t per_minute = 0;
 
-    // Zero in either is no limit, which is what an operator who fronts the API with
-    // something that limits already sets.
+    // Zero in either means no limit.
     bool unlimited() const { return burst == 0 || per_minute == 0; }
   };
 
-  // Beyond this many keys the full buckets are forgotten: a bucket that has refilled says
-  // nothing a new one would not. The keys are chosen by callers, so without a bound a
-  // stream of made-up usernames would grow this for the life of the process.
+  // Above this many keys, full buckets are dropped. Callers choose the keys, so without a
+  // bound a stream of made-up usernames would grow the map without limit.
   explicit RateLimiter(std::size_t prune_above = 10000) : _prune_above(prune_above) {}
 
-  // Takes one request from `key`'s bucket. Nothing when it was let through; the wait until
-  // it would have been, rounded up to a whole second and never zero, when it was not.
+  // Takes one request from `key`'s bucket. Returns nothing when it is allowed, otherwise
+  // the wait until it would be, rounded up to at least one second.
   std::optional<std::chrono::seconds> take(const std::string& key, const Policy& policy, Clock::time_point now = Clock::now()) {
     if (policy.unlimited()) return std::nullopt;
 
@@ -101,25 +96,22 @@ class RateLimiter {
   std::unordered_map<std::string, Bucket> _buckets;
 };
 
-// What each kind of caller is allowed, chosen for the callers there are: a person at a
-// login prompt, a monitor polling health, the console polling every two seconds.
+// The limits for each kind of caller.
 struct RateLimits {
-  // Open routes, and any request whose credential did not resolve, per source address.
-  // Tight, because nothing but a source address is known about who is asking.
+  // Open routes, and requests whose credential did not resolve, per source address.
   RateLimiter::Policy open{30, 30};
 
-  // The login on top of that: per source address, and per username whoever is asking, so
-  // spreading guesses over many addresses buys nothing against one user.
+  // Login, on top of that: per source address, and per username so that spreading guesses
+  // over many addresses gains nothing.
   RateLimiter::Policy login_source{10, 5};
   RateLimiter::Policy login_user{5, 1};
 
-  // Per session. Generous, because it is somebody who has signed in, and the console
-  // polls: a two-second poll is thirty a minute, and a busy screen makes several.
+  // Per session. Generous, because the console polls every two seconds.
   RateLimiter::Policy session{60, 300};
 };
 
-// The limiter, the limits and the clock, shared by the router and the routes that limit
-// further on what only they can see, which is the login and its username.
+// The limiter, the limits and the clock, shared by the router and by routes that limit
+// further, as the login does by username.
 class Throttle {
  public:
   explicit Throttle(RateLimits limits = {}) : _limits(limits) {}
@@ -127,7 +119,7 @@ class Throttle {
   const RateLimits& limits() const { return _limits; }
   void limits_set(RateLimits limits) { _limits = limits; }
 
-  // Injectable, so a test advances time rather than waiting a minute for a bucket.
+  // Injectable, so a test can advance time.
   void clock_set(std::function<RateLimiter::Clock::time_point()> now) { _now = std::move(now); }
 
   std::optional<std::chrono::seconds> take(const std::string& key, const RateLimiter::Policy& policy) { return _limiter.take(key, policy, _now()); }

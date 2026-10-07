@@ -10,10 +10,12 @@
 #include <yaml-cpp/yaml.h>
 
 #include <boost/json.hpp>
+#include <chrono>
 #include <ctime>
 #include <memory>
 #include <set>
 #include <string>
+#include <thread>
 
 #include "../helpers/fake_rtpengine_helper.h"
 #include "../helpers/sync_media_engine_helper.h"
@@ -40,8 +42,8 @@ const std::string kOffer =
     "t=0 0\r\n"
     "m=audio 49170 RTP/AVP 0\r\n";
 
-// A two-party call as the proxy hands one to the engine: one dialog, both legs on it,
-// the caller marked as the originator (RFC 3261 12.1.1).
+// A two-party call as the proxy hands one to the engine: one dialog, both legs on it, the caller marked as
+// originator (RFC 3261 12.1.1).
 std::shared_ptr<Call> make_call() {
   auto dialog = std::make_shared<types::Dialog>();
   dialog->call_id = "call-1@example.com";
@@ -75,9 +77,8 @@ Bencode ok_with_sdp(const std::string& sdp) { return Bencode::dictionary({{"resu
 
 }  // namespace
 
-// The ng protocol's handshake. A UDP socket opens whether or not anything is listening,
-// so the ping is the only thing that distinguishes a configured engine from a reachable
-// one.
+// The ng handshake. A UDP socket opens whether or not anything listens, so only the ping shows the engine
+// is reachable.
 TEST(RtpengineMediaEngineTest, ConnectPingsAndWaitsForAPong) {
   FakeRtpengine fake;
   fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
@@ -103,12 +104,11 @@ TEST(RtpengineMediaEngineTest, ConnectFailsWhenNothingAnswers) {
   EXPECT_FALSE(engine->connect());
   EXPECT_FALSE(engine->is_connected());
 
-  // Asked twice and then given up on, rather than once or for ever.
+  // Asked twice, then given up on.
   EXPECT_EQ(fake.count(), 2u);
 }
 
-// A node that started against an engine answering something other than pong would
-// report a media engine it cannot use.
+// Anything but pong is not a usable engine.
 TEST(RtpengineMediaEngineTest, ConnectFailsWhenThePingIsAnsweredWithAnythingElse) {
   FakeRtpengine fake;
   fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("error"))}, {"error-reason", Bencode(std::string("no"))}}));
@@ -144,26 +144,23 @@ TEST(RtpengineMediaEngineTest, AnOfferNamesTheCallTheOffererAndTheDescription) {
   EXPECT_EQ(request->string_at("from-tag"), "alice-tag");
   EXPECT_EQ(request->string_at("sdp"), kOffer);
 
-  // The two substitutions that keep one end from learning the other's address
-  // (RFC 8866 section 5.2), which is the whole point of anchoring.
+  // The two substitutions that keep one end from learning the other's address (RFC 8866 5.2).
   const auto* replace = request->find("replace");
   ASSERT_NE(replace, nullptr);
   ASSERT_TRUE(replace->is_list());
 
-  // A list is a set here, so what matters is what is in it and not the order.
+  // A list is a set here: order does not matter.
   std::set<std::string> replacements;
   for (const auto& value : replace->values()) replacements.insert(value.string());
 
-  // RFC 3264 section 8: the version is rtpengine's too, because what this node emits
-  // is not what the endpoint sent.
+  // RFC 3264 8: the version is rtpengine's too, because what this node emits is not what the endpoint sent.
   EXPECT_EQ(replacements, (std::set<std::string>{"origin", "sdp-version", "session-connection"}));
 
   engine->close();
 }
 
-// rtpengine files media under the tag of the end that offered it, so the answer names
-// the offerer as from and the answerer as to. Getting this the wrong way round makes
-// a second, unrelated call rather than an error anybody would see.
+// rtpengine files media under the offerer's tag, so an answer names the offerer as from and the answerer as
+// to. Reversed, it silently makes a second call.
 TEST(RtpengineMediaEngineTest, AnAnswerNamesTheOffererAsFromAndTheAnswererAsTo) {
   FakeRtpengine fake;
   fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
@@ -189,8 +186,7 @@ TEST(RtpengineMediaEngineTest, AnAnswerNamesTheOffererAsFromAndTheAnswererAsTo) 
   engine->close();
 }
 
-// RFC 5761: offered onward only when the end that sent it asked for it, and never
-// invented for an endpoint that did not.
+// RFC 5761: rtcp-mux is offered onward only when the sending end asked for it.
 TEST(RtpengineMediaEngineTest, RtcpMuxIsCarriedOnlyWhenTheOfferHadIt) {
   FakeRtpengine fake;
   fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
@@ -226,9 +222,7 @@ TEST(RtpengineMediaEngineTest, RtcpMuxIsCarriedOnlyWhenTheOfferHadIt) {
   engine->close();
 }
 
-// An engine that will not take the media is not a call that has to fail: the proxy
-// passes the description through. What it must not do is pretend the media was
-// anchored, so the reason has to come back.
+// An engine's refusal comes back with its reason, so the proxy can pass the description through unanchored.
 TEST(RtpengineMediaEngineTest, AnErrorReplyIsReportedWithItsReason) {
   FakeRtpengine fake;
   fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
@@ -258,8 +252,7 @@ TEST(RtpengineMediaEngineTest, AnOkWithNoSdpIsNotAnAnswer) {
   engine->close();
 }
 
-// Releasing one leg would leave the other holding ports for a call that has ended, so
-// the delete names the call and no tag at all.
+// The delete names the call and no tag, so both legs' ports are released.
 TEST(RtpengineMediaEngineTest, ReleaseDeletesTheWholeCall) {
   FakeRtpengine fake;
   fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
@@ -279,9 +272,7 @@ TEST(RtpengineMediaEngineTest, ReleaseDeletesTheWholeCall) {
   engine->close();
 }
 
-// UDP loses datagrams, and rtpengine caches its answer against the cookie so that
-// asking again is asking for the answer rather than for the work. A driver that gave
-// up on the first silence would fail a call for one lost packet.
+// UDP loses datagrams, and rtpengine caches its answer against the cookie, so a retry reuses the cookie.
 TEST(RtpengineMediaEngineTest, ARequestLostOnTheWayIsAskedAgainWithTheSameCookie) {
   FakeRtpengine fake;
   fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
@@ -297,15 +288,13 @@ TEST(RtpengineMediaEngineTest, ARequestLostOnTheWayIsAskedAgainWithTheSameCookie
   const auto cookies = fake.cookies();
   ASSERT_GE(cookies.size(), before + 2);
 
-  // The lost one and the one that got through are the same request, not two.
+  // The lost request and the one that got through are the same request.
   EXPECT_EQ(cookies[before], cookies[before + 1]);
 
   engine->close();
 }
 
-// What the call sweep reads. rtpengine reports a per-stream "last packet"; the shortest
-// idle across the call is what says whether it is still up, because one stream still
-// carrying is a call still up.
+// What the call sweep reads: the shortest "last packet" idle across the call's streams.
 TEST(RtpengineMediaEngineTest, QueryReportsTheShortestIdleAcrossEveryStream) {
   const auto now = static_cast<std::int64_t>(std::time(nullptr));
 
@@ -334,11 +323,8 @@ TEST(RtpengineMediaEngineTest, QueryReportsTheShortestIdleAcrossEveryStream) {
   engine->close();
 }
 
-// The ng protocol's query gives each stream a "stats" dictionary of packets, bytes and
-// errors received on it. Each is one end, inbound at the engine. What the engine sent to
-// that end is only reported where the engine reports it, as "stats_out"; nothing is made
-// up from the other leg, because the difference between the two is exactly what one-way
-// audio looks like.
+// The ng query gives each stream a "stats" dictionary of what the engine received from that end. What it
+// sent is reported only where the engine reports it, as "stats_out"; nothing is derived from the other leg.
 TEST(RtpengineMediaEngineTest, QueryReportsEachEndsCounts) {
   auto with_out = Bencode::dictionary({{"stats", Bencode::dictionary({{"packets", Bencode(1427)}, {"bytes", Bencode(84790)}, {"errors", Bencode(0)}})},
                                        {"stats_out", Bencode::dictionary({{"packets", Bencode(4)}, {"bytes", Bencode(336)}})}});
@@ -373,9 +359,8 @@ TEST(RtpengineMediaEngineTest, QueryReportsEachEndsCounts) {
   engine->close();
 }
 
-// A stream nothing has ever arrived on is idle from when the call was created rather
-// than not idle at all, which is what the builtin relay reports and what stops a call
-// that never carried media living for ever.
+// A stream with no packet yet is idle since the call was created, as the builtin relay reports, so a call
+// that never carried media does not live for ever.
 TEST(RtpengineMediaEngineTest, AStreamWithNoPacketIsIdleSinceTheCallWasCreated) {
   const auto now = static_cast<std::int64_t>(std::time(nullptr));
 
@@ -397,8 +382,7 @@ TEST(RtpengineMediaEngineTest, AStreamWithNoPacketIsIdleSinceTheCallWasCreated) 
   engine->close();
 }
 
-// A call the engine holds nothing for has no media to be idle, and the sweep must read
-// that as "no answer" rather than as a long silence.
+// A call with no streams reports no idle figure, which the sweep reads as "no answer".
 TEST(RtpengineMediaEngineTest, ACallWithNoStreamsReportsNoIdleAtAll) {
   FakeRtpengine fake;
   fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
@@ -434,10 +418,8 @@ TEST(RtpengineMediaEngineTest, RecordingIsAskedForByName) {
   engine->close();
 }
 
-// The profile is what the caller knows and the engine does not: which side of the
-// bridge is the browser. Without it rtpengine mirrors what it was handed, so a WebRTC
-// offer produces a WebRTC offer to the desk phone, which is the one call Milestone 3
-// exists to make work.
+// The profile tells the engine which side of the bridge is the browser. Without it rtpengine mirrors what it
+// was handed, and a desk phone gets a WebRTC offer.
 TEST(RtpengineMediaEngineTest, TheWebRtcProfileAsksRtpengineForIceDtlsAndSavpf) {
   FakeRtpengine fake;
   fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
@@ -457,8 +439,7 @@ TEST(RtpengineMediaEngineTest, TheWebRtcProfileAsksRtpengineForIceDtlsAndSavpf) 
 
   EXPECT_EQ(request->string_at("ICE"), "force");
 
-  // Passive in the offer, so the engine advertises actpass and prefers to let the
-  // callee start the handshake. Only in the offer - see the answer test below.
+  // Passive in the offer, so the engine advertises actpass. Only in the offer: see the answer test below.
   EXPECT_EQ(request->string_at("DTLS"), "passive");
   EXPECT_EQ(request->string_at("transport-protocol"), "UDP/TLS/RTP/SAVPF");
 
@@ -471,14 +452,9 @@ TEST(RtpengineMediaEngineTest, TheWebRtcProfileAsksRtpengineForIceDtlsAndSavpf) 
   engine->close();
 }
 
-// RFC 5763 section 5: the offerer says actpass and the answerer chooses. Towards an
-// offerer, rtpengine is the answerer, and it chooses active and starts the handshake
-// the moment ICE comes up - seconds before any 200 OK exists when the callee is a phone
-// somebody has to pick up. Telling it "passive" in the answer flips the role under a
-// handshake in flight: the engine resets and waits for a ClientHello, the offerer was
-// told the engine is passive after it had already been receiving ClientHellos, and
-// neither end ever starts again. The 2026-09-30 live call was silent for exactly this,
-// and the automated browser run never saw it because it answers within milliseconds.
+// RFC 5763 5: the offerer says actpass and the answerer chooses. Towards an offerer rtpengine is the answerer
+// and has already chosen active and started the handshake when ICE came up. Sending "passive" in the answer
+// would flip the role under a handshake in flight, and neither end would start again.
 TEST(RtpengineMediaEngineTest, TheWebRtcAnswerLeavesTheDtlsRoleToTheEngine) {
   FakeRtpengine fake;
   fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
@@ -518,8 +494,7 @@ TEST(RtpengineMediaEngineTest, ThePlainRtpProfileStripsWhatAPhoneCannotUse) {
   flags.participant = 0;
   flags.target = Flags::Profile::PlainRtp;
 
-  // Even where the offer in hand is a browser's, which is exactly the case that has to
-  // come out the other side as something a phone can answer.
+  // Even when the offer in hand is a browser's.
   flags.ice = true;
   flags.dtls = true;
   flags.rtcp_mux = true;
@@ -541,8 +516,7 @@ TEST(RtpengineMediaEngineTest, ThePlainRtpProfileStripsWhatAPhoneCannotUse) {
   engine->close();
 }
 
-// RFC 4568: the keys travel in the description, so there is no handshake to start and
-// no ICE to gather. A desk phone offered a browser's UDP/TLS/RTP/SAVPF cannot answer.
+// RFC 4568: the keys travel in the description, so there is no DTLS handshake and no ICE.
 TEST(RtpengineMediaEngineTest, TheSrtpProfileAsksForSavpWithNoDtls) {
   FakeRtpengine fake;
   fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
@@ -567,8 +541,7 @@ TEST(RtpengineMediaEngineTest, TheSrtpProfileAsksForSavpWithNoDtls) {
   engine->close();
 }
 
-// Nothing said means nothing sent, which leaves rtpengine doing what it did before the
-// profile existed. That is the right answer for a caller that cannot tell.
+// The mirror profile sends no ICE or DTLS instruction, leaving rtpengine to mirror what it was handed.
 TEST(RtpengineMediaEngineTest, TheMirrorProfileSaysNothingAboutIceOrDtls) {
   FakeRtpengine fake;
   fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
@@ -605,8 +578,7 @@ TEST(RtpengineMediaEngineTest, CapabilitiesAreBridgeRecordAndTranscodeButNotConf
   EXPECT_FALSE(capabilities.conference);
 }
 
-// The builtin engine advertises record and cannot do it; the contract's default has to
-// say so rather than silently succeed.
+// An engine that cannot record declines rather than silently succeed.
 TEST(RtpengineMediaEngineTest, AnEngineThatDoesNotRecordDeclines) {
   auto logger = std::make_shared<MockLogger>();
   auto url = std::make_shared<types::URL>("builtin://?bind_address=127.0.0.1&port_min=24800&port_max=24810");
@@ -627,11 +599,324 @@ TEST(RtpengineMediaEngineTest, TheDriverResolvesFromItsUrlScheme) {
   EXPECT_EQ(engine->name(), "rtpengine");
 }
 
-// An engine is somewhere else by definition, so a URL that names nowhere is a
-// configuration error at startup rather than a call that fails later.
+// A URL with no host is a configuration error at startup.
 TEST(RtpengineMediaEngineTest, AUrlWithNoHostIsRefusedAtConfigureTime) {
   auto logger = std::make_shared<MockLogger>();
   auto engine = std::make_shared<RtpengineMediaEngine>(logger, std::make_shared<types::URL>("rtpengine://"));
 
   EXPECT_FALSE(engine->configure(YAML::Node(), Config(logger)));
+}
+
+// A leg inside sip.localnet (Flags::address) is told the local address; every other leg the configured
+// media_address. One address for both would depend on the router hairpinning, or be unreachable from outside.
+TEST(RtpengineMediaEngineTest, ALegInsideTheLocalNetworkIsGivenTheLocalAddress) {
+  FakeRtpengine fake;
+  fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
+  fake.answer("offer", ok_with_sdp(kOffer));
+
+  auto engine = make_engine(fake, "timeout_ms: 100\nattempts: 3\nmedia_address: 203.0.113.5");
+  ASSERT_TRUE(engine->connect());
+  auto call = make_call();
+
+  Flags outside;
+  outside.participant = 0;
+  ASSERT_TRUE(engine->offer(call, kOffer, outside).ok);
+  EXPECT_EQ(fake.last("offer")->string_at("media-address"), "203.0.113.5");
+
+  Flags inside;
+  inside.participant = 0;
+  inside.address = "10.44.1.50";
+  ASSERT_TRUE(engine->offer(call, kOffer, inside).ok);
+  EXPECT_EQ(fake.last("offer")->string_at("media-address"), "10.44.1.50");
+
+  engine->close();
+}
+
+// media_address may be a name: rtpengine is given the address it resolves to, because phones do not resolve
+// a name in a description.
+TEST(RtpengineMediaEngineTest, AMediaAddressThatIsANameIsGivenAsTheAddressItResolvesTo) {
+  FakeRtpengine fake;
+  fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
+  fake.answer("offer", ok_with_sdp(kOffer));
+
+  auto engine = make_engine(fake, "timeout_ms: 100\nattempts: 3\nmedia_address: localhost");
+  ASSERT_TRUE(engine->connect());
+  auto call = make_call();
+
+  Flags flags;
+  flags.participant = 0;
+  ASSERT_TRUE(engine->offer(call, kOffer, flags).ok);
+  EXPECT_EQ(fake.last("offer")->string_at("media-address"), "127.0.0.1");
+
+  engine->close();
+}
+
+// --- A pool of engines -------------------------------------------------------------------
+
+namespace {
+
+Bencode pong() { return Bencode::dictionary({{"result", Bencode(std::string("pong"))}}); }
+
+std::string engine_name(const FakeRtpengine& fake) { return "rtpengine://127.0.0.1:" + std::to_string(fake.port()); }
+
+// Two engines: the URL names the first, rtpengine.engines adds the second.
+std::shared_ptr<SyncMediaEngine> make_pool(const FakeRtpengine& first, const FakeRtpengine& second,
+                                           const std::string& settings = "timeout_ms: 50\nattempts: 2") {
+  auto logger = std::make_shared<MockLogger>();
+  auto url = std::make_shared<types::URL>(engine_name(first));
+
+  auto engine = std::make_shared<SyncMediaEngine>(std::make_shared<RtpengineMediaEngine>(logger, url));
+  EXPECT_TRUE(engine->configure(YAML::Load(settings + "\nengines: [\"127.0.0.1:" + std::to_string(second.port()) + "\"]"), Config(logger)));
+
+  return engine;
+}
+
+std::shared_ptr<Call> make_call_with_id(const std::string& id) {
+  auto call = make_call();
+  call->id = id;
+  for (auto& participant : call->participants) participant.dialog->call_id = id;
+  return call;
+}
+
+std::size_t offers_to(const FakeRtpengine& fake) {
+  std::size_t count = 0;
+  for (const auto& request : fake.requests()) count += request.string_at("command") == "offer" ? 1 : 0;
+  return count;
+}
+
+}  // namespace
+
+// The engine that anchored a call is recorded on it, so every later request for the call, from any node, goes to
+// the engine that holds its ports.
+TEST(RtpengineMediaEngineTest, ACallIsRecordedOnTheEngineThatAnchoredItAndStaysThere) {
+  FakeRtpengine first;
+  FakeRtpengine second;
+  for (auto* fake : {&first, &second}) {
+    fake->answer("ping", pong());
+    fake->answer("offer", ok_with_sdp(kOffer));
+    fake->answer("answer", ok_with_sdp(kOffer));
+  }
+
+  auto engine = make_pool(first, second);
+  ASSERT_TRUE(engine->connect());
+
+  auto call = make_call();
+  Flags flags;
+  flags.participant = 0;
+  ASSERT_TRUE(engine->offer(call, kOffer, flags).ok);
+
+  const auto& holder = call->media_engine == engine_name(first) ? first : second;
+  const auto& other = &holder == &first ? second : first;
+  ASSERT_TRUE(call->media_engine == engine_name(first) || call->media_engine == engine_name(second)) << call->media_engine;
+
+  Flags answering;
+  answering.participant = 1;
+  ASSERT_TRUE(engine->answer(call, kOffer, answering).ok);
+  EXPECT_TRUE(engine->release(call));
+
+  EXPECT_TRUE(holder.last("answer").has_value());
+  EXPECT_TRUE(holder.last("delete").has_value());
+  EXPECT_FALSE(other.last("answer").has_value());
+  EXPECT_FALSE(other.last("delete").has_value());
+
+  engine->close();
+}
+
+// A node that never saw the call, reading it from the datastore, reaches the same engine.
+TEST(RtpengineMediaEngineTest, ACallRecordedOnAnEngineIsReleasedThereByAnyNode) {
+  FakeRtpengine first;
+  FakeRtpengine second;
+  first.answer("ping", pong());
+  second.answer("ping", pong());
+
+  auto engine = make_pool(first, second);
+  ASSERT_TRUE(engine->connect());
+
+  auto call = make_call();
+  call->media_engine = engine_name(second);
+  EXPECT_TRUE(engine->release(call));
+
+  EXPECT_TRUE(second.last("delete").has_value());
+  EXPECT_FALSE(first.last("delete").has_value());
+
+  engine->close();
+}
+
+// New calls are spread over the engines, and the choice depends on the call alone, so it is the same on every node.
+TEST(RtpengineMediaEngineTest, NewCallsAreSpreadOverEveryEngine) {
+  FakeRtpengine first;
+  FakeRtpengine second;
+  for (auto* fake : {&first, &second}) {
+    fake->answer("ping", pong());
+    fake->answer("offer", ok_with_sdp(kOffer));
+  }
+
+  auto engine = make_pool(first, second);
+  ASSERT_TRUE(engine->connect());
+
+  Flags flags;
+  flags.participant = 0;
+  for (int i = 0; i < 20; ++i) ASSERT_TRUE(engine->offer(make_call_with_id("spread-" + std::to_string(i) + "@example.com"), kOffer, flags).ok);
+
+  EXPECT_GT(offers_to(first), 0u);
+  EXPECT_GT(offers_to(second), 0u);
+  EXPECT_EQ(offers_to(first) + offers_to(second), 20u);
+
+  engine->close();
+}
+
+// An engine that stops answering costs the call it was asked about one timeout; that call and every later one go
+// to an engine that answers.
+TEST(RtpengineMediaEngineTest, AnEngineThatStopsAnsweringIsPassedOverForNewCalls) {
+  FakeRtpengine first;
+  FakeRtpengine second;
+  for (auto* fake : {&first, &second}) {
+    fake->answer("ping", pong());
+    fake->answer("offer", ok_with_sdp(kOffer));
+  }
+
+  auto engine = make_pool(first, second);
+  ASSERT_TRUE(engine->connect());
+
+  first.swallow(1000);
+
+  Flags flags;
+  flags.participant = 0;
+  for (int i = 0; i < 10; ++i) {
+    auto call = make_call_with_id("over-" + std::to_string(i) + "@example.com");
+    ASSERT_TRUE(engine->offer(call, kOffer, flags).ok) << i;
+    EXPECT_EQ(call->media_engine, engine_name(second));
+  }
+
+  // Asked once, for attempts datagrams, and not again.
+  EXPECT_LE(offers_to(first), 2u);
+  EXPECT_TRUE(engine->is_connected());
+
+  engine->close();
+}
+
+// A call already anchored cannot move: its ports are on the engine that went quiet.
+TEST(RtpengineMediaEngineTest, ACallOnAnEngineThatStoppedAnsweringIsNotMoved) {
+  FakeRtpengine first;
+  FakeRtpengine second;
+  for (auto* fake : {&first, &second}) {
+    fake->answer("ping", pong());
+    fake->answer("offer", ok_with_sdp(kOffer));
+  }
+
+  auto engine = make_pool(first, second);
+  ASSERT_TRUE(engine->connect());
+
+  first.swallow(1000);
+
+  auto call = make_call();
+  call->media_engine = engine_name(first);
+
+  Flags flags;
+  flags.participant = 0;
+  EXPECT_FALSE(engine->offer(call, kOffer, flags).ok);
+  EXPECT_EQ(call->media_engine, engine_name(first));
+  EXPECT_EQ(offers_to(second), 0u);
+
+  engine->close();
+}
+
+// The pool is pinged, and an engine that answers again takes calls again.
+TEST(RtpengineMediaEngineTest, AnEngineThatAnswersAgainTakesCallsAgain) {
+  FakeRtpengine first;
+  FakeRtpengine second;
+  for (auto* fake : {&first, &second}) {
+    fake->answer("ping", pong());
+    fake->answer("offer", ok_with_sdp(kOffer));
+  }
+
+  auto engine = make_pool(first, second, "timeout_ms: 50\nattempts: 2\nping_interval: 1");
+  ASSERT_TRUE(engine->connect());
+
+  // Down: every new call goes to the second.
+  first.swallow(1000);
+  Flags flags;
+  flags.participant = 0;
+  for (int i = 0; i < 10; ++i) ASSERT_TRUE(engine->offer(make_call_with_id("back-" + std::to_string(i) + "@example.com"), kOffer, flags).ok);
+  const auto while_down = offers_to(first);
+
+  first.swallow(0);
+  std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+
+  for (int i = 0; i < 10; ++i) ASSERT_TRUE(engine->offer(make_call_with_id("back-" + std::to_string(i) + "@example.com"), kOffer, flags).ok);
+  EXPECT_GT(offers_to(first), while_down);
+
+  engine->close();
+}
+
+// One engine answering is enough to serve; the rest are tried again by the pings.
+TEST(RtpengineMediaEngineTest, ConnectSucceedsWhileAnyEngineAnswers) {
+  FakeRtpengine first;
+  FakeRtpengine second;
+  first.swallow(1000);
+  second.answer("ping", pong());
+
+  auto engine = make_pool(first, second);
+  EXPECT_TRUE(engine->connect());
+  EXPECT_TRUE(engine->is_connected());
+
+  engine->close();
+}
+
+TEST(RtpengineMediaEngineTest, ConnectFailsWhenNoEngineAnswers) {
+  FakeRtpengine first;
+  FakeRtpengine second;
+  first.swallow(1000);
+  second.swallow(1000);
+
+  auto engine = make_pool(first, second);
+  EXPECT_FALSE(engine->connect());
+  EXPECT_FALSE(engine->is_connected());
+}
+
+// rtpengine.engines alone is a pool; the URL needs no host then.
+TEST(RtpengineMediaEngineTest, EnginesAloneNeedNoHostInTheUrl) {
+  auto logger = std::make_shared<MockLogger>();
+  auto engine = std::make_shared<RtpengineMediaEngine>(logger, std::make_shared<types::URL>("rtpengine://"));
+
+  EXPECT_TRUE(engine->configure(YAML::Load("engines: [\"10.0.0.5:2223\", \"10.0.0.6\"]"), Config(logger)));
+}
+
+// A call recorded on an engine this node does not have is not guessed at: another engine would delete nothing,
+// or the wrong call's ports.
+TEST(RtpengineMediaEngineTest, ACallRecordedOnAnEngineOutsideThePoolIsRefused) {
+  FakeRtpengine fake;
+  fake.answer("ping", pong());
+
+  auto engine = make_engine(fake);
+  ASSERT_TRUE(engine->connect());
+
+  auto call = make_call();
+  call->media_engine = "rtpengine://192.0.2.77:2223";
+
+  EXPECT_FALSE(engine->release(call));
+  EXPECT_FALSE(engine->query_result(call).ok);
+  EXPECT_FALSE(fake.last("delete").has_value());
+
+  engine->close();
+}
+
+// An engine that holds nothing for the call says so, which is how a node tells a call whose media has gone from one
+// it cannot see.
+TEST(RtpengineMediaEngineTest, AQueryForACallTheEngineDoesNotHoldSaysSo) {
+  FakeRtpengine fake;
+  fake.answer("ping", pong());
+  fake.answer("query", Bencode::dictionary({{"result", Bencode(std::string("error"))}, {"error-reason", Bencode(std::string("Unknown call-id"))}}));
+
+  auto engine = make_engine(fake);
+  ASSERT_TRUE(engine->connect());
+
+  auto held = engine->query_result(make_call());
+  ASSERT_TRUE(held.ok) << held.error;
+
+  const auto document = boost::json::parse(held.value).as_object();
+  ASSERT_TRUE(document.contains("held"));
+  EXPECT_FALSE(document.at("held").as_bool());
+
+  engine->close();
 }

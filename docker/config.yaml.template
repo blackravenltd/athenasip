@@ -4,27 +4,14 @@
 # Copyright (C) 2026 Tom Cully <mail@tomcully.com>
 # Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 #
-# The node that docker-compose.yml runs: the canonical backends rather than the built-in
-# ones, because the point of this stack is to show what a real deployment looks like.
-# Redis holds registrations and admin users, Mosquitto carries the event bus, rtpengine
-# is on the media path, and the whole thing comes up with one command.
+# The node docker-compose.yml runs, rendered by docker/up.sh. Hosts are compose service
+# names, except @PUBLIC_ADDRESS@, the host's, which clients must be able to reach.
 #
-# Addresses here are container names on the compose network. The one exception is
-# sip.public_address, which has to be an address a client can come back to and therefore
-# comes from the host. docker/up.sh renders this file and works that address out.
 
 sip:
   node_id: athenasip-quickstart
-
-  # What this node writes into Via, Record-Route and Contact. A container's own address
-  # is reachable from the compose network and from nothing else, so a client told to come
-  # back to it never arrives.
   public_address: @PUBLIC_ADDRESS@
-
-  # UDP and TCP are open here because the point is that a newcomer can point any softphone
-  # at this in ten minutes. A deployment facing anything hostile turns this off and serves
-  # TLS and WSS only.
-  allow_unencrypted: true
+  allow_unencrypted: true         # plain UDP and TCP, for any softphone
 
 udp:
   enable: true
@@ -40,13 +27,9 @@ tls:
   enable: true
   address: 0.0.0.0
   port: @TLS_PORT@
-  cert_pem_filename: "/tls/snakeoil.cer"
+  cert_pem_filename: "/tls/snakeoil.cer"   # trust tls/ca/snakeca.crt, or click through
   key_pem_filename: "/tls/snakeoil.key"
 
-# WSS, which is what a browser needs: it will not open an insecure WebSocket from a page
-# served over https, and getUserMedia wants a secure origin. The certificate is the
-# snakeoil one, so a browser will refuse it until you trust tls/ca/snakeca.crt or click
-# through - see docs/quick_start.md.
 websocket:
   enable: true
   address: 0.0.0.0
@@ -56,22 +39,14 @@ websocket:
   key_pem_filename: "/tls/snakeoil.key"
 
 datastore:
-  # Registrations, realms, subscribers, admin users and sessions. Survives a restart of the
-  # node, which memory:// does not.
   url: "redis://redis:6379"
 
 events:
-  # Observability, presence and discovery. Never on the call setup path, so a node whose
-  # broker is down still places calls.
   url: "mqtt://mosquitto:1883/?prefix=athenasip/"
   status_interval: 30
 
 media:
-  # rtpengine rather than the in-process relay, because a browser's media is WebRTC and
-  # the built-in relay speaks plain RTP. The plugin contract is what makes this one line:
-  # nothing else in this file changes with the engine.
-  url: "rtpengine://@RTPENGINE_ADDRESS@:22222"
-
+  url: "rtpengine://@RTPENGINE_ADDRESS@:22222"   # browsers need WebRTC, which builtin cannot do
   rtpengine:
     timeout_ms: 500
     attempts: 3
@@ -79,37 +54,16 @@ media:
 http:
   address: 0.0.0.0
   port: @API_PORT@
-
   api:
-    enable: true
-
-    # No tokens: everything that uses this API signs in as a user. docker/up.sh creates
-    # the first administrator with `athenasip --add-user` inside the container, which is
-    # also the way back in if that password is lost.
-
+    enable: true                  # up.sh makes the first admin with athenasip --add-user
     session_lifetime: 43200
     session_idle: 3600
-
-    # What a web client is told to use for ICE, served by GET /api/v1/client/config. A
-    # browser reads no configuration file, so this is how it learns about the coturn in
-    # this stack.
-    #
-    # The address is the host's, rendered by up.sh, because a container address is no use
-    # to a browser.
     ice_servers:
       - url: "stun:@PUBLIC_ADDRESS@:3478"
       - url: "turn:@PUBLIC_ADDRESS@:3478"
-
-    # The same secret coturn is given in docker/turnserver.conf. The two never talk: the
-    # node mints a credential under it and coturn recomputes the same HMAC to check one.
-    # Change both together, and change them before this is reachable from anywhere you do
-    # not control.
-    turn_shared_secret: "change-me-turn-secret"
+    turn_shared_secret: "change-me-turn-secret"   # must match docker/turnserver.conf; change both
     turn_credential_ttl: 3600
-
-  # The admin console, which lives in its own repository and is mounted here when it has
-  # been built. Nothing is served when it has not, and the API is unaffected either way.
   files:
-    enable: @SERVE_CONSOLE@
+    enable: @SERVE_CONSOLE@       # true once the console has been built
     path: "/console"
     spa: true

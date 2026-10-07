@@ -20,8 +20,7 @@ using namespace athenasip;
 
 namespace {
 
-// Somewhere off this node to send things: a UDP listener as Core sees one, recording every
-// flow it is asked to open.
+// A UDP listener as Core sees one, recording every flow it is asked to open.
 class DatagramListener : public servers::Server {
  public:
   using Server::Server;
@@ -42,10 +41,9 @@ class DatagramListener : public servers::Server {
   std::vector<std::shared_ptr<MockConnection>> opened;
 };
 
-// The policy, from RFC 3261 22.3 and decision 7 in TODO/ACTIVE.md: a caller claiming an
-// identity in a domain this node serves proves it, whoever it is calling; a caller from
-// anywhere else may call into this node's domains and nowhere else. Alice is on UDP, where
-// a source address proves nothing, and has not registered.
+// The policy (RFC 3261 22.3): a caller claiming an identity in a domain this node serves must prove
+// it, whoever it calls; any other caller may call into this node's domains and nowhere else.
+// Alice is on UDP, where a source address proves nothing, and has not registered.
 struct AuthFixture : ProxyFixture {
   std::shared_ptr<DatagramListener> listener;
 
@@ -77,8 +75,7 @@ struct AuthFixture : ProxyFixture {
     return raw;
   }
 
-  // RFC 2617 without qop, which is what this node's challenges ask for: HA1 is what the
-  // store holds, and the response is H(HA1:nonce:H(method:uri)).
+  // RFC 2617 Digest without qop, as this node challenges: response = H(HA1:nonce:H(method:uri)).
   static std::string credentials(const std::string& user, const std::string& ha1, const std::string& nonce, const std::string& method, const std::string& uri,
                                  const std::string& realm = "example.com") {
     const auto response = Util::md5(ha1 + ":" + nonce + ":" + Util::md5(method + ":" + uri));
@@ -105,9 +102,8 @@ struct AuthFixture : ProxyFixture {
 
 }  // namespace
 
-// RFC 3261 22.3: a proxy that wants a caller to prove who it is answers 407 with a
-// Proxy-Authenticate for its realm. Alice claims to be one of this node's subscribers and
-// is calling out, which is the call a toll fraudster wants to make.
+// RFC 3261 22.3: a caller claiming a local identity and calling off-node is answered 407 with a
+// Proxy-Authenticate for the realm.
 TEST(ProxyAuthenticationTest, AnOffNodeCallFromALocalIdentityIsChallenged) {
   AuthFixture f;
 
@@ -128,8 +124,7 @@ TEST(ProxyAuthenticationTest, AnOffNodeCallFromALocalIdentityIsChallenged) {
   EXPECT_EQ(f.forwarded_off_node(), 0u);
 }
 
-// And calling a colleague on the same node is no different: a From in this node's domain
-// is a claim, and the callee's phone shows it as who is calling.
+// A local identity calling a local user is challenged too: the From is shown to the callee.
 TEST(ProxyAuthenticationTest, ALocalCallFromALocalIdentityIsChallengedToo) {
   AuthFixture f;
 
@@ -141,8 +136,8 @@ TEST(ProxyAuthenticationTest, ALocalCallFromALocalIdentityIsChallengedToo) {
   EXPECT_EQ(ProxyFixture::request_with(f.callee_connection, "INVITE"), nullptr);
 }
 
-// The answered challenge is let through, and the credentials stop here: they were for this
-// node's realm, and the callee has no business holding a replayable Digest response.
+// An answered challenge is forwarded with its Proxy-Authorization removed: the Digest response is
+// replayable and was for this node's realm.
 TEST(ProxyAuthenticationTest, AnAnsweredChallengeIsForwardedWithoutItsCredentials) {
   AuthFixture f;
 
@@ -180,8 +175,7 @@ TEST(ProxyAuthenticationTest, AWrongAnswerIsChallengedAgain) {
   EXPECT_EQ(ProxyFixture::request_with(f.callee_connection, "INVITE"), nullptr);
 }
 
-// A nonce this node never minted is no nonce at all, however well the response was
-// computed over it.
+// A correct response over a nonce this node did not mint is challenged again.
 TEST(ProxyAuthenticationTest, ANonceThisNodeNeverMintedIsChallengedAgain) {
   AuthFixture f;
 
@@ -193,8 +187,7 @@ TEST(ProxyAuthenticationTest, ANonceThisNodeNeverMintedIsChallengedAgain) {
   EXPECT_EQ(response->header->response_code, 407);
 }
 
-// Bob's password proves Bob, not Alice. Authenticating as one subscriber while the From says
-// another is exactly the spoofing that challenging local calls exists to stop.
+// Valid credentials for one subscriber do not authorise a From naming another.
 TEST(ProxyAuthenticationTest, CredentialsForSomebodyElseAreRefused) {
   AuthFixture f;
 
@@ -208,8 +201,7 @@ TEST(ProxyAuthenticationTest, CredentialsForSomebodyElseAreRefused) {
   EXPECT_EQ(f.forwarded_off_node(), 0u);
 }
 
-// Somebody else's subscriber calling one of ours is receiving a call, and a node that
-// challenged it would be unreachable from the rest of the world.
+// A caller from another domain calling a local user is forwarded unchallenged.
 TEST(ProxyAuthenticationTest, AStrangerCallingALocalUserIsForwarded) {
   AuthFixture f;
 
@@ -218,8 +210,7 @@ TEST(ProxyAuthenticationTest, AStrangerCallingALocalUserIsForwarded) {
   EXPECT_NE(ProxyFixture::request_with(f.callee_connection, "INVITE"), nullptr);
 }
 
-// And the relay itself: a stranger, calling somewhere that is not here. There is no
-// subscriber to challenge for, so the answer is no.
+// A caller from another domain calling off-node is refused: this node is not an open relay.
 TEST(ProxyAuthenticationTest, AStrangerCallingOffNodeIsRefused) {
   AuthFixture f;
 
@@ -231,8 +222,7 @@ TEST(ProxyAuthenticationTest, AStrangerCallingOffNodeIsRefused) {
   EXPECT_EQ(f.forwarded_off_node(), 0u);
 }
 
-// A To tag is not a dialog. Without one this node is on, the request is out of dialog
-// whatever its headers say, or a To tag would be the way round all of the above.
+// A To tag exempts a request only when it matches a dialog this node is on.
 TEST(ProxyAuthenticationTest, AToTagWithNoDialogBehindItIsNoExemption) {
   AuthFixture f;
 
@@ -244,8 +234,7 @@ TEST(ProxyAuthenticationTest, AToTagWithNoDialogBehindItIsNoExemption) {
   EXPECT_EQ(f.forwarded_off_node(), 0u);
 }
 
-// Inside a dialog this node is on, the request is part of a call that was let through
-// already, and challenging the BYE would be challenging a hang-up.
+// A request inside a dialog this node is on is not challenged.
 TEST(ProxyAuthenticationTest, ARequestInADialogThisNodeIsOnIsNotChallenged) {
   AuthFixture f;
 
@@ -277,9 +266,8 @@ TEST(ProxyAuthenticationTest, ARequestInADialogThisNodeIsOnIsNotChallenged) {
   EXPECT_NE(ProxyFixture::request_with(f.callee_connection, "BYE"), nullptr);
 }
 
-// RFC 3261 22.1: a CANCEL cannot be challenged - it has no response of its own that the
-// caller could resubmit through - and nor can the ACK for a non-2xx. A CANCEL for a call
-// that was let through reaches its branch.
+// RFC 3261 22.1: a CANCEL cannot be resubmitted with credentials, so it is never challenged and
+// reaches its branch.
 TEST(ProxyAuthenticationTest, ACancelIsNeverChallenged) {
   AuthFixture f;
 
@@ -306,9 +294,8 @@ TEST(ProxyAuthenticationTest, ACancelIsNeverChallenged) {
   }
 }
 
-// RFC 5626 and common practice: a connection over which a REGISTER was authenticated
-// belongs to the client that authenticated, and its requests as that subscriber need no
-// second challenge. Only a connection: a UDP source address can be anybody's.
+// A connection over which a REGISTER was authenticated is trusted for that subscriber only. A UDP
+// source address is not a connection and is still challenged.
 TEST(ProxyAuthenticationTest, AConnectionThatRegisteredIsAuthenticatedForThatSubscriber) {
   AuthFixture f;
 
@@ -345,7 +332,7 @@ TEST(ProxyAuthenticationTest, AUdpSourceThatRegisteredIsStillChallenged) {
   EXPECT_EQ(response->header->response_code, 407);
 }
 
-// The registrar is what marks a connection, on a REGISTER it authenticated.
+// The registrar marks the connection when it authenticates a REGISTER.
 TEST(ProxyAuthenticationTest, TheRegistrarMarksTheConnectionItAuthenticated) {
   AuthFixture f;
 
@@ -369,10 +356,8 @@ TEST(ProxyAuthenticationTest, TheRegistrarMarksTheConnectionItAuthenticated) {
   EXPECT_NE(ProxyFixture::request_with(f.callee_connection, "INVITE"), nullptr);
 }
 
-// The 2026-09-17 decision: a connection showing a certificate the cluster CA signed is a
-// peer node, and anything else is an endpoint. A peer has already done this node's job - it
-// challenged the caller, or took the call from its own subscriber - so what it sends on is
-// forwarded, not challenged a second time by a node the caller has no way to answer through.
+// A connection presenting a certificate signed by the cluster CA is a peer node. The peer has
+// already authenticated the caller, so its requests are forwarded unchallenged.
 TEST(ProxyAuthenticationTest, ARequestFromAClusterPeerIsNotChallenged) {
   AuthFixture f;
 
@@ -386,8 +371,7 @@ TEST(ProxyAuthenticationTest, ARequestFromAClusterPeerIsNotChallenged) {
   EXPECT_NE(ProxyFixture::request_with(f.callee_connection, "INVITE"), nullptr);
 }
 
-// The certificate is what makes a peer. The same request over TLS from something that
-// showed none is a caller claiming an identity, and is asked to prove it.
+// A TLS connection that presented no cluster certificate is an endpoint and is challenged.
 TEST(ProxyAuthenticationTest, ATlsConnectionThatIsNotAPeerIsChallenged) {
   AuthFixture f;
 

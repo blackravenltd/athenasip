@@ -35,8 +35,8 @@ std::shared_ptr<SIPMessage> request(const std::string& method, const std::string
   return message;
 }
 
-// An RFC 2543 request: the branch is optional and, when present, carries no magic
-// cookie. Everything else is what 17.2.3's fallback matches on.
+// An RFC 2543 request: the branch is optional and carries no magic cookie. The rest is what the 17.2.3
+// fallback matches on.
 std::shared_ptr<SIPMessage> legacy_request(const std::string& method, const std::string& branch = "", const std::string& cseq_method = "",
                                            const std::string& call_id = "call-1", const std::string& to_tag = "",
                                            const std::string& request_uri = "sip:bob@example.com") {
@@ -80,8 +80,8 @@ struct Harness {
 
 }  // namespace
 
-// RFC 3261 17.2.3: branch alone is not the identity. Two upstream hops can pick the same
-// branch, and the same branch on two methods is two transactions.
+// RFC 3261 17.2.3: the key is branch, sent-by and method. Two hops can pick the same branch, and one branch on
+// two methods is two transactions.
 TEST(TransactionMatcherTest, KeyIsBranchSentByAndMethod) {
   const auto key = TransactionMatcher::key(request("INVITE"));
 
@@ -92,13 +92,12 @@ TEST(TransactionMatcherTest, KeyIsBranchSentByAndMethod) {
   EXPECT_NE(key, TransactionMatcher::key(request("OPTIONS", "z9hG4bK-one")));
 }
 
-// The separators are what stop "abc" + "INVITE" and "abcI" + "NVITE" colliding.
+// Separators stop "abc" + "INVITE" and "abcI" + "NVITE" colliding.
 TEST(TransactionMatcherTest, KeyComponentsCannotRunTogether) {
   EXPECT_NE(TransactionMatcher::key(request("INVITE", "z9hG4bK-abc", "host")), TransactionMatcher::key(request("NVITE", "z9hG4bK-abcI", "host")));
 }
 
-// A message with no Via or no CSeq names no transaction at all: those two fields are
-// what every form of the identity is built from.
+// A message with no Via or no CSeq names no transaction.
 TEST(TransactionMatcherTest, KeyIsEmptyWithoutAViaOrCSeq) {
   auto message = std::make_shared<SIPMessage>();
   message->header = std::make_shared<SIPHeader>(
@@ -126,8 +125,7 @@ TEST(TransactionMatcherTest, AddFindAndRemoveRoundTrip) {
   EXPECT_FALSE(matcher.remove(key));
 }
 
-// A retransmitted request is the same transaction, and must reach it rather than start
-// a second one (RFC 3261 17.2.1).
+// RFC 3261 17.2.1: a retransmitted request matches its transaction rather than starting a second one.
 TEST(TransactionMatcherTest, ARetransmittedRequestMatchesItsTransaction) {
   Harness h;
   TransactionMatcher matcher;
@@ -138,10 +136,8 @@ TEST(TransactionMatcherTest, ARetransmittedRequestMatchesItsTransaction) {
   EXPECT_NE(matcher.match_request(request("INVITE")), nullptr);
 }
 
-// RFC 3261 17.2.3: the ACK for a non-2xx carries CSeq method ACK, but belongs to the
-// INVITE server transaction that sent the response. Matching on the ACK's own method
-// would miss it, leave the transaction retransmitting, and hand the TU an ACK it has no
-// use for.
+// RFC 3261 17.2.3: the ACK for a non-2xx carries CSeq method ACK but belongs to the INVITE server transaction
+// that sent the response.
 TEST(TransactionMatcherTest, AnAckMatchesTheInviteTransactionItAcknowledges) {
   Harness h;
   TransactionMatcher matcher;
@@ -156,16 +152,14 @@ TEST(TransactionMatcherTest, AnAckMatchesTheInviteTransactionItAcknowledges) {
   EXPECT_EQ(matcher.match_request(ack), transaction);
 }
 
-// An ACK whose branch matches nothing is the ACK for a 2xx. That one is end to end and
-// belongs to the transaction user, so the matcher must not claim it.
+// An ACK whose branch matches nothing is the ACK for a 2xx, which belongs to the TU: the matcher does not claim it.
 TEST(TransactionMatcherTest, AnUnmatchedAckIsNotClaimed) {
   TransactionMatcher matcher;
 
   EXPECT_EQ(matcher.match_request(request("ACK", "z9hG4bK-unknown", "alice.example.com:5060", "ACK")), nullptr);
 }
 
-// RFC 3261 9.2: a CANCEL is its own transaction and separately names the INVITE it
-// cancels. Both have to be findable, and they are not the same one.
+// RFC 3261 9.2: a CANCEL is its own transaction and separately names the INVITE it cancels.
 TEST(TransactionMatcherTest, ACancelFindsTheInviteItCancelsAndNotItself) {
   Harness h;
   TransactionMatcher matcher;
@@ -204,8 +198,8 @@ TEST(TransactionMatcherTest, AResponseMatchesTheRequestItAnswers) {
   EXPECT_EQ(matcher.match_response(response), transaction);
 }
 
-// terminate_all fires on_terminated, which is wired to remove from the table being
-// walked. Iterating it directly would invalidate under its own callbacks.
+// terminate_all fires on_terminated, which removes from the table being walked, so it must not iterate the
+// table directly.
 TEST(TransactionMatcherTest, TerminateAllEmptiesTheTableUnderItsOwnCallbacks) {
   Harness h;
   TransactionMatcher matcher;
@@ -222,10 +216,8 @@ TEST(TransactionMatcherTest, TerminateAllEmptiesTheTableUnderItsOwnCallbacks) {
   EXPECT_EQ(matcher.size(), 0u);
 }
 
-// RFC 3261 17.2.3: a branch with no magic cookie was not generated by a 3261 client
-// transaction, so it cannot be trusted to be unique on its own. The fallback names the
-// transaction by the Request-URI, From tag, Call-ID, CSeq and the whole topmost Via -
-// the branch counts only as one more parameter of that Via, not as the identity.
+// RFC 3261 17.2.3: a branch with no magic cookie is not unique on its own. The fallback names the transaction
+// by Request-URI, From tag, Call-ID, CSeq and the whole topmost Via.
 TEST(TransactionMatcherTest, ALegacyRequestIsNamedByTheFallbackTuple) {
   const auto key = TransactionMatcher::key(legacy_request("INVITE", "1234-not-magic"));
 
@@ -234,19 +226,16 @@ TEST(TransactionMatcherTest, ALegacyRequestIsNamedByTheFallbackTuple) {
   EXPECT_NE(key, TransactionMatcher::key(legacy_request("OPTIONS", "1234-not-magic")));
   EXPECT_NE(key, TransactionMatcher::key(legacy_request("INVITE", "5678-also-not-magic")));
 
-  // Nothing of the 3261 identity is in it: that key is branch and sent-by alone, and
-  // reading a non-magic branch that way is what the fallback exists to avoid.
+  // Not the 3261 key of branch, sent-by and method.
   EXPECT_NE(key, "1234-not-magic|alice.example.com:5060|INVITE");
 }
 
-// A 2543 request had no branch to carry, and this is the case that used to be answered
-// 400 for want of a transaction identifier.
+// A 2543 request with no branch still names a transaction.
 TEST(TransactionMatcherTest, ARequestWithNoBranchStillNamesATransaction) {
   EXPECT_FALSE(TransactionMatcher::key(legacy_request("INVITE")).empty());
 }
 
-// The whole point of the rule: a retransmission from a 2543 client reaches the
-// transaction it started rather than starting another one.
+// A retransmission from a 2543 client reaches the transaction it started.
 TEST(TransactionMatcherTest, ALegacyRetransmissionMatchesItsTransaction) {
   Harness h;
   TransactionMatcher matcher;
@@ -261,8 +250,7 @@ TEST(TransactionMatcherTest, ALegacyRetransmissionMatchesItsTransaction) {
   EXPECT_EQ(matcher.match_request(legacy_request("INVITE", "", "", "call-2")), nullptr);
 }
 
-// 17.2.3: the ACK matches on the CSeq number rather than the method, and on the To tag
-// the response carried, which the INVITE that created the transaction did not have.
+// RFC 3261 17.2.3: the ACK matches on the CSeq number rather than the method, and on the response's To tag.
 TEST(TransactionMatcherTest, ALegacyAckMatchesTheInviteTransactionItAcknowledges) {
   Harness h;
   TransactionMatcher matcher;
@@ -276,9 +264,8 @@ TEST(TransactionMatcherTest, ALegacyAckMatchesTheInviteTransactionItAcknowledges
   EXPECT_EQ(matcher.match_request(ack), transaction);
 }
 
-// RFC 3261 9.2: the CANCEL is matched as though its method were the one it cancels. Its
-// Request-URI, Call-ID, From, CSeq number and topmost Via are identical to the INVITE's
-// (9.1), which is what makes that possible without a branch to go on.
+// RFC 3261 9.2: the CANCEL is matched as though its method were the INVITE's. Its Request-URI, Call-ID, From,
+// CSeq number and topmost Via are the INVITE's (9.1).
 TEST(TransactionMatcherTest, ALegacyCancelFindsTheInviteItCancelsAndNotItself) {
   Harness h;
   TransactionMatcher matcher;
@@ -300,9 +287,8 @@ TEST(TransactionMatcherTest, ALegacyCancelFindsTheInviteItCancelsAndNotItself) {
   EXPECT_EQ(matcher.match_cancelled(cancel), invite_transaction);
 }
 
-// 17.2.3 ends by saying the server cannot match a response this way, because the rules
-// include the Request-URI. A response with no magic cookie belongs to no client
-// transaction here.
+// RFC 3261 17.2.3: a response cannot be matched by the fallback, which includes the Request-URI. One with no
+// magic cookie belongs to no client transaction.
 TEST(TransactionMatcherTest, ALegacyResponseNamesNoTransaction) {
   auto response = legacy_request("INVITE", "1234-not-magic")->generate_response();
   response->header->response_code = 200;

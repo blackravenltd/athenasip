@@ -1,526 +1,366 @@
 # AthenaSIP - Configuration
 
-AthenaSIP uses a YAML configuration file. With no `--config`, the first of these that
-exists is read:
+One YAML file. With no `--config`, the node reads:
 
-1. `$ATHENASIP_CONFIG`
-2. `/etc/athenasip/config.yaml`
-3. `~/.athenasip/config.yaml`
+1. `$ATHENASIP_CONFIG`, when it is set
+2. otherwise `/etc/athenasip/config.yaml`, when it exists
+3. otherwise `~/.athenasip/config.yaml`
 
-In that order on purpose: what the command line was told beats the environment, the
-environment beats the system path a package installs to, and a home directory is last
-because it is a person's checkout rather than a service.
+[`config/config.example.yaml`](../config/config.example.yaml) shows the settings in place,
+and the [reference](configuration-reference.md) lists every one with its default and limits.
+An unknown `behaviour` value, a missing required key or an unparseable value stops the
+node at startup. A key the node does not know is logged as a warning naming the key that
+was probably meant (`'udp.prot' is not a setting, and is ignored - did you mean
+'udp.port'?`), and ignored.
 
-## What this node is actually running on
-
-Most of what decides a node's behaviour is a default nobody wrote down, so reading the
-file answers a different question from reading the node:
-
-```
-athenasip --print-config
-```
-
-That prints the effective values - the file, the search path and the defaults all
-resolved - as YAML, says which file it came from, and exits without starting a listener or
-constructing a driver. A plugin's own section is copied through rather than interpreted,
-since only the plugin knows what it means. There are no API tokens to show: a file that
-still sets `http.api.tokens` is refused, and administrators are users made with
-`athenasip --add-user`.
-
-## Whether this node can reach what it needs
+An editor can check the file as it is written. `athenasip --print-schema` prints the
+settings as a JSON Schema, the same as
+[`configuration.schema.json`](configuration.schema.json); with the YAML language server
+(VS Code's YAML extension, among others), save it beside the file and name it on the
+file's first line:
 
 ```sh
-athenasip --check
+athenasip --print-schema > /etc/athenasip/configuration.schema.json
 ```
 
-Tries everything the node would connect to, one at a time, and says which answered: the
-datastore, the event bus, the media engine, every certificate a listener will ask for,
-and, in a cluster, a mutual-TLS handshake with each other node that has said it is up.
-
-```
-ok    configuration        /etc/athenasip/config.yaml
-ok    datastore            redis 0.0.1 at redis://:***@127.0.0.1:6379/3
-ok    events               mqtt 0.0.1 at mqtt://10.35.1.10:1883
-ok    media                builtin 0.0.1 at builtin://
-ok    tls certificate      /etc/athenasip/tls/node.cer
-FAIL  peer node-b          10.0.0.2:5062 - Connection refused
+```yaml
+# yaml-language-server: $schema=configuration.schema.json
 ```
 
-It exits 0 when everything passed and 1 when anything did not. Nothing is started and
-nothing is changed, so it is safe to run beside a node that is serving: it is the first
-thing to run when a node will not start, and before starting one for the first time. A
-password in a URL is not printed.
-
-## Configuration
-
-`config/config.example.yaml` is the annotated reference: every setting appears in it with
-its own default and a note on what it is for, so a line deleted from a copy of it changes
-nothing. This page is the longer prose for the settings that need it.
-
-A working configuration is much shorter than the example. A node id, one listener and the
-driver URLs will run:
+## Minimal configuration
 
 ```yaml
 sip:
   node_id: sip-0001
 
 udp:
-  enable: true
-  address: 0.0.0.0
   port: 5060
-
-datastore:
-  url: "memory://"
-
-events:
-  url: "local://"
-
-media:
-  url: "builtin://"
 ```
 
-### `sip` Section
+`sip.node_id` is the only required key. A listener section that is present is enabled and
+needs a `port`; a node with no listener section listens for nothing. The plugin URLs
+default to `memory://`, `local://` and `builtin://`, which need no external service. The
+admin API and console need an [`http`](#http) section.
 
-This section configures the server itself.
+## Inspecting a node
 
-#### `node_id`
+| Command | What it does |
+|---|---|
+| `athenasip --print-config` | Prints the effective configuration (file, search path and defaults resolved) as YAML, names the file it came from, and exits. Plugin sections are copied through as written. The output is itself a configuration: saved and loaded, it runs the same node. |
+| `athenasip --print-schema` | Prints every setting with its type, default and limits as a JSON Schema; `--print-schema=markdown` prints the [reference](configuration-reference.md). Reads no file. |
+| `athenasip --check` | Tries the datastore, event bus, media engine, each certificate a listener needs and, in a cluster, a mutual-TLS handshake with each node that reports itself up. Prints `ok` or `FAIL` per item; exits 0 if all passed, 1 otherwise. With a `stun:` server in `http.api.ice_servers`, also asks it what address the node is seen from and compares that with `sip.public_address`. Push services are not tried. Starts and changes nothing, so it is safe beside a running node. Passwords in URLs are masked. |
 
-This node's name, which must be unique across the cluster. It identifies the node on the
-event bus and in `GET /api/v1/nodes`, so two nodes sharing one is two nodes nobody can
-tell apart.
+```
+ok    configuration        /etc/athenasip/config.yaml
+ok    datastore            redis 0.0.1 at redis://:***@127.0.0.1:6379/3
+ok    events               mqtt 0.0.1 at mqtt://10.35.1.10:1883
+FAIL  peer node-b          10.0.0.2:5062 - Connection refused
+```
 
-#### `public_address`
+## `sip`
 
-The address this node tells the outside world to reach it on, and what it writes into the
-`Via`, `Record-Route` and `Service-Route` it generates.
+| Key | Default | Meaning |
+|---|---|---|
+| `node_id` | required | This node's name, unique across the cluster. Used on the event bus and in `GET /api/v1/nodes`. |
+| `public_address` | unset | The address written into `Via`, `Record-Route` and `Service-Route` and published in the node list. Set it when the node binds `0.0.0.0` in a container, behind a load balancer or behind NAT; leave it unset on a single-homed host. Unset, a node in a cluster can find it for itself: see [The node's own address](architecture.md#the-nodes-own-address). |
+| `localnet` | `[]` | Prefixes on the node's own side of the router, e.g. `["192.168.0.0/16", "10.0.0.0/8"]`. A peer inside one is given the node's local address and port instead of `public_address` (Asterisk's `localnet`). A bare address is a prefix of one. |
+| `allow_unencrypted` | `true` | Permit SIP over plain UDP, TCP and WS. When `false`, the node refuses to start with a `udp`, `tcp` or plain `websocket` listener enabled (including a plain `websocket.port` beside `secure_port`), and dials only TLS. |
+| `forward_register` | `subscribers` | A REGISTER for a domain this node does not serve (RFC 3261 10.3 step 1). `subscribers` forwards it, by DNS (RFC 3263), for a sender who is one of this node's subscribers: one already registered here over a reliable connection, or one answering a 407 for this node's realm. The node puts itself on the Path, so the far registrar's calls come back down the same connection. `never` answers 403. Either way nobody else's REGISTER is relayed. |
+| `log_messages` | `false` | Log every SIP message in full (headers and body) rather than its first line. Digest headers are logged as `<redacted>`. |
+| `connect_timeout_ms` | `4000` | How long to spend opening a connection to a next hop the node has no flow to (RFC 3261 16.6 step 7). |
+| `flow_idle_timeout` | `300` | Seconds a UDP flow may sit idle before the node forgets it. `0` never forgets. The peer's next datagram makes a new flow. |
+| `media_timeout` | `300` | Seconds an anchored call may carry no RTP or RTCP before the node releases it. `0` is off. |
+| `session_expires` | `1800` | Session interval (RFC 4028 8.1) added to an INVITE that carried none. `0` adds none. Below 90 is refused and the default kept; below 1800 is accepted with a warning. |
+| `session_min_se` | `90` | Shortest session interval the node accepts. Below 90 is refused and the default kept. |
+| `max_call_duration` | `0` | Longest any call is held, in seconds. `0` is no cap. |
+| `require_session_timer` | `false` | Add `Require: timer` when the caller did not advertise support. An endpoint without RFC 4028 then answers 420 and the call fails. |
+| `timers` | see below | RFC 3261 transaction timers. |
 
-A listener bound to `0.0.0.0` answers on every address the host has and can name none of
-them, so without this those fields say `0.0.0.0` and nothing can route back. Leave it
-unset on a single-homed host, where the address of the flow itself is right; set it in a
-container, behind a load balancer, or on a NAT'd public IP.
-
-#### `localnet`
+### Addresses behind NAT
 
 ```yaml
 sip:
   public_address: 203.0.113.5
   localnet: ["192.168.0.0/16", "10.0.0.0/8"]
-```
-
-The prefixes on this node's side of the router, which is Asterisk's `localnet`. A peer
-whose address is inside one is given the node's local address and port, in every `Via`,
-`Record-Route`, `Service-Route` and request the node writes to it. Everyone else is given
-`public_address`. Without this a phone on the same LAN is handed the public address, which
-reaches the node only if the router hairpins, and plenty of routers do not. A bare address
-is a prefix of one. A listener bound to `0.0.0.0` gives the address the host would use to
-reach that peer.
-
-The builtin media relay follows the same rule: a leg inside `localnet` is told to send its
-media to that local address rather than `media.builtin.public_address`, which works when
-the relay is bound to `0.0.0.0` or to that address. rtpengine chooses its addresses from
-its own interface configuration and is not affected.
-
-#### `public_port`, on each listener
-
-```yaml
 udp:
   port: 5060
-  public_port: 5080
+  public_port: 5080   # the port the router forwards, when it differs
 ```
 
-The port a router forwards to this listener, when it is not the one the listener is bound
-to. It is what peers outside `localnet` are given and what the node list says. Leave it out
-when the ports are the same.
+Peers outside `localnet` are given `public_address` and the listener's `public_port`;
+peers inside are given the local address and bound port. The builtin media relay follows
+the same rule for the address it writes into SDP. rtpengine chooses its own addresses.
 
-Realms and their nonce secrets are not configured here. They are provisioned over the
-admin API - `POST /api/v1/realms` - because a cluster shares them and a file on one node
-does not.
+### Ending dead calls
 
-#### `allow_unencrypted`
+An endpoint that loses power sends no BYE. Four settings bound how long the node holds
+such a call:
 
-If `true`, the server will reject SIP `INVITE` requests that do not describe encrypted media.
-This setting can be `true` even if the TCP server is enabled - in which case the SIP flow will
-be unencrypted, but the server will still reject attempts to initate unencrypted calls.
+| Setting | Reaches | Misses |
+|---|---|---|
+| `media_timeout` | Calls this node anchors | Media that goes end to end |
+| `session_expires` | Calls whose callee implements RFC 4028 | Two endpoints that do not |
+| `max_call_duration` | Every call | Cannot tell a live call from a dead one |
+| `require_session_timer` | Every call that is set up | Fails calls to endpoints without RFC 4028 |
 
+The first two cover most deployments. When `media_timeout` or `max_call_duration` fires,
+the node sends each end a BYE and releases the call. When a session timer lapses it releases
+the call and sends nothing: RFC 4028 8.3 forbids a proxy's BYE there, and the ends run their
+own timers.
 
-#### `files.spa`
+A caller that asks for an interval below `session_min_se` and advertises
+`Supported: timer` is answered 422 with `Min-SE`. One that does not advertise it has its
+interval raised to `session_min_se` on the way through. The node never names a refresher.
 
-Single-page application mode. Defaults to `true`.
+### `timers`
 
-A path with nothing behind it - `/sip/realms`, `/diagnostics/softphone` - is answered
-with `index.html` from the document root, so a client-side route survives a reload or a
-pasted link. Three things are never answered this way:
+Change these only with a specific reason. A to K are multiples of T1 or T4 (RFC 3261 17).
 
-- anything under `/api/`, so an unknown API path still 404s rather than returning a web
-  page and telling a script that its request succeeded;
-- any path whose last segment names a file extension, so a missing asset stays missing
-  instead of hiding behind a 200 with HTML in it;
-- anything but `GET` and `HEAD`, because a write to a path that does not exist is not a
-  page view.
+| Key | Default | Timer |
+|---|---|---|
+| `t1_rtt_ms` | `500` | T1, round-trip estimate (ms) |
+| `t2_max_retransmit_interval_ms` | `4000` | T2, retransmission ceiling (ms) |
+| `t4_network_propagation_ms` | `5000` | T4, longest a message stays in the network (ms) |
+| `a_invite_initial` | `1` x T1 | A, INVITE client retransmit interval |
+| `b_invite_timeout` | `64` x T1 | B, INVITE client timeout |
+| `d_invite_duration` | `64` x T1 | D, INVITE client wait for response retransmissions |
+| `e_non_invite_initial` | `1` x T1 | E, non-INVITE client retransmit interval |
+| `f_non_invite_timeout` | `64` x T1 | F, non-INVITE client timeout |
+| `k_non_invite_duration` | `1` x T4 | K, non-INVITE client wait for response retransmissions |
+| `g_server_invite_initial` | `1` x T1 | G, INVITE server final-response retransmit interval |
+| `h_server_invite_timeout` | `64` x T1 | H, INVITE server wait for ACK |
+| `i_server_invite_duration` | `1` x T4 | I, INVITE server wait for ACK retransmissions |
+| `j_server_non_invite_duration` | `64` x T1 | J, non-INVITE server wait for request retransmissions |
+| `c_invite_proxy_ms` | `240000` | C, how long a proxied INVITE may stay provisional (RFC 3261 16.6 step 11), in ms. Must be larger than 180000; a smaller value is refused and the default kept. |
 
-Set `false` for an ordinary document root.
+### Routing to a host name
 
-#### `log_messages`
+Not configurable. A request URI that names a host is resolved per RFC 3263: NAPTR, then
+SRV, then A/AAAA, trying each target in turn. The nameservers come from
+`/etc/resolv.conf`; each query is tried for five seconds, twice round, and answers are
+cached for their TTL.
 
-If `true`, every message in and out is logged in full rather than by its first line.
-Defaults to `false`.
+## Listeners
 
-The first line is the readable trace and is always logged. This adds the headers and
-the body, and the body is the reason to want it: a session description is the one thing
-a node is better placed to show than either end of a call, and reading it off both
-endpoints instead is what the interop runbook otherwise has to tell you to do. It is
-also most of the bytes, which is why it is asked for rather than assumed.
+Each of `udp`, `tcp`, `tls` and `websocket` is optional.
 
-`Authorization`, `Proxy-Authorization`, `WWW-Authenticate` and `Proxy-Authenticate` are
-logged as `<redacted>`. A Digest response is a hash rather than the password, but it is
-replayable for as long as its nonce lives, and a challenge carries the nonce the next
-response is computed over. The line itself is kept, because knowing that a request
-carried credentials is part of reading the exchange.
+| Key | Default | Meaning |
+|---|---|---|
+| `enable` | `true` if the section is present | Whether the listener starts |
+| `address` | `0.0.0.0` | Bind address |
+| `port` | required when enabled | Bind port. Conventionally 5060 for `udp` and `tcp`, 5061 for `tls`. |
+| `public_port` | the bound port | The port a router forwards to this listener |
 
-#### `media_timeout`
+`tcp`, `udp` and plain `websocket` are unencrypted.
 
-How long a call may carry no media at all before this node stops holding it open, in
-seconds - Defaults to `300`. Zero turns it off.
+### `tls`
 
-A phone that loses power sends no BYE. A call between two endpoints that never negotiated
-a session timer (see `session_min_se`) has no expiry of its own either, so nothing in the
-signalling plane will ever say that call ended - and the node goes on holding its dialog,
-its call record and its relay ports. The ports come from a finite pool, so left long
-enough a node stops being able to anchor new calls. Only a restart clears them.
+| Key | Meaning |
+|---|---|
+| `cert_pem_filename` | PEM server certificate |
+| `key_pem_filename` | PEM private key |
 
-The media plane knows what the signalling plane cannot: the relay records when it last
-carried a packet. RTCP counts as well as RTP, which is what keeps a call on hold, or one
-whose codec suppresses silence, from reading as dead - RFC 3550 has reports sent for the
-life of the session whether or not there is anything to carry.
+Also the fallback certificate for `websocket` and `http.tls`.
 
-Being wrong means cutting the media on a call that is still up, so the default is minutes
-rather than seconds. Shorten it only if you know your endpoints.
+### `websocket`
 
-When it fires the node releases the call and says nothing to either end. RFC 4028 section
-8.3 is explicit that a proxy "MUST NOT send a BYE": this node is on the path of the
-dialog, not an end of it. Both endpoints run their own timers and will each send their
-own when they notice.
+SIP over WebSocket (RFC 7118).
 
-Only calls this node anchors are covered. Where the media engine declined the description
-- a WebRTC offer at the plain-RTP relay - or media otherwise goes end to end, there is
-nothing to observe and the call is left alone.
+| Key | Default | Meaning |
+|---|---|---|
+| `tls` | `false` | Make this listener `wss`. Needs `cert_pem_filename` and `key_pem_filename` in this section. |
+| `secure_port` | `0` (none) | A second, `wss` listener beside the plain one. Uses this section's certificate, or the `tls` section's. Must differ from `port`. Ignored when `tls` is `true`. |
+| `cert_pem_filename`, `key_pem_filename` | unset | Certificate and key for the secure listener |
 
-#### `max_call_duration`
+A page served over HTTPS may only open `wss`, so a browser client needs one of the two.
 
-The longest this node will hold any call open, in seconds - Defaults to `0`, which is no
-cap at all.
+## `cluster`
 
-This is the backstop for what the other two mechanisms cannot see. `media_timeout` only
-reaches a call this node anchors; `session_expires` only reaches one whose far end
-implements RFC 4028. A call that is neither - media end to end, and two endpoints that
-have never heard of session timers - is held until the node restarts, and this is the only
-thing that catches it.
+The inter-node listener: SIP over mutual TLS between nodes.
+[Certificates](certificates.md) covers making the files.
 
-It is blunt by nature. There is nothing in it about whether the call is alive: set it to
-four hours and a legitimate four-hour call is cut. Set it only on a deployment that knows
-what its calls look like, and prefer the other two where they reach.
+| Key | Default | Meaning |
+|---|---|---|
+| `enable` | `false` | Whether this node is part of a cluster |
+| `address` | `0.0.0.0` | Bind address |
+| `port` | `5062` | Bind port |
+| `advertise` | derived | The name or address peers dial; the node's certificate must name it. Unset, it is the bind address, or `sip.public_address` when bound to `0.0.0.0`. |
+| `ca`, `cert`, `key` | required when enabled | Cluster CA certificate, this node's certificate and its key |
 
-Like them, when it fires the node releases the call and says nothing to either end
-(RFC 4028 section 8.3).
+## Plugins: `datastore`, `events`, `media`
 
-#### `require_session_timer`
+Each takes a `url` whose scheme selects the driver, and an optional section named after
+the driver for what a URL cannot express. [Plugins](plugins.md) describes the contract.
 
-Whether to insist on a session timer by putting `Require: timer` on a request whose caller
-did not advertise support - Defaults to `false`, and it should usually stay that way.
+### `datastore`
 
-RFC 4028 section 8.1 allows it and calls it NOT RECOMMENDED in the same breath. The
-consequence is concrete: an endpoint that does not implement the extension answers
-`420 (Bad Extension)`, so the call **fails outright** rather than merely going without an
-expiry. That can be a reasonable trade on a closed fleet where every handset is known and
-a call with no expiry is the worse outcome. It is the wrong one on anything a stranger can
-call.
+| URL | Driver |
+|---|---|
+| `memory://` (default) | In-process. Nothing survives a restart. Single node only. |
+| `redis://[user:password@]host[:port][/db]` | [Redis](https://redis.io/). Shared by a cluster and survives restarts. Port defaults to 6379. `rediss://` and `redis+ssl://` are the same driver over TLS. |
 
-With it off, a caller that cannot do session timers is still offered one through
-`session_expires`, and the callee decides whether the session gets a timer. That is the
-same protection without the failure mode.
+### `events`
 
-#### `session_expires`
+| Key | Default | Meaning |
+|---|---|---|
+| `url` | `local://` | `local://` keeps events in-process. `mqtt://[user:password@]host[:port]` publishes to a broker (port 1883 by default), which is also how nodes discover each other. |
+| `status_interval` | `30` | Seconds between retained node-status messages. `0` publishes once at startup. |
 
-The session interval this node offers a call that asked for none, in seconds - Defaults to
-`1800`. Zero leaves such a call without one.
+`events.mqtt`:
 
-RFC 4028 section 8.1 lets a proxy add a `Session-Expires` to a request that carried none,
-which is how a call gets an expiry when the caller never thought to ask for one. It is
-worth having alongside `media_timeout` because the two cover different gaps: the media
-sweep only sees calls this node anchors, and this only helps where the far end implements
-RFC 4028.
+| Key | Default | Meaning |
+|---|---|---|
+| `client_id` | `athenasip-<node_id>` | MQTT client identifier; must be unique on the broker |
+| `keep_alive` | `30` | MQTT keep-alive, seconds |
+| `connect_timeout_ms` | `5000` | How long startup waits for the broker before failing |
+| `username`, `password` | unset | Broker credentials, if not in the URL |
+| `prefix` | `athenasip/` | Topic level prepended to everything published and subscribed, so clusters can share a broker |
 
-It cannot break a call. A callee that does not implement session timers answers without
-one, and section 8.2 then leaves the call with no expiration at all - exactly where it
-started. A callee that does implement them takes the refreshing on itself when the caller
-cannot, which section 9's Table 2 requires of it. This node never names a refresher: 8.1
-forbids a proxy from doing so, and which end refreshes is for the endpoints to settle.
+[Events](events.md) lists the topics.
 
-An interval already in the request is left alone, and an inserted one is never lower than
-a `Min-SE` the request carried. Section 4 puts the absolute floor at 90 seconds and
-recommends 1800; a value below 90 is refused and one below 1800 is taken with a warning.
+### `media`
 
-#### `session_min_se`
+| URL | Driver |
+|---|---|
+| `builtin://` (default) | Relays plain RTP from the node's own process. Declines offers that need ICE, DTLS or SRTP; the SDP then passes through untouched and media goes end to end. |
+| `rtpengine://host[:port]` | [rtpengine](https://github.com/sipwise/rtpengine) over its ng control port (2223 by default). Required for WebRTC and SRTP. With `media.rtpengine.engines` the host may be left out. |
 
-The shortest session interval this node will carry a call on, in seconds - Defaults to
-`90`.
+`media.builtin`:
 
-A session timer (RFC 4028) is how a call that has gone silent - one end powered off, a
-network that went away without a BYE - is eventually cleaned up rather than held for
-ever. The node keeps state for the length of the interval the two ends agree on, so how
-short that interval may be is its business as well as theirs.
-
-A caller that asks for less than this and advertises `Supported: timer` is answered
-`422 (Session Interval Too Small)` with this value in a `Min-SE` header, and is expected
-to ask again with something longer. A caller that does not advertise support cannot read
-that answer, so refusing it would only fail the call: its interval is raised to this
-value on the way through instead, and a `Min-SE` is added so the far end knows why.
-
-A call where neither end asked for a session timer still has no interval and is not given
-one. RFC 4028 allows a proxy to insert one; this node does not, because ending a call
-that nobody said would end is worse than holding its state.
-
-RFC 4028 sets a floor of 90 seconds, a little over twice the longest a SIP transaction
-can take, so that a refresh has time to complete before the session it refreshes expires.
-A lower value here is refused, with an error in the log, and the default kept.
-
-#### `timers`
-
-The SIP implementation timers and multipliers as specified in [RFC 3261](https://datatracker.ietf.org/doc/html/rfc3261).
-Please note for nearly all normal use cases, you should not adjust these from their defaults.
-
-**NOTE:** Timers A to K are the transaction timers of RFC 3261 section 17, and every one
-of them is expressed as a multiple of T1 or T4. Timer C is the exception: it belongs to
-the proxy rather than to a transaction (section 16.6 step 11), so it is an absolute
-value in milliseconds.
-
-##### `t1_rtt_ms`
-
-The SIP Timer T1 (Retransmit) - this is the initial time between retransmits,
-and is used by the other timers as a multiplier. Defaults to `500`.
-
-##### `t2_max_retransmit_interval_ms`
-
-The SIP T2 (Max retransmit interval) timeout - Defaults to `4000` (4s).
-
-##### `t4_network_propagation_ms`
-
-The SIP Timer T4 (Max network latency) - Defaults to `5000` (5s).
-
-##### `a_invite_initial`
-
-The SIP Timer A (Client INVITE retransmit interval) multipler of T1 above - Defaults to `1` (500ms).
-
-Controls retransmit interval for INVITE requests.
-
-##### `b_invite_timeout`
-
-The SIP Timer B (Client INVITE max time to receive response) multipler of T1 above - Defaults to `64` (32s).
-
-Maximum time to receive a response.
-
-##### `d_invite_duration`
-
-The SIP Timer D (Server INVITE transaction discard timer, UDP only) multipler of T1 above - Defaults to `64` (32s).
-
-Delay before discarding completed INVITE transaction
-
-##### `e_non_invite_initial`
-
-The SIP Timer E (Client Non-INVITE retransmit interval) multipler of T1 above - Defaults to `1` (500ms).
-
-Controls retransmit interval for non-INVITE requests.
-
-##### `f_non_invite_timeout`
-
-The SIP Timer F (Client Non-INVITE max time to receive response) multipler of T1 above - Defaults to `64` (32s).
-
-Maximum time to wait for a final response.
-
-##### `g_server_invite_initial`
-
-The SIP Timer G (Server Non-INVITE retransmit interval) multipler of T1 above - Defaults to `1` (500ms).
-
-Retransmit interval for final responses to unreliable transport.
-
-##### `h_server_invite_timeout`
-
-The SIP Timer H (Server Non-INVITE max time to retransmit response) multipler of T1 above - Defaults to `64` (32s).
-
-Maximum time to retransmit final response.
-
-##### `i_server_invite_duration`
-
-The SIP Timer I (Server INVITE transaction termination timer) multipler of T4 above - Defaults to `1` (5s).
-
-##### `j_server_non_invite_duration`
-
-The SIP Timer J (Server non-INVITE transaction termination timer) multipler of T1 above - Defaults to `64` (32s).
-
-##### `k_non_invite_duration`
-
-The SIP Timer K (Client non-INVITE transaction termination timer) multipler of T4 above - Defaults to `1` (5s).
-
-##### `c_invite_proxy_ms`
-
-The SIP Timer C (how long a proxied INVITE may go on answering provisionally without
-finishing), in milliseconds - Defaults to `240000` (4 minutes).
-
-This is the one timer that is not a multiple of T1 or T4, because it is the proxy's and
-not a transaction's (RFC 3261 section 16.6 step 11). It is what gives up on a callee that
-starts ringing and then goes silent: Timer B bounds a branch that never answers at all,
-but the first provisional response ends Timer B, and from then until Timer C fires
-nothing else is watching. When it fires the node cancels the branch, and if the branch
-ignores that too it is abandoned and the caller is answered.
-
-RFC 3261 requires this to be larger than 3 minutes. A smaller value is refused, with an
-error in the log, and the default kept - a shorter timer would hang up on calls that are
-only still ringing.
-
-#### Finding a host by name
-
-There is nothing to configure. When a request has to go to a URI that names a host - a
-trunk, `sip:+15551234567@sip.provider.example` - the node looks it up the way RFC 3263
-says: NAPTR for which transports the domain offers, SRV for the servers and ports, then
-their addresses, and it tries each in turn until one answers. It asks the nameservers in
-`/etc/resolv.conf`, five seconds a try and twice round, and keeps each answer for as long as
-its TTL says. A URI with an address, or with a port, skips the lookups it makes unnecessary.
-A provider that publishes only an A record still works: that is the last step.
-
-### `tcp` Section
-
-This section configures TCP listener for the server. TCP is one possible transport
-for SIP.
-
-**WARNING** The TCP transport is unencrypted.
-
-#### `enabled`
-
-Whether to enable the TCP server, defaults to `true` if the section is present.
-
-#### `address`
-
-The address to bind to, e.g. `0.0.0.0`
-
-#### `port`
-
-The port to listen on, defaults to `5061`.
-
-### `tls` Section
-
-This section configures Transport Layer Security for the server.
-
-#### `enabled`
-
-Whether to enable the TLS server, defaults to `true` if the section is present.
-
-#### `cert_pem_filename`
-
-The filename for the PEM format server certificate.
-
-#### `key_pem_filename`
-
-The filename for the PEM format server key.
-
-### `datastore` Section
-
-Where realms, subscribers, registrations, nonces and call records live. One of the three
-plugin kinds: the URL's scheme picks the driver, and a section named after that driver
-carries anything the URL cannot express.
-
-#### `url`
-
-The URL of the datastore. AthenaSIP ships with two:
-
-| Datastore                  | Scheme   | Example URL              |
-|:---------------------------|:---------|:-------------------------|
-| In memory                  | `memory` | `memory://`              |
-|[Redis](https://redis.io/)  | `redis`  | `redis://127.0.0.1:6379` |
-
-`memory://` keeps realms, subscribers, registrations, nonces and calls in the server
-process. It needs no external service and nothing survives a restart, which makes it
-the right choice for a single node you are trying out, and for the tests.
-
-`redis://` is the canonical backend: registrations survive a restart and are shared
-across a cluster. `rediss://` and `redis+ssl://` are the same driver over TLS.
-
-### `media` Section
-
-Where the RTP goes. One of the three plugin kinds: the URL's scheme picks the driver,
-and a section named after that driver carries anything the URL cannot express.
-
-#### `url`
-
-The URL of the media engine. AthenaSIP ships with two:
-
-| Engine                                              | Scheme      | Example URL                  |
-|:----------------------------------------------------|:------------|:-----------------------------|
-| Built-in relay                                       | `builtin`   | `builtin://`                 |
-|[rtpengine](https://github.com/sipwise/rtpengine)     | `rtpengine` | `rtpengine://127.0.0.1:2223` |
-
-`builtin://` relays plain RTP from the server process and needs nothing installed. It
-advertises the `bridge` capability and nothing else, and it declines an offer that asks
-for ICE, DTLS or SRTP rather than answering one it cannot carry. That decline is not a
-failed call: the description travels on untouched and the media goes end to end.
-
-`rtpengine://host:port` is the canonical engine and the one that does WebRTC, because
-ICE, DTLS and SRTP are what a browser requires. It also records and transcodes. The port
-is rtpengine's ng control port, `2223` unless its own configuration says otherwise.
-
-#### `builtin`
-
-| Setting | Default | What it is |
-| --- | --- | --- |
+| Key | Default | Meaning |
+|---|---|---|
 | `bind_address` | `0.0.0.0` | Where the relay binds |
-| `public_address` | `0.0.0.0` | The address written into the descriptions it hands out |
-| `port_min` | `22000` | The bottom of the RTP port range |
-| `port_max` | `23000` | The top of it |
+| `public_address` | `0.0.0.0` | The address written into SDP. Must be reachable by endpoints: on a NAT'd host, the public address. May be a host name, resolved at start and every minute; while it does not resolve, the relay declines. |
+| `port_min`, `port_max` | `22000`, `23000` | RTP port range. Behind NAT, forward the whole range. |
 
-`public_address` has to be somewhere the endpoints can actually send: `0.0.0.0` in a
-`c=` line is a black hole. On a NAT'd host it is the public address, and the port range
-has to be forwarded to the host as a contiguous block.
+`media.rtpengine`:
 
-#### `rtpengine`
+| Key | Default | Meaning |
+|---|---|---|
+| `engines` | none | More engines, as `host[:port]`, making a pool with the URL's. See [Media](media.md#more-than-one-engine). |
+| `timeout_ms` | `500` | Wait for one ng reply before asking again |
+| `attempts` | `3` | Total tries per request. An engine that gives no answer in all of them is taken out of the pool until it answers a ping. |
+| `ping_interval` | `10` | Seconds between pings of every engine |
+| `media_address` | unset | Address rtpengine should advertise. Leave unset to let rtpengine's interface configuration decide. May be a host name. A leg inside `sip.localnet` is given the node's local address instead. |
 
-| Setting | Default | What it is |
-| --- | --- | --- |
-| `timeout_ms` | `500` | How long to wait for one answer before asking again |
-| `attempts` | `3` | How many times to ask in all |
-| `media_address` | unset | The address rtpengine should advertise, when it should not choose |
+Whether media is anchored at all is [`behaviour.media_anchor`](#behaviour).
 
-The ng protocol runs over UDP, so a request can be lost. rtpengine caches its answer
-against the request's cookie, which makes asking again a request for the same answer
-rather than for the work a second time, and this driver asks again rather than failing a
-call for one lost datagram. `timeout_ms` bounds one attempt and not the operation:
-three attempts at half a second is well inside the thirty-two seconds RFC 3261's timer B
-gives a transaction, which a fork with several bindings has to share.
+## `plugins`
 
-`media_address` is only needed where rtpengine cannot work out for itself which of its
-addresses to put in the SDP it hands back. Leave it unset and let rtpengine's own
-interface configuration decide.
+| Key | Default | Meaning |
+|---|---|---|
+| `path` | unset | A directory, or a list of them, holding plugin modules (`.so`, `.dylib`, `.dll`) to load at start. See [Building a module](plugins.md#building-a-module); `athenasip --list-plugins` shows what loaded. |
 
-#### Whether media is anchored, and how
+## `push`
 
-That is behaviour rather than media configuration, and lives in the `behaviour` section
-below, where a realm can override it.
+Push notifications ([RFC 8599](https://www.rfc-editor.org/rfc/rfc8599)) wake a client that
+is asleep, as a phone's operating system puts a SIP app to sleep. A client asks for push
+by putting `pn-provider`, `pn-prid` and, for some services, `pn-param` on the Contact of
+its REGISTER. Off unless `urls` names a service.
 
-### `calls` Section
+| Key | Default | Meaning |
+|---|---|---|
+| `urls` | `[]` | The push services this node uses, one driver each: `apns://`, `fcm://`, `webpush://`. Each takes a section named after it, below. |
+| `timeout` | `10` | Seconds a call waits for the client to wake and register again before the next target is tried, or the caller gets 480. 1 to 30. |
+| `refresh` | `180` | Seconds before a push binding expires that the client is pushed to refresh it. Over 120. A client asking for push must register for at least `refresh` + 60 seconds, or it gets 423. |
+
+What the node does:
+
+- A REGISTER asking for a service this node runs is answered 200 with
+  `Feature-Caps: *;+sip.pns="<service>"`, and the binding is marked for push. A service it
+  does not run, or a Contact missing what the service needs, is 555.
+- A call or other new request for a push binding sends a push and holds the request until
+  the client registers again, then sends it down the new connection. Any node of a cluster
+  can do this, and the client may register again through any node.
+- The `pn-*` parameters are never shown in the admin API or on the event bus.
+
+`push.fcm`, for Android through [Firebase Cloud Messaging](https://firebase.google.com/docs/cloud-messaging).
+The client's `pn-param` is the Firebase project ID and `pn-prid` its registration token:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `service_account` | required | Path to the service-account JSON file the Firebase console gives you |
+| `ttl` | `60` | Seconds FCM keeps trying to deliver the push |
+| `api_base` | `https://fcm.googleapis.com` | Only to go through a proxy |
+| `ca_file` | system roots | Extra CA certificates to trust |
+
+`push.webpush`, for browsers ([RFC 8030](https://www.rfc-editor.org/rfc/rfc8030)). The
+client's `pn-prid` is its push subscription URL and it has no `pn-param`. The node signs
+each push with its VAPID key ([RFC 8292](https://www.rfc-editor.org/rfc/rfc8292)) and gives
+the public half to clients as `+sip.vapid`:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `vapid_private_key` | required | Path to a P-256 private key in PEM: `openssl ecparam -name prime256v1 -genkey -noout -out vapid.pem` |
+| `subject` | required | A `mailto:` or `https:` URI the push service can contact you at |
+| `ttl` | `60` | Seconds the push service keeps trying |
+| `ca_file` | system roots | Extra CA certificates to trust |
+
+`push.apns`, for iOS through the [Apple Push Notification service](https://developer.apple.com/documentation/usernotifications/sending-notification-requests-to-apns).
+The client's `pn-param` is the Team ID and the topic, separated by the first period
+(`DEF123GHIJ.com.example.app.voip`), and `pn-prid` its device token. A topic ending in
+`.voip` gets a VoIP (PushKit) push, only ever for a call: iOS cuts off an app that takes a
+VoIP push without ringing, so such a client is not pushed to refresh its registration and
+must refresh it itself. Any other topic gets a background push (`content-available`,
+priority 5). The node signs a token with the team's APNs key and sends over HTTP/2, keeping
+one connection open to Apple. A binding for another team's app is 555:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `key_file` | required | Path to the APNs key (`AuthKey_<key ID>.p8`) from Certificates, Identifiers & Profiles > Keys in the Apple developer account |
+| `key_id` | required | The key's ten-character ID, shown beside it there |
+| `team_id` | required | The developer team's ten-character ID, as the app's `pn-param` starts |
+| `environment` | `production` | `sandbox` for an app built for development, which APNs knows by a different host |
+| `ttl` | `60` | Seconds APNs keeps trying to deliver the push. `0` is deliver now or not at all |
+| `api_base` | from `environment` | Only to go through a proxy |
+| `ca_file` | system roots | Extra CA certificates to trust |
+
+## `behaviour`
 
 ```yaml
-calls:
-  history_retention: 2592000
+behaviour:
+  media_anchor: true
+  media_profile: mirror
+  qualify_interval: 0
+  rewrite_contact: false
 ```
 
-Every call that got as far as ringing leaves a record when it ends: who called whom, when
-it was made, answered and ended, which nodes carried it and which media engine.
-`GET /api/v1/call-records` lists them, newest first, from the datastore, so every node of
-a cluster gives the same list. `history_retention` is how long a record is kept, in
-seconds: thirty days by default, and zero keeps them for ever. With `memory://` the
-records go when the node stops.
+| Key | Default | Meaning |
+|---|---|---|
+| `media_anchor` | `true` | Route media through the media engine |
+| `media_profile` | `mirror` | What a leg is offered: `mirror`, `transport`, `rtp`, `webrtc` or `srtp` |
+| `qualify_interval` | `0` | Seconds between OPTIONS to each registered client; `0` is never, otherwise 5 to 86400 |
+| `rewrite_contact` | `false` | Rewrite forwarded Contacts to the address a message came from |
 
-### `http` Section
+These are the server defaults. Realms and subscribers override them over the admin API.
+[Behaviour](behaviour.md) explains each setting and the overrides.
 
-The admin API and the console.
+## `log`
+
+| Key | Default | Values |
+|---|---|---|
+| `level` | `debug` | `debug`, `info`, `warn`, `error` |
+| `format` | `text` | `text`, or `json` for one object per line |
+
+```json
+{"at":"2026-10-03T19:44:20Z","level":"info","scope":"channel tls://10.35.1.164:33083","message":"Connected"}
+```
+
+`scope` is the component that wrote the line, nested scopes joined with `/`; it is absent
+when there is none.
+
+## `calls`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `history_retention` | `2592000` (30 days) | Seconds a call record is kept in the datastore. `0` keeps them for ever. |
+
+A record is written when a call that reached ringing ends. `GET /api/v1/call-records`
+lists them, newest first.
+
+## `http`
+
+The admin API and the console. Without this section neither is served.
 
 ```yaml
 http:
@@ -531,103 +371,62 @@ http:
     port: 8443
   api:
     enable: true
-    rate_limits:
-      session: { burst: 60, per_minute: 300 }
+  files:
+    path: "../admin/"
 ```
 
-`http.tls` adds an HTTPS listener beside the plain one; both serve the same API and the
-same console. It uses the certificate and key of the [`tls` section](#tls-section) unless
-it names its own with `cert_pem_filename` and `key_pem_filename`, and it binds `address`
-unless it has one of its own. A node asked for HTTPS with no certificate to show does not
-start. The plain listener stays for what has no use for a certificate: a healthcheck, a
-provisioning script on the host. The console's softphone needs HTTPS, because a browser
-gives a page that is not a secure context no microphone - and a page served over HTTPS may
-only open a secure WebSocket, so it needs `wss` as well: either `websocket.tls: true`, or
-`websocket.secure_port`, which starts a second, secure WebSocket listener beside the plain
-one with the `websocket` section's certificate or the `tls` section's.
+| Key | Default | Meaning |
+|---|---|---|
+| `address` | `0.0.0.0` | Bind address |
+| `port` | required | Plain HTTP port |
+| `tls.enable` | `false` | Add an HTTPS listener serving the same API and console |
+| `tls.address` | `http.address` | HTTPS bind address |
+| `tls.port` | `8443` | HTTPS port |
+| `tls.cert_pem_filename`, `tls.key_pem_filename` | the `tls` section's | HTTPS certificate and key. With neither available the node does not start. |
 
-`http.api.rate_limits` sets, for each kind of caller, how many requests are let through at
-once (`burst`) and how many a minute after that (`per_minute`). Zero in either turns that
-limit off. A refusal is `429` with `Retry-After`.
+The console's softphone needs HTTPS (a browser grants no microphone otherwise) and
+therefore a `wss` listener.
+
+### `http.api`
+
+Enabled when the section is present. Users sign in with `POST /api/v1/auth/login`; see
+[Authentication](authentication.md). `http.api.tokens` is refused at startup.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enable` | `true` | Serve `/api/v1`, and `/metrics` in the Prometheus text format ([Media](media.md#is-media-flowing)) |
+| `session_lifetime` | `43200` | Seconds a login lasts. Cannot be `0`. |
+| `session_idle` | `3600` | Seconds a login survives unused. `0` is off. |
+| `rate_limits` | see below | Request limits |
+| `ice_servers` | `[]` | STUN and TURN URLs handed to web clients by `GET /api/v1/subscriber/{realm}/config`, e.g. `- url: "stun:stun.example.com:3478"` |
+| `turn_shared_secret` | unset | coturn `static-auth-secret`. The node mints time-limited TURN credentials under it. Without it a `turn:` URL is served with no credential, and the node warns at startup. |
+| `turn_credential_ttl` | `3600` | Seconds a minted TURN credential is valid. Cannot be `0`. |
+
+`rate_limits` entries take `burst` (requests allowed at once) and `per_minute` (refill
+rate). `0` in either turns that limit off. A refusal is `429` with `Retry-After`.
 
 | Limit | Applies to | Keyed by | Default |
 |---|---|---|---|
-| `open` | no credential, an unknown endpoint, a token that is not one | source address | 30, then 30 a minute |
-| `login_source` | the login, on top of `open` | source address | 10, then 5 a minute |
-| `login_user` | the login, on top of `open` | username, counting every attempt | 5, then 1 a minute |
-| `session` | a signed-in caller | session | 60, then 300 a minute |
+| `open` | No credential, an unknown endpoint, an unresolved token | source address | `{ burst: 30, per_minute: 30 }` |
+| `login_source` | The login, on top of `open` | source address | `{ burst: 10, per_minute: 5 }` |
+| `login_user` | The login, on top of `open` | username | `{ burst: 5, per_minute: 1 }` |
+| `session` | A signed-in caller | session | `{ burst: 60, per_minute: 300 }` |
 
-The limits are per node and held in memory. The source address is the peer of the
-connection, so a node behind a reverse proxy sees every caller as the proxy: turn `open`
-and `login_source` off there and limit at the proxy.
+Limits are per node and in memory. Behind a reverse proxy every caller has the proxy's
+address: turn `open` and `login_source` off and limit at the proxy.
 
-### behaviour
+### `http.files`
 
-```yaml
-behaviour:
-  media_anchor: true
-  media_profile: mirror
-  qualify_interval: 0
-  rewrite_contact: false
-```
+Enabled when the section is present.
 
-[Behaviour](behaviour.md) is the whole of it, with how to set it to match the server you
-are moving from. Where the standards leave a choice, this section makes it. Leave it out and the node
-behaves as the standards say, with one deliberate deviation: it anchors media when an
-engine is configured, which is what most servers in front of rtpengine do and what a
-call through NAT needs.
-
-Every realm has the same section, provisioned over the admin API as `behaviour` on the
-realm (see [`docs/api/openapi.yaml`](api/openapi.yaml)). A realm overrides only what it
-sets and takes the rest from here, so changing this file changes every realm that has
-not chosen otherwise. A realm that sets a value to `null` goes back to inheriting it.
-The API returns what a realm chose (`behaviour`), what that comes to on the node
-answering (`behaviour_effective`), and that node's default on its own
-(`behaviour_default`).
-
-`media_anchor` off leaves every session description untouched and lets the media go
-end to end, as RFC 3261 16.6 has a proxy do. That is right for two endpoints that can
-reach each other and wrong for anything behind a NAT.
-
-`media_profile` decides what the engine is asked to produce for a leg that has not yet
-said what it speaks. A leg that has is always answered in kind.
-
-| Value | What a callee is offered | Behaves like |
+| Key | Default | Meaning |
 |---|---|---|
-| `mirror` (default) | What the caller offered | A proxy that imposes nothing |
-| `transport` | WebRTC over `ws`/`wss`, plain RTP otherwise | Kamailio's usual WebSocket routing |
-| `rtp` | Plain RTP | A realm whose WebSocket clients are SIP phones (RFC 7118 requires no WebRTC) |
-| `webrtc` | WebRTC | A browser-only realm |
-| `srtp` | SRTP with keys in the description (RFC 4568) | Desk phones that want encryption and do not do DTLS |
+| `enable` | `true` | Serve static files from the admin listener. `/api/` and `/metrics` are routed first. |
+| `path` | unset | Document root: the built console |
+| `spa` | `true` | Answer a `GET` or `HEAD` for a path with nothing behind it with `index.html`, so client-side routes survive a reload. Never applied under `/api/` or to a path with a file extension. |
 
-A subscriber can say what its endpoint is with the same `media_profile` in its own
-`behaviour` section, which is Asterisk's `webrtc=yes`: AthenaPhone signals over TCP and
-its media is WebRTC, which neither the realm nor the transport can tell. Precedence, for
-the first description produced towards a leg, is what that leg has itself said in an
-offer or answer or in answer to an OPTIONS, then its subscriber, then its realm, then this
-section.
+## Not in the file
 
-`qualify_interval` is how often, in seconds, each registered client is sent an OPTIONS
-down the flow it registered on, which is Asterisk's `qualify` and Kamailio's nathelper
-ping. 0, the default, sends none, because RFC 3261 does not ask a registrar to; otherwise
-it is 5 to 86400. The probe keeps a NAT's mapping for the client open, and a client that
-answers with a session description (RFC 3261 11.2) has said what media it takes, which
-then counts as the client's own word: it decides the first offer towards it ahead of the
-subscriber, the realm and this section. `GET /api/v1/qualify` lists the clients being probed,
-when each last answered and what it said.
-
-`rewrite_contact`, off by default, rewrites the Contact in what this node forwards to the
-address and port the message came from, as Asterisk's `rewrite_contact` does; see
-[Behaviour](behaviour.md#rewrite_contact).
-
-When a callee answers an offer the engine produced for it with 488 Not Acceptable Here,
-the node offers it the other profile once, WebRTC for plain RTP or the reverse, as a
-Kamailio failure route would. Under `mirror` the other profile is the other of what the
-caller offered, which is what lets a browser call a desk phone. Nothing is learned from
-it: `GET /api/v1/media/reoffers` lists the subscribers that needed it and the
-`media_profile` that would save them the round trip, and setting it is the operator's
-call.
-
-An unknown setting or value is an error at startup and a 400 from the API, never a
-guess.
-
+Realms, subscribers and users are provisioned over the admin API
+([`api/openapi.yaml`](api/openapi.yaml)) and stored in the datastore, so a cluster shares
+them.

@@ -61,7 +61,7 @@ bool base64_decode(const std::string& input, std::vector<unsigned char>& out) {
       const auto character = static_cast<unsigned char>(input[i + j]);
 
       if (character == '=') {
-        // Padding, and only ever at the end.
+        // Padding, only at the end.
         if (i + 4 < input.size() || j < 2) return false;
         quad[j] = 0;
         continue;
@@ -82,8 +82,7 @@ bool base64_decode(const std::string& input, std::vector<unsigned char>& out) {
   return true;
 }
 
-// The derivation itself, shared by hashing and verifying so the two can never disagree
-// about what they compute.
+// Shared by hash and verify, so the two cannot disagree.
 bool derive(const std::string& password, const std::vector<unsigned char>& salt, std::uint32_t iterations, std::size_t length,
             std::vector<unsigned char>& out) {
   out.assign(length, 0);
@@ -125,8 +124,7 @@ bool Password::verify(const std::string& password, const std::string& stored) {
 
   std::uint32_t iterations = 0;
   try {
-    // Refuses anything that is not entirely digits: stoul would accept "600000x" and
-    // a leading sign, and a cost read from a corrupted row should not be guessed at.
+    // Digits only: stoul would accept "600000x" or a leading sign.
     if (parts[1].empty() || parts[1].find_first_not_of("0123456789") != std::string::npos) return false;
     iterations = static_cast<std::uint32_t>(std::stoul(parts[1]));
   } catch (const std::exception&) {
@@ -140,22 +138,15 @@ bool Password::verify(const std::string& password, const std::string& stored) {
   if (!base64_decode(parts[2], salt) || !base64_decode(parts[3], expected)) return false;
   if (salt.empty()) return false;
 
-  // Exactly the length this code writes, and derive to that length rather than to the
-  // stored one. PBKDF2 to a shorter length is a *prefix* of the output for a longer one -
-  // that is the construction, not a quirk of OpenSSL - so deriving to the stored hash's own
-  // length compares only as many bytes as the record happens to carry. A hash truncated to
-  // one byte was then matched by about one password in 256.
-  //
-  // A row gets truncated by a partial write, a corrupted value, a migration, or by somebody
-  // with write access to the datastore who cannot read the hash but can shorten it. The
-  // last is the one that matters: it turns write access into a login, quietly, leaving a
-  // record that still parses.
+  // Exactly the length this code writes, and derived to that length, not the stored one. PBKDF2 to a shorter length
+  // is a prefix of the longer output, so deriving to a truncated record's length would compare only the bytes it
+  // carries, and anyone able to shorten a stored hash could turn write access into a login.
   if (expected.size() != kHashBytes) return false;
 
   std::vector<unsigned char> derived;
   if (!derive(password, salt, iterations, kHashBytes, derived)) return false;
 
-  // Constant time, so the comparison says nothing about how much of the hash matched.
+  // Constant time.
   return CRYPTO_memcmp(derived.data(), expected.data(), kHashBytes) == 0;
 }
 

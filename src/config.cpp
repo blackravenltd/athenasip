@@ -13,6 +13,9 @@
 #include <sstream>
 #include <stdexcept>
 
+#include "config_schema.h"
+#include "util.h"
+
 namespace athenasip {
 
 Config::Config(std::shared_ptr<Logger> logger) { _logger = std::make_unique<LoggerScoped>("config", logger); }
@@ -28,7 +31,10 @@ bool Config::load_from_yaml(const std::string& filename) {
 
   _root = config;
 
-  // --- Parse the 'sip' section ---
+  // A misspelt key would otherwise leave its default in place without a word.
+  for (const auto& unknown : unknown_config_keys(config, all_config_settings())) _logger->warn(unknown);
+
+  // sip
   if (!config["sip"]) {
     _logger->error("YAML file missing 'sip' section");
     return false;
@@ -42,9 +48,13 @@ bool Config::load_from_yaml(const std::string& filename) {
     return false;
   }
 
-  // Previously present in the YAML and the docs but never read, so setting it had no
-  // effect at all.
   if (sip["allow_unencrypted"]) sip_allow_unencrypted = sip["allow_unencrypted"].as<bool>();
+
+  if (sip["forward_register"]) sip_forward_register = Util::to_lower(sip["forward_register"].as<std::string>());
+  if (sip_forward_register != "subscribers" && sip_forward_register != "never") {
+    _logger->error("'sip.forward_register' is '" + sip_forward_register + "': it is subscribers or never");
+    return false;
+  }
 
   if (sip["flow_idle_timeout"]) {
     try {
@@ -73,10 +83,8 @@ bool Config::load_from_yaml(const std::string& filename) {
   if (sip["session_expires"]) {
     const auto configured = sip["session_expires"].as<uint32_t>();
 
-    // RFC 4028 section 4: "SIP entities MUST be prepared to handle Session-Expires header
-    // field values of any duration greater than 90 seconds, but entities that insert the
-    // Session-Expires header field SHOULD NOT choose values of less than 30 minutes."
-    // Zero is not a short interval, it is the switch that says not to insert one.
+    // RFC 4028 section 4: at least 90 seconds, and an inserted interval SHOULD NOT be under
+    // 30 minutes. Zero means insert none.
     if (configured != 0 && configured < 90) {
       _logger->error("sip.session_expires must be at least 90 (RFC 4028) - keeping " + std::to_string(sip_session_expires));
     } else {
@@ -88,10 +96,7 @@ bool Config::load_from_yaml(const std::string& filename) {
   if (sip["session_min_se"]) {
     const auto configured = sip["session_min_se"].as<uint32_t>();
 
-    // RFC 4028 section 8.1: the minimum a proxy quotes in a 422 "MUST NOT be lower than
-    // 90 seconds", which section 4 explains is a bit more than twice the longest a SIP
-    // transaction can take. Below it a refresh could not complete before the session it
-    // was refreshing expired.
+    // RFC 4028 section 8.1: the Min-SE a proxy quotes in a 422 MUST NOT be under 90 seconds.
     if (configured < 90) {
       _logger->error("sip.session_min_se must be at least 90 (RFC 4028) - keeping " + std::to_string(sip_session_min_se));
     } else {
@@ -99,7 +104,6 @@ bool Config::load_from_yaml(const std::string& filename) {
     }
   }
 
-  // SIP Timers
   YAML::Node sip_timers = sip["timers"];
   if (sip_timers) {
     if (sip_timers["t1_rtt_ms"]) sip_timer_t1_rtt_ms = sip_timers["t1_rtt_ms"].as<uint16_t>();
@@ -119,9 +123,7 @@ bool Config::load_from_yaml(const std::string& filename) {
     if (sip_timers["c_invite_proxy_ms"]) {
       const auto configured = sip_timers["c_invite_proxy_ms"].as<uint32_t>();
 
-      // RFC 3261 16.6 step 11: "The timer MUST be larger than 3 minutes." A shorter one
-      // would give up on calls that are only still ringing, so it is refused rather
-      // than honoured.
+      // RFC 3261 16.6 step 11: timer C MUST be larger than 3 minutes.
       if (configured <= 180000) {
         _logger->error("sip.timers.c_invite_proxy_ms must be larger than 180000 - keeping " + std::to_string(sip_timer_c_invite_proxy_ms));
       } else {
@@ -132,7 +134,7 @@ bool Config::load_from_yaml(const std::string& filename) {
 
   if (sip["connect_timeout_ms"]) sip_connect_timeout_ms = sip["connect_timeout_ms"].as<uint32_t>();
 
-  // --- Parse the 'tls' section ---
+  // tls
   YAML::Node tls = config["tls"];
   if (tls) {
     if (tls["enable"])
@@ -153,10 +155,8 @@ bool Config::load_from_yaml(const std::string& filename) {
         return false;
       }
     } else if (tls_enable) {
-      // Only when the listener is switched on. A section that says enable: false and
-      // nothing else is a listener turned off, not a configuration error, and refusing
-      // to start over the port of something that will never listen is the kind of thing
-      // that makes a server feel hostile to configure.
+      // A port is required only when the listener is enabled. The same holds for tcp, udp
+      // and websocket below.
       _logger->error("Missing 'tls.port'");
       return false;
     } else {
@@ -178,7 +178,7 @@ bool Config::load_from_yaml(const std::string& filename) {
     }
   }
 
-  // --- Parse the 'tls' section ---
+  // tcp
   YAML::Node tcp = config["tcp"];
   if (tcp) {
     if (tcp["enable"])
@@ -199,10 +199,6 @@ bool Config::load_from_yaml(const std::string& filename) {
         return false;
       }
     } else if (tcp_enable) {
-      // Only when the listener is switched on. A section that says enable: false and
-      // nothing else is a listener turned off, not a configuration error, and refusing
-      // to start over the port of something that will never listen is the kind of thing
-      // that makes a server feel hostile to configure.
       _logger->error("Missing 'tcp.port'");
       return false;
     } else {
@@ -210,7 +206,7 @@ bool Config::load_from_yaml(const std::string& filename) {
     }
   }
 
-  // --- Parse the 'udp' section ---
+  // udp
   YAML::Node udp = config["udp"];
   if (udp) {
     if (udp["enable"])
@@ -231,10 +227,6 @@ bool Config::load_from_yaml(const std::string& filename) {
         return false;
       }
     } else if (udp_enable) {
-      // Only when the listener is switched on. A section that says enable: false and
-      // nothing else is a listener turned off, not a configuration error, and refusing
-      // to start over the port of something that will never listen is the kind of thing
-      // that makes a server feel hostile to configure.
       _logger->error("Missing 'udp.port'");
       return false;
     } else {
@@ -242,7 +234,7 @@ bool Config::load_from_yaml(const std::string& filename) {
     }
   }
 
-  // --- Parse the 'websocket' section ---
+  // websocket
   YAML::Node websocket = config["websocket"];
   if (websocket) {
     if (websocket["enable"])
@@ -263,10 +255,6 @@ bool Config::load_from_yaml(const std::string& filename) {
         return false;
       }
     } else if (websocket_enable) {
-      // Only when the listener is switched on. A section that says enable: false and
-      // nothing else is a listener turned off, not a configuration error, and refusing
-      // to start over the port of something that will never listen is the kind of thing
-      // that makes a server feel hostile to configure.
       _logger->error("Missing 'websocket.port'");
       return false;
     } else {
@@ -292,15 +280,23 @@ bool Config::load_from_yaml(const std::string& filename) {
     if (websocket["cert_pem_filename"]) websocket_cert_pem_filename = websocket["cert_pem_filename"].as<std::string>();
     if (websocket["key_pem_filename"]) websocket_key_pem_filename = websocket["key_pem_filename"].as<std::string>();
 
-    // A listener asked to be secure with nothing to be secure with cannot start, and
-    // falling back to ws:// would be a node quietly serving a browser in the clear.
+    // Never fall back to ws:// when wss was asked for.
     if (websocket_tls && (websocket_cert_pem_filename.empty() || websocket_key_pem_filename.empty())) {
       _logger->error("'websocket.tls' is set but 'websocket.cert_pem_filename' or 'websocket.key_pem_filename' is missing");
       return false;
     }
   }
 
-  // --- Parse the 'datastore' section ---
+  if (!sip_allow_unencrypted) {
+    for (const auto& [name, plain] :
+         {std::pair<const char*, bool>{"udp", udp_enable}, {"tcp", tcp_enable}, {"websocket", websocket_enable && !websocket_tls}}) {
+      if (!plain) continue;
+      _logger->error(std::string("'sip.allow_unencrypted' is false but the plain '") + name + "' listener is enabled");
+      return false;
+    }
+  }
+
+  // datastore
   YAML::Node datastore = config["datastore"];
   if (datastore) {
     if (datastore["url"]) {
@@ -311,7 +307,7 @@ bool Config::load_from_yaml(const std::string& filename) {
     }
   }
 
-  // --- Parse the 'event' section ---
+  // events
   YAML::Node events = config["events"];
   if (events) {
     if (events["url"]) {
@@ -324,14 +320,49 @@ bool Config::load_from_yaml(const std::string& filename) {
     if (events["status_interval"]) events_status_interval = events["status_interval"].as<std::uint32_t>();
   }
 
-  // --- Parse the 'media' section ---
+  // media
   YAML::Node media = config["media"];
   if (media) {
     if (media["url"]) media_url = media["url"].as<std::string>();
   }
 
-  // The port each listener is reached on from outside, when a router forwards a different
-  // one to it.
+  // plugins
+  if (YAML::Node plugins = config["plugins"]; plugins && plugins["path"]) {
+    try {
+      if (plugins["path"].IsSequence()) {
+        plugins_path = plugins["path"].as<std::vector<std::string>>();
+      } else {
+        plugins_path = {plugins["path"].as<std::string>()};
+      }
+    } catch (const std::exception& e) {
+      _logger->error("Invalid 'plugins.path': " + std::string(e.what()));
+      return false;
+    }
+  }
+
+  // push
+  if (YAML::Node push = config["push"]) {
+    try {
+      if (push["urls"]) push_urls = push["urls"].as<std::vector<std::string>>();
+      if (push["timeout"]) push_timeout = push["timeout"].as<std::uint32_t>();
+      if (push["refresh"]) push_refresh = push["refresh"].as<std::uint32_t>();
+    } catch (const std::exception& e) {
+      _logger->error("Invalid 'push' section: " + std::string(e.what()));
+      return false;
+    }
+
+    if (push_timeout == 0 || push_timeout > 30) {
+      _logger->error("'push.timeout' is " + std::to_string(push_timeout) + ": it must be 1 to 30 seconds, inside timer F (RFC 8599 5.6.2)");
+      return false;
+    }
+
+    if (push_refresh <= 120) {
+      _logger->error("'push.refresh' is " + std::to_string(push_refresh) + ": it must be over 120 seconds (RFC 8599 5.5)");
+      return false;
+    }
+  }
+
+  // public_port, for each listener.
   for (const auto& [name, field] : std::initializer_list<std::pair<const char*, std::uint16_t*>>{
            {"udp", &udp_public_port}, {"tcp", &tcp_public_port}, {"tls", &tls_public_port}, {"websocket", &websocket_public_port}}) {
     if (!config[name] || !config[name]["public_port"]) continue;
@@ -343,7 +374,7 @@ bool Config::load_from_yaml(const std::string& filename) {
     }
   }
 
-  // --- Parse the 'cluster' section ---
+  // cluster
   if (YAML::Node cluster = config["cluster"]) {
     try {
       if (cluster["enable"]) cluster_enable = cluster["enable"].as<bool>();
@@ -358,18 +389,14 @@ bool Config::load_from_yaml(const std::string& filename) {
       return false;
     }
 
-    // A cluster listener with no way to tell a node from anybody else would be an open door.
+    // The cluster listener is mutual TLS or nothing.
     if (cluster_enable && (cluster_ca.empty() || cluster_cert.empty() || cluster_key.empty())) {
       _logger->error("'cluster' needs ca, cert and key: athenasip --ca-init and --ca-node make them (docs/certificates.md)");
       return false;
     }
   }
 
-  // --- Parse the 'behaviour' section ---
-  //
-  // The server's default for every behaviour that differs between SIP servers; a realm
-  // overrides any of it. A name that is not one of the choices stops the node: a node doing
-  // something other than what its operator wrote is the failure to avoid.
+  // behaviour. An unknown value stops the node rather than being ignored.
   YAML::Node behaviour_section = config["behaviour"];
   if (behaviour_section) {
     try {
@@ -412,7 +439,43 @@ bool Config::load_from_yaml(const std::string& filename) {
     }
   }
 
-  // --- Parse the 'calls' section ---
+  // log
+  if (YAML::Node log = config["log"]) {
+    try {
+      if (log["level"]) {
+        const auto level = Util::to_lower(log["level"].as<std::string>());
+        if (level == "debug") {
+          log_level = loggers::LogLevel::DEBUG;
+        } else if (level == "info") {
+          log_level = loggers::LogLevel::INFO;
+        } else if (level == "warn") {
+          log_level = loggers::LogLevel::WARN;
+        } else if (level == "error") {
+          log_level = loggers::LogLevel::ERROR;
+        } else {
+          _logger->error("Invalid 'log.level': " + level + " - it is debug, info, warn or error");
+          return false;
+        }
+      }
+
+      if (log["format"]) {
+        const auto format = Util::to_lower(log["format"].as<std::string>());
+        if (format == "text") {
+          log_format = loggers::LogFormat::Text;
+        } else if (format == "json") {
+          log_format = loggers::LogFormat::Json;
+        } else {
+          _logger->error("Invalid 'log.format': " + format + " - it is text or json");
+          return false;
+        }
+      }
+    } catch (const std::exception& e) {
+      _logger->error("Invalid 'log' section: " + std::string(e.what()));
+      return false;
+    }
+  }
+
+  // calls
   if (YAML::Node calls = config["calls"]) {
     try {
       if (calls["history_retention"]) calls_history_retention = calls["history_retention"].as<std::uint32_t>();
@@ -422,7 +485,7 @@ bool Config::load_from_yaml(const std::string& filename) {
     }
   }
 
-  // --- Parse the 'http' section ---
+  // http
   YAML::Node http = config["http"];
   if (http) {
     if (http["address"])
@@ -457,7 +520,6 @@ bool Config::load_from_yaml(const std::string& filename) {
 
     if (http_tls_address.empty()) http_tls_address = http_address;
 
-    // HTTPS with nothing to show would be a listener that fails every handshake.
     if (http_tls_enable && (http_tls_cert().empty() || http_tls_key().empty())) {
       _logger->error("'http.tls' needs a certificate and a key: cert_pem_filename and key_pem_filename here, or in the 'tls' section");
       return false;
@@ -470,10 +532,8 @@ bool Config::load_from_yaml(const std::string& filename) {
       else
         http_api_enable = true;
 
-      // Configured tokens were removed on 2026-10-01: a permanent credential that can do
-      // everything, sitting in a file, is what this node no longer has. A file that still
-      // sets them is refused rather than read as if they were not there, so nobody finds out
-      // by being unable to log in. The first administrator is made on the host instead.
+      // Configured API tokens are not supported. A file that sets them is refused, not
+      // ignored, so the operator learns why they cannot sign in.
       if (http_api["tokens"]) {
         _logger->error(
             "'http.api.tokens' is no longer supported: configured API tokens were removed. Delete it, create an administrator with "
@@ -514,14 +574,11 @@ bool Config::load_from_yaml(const std::string& filename) {
         return false;
       }
 
-      // Not an error, because the session still ends: the absolute expiry comes first
-      // and the idle rule never gets a chance to fire.
+      // Only a warning: the session still ends, at its absolute lifetime.
       if (http_api_session_idle > http_api_session_lifetime) {
         _logger->warn("'http.api.session_idle' is longer than 'http.api.session_lifetime', so nothing will ever expire on idle");
       }
 
-      // What a web client is told to use for ICE. Nothing here changes what this node
-      // does with media; it is what the client is handed and the client is what acts on it.
       YAML::Node ice = http_api["ice_servers"];
       if (ice && ice.IsSequence()) {
         for (const auto& entry : ice) {
@@ -555,8 +612,7 @@ bool Config::load_from_yaml(const std::string& filename) {
         return false;
       }
 
-      // Said out loud, because the failure is silent otherwise: a browser handed a turn:
-      // URL with no credential cannot use it, and the call fails later and further away.
+      // A browser cannot use a turn: URL without a credential, so warn at startup.
       const auto wants_turn = std::any_of(ice_servers.begin(), ice_servers.end(),
                                           [](const IceServer& server) { return server.url.rfind("turn:", 0) == 0 || server.url.rfind("turns:", 0) == 0; });
 
@@ -595,19 +651,14 @@ YAML::Node Config::plugin_root(const std::string& kind, const std::string& name)
 
 namespace {
 
-// Whatever a plugin put under its kind that is not the URL. Copied through rather than
-// interpreted, because only the driver knows what its own section means - and a
-// --print-config that quietly dropped the half it did not understand would be worse than
-// one that refused to print at all.
+// Copies a kind's plugin sections through from the document, skipping the keys in `mine`,
+// which the server has already emitted from its own fields.
 void emit_plugin_sections(YAML::Emitter& out, const YAML::Node& root, const std::string& kind, const std::vector<std::string>& mine) {
   if (!root || !root[kind] || !root[kind].IsMap()) return;
 
   for (const auto& entry : root[kind]) {
     const auto name = entry.first.as<std::string>();
 
-    // Anything the server parses for itself has already been emitted from the field it
-    // was parsed into, which is the effective value; emitting it again from the document
-    // would put the key in twice and give a reader two answers.
     if (std::find(mine.begin(), mine.end(), name) != mine.end()) continue;
 
     out << YAML::Key << name << YAML::Value << entry.second;
@@ -626,6 +677,7 @@ std::string Config::effective_yaml() const {
   out << YAML::Key << "public_address" << YAML::Value << sip_public_address;
   out << YAML::Key << "localnet" << YAML::Value << YAML::Flow << sip_localnet;
   out << YAML::Key << "allow_unencrypted" << YAML::Value << sip_allow_unencrypted;
+  out << YAML::Key << "forward_register" << YAML::Value << sip_forward_register;
   out << YAML::Key << "log_messages" << YAML::Value << sip_log_messages;
   out << YAML::Key << "session_expires" << YAML::Value << sip_session_expires;
   out << YAML::Key << "session_min_se" << YAML::Value << sip_session_min_se;
@@ -635,15 +687,22 @@ std::string Config::effective_yaml() const {
   out << YAML::Key << "connect_timeout_ms" << YAML::Value << sip_connect_timeout_ms;
   out << YAML::Key << "flow_idle_timeout" << YAML::Value << sip_flow_idle_timeout;
 
-  // The section 17 timers, which are the ones somebody reading this is most likely to be
-  // checking against the RFC.
-  out << YAML::Key << "timer_t1_rtt_ms" << YAML::Value << sip_timer_t1_rtt_ms;
-  out << YAML::Key << "timer_t2_max_retransmit_interval_ms" << YAML::Value << sip_timer_t2_max_retransmit_interval_ms;
-  out << YAML::Key << "timer_t4_network_propagation_ms" << YAML::Value << sip_timer_t4_network_propagation_ms;
-  out << YAML::Key << "timer_b_invite_timeout" << YAML::Value << sip_timer_b_invite_timeout;
-  out << YAML::Key << "timer_c_invite_proxy_ms" << YAML::Value << sip_timer_c_invite_proxy_ms;
-  out << YAML::Key << "timer_f_non_invite_timeout" << YAML::Value << sip_timer_f_non_invite_timeout;
-  out << YAML::Key << "timer_reliable_transport_retransmits" << YAML::Value << sip_timer_reliable_transport_retransmits;
+  out << YAML::Key << "timers" << YAML::Value << YAML::BeginMap;
+  out << YAML::Key << "t1_rtt_ms" << YAML::Value << sip_timer_t1_rtt_ms;
+  out << YAML::Key << "t2_max_retransmit_interval_ms" << YAML::Value << sip_timer_t2_max_retransmit_interval_ms;
+  out << YAML::Key << "t4_network_propagation_ms" << YAML::Value << sip_timer_t4_network_propagation_ms;
+  out << YAML::Key << "a_invite_initial" << YAML::Value << sip_timer_a_invite_initial;
+  out << YAML::Key << "b_invite_timeout" << YAML::Value << sip_timer_b_invite_timeout;
+  out << YAML::Key << "d_invite_duration" << YAML::Value << sip_timer_d_invite_duration;
+  out << YAML::Key << "e_non_invite_initial" << YAML::Value << sip_timer_e_non_invite_initial;
+  out << YAML::Key << "f_non_invite_timeout" << YAML::Value << sip_timer_f_non_invite_timeout;
+  out << YAML::Key << "g_server_invite_initial" << YAML::Value << sip_timer_g_server_invite_initial;
+  out << YAML::Key << "h_server_invite_timeout" << YAML::Value << sip_timer_h_server_invite_timeout;
+  out << YAML::Key << "i_server_invite_duration" << YAML::Value << sip_timer_i_server_invite_duration;
+  out << YAML::Key << "j_server_non_invite_duration" << YAML::Value << sip_timer_j_server_non_invite_duration;
+  out << YAML::Key << "k_non_invite_duration" << YAML::Value << sip_timer_k_non_invite_duration;
+  out << YAML::Key << "c_invite_proxy_ms" << YAML::Value << sip_timer_c_invite_proxy_ms;
+  out << YAML::EndMap;
   out << YAML::EndMap;
 
   const auto listener = [&out](const std::string& name, bool enable, const std::string& address, std::uint16_t port, std::uint16_t public_port) {
@@ -688,6 +747,17 @@ std::string Config::effective_yaml() const {
   emit_plugin_sections(out, _root, "media", {"url"});
   out << YAML::EndMap;
 
+  out << YAML::Key << "plugins" << YAML::Value << YAML::BeginMap;
+  out << YAML::Key << "path" << YAML::Value << YAML::Flow << plugins_path;
+  out << YAML::EndMap;
+
+  out << YAML::Key << "push" << YAML::Value << YAML::BeginMap;
+  out << YAML::Key << "urls" << YAML::Value << YAML::Flow << push_urls;
+  out << YAML::Key << "timeout" << YAML::Value << push_timeout;
+  out << YAML::Key << "refresh" << YAML::Value << push_refresh;
+  emit_plugin_sections(out, _root, "push", {"urls", "timeout", "refresh"});
+  out << YAML::EndMap;
+
   out << YAML::Key << "cluster" << YAML::Value << YAML::BeginMap;
   out << YAML::Key << "enable" << YAML::Value << cluster_enable;
   out << YAML::Key << "address" << YAML::Value << cluster_address;
@@ -703,6 +773,12 @@ std::string Config::effective_yaml() const {
   out << YAML::Key << "media_profile" << YAML::Value << types::MediaPolicy::to_string(behaviour.profiles);
   out << YAML::Key << "qualify_interval" << YAML::Value << behaviour_qualify_interval;
   out << YAML::Key << "rewrite_contact" << YAML::Value << behaviour_rewrite_contact;
+  out << YAML::EndMap;
+
+  out << YAML::Key << "log" << YAML::Value << YAML::BeginMap;
+  const char* levels[] = {"debug", "info", "warn", "error"};
+  out << YAML::Key << "level" << YAML::Value << levels[static_cast<int>(log_level)];
+  out << YAML::Key << "format" << YAML::Value << (log_format == loggers::LogFormat::Json ? "json" : "text");
   out << YAML::EndMap;
 
   out << YAML::Key << "calls" << YAML::Value << YAML::BeginMap;
@@ -739,6 +815,12 @@ std::string Config::effective_yaml() const {
   emit_limit("session", http_api_limit_session);
   out << YAML::EndMap;
 
+  out << YAML::Key << "ice_servers" << YAML::Value << YAML::BeginSeq;
+  for (const auto& server : ice_servers) out << server.url;
+  out << YAML::EndSeq;
+  out << YAML::Key << "turn_shared_secret" << YAML::Value << turn_shared_secret;
+  out << YAML::Key << "turn_credential_ttl" << YAML::Value << turn_credential_ttl;
+
   out << YAML::EndMap;
 
   out << YAML::Key << "files" << YAML::Value << YAML::BeginMap;
@@ -757,17 +839,26 @@ std::string Config::AdvertisedTransport::uri() const {
   return std::string(secure ? "sips:" : "sip:") + address + ":" + std::to_string(port) + ";transport=" + transport;
 }
 
-// sip.public_address when it is set, because a node bound to 0.0.0.0 knows every address it
-// answers on and none that a client should use. Falling back to the bind address is right on
-// a single-homed host and honest everywhere else: what comes out is what the node was told,
-// and an operator who sees 0.0.0.0 knows why a client could not use it.
+std::string Config::public_address() const {
+  if (!sip_public_address.empty()) return sip_public_address;
+
+  std::lock_guard<std::mutex> lock(_discovered->mutex);
+  return _discovered->address;
+}
+
+void Config::discovered_address_set(std::string address) {
+  std::lock_guard<std::mutex> lock(_discovered->mutex);
+  _discovered->address = std::move(address);
+}
+
 std::vector<Config::AdvertisedTransport> Config::advertised_transports() const {
   std::vector<AdvertisedTransport> out;
+  const auto public_address = this->public_address();
 
-  const auto add = [this, &out](const std::string& transport, const std::string& bind_address, std::uint16_t port, bool secure) {
+  const auto add = [this, &out, &public_address](const std::string& transport, const std::string& bind_address, std::uint16_t port, bool secure) {
     const auto public_port = public_port_for(transport);
-    out.push_back(AdvertisedTransport{transport, sip_public_address.empty() ? bind_address : sip_public_address,
-                                      !sip_public_address.empty() && public_port != 0 ? public_port : port, secure});
+    out.push_back(AdvertisedTransport{transport, public_address.empty() ? bind_address : public_address,
+                                      !public_address.empty() && public_port != 0 ? public_port : port, secure});
   };
 
   if (udp_enable) add("udp", udp_address, udp_port, false);
@@ -775,10 +866,9 @@ std::vector<Config::AdvertisedTransport> Config::advertised_transports() const {
   if (tls_enable) add("tls", tls_address, tls_port, true);
   if (websocket_enable) add(websocket_tls ? "wss" : "ws", websocket_address, websocket_port, websocket_tls);
 
-  // The secure listener beside a plain one. Its port is its own: websocket.public_port is
-  // the plain listener's.
+  // The secure_port listener. websocket.public_port applies only to the plain one.
   if (websocket_enable && !websocket_tls && websocket_secure_port != 0) {
-    out.push_back(AdvertisedTransport{"wss", sip_public_address.empty() ? websocket_address : sip_public_address, websocket_secure_port, true});
+    out.push_back(AdvertisedTransport{"wss", public_address.empty() ? websocket_address : public_address, websocket_secure_port, true});
   }
 
   return out;
@@ -790,13 +880,13 @@ std::optional<Config::AdvertisedTransport> Config::advertised_cluster() const {
   const bool everywhere = cluster_address.empty() || cluster_address == "0.0.0.0" || cluster_address == "::";
 
   std::string address = cluster_advertise;
-  if (address.empty()) address = everywhere && !sip_public_address.empty() ? sip_public_address : cluster_address;
+  if (address.empty()) address = everywhere && !public_address().empty() ? public_address() : cluster_address;
 
   return AdvertisedTransport{"tls", address, cluster_port, true};
 }
 
-// Each entry a prefix, or a bare address that is a prefix of one. A prefix with host bits set
-// is taken as the network it names, as an operator writing 192.168.1.2/24 means.
+// Each entry is a prefix or a bare address. Host bits are masked off, so 192.168.1.2/24
+// means 192.168.1.0/24.
 bool Config::parse_localnet() {
   _localnet_v4.clear();
   _localnet_v6.clear();

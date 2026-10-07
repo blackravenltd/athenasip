@@ -12,15 +12,12 @@
 
 namespace athenasip::transactions {
 
-// RFC 3261 section 17.1.2, the non-INVITE client transaction. REGISTER, OPTIONS and
-// BYE go out on this.
+// RFC 3261 section 17.1.2, the non-INVITE client transaction.
 //
-//   Trying -- 1xx --> Proceeding -- final --> Completed --> Terminated
+//   Trying -- 1xx --> Proceeding -- final --> Completed -- timer K --> Terminated
 //          -- final ---------------------->
 //
-// Timer E behaves differently here from timer A in the INVITE client transaction: it
-// is capped at T2 rather than doubling without limit, and once in Proceeding it fires
-// at T2 flat.
+// Unlike timer A, timer E is capped at T2, and in Proceeding it fires at T2 flat.
 class NonInviteClientTransaction : public TransactionBase {
  public:
   NonInviteClientTransaction(std::shared_ptr<loggers::Logger> logger, std::string id, bool reliable, Timers timers, std::shared_ptr<TimerSource> timer_source,

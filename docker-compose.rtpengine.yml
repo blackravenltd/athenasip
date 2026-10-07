@@ -4,16 +4,13 @@
 # Copyright (C) 2026 Tom Cully <mail@tomcully.com>
 # Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 #
-# An overlay that puts rtpengine on the media path instead of the in-process relay.
+# An overlay that puts rtpengine on the media path instead of the builtin relay: two
+# engines, as a pool.
 #
 #   test/e2e/run.sh --rtpengine
 #
-# runs the same scenarios against it. The rtpengine driver is otherwise only ever
-# exercised against a fake socket in the unit tests, which proves what it puts on the
-# wire and not that rtpengine agrees with any of it.
-#
-# Everything stays on the harness bridge, so rtpengine's own address is reachable by
-# both the node and sipp and nothing has to be published to the host.
+# runs the same scenarios against it. Everything stays on the harness bridge, so nothing
+# is published to the host.
 
 services:
   rtpengine:
@@ -33,8 +30,31 @@ services:
       e2e:
         ipv4_address: 172.31.0.30
     healthcheck:
-      # rtpengine answers ng over UDP and has no TCP socket to knock on, so the check
-      # is that the process is up and the control port is bound.
+      # ng is UDP only, so check that the control port is bound.
+      test: ["CMD-SHELL", "ss -lun | grep -q 22222 || netstat -lun | grep -q 22222"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+      start_period: 2s
+
+  rtpengine-b:
+    image: drachtio/rtpengine:latest
+    container_name: athenasip-e2e-rtpengine-b
+    command:
+      - rtpengine
+      - --interface=172.31.0.31
+      - --listen-ng=172.31.0.31:22222
+      - --port-min=23300
+      - --port-max=23500
+      - --foreground
+      - --log-stderr
+      - --log-level=7
+      - --delete-delay=0
+    networks:
+      e2e:
+        ipv4_address: 172.31.0.31
+    healthcheck:
+      # ng is UDP only, so check that the control port is bound.
       test: ["CMD-SHELL", "ss -lun | grep -q 22222 || netstat -lun | grep -q 22222"]
       interval: 1s
       timeout: 2s
@@ -46,4 +66,6 @@ services:
       - ./test/e2e/config-rtpengine:/root/.athenasip:ro
     depends_on:
       rtpengine:
+        condition: service_healthy
+      rtpengine-b:
         condition: service_healthy

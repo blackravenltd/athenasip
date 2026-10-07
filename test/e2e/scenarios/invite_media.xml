@@ -2,13 +2,9 @@
 <!DOCTYPE scenario SYSTEM "sipp.dtd">
 
 <!--
-  A call with RTP actually flowing. The caller plays a G.711 stream from a capture; the
-  callee echoes it, and the packets go through the node's builtin relay in both
-  directions because that is where the descriptions point.
-
-  sipp's own RTP counters are what say whether anything arrived: a relay that answers
-  the SDP and forwards nothing looks identical from the signalling alone, and silence
-  passing for success is the failure this scenario exists to catch.
+  A call with RTP flowing. The caller plays a G.711 capture and the callee echoes it, both
+  ways through the node's relay. sipp's RTP counters show whether media arrived: a relay
+  that rewrites the SDP and forwards nothing looks the same from the signalling.
 -->
 <scenario name="Caller: RTP through the relay">
 
@@ -76,9 +72,8 @@
     ]]>
   </send>
 
-  <!-- RFC 3261 22.3: a subscriber proves who it is to the proxy as well as to the
-       registrar, and on UDP nothing else can prove it. The 407 is acknowledged as any
-       final non-2xx is (17.1.1.3) and the INVITE sent again with credentials. -->
+  <!-- RFC 3261 22.3: the proxy challenges the INVITE. The 407 is ACKed (17.1.1.3) and the
+       INVITE sent again with credentials. -->
   <recv response="100" optional="true"/>
   <recv response="407" auth="true"/>
 
@@ -128,7 +123,7 @@
 
   <recv response="200" rtd="true">
     <action>
-      <!-- The answer comes back pointing at the relay too, not at the callee. -->
+      <!-- The answer names the relay too, not the callee. -->
       <ereg regexp="c=IN IP4 172.31.0.10" search_in="body" check_it="true" assign_to="anchored"/>
     </action>
   </recv>
@@ -150,7 +145,7 @@
     ]]>
   </send>
 
-  <!-- Two seconds of G.711, which is what sipp ships as a capture. -->
+  <!-- Two seconds of G.711 from sipp's bundled capture. -->
   <nop>
     <action>
       <exec play_pcap_audio="/usr/share/sip-tester/g711a.pcap"/>

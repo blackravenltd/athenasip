@@ -81,9 +81,7 @@ struct UsersFixture {
     auth = std::make_shared<api::AuthAPI>(logger, sessions);
     auth->register_routes(*router);
 
-    // A password created through the API is hashed at the production count unless it is
-    // told otherwise, and 600000 iterations per created user is most of a second each.
-    // These are statements about the routes, not about PBKDF2.
+    // A low iteration count: these tests are about the routes, not PBKDF2.
     users = std::make_shared<api::UsersAPI>(logger, datastore, admin->executor(), sessions, kIterations);
     users->register_routes(*router);
 
@@ -157,11 +155,10 @@ struct UsersFixture {
 
 // --- Creating ---
 
-TEST(UsersApiTest, TheConfigurationTokenCreatesTheFirstUser) {
+TEST(UsersApiTest, ACallerWithTheRoleCreatesAUser) {
   UsersFixture f;
 
-  // What a fresh node is for: there are no users, so the only credential that exists is
-  // the one in the configuration file, and it has to be able to make the first one.
+  // A caller holding the role creates a user.
   auto response = f.post("/api/v1/users", R"({"username":"tom","password":"a long enough password","roles":["manage-realms"]})");
 
   ASSERT_EQ(response.status, 201u);
@@ -171,7 +168,7 @@ TEST(UsersApiTest, TheConfigurationTokenCreatesTheFirstUser) {
   EXPECT_EQ(body.at("roles").at(0).as_string(), types::roles::manage_realms);
   EXPECT_FALSE(body.at("disabled").as_bool());
 
-  // And it can then log in, which is the whole chain this step completes.
+  // The new user can log in.
   EXPECT_EQ(f.login("tom", "a long enough password").size(), 64u);
 }
 
@@ -181,8 +178,7 @@ TEST(UsersApiTest, APasswordNeverComesBackOut) {
   auto created = f.post("/api/v1/users", R"({"username":"tom","password":"a long enough password"})");
   ASSERT_EQ(created.status, 201u);
 
-  // Not in the creation answer, not in a read, not in the list. It is the password in the
-  // only form this node holds it.
+  // The password hash is in no answer: not creation, not a read, not the list.
   EXPECT_EQ(created.body.find("password_hash"), std::string::npos);
   EXPECT_EQ(f.get("/api/v1/users/tom").body.find("password_hash"), std::string::npos);
   EXPECT_EQ(f.get("/api/v1/users").body.find("password_hash"), std::string::npos);
@@ -195,12 +191,11 @@ TEST(UsersApiTest, ATakenUsernameIsAConflictRatherThanAnOverwrite) {
 
   auto response = f.post("/api/v1/users", R"({"username":"TOM","password":"another password"})");
 
-  // Case-folded, so "TOM" and "tom" are the same conflict rather than two logins nobody
-  // can tell apart. Agreed with the console as a 409.
+  // Usernames are case-folded, so "TOM" and "tom" conflict: 409.
   EXPECT_EQ(response.status, 409u);
   EXPECT_EQ(response.json().at("error").at("code").as_string(), "conflict");
 
-  // And the user it collided with is untouched.
+  // The existing user is untouched.
   auto existing = f.store->user_get("tom");
   ASSERT_NE(existing, nullptr);
   EXPECT_TRUE(existing->has_role(types::roles::manage_realms));
@@ -211,9 +206,7 @@ TEST(UsersApiTest, ARoleThisBuildDoesNotKnowIsRefusedOnTheWayIn) {
 
   auto response = f.post("/api/v1/users", R"({"username":"tom","password":"a long enough password","roles":["wizard"]})");
 
-  // The datastore carries an unknown role rather than dropping it, so that an older node
-  // rewriting a user cannot silently strip a role a newer one granted. That makes this the
-  // only place a typo can be caught.
+  // The datastore carries unknown roles through, so the API is the only place a typo can be caught.
   EXPECT_EQ(response.status, 400u);
   EXPECT_EQ(response.json().at("error").at("code").as_string(), "unknown_role");
   EXPECT_EQ(f.store->user_get("tom"), nullptr);
@@ -243,7 +236,7 @@ TEST(UsersApiTest, ListingAndReadingAUser) {
   auto one = f.get("/api/v1/users/TOM");
   ASSERT_EQ(one.status, 200u);
 
-  // Looked up case-insensitively, and handed back with the spelling it was created with.
+  // Looked up case-insensitively, returned with its original spelling.
   EXPECT_EQ(one.json().at("username").as_string(), "tom");
 }
 
@@ -263,8 +256,7 @@ TEST(UsersApiTest, RolesGivenAsAnEmptyListTakeThemAllAway) {
 
   auto response = f.put("/api/v1/users/tom", R"({"roles":[]})");
 
-  // Given as empty and not given at all are different answers, which is why the field is
-  // read as absent rather than as empty.
+  // An empty value and an absent field are different answers.
   ASSERT_EQ(response.status, 200u);
   EXPECT_TRUE(response.json().at("roles").as_array().empty());
 }
@@ -291,8 +283,7 @@ TEST(UsersApiTest, DisablingAUserRevokesWhatItAlreadyHeld) {
 
   ASSERT_EQ(f.put("/api/v1/users/tom", R"({"disabled":true})", f.login("boss")).status, 200u);
 
-  // Immediate rather than eventual: the sessions go with the user, so a disabled user
-  // does not keep working until each token happens to expire.
+  // Immediate: a disabled user's sessions are revoked with it.
   EXPECT_EQ(f.get("/api/v1/session", token).status, 401u);
   EXPECT_EQ(f.store->session_get(api::Sessions::token_hash(token)), nullptr);
 }
@@ -326,8 +317,7 @@ TEST(UsersApiTest, AUserCannotDeleteItself) {
   UsersFixture f;
   f.add_user("boss", {types::roles::manage_admin_users});
 
-  // Deleting yourself locks you out exactly as thoroughly as disabling yourself, so the
-  // rule that stops one has to stop the other or it is decorative.
+  // Deleting yourself is refused, like disabling yourself.
   auto response = f.del("/api/v1/users/boss", f.login("boss"));
 
   EXPECT_EQ(response.status, 409u);
@@ -339,8 +329,8 @@ TEST(UsersApiTest, TheLockoutRulesAreAboutSelfAndNotAboutTheRole) {
   f.add_user("boss", {types::roles::manage_admin_users});
   f.add_user("other", {types::roles::manage_admin_users});
 
-  // Somebody else holding the same role may still be disabled, demoted and deleted.
-  // `athenasip --add-user` on the host is what recovers a node with no administrators left.
+  // Another holder of the same role may be disabled, demoted and deleted. `athenasip --add-user` on the host
+  // recovers a node with no administrators left.
   const auto token = f.login("boss");
   EXPECT_EQ(f.put("/api/v1/users/other", R"({"disabled":true})", token).status, 200u);
   EXPECT_EQ(f.del("/api/v1/users/other", token).status, 204u);
@@ -375,8 +365,7 @@ TEST(UsersApiTest, RevokingSessionsSignsOutEverywhereAndLeavesTheUser) {
   EXPECT_EQ(f.get("/api/v1/session", first).status, 401u);
   EXPECT_EQ(f.get("/api/v1/session", second).status, 401u);
 
-  // The user is still there and can be logged into again, which is what makes this
-  // "sign out everywhere" rather than a delete.
+  // The user remains and can log in again: this is "sign out everywhere", not a delete.
   EXPECT_NE(f.store->user_get("tom"), nullptr);
   EXPECT_EQ(f.login("tom").size(), 64u);
 }
@@ -385,8 +374,7 @@ TEST(UsersApiTest, RevokingForAUserThatHasNeverLoggedInIs204) {
   UsersFixture f;
   f.add_user("tom", {});
 
-  // Holding no sessions is the state the caller asked for, which is why the store treats
-  // nothing to revoke as success.
+  // Nothing to revoke is success.
   EXPECT_EQ(f.del("/api/v1/users/tom/sessions").status, 204u);
 }
 
@@ -416,14 +404,11 @@ TEST(UsersApiTest, TheWrongOldPasswordIsRefusedWithoutEndingTheSession) {
   const auto token = f.login("tom");
   auto response = f.post("/api/v1/users/tom/password", R"({"old_password":"not it","password":"a brand new password"})", token);
 
-  // 403 rather than 401, and with a code of its own. A 401 on an authenticated request
-  // means the credential is no longer good, and a client that believes it signs the user
-  // out; the bearer here is fine and it is a field in the body that is wrong.
+  // 403 with its own code, not 401: the bearer is fine and a body field is wrong. A client signs the user out on a 401.
   EXPECT_EQ(response.status, 403u);
   EXPECT_EQ(response.json().at("error").at("code").as_string(), "wrong_password");
 
-  // Which is the thing a client must be able to rely on: the session it presented still
-  // works, so a typo does not look like being logged out.
+  // The session presented still works.
   EXPECT_EQ(f.get("/api/v1/session", token).status, 200u);
   EXPECT_EQ(f.login("tom").size(), 64u);
 }
@@ -443,7 +428,7 @@ TEST(UsersApiTest, TheRoleSetsAnyonesPasswordWithoutTheOldOne) {
   f.add_user("tom", {});
   f.add_user("boss", {types::roles::manage_admin_users});
 
-  // Which is the case it exists for: somebody who has lost theirs cannot present it.
+  // A user who has lost their password cannot present it.
   EXPECT_EQ(f.post("/api/v1/users/tom/password", R"({"password":"a reset password"})", f.login("boss")).status, 204u);
   EXPECT_EQ(f.login("tom", "a reset password").size(), 64u);
 }
@@ -458,8 +443,7 @@ TEST(UsersApiTest, ChangingAPasswordEndsEverySessionThatUsedTheOldOne) {
 
   ASSERT_EQ(f.post("/api/v1/users/tom/password", R"({"password":"a reset password"})", f.login("boss")).status, 204u);
 
-  // Resetting a compromised user would be pointless if it left whoever compromised it
-  // logged in.
+  // A reset revokes the user's sessions, including a compromised one.
   EXPECT_EQ(f.get("/api/v1/session", stolen).status, 401u);
 }
 
@@ -472,7 +456,7 @@ TEST(UsersApiTest, SomebodyElsesPasswordWithoutTheRoleIsForbidden) {
 
   EXPECT_EQ(response.status, 403u);
 
-  // Still the old password, which is the thing that matters.
+  // The old password still works.
   EXPECT_EQ(f.login("sam").size(), 64u);
 }
 
@@ -480,8 +464,7 @@ TEST(UsersApiTest, AskingForSomebodyWhoDoesNotExistSaysNothingWithoutTheRole) {
   UsersFixture f;
   f.add_user("tom", {});
 
-  // 403 before the store is asked, so this cannot be walked to find out who exists. With
-  // the role it is a 404, because by then the caller is allowed to know.
+  // 403 before the store is asked, so the route cannot be used to find out who exists. With the role it is a 404.
   EXPECT_EQ(f.post("/api/v1/users/ghost/password", R"({"password":"x"})", f.login("tom")).status, 403u);
   EXPECT_EQ(f.post("/api/v1/users/ghost/password", R"({"password":"x"})").status, 404u);
 }

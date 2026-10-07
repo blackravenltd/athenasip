@@ -16,13 +16,11 @@ namespace athenasip::api {
 
 namespace http = boost::beast::http;
 
-// One error shape for the whole API:
+// The one error shape for the whole API:
 //
 //   { "error": { "code": "conflict", "message": "realm example.com already exists" } }
 //
-// The code is for a client to branch on and never changes wording; the message is for a
-// person reading a log. A client that has to parse prose to tell a duplicate from a
-// typo is a client that breaks on the next release.
+// Clients branch on the code, which never changes; the message is for a person.
 inline void write_error(const std::shared_ptr<http::response<http::string_body>>& response, http::status status, std::string code, std::string message) {
   boost::json::object error;
   error["code"] = std::move(code);
@@ -42,14 +40,14 @@ inline void write_json(const std::shared_ptr<http::response<http::string_body>>&
   response->body() = boost::json::serialize(value);
 }
 
-// 204 carries no body, so it gets no content type either.
+// 204 carries no body and no content type.
 inline void write_no_content(const std::shared_ptr<http::response<http::string_body>>& response) {
   response->result(http::status::no_content);
   response->body().clear();
 }
 
-// A body that is not an object is not a request this API understands, and saying so is
-// the difference between a 400 a client can act on and a 500 nobody can.
+// nullopt for a body that is not a JSON object, which the caller answers with a 400. An
+// empty body is an empty object.
 inline std::optional<boost::json::object> parse_object(const std::string& body) {
   if (body.empty()) return boost::json::object{};
 
@@ -60,8 +58,8 @@ inline std::optional<boost::json::object> parse_object(const std::string& body) 
   return parsed.as_object();
 }
 
-// A string field, absent rather than empty when it is not there: "not given" and "given
-// as empty" are different answers on a PUT.
+// nullopt when the field is absent or not a string: on a PUT, "not given" and "given as
+// empty" differ.
 inline std::optional<std::string> string_field(const boost::json::object& object, const std::string& name) {
   const auto it = object.find(name);
   if (it == object.end() || !it->value().is_string()) return std::nullopt;

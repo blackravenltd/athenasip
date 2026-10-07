@@ -11,42 +11,46 @@
 
 namespace athenasip::cli {
 
-// What the command line said. Hand-rolled rather than taken from a library, which is
-// the rule in this tree: a handful of options are not worth a dependency.
+// The parsed command line.
 struct Options {
-  // Empty means nothing was given and the search decides (see config_search_paths).
+  // Empty: search for one (see config_search_paths).
   std::string config;
 
   bool version = false;
   bool help = false;
 
-  // Print the values this node would actually run on, and exit. Not the file: the file
-  // is what `cat` is for, and most of what decides a node's behaviour is a default
-  // nobody wrote down.
+  // Print the effective configuration, defaults included, and exit.
   bool print_config = false;
 
-  // Try everything this node would connect to - datastore, event bus, media engine, the
-  // other nodes of its cluster - and say which of them answered. Nothing is started.
+  // Print every setting, as a JSON Schema ("json") or the reference ("markdown"), and exit.
+  std::string print_schema;
+
+  // Try the datastore, event bus, media engine and cluster peers, report which answered,
+  // and exit. Nothing is started.
   bool check = false;
 
-  // Create an administrator and exit, without starting a single listener. This is the
-  // way back in when the API cannot be reached or every admin password has been lost,
-  // so it goes to the datastore and nothing else.
+  // Load the plugin modules in plugins.path, say which loaded and why any did not, and the
+  // drivers there are for each kind, and exit.
+  bool list_plugins = false;
+
+  // Create an administrator in the datastore and exit, without starting a listener. The way
+  // back in when the API is unreachable or every admin password is lost.
   std::string add_user;
+
+  // Give an existing user a new password and end its sessions.
+  std::string reset_password;
   std::string display_name;
   std::vector<std::string> roles;
 
   // The cluster CA (see cluster_ca.h): make one, or issue a node its certificate. Neither
-  // reads the configuration. The directory defaults to ~/.athenasip/ca.
+  // reads the configuration. ca_dir defaults to ~/.athenasip/ca.
   bool ca_init = false;
   std::string ca_node;
   std::string ca_dir;
   std::vector<std::string> sans;
   bool replace = false;
 
-  // False stops the node before it starts. An argument it does not understand is not
-  // ignored: a daemon that silently drops the one telling it where its configuration
-  // is would read the wrong one and serve the wrong thing.
+  // False stops the node before it starts. An unknown argument is an error, never ignored.
   bool ok = true;
   std::string error;
 };
@@ -62,9 +66,7 @@ inline Options parse(int argc, char* argv[]) {
   for (int i = 1; i < argc && options.ok; ++i) {
     const std::string argument = argv[i];
 
-    // Both spellings for everything that takes a value: --name value and --name=value are
-    // each common enough that supporting one and not the other is a papercut in somebody
-    // else's script.
+    // Accepts both --name value and --name=value.
     const auto takes = [&](const std::string& name, const std::string& what, std::string& out) -> bool {
       if (argument == name) {
         if (i + 1 >= argc) {
@@ -96,10 +98,19 @@ inline Options parse(int argc, char* argv[]) {
       options.help = true;
     } else if (argument == "--print-config") {
       options.print_config = true;
+    } else if (argument == "--print-schema" || argument.rfind("--print-schema=", 0) == 0) {
+      options.print_schema = argument == "--print-schema" ? "json" : argument.substr(15);
+      if (options.print_schema != "json" && options.print_schema != "markdown") {
+        options.ok = false;
+        options.error = "--print-schema is json or markdown";
+      }
     } else if (argument == "--check") {
       options.check = true;
+    } else if (argument == "--list-plugins") {
+      options.list_plugins = true;
     } else if (takes("--config", "a path", options.config) || takes("-c", "a path", options.config)) {
-      // Handled, and any error is already recorded.
+      // Handled; any error is already recorded.
+    } else if (takes("--reset-password", "a username", options.reset_password)) {
     } else if (takes("--add-user", "a username", options.add_user)) {
     } else if (takes("--display-name", "a name", options.display_name)) {
     } else if (takes("--role", "a role", role)) {
@@ -129,16 +140,23 @@ inline std::string usage() {
          "  -h, --help            print this and exit\n"
          "  --print-config        print the effective configuration and exit, with the\n"
          "                        file, the search path and the defaults all resolved\n"
+         "  --print-schema[=FORMAT] print every setting, with its default and limits, as\n"
+         "                        a JSON Schema for an editor (json, the default) or as\n"
+         "                        the reference (markdown), and exit\n"
          "\n"
          "Administration, which starts no listeners and exits when it is done:\n"
          "\n"
          "  --check               try the datastore, the event bus, the media engine, the\n"
          "                        certificates and the cluster's other nodes, say which\n"
          "                        of them answered, and exit; nothing is started\n"
+         "  --list-plugins        load the modules in plugins.path, say which loaded and\n"
+         "                        why any did not, list every driver, and exit\n"
          "  --add-user NAME       create an administrator in the configured datastore and\n"
          "                        exit; with memory://, which keeps nothing once this\n"
          "                        process exits, create it and carry on as the node\n"
          "  --display-name NAME   what to call them, for the console\n"
+         "  --reset-password NAME give a user a new password, end every session it held,\n"
+         "                        and exit\n"
          "  --role ROLE           may be given more than once; without it the new user\n"
          "                        holds manage-admin-users, because a recovery user\n"
          "                        that cannot administer anybody is not a way back in\n"

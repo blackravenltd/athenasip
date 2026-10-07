@@ -13,8 +13,7 @@
 using athenasip::types::User;
 namespace roles = athenasip::types::roles;
 
-// There is no superuser, and nothing implies anything else. A user holds what it was
-// given: any combination, including none.
+// No role implies another: a user holds exactly the roles it was given.
 TEST(UserTest, AUserHoldsOnlyTheRolesItWasGiven) {
   User user;
   user.roles = {roles::manage_realms};
@@ -26,8 +25,7 @@ TEST(UserTest, AUserHoldsOnlyTheRolesItWasGiven) {
   EXPECT_FALSE(user.has_role(roles::manage_cluster));
 }
 
-// A new user has none, which is a useful state and the safe default: it can log in and
-// do nothing until somebody decides what it is for.
+// A new user has no roles: it can log in and do nothing.
 TEST(UserTest, AUserWithNoRolesCanDoNothing) {
   const User user;
 
@@ -43,15 +41,14 @@ TEST(UserTest, TheRolesAreTheFiveAndNothingElse) {
   EXPECT_TRUE(roles::is_known("manage-realm-subscribers"));
   EXPECT_TRUE(roles::is_known("manage-cluster"));
 
-  // The scopes this replaces, and a plausible typo, are not roles.
+  // Scope-style names and typos are not roles.
   EXPECT_FALSE(roles::is_known("admin"));
   EXPECT_FALSE(roles::is_known("client"));
   EXPECT_FALSE(roles::is_known("manage-realm-accounts"));
   EXPECT_FALSE(roles::is_known(""));
 }
 
-// Usernames are compared case-insensitively and kept as they were typed, so a display
-// stays as somebody wrote it and two users cannot differ only by case.
+// Usernames compare case-insensitively and are stored as typed.
 TEST(UserTest, AUsernameIsMatchedWithoutRegardToCase) {
   User user;
   user.username = "Tom.Cully";

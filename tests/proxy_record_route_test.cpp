@@ -19,10 +19,8 @@ using namespace athenasip;
 
 namespace {
 
-// Bob is a browser: he reached the node over a secure WebSocket and the Contact he
-// offered resolves to nothing at all, which is true of every browser. Alice is a desk
-// phone on UDP. This is the call Milestone 3 exists for, and the one that shows what
-// Record-Route has to carry.
+// Bob is a browser on a secure WebSocket whose Contact resolves to nothing. Alice is a
+// desk phone on UDP.
 struct MixedTransportFixture : ProxyFixture {
   static constexpr const char* kBrowserContact = "sip:bob@df7jal23ls0d.invalid;transport=wss";
 
@@ -31,8 +29,7 @@ struct MixedTransportFixture : ProxyFixture {
     register_binding(bob, std::make_shared<types::SIPUri>(kBrowserContact), callee, 3600);
   }
 
-  // The route set as the caller builds it: the response's Record-Route values, reversed
-  // (RFC 3261 12.1.2).
+  // The caller's route set: the response's Record-Route values, reversed (RFC 3261 12.1.2).
   std::vector<std::string> caller_route_set() {
     auto forwarded = request_with(callee_connection, "INVITE");
     if (!forwarded) return {};
@@ -44,8 +41,7 @@ struct MixedTransportFixture : ProxyFixture {
     return routes;
   }
 
-  // And as the callee builds it: the request's Record-Route values, in order
-  // (RFC 3261 12.1.1).
+  // The callee's route set: the request's Record-Route values, in order (RFC 3261 12.1.1).
   std::vector<std::string> callee_route_set() {
     auto forwarded = request_with(callee_connection, "INVITE");
     if (!forwarded) return {};
@@ -79,10 +75,8 @@ struct MixedTransportFixture : ProxyFixture {
 
 }  // namespace
 
-// RFC 5658 section 3: the topmost value names the interface the request is sent on and
-// the second the interface it arrived on. That order is what gives each end the value
-// facing it, because a UAS reads the route set from the request in order and a UAC
-// reads it from the response reversed.
+// RFC 5658 3: the top value names the interface the request is sent on, the second the
+// one it arrived on, so each end's route set starts with the value facing it.
 TEST(ProxyRecordRouteTest, TwoValuesAreWrittenOutboundFirst) {
   MixedTransportFixture f;
 
@@ -108,9 +102,8 @@ TEST(ProxyRecordRouteTest, TwoValuesAreWrittenOutboundFirst) {
   EXPECT_TRUE(inbound->has_parameter("lr"));
 }
 
-// The token is what makes the pair worth writing, and it must not be the flow's name:
-// the flow id is the far end's address, and a route set that spelled it out would hand
-// one end of an anchored call the other end's address.
+// Each value carries an opaque flow token. The flow id is the far end's address, so the
+// token must not reveal it.
 TEST(ProxyRecordRouteTest, EachValueCarriesAnOpaqueTokenForTheSideItFaces) {
   MixedTransportFixture f;
 
@@ -129,7 +122,7 @@ TEST(ProxyRecordRouteTest, EachValueCarriesAnOpaqueTokenForTheSideItFaces) {
   EXPECT_FALSE(inbound.empty());
   EXPECT_NE(outbound, inbound);
 
-  // Neither says where anybody is.
+  // Neither token contains an address.
   for (const auto& token : {outbound, inbound}) {
     EXPECT_EQ(token.find("192.0.2."), std::string::npos) << token;
     EXPECT_EQ(token.find("wss"), std::string::npos) << token;
@@ -137,9 +130,8 @@ TEST(ProxyRecordRouteTest, EachValueCarriesAnOpaqueTokenForTheSideItFaces) {
   }
 }
 
-// The whole point. Bob is a browser, so his Contact resolves to nothing: a BYE
-// forwarded to it would go nowhere, and a call that cannot be hung up is worse than
-// one that cannot be made. The flow token in the route set is the only way back.
+// A BYE reaches a browser by the flow token in the route set, since its Contact resolves
+// to nothing.
 TEST(ProxyRecordRouteTest, AByeReachesABrowserWhoseContactResolvesToNothing) {
   MixedTransportFixture f;
   f.answer();
@@ -152,15 +144,11 @@ TEST(ProxyRecordRouteTest, AByeReachesABrowserWhoseContactResolvesToNothing) {
   auto delivered = ProxyFixture::requests_with(f.callee_connection, "BYE");
   ASSERT_EQ(delivered.size(), before + 1);
 
-  // Forwarded as it was addressed: the remote target is still the Contact, and only
-  // the flow it went down was decided by the token (RFC 3261 16.6 leaves the
-  // Request-URI alone when a route set decided the hop).
+  // RFC 3261 16.6: the Request-URI is still the Contact; the token decided only the flow.
   EXPECT_EQ(delivered.back()->header->request_uri->host, "df7jal23ls0d.invalid");
 }
 
-// And the other way. Bob's route set is the request's values in order, so the one he
-// sends to is the outbound value and the one behind it is the inbound: the token that
-// comes out names Alice's flow.
+// In the other direction, the token the browser's BYE carries names Alice's flow.
 TEST(ProxyRecordRouteTest, AByeFromTheBrowserReachesTheCallerByItsOwnToken) {
   MixedTransportFixture f;
   f.answer();
@@ -173,8 +161,8 @@ TEST(ProxyRecordRouteTest, AByeFromTheBrowserReachesTheCallerByItsOwnToken) {
   EXPECT_EQ(ProxyFixture::requests_with(f.caller_connection, "BYE").size(), before + 1);
 }
 
-// RFC 5658 section 3.2: both values name this node, and a proxy that removed only the
-// first would forward the request straight back to itself.
+// RFC 5658 3.2: both of this node's Route values are removed, or the request would be
+// forwarded back to itself.
 TEST(ProxyRecordRouteTest, BothOfThisNodesRoutesAreRemoved) {
   MixedTransportFixture f;
   f.answer();
@@ -188,9 +176,7 @@ TEST(ProxyRecordRouteTest, BothOfThisNodesRoutesAreRemoved) {
   EXPECT_FALSE(delivered.back()->header->contains("Route")) << "a Route naming this node was left in the request";
 }
 
-// A token naming a flow that has since closed names nothing, and the Contact is all
-// that is left to go on. For a desk phone that is the right answer; for a browser the
-// attempt fails, which is what a dialog whose flow has gone deserves.
+// A token for a closed flow falls back to the Contact; for a browser that attempt fails.
 TEST(ProxyRecordRouteTest, AClosedFlowFallsBackToTheContact) {
   ProxyFixture f;
   f.bind_bob("sip:bob@192.0.2.20:5060");
@@ -206,7 +192,7 @@ TEST(ProxyRecordRouteTest, AClosedFlowFallsBackToTheContact) {
   for (const auto& value : forwarded->header->headers_map["Record-Route"]) routes.push_back(value->to_string());
   std::reverse(routes.begin(), routes.end());
 
-  // The browser hangs up and its socket goes with it.
+  // The browser's socket closes.
   f.on_strand([&f]() { f.callee->close(); });
   f.settle();
 
@@ -214,6 +200,6 @@ TEST(ProxyRecordRouteTest, AClosedFlowFallsBackToTheContact) {
 
   f.receive(f.caller, MixedTransportFixture::bye("sip:alice@example.com", "alice", "sip:bob@example.com", "bob", "sip:bob@192.0.2.20:5060", routes));
 
-  // Nothing crashed, and the node did not forward the request to itself.
+  // The node did not forward the request to itself.
   EXPECT_EQ(ProxyFixture::requests_with(f.callee_connection, "BYE").size(), before);
 }

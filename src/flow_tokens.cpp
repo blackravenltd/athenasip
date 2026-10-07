@@ -17,9 +17,8 @@ namespace athenasip {
 
 namespace {
 
-// AES-256-GCM: one primitive for both the sealing and the authentication, and already in
-// the OpenSSL this node links. The nonce is random per token, which at 96 bits is safe for
-// far more tokens than one process will ever write.
+// AES-256-GCM seals and authenticates in one primitive. The 96-bit nonce is random per
+// token.
 constexpr std::size_t kNonce = 12;
 constexpr std::size_t kTag = 16;
 
@@ -31,8 +30,7 @@ Context make_context() {
   return context;
 }
 
-// Hex rather than base64: lowercase hex is safe unescaped in a URI user part (RFC 3261
-// 25.1) and can never spell an address or a transport name by accident.
+// Lowercase hex is safe unescaped in a URI user part (RFC 3261 25.1).
 std::string to_hex(const std::vector<unsigned char>& bytes) {
   static constexpr char kDigits[] = "0123456789abcdef";
 
@@ -117,8 +115,7 @@ std::string FlowTokens::open(const std::string& token) const {
     return "";
   }
 
-  // The tag is checked here. Anything that fails it - altered, or sealed under another
-  // key - is not a token of ours, and what it decrypted to is thrown away unread.
+  // The tag check: a token that was altered or sealed under another key is rejected.
   if (EVP_DecryptFinal_ex(context.get(), reinterpret_cast<unsigned char*>(flow_id.data()) + length, &length) != 1) return "";
 
   return flow_id;

@@ -51,8 +51,7 @@ class RTPRelay : public std::enable_shared_from_this<RTPRelay> {
     return relay;
   }
 
-  // Packets sent on by every set this relay has ever allocated: the node's whole-life
-  // count of media carried, for /metrics and for a harness asking whether anything was.
+  // Packets sent on by every set this relay has allocated, over its lifetime.
   std::uint64_t packets_relayed() const { return _relayed->load(std::memory_order_relaxed); }
 
   void release_relay_set(std::shared_ptr<RTPRelaySet> relay) {

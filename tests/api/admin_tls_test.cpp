@@ -26,8 +26,7 @@ namespace beast = boost::beast;
 namespace http = boost::beast::http;
 namespace net = boost::asio;
 
-// The admin server with a certificate, made the way a cluster's are so the test needs no
-// file checked in: an authority, and a certificate it signed naming 127.0.0.1.
+// The admin server with a generated authority and a certificate it signed naming 127.0.0.1.
 struct TlsFixture {
   std::shared_ptr<MockLogger> logger = std::make_shared<MockLogger>();
   std::filesystem::path dir;
@@ -72,8 +71,7 @@ struct TlsFixture {
     return exchange(socket);
   }
 
-  // Over TLS, trusting only the authority that signed the server's certificate and
-  // checking it names the address dialled, as a browser would.
+  // Over TLS, trusting only that authority and checking the certificate names the address dialled, as a browser would.
   std::string get_tls(boost::system::error_code& error) {
     net::io_context io;
     net::ssl::context context(net::ssl::context::tls_client);
@@ -107,9 +105,7 @@ struct TlsFixture {
 
 }  // namespace
 
-// A browser gives a page that is not a secure context no microphone, so the console's
-// softphone cannot place a call from plain HTTP (found on 2026-10-03). The admin listener
-// offers HTTPS, with the certificate it was given, serving the same chain.
+// The admin listener serves the same chain over HTTPS: a browser gives a page no microphone outside a secure context.
 TEST(AdminTlsTest, TheSameChainIsServedOverHttps) {
   TlsFixture f;
   ASSERT_TRUE(f.admin->tls_enable("127.0.0.1", 0, f.cert(), f.key()));
@@ -121,12 +117,11 @@ TEST(AdminTlsTest, TheSameChainIsServedOverHttps) {
   EXPECT_EQ(f.get_tls(error), "served");
   EXPECT_FALSE(error) << error.message();
 
-  // Who is calling is known over TLS as it is over plain HTTP: the rate limits are by it.
+  // The caller's address is known over TLS too: the rate limits are keyed by it.
   EXPECT_EQ(f.remote_seen, "127.0.0.1");
 }
 
-// And plain HTTP stays, beside it: a healthcheck and a provisioning script on the host
-// have no certificate to check and no reason to need one (Tom, 2026-10-03).
+// Plain HTTP stays beside it, for healthchecks and provisioning scripts on the host.
 TEST(AdminTlsTest, PlainHttpIsStillServedBesideIt) {
   TlsFixture f;
   ASSERT_TRUE(f.admin->tls_enable("127.0.0.1", 0, f.cert(), f.key()));
@@ -136,7 +131,7 @@ TEST(AdminTlsTest, PlainHttpIsStillServedBesideIt) {
   EXPECT_NE(f.admin->port(), f.admin->tls_port());
 }
 
-// Off unless asked for, and then there is no second listener at all.
+// Without a certificate there is no HTTPS listener.
 TEST(AdminTlsTest, WithoutACertificateThereIsNoHttpsListener) {
   TlsFixture f;
   EXPECT_FALSE(f.admin->tls_enable("127.0.0.1", 0, "/nowhere/cert.pem", "/nowhere/key.pem"));
@@ -146,7 +141,7 @@ TEST(AdminTlsTest, WithoutACertificateThereIsNoHttpsListener) {
   EXPECT_EQ(f.get_plain(), "served");
 }
 
-// One connection that opens and never finishes its handshake holds up nobody else.
+// A connection that never finishes its handshake holds up nobody else.
 TEST(AdminTlsTest, ASilentConnectionDoesNotStopTheNextOne) {
   TlsFixture f;
   ASSERT_TRUE(f.admin->tls_enable("127.0.0.1", 0, f.cert(), f.key()));

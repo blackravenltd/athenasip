@@ -53,9 +53,7 @@ TEST(TopicsTest, CallTopicsSitUnderTheCallFilter) {
   EXPECT_TRUE(TopicFilter::matches("calls/+/unregister", topics::call_unregister("call-1234")));
 }
 
-// Subscriber topics are observability. A "subscribers/#" filter must not reach anything
-// on the call setup path, and since the INVITE topic is gone there is nothing there to
-// reach.
+// Subscriber topics are observability: nothing under "subscribers/#" is on the call setup path.
 TEST(TopicsTest, SubscriberTopicsAreStatusOnly) {
   const auto uri = std::string("sip:alice@example.com");
 

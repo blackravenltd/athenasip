@@ -23,7 +23,7 @@ namespace {
 
 using Fixture = ProxyFixture;
 
-// The URI of a Route or Record-Route value, which is a name-addr like any other.
+// The URI of a Route or Record-Route value.
 std::shared_ptr<types::SIPUri> route_uri(const std::shared_ptr<SIPMessage>& message, const std::string& field, std::size_t index = 0) {
   if (!message->header->contains(field)) return nullptr;
 
@@ -36,8 +36,8 @@ std::shared_ptr<types::SIPUri> route_uri(const std::shared_ptr<SIPMessage>& mess
   return identity->value ? identity->value->uri : nullptr;
 }
 
-// An in-dialog request as an endpoint that honoured a Record-Route would send it: the
-// Route set it kept, and the remote target as the Request-URI.
+// An in-dialog request as an endpoint sends it: the route set it kept, and the remote
+// target as the Request-URI.
 std::string in_dialog(const std::string& method, const std::string& request_uri, const std::string& route, const std::string& branch, int cseq = 2) {
   std::string raw = method + " " + request_uri + " SIP/2.0\r\n";
   raw += "Via: SIP/2.0/UDP 192.0.2.10:5060;branch=" + branch + "\r\n";
@@ -53,9 +53,8 @@ std::string in_dialog(const std::string& method, const std::string& request_uri,
 
 }  // namespace
 
-// RFC 3261 16.6 step 4: a proxy that wants to stay on the path of a dialog says so on
-// the request that creates it. Without this the ACK and the BYE go end to end and the
-// node never learns the call ended, which a node that anchors media cannot afford.
+// RFC 3261 16.6 step 4: a dialog-creating request is Record-Routed, so the ACK and BYE
+// come back through this node.
 TEST(ProxyRouteTest, AnInviteIsRecordRouted) {
   Fixture f;
   f.bind_bob();
@@ -71,13 +70,11 @@ TEST(ProxyRouteTest, AnInviteIsRecordRouted) {
   EXPECT_EQ(record_route->host, "192.0.2.1");
   EXPECT_EQ(record_route->port.value_or(0), 5060);
 
-  // 19.1.1: lr is what says this node is a loose router, and 16.6 step 4 requires it.
+  // RFC 3261 19.1.1: lr marks this node as a loose router.
   EXPECT_TRUE(record_route->has_parameter("lr"));
 }
 
-// RFC 3261 16.6 step 4 applies to requests that create a dialog. A MESSAGE creates
-// nothing to stay on the path of, so recording a route would only add a hop to a
-// request that has no sequel.
+// RFC 3261 16.6 step 4: a request that creates no dialog is not Record-Routed.
 TEST(ProxyRouteTest, ARequestThatCreatesNoDialogIsNotRecordRouted) {
   Fixture f;
   f.bind_bob();
@@ -98,8 +95,7 @@ TEST(ProxyRouteTest, ARequestThatCreatesNoDialogIsNotRecordRouted) {
   EXPECT_FALSE(forwarded->header->contains("Record-Route"));
 }
 
-// RFC 3261 16.4: a Route naming this node has been honoured by the request arriving
-// here, so it comes off. Leaving it on would send the request back to this node.
+// RFC 3261 16.4: a Route naming this node is removed, or the request would come back.
 TEST(ProxyRouteTest, ARouteNamingThisNodeIsRemoved) {
   Fixture f;
   f.bind_bob();
@@ -111,10 +107,8 @@ TEST(ProxyRouteTest, ARouteNamingThisNodeIsRemoved) {
   EXPECT_FALSE(forwarded->header->contains("Route"));
 }
 
-// RFC 3261 16.5 and 16.6: this is the whole of in-dialog routing. The Record-Route this
-// node wrote brings the BYE back through it, and the Request-URI is the remote target,
-// which is in no domain this node is responsible for, so it is forwarded as it stands.
-// No dialog state is consulted, because a proxy is not dialog-stateful (16.1).
+// RFC 3261 16.5, 16.6: an in-dialog BYE is forwarded to its Request-URI, the remote
+// target, on its route set. No dialog state is consulted (16.1).
 TEST(ProxyRouteTest, AnInDialogByeTransitsOnItsRouteSet) {
   Fixture f;
   f.bind_bob();
@@ -124,19 +118,17 @@ TEST(ProxyRouteTest, AnInDialogByeTransitsOnItsRouteSet) {
   auto forwarded = f.request_with(f.callee_connection, "BYE");
   ASSERT_NE(forwarded, nullptr);
 
-  // The Request-URI is untouched: with a loose route the target is not rewritten.
+  // A loose route does not rewrite the Request-URI.
   ASSERT_NE(forwarded->header->request_uri, nullptr);
   EXPECT_EQ(forwarded->header->request_uri->host, "192.0.2.20");
   EXPECT_EQ(forwarded->header->request_uri->user, "bob");
 
-  // And this node is on the path, so the Via chain is two deep.
+  // This node is on the path, so the Via chain is two deep.
   EXPECT_EQ(forwarded->header->headers_map["Via"].size(), 2u);
 }
 
-// RFC 3261 16.6 step 7 and RFC 5923: a second request to a hop this node already has a
-// flow to goes out on that flow. Opening a second connection per request would leave a
-// node holding one socket per in-dialog request, and for a client behind NAT the new
-// one would not reach it at all - the flow the client opened is the only way back.
+// RFC 3261 16.6 step 7, RFC 5923: a request to a hop this node already has a flow to
+// reuses that flow. Behind NAT, the flow the client opened is the only way back.
 TEST(ProxyRouteTest, ASecondInDialogRequestReusesTheFirstOnesFlow) {
   Fixture f;
   f.bind_bob();
@@ -149,19 +141,15 @@ TEST(ProxyRouteTest, ASecondInDialogRequestReusesTheFirstOnesFlow) {
 
   f.receive(f.caller, in_dialog("BYE", "sip:bob@192.0.2.20:5060", "<sip:192.0.2.1:5060;lr>", "z9hG4bK-bye-2"));
 
-  // The same connection carried it: a second flow would have written somewhere else and
-  // left this one where it was.
+  // The same connection carried it.
   EXPECT_GT(f.callee_connection->write_calls, after_first);
 
-  // And the registry still holds one channel for that hop, which is the one we started
-  // with.
+  // The registry still holds one channel for that hop, the original.
   auto found = f.on_strand([&f]() { return f.core->channel_find("udp", "192.0.2.20", 5060); });
   EXPECT_EQ(found, f.callee);
 }
 
-// RFC 3261 16.6 step 6: with a route set in play the top Route decides the hop and the
-// Request-URI is left alone. Here the Route names somewhere this node has a flow to and
-// the Request-URI still names an address of record.
+// RFC 3261 16.6 step 6: the top Route decides the hop and the Request-URI is left alone.
 TEST(ProxyRouteTest, ATopRouteDecidesTheHopAndLeavesTheRequestUri) {
   Fixture f;
 
@@ -179,9 +167,8 @@ TEST(ProxyRouteTest, ATopRouteDecidesTheHopAndLeavesTheRequestUri) {
   EXPECT_EQ(remaining->host, "192.0.2.20");
 }
 
-// RFC 3261 16.6 step 6: a top Route without lr belongs to a strict router, which expects
-// to find its own URI in the Request-URI. The Request-URI being replaced goes to the end
-// of the route set so the far end can put it back.
+// RFC 3261 16.6 step 6: a top Route without lr is a strict router's. Its URI becomes the
+// Request-URI, and the old Request-URI goes to the end of the route set.
 TEST(ProxyRouteTest, AStrictRouteIsRewrittenIntoTheRequestUri) {
   Fixture f;
 
@@ -194,7 +181,7 @@ TEST(ProxyRouteTest, AStrictRouteIsRewrittenIntoTheRequestUri) {
   EXPECT_EQ(forwarded->header->request_uri->host, "192.0.2.20");
   EXPECT_FALSE(forwarded->header->request_uri->has_parameter("lr"));
 
-  // The address of record is now the last Route value rather than lost.
+  // The address of record is now the last Route value.
   const auto& routes = forwarded->header->headers_map["Route"];
   ASSERT_FALSE(routes.empty());
 
@@ -204,10 +191,8 @@ TEST(ProxyRouteTest, AStrictRouteIsRewrittenIntoTheRequestUri) {
   EXPECT_EQ(last->user, "bob");
 }
 
-// RFC 3261 16.4: a strict router upstream will have moved this node's Record-Route into
-// the Request-URI and pushed the real target to the end of the route set. Undoing that
-// is the first thing route preprocessing does, and without it the request would be
-// forwarded to this node's own address.
+// RFC 3261 16.4: a strict router upstream put this node's URI in the Request-URI and the
+// real target last in the route set. Route preprocessing restores the target.
 TEST(ProxyRouteTest, AStrictRoutersRewriteIsUndone) {
   Fixture f;
   f.bind_bob();
@@ -221,13 +206,12 @@ TEST(ProxyRouteTest, AStrictRoutersRewriteIsUndone) {
   EXPECT_EQ(forwarded->header->request_uri->host, "192.0.2.20");
   EXPECT_EQ(forwarded->header->request_uri->user, "bob");
 
-  // The route set is spent: the value that was recovered is not sent on as well.
+  // The recovered value is not also sent on as a Route.
   EXPECT_FALSE(forwarded->header->contains("Route"));
 }
 
-// RFC 3261 16.5: a Request-URI in a domain this element is not responsible for is itself
-// the only target. No location lookup happens, because there is no address of record to
-// look up.
+// RFC 3261 16.5: a Request-URI in a domain this node does not serve is the only target;
+// there is no location lookup.
 TEST(ProxyRouteTest, ARequestForADomainWeDoNotServeGoesToItsRequestUri) {
   Fixture f;
 
@@ -238,10 +222,8 @@ TEST(ProxyRouteTest, ARequestForADomainWeDoNotServeGoesToItsRequestUri) {
   EXPECT_EQ(forwarded->header->request_uri->user, "carol");
 }
 
-// RFC 3261 16.6 step 1: every branch of a fork starts from a copy of the request as it
-// arrived. Forwarding the same object twice would stack this node's Via and decrement
-// Max-Forwards once per attempt, so the second callee would see a different request from
-// the first for no reason of the protocol's.
+// RFC 3261 16.6 step 1: each branch of a fork starts from a copy of the request as
+// received, so Via and Max-Forwards do not accumulate across attempts.
 TEST(ProxyRouteTest, EachForkStartsFromTheRequestAsReceived) {
   Fixture f;
   f.bind_bob("sip:bob@192.0.2.20:5060");
@@ -256,19 +238,18 @@ TEST(ProxyRouteTest, EachForkStartsFromTheRequestAsReceived) {
   for (const auto& attempt : forwarded) {
     EXPECT_EQ(attempt->header->headers_map["Via"].size(), 2u);
     EXPECT_EQ(attempt->header->headers_map["Max-Forwards"][0]->as<UIntHeader>()->value, 69u);
-    // Two per attempt and not four: the Record-Route of one branch is not inherited
-    // by the next (RFC 5658 asks for the pair, 16.6 step 1 for the fresh copy).
+    // Two per attempt, not four: one branch's Record-Route pair (RFC 5658) is not
+    // inherited by the next.
     EXPECT_EQ(attempt->header->headers_map["Record-Route"].size(), 2u);
   }
 
-  // Two branches of one fork are two transactions (16.6 step 8).
+  // RFC 3261 16.6 step 8: two branches are two transactions.
   EXPECT_NE(forwarded[0]->header->headers_map["Via"][0]->as<ViaHeader>()->parameters["branch"],
             forwarded[1]->header->headers_map["Via"][0]->as<ViaHeader>()->parameters["branch"]);
 }
 
-// RFC 3261 16.3.4: a request carrying a Via this node wrote has been here before. The
-// branch this node writes carries a hash of the fields that decide where the request
-// goes, so a request that comes back unchanged is a loop and is refused.
+// RFC 3261 16.3.4: the branch this node writes hashes the fields that decide routing, so
+// a request that comes back unchanged is a loop and gets 482.
 TEST(ProxyRouteTest, ARequestThatComesBackUnchangedIs482) {
   Fixture f;
   f.bind_bob();
@@ -278,9 +259,8 @@ TEST(ProxyRouteTest, ARequestThatComesBackUnchangedIs482) {
   auto forwarded = f.request_with(f.callee_connection, "INVITE");
   ASSERT_NE(forwarded, nullptr);
 
-  // What a looping element downstream would send back: the Via chain as it stands, one
-  // more Via on top, and the Request-URI it was given by its own routing - which for a
-  // loop is the address of record this node started from.
+  // What a looping downstream element sends back: one more Via on top and the original
+  // Request-URI.
   std::string looped = "INVITE sip:bob@example.com SIP/2.0\r\n";
   looped += "Via: SIP/2.0/UDP 192.0.2.99:5060;branch=z9hG4bK-elsewhere\r\n";
   for (const auto& via : forwarded->header->headers_map["Via"]) looped += "Via: " + via->to_string() + "\r\n";
@@ -296,9 +276,7 @@ TEST(ProxyRouteTest, ARequestThatComesBackUnchangedIs482) {
   EXPECT_NE(f.response_with(f.caller_connection, 482), nullptr);
 }
 
-// RFC 3261 16.3.4: the same Via with a different Request-URI is a spiral, not a loop.
-// The request is legitimately passing through this node a second time on its way
-// somewhere else, and refusing it would break every service that routes that way.
+// RFC 3261 16.3.4: the same Via with a different Request-URI is a spiral, and is allowed.
 TEST(ProxyRouteTest, ARequestThatComesBackChangedIsASpiralAndNot482) {
   Fixture f;
   f.bind_bob();
@@ -322,13 +300,12 @@ TEST(ProxyRouteTest, ARequestThatComesBackChangedIsASpiralAndNot482) {
 
   EXPECT_EQ(f.response_with(f.caller_connection, 482), nullptr);
 
-  // It was processed as an ordinary request: nobody@example.com has no subscriber.
+  // Processed as an ordinary request: nobody@example.com has no subscriber.
   EXPECT_NE(f.response_with(f.caller_connection, 404), nullptr);
 }
 
-// RFC 3261 16.7 step 1 and 18.1.2: a response that belongs to no client transaction here
-// still belongs to whoever sent the request. It goes back down the Via chain with this
-// node's own Via removed and nothing remembered about it.
+// RFC 3261 16.7 step 1, 18.1.2: a response matching no client transaction is forwarded
+// statelessly down the Via chain with this node's Via removed.
 TEST(ProxyRouteTest, AResponseWithNoTransactionIsForwardedStatelessly) {
   Fixture f;
 
@@ -351,9 +328,7 @@ TEST(ProxyRouteTest, AResponseWithNoTransactionIsForwardedStatelessly) {
   EXPECT_EQ(vias[0]->as<ViaHeader>()->parameters["branch"], "z9hG4bK-caller");
 }
 
-// RFC 3261 18.1.2: a response whose top Via is not one this node wrote was never this
-// node's to forward, whatever it claims to answer. Forwarding it would make this node a
-// relay for anything that can spell a Via.
+// RFC 3261 18.1.2: a response whose top Via is not this node's is dropped.
 TEST(ProxyRouteTest, AResponseWhoseTopViaIsNotOursIsDropped) {
   Fixture f;
 
@@ -371,8 +346,7 @@ TEST(ProxyRouteTest, AResponseWhoseTopViaIsNotOursIsDropped) {
   EXPECT_EQ(f.response_with(f.caller_connection, 200), nullptr);
 }
 
-// RFC 3261 16.10: a CANCEL reaching the proxy must reach the branches the proxy has
-// already tried, or the callee goes on ringing after the caller has given up.
+// RFC 3261 16.10: a CANCEL is forwarded to every branch already tried.
 TEST(ProxyRouteTest, ACancelIsForwardedToTheBranchAlreadyTried) {
   Fixture f;
   f.bind_bob();
@@ -397,15 +371,13 @@ TEST(ProxyRouteTest, ACancelIsForwardedToTheBranchAlreadyTried) {
   auto sent = f.request_with(f.callee_connection, "CANCEL");
   ASSERT_NE(sent, nullptr);
 
-  // RFC 3261 9.1: a single Via, the one this node put on the INVITE it is cancelling.
+  // RFC 3261 9.1: a single Via, matching the INVITE being cancelled.
   const auto& vias = sent->header->headers_map["Via"];
   ASSERT_EQ(vias.size(), 1u);
   EXPECT_EQ(vias[0]->as<ViaHeader>()->parameters["branch"], forwarded->header->headers_map["Via"][0]->as<ViaHeader>()->parameters["branch"]);
 }
 
-// RFC 3261 9.1: a CANCEL may not go out before the branch has answered provisionally,
-// because until it has, the far end has no transaction by that name to cancel. The
-// CANCEL waits, and the provisional response is what releases it.
+// RFC 3261 9.1: a CANCEL is held until the branch has answered provisionally.
 TEST(ProxyRouteTest, ACancelWaitsForAProvisionalResponseOnTheBranch) {
   Fixture f;
   f.bind_bob();
@@ -423,10 +395,10 @@ TEST(ProxyRouteTest, ACancelWaitsForAProvisionalResponseOnTheBranch) {
 
   f.receive(f.caller, cancel);
 
-  // Nothing has answered the branch yet, so nothing has been cancelled on it.
+  // No provisional response yet, so no CANCEL on the branch.
   EXPECT_EQ(f.request_with(f.callee_connection, "CANCEL"), nullptr);
 
-  // The caller is told straight away regardless: it is waiting on its own transaction.
+  // The caller is answered straight away regardless.
   EXPECT_NE(f.response_with(f.caller_connection, 487), nullptr);
 
   f.receive(f.callee, f.response_from_callee(180, "Ringing"));
@@ -434,9 +406,7 @@ TEST(ProxyRouteTest, ACancelWaitsForAProvisionalResponseOnTheBranch) {
   EXPECT_NE(f.request_with(f.callee_connection, "CANCEL"), nullptr);
 }
 
-// RFC 3261 16.10: once the caller has been told 487, the remaining bindings are no
-// longer wanted. Ringing the next phone after the caller hung up is the bug this
-// prevents.
+// RFC 3261 16.10: after a CANCEL the fork tries no further targets.
 TEST(ProxyRouteTest, ACancelStopsTheForkTryingFurtherTargets) {
   Fixture f;
   f.bind_bob("sip:bob@192.0.2.20:5060");
@@ -459,9 +429,7 @@ TEST(ProxyRouteTest, ACancelStopsTheForkTryingFurtherTargets) {
   EXPECT_EQ(f.requests_with(f.callee_connection, "INVITE").size(), 1u);
 }
 
-// RFC 3261 16.7: a 503 says the next hop is out of service, which is a fact about the
-// hop and not about the request. Passing it upstream would tell the caller something
-// untrue about this node.
+// RFC 3261 16.7 step 6: a 503 is about the next hop, so it goes upstream as a 500.
 TEST(ProxyRouteTest, A503FromTheOnlyBranchBecomesA500) {
   Fixture f;
   f.bind_bob();

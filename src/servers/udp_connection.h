@@ -49,8 +49,7 @@ class UDPConnection : public Connection {
  protected:
   std::weak_ptr<UDPServer> _udp_server;
 
-  // Taken at construction, because the executor has to answer after the server has gone
-  // and a channel is still tearing itself down.
+  // Taken at construction: it must still answer after the server has gone, while a channel tears itself down.
   boost::asio::any_io_executor _executor;
 
   boost::asio::ip::udp::endpoint _local_endpoint;

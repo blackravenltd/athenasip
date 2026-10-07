@@ -25,16 +25,10 @@
 using namespace athenasip;
 using athenasip::events::MQTTEventSystem;
 
-// These run against a real broker. Point ATHENA_TEST_MQTT_URL at one to enable them;
-// without it every case skips, so a machine with no broker still runs the suite green.
+// These run against a real broker and skip without ATHENA_TEST_MQTT_URL:
 //
 //   mosquitto -p 1883 -d
-//   ATHENA_TEST_MQTT_URL=mqtt://127.0.0.1:1883 ctest -R MqttEventSystemTest
-//
-// mqtt:// is the canonical event system and the one a cluster runs on, so what is
-// asserted here is what Milestone 4 depends on: that a node's events reach another
-// process, that the wildcards mean what MQTT says they mean, and that a prefix keeps
-// two clusters on one broker apart.
+//   ATHENA_TEST_MQTT_URL=mqtt://127.0.0.1:1883 ./build-tests/athenasip_tests --gtest_filter='MqttEventSystemTest.*'
 namespace {
 
 std::string broker_url() {
@@ -55,8 +49,7 @@ std::shared_ptr<SyncEventSystem> connect_to(const std::string& suffix = "") {
   return bus;
 }
 
-// A topic nobody else is using, so two runs of the suite against one broker do not see
-// each other's messages.
+// A topic unique to this run, so two runs against one broker do not see each other's messages.
 std::string unique_topic(const std::string& leaf) {
   static std::atomic<int> counter{0};
   return "athenatest/" + std::to_string(::getpid()) + "-" + std::to_string(counter.fetch_add(1)) + "/" + leaf;
@@ -83,9 +76,7 @@ struct Received {
   }
 };
 
-// A broker is another process on the other side of a socket, so everything here is
-// eventual. Waiting for the count rather than sleeping a fixed time keeps the tests
-// quick when the broker is local and honest when it is not.
+// Waits for the count rather than sleeping a fixed time: delivery through a broker is eventual.
 bool eventually(Received& received, std::size_t count, std::chrono::milliseconds limit = std::chrono::seconds(5)) {
   const auto deadline = std::chrono::steady_clock::now() + limit;
 
@@ -97,7 +88,7 @@ bool eventually(Received& received, std::size_t count, std::chrono::milliseconds
   return received.size() >= count;
 }
 
-// Nothing arrived, and it stayed that way. Used where the assertion is an absence.
+// A fixed wait, for asserting that nothing arrived.
 void settle() { std::this_thread::sleep_for(std::chrono::milliseconds(400)); }
 
 #define SKIP_WITHOUT_BROKER(bus)                                                               \
@@ -107,9 +98,7 @@ void settle() { std::this_thread::sleep_for(std::chrono::milliseconds(400)); }
 
 }  // namespace
 
-// A node whose broker address is wrong has to find out at startup. boost.mqtt5 queues
-// and reconnects for ever on its own, so starting the client says nothing: only a
-// round trip does.
+// A wrong broker address fails connect(): boost.mqtt5 reconnects for ever on its own, so only a round trip tells.
 TEST(MqttEventSystemTest, ConnectFailsWhenNoBrokerIsThere) {
   if (broker_url().empty()) GTEST_SKIP() << "set ATHENA_TEST_MQTT_URL to a broker to run the MQTT event system tests";
 
@@ -158,9 +147,7 @@ TEST(MqttEventSystemTest, APublishedMessageReachesAConsumerOnTheSameTopic) {
   bus->close();
 }
 
-// The whole reason the bus is MQTT rather than something in process: a node publishes
-// and another node, in another process, hears it. This is how cluster discovery works
-// in Milestone 4, and it is the one thing an in-process bus cannot do.
+// A node publishes and another process hears it, which cluster discovery depends on.
 TEST(MqttEventSystemTest, OneClientHearsWhatAnotherPublishes) {
   auto publisher = connect_to();
   auto consumer = connect_to();
@@ -183,9 +170,7 @@ TEST(MqttEventSystemTest, OneClientHearsWhatAnotherPublishes) {
   consumer->close();
 }
 
-// MQTT's own wildcard rules, which docs/events.md tells a consumer to rely on: + is
-// exactly one level and # is the rest. A consumer subscribing to nodes/+/status to
-// find the cluster is depending on this being the broker's meaning and not ours.
+// MQTT's wildcard rules, as docs/events.md promises: + is exactly one level and # is the rest.
 TEST(MqttEventSystemTest, PlusMatchesOneLevelAndHashMatchesTheRest) {
   auto bus = connect_to();
   SKIP_WITHOUT_BROKER(bus);
@@ -258,12 +243,10 @@ TEST(MqttEventSystemTest, UnsubscribeAllLeavesNothingListening) {
   bus->close();
 }
 
-// The prefix is what keeps two clusters on one broker from hearing each other. It goes
-// on in front of what this node publishes and comes off again before a consumer sees
-// the topic, so nothing above the driver has to know it is there.
+// The prefix keeps two clusters on one broker apart. It is added on the wire and stripped before a consumer
+// sees the topic.
 TEST(MqttEventSystemTest, ThePrefixIsAppliedOnTheWireAndStrippedOnTheWayBack) {
-  // Deliberately without a trailing separator: a prefix is a topic level and the
-  // driver is what puts the '/' between it and the topic.
+  // No trailing separator: the driver puts the '/' between the prefix and the topic.
   const auto prefix = "athenatest-prefix-" + std::to_string(::getpid());
 
   auto prefixed = connect_to("/?prefix=" + prefix);
@@ -288,14 +271,14 @@ TEST(MqttEventSystemTest, ThePrefixIsAppliedOnTheWireAndStrippedOnTheWayBack) {
   // The consumer inside the prefix sees the topic it asked for, not the wire topic.
   EXPECT_EQ(inside.all()[0].first, topic);
 
-  // And on the wire the prefix really is there, which is what separates two clusters.
+  // On the wire the prefix is there.
   EXPECT_EQ(outside.all()[0].first, prefix + "/" + topic);
 
   prefixed->close();
   plain->close();
 }
 
-// A cluster on a prefix must not hear one that is not, or the separation is decoration.
+// A prefixed client does not hear an unprefixed publish.
 TEST(MqttEventSystemTest, APrefixedClientDoesNotHearAnUnprefixedPublish) {
   const auto prefix = "athenatest-apart-" + std::to_string(::getpid());
 
@@ -319,9 +302,7 @@ TEST(MqttEventSystemTest, APrefixedClientDoesNotHearAnUnprefixedPublish) {
   plain->close();
 }
 
-// The fire-and-forget publish stays on the contract because the bus is observability
-// and is never on the call setup path. It answers nothing, so what proves it worked is
-// what the consumer saw.
+// The fire-and-forget publish answers nothing, so what proves it worked is what the consumer saw.
 TEST(MqttEventSystemTest, TheFireAndForgetPublishStillDelivers) {
   auto bus = connect_to();
   SKIP_WITHOUT_BROKER(bus);
@@ -339,9 +320,8 @@ TEST(MqttEventSystemTest, TheFireAndForgetPublishStillDelivers) {
   bus->close();
 }
 
-// The topics the node actually publishes, through the driver that actually carries
-// them. docs/events.md says no topic begins with a slash, because a leading slash is a
-// distinct empty first level in MQTT and a nodes/# filter does not match it.
+// The node's own topics through the real driver. No topic begins with a slash: a leading slash is an empty
+// first level in MQTT, which a nodes/# filter does not match.
 TEST(MqttEventSystemTest, TheNodeTopicSchemeSurvivesTheRoundTrip) {
   auto bus = connect_to();
   SKIP_WITHOUT_BROKER(bus);
@@ -362,14 +342,9 @@ TEST(MqttEventSystemTest, TheNodeTopicSchemeSurvivesTheRoundTrip) {
   bus->close();
 }
 
-// One mqtt_client is reused across connect/close cycles, so a completion handler from a
-// finished run can still be in flight while the next run is starting - and connect() sets
-// _connected true before it joins the previous thread, so the handler's own guard does not
-// catch it. It would then reset the new run's work guard and clear its subscriptions.
-//
-// Each run now carries a generation and a late completion identifies itself. This exercises
-// the cycle it happens in; it does not force the interleaving, which would need a hook into
-// the client thread that does not exist. Reported by the Corvus LoRa Bridge session.
+// One mqtt_client is reused across connect/close cycles, so a completion from a finished run may arrive during
+// the next. Each run carries a generation so a late completion cannot reset the new run's work guard or clear
+// its subscriptions. This exercises the cycle; it cannot force the interleaving.
 TEST(MqttEventSystemTest, AClosedRunDoesNotTakeTheNextOneDownWithIt) {
   const auto url = broker_url();
   if (url.empty()) GTEST_SKIP() << "ATHENA_TEST_MQTT_URL is not set";
@@ -384,8 +359,7 @@ TEST(MqttEventSystemTest, AClosedRunDoesNotTakeTheNextOneDownWithIt) {
     ASSERT_TRUE(bus->connect()) << "cycle " << cycle;
     EXPECT_TRUE(bus->is_connected()) << "cycle " << cycle;
 
-    // Something that needs this run to still be working: a publish goes through the client
-    // whose work guard a stale completion would have released.
+    // A publish needs this run's work guard, which a stale completion would have released.
     EXPECT_TRUE(bus->publish(topic, "still here")) << "cycle " << cycle;
 
     bus->close();

@@ -153,8 +153,7 @@ def main():
 
     args = parser.parse_args()
 
-    # Watching ends by being stopped, and being stopped has to leave the output behind:
-    # SIGTERM raises rather than killing the process where it stands.
+    # SIGTERM ends a watch the way an interrupt does, so buffered output is not lost.
     signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
 
     engine = Engine(args.host, args.port, args.timeout)
@@ -178,9 +177,7 @@ def main():
             once()
             return 0
 
-        # Flushed every time round. Watching is the mode whose output is read while it
-        # is still being written - in a terminal beside a call, or into a file that is
-        # read after the call ended - and a block-buffered stdout loses all of it.
+        # Flushed every round: watch output is read while it is being written.
         while True:
             print(f"--- {time.strftime('%H:%M:%S')}", flush=True)
             once()

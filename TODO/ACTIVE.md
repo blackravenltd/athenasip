@@ -1,20 +1,36 @@
 # AthenaSIP - Active Work
 
-Work happens on `develop`; `main` carries the last release, and `0.8.0` is the current
+Work happens on `develop`; `main` carries the last release, and `0.9.0` is the current
 one. Line numbers refer to the current tree; update them as files move.
 
 Milestones 1, 2 and 3 are complete apart from the items left under Milestone 3 below.
 `0.8.0` (2026-10-03) carried a good part of Milestone 4 and most of Milestone 5:
 `COMPLETED.md` has every item with what shipped.
 
-1036 unit tests at `0.8.0`. **The sipp harnesses were not run on the tagged tree**: Docker
-was paused when Tom asked for the tag. The single-node harness last passed, 12 of 12, at
-`2e7ae4d`, and the two-node harness 9 of 11 a few commits before the tag, with the two
-failures the scenarios' own. Running both is the first thing to do with Docker back, and
-what they find goes into a 0.8.1.
+`0.9.0` (2026-10-07) carried, since `0.8.0`: RFC 6026's
+Accepted state, media addresses that may be names, `--reset-password`, `--check`,
+`log.level` and `log.format`, `sip.allow_unencrypted: false`, RFC 8599 push (unproven
+against a real service for want of credentials), the second node and client failover, the
+rtpengine pool, the local UA that ends dead calls with a BYE, and the configuration schema
+with `--print-schema`. The README and documentation were checked against the code on
+2026-10-07 and the quick-start guides written. 1296 unit tests (one skipped without a
+resolver) at the tag. Both nodes run `3ff67db`, which is `0.9.0` without the fix
+that lets a plugin module describe its settings.
 
-**Next:** the two harnesses on the tagged tree, then in Milestone 4 the chaos test, and
-video through rtpengine.
+**Two live nodes**, neither production:
+- `corvus-fi-1` (10.35.1.20): builtin relay, AthenaPhone's usual home.
+- `corvus-gbni-1` (10.44.1.50) as `macnessa.athenasip.org`, behind the other site's NAT:
+  native rtpengine, the domain as `sip.public_address` and as the media address, DNS kept
+  current by manannan, the signalling and media ports forwarded and checked from outside.
+  A headless browser called AthenaPhone with video through it on 2026-10-04 and the
+  console's `e2e/phone-call.spec.ts` passed (`COMPLETED.md`).
+
+**The sipp harnesses pass at `67a4b75`** (2026-10-04, Docker back): single node 12 of 12,
+with rtpengine 12 of 12, two nodes 15 of 15. That covers RFC 6026 and `allow_unencrypted`;
+push is after it and has no scenario yet.
+
+**Next:** Milestone 5's packaging. Milestone 4's intermittent `across-cancel-ringing` has not
+failed again in 18 runs; it stays open for the next failure's logs.
 
 **Once things are stable, video calling is a primary feature** (Tom, 2026-10-03), not a
 later extra: principle 6 already says so, and this is the reminder that it is next in line
@@ -30,20 +46,16 @@ they land, with a note on what shipped.
 
 Nothing below can move until these are settled, and each one has somebody or something
 stopped against it. They are here rather than scattered through the milestones because a
-session that has lost its context needs to see them first. The rest of the list was
-answered on 2026-10-03; the answers are under Decisions.
+session that has lost its context needs to see them first.
 
-1. **How a browser that is only a SIP subscriber gets its configuration.** Decided that it
-   does not use HTTP at all (see Decisions); what it uses instead is still open. The
-   standard candidate is RFC 6080, the SIP UA configuration framework: SUBSCRIBE to the
-   `ua-profile` event, authenticated by the subscriber's own Digest credentials, with the
-   profile in the NOTIFY. TURN can authenticate with the same credentials, since a TURN
-   long-term key (RFC 8489) is MD5(username:realm:password), the HA1 already stored. Needs
-   a conversation before anything is built.
+1. **Push credentials.** `fcm://`, `webpush://` and `apns://` are built and tested against
+   local servers only. Proving them needs a Firebase service account (AthenaPhone on
+   Android), an Apple APNs key with the app's Team ID and bundle ID (iOS), or a browser
+   subscription.
 
 ## How to prove it
 
-`docs/testing.md` is the whole of it: the five layers, what each answers that the one
+`docs/testing.md` is the whole of it: the layers, what each answers that the one
 before it cannot, and the exact commands. The short version, cheapest first:
 
 ```
@@ -52,6 +64,8 @@ test/e2e/run.sh [--rtpengine]    the sipp scenarios, the second with a real engi
 test/e2e/cluster.sh              the same call across two nodes of a cluster
 test/interop/up.sh --rtpengine   a node to point a real client at
 test/interop/browser.sh          two browsers calling, direct then relayed through coturn
+e2e/phone-call.spec.ts           (../athenasip-admin) a headless browser calls a real phone
+                                 through a named node, with video; somebody answers it
 test/interop/UAT.md              the call a person has to make
 ```
 
@@ -139,7 +153,7 @@ Dated, and not reopened without asking.
   no dialog replication; every node therefore needs a client-reachable address of its
   own as well as the shared one. RFC 3263 SRV is the failover mechanism for SIP
   endpoints and needs no balancer; browsers cannot use it, so they get a balancer or a
-  provisioned list from `GET /api/v1/client/config`.
+  provisioned list from `GET /api/v1/subscriber/{realm}/config`.
 - (2026-09-21) Client failover without infrastructure. A realm should survive a node
   dying without the operator running DNS they control, which is what principle 3 asks
   for and what RFC 3263 alone does not give. The answer is the standard mechanisms
@@ -156,6 +170,17 @@ Dated, and not reopened without asking.
   Neither is created from the other in either direction and neither credential works as
   the other. The resource became `/realms/{realm}/subscribers` on 2026-10-03, and the
   type `Subscriber`.
+- (2026-10-05, replacing the 2026-10-03 and 2026-10-04 decisions on browsers) A subscriber
+  reaches its own API routes, all under `/api/v1/subscriber/{realm}/`, with HTTP Digest
+  (RFC 7616) and its SIP credentials: the HTTP realm is the SIP realm, so the stored HA1 is
+  the key. A softphone gets its ICE servers and a minted TURN credential there, so coturn
+  stays in shared-secret mode (it cannot also take long-term users: tested 2026-10-05).
+  `/client/config` moved there with no alias, and the console follows.
+- (2026-10-04) nghttp2 is a dependency, for APNs, which speaks only HTTP/2.
+- (2026-10-04) A node asks the `stun:` servers already in `http.api.ice_servers` for its own
+  address, and no others: no public STUN server by default.
+- (2026-10-04) A REGISTER for a domain no node serves is forwarded for this node's
+  subscribers by default (`sip.forward_register`), over any transport.
 - (2026-10-03) Tom's answers to the questions that were waiting on him:
   - The API says **subscriber** for a subscriber, everywhere and in one go:
     `/realms/{realm}/subscribers`, and `subscriber` / `subscriber_id` where a response
@@ -169,9 +194,6 @@ Dated, and not reopened without asking.
     appropriately.
   - **The admin interface does not need HTTPS yet**, unless it is really easy, in which
     case it is done to get it out of the way.
-  - **A browser that is only a subscriber reaches no HTTP endpoint**, `/client/config`
-    included. If it needs configuration, that comes a SIP-idiomatic, standards way, or is
-    talked about first (Waiting on Tom, 1).
   - **No role is defined before it has routes to permit.** `manage-cluster` waits for M4
     and M5.
   - **`status_interval`** is in the node status payload, for monitors such as T.O.M.S to
@@ -246,6 +268,12 @@ Dated, and not reopened without asking.
   serving something checked in, which is preferred to a copied bundle going stale. The
   Playwright spec lives beside the page in that repository and this side brings the
   node, rtpengine and the subscribers up for it.
+- (2026-10-06) The node sends a BYE to each end when it ends a call by its own policy
+  (`sip.media_timeout`, `sip.max_call_duration`) or for an administrator
+  (`DELETE /api/v1/calls/{call}`, `manage-cluster`), as Kamailio's dialog module does. It
+  never does on an RFC 4028 lapse, after which a proxy "MUST NOT send a BYE" (8.3). The BYE
+  is the one the far end would send, entering the proxy like any in-dialog request.
+
 
 ## Architecture
 
@@ -259,8 +287,8 @@ udp/tcp/tls/ws/wss servers -> Connection -> Channel     transport   s18, RFC 358
                                               |
                     +-------------+-----------+-----------+
                 Registrar       Proxy       Dialogs       UA        transaction users
-               s10, 3327,      s16, 3263   s12, 4028     (local
-               5626 flows      loose route              responses)
+               s10, 3327,      s16, 3263   s12, 4028     (BYE to
+               5626 flows      loose route              both ends)
                     |             |
                 Datastore    MediaEngine       Events: observability only, never the call path
                 (async)
@@ -272,8 +300,8 @@ Everything below the transaction users is a plugin: datastores, event systems an
 engines today, routing policy and others later. They hang off the TU layer and register
 through one contract, so adding a kind or an implementation touches nothing above it.
 
-The tree matches the diagram, checked on 2026-09-30, with one box not yet built: the local UA,
-which is what would let a node send a BYE to both ends of a call it decided was over.
+The tree matches the diagram. The local UA (`src/local_ua.*`) is the fourth transaction user:
+it sends a BYE to both ends of a call this node ends, through the proxy.
 `docs/architecture.md` describes the shape for a reader; this section is the target.
 
 ### Known deviations from the standards
@@ -320,7 +348,7 @@ endpoint on an ordinary transport. All of that is in. What is not yet in is list
 here, in the order it is needed.
 
 The call was made on 2026-09-30 and heard both ways in both directions;
-`test/interop/UAT.md` holds the record and `COMPLETED.md` the account of what it found,
+`test/interop/UAT.md` at `47de4a2` holds the record and `COMPLETED.md` the account of what it found,
 including the behaviour profiles it led to. What is left of it is below.
 
 - [ ] **Ring the automated browser call.** `browser.sh` answers within milliseconds and
@@ -335,13 +363,9 @@ The trunk scenario waits on trunks existing.
 - [ ] A harness scenario for a trunk, once a trunk is something the node can be
       configured with: an authenticated subscriber calling a number that leaves by it, and
       a call arriving from it. Today an off-node call goes wherever its Request-URI says.
-- [ ] Record which rtpengine instance owns a call in the datastore so any node can
-      release it; support a pool of engines with health checks. The driver is proven
-      against rtpengine 9.4.0, so this is the cluster's question and not the
-      protocol's; it belongs with M4 as much as here.
-- [ ] Video through rtpengine: a browser and AthenaPhone with the media anchored and
-      relayed (BUNDLE, rtcp-mux), which the 2026-10-03 call did not exercise because the
-      builtin relay passes a WebRTC description through. Then video in the sipp harness.
+- [ ] The phone's media across the internet: AthenaPhone on mobile data to
+      macnessa.athenasip.org. The 2026-10-04 run's phone leg went over the link between
+      the two sites.
 - [ ] Verify the rest against AthenaPhone: hold and resume, DTMF (RFC 4733
       passthrough), blind transfer (REFER proxying).
 - [ ] Interop matrix documented: AthenaPhone, JsSIP in Chrome, Firefox and Safari,
@@ -360,75 +384,24 @@ milestone is the second node.
 
 ### Client failover, in the order decided on 2026-09-21
 
-- [ ] What the realm expects of a client, in `GET /api/v1/client/config` beside the node
-      list it now carries. For an admin user's softphone only: a subscriber-only browser
-      reaches no HTTP endpoint (2026-10-03), so its equivalent waits on Waiting on Tom, 1.
-- [ ] RFC 5626 outbound, what is left of it: a flow token in the Path a node writes when
-      it is the edge for another registrar, which is the cluster case. (No 430 for a gone
-      in-dialog flow, by choice: see Known deviations.)
-- [ ] `AthenaSIP-Alternate-Server`, the optional extension, and last because it is what
-      the standards above do not cover: a client that cannot do outbound and has no DNS
-      still has to learn where else to go. Four conditions, and it is not worth shipping
-      without them:
-      - Honoured only over a transport that authenticated the server - TLS or WSS with a
-        verified certificate. Digest authenticates the client to us, not us to the
-        client, so over anything else this is a redirection primitive handed to whoever
-        can forge a response.
-      - Negotiated by option tag, sent only to a client that advertised
-        `Supported: athenasip-failover`. Unknown headers are ignored anyway, so this
-        costs nothing and keeps the header off the wire for everyone else.
-      - The value borrows Contact's grammar rather than inventing one: name-addr with
-        parameters, `q` for preference, `expires` for how long the list is good. A stale
-        list is the failure mode to design for, so the lifetime is not optional.
-      - The name is vendor-prefixed because the header is ours and unregistered
-        (RFC 6648 killed `X-`). If it is ever worth standardising the name changes, which
-        is the other reason the option tag rather than the header name is what gets
-        negotiated.
-      The list itself comes from the same discovery bus as `GET /api/v1/nodes`, so this
-      is a way of carrying an answer the node already has, not a new source of truth.
+Done (`COMPLETED.md`). What remains of client failover is the node's own address, below.
 
 ### The node's own address
 
-- [ ] A node determines its own public address and reachability, rather than being told.
-      Configuration stays and always wins, because an explicit answer beats a guessed
-      one, but a node with nothing configured should work out the answer itself. Three
-      sources, cheapest first:
-      - From peers, for nothing. A peer that receives an inter-node request already
-        stamps `received` and `rport` on the top Via (RFC 3581), which is what
-        `Channel::_stamp_via` does in the receive direction. Reading them back off the
-        response is a per-transport observation of what a peer actually sees, which one
-        STUN answer cannot give.
-      - From STUN (RFC 5389) when there is no peer yet, which is every single-node first
-        start. coturn is already in the M5 compose, so the client is the only new part.
-        STUN reports the mapping the router made for an outbound packet, which on a SOHO
-        router doing symmetric NAT is not the port that was forwarded inbound. It gives
-        the public address with confidence and the port only as a guess, so it is a
-        starting point to be verified, never an answer to act on.
-      - From the operator, as today.
-      Then verify rather than believe: the node publishes what it thinks it is in the
-      retained `nodes/<id>/status` roster, and a peer sends an OPTIONS (11.1) back to
-      that address from outside. An address that does not answer is not advertised, and
-      the node says so loudly instead of record-routing something unreachable.
-      `athenasip --check` reports what was found, per transport, and how.
-      The honest failure case has to be expressible: a node behind symmetric NAT or a
-      connection-pinning balancer has no address peers can reach on their own, only
-      flows clients opened. Discovery must be able to answer "not directly reachable",
-      and a node in that state must not advertise itself as a routable cluster peer -
-      that is the case where Record-Route-the-node stops working and RFC 5626 flows are
-      the only way in.
+Done (`COMPLETED.md`, `docs/architecture.md`).
 
 ### The second node
 
-- [ ] The rest of discovery: the node's capabilities in its status. The SIP addresses, the
-      roster from MQTT, staleness and the inter-node address (`cluster.advertise`,
-      `NodeDirectory::find`) are in.
-- [ ] Re-run `test/e2e/cluster.sh` in full. Cancel, busy, the timeout and the TCP and
-      WebSocket callees passed across two nodes on 2026-10-03; delayed offer and hold
-      failed on the scenarios' own check of the relay address, the harness was moved to the
-      subnet they expect, and Docker was paused before the re-run. The call records check
-      across the two nodes has not run at all.
-- [ ] Chaos test: kill node A mid-registration-cycle, assert re-REGISTER on node B and
-      a new call completes within one registration interval.
+Both done on 2026-10-04 (`COMPLETED.md`): the full two-node harness, and the chaos test as
+its last scenario.
+
+- [ ] `across-cancel-ringing` failed once in five runs at `5986eaa` (once in the full run,
+      not in four runs on its own; it passed at `67a4b75`). Cause unknown: the logs were
+      overwritten by the next harness run before they were read. Run the full harness until
+      it fails again, and read `cluster-across-cancel-ringing*.log` and both nodes' logs
+      before naming a cause. Not reproduced since (2026-10-06, at `ed9141f`): 15 runs on its
+      own and three of the full harness, the third cut short by Docker Desktop pausing after
+      `across-ws-flow`. Left open, so the next failure's logs are kept and read.
 
 ---
 
@@ -447,14 +420,6 @@ configuration search path, the heartbeat and its will, SPA mode as a choice, the
 `corvus-fi-1`, both datastores holding users and sessions, the whole of admin
 authentication from session issue to the OpenAPI document, and the one-command stack.
 
-- [ ] The "cannot produce webrtc - offering what it can" warning fires for an offer that
-      is already WebRTC and passes through untouched. It should fire only when the node
-      would have had to convert, and it names the Contact rather than the subscriber.
-- [ ] Admin API, part 2, what is left of it. `/api/v1/calls`, `/api/v1/calls/{call}`,
-      `/api/v1/media` and `/metrics` landed on 2026-10-01. Left: hanging up a call
-      (`DELETE /api/v1/calls/{call}`), which needs the node to send BYEs itself and so waits
-      for the local UA in M6; call history, which is M4's CDRs; and `/api/v1/events`, an SSE
-      stream bridging `nodes/#`, `subscribers/#` and `calls/#`.
 - [ ] athenasip-admin: replace the empty `src/lib/API.js` with a client generated from
       the OpenAPI document; pages for realms, subscribers, registrations, live calls,
       nodes, media engines, and the JsSIP test phone pointed at the server's own WSS.
@@ -462,24 +427,8 @@ authentication from session issue to the OpenAPI document, and the one-command s
       hand-written and speaks the whole documented API, with a contract test against
       `docs/api/openapi.yaml` passing. Generation is what is left, and every operation in
       the document now carries an `operationId` for it.
-- [ ] Docs for the reader without a telecoms background. The M2 audit made every page
-      true; this is the pages that do not exist: a configuration reference generated
-      from the config schema, "how a call works", a clustering guide, a TLS and
-      certificates guide, a media engines guide, troubleshooting.
-- [ ] Plugins as shared libraries: `plugins.path` in config, scan for `.so`, `.dylib`
-      and `.dll`, `dlopen`, call an `extern "C"` describe/create entry point, register
-      through the contract, and refuse to load a plugin whose `api_version` does not
-      match. The rule is documented plainly: build against the SDK headers with the same
-      toolchain, because `YAML::Node` and `std::shared_ptr` cross the boundary. A pure C
-      ABI is more portable and much more work; not the starting point.
-      `athenasip plugins list` shows what loaded and why anything did not.
 - [ ] Packaging: Docker image, Debian package, Homebrew formula. In-tree plugins ship
       compiled in; the packages also carry the SDK headers.
-- [ ] Observability: a structured log option. Prometheus `/metrics` landed on 2026-10-01.
-- [ ] Pipelining in `RedisDatastore`: the listing operations walk their index one key at
-      a time because each step starts the next from its own completion. Correct, and
-      slower than one MGET would be. Worth doing when a node has enough bindings for it
-      to show, which the M4 chaos test is the first thing likely to produce.
 
 ---
 
@@ -495,15 +444,19 @@ authentication from session issue to the OpenAPI document, and the one-command s
       would forward each to the other two, which works and is not mixing.
 - [ ] Presence: SUBSCRIBE/NOTIFY (RFC 6665), `presence` (RFC 3856) and `dialog` packages
       for BLF, `message-summary` for MWI, backed by MQTT fan-out.
+- [ ] RFC 6080 client configuration (SUBSCRIBE to `ua-profile`, NOTIFY pointing at
+      `/api/v1/subscriber/{realm}/config`), once the local UA can be a notifier for
+      presence. Little before then: it needs a SUBSCRIBE/NOTIFY UAS, and the profile format
+      is each vendor's, so only our own clients would read it (Tom, 2026-10-05: if it costs
+      little).
 - [ ] SIP MESSAGE relay.
-- [ ] Push (RFC 8599) parameters on REGISTER and a push gateway hook for AthenaPhone.
+- [ ] Push, RFC 8599, what is left (`COMPLETED.md` has what shipped): proving each service
+      for real (Waiting on Tom, 1); a sipp scenario with a fake provider; and section 6,
+      `pn-purr` for long-lived dialogs, which nothing needs yet. The client side is
+      AthenaPhone's.
 - [ ] Web client repository: video calling and conferencing, JsSIP over WSS, served by
-      AthenaSIP. Not provisioned from `/api/v1/client/config`: a subscriber-only browser
-      reaches no HTTP endpoint (2026-10-03), so how it is configured is Waiting on Tom, 1.
-- [ ] The local UA, the fourth transaction user in the Architecture diagram. Its first
-      use is tearing a lapsed call down towards both ends: on expiry this node discards
-      its state, which is what RFC 4028 section 8 asks of a proxy, and a node that
-      anchored media would rather tell both ends than leave them to their own timers.
+      AthenaSIP, configured from `/api/v1/subscriber/{realm}/config` with the subscriber's
+      own credentials.
 
 ---
 
@@ -512,7 +465,7 @@ authentication from session issue to the OpenAPI document, and the one-command s
 Kept in the tree or history, not on any milestone:
 
 - Lua scripting (`src/script/`): not compiled, `on_message`/`send_message` are TODOs,
-  `luaL_openlibs` disabled. Revisit when routing policy needs more than location lookup,
+  `luaL_openlibs` disabled, no example scripts. Revisit when routing policy needs more than location lookup,
   and then as a routing-policy plugin through the plugin contract.
 - `RTPProxyClient` (`src/rtp/rtp_proxy_client.*`): rtpproxy text protocol. Out of the
   build path since 2026-09-21, the way Lua is. May become an `rtpproxy://` driver with
@@ -524,6 +477,6 @@ Kept in the tree or history, not on any milestone:
   creates one dialog per answering branch (12.1) and the model holds them, but with one
   branch outstanding at a time the second is untested; parallel forking is what would
   exercise it.
-- `Util::is_ipv4` (`src/util.cpp:161`) still uses a regex and does see network data, but
+- `Util::is_ipv4` (`src/util.cpp:148`) still uses a regex and does see network data, but
   the pattern is anchored with no nested quantifiers, so it is linear and not the hazard
   the message-path regexes were. Left deliberately.

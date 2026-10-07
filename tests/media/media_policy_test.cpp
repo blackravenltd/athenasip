@@ -21,8 +21,7 @@ using athenasip::types::MediaPolicy;
 
 namespace {
 
-// The same recording engine the profile tests use: what is asserted here is what the
-// node asked an engine for, and whether it asked at all.
+// A recording engine: what is asserted is what the node asked an engine for, and whether it asked at all.
 class RecordingMediaEngine : public media::MediaEngine {
  public:
   std::string name() const override { return "recording"; }
@@ -46,8 +45,7 @@ class RecordingMediaEngine : public media::MediaEngine {
     (void)call;
     _record(flags);
 
-    // Rewritten, so a test can tell an anchored description from one that went past
-    // untouched.
+    // Rewritten, so a test can tell an anchored description from an untouched one.
     _complete(std::move(on), std::move(handler), media::Result::success(std::string("v=0\r\no=anchored 1 1 IN IP4 203.0.113.5\r\ns=-\r\nt=0 0\r\n")));
   }
 
@@ -128,10 +126,8 @@ MediaPolicy with_profiles(MediaPolicy::Profiles profiles) {
 
 }  // namespace
 
-// A realm that has said nothing about behaviour follows the server's default (Config
-// behaviour), and the shipped one passes the caller's profile through: a browser calling
-// over a WebSocket is offered on as WebRTC whatever the callee's transport, which is what
-// let a browser reach an AthenaPhone on TCP once the realm was told so by hand.
+// A realm that sets no behaviour follows the server's default, and the shipped one passes the caller's
+// profile through: a browser's offer goes on as WebRTC whatever the callee's transport.
 struct DefaultFixture : ProxyFixture {
   std::shared_ptr<RecordingMediaEngine> engine = std::make_shared<RecordingMediaEngine>();
 
@@ -155,7 +151,7 @@ TEST(MediaPolicyTest, ARealmThatSaysNothingPassesTheProfileThroughByDefault) {
   EXPECT_EQ(seen[0].target, Flags::Profile::Mirror);
 }
 
-// And a server default of reading the leg from its transport applies to it instead.
+// A server default of reading the leg from its transport applies instead.
 TEST(MediaPolicyTest, ARealmThatSaysNothingFollowsAConfiguredServerDefault) {
   DefaultFixture f("wss");
   f.config->behaviour.profiles = MediaPolicy::Profiles::FromTransport;
@@ -167,8 +163,7 @@ TEST(MediaPolicyTest, ARealmThatSaysNothingFollowsAConfiguredServerDefault) {
   EXPECT_EQ(seen[0].target, Flags::Profile::WebRtc);
 }
 
-// A realm with a typo in its policy keeps doing what it was doing. Changing what a
-// node does to media because a word was misspelled is the worse failure.
+// An unreadable profile name leaves the realm's policy as it was.
 TEST(MediaPolicyTest, AnUnreadableProfileNameLeavesThePolicyAlone) {
   EXPECT_EQ(MediaPolicy::profiles_from_string("webrtc", MediaPolicy::Profiles::Mirror), MediaPolicy::Profiles::WebRtc);
   EXPECT_EQ(MediaPolicy::profiles_from_string("  RTP  ", MediaPolicy::Profiles::Mirror), MediaPolicy::Profiles::PlainRtp);
@@ -184,9 +179,8 @@ TEST(MediaPolicyTest, EveryProfileNameSurvivesBeingWrittenDownAndReadBack) {
   }
 }
 
-// RFC 7118 is SIP over WebSocket and requires no WebRTC, so a realm whose WebSocket
-// clients are phones has to be able to say so. Without this, the transport rule offers
-// them ICE and DTLS they cannot answer.
+// RFC 7118 requires no WebRTC, so a realm can say its WebSocket clients are phones and are not offered ICE
+// and DTLS.
 TEST(MediaPolicyTest, ARealmCanSayItsWebSocketClientsArePhones) {
   PolicyFixture f(with_profiles(MediaPolicy::Profiles::PlainRtp), "wss");
 
@@ -207,8 +201,7 @@ TEST(MediaPolicyTest, ARealmCanSayEveryLegIsWebRtc) {
   EXPECT_EQ(seen[0].target, Flags::Profile::WebRtc);
 }
 
-// Nothing about a flow distinguishes a desk phone that wants SRTP from one that does
-// not, so this profile can only be asked for.
+// Nothing about a flow says a phone wants SRTP, so this profile can only be asked for.
 TEST(MediaPolicyTest, ARealmCanAskForSrtpWithTheKeysInTheDescription) {
   PolicyFixture f(with_profiles(MediaPolicy::Profiles::SrtpSdes), "udp");
 
@@ -229,8 +222,7 @@ TEST(MediaPolicyTest, ARealmCanLeaveItToTheEngine) {
   EXPECT_EQ(seen[0].target, Flags::Profile::Mirror);
 }
 
-// Not anchoring is the same outcome as having no engine: the description travels
-// exactly as it arrived. The difference is that somebody chose it.
+// Not anchoring is the same outcome as having no engine: the description travels as it arrived.
 TEST(MediaPolicyTest, ARealmThatDoesNotAnchorLeavesTheDescriptionAlone) {
   MediaPolicy policy;
   policy.anchor = false;
@@ -258,10 +250,8 @@ TEST(MediaPolicyTest, ARealmThatAnchorsHandsOnWhatTheEngineProduced) {
   EXPECT_NE(forwarded->body.find("o=anchored"), std::string::npos) << forwarded->body;
 }
 
-// A realm says what to do about a leg this node has never heard describe itself. It is
-// not a licence to contradict one that has: an answer goes back to the end that made the
-// offer, and telling a plain-RTP caller under `media_profiles: webrtc` that its answer is
-// WebRTC is worse than the transport guess it replaced.
+// A realm's policy covers a leg that has not described itself. It never contradicts one that has: an answer
+// goes back in the profile of the offer it answers.
 TEST(MediaPolicyTest, ARealmPolicyDoesNotContradictWhatALegHasSaid) {
   PolicyFixture f(with_profiles(MediaPolicy::Profiles::WebRtc), "udp");
 
@@ -271,13 +261,11 @@ TEST(MediaPolicyTest, ARealmPolicyDoesNotContradictWhatALegHasSaid) {
   const auto seen = f.engine->seen();
   ASSERT_GE(seen.size(), 2u);
 
-  // Alice offered plain RTP, so plain RTP is what her answer is produced as.
+  // Alice offered plain RTP, so her answer is produced as plain RTP.
   EXPECT_EQ(seen.back().target, Flags::Profile::PlainRtp);
 }
 
-// A re-INVITE travels in-dialog on its route set and never looks a realm up, so a
-// policy read afresh for each message would have hold and resume behave differently
-// from the INVITE that started the call. It is decided once and kept on the call.
+// The policy is decided once and kept on the call: a re-INVITE travels in-dialog and never looks a realm up.
 TEST(MediaPolicyTest, TheCallKeepsThePolicyForTheRequestsThatFollow) {
   PolicyFixture f(with_profiles(MediaPolicy::Profiles::WebRtc), "udp");
 

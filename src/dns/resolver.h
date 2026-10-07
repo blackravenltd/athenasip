@@ -20,13 +20,11 @@
 
 namespace athenasip::dns {
 
-// Asks a DNS server a question. The answer is the records of the type asked for: empty is
-// a real answer - the name does not exist, or has nothing of that type - and a failure is
-// only for not getting an answer at all. RFC 3263 treats the two differently: an empty
-// answer moves it to the next step, and no answer is a hop it cannot reach.
+// Asks a DNS server a question. An empty answer is an answer: the name does not exist, or has nothing of that type.
+// A failure means no answer at all. RFC 3263 moves on to its next step after the first and gives up the hop after the
+// second.
 //
-// An interface so that what is built on it, the SIP locator, can be tested against canned
-// answers rather than the network.
+// An interface so the SIP locator can be tested against canned answers.
 class Resolver {
  public:
   virtual ~Resolver() = default;
@@ -34,24 +32,19 @@ class Resolver {
   virtual void query(plugins::Executor on, std::string name, Type type, plugins::Handler<std::vector<Record>> handler) = 0;
 };
 
-// The one that talks to real servers: a datagram to each configured server in turn, twice
-// round as resolv.conf(5) does by default, and TCP when the answer did not fit in one
-// (RFC 1035 4.2.2, RFC 7766). Every query has a socket of its own on a fresh port, so a
-// reply is matched by where it came from and by its id, and one that matches neither is not
-// an answer to anything this node asked.
+// Talks to real servers: a datagram to each configured server in turn, twice round as resolv.conf(5) does, and TCP
+// when the answer is truncated (RFC 1035 4.2.2, RFC 7766). Each query has its own socket on a fresh port; a reply
+// is matched by its source and its id.
 class UdpResolver : public Resolver, public std::enable_shared_from_this<UdpResolver> {
  public:
-  // Five seconds a try is resolv.conf(5)'s default. Shorter gives up on answers that are
-  // merely slow: a public resolver fetching an SRV from a cold authoritative server takes
-  // two and a half, measured, and a timeout under that turns every such lookup into a
-  // retry.
+  // Five seconds per try is resolv.conf(5)'s default. A public resolver fetching an SRV from a cold authoritative
+  // server can take over two seconds, so a much shorter timeout turns slow answers into retries.
   UdpResolver(std::shared_ptr<loggers::Logger> logger, std::vector<boost::asio::ip::udp::endpoint> servers,
               std::chrono::milliseconds timeout = std::chrono::milliseconds(5000));
 
   void query(plugins::Executor on, std::string name, Type type, plugins::Handler<std::vector<Record>> handler) override;
 
-  // The nameservers in a resolv.conf (resolv.conf(5)): one per "nameserver" line, port 53,
-  // comments and everything else ignored. Empty when there are none, or no file.
+  // The "nameserver" lines of a resolv.conf (resolv.conf(5)), port 53. Empty when there are none, or no file.
   static std::vector<boost::asio::ip::udp::endpoint> servers_from(const std::string& resolv_conf);
 
  private:
@@ -59,10 +52,8 @@ class UdpResolver : public Resolver, public std::enable_shared_from_this<UdpReso
   std::vector<boost::asio::ip::udp::endpoint> _servers;
   std::chrono::milliseconds _timeout;
 
-  // RFC 1035 7.4: answers kept for their TTL, and an empty one - the name has nothing of
-  // that type - for a short while (RFC 2308, without the SOA it would take the time from).
-  // Queries are asked from the Core strand and answered on each query's own, so it is
-  // locked.
+  // RFC 1035 7.4: answers are cached for their TTL, and an empty answer briefly (RFC 2308). Locked, because queries are
+  // asked from the Core strand and answered on each query's own.
   struct Cached {
     std::vector<Record> records;
     std::chrono::steady_clock::time_point expires;

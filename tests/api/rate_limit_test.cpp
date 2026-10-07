@@ -44,9 +44,8 @@ struct Response {
   std::string retry_after;
 };
 
-// Every route is rate limited (Tom, 2026-10-03): open routes hard, by source address;
-// signed-in callers generously, by session. The limits under test are the shipped ones,
-// because those are the promise the console was given; the clock is the test's.
+// Every route is rate limited: open routes hard, by source address; signed-in callers generously, by session.
+// The limits under test are the shipped ones; the clock is the test's.
 struct LimitFixture {
   std::shared_ptr<MockLogger> logger = std::make_shared<MockLogger>();
   std::shared_ptr<datastores::MemoryDatastore> datastore;
@@ -136,13 +135,12 @@ TEST(RateLimitTest, AnOpenRouteIsLimitedBySourceAddress) {
   EXPECT_EQ(refused.status, 429u);
   EXPECT_EQ(refused.retry_after, "2");
 
-  // And waiting what it said is enough.
+  // Waiting as long as it said is enough.
   f.now += 2s;
   EXPECT_EQ(f.request(http::verb::post, "/api/v1/auth/logout", "names-nothing").status, 204u);
 }
 
-// A token that names nothing is somebody this node does not know, and counts against the
-// address it came from like an open route does.
+// A token that resolves to nobody counts against its source address, like an open route.
 TEST(RateLimitTest, ACredentialThatDoesNotResolveIsLimitedBySourceAddress) {
   LimitFixture f;
 
@@ -150,7 +148,7 @@ TEST(RateLimitTest, ACredentialThatDoesNotResolveIsLimitedBySourceAddress) {
 
   EXPECT_EQ(f.session("not-a-token").status, 429u);
 
-  // A signed-in caller on the same address is not who is being stopped.
+  // A signed-in caller on the same address is not limited by it.
   EXPECT_EQ(f.session("admin-token").status, 200u);
 }
 
@@ -163,7 +161,7 @@ TEST(RateLimitTest, AnEndpointThatIsNotThereIsLimitedToo) {
   EXPECT_EQ(f.request(http::verb::get, "/api/v1/nothing").status, 429u);
 }
 
-// Guesses at one user's password meet a limit after five, whoever is guessing.
+// Guesses at one user's password are limited after five, whoever is guessing.
 TEST(RateLimitTest, LoginIsLimitedPerUsername) {
   LimitFixture f;
 
@@ -173,14 +171,14 @@ TEST(RateLimitTest, LoginIsLimitedPerUsername) {
   EXPECT_EQ(refused.status, 429u) << "even with the right password: the limit is on attempts, not on failures";
   EXPECT_EQ(refused.retry_after, "60");
 
-  // Somebody else's username is still open from here.
+  // Another username is still open from this address.
   EXPECT_EQ(f.login("somebody", "wrong").status, 401u);
 
   f.now += 60s;
   EXPECT_EQ(f.login("tom").status, 200u);
 }
 
-// And guesses spread across usernames meet a limit per address.
+// Guesses spread across usernames are limited per address.
 TEST(RateLimitTest, LoginIsLimitedPerSourceAddress) {
   LimitFixture f;
 
@@ -189,8 +187,7 @@ TEST(RateLimitTest, LoginIsLimitedPerSourceAddress) {
   EXPECT_EQ(f.login("user-10", "wrong").status, 429u);
 }
 
-// The promise to the console: a two-second poll, and a busy screen making three requests
-// at a time, is never limited however long it runs.
+// A console polling every two seconds, three requests at a time, is never limited.
 TEST(RateLimitTest, ASignedInConsolePollingEveryTwoSecondsIsNeverLimited) {
   LimitFixture f;
 
@@ -200,7 +197,7 @@ TEST(RateLimitTest, ASignedInConsolePollingEveryTwoSecondsIsNeverLimited) {
   }
 }
 
-// But a session is limited, by itself: another session is not slowed by it.
+// Each session has its own limit.
 TEST(RateLimitTest, ASessionIsLimitedOnItsOwn) {
   LimitFixture f;
 

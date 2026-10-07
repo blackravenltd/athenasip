@@ -18,8 +18,8 @@ namespace athenasip::dns {
 
 namespace {
 
-// RFC 3263 4.1 and RFC 3261 26: what each NAPTR service and SRV name means, for the
-// transports this node can open. Order here is preference when DNS expresses none.
+// RFC 3263 4.1 and RFC 3261 26: the NAPTR service and SRV name of each transport this node can open, in order of
+// preference when DNS expresses none.
 struct Service {
   const char* naptr;
   const char* srv_prefix;
@@ -64,14 +64,13 @@ struct SipLocator::Search {
   std::string host;
   bool secure = false;
 
-  // What the URI fixed, when it fixed it.
+  // Set when the URI fixes them.
   std::string transport;
   std::uint16_t port = 0;
 
   std::vector<Hop> hops;
 
-  // Whether DNS answered anything at all. A search that heard nothing from anybody is a
-  // failure; one told "nothing here" has an answer, and it is empty.
+  // Whether DNS answered at all. Hearing nothing is a failure; "nothing here" is an empty answer.
   bool answered = false;
   bool srv_found = false;
 };
@@ -105,8 +104,7 @@ void SipLocator::locate(plugins::Executor on, const types::SIPUri& uri, plugins:
     return _finish(search);
   }
 
-  // RFC 6761 6.4: nothing under .invalid exists, and asking would only tell the network
-  // about it. Browsers name their Contact this way, and so does AthenaPhone.
+  // RFC 6761 6.4: nothing under .invalid exists, so it is not asked. Browsers name their Contact this way.
   const auto lowered = Util::to_lower(search->host);
   const std::string invalid = ".invalid";
   if (lowered == "invalid" || (lowered.size() > invalid.size() && lowered.compare(lowered.size() - invalid.size(), invalid.size(), invalid) == 0)) {
@@ -114,14 +112,13 @@ void SipLocator::locate(plugins::Executor on, const types::SIPUri& uri, plugins:
     return _finish(search);
   }
 
-  // 4.2: a port in the URI means the host is to be looked up as an address, nothing more.
+  // 4.2: a port in the URI means the host is looked up as an address only.
   if (search->port) {
     if (search->transport.empty()) search->transport = default_transport();
     return _addresses(search, {{search->host, Srv{0, 0, search->port, search->host}}}, 0);
   }
 
-  // 4.1 and 4.2: a transport parameter fixes the transport, and SRV for it still decides
-  // where.
+  // 4.1 and 4.2: a transport parameter fixes the transport; SRV for it still decides where.
   if (!search->transport.empty()) {
     const auto* service = service_for_transport(search->transport, search->secure);
     if (!service) {
@@ -140,9 +137,8 @@ void SipLocator::_naptr(std::shared_ptr<Search> search) {
   _resolver->query(search->on, search->host, Type::NAPTR, [self, search](plugins::Result<std::vector<Record>> answer) {
     if (answer.ok) search->answered = true;
 
-    // 4.1: keep what this client can use - for a sips URI only SIPS+D2T - and sort by order
-    // then preference. "s" is the only flag that leads to SRV; anything else is not a
-    // record for this procedure.
+    // 4.1: keep what this client can use (for a sips URI only SIPS+D2T), sorted by order then preference. Only the
+    // "s" flag leads to SRV.
     std::vector<Naptr> usable;
     if (answer.ok) {
       for (const auto& record : answer.value) {
@@ -172,8 +168,8 @@ void SipLocator::_naptr(std::shared_ptr<Search> search) {
 }
 
 void SipLocator::_srv_in_turn(std::shared_ptr<Search> search, std::vector<std::pair<std::string, std::string>> names, std::size_t next) {
-  // Every SRV name asked. If none had records, 4.2: the host's own addresses, on the
-  // default port and the default transport (or the one the URI fixed).
+  // Every SRV name has been asked. 4.2: if none had records, the host's own addresses on the default port and the
+  // default transport, or the one the URI fixed.
   if (next >= names.size()) {
     if (search->srv_found) return _finish(search);
 
@@ -199,13 +195,12 @@ void SipLocator::_srv_in_turn(std::shared_ptr<Search> search, std::vector<std::p
 
     std::vector<std::pair<std::string, Srv>> targets;
     for (const auto& srv : self->_order(std::move(records))) {
-      // RFC 2782: "." is the domain saying it does not offer this at all.
+      // RFC 2782: a target of "." means the service is not offered.
       if (is_root(srv.target)) continue;
       targets.emplace_back(transport, srv);
     }
 
-    // The addresses of these targets, then on to the next SRV name - the next transport
-    // NAPTR listed, or the next this client supports.
+    // Resolve these targets, then go on to the next SRV name.
     self->_srv_targets(search, std::move(targets), 0, std::move(names), next + 1);
   });
 }
@@ -264,9 +259,8 @@ void SipLocator::_finish(std::shared_ptr<Search> search) {
   boost::asio::post(search->on, [handler = search->handler, result = std::move(result)]() mutable { handler(std::move(result)); });
 }
 
-// RFC 2782: by priority, lowest first; within a priority, zero weights first in the list,
-// then repeatedly a number in [0, sum of weights] chosen at random and the first record
-// whose running sum reaches it taken out.
+// RFC 2782: by priority, lowest first. Within a priority, zero weights go first, then repeatedly pick a random
+// number in [0, sum of weights] and take the first record whose running sum reaches it.
 std::vector<Srv> SipLocator::_order(std::vector<Srv> records) const {
   std::stable_sort(records.begin(), records.end(), [](const Srv& a, const Srv& b) { return a.priority < b.priority; });
 

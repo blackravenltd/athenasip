@@ -4,13 +4,11 @@
 # Copyright (C) 2026 Tom Cully <mail@tomcully.com>
 # Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
 #
-# node-b of the two-node harness (test/e2e/cluster.sh). The two files differ in the node's
-# name and address and in nothing else: one Redis and one broker between them is what makes
-# them a cluster.
+# node-b of the two-node harness (test/e2e/cluster.sh). node-a differs only in name and
+# address; they share one Redis and one broker.
 
 sip:
   node_id: node-b
-  event_prefix: athenasip
   public_address: 172.31.0.11
   allow_unencrypted: true
 
@@ -28,8 +26,6 @@ sip:
     h_server_invite_timeout: 64
     i_server_invite_duration: 1
     j_server_non_invite_duration: 64
-    retransmit_max_interval: 8
-    retransmit_max_attempts: 7
 
 udp:
   enable: true
@@ -50,11 +46,7 @@ websocket:
   port: 9500
   tls: false
 
-rtprelay:
-  enable: false
-
-# The inter-node listener. The certificates are made by cluster.sh with the node's own
-# --ca-init and --ca-node, and name the address below.
+# The inter-node listener. cluster.sh makes the certificates with --ca-init and --ca-node.
 cluster:
   enable: true
   address: 0.0.0.0

@@ -11,17 +11,14 @@ namespace athenasip::types {
 std::string Dialog::id() const {
   if (call_id.empty() || caller_tag.empty() || callee_tag.empty()) return "";
 
-  // The separators matter for the same reason they do in a transaction key: without
-  // them two different pairs of tags can spell the same string.
+  // Separated, so two different pairs of tags cannot spell the same string.
   return call_id + "|" + caller_tag + "|" + callee_tag;
 }
 
 bool Dialog::matches(const std::string& message_call_id, const std::string& from_tag, const std::string& to_tag) const {
   if (message_call_id != call_id) return false;
 
-  // From the caller: its own tag in From, the callee's in To. From the callee: the
-  // reverse. RFC 3261 12.2.2 states this from one UA's side, where the two are local
-  // and remote; a proxy sees both and has to accept either order.
+  // RFC 3261 12.2.2, seen from a proxy: the tags arrive in either order, depending on which end sent the request.
   if (from_tag == caller_tag && to_tag == callee_tag) return true;
   if (from_tag == callee_tag && to_tag == caller_tag) return true;
 

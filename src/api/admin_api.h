@@ -19,6 +19,7 @@
 
 #include "../loggers/logger.h"
 #include "../loggers/logger_scoped.h"
+#include "response_stream.h"
 
 namespace athenasip::api {
 
@@ -27,55 +28,43 @@ namespace http = beast::http;
 namespace net = boost::asio;
 using tcp = net::ip::tcp;
 
-// The HttpMiddleware function type.
-// Parameters:
-// - The incoming HTTP request (const reference).
-// - A shared pointer to the HTTP response to be modified.
-// - A "next" callback: if called with true, processing continues; if called with false,
-//   the chain stops and the current response is sent.
-// The request, the address it came from, the response to fill and what to call next.
-// The address is the peer of the connection: there is no X-Forwarded-For, because a
-// header anybody can set is not something to limit or log a caller by.
+// The request, the peer address, the response to fill, and next: next(true) continues the
+// chain, next(false) stops it and sends the response. The address is the connection's
+// peer; X-Forwarded-For is not read, because anybody can set it.
 typedef std::function<void(const http::request<http::string_body>&, const std::string&, std::shared_ptr<http::response<http::string_body>>,
                            std::function<void(bool)>)>
     HttpMiddleware;
 
 class AdminAPI {
  public:
-  // Public middleware chain.
-  // Middleware functions are invoked in order for each incoming request.
+  // Invoked in order for each request.
   std::vector<HttpMiddleware> middlewares;
 
-  // Constructs the server using the provided logger, bind address, and port.
   AdminAPI(std::shared_ptr<athenasip::loggers::Logger> logger, const std::string& bind_address, unsigned short port);
   ~AdminAPI();
 
-  // A second listener, speaking HTTPS, beside the plain one and serving the same chain.
-  // Called before start(). The plain listener stays: a healthcheck on loopback and a
-  // provisioning script on the host have no use for a certificate, and a browser has no
-  // use for a page that is not a secure context - it gives one no microphone. False when
-  // the certificate or the port could not be had, and then there is no HTTPS listener.
+  // Adds an HTTPS listener beside the plain one, serving the same chain. Call before
+  // start(). Returns false, and adds no listener, when the certificate or port cannot be had.
   bool tls_enable(const std::string& bind_address, unsigned short port, const std::string& cert, const std::string& key);
 
-  // Start and stop the server.
   void start();
   void stop();
 
-  // The port actually being listened on, which is not the configured one when that was
-  // zero and the operating system chose. A test binds without picking a number that
-  // something else on the machine may already hold.
+  // The port being listened on, which differs from the configured one when that was zero.
   std::uint16_t port() const;
 
-  // The same for the HTTPS listener, zero when there is none.
+  // The HTTPS listener's port, zero when there is none.
   std::uint16_t tls_port() const;
 
-  // The executor the API runs on. Provisioning hands this to the datastore so answers
-  // come back on the API's own thread: the admin API is not on the Core strand and must
-  // never put a request on the call path.
+  // The executor the API runs on. It is not the Core strand; datastore answers for API
+  // requests come back here, off the call path.
   net::any_io_executor executor() { return _io_context.get_executor(); }
 
-  // Static helper middleware functions for common responses.
-  // These functions return a middleware that sends the appropriate HTTP response and stops the chain.
+  // Where a route leaves a response that stays open (Router::streams).
+  void streams_register(std::shared_ptr<StreamRegistry> streams) { _streams = std::move(streams); }
+  std::shared_ptr<StreamRegistry> _streams;
+
+  // Middleware that sends a fixed response and stops the chain.
   static HttpMiddleware send_status_end(uint16_t code, std::string message);
 
   static HttpMiddleware send_200_end();
@@ -97,11 +86,10 @@ class AdminAPI {
 
   static bool _listen(tcp::acceptor& acceptor, const std::string& bind_address, unsigned short port, athenasip::loggers::Logger& logger);
 
-  // Initiates an asynchronous accept operation.
   void _do_accept();
   void _do_accept_tls();
 
-  // The sessions read the middleware chain and the logger.
+  // Sessions read the middleware chain and the logger.
   template <typename Stream>
   friend class HttpSession;
 };

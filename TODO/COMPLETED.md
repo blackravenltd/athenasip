@@ -14,6 +14,15 @@ week, under Milestone 1. Everything after that is dated as it landed.
 
 Newest first. The detail is below, oldest first.
 
+- **0.9.0** (2026-10-07): a second node that takes over, and phones woken for a call.
+  A client whose node dies registers again through the other; an rtpengine pool keeps
+  media going when an engine dies; the node ends dead calls itself with a BYE, and an
+  administrator can hang one up. RFC 8599 push through `apns://`, `fcm://` and
+  `webpush://`, tested against local stand-ins only. Plugins can be shared libraries;
+  every setting is described once, giving `--print-schema`, a generated reference and a
+  warning naming the key a misspelt one meant. The README loses its alpha banner and
+  gains a quick-start guide for each way in. The sipp harnesses were not run on the tagged
+  tree (Docker was paused).
 - **0.8.0** (2026-10-03): a cluster that carries a call, and a console that can make one.
   A node forwards a call to the node holding the subscriber's flow, over mutual TLS from
   the cluster's own CA, and a call crossed two real nodes over UDP, TCP and WebSocket.
@@ -2023,7 +2032,7 @@ that came in from sibling sessions and one found by watching a live node.
 The call Milestone 3 was named for: a browser on this Mac called an AthenaPhone on a
 Blackview A85, through the interop fixture with rtpengine on the media path, and Tom heard
 it both ways; the phone then called the browser and he heard that both ways too, with a
-BYE from each end. `test/interop/UAT.md` carries the record - fixture, versions, counters
+BYE from each end. `test/interop/UAT.md` at `47de4a2` carries the record - fixture, versions, counters
 from the silent attempts and the working ones, both ends' SDP, and the defects found on
 both sides.
 
@@ -2499,7 +2508,7 @@ Tom's answers to the questions that were waiting on him, and what they led to.
       console softphone as 1001 to the A85 over TLS: one INVITE, the browser's own
       `UDP/TLS/RTP/SAVPF` offer, no 488, ICE and DTLS up, media direct on the LAN, 0 lost.
       The first call was silent one way because the Mac's default microphone was a
-      loopback device. `test/interop/UAT.md` has both calls and what it took to make them.
+      loopback device. `test/interop/UAT.md` at `47de4a2` has both calls and what it took to make them.
 
 ### HTTPS on the admin listener and configurable rate limits (2026-10-03)
 
@@ -2555,5 +2564,255 @@ Tom's answers to the questions that were waiting on him, and what they led to.
 - [x] **A video call, browser to AthenaPhone, seen and heard both ways.** The console
       softphone at `https://10.35.1.20:8443` over `wss`, no tunnel, to the phone on TLS:
       VP8 and opus, bundled, direct on the LAN, 464 frames decoded in forty seconds, and a
-      call record written. `test/interop/UAT.md`. Through the builtin relay's pass-through
+      call record written. `test/interop/UAT.md` at `47de4a2`. Through the builtin relay's pass-through
       only: video through rtpengine, and plain-RTP video end to end, have not been run.
+
+### After 0.8.0 (2026-10-03)
+
+- [x] **The "cannot produce" warning only when something had to be made**, and naming the
+      subscriber rather than the Contact the copy went to. Every browser call to
+      AthenaPhone on `corvus-fi-1` logged it for an offer that was already WebRTC.
+- [x] **`athenasip --reset-password NAME`**: a new password for a user that exists, from
+      the host, and every session it held ended. On 2026-10-03 the only way to reset an
+      administrator's password was to edit Redis by hand.
+- [x] **The node's media in its status**: the engine, its capabilities and the profiles
+      it can produce, `null` with none. The last of discovery.
+- [x] **`log.level` and `log.format`.** JSON lines with `at`, `level`, `scope` and
+      `message`, the scope taken off the front of the message where a scoped logger put
+      it. The node logged everything as text, always, with no way to say otherwise.
+- [x] **`media.builtin.public_address` may be a name**, resolved at start and every
+      minute after, the address written into descriptions. A node behind NAT on a dynamic
+      address (corvus-gbni-1, as `macnessa.athenasip.org`, kept current by manannan) has
+      its media follow the name. A name that resolves to nothing is declined, never written.
+- [x] **rtpengine's advertised address follows sip.localnet and may be a name.** A leg inside
+      `sip.localnet` is given the local address and every other leg `media_address`, resolved
+      at start and every minute if it is a name (`src/media/public_address.h`, shared with the
+      builtin relay). It had told every leg one fixed address, which a LAN phone reaches only
+      through a hairpinning router and which goes stale on a dynamic site address.
+- [x] **Video through rtpengine, automated, through a named endpoint behind NAT.**
+      corvus-gbni-1 as `macnessa.athenasip.org`, native rtpengine: a headless browser with a
+      fake camera called AthenaPhone, 167 frames decoded in the browser and the pattern
+      moving on the phone, the browser's media through the public address and a forwarded
+      port. `test/interop/UAT.md` at `47de4a2`.
+- [x] **RFC 6026: the INVITE transactions' Accepted state.** A 2xx moves both INVITE
+      transactions to Accepted for 64*T1 rather than ending them, so a callee's 2xx
+      retransmissions still match: the client transaction passes each to the proxy, which
+      sends the caller the answer it already sent, through the server transaction, on the
+      connection the INVITE came in on. Before, a retransmitted 2xx arrived as a stray, was
+      routed by the caller's Via, and for a WebSocket caller - whose Via names a `.invalid`
+      host - was dropped. Found through macnessa.athenasip.org on 2026-10-04.
+- [x] **Removing a binding that is not there is not logged as an error** (RFC 3261 10.3
+      step 7). The store still says there was nothing to remove; Core logs it at debug.
+- [x] **A TLS peer closing without close_notify is logged as a disconnect**, not an ERROR.
+      Every browser hang-up through macnessa's secure WebSocket logged one.
+
+### The documentation describes the code (2026-10-04)
+
+- [x] **Documentation and comments rationalised.** Comments state intent, invariants and
+      RFC references in a line or two, with no history. The documents were checked against
+      the source and corrected where they had drifted: listener keys are `enable`, an
+      enabled listener needs a `port`, timers G and H are INVITE server timers, the
+      `cluster` and `websocket` sections and a dozen keys were undocumented, and the guides
+      still described configured API tokens. `docs/design.md` is folded into
+      `docs/architecture.md`; `docs/versions/` (MySQL, PostgreSQL, NSQ and NATS goals that
+      never shipped) is gone; `test/interop/UAT.md` is the procedure only, its run records
+      left at `47de4a2`.
+- [x] **`sip.allow_unencrypted` does what it says.** It was read and never used. When
+      false, an enabled `udp`, `tcp` or plain `websocket` listener (a plain `port` beside
+      `secure_port` included) is a configuration error, and `Core::channel_connect` dials
+      only TLS.
+- [x] **The example configuration shows the `cluster` section**, off, with the files
+      `--ca-init` and `--ca-node` make.
+- [x] **Every Lua log function takes the engine as its upvalue.** `debug`, `warn` and
+      `error` were given the logger, which `get_script_engine` reads as the engine. Not
+      compiled, since scripting is parked; the example scripts under `config/` are removed.
+- [x] **Tests renamed** where the name described configured tokens and scopes rather than
+      users and roles.
+
+### Push notifications, RFC 8599 (2026-10-04)
+
+Tom asked that a call can wake a registered client that is asleep, after a phone was
+missed because its connection had silently died.
+
+- [x] **The `push` plugin kind** (`src/push/push_service.h`), one driver per push service
+      named by its `pn-provider`, with what it accepts, its Feature-Caps indicators and
+      `send`. Contract version 16, because a binding now records whether it is pushed.
+- [x] **The registrar** answers a REGISTER asking for push with
+      `Feature-Caps: *;+sip.pns=...` (plus `+sip.vapid` and `+sip.pnsreg` where they
+      apply), 555 for a service this node does not run or a Contact missing what it needs,
+      and 423 for a binding too brief to be woken in time; a query (no `pn-prid`) is
+      answered for the service named or all of them; a `+sip.pns` already in the request
+      leaves push to the proxy that put it there.
+- [x] **The proxy's push bucket.** A request for a new dialog, or a standalone one, to a
+      push binding pushes and waits until the client registers again, found by the
+      registrar telling the proxy or by polling the store every 250 ms (a cluster), then
+      goes down the new flow. A failed push or `push.timeout` is a 480 for that target and
+      the fork moves on; a CANCEL ends the wait. Any node pushes, so a request from a peer
+      is not pushed twice.
+- [x] **Refresh pushes** (5.5): `push.refresh` seconds before a push binding expires,
+      unless it was refreshed meanwhile here or elsewhere.
+- [x] **`fcm://`** (OAuth 2.0 service-account token, cached, FCM HTTP v1 high-priority data
+      message) and **`webpush://`** (RFC 8030 with no payload, VAPID per RFC 8292), on a
+      small HTTPS client of our own. Tested against local HTTPS servers; not yet against
+      the real services.
+- [x] **The `pn-*` parameters stay private** (section 13): stripped from
+      `/api/v1/registrations`, the qualify listing, the subscriber-status event and the
+      log.
+
+### Milestone 4: client failover and the second node (2026-10-04)
+
+- [x] **The two-node harness in full**: 15 of 15 at `67a4b75`, the call records check
+      included, after Docker came back.
+- [x] **The chaos test** (`failover` in `test/e2e/cluster.sh`, last because it kills node A):
+      Bob registers through node A, node A is killed, Bob registers again through node B,
+      and a new call through node B reaches him. 11 seconds from the kill on the first run,
+      against a bound of one minute.
+- [x] **`GET /api/v1/client/config?realm=`** says what the realm expects of a client: the
+      lifetime the registrar grants and the shortest it takes, how many RFC 5626 flows to
+      keep (one per node, up to two), and the push services with the VAPID key and the
+      shortest registration push takes.
+- [x] **`AthenaSIP-Alternate-Server`** in the 2xx to REGISTER: the other nodes that are up,
+      on the same transport, in Contact grammar with `expires`; only over TLS or WSS, and
+      only to a client that sent `Supported: athenasip-failover`.
+- [x] **The image builds in an 8 GB Docker VM again**: one compiler per 1.5 GB of available
+      memory, and the cluster harness builds the node image once rather than twice at once.
+- [x] **A REGISTER for a domain not served here is forwarded** (RFC 3261 10.3 step 1, Tom
+      2026-10-04: configurable, default to subscribers, UDP as well). `sip.forward_register`
+      is `subscribers` or `never` (403). A subscriber is one registered over a reliable
+      connection, or one answering a 407 offered for each of this node's realms, since the
+      From is the foreign address of record. The forwarded REGISTER carries no
+      Record-Route; it carries a Path naming this node, with the flow token and `ob` at the
+      first hop (RFC 3327 5.2, RFC 5626 5.1), when the client supports Path or asks for
+      outbound. A request routed back through a Path or Record-Route this node sealed is
+      admitted and goes down the flow. A REGISTER whose address of record is in one of this
+      node's realms is registered here, whatever its Request-URI, as before.
+- [x] **The node's own address, from STUN and peers** (Tom, 2026-10-04: the `stun:` servers in
+      `http.api.ice_servers` and no others). A node asks them from its SIP UDP socket every
+      five minutes and reports `discovered` in its status and in `--check`, which fails when
+      `sip.public_address` disagrees. Every node probes every other node's discovered address
+      with an OPTIONS and publishes the ones that answer as `reaches`; a node whose address a
+      peer reached advertises it (`Config::public_address()`), and one nobody reached is
+      never advertised. `sip.public_address` always wins.
+- [x] **A node answers an OPTIONS for itself** (RFC 3261 11.2): its own, public or
+      discovered address, or a realm with no user, with Allow, Accept and Supported; and an
+      OPTIONS with no hops left (16.3 step 3) instead of 483. Before this a monitor's OPTIONS
+      to the node was refused or forwarded.
+- [x] **`apns://`** (Tom, 2026-10-04: nghttp2 rather than a hand-rolled HTTP/2 client). Token
+      authentication with the team's P-256 key, one HTTP/2 connection to Apple kept open, a
+      PushKit push for a `.voip` topic and a background push (priority 5) for any other. A
+      VoIP binding is never pushed to refresh: iOS 13 stops PushKit delivery to an app that
+      takes a VoIP push without ringing (`PushService::refreshes()`, contract version 17).
+      Tested against a local nghttp2 server; not yet against Apple.
+- [x] **The rest of the node's own address.** A public address a peer node stamps as
+      `received` on this node's Via (RFC 3581) is a finding when STUN has none; a private
+      one is ignored. Each node tries every peer's inter-node listener every ten minutes
+      (`cluster_probes`); a node a peer tried and none reached marks itself
+      `"reachable": false` and is not forwarded to, and recovers when one gets through.
+      `--check` reports what peers found and fails on a listener none reaches.
+
+### Milestone 5 (2026-10-05)
+
+- [x] **`GET /api/v1/events`**: `nodes/#`, `subscribers/#` and `calls/#` as Server-Sent
+      Events, one event per message named by its topic, a keep-alive comment every fifteen
+      seconds, `view-cluster-status`, at most 32 streams a node (503 past that). The HTTP
+      session can now hold a response open: a route asks for it with
+      `RouteContext::stream`.
+- [x] **Redis listings in two round trips**: realms, users, subscribers, bindings and calls
+      are read with SMEMBERS and one MGET instead of a GET per member in sequence; a member
+      whose record has expired is still dropped from its index.
+- [x] **Plugins as shared libraries.** `plugins.path` (a directory or a list) is scanned for
+      `.so`, `.dylib` and `.dll`; a module declares itself with `ATHENASIP_PLUGIN_MODULE`
+      (`src/plugins/plugin_module.h`), which exports its contract version, name and a
+      register function; a version mismatch or a non-module is refused with the reason and
+      never fatal. `athenasip --list-plugins` (a flag, as the rest of the command line is)
+      shows the outcome and every driver. The server exports its symbols, a module must not
+      link `athena_core`, and `create_as` casts by kind, not `dynamic_cast`. Built and
+      loaded by the tests (`tests/modules/`). Windows loading is written but not built.
+- [x] **Guides for a reader without a telecoms background**: how a call works, clustering,
+      media engines, troubleshooting, and certificates for clients.
+- [x] **Found while writing them, and fixed**: the callee's 100 Trying is no longer forwarded
+      (RFC 3261 16.7 step 5); SIGTERM, which `systemctl stop` sends, shuts the node down
+      cleanly and publishes "stopped" instead of killing it; the harness configs lose keys
+      nothing reads.
+
+### The rtpengine pool, and calls a dead node left (2026-10-06)
+
+- [x] **A pool of rtpengine engines.** `media.rtpengine.engines` adds engines to the URL's.
+      A new call goes to one chosen from its Call-ID among those answering, the same on every
+      node, and the engine is recorded on the call (`Call::media_engine`,
+      `rtpengine://host:port`), so every later request for it goes there from any node. An
+      engine that gives no answer is out of the pool until it answers a ping
+      (`ping_interval`); the call that found it out moves to another after one timeout, and a
+      call already on it stays. Proven by `test/e2e/run.sh --rtpengine`, which now runs two
+      engines and stops the first mid-run (`engine-failover`), 14 of 14.
+- [x] **Call records a gone or restarted node left behind.** The live node with the lowest
+      id closes them (`Core::_orphan_sweep`): at once when the media was not anchored, and
+      for anchored media once the engine holds nothing for the call or it has been silent
+      for `sip.media_timeout`. A node judges others only after three status intervals.
+      Engines now say `held: false` for a call they hold nothing for. Proven in
+      `test/e2e/cluster.sh` (`failover-orphan-closed`). `docs/clustering.md` no longer
+      claims phones hang up when a node dies: with rtpengine the media carries on.
+- [x] **The whole suite green in both phases** (`20261006-113507`): unit 1268, smoke on
+      every transport, the console 260 and 5, AthenaPhone 88 with werift calls carrying
+      RTP both ways, direct and through TURN.
+
+### The local UA (2026-10-06)
+
+- [x] **The fourth transaction user** (`src/local_ua.*`). `LocalUA::hang_up` sends each end
+      of a confirmed dialog the BYE its peer would send (RFC 3261 12.2.1.1, 15.1.1): the
+      end's remote target, the peer's tag in From, one past the peer's CSeq, and the route set
+      from this node's own entries onward. It enters the proxy at `Core::local_request` as if
+      the peer had sent it, through a server transaction that keeps the answer, so flow
+      tokens reach a browser's flow and dialog tracking ends the call as for any BYE.
+- [x] **Ending calls by policy says so.** `sip.media_timeout` and `sip.max_call_duration`
+      send each end a BYE; an RFC 4028 lapse still sends none (8.3).
+- [x] **`DELETE /api/v1/calls/{call}`**, under `manage-cluster`: 202 with the BYEs on their
+      way, 404 for no live call, 409 for one not yet answered.
+
+
+### The configuration schema (2026-10-07)
+
+- [x] **`--print-config` prints what the loader reads.** The SIP timers were printed flat
+      under `sip` (`timer_t1_rtt_ms`), eight of them not at all, nor the ICE and TURN
+      settings; the output now loads back as the same configuration
+      (`ConfigTest.TheEffectiveConfigurationLoadsBackAsTheSame`). A reliable-transport
+      retransmit flag that nothing read is gone.
+- [x] **Every setting described once** (`src/config_schema.cpp`, `plugins::Setting`): type,
+      default, limits, meaning. Tests hold it to the loader: every setting set to something
+      other than its default comes back where the schema puts it, every stated default is
+      the node's, and nothing `--print-config` prints is undescribed.
+- [x] **`athenasip --print-schema`** prints a JSON Schema (draft 2020-12) for an editor;
+      `=markdown` prints `docs/configuration-reference.md`. Both are checked in and a test
+      fails when they fall behind. The shipped example, the harness configurations and both
+      nodes' files validate against it.
+- [x] **A misspelt key is warned about**, naming the one probably meant, from the same
+      section or by name from another (`'sip.media_anchor' ... did you mean
+      'behaviour.media_anchor'?`). A driver's own section is left to the driver.
+- [x] **Drivers describe their own sections** with a static `settings()`, which
+      `PluginRegistry::add<T>` picks up (contract version 18). `mqtt`, `builtin`,
+      `rtpengine`, `apns`, `fcm` and `webpush` do; their sections are in the reference and
+      the JSON Schema, and a misspelt key inside one is named
+      (`'media.rtpengine.timeout' ... did you mean 'media.rtpengine.timeout_ms'?`). A
+      driver that says nothing has its section left alone. `docs/plugins.md` shows how.
+- [x] **A module's driver describes its section too.** `ModuleHost::add<T>` forwards
+      `T::settings()` as the registry's does, and a module's section is checked for misspelt
+      keys once the module has loaded (`ModuleLoaderTest.AModulesDriverDescribesItsSection`,
+      `ConfigSchemaTest.AMisspeltKeyInAModulesSectionIsNamed`). Found by the documentation
+      audit below; v18 had not been released, so the contract version stays 18.
+
+### The README and documentation, as for a release (2026-10-07)
+
+- [x] **The README** drops the "ALPHA - DO NOT USE" banner and says what is there: clustering,
+      browsers and phones, mobile push, the plugin contract with modules, the configuration
+      checks. Its limits name what is not proven (push against the real services, more than
+      two nodes) or not built (conferencing, presence).
+- [x] **Quick-start guides**, one per way in, under `docs/quick-start/`: Docker, one node by
+      hand, a server on Linux (systemd, Redis, TLS, HTTPS), connecting phones, and calling
+      from a browser (rtpengine, WSS, TURN, the subscriber's config endpoint).
+      `docs/quick_start.md` is their index.
+- [x] **Every doc checked against the code** and corrected: the configuration search order,
+      `--check`'s public address line, `/metrics`, `--list-plugins`, the node certificate's
+      names, both WebSocket certificate errors, the source layout and the push kind in
+      architecture, the local UA in the call flow and glossary, the rtpengine pool's
+      defaults and ordering, the exit code for a missing password, and the stale `wss`
+      note in the interop fixture's README. Every relative link and anchor resolves.

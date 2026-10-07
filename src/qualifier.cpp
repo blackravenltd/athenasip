@@ -38,8 +38,7 @@ void Qualifier::watch(const std::string& aor, const std::shared_ptr<types::SIPUr
 
   if (probe.timer) probe.timer->cancel();
 
-  // A refresh keeps what the client said and the conversation it is in. A binding that
-  // moved to another flow is another client as far as either is concerned.
+  // A refresh on the same flow keeps the probe's state; a binding on a new flow starts over.
   if (probe.flow_id != flow_id) {
     probe.said.reset();
     probe.unanswered = 0;
@@ -53,8 +52,7 @@ void Qualifier::watch(const std::string& aor, const std::shared_ptr<types::SIPUr
   probe.interval = interval;
   probe.expires_at = std::time(nullptr) + expires_seconds;
 
-  // At once, as Asterisk does on registration, so what the client takes is known before its
-  // first call rather than an interval later.
+  // Probe at once, so the client's media is known before its first call.
   _schedule(key, std::chrono::milliseconds(0));
 }
 
@@ -92,7 +90,7 @@ void Qualifier::_schedule(const std::string& key, std::chrono::milliseconds dela
   auto timers = core->timer_source();
   if (!timers) return;
 
-  // Weak: a timer an interval away must not be what keeps this alive.
+  // Weak: a pending timer must not keep the qualifier alive.
   std::weak_ptr<Qualifier> weak_self = weak_from_this();
   found->second.timer = timers->schedule(delay, [weak_self, key]() {
     auto self = weak_self.lock();
@@ -119,8 +117,7 @@ void Qualifier::_probe(const std::string& key) {
     return;
   }
 
-  // The flow is the only way to the client, and the reason for asking. A client whose flow
-  // has gone has gone with it, and registers again on a new one.
+  // Probes travel down the registered flow; once it closes there is nothing to probe.
   auto channel = core->channel_find(probe.flow_id);
   if (!channel || !channel->_connection) {
     _logger->debug("The flow for " + key + " has closed - no longer qualifying it");
@@ -150,14 +147,12 @@ void Qualifier::_on_answer(const std::string& key, const std::shared_ptr<SIPMess
   if (found == _probes.end()) return;
   auto& probe = found->second;
 
-  // Any final response says the client is there: a 405 or a 481 comes from something
-  // listening as surely as a 200 does.
+  // Any final response, even a 405 or 481, shows the client is there.
   probe.unanswered = 0;
   probe.answered_at = std::time(nullptr);
 
-  // RFC 3261 11.2: the 200 "MAY" carry a session description, and when it does it is the
-  // client saying what it takes. A reply without one says nothing about media, which is
-  // not the same as saying something else, so what was said before stands.
+  // RFC 3261 11.2: a 200 may carry SDP stating what media the client takes. A reply without
+  // SDP leaves the previous statement standing.
   if (code < 300 && carries_sdp(response)) {
     if (const auto stated = media::Flags::from_sdp(response->body).stated()) {
       if (probe.said != stated)
@@ -181,8 +176,7 @@ void Qualifier::_on_silence(const std::string& key) {
 }
 
 std::shared_ptr<SIPMessage> Qualifier::_options_for(Probe& probe, const std::string& transport, const std::string& host, std::uint16_t port) const {
-  // RFC 3261 8.1.1: what every request carries. The branch has the magic cookie (8.1.1.7);
-  // Accept asks for the description 11.2 says the 200 may carry.
+  // RFC 3261 8.1.1 mandatory headers. Accept asks for the SDP that 11.2 lets the 200 carry.
   const auto branch = std::string("z9hG4bK") + Util::generate_random_string("", 16);
   const auto aor = std::make_shared<types::SIPUri>(probe.aor);
 

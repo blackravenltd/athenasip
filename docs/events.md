@@ -1,161 +1,111 @@
-# AthenaSIP - Event Topics
+# AthenaSIP - Events
 
-AthenaSIP publishes what it is doing to an event system. The built-in `local://` driver
-keeps events inside the process; the canonical `mqtt://` driver publishes them to a
-broker, where they are also how nodes discover each other.
+A node publishes what it is doing to its event system: `local://` keeps events in the
+process, `mqtt://` publishes them to a broker, where they are also how nodes discover each
+other. Configuration is under [`events`](configuration.md#events).
 
-Events are for observability, presence and discovery. They are never on the call setup
-path: nodes route calls to each other over SIP, not over the event bus.
+Events carry observability, presence and discovery. No SIP message travels over the bus
+and nothing on the call path waits for it.
 
-## Shape
+## Topic rules
 
-Topics are hierarchical and use `/` as the only separator, matching MQTT. They follow
-three rules:
-
-1. **No topic begins with `/`.** A leading slash is a distinct, empty first level in
-   MQTT, so `/nodes/x` and `nodes/x` are different topics and a `nodes/#` filter does
-   not match the first.
-2. **The topic says what the thing is, the payload says what happened.** A channel
-   opening and closing publish to the same topic with different payloads.
-3. **No dots.** `calls/<id>/unregister`, never `call.unregister`.
-
-Every topic is built by `src/events/topics.h`, so the scheme is defined once. Nothing
-should assemble a topic from string literals at the call site.
-
-4. **The bus is observability, never signalling.** No SIP request or response travels
-   over it, and nothing on the call setup path waits for it. An `account/<uri>/invite`
-   topic once carried INVITEs between nodes; it is gone, and requests reach other nodes
-   by being proxied to them.
+- Levels are separated by `/`, as in MQTT. No topic begins with `/` and none contains dots.
+- The topic names the thing; the payload says what happened to it.
+- Every topic is built by `src/events/topics.h`. Do not assemble one from string literals.
 
 ## Topics
 
 | Topic | Published when | Retained | Payload |
-| --- | --- | --- | --- |
-| `nodes/<node_id>/status` | Every `events.status_interval` seconds, on stop, and by the broker if the node dies | yes | see below |
+|---|---|---|---|
+| `nodes/<node_id>/status` | Every `events.status_interval` seconds, on stop, and by the broker if the node dies | yes | [Node status](#node-status) |
 | `nodes/<node_id>/channels/<transport>/<endpoint>` | A channel opens or closes | no | `{"status":"registered","at":"<zulu>"}` or `{"status":"closed","at":"<zulu>"}` |
-| `nodes/<node_id>/transactions/<transaction_id>` | A transaction is registered or unregistered | no | `registered` or `unregistered` |
+| `nodes/<node_id>/transactions/<transaction_id>` | A transaction is created or destroyed | no | `registered` or `unregistered` |
 | `subscribers/<uri>/status` | A subscriber registers | no | `{"contact":"<uri>","node":"<node_id>","registered":"<zulu>"}` |
 | `calls/<call_id>/register` | A call is created | no | The call id |
+| `calls/<call_id>/state` | A call changes state | no | The state |
 | `calls/<call_id>/unregister` | A call ends | no | The call id |
-| `calls/<call_id>/state` | A dialog changes state | no | The state |
 
-`<transport>` is one of `udp`, `tcp`, `tls`, `ws`, `wss`. `<endpoint>` is `host:port`.
+`<transport>` is `udp`, `tcp`, `tls`, `ws` or `wss`. `<endpoint>` is `host:port`.
 
-Only the node status is retained, which is what makes it the one topic a monitor can ask
-rather than wait for. Everything else is an event: it says something happened, and a
-consumer that was not subscribed at the time has missed it.
+Only the node status is retained. A consumer that was not subscribed when any other event
+was published has missed it.
 
-### The node status payload
+## Node status
 
 ```json
-{"status":"ok","node":"corvus-fi-1","version":"0.7.0","datastore":"redis 0.0.1","at":"2026-09-27T09:58:59Z","uptime":188790,"status_interval":30,
- "transports":[{"transport":"tls","address":"10.35.1.20","port":5061,"uri":"sips:10.35.1.20:5061;transport=tls"}]}
+{"status":"ok","node":"sip-0001","version":"0.8.0","datastore":"redis 0.0.1","at":"2026-09-27T09:58:59Z","uptime":188790,"status_interval":30,
+ "transports":[{"transport":"tls","address":"10.35.1.20","port":5061,"uri":"sips:10.35.1.20:5061;transport=tls"}],
+ "media":{"engine":"builtin 0.0.1","capabilities":["bridge"],"produces":["rtp"]},
+ "cluster":{"address":"10.35.1.20","port":5062}}
 ```
 
-| | |
+| Field | |
 |---|---|
-| `status` | `ok`, `degraded`, `stopped` or `down` |
-| `node` | `sip.node_id`, which is required configuration and is not derived from the hostname |
-| `version` | the server version |
-| `datastore` | the driver and its version, or `none` |
-| `at` | when the node composed the message, not when it arrived |
-| `uptime` | seconds since this process started serving, `0` in a will |
-| `status_interval` | `events.status_interval`: seconds until this node says it again, `0` if it never repeats; present in a will too |
-| `transports` | where the node listens, one entry per enabled SIP transport, at `sip.public_address` when set; empty in a will |
-| `cluster` | `{"address":..,"port":..}`: where a peer node reaches this one's inter-node listener (`cluster.advertise`); absent on a node not in a cluster, and in a will |
+| `status` | `ok`; `degraded` (running, but the datastore is unreachable); `stopped` (published by the node on shutdown); `down` (the MQTT will, published by the broker when the node vanished) |
+| `node` | `sip.node_id` |
+| `version` | The server version, as `athenasip --version` prints it |
+| `datastore` | Driver name and version, or `none` |
+| `at` | When the node composed the message. In a `down` that is startup, so date a `down` by receipt. |
+| `uptime` | Seconds since the node started serving; `0` in a will |
+| `status_interval` | `events.status_interval`: seconds until the next report, `0` if it never repeats |
+| `transports` | One entry per enabled SIP listener, at `sip.public_address` when set; empty in a will |
+| `media` | Engine name and version, its capabilities (`bridge`, `conference`, `record`, `transcode`) and the profiles it produces (`rtp`, `webrtc`, `srtp`); `null` with no engine; absent in a will |
+| `cluster` | Where peers reach the inter-node listener; absent outside a cluster and in a will |
 
-`degraded` is a node that is running with a datastore it cannot reach: it cannot read a
-registration, so calling that `ok` would be the most misleading thing this node says.
-`stopped` is published on the way down by a node that got to say goodbye. `down` is the
-will, published by the broker on this node's behalf when it did not - so `at` in a `down`
-is the time the *will was composed*, at startup, and a consumer must date it by receipt.
+Every node subscribes to `nodes/+/status`, and `GET /api/v1/nodes` lists what it has
+heard. A report not repeated within three status intervals is stale; a monitor should
+apply the same rule using the `status_interval` in the message.
 
-Every node subscribes to `nodes/+/status`, so each knows the cluster as the others
-describe themselves, and `GET /api/v1/nodes` lists it. A report not repeated within three
-status intervals is listed as stale. A monitor elsewhere should do the same with the
-`status_interval` the node carries, rather than a threshold of its own that agrees with it
-only by coincidence.
+Consumers must ignore fields they do not know.
 
-A consumer should ignore fields it does not know: the node's capabilities are still to
-come in this payload, and the live registries
-(Milestone 5) may add counts. Nothing already here is planned to change meaning or go
-away.
+## A channel is not a registration
 
-### A channel is not a registration
+On the `channels` topics, `registered` means a transport flow entered the node's channel
+registry: a TCP, TLS or WebSocket connection, or a UDP peer address. It says nothing about
+authentication.
 
-The `channels` topics say "registered", and it does not mean what REGISTER means. A
-channel is a transport flow this node is holding - a TCP, TLS, WS or WSS connection, or,
-for UDP, the peer address a datagram arrived from - and "registered" means it has been
-entered in the node's channel registry. Nothing about it says anybody authenticated.
+- A flow appears as soon as anything connects or sends a datagram.
+- One flow can carry several registrations, and a binding outlives its flow.
+- A UDP flow is forgotten after `sip.flow_idle_timeout` seconds idle and publishes
+  `closed`; the peer's next datagram publishes `registered` again.
 
-So counting them is not counting endpoints, in either direction:
-
-- A flow appears as soon as something connects or sends a packet, whether or not it ever
-  sends a REGISTER, gets past a Digest challenge, or belongs to a subscriber this node has
-  heard of. A port scanner makes them.
-- One flow can carry several registrations, and a registration outlives its flow: a
-  binding lives in the datastore with its own expiry, so a UDP phone has a registration
-  and usually no live flow at all, and a TCP client that reconnects has two flows and one
-  registration.
-- A UDP flow is created on the first datagram from an address. It is forgotten after
-  `sip.flow_idle_timeout` seconds without traffic (five minutes by default), and publishes
-  `closed` when it goes, so the two topics do balance. Forgetting one costs a peer nothing:
-  its next datagram makes a new flow, and a request for it - a call to its binding, or a
-  BYE in a dialog it is on - opens a new flow to the address it was last heard from, which
-  publishes "registered" again.
-
-What answers "who is registered here" is `GET /api/v1/registrations`, which reads the
-bindings, or the `subscribers/+/status` events as they happen.
+For who is registered, use `GET /api/v1/registrations` or `subscribers/+/status`.
 
 ## Subscribing
 
-Standard MQTT wildcards apply: `+` matches exactly one level, `#` matches the rest and
-must be the last level.
+MQTT wildcards apply: `+` matches one level; `#` matches the rest and must come last.
 
 | Filter | Matches |
-| --- | --- |
-| `nodes/#` | Everything every node publishes |
-| `nodes/+/status` | Node up and down events, for discovery |
+|---|---|
+| `nodes/+/status` | Node status, for discovery and monitoring |
 | `nodes/sip-0001/#` | Everything one node publishes |
-| `calls/+/unregister` | Every call ending, for CDR |
-| `subscribers/+/status` | Every registration, for presence |
+| `subscribers/+/status` | Every registration |
+| `calls/+/unregister` | Every call ending |
 
-Subscribe to the narrowest filter that does the job. A trailing `#` under a prefix also
-matches that prefix's other topics, so a consumer expecting one payload shape will be
-handed others.
+Use the narrowest filter that works: `#` under a prefix delivers every payload shape below
+it.
 
-## Prefix
+## Watching from a browser
 
-The MQTT driver prefixes every topic with the `prefix` from its URL, so one broker can
-carry several clusters:
+`GET /api/v1/events` serves `nodes/#`, `subscribers/#` and `calls/#` as Server-Sent Events,
+one event per message named by its topic, for a console that would rather watch than poll.
+It needs the `view-cluster-status` role, and is in the [API description](api/openapi.yaml).
 
-```
+## MQTT
+
+```yaml
 events:
-  url: "mqtt://127.0.0.1:1883/?client_id=sip-01&keep_alive=30&prefix=athenasip/"
+  url: "mqtt://user:password@127.0.0.1:1883"
+  mqtt:
+    prefix: "athenasip/"
 ```
 
-The prefix is applied on publish and subscribe, and stripped on delivery, so the topics
-above are what the application sees either way. It is a topic level, so the separator
-is added when it is left off: `athenasip` and `athenasip/` mean the same thing.
+| Topic | Detail |
+|---|---|
+| Prefix | Prepended on publish and subscribe and stripped on delivery, so one broker can carry several clusters. A missing trailing `/` is added. |
+| Client identifier | Must be unique on the broker, or the broker disconnects the older connection. Defaults to `athenasip-<node_id>`. |
+| Startup | The node waits up to `connect_timeout_ms` for the broker and does not start without it. After that the client reconnects on its own. |
+| TLS | `mqtts://` is not implemented. |
 
-The settings can also go in an `events.mqtt` section, which is the form
-`config/config.example.yaml` shows and which wins where both are given.
-
-## Client identifiers
-
-MQTT requires a client identifier to be unique on the broker, and a broker that sees a
-second connection using one it already has disconnects the first. Two nodes sharing one
-would trade the connection back and forth for as long as both were running, and the bus
-would carry nothing.
-
-So there is no shared default. Unset, the identifier is this node's `sip.node_id`,
-which is unique across the cluster by definition; `events.mqtt.client_id` overrides it
-where something else is needed.
-
-## Connecting
-
-The client queues what it is given and reconnects on its own, so starting it says
-nothing about whether the broker is there. `connect()` therefore answers on a round
-trip to the broker rather than on having started, bounded by
-`events.mqtt.connect_timeout_ms` (5000 by default). A node whose broker address is
-wrong says so at startup rather than running with a bus that carries nothing.
+`client_id`, `keep_alive`, `connect_timeout_ms` and `prefix` are also accepted as URL query
+parameters; the `events.mqtt` section wins where both are given.

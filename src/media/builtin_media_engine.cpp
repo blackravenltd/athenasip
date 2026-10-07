@@ -47,13 +47,26 @@ std::uint16_t parse_port(const std::string& text, std::uint16_t fallback) {
 }  // namespace
 
 BuiltinMediaEngine::BuiltinMediaEngine(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<types::URL> url)
-    : _logger(std::make_shared<loggers::LoggerScoped>("builtin_media", std::move(logger))), _url(std::move(url)) {
+    : _logger(std::make_shared<loggers::LoggerScoped>("builtin_media", std::move(logger))), _url(std::move(url)), _public(_logger) {
   _apply_url(_url);
 }
 
 BuiltinMediaEngine::~BuiltinMediaEngine() { close(); }
 
 std::string BuiltinMediaEngine::name() const { return "builtin"; }
+
+plugins::Settings BuiltinMediaEngine::settings() {
+  using namespace plugins::define;
+  return {
+      section("builtin", "The builtin:// relay: plain RTP from the node's own process."),
+      text("builtin.bind_address", "0.0.0.0", "Where the relay binds."),
+      text("builtin.public_address", "0.0.0.0",
+           "The address written into SDP, which endpoints must reach: on a host behind NAT, the public one. May be a host name, "
+           "resolved at start and every minute."),
+      port("builtin.port_min", "22000", "The bottom of the RTP port range. Behind NAT, forward the whole range."),
+      port("builtin.port_max", "23000", "The top of the RTP port range. Above port_min, or both take their defaults."),
+  };
+}
 
 std::string BuiltinMediaEngine::version() const { return "0.0.1"; }
 
@@ -108,6 +121,10 @@ void BuiltinMediaEngine::connect(plugins::Executor on, plugins::StatusHandler ha
   _relay->start();
   _connected = true;
 
+  // Resolves a name before the node serves anything, so the first call has an address.
+  _public.set(_public_address);
+  _public.start();
+
   _logger->info("Connected, relaying on " + _bind_address + " as " + _public_address);
   _complete(std::move(on), std::move(handler), plugins::Status::success());
 }
@@ -120,6 +137,8 @@ void BuiltinMediaEngine::close() {
     _allocated.clear();
     _emitted.clear();
   }
+
+  _public.stop();
 
   if (_relay) _relay->stop();
   _relay.reset();
@@ -136,13 +155,10 @@ Capabilities BuiltinMediaEngine::capabilities() const {
   return capabilities;
 }
 
-// A relay and nothing more: what comes in plain goes out plain. Mirror is whatever the
-// caller sent, which is what this engine sends on.
+// A relay only: plain in, plain out. Mirror is whatever the caller sent.
 bool BuiltinMediaEngine::produces(Profile profile) const { return profile == Profile::PlainRtp || profile == Profile::Mirror; }
 
-// The relay is in this process and answers at once; the contract is about where the
-// handler runs. Posting it is what lets an rtpengine driver, which really does go to
-// the network, be dropped in without the caller changing.
+// The work is synchronous; the handler is still delivered on the caller's executor, as for a networked engine.
 void BuiltinMediaEngine::offer(plugins::Executor on, std::shared_ptr<Call> call, std::string sdp, Flags flags, MediaHandler handler) {
   _complete(std::move(on), std::move(handler), _offer(std::move(call), sdp, flags));
 }
@@ -160,7 +176,6 @@ void BuiltinMediaEngine::query(plugins::Executor on, std::shared_ptr<Call> call,
 }
 
 Result BuiltinMediaEngine::_offer(std::shared_ptr<Call> call, const std::string& sdp, const Flags& flags) {
-  // Plain RTP only. An offer needing ICE, DTLS or SRTP belongs to rtpengine.
   if (flags.ice || flags.dtls || flags.srtp) {
     return Result::failure("builtin media engine handles plain RTP only: use rtpengine:// for ICE, DTLS or SRTP");
   }
@@ -184,25 +199,22 @@ Result BuiltinMediaEngine::_map_media(std::shared_ptr<Call> call, const std::str
   auto sdp = std::make_shared<SDP>();
   if (!sdp->parse(sdp_text)) return Result::failure("could not parse SDP");
 
-  // Where this leg said to send its media, read before it is rewritten to be the relay's.
+  // Where this leg said to send its media, read before the rewrite.
   const auto session_address = sdp->has_connection() ? sdp->connection().address : std::string();
 
-  // Make us the endpoint for everything.
+  // This node becomes the endpoint for every stream.
   ConnectionInfo relay;
   relay.nettype = "IN";
   relay.addrtype = "IP4";
-  relay.address = flags.address.empty() ? _public_address : flags.address;
+  relay.address = flags.address.empty() ? _public.current() : flags.address;
+
+  // Decline rather than write an address that would send the far end's media nowhere.
+  if (relay.address.empty()) return Result::failure("the public address " + _public_address + " does not resolve to an address");
 
   sdp->set_connection(relay);
 
-  // RFC 8866 section 5.2: the o= line gives "an address of the machine from which the
-  // session was created", and a node that anchors media so the two ends never see each
-  // other's addresses hands one of them away in it regardless. The RFC allows exactly
-  // this substitution - "for privacy reasons, it is sometimes desirable to obfuscate the
-  // username and IP address of the session originator" - on the condition that the field
-  // stays globally unique. The username and session id the endpoint chose are what carry
-  // that uniqueness and are left alone; only the address is replaced. The version is the
-  // endpoint's too, and 3264's rule for incrementing it is its own item in the plan.
+  // RFC 8866 section 5.2: o= carries the originator's address, which anchoring exists to hide. Only the address is
+  // replaced; the endpoint's username and session id keep the field globally unique.
   auto origin = sdp->origin();
   origin.nettype = relay.nettype;
   origin.addrtype = relay.addrtype;
@@ -214,11 +226,8 @@ Result BuiltinMediaEngine::_map_media(std::shared_ptr<Call> call, const std::str
   for (auto& media : sdp->media()) {
     const auto id = media.unique_id();
 
-    // RFC 3264 sections 5.1, 6 and 8.2: a stream with port zero is one that is not offered,
-    // was declined, or has been taken away. It keeps its place in the description and gets
-    // nothing else: no relay, and above all no relay port, which would tell the other end
-    // that a stream its peer refused had been accepted. A phone with no camera answering a
-    // video call is the usual one. What the stream held, if anything, goes back.
+    // RFC 3264 sections 5.1, 6 and 8.2: a port-zero stream is not offered, declined or removed. It keeps its place and
+    // gets no relay; a relay port would tell the other end the stream had been accepted. Anything it held is released.
     if (media.description.port == 0) {
       std::lock_guard<std::mutex> lock(_mutex);
       auto& streams = _allocated[call->id];
@@ -240,9 +249,7 @@ Result BuiltinMediaEngine::_map_media(std::shared_ptr<Call> call, const std::str
       auto& streams = _allocated[call->id];
       auto existing = streams.find(id);
 
-      // The stream is the call's, not the leg's. The second leg to arrive for a stream
-      // is the far end of a bridge already standing, and giving it a port of its own
-      // would leave each end talking to a relay nothing else is on.
+      // A stream belongs to the call, not the leg: the second leg to arrive joins the relays already allocated.
       if (existing != streams.end()) {
         relays = existing->second;
         _logger->debug("Mapping media, existing stream: " + media.description.to_string());
@@ -264,7 +271,7 @@ Result BuiltinMediaEngine::_map_media(std::shared_ptr<Call> call, const std::str
       }
     }
 
-    // What the leg itself holds, for everything that reads a call rather than relays it.
+    // The leg's own record of its streams, for whatever reads a call.
     auto& stream = participant.streams[id];
     if (!stream) {
       stream = std::make_shared<MediaStream>();
@@ -274,9 +281,8 @@ Result BuiltinMediaEngine::_map_media(std::shared_ptr<Call> call, const std::str
     stream->rtp_set = relays.rtp;
     stream->rtcp_set = relays.rtcp;
 
-    // The relay starts sending to this leg where its description said, so a leg that only
-    // listens gets media before it has sent any. RTCP is where a=rtcp says (RFC 3605), or
-    // the port above (RFC 3550 11).
+    // The relay sends to the described address from the start, so a leg that only listens still gets media. RTCP goes to
+    // a=rtcp (RFC 3605), or to the port above (RFC 3550 section 11).
     const auto described_address = media.has_connection() ? media.connection().address : session_address;
     const auto described_port = media.description.port;
     if (!described_address.empty() && described_port != 0) {
@@ -293,17 +299,12 @@ Result BuiltinMediaEngine::_map_media(std::shared_ptr<Call> call, const std::str
       relays.rtcp->expect(described_address, rtcp_port);
     }
 
-    // Point the media at our relay port.
     media.description.port = relays.rtp->port;
 
-    // Only rewrite a media-level c= that was already there. Adding one where the far
-    // end relied on the session-level line would change the shape of the offer.
+    // Only rewrite a media-level c= that was already there; adding one would change the shape of the offer.
     if (media.has_connection()) media.set_connection(relay);
 
-    // RFC 3605, and written whether or not the far end named a port of its own. The
-    // relay's RTCP port comes out of the same pool as its RTP port and is not reliably
-    // the one above it, so an endpoint left to assume the convention would send its
-    // receiver reports into somebody else's call.
+    // RFC 3605, always written: the relay's RTCP port is not reliably the one above its RTP port.
     const auto rtcp = "rtcp:" + std::to_string(relays.rtcp->port) + " IN IP4 " + relay.address;
     if (!media.set_attribute("rtcp:", rtcp)) media.add_attribute(rtcp);
   }
@@ -313,21 +314,13 @@ Result BuiltinMediaEngine::_map_media(std::shared_ptr<Call> call, const std::str
   return Result::success(sdp->to_string());
 }
 
-// RFC 3264 section 8: an offer that changes the description must carry a higher version
-// than the one before it, and one that does not must carry the same. The endpoint's own
-// version cannot be passed through to answer that, because what this node emits is not
-// what the endpoint sent: the addresses and the ports are this node's, and two offers
-// an endpoint considered identical can come out of here different - a stream released
-// and re-anchored gets other ports.
-//
-// So the version is this node's from the second description onwards. The first keeps
-// the endpoint's, which is what makes a call that never re-offers look exactly as it
-// did before.
+// RFC 3264 section 8: a changed description carries a higher version, an unchanged one the same. The endpoint's
+// version cannot be passed through, because what this node emits (addresses, ports) can change when the endpoint's
+// description did not. The first description keeps the endpoint's version; after that the version is this node's.
 void BuiltinMediaEngine::_apply_version(const std::shared_ptr<Call>& call, const Flags& flags, SDP& sdp) {
   auto origin = sdp.origin();
 
-  // The shape is the body with the version taken out, so that comparing two of them
-  // asks whether anything else changed.
+  // The body with the version blanked, so comparing two asks whether anything else changed.
   auto blanked = origin;
   blanked.sessionVersion = "0";
   sdp.set_origin(blanked);
@@ -342,8 +335,7 @@ void BuiltinMediaEngine::_apply_version(const std::shared_ptr<Call>& call, const
     auto& last = _emitted[call->id][flags.participant];
 
     if (last.shape.empty()) {
-      // Nothing emitted yet, so the endpoint's own version is as good a starting point
-      // as any and leaves an unchanging call looking untouched.
+      // First description: start from the endpoint's own version.
       version = 0;
       try {
         version = std::stoull(origin.sessionVersion);
@@ -399,12 +391,8 @@ std::string BuiltinMediaEngine::_query(std::shared_ptr<Call> call) {
   auto it = _allocated.find(call->id);
   const auto count = (it == _allocated.end()) ? 0u : it->second.size() * 2;
 
-  // How long every relay this call holds has been silent, which is the shortest idle of
-  // any of them: one stream still carrying is a call still up. RTP and RTCP both count,
-  // so a call on hold or one whose codec suppresses silence does not read as dead.
-  //
-  // A call the engine holds nothing for has no media to be idle, and says so with -1
-  // rather than with a number a caller might act on.
+  // The shortest idle time of any relay the call holds: one stream still carrying is a call still up. RTP and RTCP
+  // both count, so a held call or a silence-suppressing codec does not read as dead. A call holding nothing reports null.
   std::int64_t idle_ms = -1;
 
   if (it != _allocated.end()) {
@@ -420,9 +408,8 @@ std::string BuiltinMediaEngine::_query(std::shared_ptr<Call> call) {
 
   const auto idle_seconds = idle_ms < 0 ? std::string("null") : std::to_string(idle_ms / 1000);
 
-  // Per end per stream, RTP only: RTCP is the same ends reporting on it. Which
-  // participant an end is cannot be said honestly - the relay learns an end from where its
-  // packets come from, and behind a NAT that is not the address its description gave.
+  // Per end per stream, RTP only. Ends are not mapped to participants: the relay knows an end by its source address,
+  // which behind NAT is not the address in its description.
   std::string legs = "[";
   if (it != _allocated.end()) {
     for (const auto& [id, relays] : it->second) {
@@ -436,8 +423,8 @@ std::string BuiltinMediaEngine::_query(std::shared_ptr<Call> call) {
   }
   legs += "]";
 
-  return "{\"call_id\":\"" + call->id + "\",\"engine\":\"builtin\",\"relay_sets\":" + std::to_string(count) + ",\"idle_seconds\":" + idle_seconds +
-         ",\"legs\":" + legs + "}";
+  return "{\"call_id\":\"" + call->id + "\",\"engine\":\"builtin\",\"held\":" + (it == _allocated.end() ? "false" : "true") +
+         ",\"relay_sets\":" + std::to_string(count) + ",\"idle_seconds\":" + idle_seconds + ",\"legs\":" + legs + "}";
 }
 
 std::optional<std::uint64_t> BuiltinMediaEngine::packets_relayed() const {

@@ -20,13 +20,9 @@ class Connection {
 
   virtual bool start() = 0;
 
-  // The executor this connection's stream belongs to: its server's io_context, or the
-  // strand that server shares between its connections. A socket is not safe for two
-  // threads at once and the server's own thread is already inside it, so everything that
-  // touches the stream - starting a read, starting a write, tearing it down - runs here.
-  // The Core strand hands the work over rather than doing it. UDPServer already worked
-  // this way; the others reached into the socket from the strand, and tsan sees it on a
-  // WebSocket whose peer is closing while the node closes its end.
+  // The executor this connection's stream belongs to: its server's io_context, or the strand the server shares between
+  // its connections. A socket is not safe for two threads, so every read, write and teardown runs here; the Core strand
+  // hands the work over.
   virtual boost::asio::any_io_executor executor() = 0;
 
   virtual void async_read_some(boost::asio::mutable_buffer buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) = 0;
@@ -56,8 +52,7 @@ class Connection {
 
   virtual std::string transport_name() const = 0;
 
-  // Who the far end proved it is, for a connection that made it prove anything: the
-  // common name of a peer certificate the handshake verified. Empty everywhere else.
+  // The common name of a peer certificate the handshake verified. Empty for any other connection.
   virtual std::string peer_identity() const { return ""; }
 };
 

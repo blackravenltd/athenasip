@@ -13,8 +13,7 @@ namespace athenasip::transactions {
 
 namespace {
 
-// RFC 3261 17.2.1: if the TU has not responded in 200ms, the transaction sends 100
-// Trying itself so the far end stops retransmitting.
+// RFC 3261 17.2.1: if the TU has not responded within 200ms the transaction sends 100 Trying itself.
 constexpr std::chrono::milliseconds kTrying100Delay{200};
 
 bool is_provisional(int code) { return code >= 100 && code < 200; }
@@ -42,15 +41,13 @@ void InviteServerTransaction::receive(std::shared_ptr<SIPMessage> message) {
 
   switch (_state) {
     case State::Proceeding:
-      // A retransmitted INVITE gets the most recent provisional response back. The TU
-      // never sees it again (RFC 3261 17.2.1).
+      // RFC 3261 17.2.1: a retransmitted INVITE gets the latest provisional response again; the TU does not see it.
       if (!is_ack && _last_response) _transport_send(_last_response);
       return;
 
     case State::Completed:
       if (is_ack) {
-        // The ACK for a non-2xx is absorbed here: it is a transaction-level
-        // acknowledgement and the TU has no interest in it.
+        // The ACK for a non-2xx is absorbed here and never reaches the TU.
         _cancel(_timer_g);
         _cancel(_timer_h);
         _set_state(State::Confirmed);
@@ -63,7 +60,12 @@ void InviteServerTransaction::receive(std::shared_ptr<SIPMessage> message) {
       return;
 
     case State::Confirmed:
-      // Absorbing ACK retransmissions is the whole purpose of this state.
+      // Absorbs ACK retransmissions.
+      return;
+
+    case State::Accepted:
+      // RFC 6026 section 7.1: a retransmitted INVITE is absorbed; an ACK goes to the TU.
+      if (is_ack) _deliver_to_tu(message);
       return;
 
     default:
@@ -73,9 +75,16 @@ void InviteServerTransaction::receive(std::shared_ptr<SIPMessage> message) {
 
 void InviteServerTransaction::send(std::shared_ptr<SIPMessage> message) {
   if (!message || !message->header) return;
-  if (_state != State::Proceeding && _state != State::Completed) return;
 
   const int code = message->header->response_code;
+
+  // In Accepted only the TU's 2xx retransmissions go out, on the connection the INVITE arrived on.
+  if (_state == State::Accepted) {
+    if (is_2xx(code)) _transport_send(message);
+    return;
+  }
+
+  if (_state != State::Proceeding && _state != State::Completed) return;
 
   _last_response = message;
   _cancel(_timer_100);
@@ -90,16 +99,16 @@ void InviteServerTransaction::send(std::shared_ptr<SIPMessage> message) {
   _transport_send(message);
 
   if (is_2xx(code)) {
-    // RFC 3261 17.2.1: a 2xx leaves the transaction immediately. The 2xx and its ACK
-    // are end to end, retransmitted by the TU, and not this transaction's business.
-    _set_state(State::Terminated);
+    // RFC 6026 section 7.1: a 2xx moves the transaction to Accepted. The TU retransmits the 2xx and handles its ACK;
+    // both pass through here until timer L.
+    _set_state(State::Accepted);
+    _start_timer_l();
     return;
   }
 
   _set_state(State::Completed);
 
-  // G retransmits the final response until the ACK arrives, and is pointless on a
-  // reliable transport. H is the giving-up timer and runs either way.
+  // G retransmits the final response until the ACK, on an unreliable transport only. H is the timeout and always runs.
   if (!_reliable) _start_timer_g();
   _start_timer_h();
 }
@@ -129,7 +138,7 @@ void InviteServerTransaction::_start_timer_g() {
 
     if (self->_last_response) self->_transport_send(self->_last_response);
 
-    // RFC 3261 17.2.1: G doubles up to T2 and then stays there.
+    // RFC 3261 17.2.1: G doubles up to T2.
     self->_g_interval = std::min(self->_g_interval * 2, self->_timers.t2);
     self->_start_timer_g();
   });
@@ -139,7 +148,7 @@ void InviteServerTransaction::_start_timer_h() {
   auto self = std::static_pointer_cast<InviteServerTransaction>(shared_from_this());
 
   _timer_h = _start_timer(_timers.h, [self]() {
-    // No ACK ever came. The far end is gone, and RFC 3261 17.2.1 says tell the TU.
+    // RFC 3261 17.2.1: no ACK came, so the TU is told.
     self->_logger->info("No ACK for the final response, giving up");
     self->_notify_timeout();
     self->_set_state(State::Terminated);
@@ -149,11 +158,15 @@ void InviteServerTransaction::_start_timer_h() {
 void InviteServerTransaction::_start_timer_i() {
   auto self = std::static_pointer_cast<InviteServerTransaction>(shared_from_this());
 
-  // On a reliable transport there are no ACK retransmissions to absorb, so I is zero
-  // and the transaction ends at once.
+  // I absorbs ACK retransmissions; on a reliable transport there are none and the transaction ends at once.
   const auto delay = _reliable ? std::chrono::milliseconds(0) : _timers.i;
 
   _timer_i = _start_timer(delay, [self]() { self->_set_state(State::Terminated); });
+}
+
+void InviteServerTransaction::_start_timer_l() {
+  auto self = std::static_pointer_cast<InviteServerTransaction>(shared_from_this());
+  _timer_l = _start_timer(_timers.l, [self]() { self->_set_state(State::Terminated); });
 }
 
 void InviteServerTransaction::_cancel_all_timers() {
@@ -161,6 +174,7 @@ void InviteServerTransaction::_cancel_all_timers() {
   _cancel(_timer_g);
   _cancel(_timer_h);
   _cancel(_timer_i);
+  _cancel(_timer_l);
 }
 
 }  // namespace athenasip::transactions

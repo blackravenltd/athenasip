@@ -42,8 +42,8 @@ Result failure(std::string why) {
 
 KeyPtr new_key() { return {EVP_PKEY_Q_keygen(nullptr, nullptr, "EC", "P-256"), EVP_PKEY_free}; }
 
-// RFC 5280 4.1.2.2: a positive serial of up to 20 bytes, unique per CA. 159 random bits is
-// unique without the CA having to remember anything.
+// RFC 5280 4.1.2.2: a positive serial of up to 20 bytes, unique per CA. 159 random bits
+// are unique without the CA keeping state.
 bool set_serial(X509* certificate) {
   std::unique_ptr<BIGNUM, decltype(&BN_free)> serial(BN_new(), BN_free);
   if (!serial || BN_rand(serial.get(), 159, BN_RAND_TOP_ANY, BN_RAND_BOTTOM_ANY) != 1) return false;
@@ -81,8 +81,8 @@ CertPtr new_certificate(EVP_PKEY* key, const std::string& common_name, long days
   return certificate;
 }
 
-// Written with O_EXCL, so two runs at once cannot both believe they made the file, and a
-// key is never readable by anybody else for even a moment.
+// O_EXCL: two concurrent runs cannot both create the file, and a key is never readable by
+// anyone else.
 bool write_pem(const fs::path& file, mode_t mode, const std::function<bool(FILE*)>& write) {
   const int fd = ::open(file.c_str(), O_WRONLY | O_CREAT | O_EXCL, mode);
   if (fd < 0) return false;
@@ -121,7 +121,7 @@ CertPtr read_certificate(const fs::path& file) {
   return {certificate, X509_free};
 }
 
-// A node id names files in the CA directory, so it is a name and never a path.
+// A node id names files in the CA directory, so it must never be a path.
 bool usable_id(const std::string& id) {
   if (id.empty() || id.front() == '.' || id.size() > 64) return false;
   for (const char c : id) {
@@ -154,7 +154,7 @@ Result init(const std::string& dir) {
 
   X509_set_issuer_name(certificate.get(), X509_get_subject_name(certificate.get()));
 
-  // RFC 5280 4.2.1.9 and 4.2.1.3: an authority, which signs certificates and nothing else.
+  // RFC 5280 4.2.1.9, 4.2.1.3: an authority that signs certificates and nothing else.
   if (!add_extension(certificate.get(), certificate.get(), NID_basic_constraints, "critical,CA:TRUE,pathlen:0") ||
       !add_extension(certificate.get(), certificate.get(), NID_key_usage, "critical,keyCertSign,cRLSign") ||
       !add_extension(certificate.get(), certificate.get(), NID_subject_key_identifier, "hash")) {
@@ -200,9 +200,8 @@ Result issue_node(const std::string& dir, const std::string& node_id, const std:
 
   X509_set_issuer_name(certificate.get(), X509_get_subject_name(authority.get()));
 
-  // The node id is always a name it answers to; the rest are what the operator said it is
-  // reached by. An address goes in as an IP name and anything else as a DNS name (RFC 5280
-  // 4.2.1.6), because a peer checking an address looks only at the IP names.
+  // SANs (RFC 5280 4.2.1.6): the node id as a DNS name, then each given name as an IP name
+  // if it is an address, since a peer verifying an address checks only IP names.
   std::string alt = "DNS:" + node_id;
   for (const auto& name : names) {
     if (name.empty() || name == node_id) continue;

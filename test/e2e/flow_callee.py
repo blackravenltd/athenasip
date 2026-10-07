@@ -11,12 +11,11 @@
     flow_callee.py --host 172.32.0.11 --transport ws  --user bob --password bob-secret
 
 It registers over TCP or a WebSocket, keeps that connection, and answers one call on it:
-200 to the INVITE, then it waits for the ACK and for the BYE. Nothing listens at its
-Contact, so a call reaches it down the flow or not at all - which is what a browser and a
-phone behind NAT are, and what sipp cannot be: sipp registers in one run and listens in
-another, and the connection the registration was made over is gone in between.
+200 to the INVITE, then it waits for the ACK and the BYE. Nothing listens at its Contact,
+so a call reaches it down the flow or not at all, like a browser or a phone behind NAT.
+sipp cannot do this: it registers in one run and listens in another.
 
-Exit status 0 when the whole call was seen, 1 otherwise. It needs nothing installed; the
+Exit status 0 when the whole call was seen, 1 otherwise. Standard library only; the
 transports are test/interop/smoke.py's.
 """
 
@@ -31,8 +30,7 @@ from smoke import CRLF, Stream, authorization_for, connect, header, parse_challe
 
 
 class BodyStream(Stream):
-    """smoke.py frames a stream by the blank line, which is right for a REGISTER and wrong
-    for an INVITE: this one reads the body Content-Length says is there."""
+    """Reads the body Content-Length declares; smoke.py's Stream frames by the blank line."""
 
     def receive(self):
         while True:
@@ -140,8 +138,7 @@ def main():
         print(f"< {message.split(CRLF, 1)[0]}", flush=True)
 
         if method == "INVITE":
-            # An answer in kind when there was an offer. Nothing is sent to it: this is
-            # about the signalling reaching a flow, and the media is the UDP scenarios'.
+            # Answer in kind when there was an offer. No media is sent: this tests signalling.
             host = stream.local().rsplit(":", 1)[0]
             answer = ""
             if "application/sdp" in (header(message, "Content-Type") or ""):

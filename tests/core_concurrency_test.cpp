@@ -24,10 +24,8 @@
 using namespace athenasip;
 using athenasip::datastores::MemoryDatastore;
 
-// Every server (TCP, TLS, UDP, WebSocket) runs its own io_context on its own thread, so
-// Core is reached from several threads at once. Core answers that with a strand: these
-// tests drive it the way the servers do, from many threads through call_on_strand, and
-// assert the registries stay consistent.
+// Each server runs its own io_context thread, so Core is reached from several threads and serialises
+// them on a strand. These tests drive call_on_strand from many threads and check the registries.
 namespace {
 
 struct ConcurrentFixture {
@@ -79,7 +77,6 @@ TEST(CoreConcurrencyTest, CallsSurviveConcurrentRegisterAndUnregister) {
 
   for (auto& thread : threads) thread.join();
 
-  // Everything registered was unregistered.
   for (int t = 0; t < kThreads; ++t) {
     for (int i = 0; i < kIterations; ++i) {
       EXPECT_EQ(f.core->call_on_strand([&]() { return f.core->call_get("call-" + std::to_string(t) + "-" + std::to_string(i)); }), nullptr);

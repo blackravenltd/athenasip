@@ -37,9 +37,7 @@ std::string Sessions::_new_token() {
   std::array<std::uint8_t, kTokenBytes> bytes{};
   if (RAND_bytes(bytes.data(), static_cast<int>(bytes.size())) != 1) return {};
 
-  // Hex rather than base64: it is twice the length and carries nothing that has to be
-  // escaped in a header, a URL or a shell, which for a value an operator will paste
-  // around is worth more than the 21 characters it costs.
+  // Hex rather than base64: nothing to escape in a header, a URL or a shell.
   return Util::to_hex(bytes.data(), static_cast<std::uint16_t>(bytes.size()));
 }
 
@@ -53,10 +51,8 @@ void Sessions::login(std::string username, std::string password, std::function<v
 
     auto user = result.value;
 
-    // One answer for all three. The timing still differs - an unknown user costs nothing
-    // where a wrong password costs a PBKDF2 - so this hides which of them it was from a
-    // reader of the response and not from somebody with a stopwatch. Rate limiting is
-    // what closes that, and is recorded as not yet solved in docs/authentication.md.
+    // One answer for all three. Timing still differs - an unknown user skips the PBKDF2 -
+    // which the login rate limit bounds.
     if (!user) return handler(Login::refused("no such user"));
     if (user->disabled) return handler(Login::refused("the user is disabled"));
     if (!types::Password::verify(password, user->password_hash)) return handler(Login::refused("the password does not verify"));
@@ -102,9 +98,8 @@ void Sessions::resolve(std::string token, std::function<void(Lookup)> handler) {
     const auto now = self->_clock();
 
     if (session->has_expired(now, self->_lifetimes.idle)) {
-      // Deleted now rather than left to the store, which prunes on the absolute expiry
-      // alone: a session that went idle at the first minute of a twelve-hour lifetime
-      // would otherwise sit there for the rest of it.
+      // The store prunes on absolute expiry only, so an idle-expired session is deleted
+      // here.
       self->_datastore->session_delete(self->_executor, hash, [self](plugins::Status status) {
         if (!status.ok) self->_logger->warn("could not delete an expired session: " + status.error);
       });
@@ -117,9 +112,8 @@ void Sessions::resolve(std::string token, std::function<void(Lookup)> handler) {
 
       auto user = result.value;
 
-      // A session outliving the user it names is not an identity. Deleting it and every
-      // other one the user held belongs with deleting or disabling the user, which is
-      // where it can be done once rather than on whichever request happens to arrive.
+      // A session that outlives its user is not an identity. Its deletion belongs with
+      // deleting or disabling the user.
       if (!user) return handler(Lookup::refused("the user this session names is gone"));
       if (user->disabled) return handler(Lookup::refused("the user is disabled"));
 
@@ -141,21 +135,18 @@ void Sessions::_record_login(std::shared_ptr<types::User> user, std::time_t now)
 
   auto self = shared_from_this();
   _datastore->user_update(_executor, user, [self](plugins::Status status) {
-    // The login has already happened and is not being taken back over a bookkeeping
-    // write. Said out loud, because a last_login_at that stops moving is a store that
-    // has started refusing writes.
+    // A failed bookkeeping write does not undo the login, but is worth a warning: the store
+    // may be refusing writes.
     if (!status.ok) self->_logger->warn("could not record the login time: " + status.error);
   });
 }
 
 void Sessions::_touch(const types::Session& session, std::time_t now) {
-  // Nothing reads last_seen_at when there is no idle rule, so nothing writes it.
+  // Nothing reads last_seen_at without an idle rule.
   if (_lifetimes.idle <= 0) return;
 
-  // Not on every request. Rewriting the record each time makes a datastore write of
-  // every authenticated call, and all the value decides is whether the idle window has
-  // passed; refreshing it once per tenth of that window keeps a session in use alive
-  // without turning every read into a write.
+  // Refreshed once per tenth of the idle window rather than on every request, so that an
+  // authenticated read does not become a datastore write.
   const auto threshold = std::max<std::time_t>(1, _lifetimes.idle / 10);
   if (now - session.last_seen_at < threshold) return;
 
@@ -164,8 +155,7 @@ void Sessions::_touch(const types::Session& session, std::time_t now) {
 
   auto self = shared_from_this();
 
-  // There is no session_update on the contract: writing a hash that is already held
-  // replaces it, which is how last_seen_at moves and what both drivers do.
+  // The contract has no session_update: creating over a held hash replaces the record.
   _datastore->session_create(_executor, refreshed, [self](plugins::Status status) {
     if (!status.ok) self->_logger->warn("could not move the idle window along: " + status.error);
   });

@@ -10,6 +10,7 @@
 #include <chrono>
 #include <functional>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -19,53 +20,54 @@
 #include "api_json.h"
 #include "bearer_auth.h"
 #include "rate_limiter.h"
+#include "response_stream.h"
 #include "sessions.h"
+#include "subscriber_auth.h"
 
 namespace athenasip::api {
 
 namespace http = boost::beast::http;
 
-// What a handler is given. The body and the parameters are copies rather than views
-// into the request, because a handler is async: it goes to the datastore and answers
-// when the store does, by which time the request it came from may be several frames
-// down the stack.
+// What a handler is given. The body and parameters are copies, not views into the
+// request: handlers are async and may answer after the request is gone.
 struct RouteContext {
   std::unordered_map<std::string, std::string> parameters;
   std::unordered_map<std::string, std::string> query;
   std::string body;
 
-  // The bearer token this request presented, empty when it presented none. The router has
-  // already decided whether it admits the request; this is for the routes that need the
-  // token itself rather than a verdict on it, which is the logout ending the session it
-  // was given.
+  // The bearer token presented, empty when there was none. For routes that need the token
+  // itself, as logout does.
   std::string bearer;
 
-  // Who is calling, resolved by the router before the handler ran. Meaningful on a route
-  // that required a credential; a `Kind::none` caller on an open route means only that
-  // nobody asked.
+  // The caller, resolved by the router before the handler runs. On an open route it is
+  // always Kind::none.
   BearerAuth::Caller caller;
 
-  // The address the request came from, which is what an open route is limited by.
+  // The peer address, which open routes are limited by.
   std::string remote;
+
+  // On a subscriber route, the subscriber the request authenticated as (SubscriberAuth).
+  std::shared_ptr<types::Subscriber> subscriber;
 
   std::shared_ptr<http::response<http::string_body>> response;
 
-  // Sends what the handler has put in the response. Exactly once, on whatever thread
-  // the handler finished on.
+  // Sends the response. Call exactly once, on any thread.
   std::function<void()> done;
 
-  // By value, deliberately. A reference into this map outlives nothing: the usual
-  // shape here is to read a parameter and move the context into a handler in the same
-  // call, and a reference would then point into a map that has already been moved from.
+  // Makes the response a stream that stays open after its headers (Server-Sent Events): `start` is given the
+  // stream once the headers are out. Call before done().
+  std::function<void(StreamStart)> stream;
+
+  // Returns by value: callers read a parameter and move the context in the same call, and
+  // a reference would dangle.
   std::string parameter(const std::string& name) const {
     const auto it = parameters.find(name);
     return it == parameters.end() ? std::string() : it->second;
   }
 };
 
-// Method, path and the roles that admit it, in one table. A route that forgets to say who
-// may call it does not compile, which is the point: authorisation is part of declaring a
-// route rather than something a handler remembers to do.
+// Method, path and the roles that admit it, in one table: authorisation is part of
+// declaring a route, not something a handler remembers to do.
 class Router {
  public:
   using Handler = std::function<void(RouteContext)>;
@@ -73,38 +75,49 @@ class Router {
   explicit Router(std::shared_ptr<BearerAuth> auth, std::shared_ptr<Throttle> throttle = std::make_shared<Throttle>())
       : _auth(std::move(auth)), _throttle(std::move(throttle)) {}
 
-  // Every route is limited (Tom, 2026-10-03): an open one, and anything presenting a
-  // credential that did not resolve, by source address; a signed-in caller by session.
-  // Routes that can limit on more than that, the login by username, take it from here.
+  // Every route is limited: open routes and unresolved credentials by source address,
+  // signed-in callers by session. Routes that limit further, as the login does, use this.
   std::shared_ptr<Throttle> throttle() const { return _throttle; }
 
-  // 429 with how long to wait, in the header a client is meant to read it from (RFC 6585,
-  // RFC 9110 10.2.3) and in the message for a person.
+  // 429 with the wait in Retry-After (RFC 6585, RFC 9110 10.2.3) and in the message.
   static void write_too_many(const std::shared_ptr<http::response<http::string_body>>& response, std::chrono::seconds wait) {
     write_error(response, http::status::too_many_requests, "rate_limited",
                 "too many requests; try again in " + std::to_string(wait.count()) + (wait.count() == 1 ? " second" : " seconds"));
     response->set(http::field::retry_after, std::to_string(wait.count()));
   }
 
-  // Any of `roles` admits. An empty set means any authenticated caller, which is the safe
-  // thing for it to mean: a route declared without naming roles demands a credential and
-  // grants nothing, so forgetting to name them cannot open a route to the world.
+  // Any of `roles` admits. An empty set means any authenticated caller, so a route that
+  // names no roles still demands a credential.
   void add(http::verb method, std::string pattern, std::vector<std::string> roles, Handler handler) {
     _routes.push_back(Route{method, _split(pattern), std::move(roles), false, std::move(handler)});
   }
 
-  // No credential at all, and it has to be asked for by name. Only for what a load
-  // balancer or a container healthcheck reaches before it has one, and for the route that
-  // hands credentials out.
+  // A route that needs no credential: healthchecks, and the login that hands credentials out.
   void add_open(http::verb method, std::string pattern, Handler handler) { _routes.push_back(Route{method, _split(pattern), {}, true, std::move(handler)}); }
 
-  // The middleware for the chain. It answers anything under its own prefix and passes
-  // everything else along, so static files and the API can share a port.
+  // A route for a subscriber, authenticated with its SIP credentials (SubscriberAuth). Every one lives under
+  // /api/v1/subscriber/{realm}/, and a subscriber's credentials open nothing else.
+  void add_subscriber(http::verb method, std::string pattern, Handler handler) {
+    if (pattern.rfind(kSubscriberPrefix, 0) != 0) throw std::logic_error("a subscriber route must be under " + std::string(kSubscriberPrefix) + ": " + pattern);
+    Route route{method, _split(pattern), {}, false, std::move(handler)};
+    route.subscriber = true;
+    _routes.push_back(std::move(route));
+  }
+
+  static constexpr char kSubscriberPrefix[] = "/api/v1/subscriber/{realm}/";
+
+  void subscriber_auth_register(std::shared_ptr<SubscriberAuth> auth) { _subscriber_auth = std::move(auth); }
+
+  // The middleware for the chain. It answers everything under its prefix and passes the
+  // rest along, so static files and the API can share a port.
   HttpMiddleware middleware(std::string prefix) {
     return
         [this, prefix](const http::request<http::string_body>& request, const std::string& remote, std::shared_ptr<http::response<http::string_body>> response,
                        std::function<void(bool)> next) { _handle(prefix, request, remote, std::move(response), std::move(next)); };
   }
+
+  // Where streaming routes leave their streams; the listener the router serves on takes them (AdminAPI).
+  std::shared_ptr<StreamRegistry> streams() const { return _streams; }
 
  private:
   struct Route {
@@ -113,6 +126,7 @@ class Router {
     std::vector<std::string> roles;
     bool open = false;
     Handler handler;
+    bool subscriber = false;
   };
 
   void _handle(const std::string& prefix, const http::request<http::string_body>& request, const std::string& remote,
@@ -124,8 +138,7 @@ class Router {
     const auto path = question == std::string::npos ? target : target.substr(0, question);
     const auto segments = _split(path);
 
-    // A path that matches no route at all is a 404; one that matches a route with the
-    // wrong method is a 405, and saying so saves a client guessing at the spelling.
+    // No route matches the path: 404. A route matches with another method: 405.
     bool path_matched = false;
 
     for (const auto& route : _routes) {
@@ -135,9 +148,8 @@ class Router {
       path_matched = true;
       if (route.method != request.method()) continue;
 
-      // Everything out of the request and into the context first. Resolving a session
-      // token is a datastore round trip, so by the time the credential is known the
-      // request object may be several frames down the stack.
+      // Copy everything out of the request first: resolving the token is a datastore round
+      // trip, and the request may be gone when it answers.
       RouteContext context;
       context.parameters = std::move(parameters);
       context.query = _parse_query(question == std::string::npos ? std::string() : target.substr(question + 1));
@@ -146,6 +158,9 @@ class Router {
       context.remote = remote;
       context.response = response;
       context.done = [next]() { next(false); };
+      context.stream = [streams = _streams, response](StreamStart start) { streams->add(response.get(), std::move(start)); };
+
+      if (route.subscriber) return _handle_subscriber(route, request, target, std::move(context), std::move(next));
 
       if (route.open) {
         if (const auto wait = _throttle->take(_source_key(remote), _throttle->limits().open)) {
@@ -169,8 +184,7 @@ class Router {
           return context.done();
         }
 
-        // A credential that did not resolve is somebody this node does not know, and is
-        // limited as an open route is, by where it came from.
+        // An unresolved credential is limited as an open route is, by source address.
         if (!caller.authenticated()) {
           if (const auto wait = throttle->take(_source_key(context.remote), throttle->limits().open)) {
             write_too_many(context.response, *wait);
@@ -182,16 +196,13 @@ class Router {
           return context.done();
         }
 
-        // By session, held by its hash as everything else here holds one, and before
-        // the roles: a refusal is a request like any other.
+        // Limited by session, keyed by the token's hash, before the role check.
         if (const auto wait = throttle->take("session:" + Sessions::token_hash(context.bearer), throttle->limits().session)) {
           write_too_many(context.response, *wait);
           return context.done();
         }
 
-        // An empty set is any authenticated caller; otherwise one of the named roles has
-        // to be held. A real credential that holds none is a 403, not a 401: it is who it
-        // says it is and may not do this.
+        // A real credential holding none of the named roles is a 403, not a 401.
         if (!roles.empty() && !caller.has_any(roles)) {
           write_error(context.response, http::status::forbidden, "forbidden", "this credential does not hold " + _describe(roles));
           return context.done();
@@ -204,8 +215,7 @@ class Router {
       return;
     }
 
-    // An endpoint that is not there is still a request from somebody, and a scan for one
-    // is exactly what an open route is limited against.
+    // Unknown endpoints are limited too, against scanning.
     if (const auto wait = _throttle->take(_source_key(remote), _throttle->limits().open)) {
       write_too_many(response, *wait);
       return next(false);
@@ -222,9 +232,7 @@ class Router {
 
   static std::string _source_key(const std::string& remote) { return "source:" + remote; }
 
-  // What a 403 says it was missing. The role names are the API's own vocabulary and are
-  // safe to name: knowing that a route wants manage-realms tells a caller nothing it could
-  // not read in the documentation.
+  // What a 403 says was missing. Role names are documented vocabulary and safe to name.
   static std::string _describe(const std::vector<std::string>& roles) {
     if (roles.size() == 1) return roles.front();
 
@@ -292,8 +300,8 @@ class Router {
   }
 
  public:
-  // A SIP user is a URI component and arrives percent-encoded: alice%40example.com in a
-  // path is one user called alice@example.com, not two segments.
+  // Path parameters arrive percent-encoded: alice%40example.com is the one user
+  // alice@example.com.
   static std::string percent_decode(const std::string& value) {
     std::string out;
     out.reserve(value.size());
@@ -321,6 +329,51 @@ class Router {
   std::shared_ptr<BearerAuth> _auth;
   std::shared_ptr<Throttle> _throttle;
   std::vector<Route> _routes;
+  std::shared_ptr<StreamRegistry> _streams = std::make_shared<StreamRegistry>();
+  std::shared_ptr<SubscriberAuth> _subscriber_auth;
+
+  void _handle_subscriber(const Route& route, const http::request<http::string_body>& request, const std::string& target, RouteContext context,
+                          std::function<void(bool)> next) {
+    if (!_subscriber_auth) {
+      write_error(context.response, http::status::not_found, "not_found", "no such route");
+      return next(false);
+    }
+
+    const auto realm = context.parameter("realm");
+    const auto authorization = std::string(request[http::field::authorization]);
+
+    _subscriber_auth->check(
+        realm, std::string(http::to_string(request.method())), target, authorization,
+        [throttle = _throttle, context, handler = route.handler](SubscriberAuth::Outcome outcome) mutable {
+          switch (outcome.kind) {
+            case SubscriberAuth::Outcome::Kind::unavailable:
+              write_error(context.response, http::status::service_unavailable, "unavailable", "the server cannot check credentials at the moment");
+              return context.done();
+
+            case SubscriberAuth::Outcome::Kind::no_realm:
+              write_error(context.response, http::status::not_found, "not_found", "no such realm: " + context.parameter("realm"));
+              return context.done();
+
+            case SubscriberAuth::Outcome::Kind::challenge:
+              // Limited as an open route is, by source address, so a password cannot be guessed at speed.
+              if (const auto wait = throttle->take(_source_key(context.remote), throttle->limits().open)) {
+                write_too_many(context.response, *wait);
+                return context.done();
+              }
+              for (const auto& challenge : outcome.challenges) context.response->insert(http::field::www_authenticate, challenge);
+              write_error(context.response, http::status::unauthorized, "unauthorized", "a subscriber's Digest credentials are required");
+              return context.done();
+
+            case SubscriberAuth::Outcome::Kind::ok:
+              if (const auto wait = throttle->take("subscriber:" + outcome.subscriber->identity->uri->to_string(), throttle->limits().session)) {
+                write_too_many(context.response, *wait);
+                return context.done();
+              }
+              context.subscriber = std::move(outcome.subscriber);
+              return handler(std::move(context));
+          }
+        });
+  }
 };
 
 }  // namespace athenasip::api

@@ -35,9 +35,7 @@ class Util {
   static std::string trim(const std::string& str, const std::string& trimmable);
   static std::string md5(const std::string& input);
 
-  // RFC 8760: the same Digest exchange with a stronger hash. MD5 stays because nearly
-  // every SIP client still speaks it and nothing else; SHA-256 is offered first so a
-  // client that can do better does.
+  // For RFC 8760 Digest; see digest.h.
   static std::string sha256(const std::string& input);
   static std::filesystem::path expand_path(const std::string& input);
   static bool is_ipv4(const std::string& ipv4);
@@ -46,12 +44,9 @@ class Util {
   static std::string to_iso8601(const std::time_t& t);
   static std::size_t hash_combine(std::size_t seed, std::size_t hash_value);
 
-  // A 64-bit id derived from a name, the same on every node that computes it. A binding
-  // records the id of the subscriber it belongs to, so the id has to be a fact about the
-  // subscriber rather than about the node that happened to provision it: a per-node
-  // sequence would give the same subscriber a different id on each node, and a cluster
-  // would stop agreeing about whose registration is whose. FNV-1a, because the
-  // requirement is that it is stable and spread out, not that it is unguessable.
+  // A 64-bit FNV-1a id derived from a name, identical on every node. Bindings record their
+  // subscriber's id, so it must not depend on which node provisioned the subscriber. Stable
+  // and well spread, not unguessable.
   static std::uint64_t stable_id(const std::string& name);
   static std::string generate_random_string(const std::string& prefix, uint16_t length);
   static const std::string get_zulu_time();

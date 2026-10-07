@@ -43,8 +43,7 @@ Result add_user(std::shared_ptr<datastores::Datastore> datastore, plugins::Execu
 
   if (user->password_hash.empty()) return fail(Result::Outcome::invalid, "the password could not be hashed");
 
-  // The one place in this tree where waiting on the contract is right: this is a command
-  // with nothing to serve, on its own thread, and there is no strand to block.
+  // Blocking is right here: a command on its own thread, with no strand to block.
   std::promise<plugins::Status> promise;
   auto future = promise.get_future();
 
@@ -53,11 +52,7 @@ Result add_user(std::shared_ptr<datastores::Datastore> datastore, plugins::Execu
   const auto status = future.get();
 
   if (!status.ok) {
-    // Why it refused, asked rather than read out of the message. The contract makes create
-    // refuse an existing username, but it does not say what the driver calls that: Redis
-    // answers "user_create: tom already exists" and the memory driver answers "user_create
-    // failed", and an operator told the wrong one of those goes looking in the wrong
-    // place. The extra round trip is on the failure path only.
+    // Ask whether the user exists rather than parsing the error: drivers word it differently.
     std::promise<plugins::Result<std::shared_ptr<types::User>>> existing;
     auto found = existing.get_future();
 
@@ -70,6 +65,46 @@ Result add_user(std::shared_ptr<datastores::Datastore> datastore, plugins::Execu
   }
 
   return Result{Result::Outcome::created, user->key()};
+}
+
+ResetPasswordResult reset_password(std::shared_ptr<datastores::Datastore> datastore, plugins::Executor executor, const std::string& username,
+                                   const std::string& password, std::uint32_t iterations) {
+  using Reset = ResetPasswordResult;
+
+  if (!datastore) return Reset{Reset::Outcome::invalid, "there is no datastore to write to"};
+  if (username.empty()) return Reset{Reset::Outcome::invalid, "a username is required"};
+  if (password.empty()) return Reset{Reset::Outcome::invalid, "a password is required"};
+
+  const auto key = types::User::normalise(username);
+
+  std::promise<plugins::Result<std::shared_ptr<types::User>>> read;
+  auto reading = read.get_future();
+  datastore->user_get(executor, key, [&read](plugins::Result<std::shared_ptr<types::User>> result) { read.set_value(std::move(result)); });
+
+  const auto found = reading.get();
+  if (!found.ok) return Reset{Reset::Outcome::refused, found.error};
+  if (!found.value) return Reset{Reset::Outcome::missing, "there is no user called " + key};
+
+  auto user = found.value;
+  user->password_hash = types::Password::hash(password, iterations);
+  if (user->password_hash.empty()) return Reset{Reset::Outcome::invalid, "the password could not be hashed"};
+
+  std::promise<plugins::Status> written;
+  auto writing = written.get_future();
+  datastore->user_update(executor, user, [&written](plugins::Status status) { written.set_value(std::move(status)); });
+
+  const auto updated = writing.get();
+  if (!updated.ok) return Reset{Reset::Outcome::refused, updated.error};
+
+  std::promise<plugins::Status> ended;
+  auto ending = ended.get_future();
+  datastore->session_delete_for_user(executor, key, [&ended](plugins::Status status) { ended.set_value(std::move(status)); });
+
+  // The password is changed either way; a session that could not be ended is reported.
+  const auto signed_out = ending.get();
+  if (!signed_out.ok) return Reset{Reset::Outcome::refused, "the password is changed, but its sessions could not be ended: " + signed_out.error};
+
+  return Reset{Reset::Outcome::reset, key};
 }
 
 }  // namespace athenasip::cli

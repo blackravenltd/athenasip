@@ -1,24 +1,52 @@
 # AthenaSIP - Compiling
 
-## Linux - apt
+## Dependencies
+
+CMake 3.23 or newer, a C++20 compiler, Boost 1.87 or newer (`thread`, `json` and
+`charconv` are linked; the rest is header-only), OpenSSL, yaml-cpp and nghttp2, which
+APNs needs because it speaks only HTTP/2. CMake finds nghttp2 through pkg-config.
+GoogleTest is needed only for the test build.
+
+macOS:
 
 ```
-apt install cmake build-essential
+brew install cmake pkg-config boost openssl@3 yaml-cpp libnghttp2 googletest
 ```
 
-## MacOSX
-
-* Brew Dependencies:
+Debian and Ubuntu:
 
 ```
-brew install cmake boost openssl@3 lua yaml-cpp tinyxml2 googletest
+apt install build-essential cmake pkg-config libssl-dev libyaml-cpp-dev libnghttp2-dev libgtest-dev
 ```
 
-* Build
+Where the distribution's Boost is older than 1.87, build Boost from source; `Dockerfile`
+shows how.
+
+## Build
 
 ```
 cmake --preset debug
 cmake --build build -j8
+./build/athenasip --version
 ```
 
-Presets are listed in `CONTRIBUTING.md`.
+Presets are in `CMakePresets.json`:
+
+| Preset | Build dir | What it is |
+| --- | --- | --- |
+| `debug` | `build` | Debug, for local work |
+| `release` | `build-release` | Release |
+| `tests` | `build-tests` | Debug with `ATHENA_BUILD_TESTING=ON` |
+| `asan` | `build-asan` | Tests with AddressSanitizer and UndefinedBehaviourSanitizer |
+| `tsan` | `build-tsan` | Tests with ThreadSanitizer |
+
+[testing.md](testing.md) covers running the tests and when the sanitizer presets are
+used. [installation.md](installation.md) covers installing a release build.
+
+## Docker
+
+```
+docker build -t athenasip .
+```
+
+The image builds Boost from source and runs one node with `config/config.example.yaml`.

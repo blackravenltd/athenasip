@@ -17,22 +17,13 @@
 #include "global_io_context.h"
 #include "plugins/plugin.h"
 
-// A blocking view of a datastore, for tests only.
-//
-// The contract is async because a production caller runs on the Core strand and must
-// never wait there. A test is not on the strand: it is a statement about what the store
-// holds, and threading a continuation through every assertion would say nothing extra
-// about the behaviour under test. So this waits, on the test's own thread, which no
-// production caller may do.
-//
-// Anything testing the async behaviour itself - that a handler runs on the executor it
-// was given, that a failure is reported rather than swallowed - calls the datastore
-// directly instead.
+// A blocking view of a datastore, for tests only. Production callers run on the Core strand and must never wait;
+// a test is not on the strand. Tests of the async behaviour itself call the datastore directly.
 class SyncDatastore {
  public:
   explicit SyncDatastore(std::shared_ptr<athenasip::datastores::Datastore> store) : _store(std::move(store)) {}
 
-  // Straight through: these were never async.
+  // Synchronous in the contract.
   std::string name() const { return _store->name(); }
   std::string version() const { return _store->version(); }
   bool is_connected() const { return _store->is_connected(); }
@@ -177,8 +168,7 @@ class SyncDatastore {
     return _value<std::vector<std::shared_ptr<athenasip::Call>>>([this](auto on, auto handler) { _store->call_list(std::move(on), std::move(handler)); });
   }
 
-  // The failure a call reported, for the tests that care which answer they got rather
-  // than only whether it worked.
+  // The failure the last call reported.
   const std::string& last_error() const { return _last_error; }
 
  private:

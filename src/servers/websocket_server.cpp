@@ -65,8 +65,6 @@ void WebsocketServer::_handle_accept(const boost::system::error_code& error, std
     if (_tls) {
       _start_tls_session(std::move(socket));
     } else {
-      // Straight to the HTTP upgrade. Until it completes there is nothing to hang a
-      // Channel off.
       std::make_shared<WebsocketHTTPSession>(_logger->base_logger(), _core, std::move(socket), "ws")->start();
     }
   } else {
@@ -79,9 +77,7 @@ void WebsocketServer::_handle_accept(const boost::system::error_code& error, std
 void WebsocketServer::_start_tls_session(std::shared_ptr<boost::asio::ip::tcp::socket> socket) {
   auto stream = std::make_shared<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>>(std::move(*socket), _ssl_context);
 
-  // Asynchronous, unlike the TLS SIP listener's blocking handshake: this one runs on the
-  // listener's own thread, and a client that opens a connection and then says nothing
-  // would otherwise stop every other client being accepted.
+  // Asynchronous, so a client that connects and says nothing does not stop others being accepted.
   stream->async_handshake(boost::asio::ssl::stream_base::server, [this, stream](const boost::system::error_code& ec) {
     if (ec) {
       _logger->info("TLS handshake failed: " + ec.message());

@@ -16,15 +16,19 @@
 #include <memory>
 #include <string>
 
+#include "../helpers/fake_push_service_helper.h"
 #include "../helpers/signed_in_users_helper.h"
 #include "../helpers/sync_datastore_helper.h"
 #include "../mocks/logger_mock.h"
 #include "api/admin_api.h"
 #include "api/router.h"
+#include "api/subscriber_auth.h"
 #include "config.h"
 #include "datastores/memory_datastore.h"
 #include "node_directory.h"
+#include "types/authorization.h"
 #include "types/url.h"
+#include "util.h"
 
 using namespace athenasip;
 
@@ -37,6 +41,9 @@ struct Response {
   unsigned status = 0;
   std::string body;
 
+  // Every WWW-Authenticate value, in order.
+  std::vector<std::string> challenges;
+
   boost::json::value json() const {
     boost::system::error_code ec;
     auto parsed = boost::json::parse(body, ec);
@@ -44,7 +51,7 @@ struct Response {
   }
 };
 
-// The API under test, on a port the operating system picked, with one token per scope.
+// The API under test, on a port the operating system picked, with the SignedInUsers credentials.
 struct ApiFixture {
   std::shared_ptr<MockLogger> logger = std::make_shared<MockLogger>();
   std::shared_ptr<Config> config;
@@ -75,6 +82,7 @@ struct ApiFixture {
     router = std::make_shared<api::Router>(bearer);
     provisioning = std::make_shared<api::ProvisioningAPI>(logger, datastore, admin->executor(), config, "0.0.0-test");
     provisioning->register_routes(*router);
+    router->subscriber_auth_register(std::make_shared<api::SubscriberAuth>(logger, datastore, admin->executor()));
 
     admin->middlewares.push_back(router->middleware("/api/"));
     admin->start();
@@ -83,9 +91,9 @@ struct ApiFixture {
 
   ~ApiFixture() { admin->stop(); }
 
-  // One request, one connection, closed afterwards: the API answers and shuts the
-  // socket down, which is what the session does.
-  Response request(http::verb method, const std::string& target, const std::string& token = "admin-token", const std::string& body = "") {
+  // One request, one connection: the API answers and closes the socket.
+  Response request(http::verb method, const std::string& target, const std::string& token = "admin-token", const std::string& body = "",
+                   const std::string& authorization = "") {
     boost::asio::io_context io_context;
     boost::asio::ip::tcp::socket socket(io_context);
 
@@ -94,6 +102,7 @@ struct ApiFixture {
     http::request<http::string_body> request{method, target, 11};
     request.set(http::field::host, "127.0.0.1");
     if (!token.empty()) request.set(http::field::authorization, "Bearer " + signed_in.presented(token));
+    if (!authorization.empty()) request.set(http::field::authorization, authorization);
     if (!body.empty()) {
       request.set(http::field::content_type, "application/json");
       request.body() = body;
@@ -109,7 +118,36 @@ struct ApiFixture {
 
     socket.close(ec);
 
-    return Response{response.result_int(), response.body()};
+    Response out{response.result_int(), response.body(), {}};
+    const auto challenges = response.equal_range(http::field::www_authenticate);
+    for (auto field = challenges.first; field != challenges.second; ++field) out.challenges.emplace_back(field->value());
+    return out;
+  }
+
+  // As a subscriber's softphone would: ask, take the challenge for `algorithm`, answer it with qop=auth (RFC 7616
+  // 3.4) and ask again.
+  Response as_subscriber(http::verb method, const std::string& target, const std::string& user, const std::string& password, const std::string& body = "",
+                         const std::string& algorithm = "MD5") {
+    const auto first = request(method, target, "", body);
+    if (first.status != 401) return first;
+
+    std::string realm;
+    std::string nonce;
+    for (const auto& challenge : first.challenges) {
+      if (challenge.find("algorithm=" + algorithm) == std::string::npos) continue;
+      types::Authorization parsed(challenge);
+      realm = parsed.fields["realm"];
+      nonce = parsed.fields["nonce"];
+    }
+    if (nonce.empty()) return first;
+
+    const auto hash = [&algorithm](const std::string& input) { return algorithm == "SHA-256" ? Util::sha256(input) : Util::md5(input); };
+    const auto ha1 = hash(user + ":" + realm + ":" + password);
+    const auto response = hash(ha1 + ":" + nonce + ":00000001:0a4f113b:auth:" + hash(std::string(http::to_string(method)) + ":" + target));
+
+    return request(method, target, "", body,
+                   "Digest username=\"" + user + "\", realm=\"" + realm + "\", nonce=\"" + nonce + "\", uri=\"" + target + "\", algorithm=" + algorithm +
+                       ", qop=auth, nc=00000001, cnonce=\"0a4f113b\", response=\"" + response + "\"");
   }
 
   Response post(const std::string& target, const std::string& body, const std::string& token = "admin-token") {
@@ -125,8 +163,19 @@ struct ApiFixture {
 
 }  // namespace
 
-// Nothing is reachable without a token. An API that answers a request it cannot
-// attribute is an API with no access control, whatever the config says.
+namespace {
+
+// Alice, a subscriber in example.com with the password "secret", made through the API as an operator would.
+void seed_alice(ApiFixture& f) {
+  if (!f.store->realm_get_by_name("example.com")) ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+  ASSERT_EQ(f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice","password":"secret"})").status, 201u);
+}
+
+Response alice_config(ApiFixture& f) { return f.as_subscriber(http::verb::get, "/api/v1/subscriber/example.com/config", "alice", "secret"); }
+
+}  // namespace
+
+// Nothing is reachable without a token.
 TEST(ProvisioningApiTest, ARequestWithNoTokenIsRefused) {
   ApiFixture f;
 
@@ -141,9 +190,8 @@ TEST(ProvisioningApiTest, AnUnknownTokenIsRefused) {
   EXPECT_EQ(f.get("/api/v1/realms", "not-a-token").status, 401u);
 }
 
-// A token is not a licence for everything: the client scope reads, and provisioning is
-// the admin scope's.
-TEST(ProvisioningApiTest, ATokenWithoutTheScopeIsForbidden) {
+// A credential without the route's role is forbidden.
+TEST(ProvisioningApiTest, ACredentialWithoutTheRoleIsForbidden) {
   ApiFixture f;
 
   auto response = f.get("/api/v1/realms", "client-token");
@@ -151,7 +199,7 @@ TEST(ProvisioningApiTest, ATokenWithoutTheScopeIsForbidden) {
   EXPECT_EQ(response.json().at("error").at("code").as_string(), "forbidden");
 }
 
-// Health is what a container healthcheck reaches before it has any credentials.
+// Health needs no credential: a container healthcheck has none.
 TEST(ProvisioningApiTest, HealthNeedsNoToken) {
   ApiFixture f;
 
@@ -177,8 +225,7 @@ TEST(ProvisioningApiTest, ARealmIsCreatedAndListed) {
   EXPECT_EQ(realms.as_array()[0].at("name").as_string(), "example.com");
 }
 
-// The create/update split is what lets this answer 409 rather than silently overwriting
-// a realm somebody else is using.
+// Creating an existing realm is a 409, not an overwrite.
 TEST(ProvisioningApiTest, CreatingARealmTwiceIsAConflict) {
   ApiFixture f;
 
@@ -189,7 +236,7 @@ TEST(ProvisioningApiTest, CreatingARealmTwiceIsAConflict) {
   EXPECT_EQ(again.json().at("error").at("code").as_string(), "conflict");
 }
 
-// The secret this node mints nonces with never comes back out, whatever it was set to.
+// The realm's nonce secret is never returned.
 TEST(ProvisioningApiTest, TheNonceSecretIsNeverReturned) {
   ApiFixture f;
 
@@ -200,9 +247,8 @@ TEST(ProvisioningApiTest, TheNonceSecretIsNeverReturned) {
   EXPECT_EQ(f.get("/api/v1/realms/example.com").body.find("do-not-leak"), std::string::npos);
 }
 
-// The registration bounds are realm policy, so they are provisioned rather than
-// configured per node. registration_minimum is what a 423 Interval Too Brief quotes in
-// Min-Expires (RFC 3261 10.3 step 7), and it is off until somebody sets it.
+// The registration bounds are realm policy, so they are provisioned. registration_minimum is what a 423 quotes
+// in Min-Expires (RFC 3261 10.3 step 7), and is off by default.
 TEST(ProvisioningApiTest, TheRegistrationBoundsAreProvisionedAndReturned) {
   ApiFixture f;
 
@@ -214,14 +260,13 @@ TEST(ProvisioningApiTest, TheRegistrationBoundsAreProvisionedAndReturned) {
   ASSERT_EQ(updated.status, 200u);
   EXPECT_EQ(updated.json().at("registration_minimum").as_int64(), 120);
 
-  // A PUT that named only the minimum left the maximum alone.
+  // A PUT that names only the minimum leaves the maximum alone.
   EXPECT_EQ(updated.json().at("registration_timeout").as_int64(), f.get("/api/v1/realms/example.com").json().at("registration_timeout").as_int64());
 
   EXPECT_EQ(f.get("/api/v1/realms/example.com").json().at("registration_minimum").as_int64(), 120);
 }
 
-// A realm's behaviour section: what it does differently from the server's default. A realm
-// created without one chooses nothing, and what it comes to is the server's default.
+// A realm's behaviour section holds what it does differently from the server's default; empty inherits it all.
 TEST(ProvisioningApiTest, ARealmChoosesNoBehaviourUntilItSays) {
   ApiFixture f;
 
@@ -232,7 +277,7 @@ TEST(ProvisioningApiTest, ARealmChoosesNoBehaviourUntilItSays) {
   EXPECT_TRUE(json.at("behaviour").at("media_anchor").is_null());
   EXPECT_TRUE(json.at("behaviour").at("media_profile").is_null());
 
-  // The shipped default, because the fixture's server says nothing either.
+  // The shipped default: the fixture's server sets nothing either.
   EXPECT_TRUE(json.at("behaviour_effective").at("media_anchor").as_bool());
   EXPECT_EQ(json.at("behaviour_effective").at("media_profile").as_string(), "mirror");
 }
@@ -257,8 +302,7 @@ TEST(ProvisioningApiTest, ARealmOverridesOneSettingAndInheritsTheOther) {
   EXPECT_FALSE(json.at("behaviour_default").at("media_anchor").as_bool());
 }
 
-// Null is how a realm goes back to inheriting, which is a different thing from setting the
-// value the server happens to have today.
+// Null puts a setting back to inheriting, which is not the same as setting the server's current value.
 TEST(ProvisioningApiTest, NullPutsASettingBackToTheServerDefault) {
   ApiFixture f;
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com","behaviour":{"media_profile":"rtp","media_anchor":false}})").status, 201u);
@@ -271,8 +315,7 @@ TEST(ProvisioningApiTest, NullPutsASettingBackToTheServerDefault) {
   EXPECT_FALSE(json.at("behaviour").at("media_anchor").as_bool()) << "left alone because it was not named";
 }
 
-// A setting nobody recognises, or a value that is not one of its choices, is refused and
-// changes nothing: a realm behaving other than its operator thinks is the failure.
+// qualify_interval is off by default; an out-of-range or non-numeric value is refused and changes nothing.
 TEST(ProvisioningApiTest, ARealmSetsHowOftenItsClientsAreQualified) {
   ApiFixture f;
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
@@ -325,9 +368,8 @@ TEST(ProvisioningApiTest, AnUnreadableBehaviourIsRefusedAndChangesNothing) {
   EXPECT_EQ(f.get("/api/v1/realms/example.com").json().at("behaviour").at("media_profile").as_string(), "webrtc");
 }
 
-// The fields a realm had before the section existed are refused with where they went,
-// rather than ignored: a client still sending them would otherwise see nothing change.
-TEST(ProvisioningApiTest, TheOldMediaFieldsAreRefusedWithWhereTheyWent) {
+// Media settings outside behaviour are refused with a pointer to it, not silently ignored.
+TEST(ProvisioningApiTest, AMediaFieldOutsideBehaviourIsRefusedWithAPointerToIt) {
   ApiFixture f;
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
 
@@ -344,9 +386,8 @@ TEST(ProvisioningApiTest, AnUnknownRealmIs404) {
   EXPECT_EQ(response.json().at("error").at("code").as_string(), "not_found");
 }
 
-// RFC 2617: the server holds HA1 and never the password. The API takes a password
-// because an operator has one, and turns it into HA1 on the way in.
-TEST(ProvisioningApiTest, AnSubscriberIsCreatedWithItsHa1ComputedHere) {
+// RFC 2617: the server holds HA1, never the password. The API takes a password and stores its HA1.
+TEST(ProvisioningApiTest, ASubscriberIsCreatedWithItsHa1ComputedHere) {
   ApiFixture f;
 
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
@@ -355,20 +396,18 @@ TEST(ProvisioningApiTest, AnSubscriberIsCreatedWithItsHa1ComputedHere) {
   ASSERT_EQ(created.status, 201u);
   EXPECT_EQ(created.json().at("uri").as_string(), "sip:alice@example.com");
 
-  // Neither the password nor the hash of it is anything the API hands back.
+  // Neither the password nor its hash is returned.
   EXPECT_EQ(created.body.find("secret"), std::string::npos);
   EXPECT_EQ(created.body.find("ha1"), std::string::npos);
 
-  // What the store holds is the HA1 of user, realm and password, which is what the
-  // registrar will check a Digest response against.
+  // The store holds the HA1 of user, realm and password, which the registrar checks a Digest response against.
   auto subscriber = f.store->subscriber_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
   ASSERT_NE(subscriber, nullptr);
   EXPECT_EQ(subscriber->ha1, Util::to_lower(Util::md5("alice:example.com:secret")));
 }
 
-// A subscriber's behaviour section has the one setting that is about an endpoint rather
-// than a realm: what the endpoint is. It starts empty, which takes the realm's.
-TEST(ProvisioningApiTest, AnSubscriberSaysWhatItsEndpointIs) {
+// A subscriber's behaviour section has one setting, what the endpoint is. Empty takes the realm's.
+TEST(ProvisioningApiTest, ASubscriberSaysWhatItsEndpointIs) {
   ApiFixture f;
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
 
@@ -389,8 +428,8 @@ TEST(ProvisioningApiTest, AnSubscriberSaysWhatItsEndpointIs) {
   EXPECT_FALSE(stored->media_profile.has_value());
 }
 
-// Anchoring is a realm's question, and a profile nobody recognises is a mistake. Both are
-// refused and neither changes the subscriber, password included.
+// Anchoring is a realm setting and an unknown profile is an error. Both are refused and change nothing,
+// password included.
 TEST(ProvisioningApiTest, AnUnreadableSubscriberBehaviourChangesNothing) {
   ApiFixture f;
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
@@ -407,11 +446,8 @@ TEST(ProvisioningApiTest, AnUnreadableSubscriberBehaviourChangesNothing) {
   EXPECT_EQ(f.store->subscriber_get(std::make_shared<types::SIPIdentity>("sip:bob@example.com")), nullptr);
 }
 
-// The realm in the path reaches the handler. This is not as obvious as it looks: the
-// handler reads the parameter and moves the context into the datastore call in the same
-// expression, and a parameter read by reference points into a map that has already been
-// moved from. It cost a 404 that said "no such realm: " with nothing after the colon,
-// on Linux, from code that worked on macOS.
+// The realm in the path reaches the handler. The handler must copy the parameter before moving the context
+// into the datastore call: a reference would point into a moved-from map.
 TEST(ProvisioningApiTest, ThePathParameterReachesTheHandler) {
   ApiFixture f;
 
@@ -428,18 +464,17 @@ TEST(ProvisioningApiTest, ThePathParameterReachesTheHandler) {
   EXPECT_EQ(subscribers.as_array()[0].at("realm").as_string(), "example.com");
 }
 
-TEST(ProvisioningApiTest, AnSubscriberInARealmThatDoesNotExistIs404) {
+TEST(ProvisioningApiTest, ASubscriberInARealmThatDoesNotExistIs404) {
   ApiFixture f;
 
   auto response = f.post("/api/v1/realms/nowhere.example/subscribers", R"({"user":"alice","password":"secret"})");
   EXPECT_EQ(response.status, 404u);
 
-  // Naming it is what distinguishes "that realm is not here" from "the path parameter
-  // never arrived", which is a 404 that looks identical until you read the message.
+  // Naming the realm distinguishes "not here" from "the path parameter never arrived".
   EXPECT_NE(response.body.find("nowhere.example"), std::string::npos);
 }
 
-TEST(ProvisioningApiTest, AnSubscriberWithNoCredentialIsRefused) {
+TEST(ProvisioningApiTest, ASubscriberWithNoCredentialIsRefused) {
   ApiFixture f;
 
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
@@ -458,12 +493,11 @@ TEST(ProvisioningApiTest, ASubscriberIsDeleted) {
   EXPECT_EQ(f.request(http::verb::delete_, "/api/v1/realms/example.com/subscribers/alice").status, 204u);
   EXPECT_EQ(f.get("/api/v1/realms/example.com/subscribers/alice").status, 404u);
 
-  // Deleting what is not there is a 404, not a 500 and not a success.
+  // Deleting what is not there is a 404.
   EXPECT_EQ(f.request(http::verb::delete_, "/api/v1/realms/example.com/subscribers/alice").status, 404u);
 }
 
-// Deleting a realm deletes what is in it (Tom, 2026-10-03): its subscribers, and the
-// registrations that would otherwise go on routing calls into a domain nobody serves.
+// Deleting a realm deletes its subscribers and their registrations.
 TEST(ProvisioningApiTest, DeletingARealmDeletesItsSubscribersAndRegistrations) {
   ApiFixture f;
 
@@ -477,15 +511,14 @@ TEST(ProvisioningApiTest, DeletingARealmDeletesItsSubscribersAndRegistrations) {
   EXPECT_EQ(f.request(http::verb::delete_, "/api/v1/realms/example.com").status, 204u);
   EXPECT_EQ(f.get("/api/v1/registrations", "client-token").json().as_array().size(), 0u);
 
-  // A realm made again under the same name starts empty rather than inheriting them.
+  // A realm made again under the same name starts empty.
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
   EXPECT_EQ(f.get("/api/v1/realms/example.com/subscribers").json().as_array().size(), 0u);
   EXPECT_EQ(f.get("/api/v1/realms/example.com/subscribers/alice").status, 404u);
 }
 
-// The id is derived from the URI rather than counted, so every node that provisions the
-// same subscriber agrees about which subscriber a binding belongs to.
-TEST(ProvisioningApiTest, AnSubscriberIdIsDerivedFromItsUri) {
+// The id is derived from the URI, so every node agrees which subscriber a binding belongs to.
+TEST(ProvisioningApiTest, ASubscriberIdIsDerivedFromItsUri) {
   ApiFixture f;
 
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
@@ -493,14 +526,12 @@ TEST(ProvisioningApiTest, AnSubscriberIdIsDerivedFromItsUri) {
   auto created = f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice","password":"secret"})");
   ASSERT_EQ(created.status, 201u);
 
-  // Parsing normalises a number that fits in an int64 to one, so the comparison asks
-  // for the value rather than the representation.
+  // Compare by value: parsing may hold the number as an int64.
   EXPECT_EQ(created.json().at("id").to_number<std::uint64_t>(), Util::stable_id("sip:alice@example.com"));
 }
 
-// Registrations are written by a REGISTER and by nothing else, so with none taken the
-// list is empty rather than absent.
-TEST(ProvisioningApiTest, RegistrationsAreListedForTheClientScope) {
+// With no REGISTER taken, the list is empty rather than absent.
+TEST(ProvisioningApiTest, RegistrationsAreListedForViewClusterStatus) {
   ApiFixture f;
 
   ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
@@ -511,8 +542,7 @@ TEST(ProvisioningApiTest, RegistrationsAreListedForTheClientScope) {
   ASSERT_TRUE(response.json().is_array());
   EXPECT_EQ(response.json().as_array().size(), 0u);
 
-  // A binding written the way the registrar writes one comes back with the flow it was
-  // learned over.
+  // A binding written as the registrar writes one comes back with the flow it was learned over.
   auto subscriber = f.store->subscriber_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
   ASSERT_NE(subscriber, nullptr);
 
@@ -531,16 +561,34 @@ TEST(ProvisioningApiTest, RegistrationsAreListedForTheClientScope) {
   EXPECT_EQ(registrations.as_array()[0].at("flow_id").as_string(), "tcp://192.0.2.10:5060");
 }
 
-// What a client reads to know where else the realm is served from. One node today, and
-// it has to say which one is itself.
+// RFC 8599 section 13: a push binding is listed without its pn-* parameters; the token is the client's and this
+// node's, not the reader's.
+TEST(ProvisioningApiTest, RegistrationsAreListedWithoutPushTokens) {
+  ApiFixture f;
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+  ASSERT_EQ(f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice","password":"secret"})").status, 201u);
+
+  auto subscriber = f.store->subscriber_get(std::make_shared<types::SIPIdentity>("sip:alice@example.com"));
+  ASSERT_NE(subscriber, nullptr);
+
+  types::Location binding;
+  binding.contact = std::make_shared<types::SIPUri>("sip:alice@192.0.2.10:5060;transport=tcp;pn-provider=fcm;pn-param=project;pn-prid=secret-token");
+  binding.push = true;
+  ASSERT_TRUE(f.store->subscriber_register(subscriber, binding, 3600));
+
+  const auto registrations = f.get("/api/v1/registrations", "client-token").json();
+  ASSERT_EQ(registrations.as_array().size(), 1u);
+  EXPECT_EQ(registrations.as_array()[0].at("contact").as_string(), "sip:alice@192.0.2.10:5060;transport=tcp");
+}
+
+// The node list says where the realm is served from and which node is this one.
 TEST(ProvisioningApiTest, TheNodeListDescribesThisNode) {
   ApiFixture f;
 
   auto response = f.get("/api/v1/nodes", "client-token");
   ASSERT_EQ(response.status, 200u);
 
-  // json() parses afresh each time, so the value has to be kept rather than reached
-  // into: a reference into a temporary is a reference into nothing.
+  // json() parses afresh each call, so keep the value: a reference into the temporary would dangle.
   const auto body = response.json();
   ASSERT_EQ(body.as_array().size(), 1u);
 
@@ -556,9 +604,8 @@ TEST(ProvisioningApiTest, TheNodeListDescribesThisNode) {
   EXPECT_EQ(transport.at("address").as_string(), "203.0.113.5");
 }
 
-// And the other nodes, from what each has said on the event bus: where they listen, what
-// they said of themselves, and whether that is current. A client reading this from any
-// node gets the same cluster.
+// The other nodes, from what each said on the event bus: where they listen, their description, and whether
+// that is current.
 TEST(ProvisioningApiTest, TheNodeListIncludesWhatTheOtherNodesSaid) {
   ApiFixture f;
   auto directory = std::make_shared<NodeDirectory>();
@@ -589,10 +636,9 @@ TEST(ProvisioningApiTest, TheNodeListIncludesWhatTheOtherNodesSaid) {
   EXPECT_EQ(other.at("transports").as_array()[0].at("uri").as_string(), "sips:198.51.100.7:5061;transport=tls");
 }
 
-// The bootstrap a browser fetches carries where else it can go: this node first, then the
-// others that are up, and their secure WebSocket URIs in that order. A node that is down,
-// or has gone quiet, is not somewhere to send a client (the 2026-09-21 decision).
-TEST(ProvisioningApiTest, ClientConfigListsTheNodesAClientCanUse) {
+// The browser bootstrap lists where a client can go: this node first, then the others that are up, with their
+// secure WebSocket URIs in that order. A node that is down or stale is not listed.
+TEST(ProvisioningApiTest, SubscriberConfigListsTheNodesAClientCanUse) {
   ApiFixture f;
   f.config->websocket_enable = true;
   f.config->websocket_tls = true;
@@ -608,7 +654,8 @@ TEST(ProvisioningApiTest, ClientConfigListsTheNodesAClientCanUse) {
   directory->observe("nodes/node-b/status", R"({"status":"ok","node":"node-b","transports":)" + wss("198.51.100.7") + "}");
   directory->observe("nodes/node-c/status", R"({"status":"down","node":"node-c","transports":)" + wss("198.51.100.8") + "}");
 
-  auto response = f.get("/api/v1/client/config", "client-token");
+  seed_alice(f);
+  auto response = alice_config(f);
   ASSERT_EQ(response.status, 200u) << response.body;
   const auto body = response.json();
 
@@ -638,11 +685,58 @@ TEST(ProvisioningApiTest, ABodyThatIsNotJsonIsRefused) {
   EXPECT_EQ(response.json().at("error").at("code").as_string(), "invalid_json");
 }
 
-// --- GET /client/config ---
+// --- GET /subscriber/{realm}/config ---
 
-// A browser cannot be configured by hand and reads no YAML file, so everything it needs
-// to place a call has to be fetchable over the API it is already speaking.
-TEST(ProvisioningApiTest, ClientConfigSaysWhereToSignalAndWhatToUseForIce) {
+
+// Named, a realm says what it expects of a client registering in it: the lifetime it grants and the shortest it
+// takes (RFC 3261 10.3 step 7), and how many RFC 5626 flows to keep, one per node up to two (section 4.2).
+TEST(ProvisioningApiTest, SubscriberConfigSaysWhatARealmExpects) {
+  ApiFixture f;
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+  auto realm = f.store->realm_get_by_name("example.com");
+  realm->registration_timeout = 1800;
+  realm->registration_minimum = 60;
+  f.store->realm_update(realm);
+  seed_alice(f);
+
+  auto response = alice_config(f);
+  ASSERT_EQ(response.status, 200u);
+
+  const auto config = response.json();
+  const auto& expects = config.at("realm").as_object();
+  EXPECT_EQ(expects.at("name").as_string(), "example.com");
+  EXPECT_EQ(expects.at("registration").at("expires").to_number<std::uint64_t>(), 1800u);
+  EXPECT_EQ(expects.at("registration").at("minimum").to_number<std::uint64_t>(), 60u);
+  EXPECT_EQ(expects.at("outbound").at("flows").to_number<std::uint64_t>(), 1u);
+  EXPECT_TRUE(expects.at("push").as_array().empty());
+}
+
+// RFC 8599: the push services the node runs, with what a client needs before it can subscribe (the VAPID key for
+// webpush, 4.1.1) and the shortest registration push accepts (5.6.1.1).
+TEST(ProvisioningApiTest, SubscriberConfigListsThePushServices) {
+  ApiFixture f;
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+  f.provisioning->push_register({std::make_shared<FakePushService>("webpush", std::vector<std::pair<std::string, std::string>>{{"+sip.vapid", "BKey"}})});
+  seed_alice(f);
+
+  const auto config = alice_config(f).json();
+
+  const auto& push = config.at("realm").at("push").as_array();
+  ASSERT_EQ(push.size(), 1u);
+  EXPECT_EQ(push[0].at("service").as_string(), "webpush");
+  EXPECT_EQ(push[0].at("vapid").as_string(), "BKey");
+  EXPECT_EQ(push[0].at("minimum_expires").to_number<std::uint64_t>(), f.config->push_minimum_expiry());
+}
+
+// A realm this node does not serve is a 404, as everywhere else.
+TEST(ProvisioningApiTest, SubscriberConfigForAnUnknownRealmIs404) {
+  ApiFixture f;
+
+  EXPECT_EQ(f.as_subscriber(http::verb::get, "/api/v1/subscriber/nowhere.example/config", "alice", "secret").status, 404u);
+}
+
+// Everything a browser needs to place a call is fetchable over the API.
+TEST(ProvisioningApiTest, SubscriberConfigSaysWhereToSignalAndWhatToUseForIce) {
   ApiFixture f;
   f.config->websocket_enable = true;
   f.config->websocket_address = "0.0.0.0";
@@ -651,85 +745,162 @@ TEST(ProvisioningApiTest, ClientConfigSaysWhereToSignalAndWhatToUseForIce) {
   f.config->ice_servers = {{"stun:stun.example.com:3478"}, {"turn:turn.example.com:3478"}};
   f.config->turn_shared_secret = "a shared secret";
   f.config->turn_credential_ttl = 600;
+  seed_alice(f);
 
-  auto response = f.get("/api/v1/client/config", "client-token");
+  auto response = alice_config(f);
   ASSERT_EQ(response.status, 200u);
 
   const auto body = response.json();
 
-  // Pulled out so a client does not have to know that "wss" is the answer.
+  // The WebSocket URI is given directly.
   EXPECT_EQ(body.at("websocket_uri").as_string(), "wss://203.0.113.5:9443");
 
   const auto ice = body.at("ice_servers").as_array();
   ASSERT_EQ(ice.size(), 2u);
 
-  // STUN has nothing to authenticate to, so it is given nothing.
+  // STUN needs no credential.
   EXPECT_EQ(ice.at(0).at("urls").as_string(), "stun:stun.example.com:3478");
   EXPECT_EQ(ice.at(0).as_object().find("username"), ice.at(0).as_object().end());
 
-  // TURN gets a credential that expires on its own.
+  // TURN gets a credential that expires.
   EXPECT_EQ(ice.at(1).at("urls").as_string(), "turn:turn.example.com:3478");
   EXPECT_FALSE(ice.at(1).at("username").as_string().empty());
   EXPECT_FALSE(ice.at(1).at("credential").as_string().empty());
   EXPECT_GT(ice.at(1).at("expires_at").as_int64(), std::time(nullptr));
 }
 
-TEST(ProvisioningApiTest, ClientConfigMintsAFreshCredentialEachTime) {
+TEST(ProvisioningApiTest, SubscriberConfigMintsAFreshCredentialEachTime) {
   ApiFixture f;
   f.config->ice_servers = {{"turn:turn.example.com:3478"}};
   f.config->turn_shared_secret = "a shared secret";
   f.config->turn_credential_ttl = 600;
 
-  const auto first = f.get("/api/v1/client/config", "client-token").json();
+  seed_alice(f);
+  const auto first = alice_config(f).json();
 
-  // The expiry is what the username is, so each request gives a credential good from when
-  // it was asked for rather than from when the node started.
-  //
-  // The name after the colon is the signed-in user's, and has to be protocol-safe: coturn refuses a username containing a space, which it reports as 401
-  // "wrong username" and then 400 Bad Request - indistinguishable from a bad secret at the
-  // client. An earlier version of this put our own log prose in there and no browser could
-  // allocate a relay.
+  // The username is the expiry, so each request gives a credential good from when it was asked for. The name
+  // after the colon is the subscriber's and must be protocol-safe: coturn refuses a username with a space.
   const auto username = std::string(first.at("ice_servers").at(0).at("username").as_string());
-  EXPECT_EQ(username, std::to_string(first.at("ice_servers").at(0).at("expires_at").as_int64()) + ":test-status");
+  EXPECT_EQ(username, std::to_string(first.at("ice_servers").at(0).at("expires_at").as_int64()) + ":alice_example.com");
   EXPECT_EQ(username.find(' '), std::string::npos);
 }
 
-TEST(ProvisioningApiTest, ClientConfigWithNoTurnSecretHandsOutNoCredential) {
+TEST(ProvisioningApiTest, SubscriberConfigWithNoTurnSecretHandsOutNoCredential) {
   ApiFixture f;
   f.config->ice_servers = {{"turn:turn.example.com:3478"}};
+  seed_alice(f);
 
-  auto response = f.get("/api/v1/client/config", "client-token");
+  auto response = alice_config(f);
   ASSERT_EQ(response.status, 200u);
 
-  // The URL is still reported, because it is what the operator configured and hiding it
-  // would be lying about the deployment. A credential that could not work is not.
+  // The configured URL is still reported; a credential that could not work is not.
   const auto server = response.json().at("ice_servers").at(0).as_object();
   EXPECT_EQ(server.at("urls").as_string(), "turn:turn.example.com:3478");
   EXPECT_EQ(server.find("username"), server.end());
 }
 
-TEST(ProvisioningApiTest, ClientConfigOffersNoWebsocketUriWhenThereIsNoSecureListener) {
+TEST(ProvisioningApiTest, SubscriberConfigOffersNoWebsocketUriWhenThereIsNoSecureListener) {
   ApiFixture f;
   f.config->websocket_enable = true;
   f.config->websocket_address = "0.0.0.0";
   f.config->websocket_port = 9500;
   f.config->websocket_tls = false;
+  seed_alice(f);
 
-  auto response = f.get("/api/v1/client/config", "client-token");
+  auto response = alice_config(f);
   ASSERT_EQ(response.status, 200u);
 
-  // A page served over https cannot open ws://, so a browser handed one would fail later
-  // and further away than being told there is nothing.
+  // A page served over https cannot open ws://, so a browser is told there is no WebSocket URI.
   const auto body = response.json().as_object();
   EXPECT_EQ(body.find("websocket_uri"), body.end());
 
-  // The listener is still in the transport list, because something that is not a browser
-  // may want it.
+  // The listener is still in the transport list, for clients that are not browsers.
   EXPECT_EQ(body.at("transports").as_array().at(0).at("transport").as_string(), "udp");
 }
 
-TEST(ProvisioningApiTest, ClientConfigNeedsACredentialLikeEverythingElse) {
+// RFC 7616 3.3: without credentials the answer is 401 with a Digest challenge for the realm, SHA-256 first, with
+// qop=auth.
+TEST(ProvisioningApiTest, ASubscriberRouteChallengesWithDigestForItsRealm) {
   ApiFixture f;
+  seed_alice(f);
 
-  EXPECT_EQ(f.get("/api/v1/client/config", "").status, 401u);
+  auto response = f.get("/api/v1/subscriber/example.com/config", "");
+
+  ASSERT_EQ(response.status, 401u);
+  ASSERT_EQ(response.challenges.size(), 2u);
+  EXPECT_NE(response.challenges[0].find("Digest realm=\"example.com\""), std::string::npos) << response.challenges[0];
+  EXPECT_NE(response.challenges[0].find("algorithm=SHA-256"), std::string::npos);
+  EXPECT_NE(response.challenges[0].find("qop=\"auth\""), std::string::npos);
+  EXPECT_NE(response.challenges[1].find("algorithm=MD5"), std::string::npos);
+}
+
+// The subscriber's SIP credentials sign it, under either algorithm.
+TEST(ProvisioningApiTest, ASubscribersSipCredentialsOpenItsRoutes) {
+  ApiFixture f;
+  seed_alice(f);
+
+  EXPECT_EQ(f.as_subscriber(http::verb::get, "/api/v1/subscriber/example.com/config", "alice", "secret", "", "MD5").status, 200u);
+  EXPECT_EQ(f.as_subscriber(http::verb::get, "/api/v1/subscriber/example.com/config", "alice", "secret", "", "SHA-256").status, 200u);
+}
+
+// A wrong password is challenged again, as is a subscriber that does not exist, so neither can be told apart.
+TEST(ProvisioningApiTest, AWrongPasswordOrAnUnknownSubscriberIsChallengedAgain) {
+  ApiFixture f;
+  seed_alice(f);
+
+  EXPECT_EQ(f.as_subscriber(http::verb::get, "/api/v1/subscriber/example.com/config", "alice", "wrong").status, 401u);
+  EXPECT_EQ(f.as_subscriber(http::verb::get, "/api/v1/subscriber/example.com/config", "mallory", "secret").status, 401u);
+}
+
+// A user's session opens no subscriber route, and a subscriber's credentials open no other route.
+TEST(ProvisioningApiTest, SubscriberAndUserCredentialsDoNotCross) {
+  ApiFixture f;
+  seed_alice(f);
+
+  EXPECT_EQ(f.get("/api/v1/subscriber/example.com/config", "admin-token").status, 401u);
+  EXPECT_EQ(f.as_subscriber(http::verb::get, "/api/v1/realms", "alice", "secret").status, 401u);
+}
+
+// --- GET /subscriber/{realm}/registrations, PUT /subscriber/{realm}/password ---
+
+// A subscriber sees its own bindings, and nobody else's.
+TEST(ProvisioningApiTest, ASubscriberSeesItsOwnRegistrations) {
+  ApiFixture f;
+  seed_alice(f);
+  ASSERT_EQ(f.post("/api/v1/realms/example.com/subscribers", R"({"user":"bob","password":"other"})").status, 201u);
+
+  for (const auto& [user, port] : {std::pair<std::string, int>{"alice", 5060}, {"bob", 5070}}) {
+    auto subscriber = f.store->subscriber_get(std::make_shared<types::SIPIdentity>("sip:" + user + "@example.com"));
+    types::Location binding;
+    binding.contact = std::make_shared<types::SIPUri>("sip:" + user + "@192.0.2.10:" + std::to_string(port));
+    ASSERT_TRUE(f.store->subscriber_register(subscriber, binding, 3600));
+  }
+
+  auto response = f.as_subscriber(http::verb::get, "/api/v1/subscriber/example.com/registrations", "alice", "secret");
+
+  ASSERT_EQ(response.status, 200u) << response.body;
+  const auto registrations = response.json().as_array();
+  ASSERT_EQ(registrations.size(), 1u);
+  EXPECT_EQ(registrations[0].at("contact").as_string(), "sip:alice@192.0.2.10:5060");
+}
+
+// A subscriber changes its own password: the new one opens its routes and the old one no longer does.
+TEST(ProvisioningApiTest, ASubscriberChangesItsOwnPassword) {
+  ApiFixture f;
+  seed_alice(f);
+
+  auto changed = f.as_subscriber(http::verb::put, "/api/v1/subscriber/example.com/password", "alice", "secret", R"({"password":"a new one"})");
+  ASSERT_EQ(changed.status, 204u) << changed.body;
+
+  EXPECT_EQ(f.as_subscriber(http::verb::get, "/api/v1/subscriber/example.com/config", "alice", "secret").status, 401u);
+  EXPECT_EQ(f.as_subscriber(http::verb::get, "/api/v1/subscriber/example.com/config", "alice", "a new one").status, 200u);
+  EXPECT_EQ(f.as_subscriber(http::verb::get, "/api/v1/subscriber/example.com/config", "alice", "a new one", "", "SHA-256").status, 200u);
+}
+
+// An empty password is refused.
+TEST(ProvisioningApiTest, AnEmptyPasswordIsRefused) {
+  ApiFixture f;
+  seed_alice(f);
+
+  EXPECT_EQ(f.as_subscriber(http::verb::put, "/api/v1/subscriber/example.com/password", "alice", "secret", R"({"password":""})").status, 400u);
 }

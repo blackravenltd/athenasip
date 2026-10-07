@@ -31,17 +31,11 @@ namespace {
 const std::string kCert = std::string(ATHENA_TEST_SOURCE_DIR) + "/tls/snakeoil.cer";
 const std::string kKey = std::string(ATHENA_TEST_SOURCE_DIR) + "/tls/snakeoil.key";
 
-// RFC 3261 section 18 is about what the transport layer does with bytes, so these tests
-// are written at that boundary: a real listener on a real socket, and a client that
-// writes exactly the bytes the test means to send.
-//
-// The observable throughout is a 401. A REGISTER with no credentials has to be
-// challenged (section 10.3 step 6), so a challenge coming back is proof that the bytes
-// were framed into a message, reached the transaction layer and were answered down the
-// same flow. Silence is proof the message was never assembled.
+// RFC 3261 18, tested at the transport boundary: a real listener on a real socket and a client that writes
+// exact bytes. The observable is a 401: a REGISTER with no credentials is challenged (10.3 step 6), so a
+// challenge proves the bytes were framed into a message and answered down the same flow.
 
-// A REGISTER with an optional body. The body is not meaningful to a registrar; it is
-// here because Content-Length framing is what these tests are about.
+// A REGISTER with an optional body, to exercise Content-Length framing.
 std::string register_request(const std::string& transport, const std::string& branch, const std::string& body = "") {
   std::string raw = "REGISTER sip:example.com SIP/2.0\r\n";
   raw += "Via: SIP/2.0/" + transport + " 127.0.0.1:9;branch=" + branch + "\r\n";
@@ -57,8 +51,7 @@ std::string register_request(const std::string& transport, const std::string& br
   return raw;
 }
 
-// A request whose Content-Length is a deliberate lie, for the two 18.3 rules about a
-// datagram that does not carry the body it claims.
+// A request whose Content-Length is deliberately wrong, for the 18.3 datagram rules.
 std::string register_claiming(const std::string& branch, std::size_t claimed, const std::string& body) {
   std::string raw = "REGISTER sip:example.com SIP/2.0\r\n";
   raw += "Via: SIP/2.0/UDP 127.0.0.1:9;branch=" + branch + "\r\n";
@@ -86,13 +79,8 @@ int responses_in(const std::string& text) {
   return count;
 }
 
-// Whatever arrives within the deadline, bounded rather than blocking: half of these
-// tests are about a message that must never be answered, and a test that proves that by
-// hanging is not a test.
-//
-// One read is outstanding at a time and the reader owns it across calls. Two overlapping
-// reads on one socket deliver to whichever handler asio picks, which looked exactly like
-// the node failing to answer.
+// Reads whatever arrives within a deadline, without blocking. The reader owns the single outstanding read
+// across calls: two overlapping reads on one socket deliver to either handler.
 template <typename Stream>
 struct Reader {
   net::io_context& io;
@@ -110,9 +98,7 @@ struct Reader {
     io.run_for(std::chrono::milliseconds(50));
   }
 
-  // Everything that arrived since the last call. Returns as soon as `wanted` responses
-  // are in, so a test that expects an answer costs what the answer costs rather than
-  // what the deadline is.
+  // Everything that arrived since the last call. Returns as soon as `wanted` responses are in.
   std::string take(std::chrono::milliseconds wait, int wanted = 1) {
     _wanted = wanted;
     _arm();
@@ -211,8 +197,7 @@ struct UdpFixture : CoreFixture {
 
 }  // namespace
 
-// The baseline for the stream transports: bytes in, a challenge back. Without this the
-// framing tests below would be asserting about a listener that never worked.
+// The baseline for the stream transports: bytes in, a challenge back.
 TEST(TransportFramingTest, TcpCarriesARequestAndAnswersItDownTheSameConnection) {
   TcpFixture f;
 
@@ -227,10 +212,8 @@ TEST(TransportFramingTest, TcpCarriesARequestAndAnswersItDownTheSameConnection) 
   EXPECT_NE(answer.find("SIP/2.0 401"), std::string::npos) << answer;
 }
 
-// RFC 3261 18.3: on a stream transport the Content-Length field is what says where the
-// body ends. TCP is a stream and not a record protocol, so a message may arrive in as
-// many pieces as the network cares to use, and the transport has to put it back
-// together rather than parse whatever one read happened to deliver.
+// RFC 3261 18.3: on a stream, Content-Length says where the body ends, and a message may arrive in any number
+// of pieces.
 TEST(TransportFramingTest, TcpReassemblesARequestSplitAcrossWrites) {
   TcpFixture f;
 
@@ -244,7 +227,7 @@ TEST(TransportFramingTest, TcpReassemblesARequestSplitAcrossWrites) {
 
   net::write(socket, net::buffer(request.substr(0, cut)));
 
-  // Nothing may be answered yet: half a message is not a message.
+  // Half a message is not answered.
   EXPECT_EQ(reader.take(std::chrono::milliseconds(300), 0), "");
 
   net::write(socket, net::buffer(request.substr(cut)));
@@ -253,8 +236,7 @@ TEST(TransportFramingTest, TcpReassemblesARequestSplitAcrossWrites) {
   EXPECT_NE(answer.find("SIP/2.0 401"), std::string::npos) << answer;
 }
 
-// The other half of the same rule. A stream has no message boundaries, so two requests
-// written together arrive as one read and both have to come out of it.
+// Two requests written together arrive as one read, and both are taken from it.
 TEST(TransportFramingTest, TcpTakesTwoRequestsFromOneWrite) {
   TcpFixture f;
 
@@ -270,9 +252,7 @@ TEST(TransportFramingTest, TcpTakesTwoRequestsFromOneWrite) {
   EXPECT_EQ(responses_in(answer), 2) << answer;
 }
 
-// Content-Length and nothing else says where a body ends. A transport that looked for
-// the next start line instead would swallow the second request whenever the first one
-// carried a body, which is every INVITE.
+// Content-Length alone says where a body ends, so a body does not swallow the request after it.
 TEST(TransportFramingTest, TcpUsesContentLengthToFindTheEndOfABody) {
   TcpFixture f;
 
@@ -290,8 +270,7 @@ TEST(TransportFramingTest, TcpUsesContentLengthToFindTheEndOfABody) {
   EXPECT_EQ(responses_in(answer), 2) << answer;
 }
 
-// A body that has not all arrived is a message that has not all arrived, whatever the
-// headers say.
+// A message is not answered until its whole body has arrived.
 TEST(TransportFramingTest, TcpWaitsForTheWholeBodyBeforeAnswering) {
   TcpFixture f;
 
@@ -313,10 +292,7 @@ TEST(TransportFramingTest, TcpWaitsForTheWholeBodyBeforeAnswering) {
   EXPECT_NE(answer.find("SIP/2.0 401"), std::string::npos) << answer;
 }
 
-// The same rule as the datagram case and the reason it matters most: a start line that
-// did not parse has no Request-URI, and anything that serialises the message throws.
-// On a read handler that exception is the process. Whatever the node decides to answer,
-// it has to still be there afterwards.
+// A start line that does not parse must not throw out of the read handler: the node answers and keeps running.
 TEST(TransportFramingTest, TcpSurvivesAMalformedStartLine) {
   TcpFixture f;
 
@@ -328,18 +304,15 @@ TEST(TransportFramingTest, TcpSurvivesAMalformedStartLine) {
   net::write(socket, net::buffer(std::string("this is not a request line\r\n\r\n")));
   net::write(socket, net::buffer(register_request("TCP", "z9hG4bK-tcp-after-rubbish")));
 
-  // 400 for the rubbish (RFC 3261 8.2.1), and then the node is still there to challenge
-  // the request that followed it.
+  // 400 for the malformed line (RFC 3261 8.2.1), then a challenge for the request that followed it.
   const auto answer = reader.take(std::chrono::seconds(3), 2);
 
   EXPECT_NE(answer.find("SIP/2.0 400"), std::string::npos) << answer;
   EXPECT_NE(answer.find("SIP/2.0 401"), std::string::npos) << answer;
 }
 
-// RFC 5626 section 4.4.1: on a stream transport a client's keep-alive is a double CRLF,
-// the "ping", and the server MUST answer it with a single CRLF, the "pong". A client that
-// hears no pong decides its flow has failed and registers again, so a server that
-// swallowed the ping would have every outbound client re-registering every few minutes.
+// RFC 5626 4.4.1: on a stream a client's keep-alive is a double CRLF, and the server MUST answer with a single
+// CRLF. A client that hears no pong treats its flow as failed and registers again.
 TEST(TransportFramingTest, TcpAnswersAKeepAlivePingWithAPong) {
   TcpFixture f;
 
@@ -351,13 +324,13 @@ TEST(TransportFramingTest, TcpAnswersAKeepAlivePingWithAPong) {
   net::write(socket, net::buffer(std::string("\r\n\r\n")));
   EXPECT_EQ(reader.take(std::chrono::milliseconds(500), 0), "\r\n");
 
-  // The ping may arrive in two reads like anything else on a stream.
+  // The ping may arrive in two reads.
   net::write(socket, net::buffer(std::string("\r\n")));
   EXPECT_EQ(reader.take(std::chrono::milliseconds(300), 0), "") << "one CRLF is not a ping";
   net::write(socket, net::buffer(std::string("\r\n")));
   EXPECT_EQ(reader.take(std::chrono::milliseconds(500), 0), "\r\n");
 
-  // And a request after it is still a request.
+  // A request after it is still a request.
   net::write(socket, net::buffer(register_request("TCP", "z9hG4bK-after-ping")));
   const auto answer = reader.take(std::chrono::seconds(3));
   EXPECT_NE(answer.find("SIP/2.0 401"), std::string::npos) << answer;
@@ -381,10 +354,8 @@ TEST(TransportFramingTest, TlsCarriesARequestOverACompletedHandshake) {
   EXPECT_NE(answer.find("SIP/2.0 401"), std::string::npos) << answer;
 }
 
-// A connection that never completes a handshake - a port scanner, a client speaking plain
-// SIP to the TLS port, a certificate the far end will not accept - is that connection's
-// problem. The listener goes on accepting: before this, one failed handshake stopped it
-// for good and TLS was down until the node restarted.
+// A failed handshake (a port scanner, plain SIP to the TLS port, a rejected certificate) is that connection's
+// problem: the listener goes on accepting.
 TEST(TransportFramingTest, TlsKeepsAcceptingAfterAFailedHandshake) {
   TlsFixture f;
 
@@ -422,8 +393,7 @@ TEST(TransportFramingTest, TlsKeepsAcceptingAfterAFailedHandshake) {
   EXPECT_NE(answer.find("SIP/2.0 401"), std::string::npos) << answer;
 }
 
-// And a connection that says nothing at all holds up nobody else: the handshake is each
-// connection's own, not the listener's.
+// A connection that says nothing holds up nobody else: the handshake is per connection.
 TEST(TransportFramingTest, ASilentTlsConnectionHoldsUpNobodyElse) {
   TlsFixture f;
 
@@ -463,11 +433,8 @@ TEST(TransportFramingTest, UdpCarriesADatagramAndAnswersItToTheSourcePort) {
   EXPECT_NE(answer.find("SIP/2.0 401"), std::string::npos) << answer;
 }
 
-// RFC 3261 18.3: "If the message has a Content-Length header field value that is greater
-// than the size of the body, the message MUST be discarded" on a message-oriented
-// transport. A datagram is the whole message or it is nothing: there is no later packet
-// that completes it, and treating the next datagram from that source as the missing
-// body makes one sender able to swallow another's request on a flow they share.
+// RFC 3261 18.3: a datagram whose Content-Length exceeds its body MUST be discarded. No later packet completes
+// it.
 TEST(TransportFramingTest, UdpDiscardsADatagramThatDoesNotCarryTheBodyItClaims) {
   UdpFixture f;
 
@@ -481,9 +448,7 @@ TEST(TransportFramingTest, UdpDiscardsADatagramThatDoesNotCarryTheBodyItClaims) 
   EXPECT_EQ(reader.take(std::chrono::milliseconds(500), 0), "");
 }
 
-// The same lie, and the consequence that makes it matter: the truncated datagram must
-// not eat the next one. A listener that kept the incomplete message waiting would take
-// the following request as its body and answer neither.
+// The discarded datagram must not take the next one as its body.
 TEST(TransportFramingTest, ADiscardedDatagramDoesNotSwallowTheNextOne) {
   UdpFixture f;
 
@@ -501,9 +466,8 @@ TEST(TransportFramingTest, ADiscardedDatagramDoesNotSwallowTheNextOne) {
   EXPECT_NE(answer.find("z9hG4bK-udp-good"), std::string::npos) << answer;
 }
 
-// The other half of 18.3: "If the message has a Content-Length header field value that
-// is less than the size of the body, the body is truncated to that length." The extra
-// bytes are not a second message and must not be read as one.
+// RFC 3261 18.3: a body longer than its Content-Length is truncated to that length. The extra bytes are not a
+// second message.
 TEST(TransportFramingTest, UdpTruncatesABodyLongerThanItsContentLength) {
   UdpFixture f;
 
@@ -521,8 +485,7 @@ TEST(TransportFramingTest, UdpTruncatesABodyLongerThanItsContentLength) {
   EXPECT_NE(answer.find("SIP/2.0 401"), std::string::npos) << answer;
 }
 
-// A listener that stopped on the first thing it could not parse would be a listener
-// anybody could turn off with one packet.
+// A datagram that is not SIP does not stop the listener.
 TEST(TransportFramingTest, UdpKeepsListeningAfterADatagramThatIsNotSip) {
   UdpFixture f;
 
@@ -538,9 +501,8 @@ TEST(TransportFramingTest, UdpKeepsListeningAfterADatagramThatIsNotSip) {
   EXPECT_NE(answer.find("SIP/2.0 401"), std::string::npos) << answer;
 }
 
-// RFC 5626 section 4.4.2: an outbound client keeps its UDP flow alive with STUN Binding
-// requests to the SIP port, and the node answers each with where it came from. Before
-// this a keep-alive was parsed as SIP and dropped, and the client heard nothing.
+// RFC 5626 4.4.2: an outbound client keeps its UDP flow alive with STUN Binding requests to the SIP port, and
+// the node answers each with the address it came from.
 TEST(TransportFramingTest, UdpAnswersAStunKeepAliveWithWhereItCameFrom) {
   UdpFixture f;
 
@@ -569,10 +531,8 @@ TEST(TransportFramingTest, UdpAnswersAStunKeepAliveWithWhereItCameFrom) {
   EXPECT_EQ(port, local_port);
 }
 
-// One flow per peer, not one per datagram. RFC 3261 18.2.1 has responses go back to the
-// source of the request, and the channel registry is keyed by transport, address and
-// port, so a second request from the same socket has to find the flow the first one
-// made rather than open another.
+// One flow per peer, not per datagram: the channel registry is keyed by transport, address and port, and
+// responses go back to the request's source (RFC 3261 18.2.1).
 TEST(TransportFramingTest, TwoDatagramsFromOnePeerShareOneFlow) {
   UdpFixture f;
 

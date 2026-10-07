@@ -25,7 +25,7 @@
 namespace athenasip::datastores {
 
 // The zero-config datastore: everything lives in this process and nothing survives a
-// restart. It is what a single node runs with no Redis, and what the tests run against.
+// restart. A single node without Redis runs on it, and so do the tests.
 class MemoryDatastore : public Datastore {
  public:
   MemoryDatastore(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<types::URL> url);
@@ -78,9 +78,8 @@ class MemoryDatastore : public Datastore {
   void call_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<Call>>> handler) override;
 
  private:
-  // The work itself, unchanged and synchronous: this datastore is a few hash maps and
-  // genuinely has the answer at once. The public methods above are the contract, and
-  // deliver these results on the caller's executor.
+  // The synchronous work behind the public operations, which deliver these results on the
+  // caller's executor.
   std::shared_ptr<types::Realm> _realm_get_by_name(const std::string& realm_name);
   bool _realm_create(std::shared_ptr<types::Realm> realm);
   bool _realm_update(std::shared_ptr<types::Realm> realm);

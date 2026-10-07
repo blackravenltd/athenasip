@@ -2,10 +2,8 @@
 <!DOCTYPE scenario SYSTEM "sipp.dtd">
 
 <!--
-  RFC 3261 13.2.1 and RFC 3264 section 5: an INVITE with no body. The offer then comes in
-  the 200 and the answer in the ACK, the other way round from every other call here, and a
-  node that anchors media has to rewrite both - the 200 as an offer and the ACK as an
-  answer - or the two ends find each other directly.
+  RFC 3261 13.2.1 and RFC 3264 section 5: an INVITE with no body. The offer comes in the
+  200 and the answer in the ACK, and a node that anchors media must rewrite both.
 -->
 <scenario name="Caller: delayed offer, the answer in the ACK">
 
@@ -64,9 +62,8 @@
     ]]>
   </send>
 
-  <!-- RFC 3261 22.3: a subscriber proves who it is to the proxy as well as to the
-       registrar, and on UDP nothing else can prove it. The 407 is acknowledged as any
-       final non-2xx is (17.1.1.3) and the INVITE sent again with credentials. -->
+  <!-- RFC 3261 22.3: the proxy challenges the INVITE. The 407 is ACKed (17.1.1.3) and the
+       INVITE sent again with credentials. -->
   <recv response="100" optional="true"/>
   <recv response="407" auth="true"/>
 
@@ -107,9 +104,8 @@
 
   <recv response="200" rtd="true" rrs="true">
     <action>
-      <!-- The offer, and it has to name the relay - the builtin one or rtpengine - and
-           not the callee at 172.31.0.20. -->
-      <ereg regexp="c=IN IP4 172\.31\.0\.(10|30)" search_in="body" check_it="true" assign_to="offer_anchored"/>
+      <!-- The offer must name the relay, not the callee at 172.31.0.20. -->
+      <ereg regexp="c=IN IP4 172\.31\.0\.(10|30|31)" search_in="body" check_it="true" assign_to="offer_anchored"/>
       <ereg regexp="m=audio [0-9]+ RTP/AVP" search_in="body" check_it="true" assign_to="offer_media"/>
     </action>
   </recv>

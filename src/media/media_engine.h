@@ -24,9 +24,7 @@
 
 namespace athenasip::media {
 
-// What an engine can do. A driver advertises these rather than the caller assuming:
-// the builtin relay can only bridge, rtpengine can also record and transcode, and an
-// SFU adds conference.
+// What an engine can do. Drivers advertise it; callers must not assume.
 struct Capabilities {
   bool bridge = false;      // Relay media between participants
   bool conference = false;  // Mix or forward for three or more participants
@@ -38,61 +36,41 @@ struct Capabilities {
   }
 };
 
-// Per-operation options, derived from the SDP rather than from the transport. A WebRTC
-// offer needs ICE and DTLS whatever it arrived over, and a plain RTP endpoint needs
-// neither (see the M3 notes in TODO/ACTIVE.md).
+// Per-operation options, read from the SDP rather than the transport: a WebRTC offer needs ICE and DTLS whatever it arrived over.
 struct Flags {
   bool ice = false;
   bool dtls = false;
   bool srtp = false;
   bool rtcp_mux = false;
 
-  // Whether the description this was read from parsed at all. A description nothing can
-  // read says nothing, which is not the same thing as a plain RTP one asking for
-  // nothing, and only one of the two is worth remembering about the leg that sent it.
+  // False when the description did not parse. An unreadable description says nothing about its leg, unlike a plain RTP one.
   bool readable = false;
 
-  // The participant this offer or answer belongs to, as an index into
-  // Call::participants. A multi-party call has more than two.
+  // Index into Call::participants of the participant this offer or answer belongs to.
   std::size_t participant = 0;
 
   using Profile = media::Profile;
 
-  // What the description this node is about to produce has to be, as opposed to what
-  // the one it was handed is. The two are the same question only when both ends of the
-  // call are alike; a browser calling a desk phone is exactly the case an engine
-  // exists for, and nothing in the offer says what is on the other side.
+  // The profile the description the engine produces must have. Mirror leaves it to the engine.
   Profile target = Profile::Mirror;
 
-  // The address the leg this description is produced for should send its media to, when
-  // the caller knows better than the engine's own configuration: a leg inside sip.localnet
-  // reaches the node at its local address, which the engine's one public address only
-  // reaches if the router hairpins. Empty leaves it to the engine. An engine that picks
-  // addresses from its own interfaces, as rtpengine does, may ignore it.
+  // Where the leg this description is produced for should send its media, when the caller knows better than the engine's
+  // configuration (a leg on the local network reaches the node at its local address). Empty leaves it to the engine. An
+  // engine that picks addresses from its own interfaces, as rtpengine does, may ignore it.
   std::string address;
 
-  // What the end that wrote this description is, which is the better answer to the same
-  // question the transport is guessed from: a leg's own offer or answer says exactly
-  // whether it asked for ICE, DTLS or SRTP. Nothing where the description could not be
-  // read, because a leg that has not been understood has not spoken.
+  // The profile of the end that wrote this description. Nothing when it was unreadable.
   std::optional<Profile> stated() const;
 
-  // From the transport of the flow the message is going out on, which before the far
-  // leg has described itself is the only thing that says what it is. A browser cannot
-  // reach a node any other way than over a WebSocket (RFC 7118), and nothing else is
-  // assumed to want ICE and DTLS.
+  // A guess from the transport of the outgoing flow, for a leg that has not described itself: ws and wss mean WebRTC
+  // (RFC 7118), anything else plain RTP, and no transport Mirror.
   static Profile profile_for_transport(const std::string& transport);
 
-  // Read from the description itself. The transport says nothing: a browser asks for
-  // ICE and DTLS whether its offer arrived over WSS or over UDP, and a desk phone on
-  // WSS is still plain RTP. It is also the only way a node can tell what an offer needs
-  // before it has to answer it, which is what lets an engine decline rather than
-  // produce something that cannot work.
+  // Reads ICE, DTLS, SRTP and rtcp-mux from the description, so a node knows what an offer needs before it answers.
   static Flags from_sdp(const std::string& sdp);
 };
 
-// The result of an offer or answer: the SDP to pass on, and whether the engine took
-// the media or declined it.
+// The SDP to pass on, or why the engine declined.
 struct Result {
   bool ok = false;
   std::string sdp;
@@ -112,70 +90,52 @@ struct Result {
   }
 };
 
-// A media engine anchors, bridges or mixes the media for a call. It is not a two-party
-// SDP rewriter: offer and answer name the participant they belong to, and a
-// conference-capable driver takes join, leave and roster as well.
+// Anchors, bridges or mixes the media for a call. offer and answer name the participant they belong to; a
+// conference-capable driver also takes join, leave and roster.
 //
-// Drivers register by URL scheme, the same way Datastore and EventSystem do, so the
-// engine is chosen by configuration: builtin:// or rtpengine://host:port.
+// Drivers register by URL scheme and are chosen by configuration: builtin:// or rtpengine://host:port.
 //
-// Async for the same reason the datastore is: rtpengine is an ng-protocol round trip
-// over UDP, and the builtin relay only looks instant because it happens to be in this
-// process. The caller is on the Core strand and must not wait there, and the contract
-// cannot be made async later without breaking every engine written against it.
+// Every operation that may be a network round trip is async: the caller is on the Core strand and must not wait.
 class MediaEngine : public plugins::Plugin {
  public:
   ~MediaEngine() override = default;
 
   std::string kind() const final { return plugins::kinds::media; }
 
-  // What an offer or answer reports back. Result already carries ok and error, so it
-  // is the handler's argument as it stands.
+  // Completion of an offer or answer.
   using MediaHandler = std::function<void(Result)>;
 
-  // Lifecycle. connect() is a round trip for a networked engine and is async like
-  // everything else; close() is teardown, synchronous and safe to call twice.
+  // connect() is async. close() is synchronous and safe to call twice.
   virtual void connect(plugins::Executor on, plugins::StatusHandler handler) = 0;
   virtual void close() = 0;
   virtual bool is_connected() const = 0;
 
-  // What this driver can do is local knowledge and needs no round trip.
+  // Local knowledge; no round trip.
   virtual Capabilities capabilities() const = 0;
 
-  // Whether this driver can produce a description in that profile, whatever it was handed.
-  // Local knowledge like capabilities(). The node asks before it promises a leg something:
-  // a re-offer in a profile the engine cannot make would be the refused offer over again.
-  // Defaulted to yes, which is what a driver written before this was assumed to be.
+  // Whether this driver can produce a description in the given profile. The node asks before re-offering a leg in it.
   virtual bool produces(Profile profile) const {
     (void)profile;
     return true;
   }
 
-  // Two-way media setup. offer() takes the offer from one participant and answers with
-  // the SDP to send on; answer() takes the answer coming back.
+  // offer() takes one participant's offer and yields the SDP to send on; answer() does the same for the answer coming back.
   virtual void offer(plugins::Executor on, std::shared_ptr<Call> call, std::string sdp, Flags flags, MediaHandler handler) = 0;
   virtual void answer(plugins::Executor on, std::shared_ptr<Call> call, std::string sdp, Flags flags, MediaHandler handler) = 0;
 
-  // Give up every resource held for this call. Safe to call for a call the engine
-  // never saw.
+  // Releases everything held for the call. Safe for a call the engine never saw.
   virtual void release(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) = 0;
 
-  // What the engine currently holds for this call, for the admin API and diagnostics. A
-  // JSON object; the fields every engine is asked to give, and may leave out, are
-  // `idle_seconds` (how long all of the call's media has been silent) and `legs`, an array
-  // with one object per end per stream: "packets_in", "bytes_in" (from that end) and
-  // "packets_out", "bytes_out" (to it), cumulative, measured at the engine.
+  // What the engine holds for the call, as a JSON object, for the admin API. Optional fields: `held` (false when the
+  // engine holds nothing for the call, which is how a node tells media that has gone from media it cannot see),
+  // `idle_seconds` (how long all of the call's media has been silent) and `legs`, one object per end per stream with cumulative "packets_in",
+  // "bytes_in" (from that end), "packets_out" and "bytes_out" (to it), measured at the engine.
   virtual void query(plugins::Executor on, std::shared_ptr<Call> call, plugins::Handler<std::string> handler) = 0;
 
-  // Packets this engine has sent on over its whole life, or nothing when it cannot say.
-  // Synchronous because it is a counter, not a question to a server. Optional in the
-  // contract: an engine that leaves this alone reports nothing, and /metrics says so.
+  // Packets relayed over the engine's lifetime. Optional: the default reports nothing.
   virtual std::optional<std::uint64_t> packets_relayed() const { return std::nullopt; }
 
-  // Recording. Only meaningful when capabilities().record is set; the defaults decline,
-  // so a driver that cannot record does not have to say so twice. Where the recording
-  // goes is the engine's business and its own configuration: this node asks for a call
-  // to be recorded and does not handle the media, which is the whole point of an engine.
+  // Recording, when capabilities().record is set; the defaults decline. Where a recording goes is the engine's own configuration.
   virtual void start_recording(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) {
     (void)call;
     _complete(std::move(on), std::move(handler), plugins::Status::failure("this engine does not record"));
@@ -186,8 +146,7 @@ class MediaEngine : public plugins::Plugin {
     _complete(std::move(on), std::move(handler), plugins::Status::failure("this engine does not record"));
   }
 
-  // Conference operations. Only meaningful when capabilities().conference is set; the
-  // defaults below decline, so a bridge-only driver does not have to implement them.
+  // Conference operations, when capabilities().conference is set; the defaults decline.
   virtual void join(plugins::Executor on, std::shared_ptr<Call> call, std::size_t participant, plugins::StatusHandler handler) {
     (void)call;
     (void)participant;

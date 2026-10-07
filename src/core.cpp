@@ -21,7 +21,9 @@
 #include "channel.h"
 #include "events/topics.h"
 #include "expiry_set.h"
+#include "local_ua.h"
 #include "proxy.h"
+#include "push/push_parameters.h"
 #include "qualifier.h"
 #include "registrar.h"
 #include "rtp/rtp_relay.h"
@@ -46,9 +48,8 @@ namespace athenasip {
 
 namespace {
 
-// The engine's query() answers with a JSON document, and idle_seconds is how long every
-// relay it holds for the call has been silent. Absent, null or unparseable all mean the
-// same thing here: this engine is not saying, so nothing is decided from it.
+// idle_seconds from a media engine's query() document: how long the call's relays have been
+// silent. nullopt when the engine does not say.
 std::optional<std::uint32_t> idle_seconds_of(const std::string& document) {
   try {
     const auto parsed = boost::json::parse(document);
@@ -61,6 +62,21 @@ std::optional<std::uint32_t> idle_seconds_of(const std::string& document) {
     if (seconds < 0) return std::nullopt;
 
     return static_cast<std::uint32_t>(seconds);
+  } catch (const std::exception&) {
+    return std::nullopt;
+  }
+}
+
+// Whether the engine says it holds anything for the call; nullopt when it does not say.
+std::optional<bool> held_of(const std::string& document) {
+  try {
+    const auto parsed = boost::json::parse(document);
+    if (!parsed.is_object()) return std::nullopt;
+
+    const auto* value = parsed.as_object().if_contains("held");
+    if (value == nullptr || !value->is_bool()) return std::nullopt;
+
+    return value->as_bool();
   } catch (const std::exception&) {
     return std::nullopt;
   }
@@ -87,12 +103,10 @@ void Core::server_stop_all() {
   for (auto& server : _servers) server->stop();
 }
 
-// Realms
 void Core::realm_get_by_name(std::string realm_name, plugins::Handler<std::shared_ptr<Realm>> handler) {
   datastore->realm_get_by_name(_strand, std::move(realm_name), std::move(handler));
 }
 
-// Subscribers
 void Core::subscriber_get(std::shared_ptr<SIPIdentity> identity, plugins::Handler<std::shared_ptr<Subscriber>> handler) {
   datastore->subscriber_get(_strand, std::move(identity), std::move(handler));
 }
@@ -102,39 +116,35 @@ void Core::location_list(std::uint64_t subscriber_id, plugins::Handler<std::vect
 }
 
 void Core::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel,
-                               std::uint32_t expires_seconds, std::string path, plugins::StatusHandler handler, std::string instance, std::uint32_t reg_id) {
-  // RFC 3261 10.3 step 7: the binding is written on every successful REGISTER. This
-  // used to be skipped whenever the subscriber record already existed, which is always,
-  // so no contact was ever stored and the registrar had nothing to route to.
-  //
-  // What the node knows and the Contact does not: the flow the REGISTER arrived over and
-  // that this node is the one holding it. A browser or a NAT'd client has a Contact that
-  // resolves to nothing reachable, so the flow is the only way back to it (RFC 5626), and
-  // a second node has to know whose flow it is before it can ask for it.
+                               std::uint32_t expires_seconds, std::string path, plugins::StatusHandler handler, std::string instance, std::uint32_t reg_id,
+                               bool push) {
+  // RFC 3261 10.3 step 7: every successful REGISTER writes the binding. It records the
+  // flow and the node holding it, the only way back to a client whose Contact is
+  // unreachable (RFC 5626).
   types::Location binding;
   binding.contact = contact;
   binding.path = std::move(path);
   binding.node_id = config->sip_node_id;
   binding.instance = std::move(instance);
   binding.reg_id = reg_id;
+  binding.push = push;
   if (channel) binding.flow_id = channel->flow_id();
 
-  // The channel index and the event both wait for the write: a binding nobody stored is
-  // not one to announce.
-  datastore->subscriber_register(
-      _strand, subscriber, std::move(binding), expires_seconds, [this, subscriber, contact, channel, handler](plugins::Status status) mutable {
-        if (!status.ok) {
-          _logger->error("Cannot register subscriber " + subscriber->identity->to_string() + " - " + status.error);
-          if (handler) handler(status);
-          return;
-        }
+  // The event waits for the write.
+  datastore->subscriber_register(_strand, subscriber, std::move(binding), expires_seconds,
+                                 [this, subscriber, contact, channel, handler](plugins::Status status) mutable {
+                                   if (!status.ok) {
+                                     _logger->error("Cannot register subscriber " + subscriber->identity->to_string() + " - " + status.error);
+                                     if (handler) handler(status);
+                                     return;
+                                   }
 
-        events->publish(
-            events::topics::subscriber_status(subscriber->identity->uri->to_string()),
-            "{\"contact\":\"" + contact->to_string() + "\",\"node\":\"" + config->sip_node_id + "\",\"registered\":\"" + Util::get_zulu_time() + "\"}");
+                                   events->publish(events::topics::subscriber_status(subscriber->identity->uri->to_string()),
+                                                   "{\"contact\":\"" + push::without_push_parameters(*contact).to_string() + "\",\"node\":\"" +
+                                                       config->sip_node_id + "\",\"registered\":\"" + Util::get_zulu_time() + "\"}");
 
-        if (handler) handler(status);
-      });
+                                   if (handler) handler(status);
+                                 });
 }
 
 void Core::subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel,
@@ -144,12 +154,16 @@ void Core::subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::sh
   auto self = shared_from_this();
 
   datastore->subscriber_unregister(_strand, subscriber, contact, [this, self, subscriber, handler](plugins::Status status) mutable {
-    if (!status.ok) _logger->error("Cannot unregister subscriber " + subscriber->identity->to_string() + " - " + status.error);
+    // Removing a binding that is not there is not an error (RFC 3261 10.3 step 7); the store
+    // reports it with this message. Anything else is the store failing.
+    if (!status.ok && status.error == "subscriber_unregister failed") {
+      _logger->debug("No binding to remove for " + subscriber->identity->to_string());
+    } else if (!status.ok) {
+      _logger->error("Cannot unregister subscriber " + subscriber->identity->to_string() + " - " + status.error);
+    }
     if (handler) handler(status);
   });
 }
-
-// Channels
 
 std::string Core::channel_key(const std::string& transport, const std::string& host, std::uint16_t port) {
   return channel_key(transport, host + ":" + std::to_string(port));
@@ -161,23 +175,19 @@ bool Core::channel_register(std::string endpoint, std::shared_ptr<Channel> chann
   _channels[endpoint] = channel;
   _channels_by_token[channel->flow_token()] = channel;
 
-  // Where the far end reached us is where a Record-Route this node writes will point,
-  // so it is what a Route coming back has to be recognised against (RFC 3261 16.4).
+  // Every address a Record-Route this node writes can carry must be recognised when it
+  // comes back as a Route (RFC 3261 16.4), or the node forwards the request to itself:
+  // the local endpoint, the address advertised on this flow, and the public address.
   if (channel->_connection) {
     local_address_add(channel->_connection->local_endpoint_name());
 
-    // And the address it advertises on that flow, which is the one it actually wrote.
-    // Without this the Record-Route comes back as a Route naming the public address,
-    // the node does not know itself in its own route set, and it forwards the request
-    // to itself - a loop, caught by 16.3.4 as a 482 instead of routing the BYE.
     const auto local = channel->_connection->local_endpoint();
     const auto advertised = advertised_for(*channel);
     local_address_add(advertised.host + ":" + std::to_string(advertised.port));
 
-    // And the public name, which a Route from outside will carry whatever this flow is.
-    if (!config->sip_public_address.empty()) {
+    if (const auto public_address = config->public_address(); !public_address.empty()) {
       const auto public_port = config->public_port_for(Util::to_lower(channel->_connection->transport_name()));
-      local_address_add(config->sip_public_address + ":" + std::to_string(public_port != 0 ? public_port : local.port()));
+      local_address_add(public_address + ":" + std::to_string(public_port != 0 ? public_port : local.port()));
     }
   }
 
@@ -197,9 +207,7 @@ bool Core::channel_unregister(std::string endpoint, std::shared_ptr<Channel> cha
   events->publish(events::topics::node_channel(config->sip_node_id, channel->_connection->transport_name(), channel->_connection->remote_endpoint_name()),
                   "{\"status\":\"closed\",\"at\":\"" + Util::get_zulu_time() + "\"}");
 
-  // Every name, not only the one the caller knew. A dialled channel is filed under the
-  // address it resolved to and under the name it was asked for, and leaving the second
-  // behind would be a route to a closed socket.
+  // Remove every name the channel is filed under, aliases included.
   const auto removed = std::erase_if(_channels, [&channel](const auto& entry) { return entry.second == channel; });
   _channels_by_token.erase(channel->flow_token());
 
@@ -228,13 +236,16 @@ std::shared_ptr<Channel> Core::channel_find(const std::string& flow_id) {
   return search->second;
 }
 
-// RFC 3261 16.6 step 7 and 18.1. Everything here runs on the global io_context, which is
-// where an outbound socket belongs - it has no server of its own - and the answer is
-// posted back to the strand, which is where the registry lives.
+// RFC 3261 16.6 step 7 and 18.1. Outbound sockets run on the global io_context; the answer
+// is posted back to the strand.
 void Core::channel_connect(std::string transport, std::string host, std::uint16_t port, plugins::Handler<std::shared_ptr<Channel>> handler) {
   using ChannelResult = plugins::Result<std::shared_ptr<Channel>>;
 
   transport = Util::to_lower(transport);
+
+  if (!config->sip_allow_unencrypted && transport != "tls" && transport != "wss") {
+    return handler(ChannelResult::failure("sip.allow_unencrypted is false: no outbound " + transport + " flow"));
+  }
 
   const auto key = channel_key(transport, host, port);
 
@@ -242,8 +253,7 @@ void Core::channel_connect(std::string transport, std::string host, std::uint16_
 
   if (transport == "udp") return _connect_datagram(host, port, std::move(handler));
 
-  // TLS outbound is to another node of the cluster, with the cluster's certificates, and
-  // to nothing else: what a node trusts beyond its own cluster is not a guess to make here.
+  // Outbound TLS is only to cluster peers, with the cluster's certificates.
   if (transport == "tls" && !_cluster_tls) {
     return handler(ChannelResult::failure("cannot open an outbound tls flow without the cluster's certificates"));
   }
@@ -261,9 +271,7 @@ void Core::channel_connect(std::string transport, std::string host, std::uint16_
   auto socket = std::make_shared<boost::asio::ip::tcp::socket>(io_context);
   auto deadline = std::make_shared<boost::asio::steady_timer>(io_context);
 
-  // One answer only. The timer and the connect race each other, and whichever loses must
-  // not call the handler a second time - a transaction told twice that its hop is
-  // unreachable would try the next target twice.
+  // The deadline and the connect race; the handler is called exactly once.
   auto answered = std::make_shared<std::atomic<bool>>(false);
 
   std::weak_ptr<Core> weak_self = weak_from_this();
@@ -290,9 +298,7 @@ void Core::channel_connect(std::string transport, std::string host, std::uint16_
     answer(ChannelResult::failure("timed out opening a flow to " + key));
   });
 
-  // Not RFC 3263: no NAPTR and no SRV, only the A and AAAA records for the host the URI
-  // named. The service records are a step of their own, and what a cluster and a trunk
-  // both need.
+  // Address records only. RFC 3263 server selection is the caller's, through locator().
   resolver->async_resolve(
       host, std::to_string(port), [weak_self, resolver, socket, answer, key, secure, cluster_tls, host](const boost::system::error_code& ec, auto results) {
         if (ec) return answer(ChannelResult::failure("cannot resolve " + key + " - " + ec.message()));
@@ -310,8 +316,8 @@ void Core::channel_connect(std::string transport, std::string host, std::uint16_
 
           auto channel = std::make_shared<Channel>(self->_logger->base_logger(), self, connection);
 
-          // start() dispatches onto the strand and files the channel under the address it
-          // reached, which is not the name it was asked for when that name was a hostname.
+          // start() files the channel under the address it reached; the alias adds the name
+          // it was dialled by.
           channel->start();
 
           boost::asio::post(self->_strand, [self, channel, key]() { self->channel_alias(key, channel); });
@@ -330,9 +336,8 @@ bool Core::cluster_tls_set(const std::string& ca, const std::string& cert, const
   return true;
 }
 
-// The client half of the cluster's mutual TLS: this node's certificate shown, the peer's
-// checked against the cluster CA and against the address or name that was dialled, so a
-// member of the cluster cannot answer for another one.
+// The client half of the cluster's mutual TLS. The peer's certificate is checked against
+// the cluster CA and the name dialled, so one member cannot answer for another.
 void Core::_secure_flow(std::shared_ptr<boost::asio::ip::tcp::socket> socket, std::shared_ptr<boost::asio::ssl::context> context, const std::string& host,
                         const std::string& key, std::function<void(plugins::Result<std::shared_ptr<Channel>>)> answer) {
   using ChannelResult = plugins::Result<std::shared_ptr<Channel>>;
@@ -362,17 +367,14 @@ void Core::_secure_flow(std::shared_ptr<boost::asio::ip::tcp::socket> socket, st
   });
 }
 
-// UDP has no connection to open. A datagram to a host this node has never heard from has to
-// leave by a listener's own socket, so that the source port is the one the far end answers
-// to and the one a NAT in front of it already has a mapping for (RFC 3261 18.1.1, RFC 3581).
-// The listener makes the connection; the channel over it is made here, as for TCP.
+// A new UDP flow leaves by a listener's socket, so its source port is the one the far end
+// answers to and a NAT already maps (RFC 3261 18.1.1, RFC 3581).
 void Core::_connect_datagram(std::string host, std::uint16_t port, plugins::Handler<std::shared_ptr<Channel>> handler) {
   using ChannelResult = plugins::Result<std::shared_ptr<Channel>>;
 
   const auto key = channel_key("udp", host, port);
 
-  // A literal address, which is every flow this node is reopening and most Contacts, needs
-  // no resolver and no trip off the strand.
+  // A literal address needs no resolver.
   boost::system::error_code literal;
   const auto address = boost::asio::ip::make_address(host, literal);
   if (!literal) return _open_datagram({boost::asio::ip::udp::endpoint(address, port)}, key, std::move(handler));
@@ -381,9 +383,8 @@ void Core::_connect_datagram(std::string host, std::uint16_t port, plugins::Hand
   auto resolver = std::make_shared<boost::asio::ip::udp::resolver>(io_context);
   auto deadline = std::make_shared<boost::asio::steady_timer>(io_context);
 
-  // Bounded as the TCP dial is: a name can hang for as long as the system resolver likes,
-  // and nothing else is timing this request yet. Whichever answers first is the answer, and
-  // it is given on the strand.
+  // The resolver is bounded by sip_connect_timeout_ms. The handler is called exactly once,
+  // on the strand.
   auto answered = std::make_shared<std::atomic<bool>>(false);
   auto answer = [answered, deadline, handler](ChannelResult result) {
     if (answered->exchange(true)) return;
@@ -416,7 +417,7 @@ void Core::_connect_datagram(std::string host, std::uint16_t port, plugins::Hand
   });
 }
 
-// On the strand, which is where the server list is read.
+// On the strand.
 void Core::_open_datagram(std::vector<boost::asio::ip::udp::endpoint> candidates, std::string key, plugins::Handler<std::shared_ptr<Channel>> handler) {
   using ChannelResult = plugins::Result<std::shared_ptr<Channel>>;
 
@@ -426,15 +427,15 @@ void Core::_open_datagram(std::vector<boost::asio::ip::udp::endpoint> candidates
     for (const auto& server : _servers) {
       const bool asked = server->open_datagram_flow(remote, [self, remote, key, handler](std::shared_ptr<servers::Connection> connection) {
         if (!connection) {
-          // A datagram from the peer made its flow first. That flow's channel is the one, if
-          // it has registered by now; if not, this attempt fails and the next request finds it.
+          // A datagram from the peer created the flow first. Use its channel if it has
+          // registered; otherwise fail and let the next request find it.
           if (auto existing = self->channel_find("udp", remote.address().to_string(), remote.port())) return handler(ChannelResult::success(existing));
           return handler(ChannelResult::failure("a flow to " + key + " was being made by a datagram from it"));
         }
 
         auto channel = std::make_shared<Channel>(self->_logger->base_logger(), self, connection);
 
-        // On the strand already, so this registers before the answer goes back.
+        // Already on the strand, so start() registers the channel inline.
         channel->start();
         if (channel->flow_id() != key) self->channel_alias(key, channel);
 
@@ -464,8 +465,7 @@ void Core::local_address_add(std::string host_port) { _local_addresses.insert(st
 bool Core::is_local_address(const std::string& host, std::uint16_t port) const { return _local_addresses.count(host + ":" + std::to_string(port)) > 0; }
 
 void Core::channel_close_all() {
-  // close() unregisters, which erases from _channels. Take a copy and empty the map
-  // first so nothing mutates it while we are walking it.
+  // close() erases from _channels, so walk a copy.
   std::vector<std::shared_ptr<Channel>> channels;
   channels.reserve(_channels.size());
   for (const auto& [endpoint, channel] : _channels) channels.push_back(channel);
@@ -474,8 +474,6 @@ void Core::channel_close_all() {
 
   for (const auto& channel : channels) channel->close();
 }
-
-// Nonce
 
 void Core::nonce_create(std::shared_ptr<Realm> realm, plugins::Handler<std::string> handler) {
   std::array<unsigned char, 16> random_bytes;
@@ -488,10 +486,9 @@ void Core::nonce_create(std::shared_ptr<Realm> realm, plugins::Handler<std::stri
 
   const std::string random_hex = Util::to_hex(random_bytes.data(), random_bytes.size());
 
-  // Public - This is visible to the client.
+  // The nonce is realm:random:timestamp, signed with the realm's secret.
   const std::string raw_nonce = std::to_string(realm->id) + ":" + random_hex + ":" + std::to_string(timestamp);
 
-  // Sign the public nonce material using the realm secret.
   unsigned char hmac_result[EVP_MAX_MD_SIZE];
   unsigned int hmac_len = 0;
 
@@ -512,7 +509,6 @@ void Core::nonce_create(std::shared_ptr<Realm> realm, plugins::Handler<std::stri
       return;
     }
 
-    // Cache the actual nonce for this node
     _nonce_cache->add(nonce, realm->nonce_expiry * 1000);
     if (handler) handler(plugins::Result<std::string>::success(nonce));
   });
@@ -520,14 +516,10 @@ void Core::nonce_create(std::shared_ptr<Realm> realm, plugins::Handler<std::stri
 
 void Core::nonce_check(std::string nonce, plugins::Handler<bool> handler) { datastore->nonce_check(_strand, std::move(nonce), std::move(handler)); }
 
-// Messages
-
 void Core::process_message(std::shared_ptr<SIPMessage> message) {
   _ensure_transaction_users();
 
-  // RFC 3261 8.2.1: a request this node cannot parse gets a 400 rather than silence.
-  // Via and CSeq are what name the transaction, so without them there is nothing to
-  // route to either.
+  // A message without a valid start line, Via and CSeq names no transaction: 400.
   if (!message->header->is_valid() || !message->header->contains("Via") || !message->header->contains("CSeq")) {
     _logger->info("Malformed or incomplete message (needs a parseable start line, Via and CSeq) - 400");
     _send_status(message, 400, "Bad Request");
@@ -535,9 +527,8 @@ void Core::process_message(std::shared_ptr<SIPMessage> message) {
   }
 
   if (message->header->type == SIPHeader::Type::Response) {
-    // RFC 3261 17.1.3: a response belongs to the client transaction whose branch it
-    // carries. One that belongs to none has no context here, so it goes back down its
-    // Via chain statelessly (16.7 step 1, 18.1.2), which is the proxy's job.
+    // RFC 3261 17.1.3: a response goes to the client transaction its branch names. One
+    // that matches none is forwarded statelessly by the proxy (16.7 step 1).
     auto transaction = _matcher.match_response(message);
 
     if (!transaction) {
@@ -551,9 +542,8 @@ void Core::process_message(std::shared_ptr<SIPMessage> message) {
 
   const auto& method = message->header->request_method;
 
-  // RFC 3261 17.1.1.3: an ACK for a non-2xx belongs to the INVITE server transaction
-  // that sent the response, which absorbs it. An ACK that matches nothing is the ACK for
-  // a 2xx, which is end to end and goes straight to the TU.
+  // RFC 3261 17.1.1.3: an ACK for a non-2xx is absorbed by its INVITE server transaction.
+  // One that matches nothing is the end-to-end ACK for a 2xx and goes to the TU.
   if (method == "ACK") {
     auto transaction = _matcher.match_request(message);
 
@@ -566,8 +556,7 @@ void Core::process_message(std::shared_ptr<SIPMessage> message) {
     return;
   }
 
-  // A request that matches an existing transaction is a retransmission. The transaction
-  // answers it from what it last sent; the TU never sees it twice.
+  // A retransmission is answered by its transaction and never reaches the TU.
   auto existing = _matcher.match_request(message);
   if (existing) {
     existing->receive(message);
@@ -608,9 +597,8 @@ Core::Advertised Core::advertised_for(const Channel& channel) const {
   const auto remote = channel._connection->remote_endpoint();
   const auto transport = Util::to_lower(channel._connection->transport_name());
 
-  // A peer node reaches this one at its inter-node listener, whichever of the two opened
-  // the connection between them: the local end of a connection this node opened is a port
-  // nothing listens on.
+  // A peer node is always given the inter-node listener: the local end of a connection
+  // this node opened is a port nothing listens on.
   if (!channel.peer_node().empty()) {
     if (const auto cluster = config->advertised_cluster()) {
       out.host = cluster->address;
@@ -619,9 +607,9 @@ Core::Advertised Core::advertised_for(const Channel& channel) const {
     }
   }
 
-  if (!config->sip_public_address.empty() && !config->in_localnet(remote.address())) {
+  if (const auto public_address = config->public_address(); !public_address.empty() && !config->in_localnet(remote.address())) {
     const auto public_port = config->public_port_for(transport);
-    out.host = config->sip_public_address;
+    out.host = public_address;
     out.port = public_port != 0 ? public_port : local.port();
     return out;
   }
@@ -629,8 +617,8 @@ Core::Advertised Core::advertised_for(const Channel& channel) const {
   out.host = local.address().to_string();
   out.port = local.port();
 
-  // The kernel's answer to "which of my addresses would reach that peer": a connected UDP
-  // socket sends nothing, but has a local address once connected.
+  // A wildcard listener: connect a UDP probe (nothing is sent) and take the local address
+  // the kernel picks to reach that peer.
   if (local.address().is_unspecified()) {
     boost::system::error_code error;
     boost::asio::ip::udp::socket probe(detail::get_global_io_context());
@@ -645,17 +633,65 @@ Core::Advertised Core::advertised_for(const Channel& channel) const {
   return out;
 }
 
+void Core::push_register(std::shared_ptr<push::PushService> service) {
+  if (service) _push_services[service->name()] = std::move(service);
+}
+
+std::shared_ptr<push::PushService> Core::push_service(const std::string& provider) const {
+  const auto found = _push_services.find(provider);
+  return found == _push_services.end() ? nullptr : found->second;
+}
+
+std::shared_ptr<AddressDiscovery> Core::address_discovery() {
+  if (!_address_discovery) _address_discovery = std::make_shared<AddressDiscovery>(_logger->base_logger(), weak_from_this());
+  return _address_discovery;
+}
+
+void Core::stun_answered(const stun::Mapped& mapped) {
+  if (_address_discovery) _address_discovery->answered(mapped);
+}
+
+void Core::register_forward(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction) {
+  if (_proxy) _proxy->forward_register(std::move(request), std::move(transaction));
+}
+
+void Core::binding_registered(std::uint64_t subscriber_id, const std::shared_ptr<SIPUri>& contact) {
+  if (_proxy) _proxy->on_registered(subscriber_id, contact);
+}
+
+std::shared_ptr<PushRefresher> Core::push_refresher() {
+  if (!_push_refresher) _push_refresher = std::make_shared<PushRefresher>(_logger->base_logger(), weak_from_this());
+  return _push_refresher;
+}
+
 std::shared_ptr<Qualifier> Core::qualifier() {
   if (!_qualifier) _qualifier = std::make_shared<Qualifier>(_logger->base_logger(), weak_from_this());
   return _qualifier;
 }
 
+std::shared_ptr<LocalUA> Core::local_ua() {
+  if (!_local_ua) _local_ua = std::make_shared<LocalUA>(_logger->base_logger(), weak_from_this());
+  return _local_ua;
+}
+
+void Core::local_request(std::shared_ptr<SIPMessage> request, transactions::TransactionBase::SendFn on_final) {
+  // A server transaction like any other, except that its answer stays here. It has no transport, so no
+  // retransmissions to absorb, and it is not filed: nothing arrives for it.
+  const auto key = TransactionMatcher::key(request);
+  auto transaction = std::make_shared<NonInviteServerTransaction>(_logger->base_logger(), key, true, Timers::from_config(*config), _timer_source,
+                                                                  std::move(on_final), nullptr);
+  transaction->start(request);
+
+  _deliver_to_tu(request, transaction);
+}
+
+bool Core::names_this_node(const SIPUri& uri) const { return _proxy && _proxy->names_this_node(uri); }
+
 void Core::_deliver_to_tu(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction) {
   _ensure_transaction_users();
 
-  // Here rather than in process_message, because this is where a request has been
-  // de-duplicated: a retransmission is absorbed by its transaction and never arrives
-  // (17.2.1), so what the tracker sees is each request once.
+  // Retransmissions never get this far (RFC 3261 17.2.1), so the dialog tracker sees each
+  // request once.
   request->in_known_dialog = !request->header->contains("To") ? false : _dialogs->find(request) != nullptr;
   _dialogs->observe_request(request);
 
@@ -666,8 +702,7 @@ void Core::_deliver_to_tu(const std::shared_ptr<SIPMessage>& request, const std:
     return;
   }
 
-  // RFC 3261 9.2: a CANCEL is its own transaction and separately names the INVITE
-  // transaction it cancels, so the TU is handed both.
+  // RFC 3261 9.2: the TU gets the CANCEL's own transaction and the INVITE's it cancels.
   if (method == "CANCEL") {
     _proxy->on_cancel(request, transaction, _matcher.match_cancelled(request));
     return;
@@ -687,9 +722,8 @@ std::shared_ptr<transactions::TransactionBase> Core::_server_transaction_start(c
 
   auto channel = request->channel.lock();
 
-  // A stream transport neither loses nor duplicates, so the retransmission timers are
-  // pointless on one (RFC 3261 17.2.1, 17.2.2). Nothing to send on means nothing to
-  // retransmit either.
+  // No retransmission timers on a reliable transport (RFC 3261 17.2.1, 17.2.2), or with no
+  // channel to send on.
   const bool reliable = !channel || !channel->_connection || channel->_connection->is_reliable();
 
   std::weak_ptr<Channel> weak_channel = channel;
@@ -699,8 +733,7 @@ std::shared_ptr<transactions::TransactionBase> Core::_server_transaction_start(c
     if (auto target = weak_channel.lock()) target->send(message);
   };
 
-  // The transaction is filed before it is started, so by the time the TU is called it can
-  // be found by the key it will answer on.
+  // The transaction is filed before it starts, so the lookup by key succeeds here.
   auto to_tu = [weak_self, key](std::shared_ptr<SIPMessage> message) {
     auto self = weak_self.lock();
     if (!self) return;
@@ -794,8 +827,6 @@ void Core::_send_status(const std::shared_ptr<SIPMessage>& request, uint16_t cod
   channel->send(response);
 }
 
-// Transactions
-
 void Core::transaction_add(const std::string& key, std::shared_ptr<transactions::TransactionBase> transaction) {
   _matcher.add(key, std::move(transaction));
   events->publish(events::topics::node_transaction(config->sip_node_id, key), "registered");
@@ -814,15 +845,12 @@ std::size_t Core::transaction_count() const { return _matcher.size(); }
 
 void Core::transaction_end_all() { _matcher.terminate_all(); }
 
-// Calls
 bool Core::call_register(std::shared_ptr<Call> call) {
   _calls[call->id] = call;
 
   if (call->node.empty()) call->node = config->sip_node_id;
 
-  // The call record is for the admin API and the cluster, not for this call's
-  // signalling, so nothing waits on it. The node the caller reached writes it; a node a
-  // peer forwarded the call to does not.
+  // Only the node the caller reached writes the call record. Signalling does not wait on it.
   if (call->from_node.empty()) {
     datastore->call_create(_strand, call, [this, self = shared_from_this(), call](plugins::Status status) {
       if (!status.ok) _logger->error("Cannot store call " + call->id + " - " + status.error);
@@ -834,18 +862,14 @@ bool Core::call_register(std::shared_ptr<Call> call) {
   return true;
 }
 
-// A dialog is the signalling relationship between the two ends; a Call is the
-// application object that hangs off it - participants, media, focus - and what the admin
-// API lists and the event bus announces. One follows the other, which is the whole
-// reason this node tracks dialogs it does not own.
+// Keeps the Call (participants, media, record, events) in step with its dialog.
 void Core::_on_dialog_change(const std::shared_ptr<types::Dialog>& dialog) {
   if (!dialog || dialog->call_id.empty()) return;
 
   auto call = call_get(dialog->call_id);
 
   if (!call) {
-    // A dialog that is over before this node had a call for it is an attempt that failed
-    // before anyone answered. There is no call to record.
+    // An attempt that failed before anyone answered: no call to record.
     if (dialog->state == types::Dialog::State::Terminated) return;
 
     call = std::make_shared<Call>();
@@ -855,14 +879,13 @@ void Core::_on_dialog_change(const std::shared_ptr<types::Dialog>& dialog) {
     call->add_participant(dialog->caller, nullptr, true);
     call->add_participant(dialog->callee, nullptr, false);
 
-    // Not inside add_participant: it returns a reference into the vector, and the second
-    // call reallocates it.
+    // add_participant's returned reference is invalidated by the next add, so set these after.
     for (auto& participant : call->participants) {
       participant.dialog = dialog;
       participant.node_id = config->sip_node_id;
     }
 
-    // Forwarded here by a peer: the caller is that node's, and so is the record.
+    // Forwarded here by a peer: the caller's leg and the record belong to that node.
     call->from_node = dialog->from_node;
     if (!call->from_node.empty()) call->participants.front().node_id = call->from_node;
 
@@ -873,8 +896,7 @@ void Core::_on_dialog_change(const std::shared_ptr<types::Dialog>& dialog) {
 
   switch (dialog->state) {
     case types::Dialog::State::Early:
-      // A callee tag means the callee has spoken, which is the difference between a call
-      // that is on its way and one that is ringing.
+      // A callee tag means the callee has responded.
       call->state = dialog->callee_tag.empty() ? Call::State::Trying : Call::State::Ringing;
       break;
 
@@ -893,8 +915,6 @@ void Core::_on_dialog_change(const std::shared_ptr<types::Dialog>& dialog) {
 
   events->publish(events::topics::call_state(call->id), Call::state_to_string(call->state));
 
-  // The record is for the admin API and the cluster, not for this call's signalling, so
-  // nothing waits on it.
   if (call->from_node.empty()) {
     datastore->call_update(_strand, call, [this, self = shared_from_this(), call](plugins::Status status) {
       if (!status.ok) _logger->error("Cannot update call " + call->id + " - " + status.error);
@@ -903,12 +923,8 @@ void Core::_on_dialog_change(const std::shared_ptr<types::Dialog>& dialog) {
 
   if (call->state != Call::State::Closed) return;
 
-  // The other end of the anchoring the proxy does on the signalling path. A dialog
-  // ending is the only thing that says a call is over, which is the whole reason this
-  // node tracks dialogs it does not own; the ports go back here or they never do.
-  //
-  // The call is held by the handler, so unregistering it below does not take it away
-  // from an engine that has not answered yet.
+  // The dialog ending is the only signal that the call is over, so the media is released
+  // here. The handler holds the call until the engine answers.
   if (media) {
     media->release(_strand, call, [this, self = shared_from_this(), call](plugins::Status status) {
       if (!status.ok) _logger->error("Cannot release the media for call " + call->id + " - " + status.error);
@@ -952,26 +968,19 @@ std::shared_ptr<Call> Core::call_get(std::string callId) {
   return search->second;
 }
 
-// Media
-
 void Core::media_register(std::shared_ptr<media::MediaEngine> engine) {
   media = std::move(engine);
 
-  // Nothing to ask an engine until there is one, and the media half of the sweep is the
-  // half that needs it.
+  // The media half of the call sweep needs an engine.
   _call_sweep_schedule();
 }
 
-// A node saying it is alive, on an interval, retained, with the broker primed to say
-// otherwise if it vanishes. Those three together are what makes this answerable by a
-// monitor: the interval proves it is still running, retention means a monitor that
-// arrives late still learns the answer, and the will covers the case where the node
-// never gets to speak again.
+// The status is published on an interval and retained, so a late monitor still learns it;
+// the bus's last-will message covers a node that dies.
 void Core::node_status_start() {
   _started_at = std::time(nullptr);
 
-  // Every node's status, so that this one knows the cluster. Retained, so a node that
-  // starts late hears the others at once rather than an interval later.
+  // Hear every node's retained status, to know the cluster.
   std::weak_ptr<NodeDirectory> weak_nodes = _nodes;
   events->subscribe(
       _strand, "nodes/+/status",
@@ -1006,13 +1015,11 @@ std::string Core::node_status_json(const std::string& status, const std::string&
   report["at"] = Util::get_zulu_time();
   report["uptime"] = uptime;
 
-  // The promise of when it will be said again, so a monitor derives its staleness from the
-  // node rather than from a constant that agrees with it by coincidence. Zero is a node that
-  // does not repeat itself.
+  // When the next report is due, in seconds, so a monitor can judge staleness. Zero means
+  // the node does not repeat it.
   report["status_interval"] = status_interval;
 
-  // Where it listens, which is what makes the status a directory entry and not only a
-  // heartbeat.
+  // Where the node listens, which makes the status a directory entry.
   boost::json::array listening;
   for (const auto& transport : transports) {
     boost::json::object entry;
@@ -1024,8 +1031,7 @@ std::string Core::node_status_json(const std::string& status, const std::string&
   }
   report["transports"] = std::move(listening);
 
-  // Where a peer node reaches this one, which is a different listener from any a client
-  // uses. Absent on a node that is not in a cluster, and in a will.
+  // The inter-node listener. Absent outside a cluster, and in a will.
   if (cluster) {
     boost::json::object peer;
     peer["address"] = cluster->address;
@@ -1039,15 +1045,69 @@ std::string Core::node_status_json(const std::string& status, const std::string&
 std::string Core::node_status_json(const std::string& status) const {
   const auto uptime = _started_at == 0 ? 0 : static_cast<std::int64_t>(std::time(nullptr) - _started_at);
 
-  return node_status_json(status, config->sip_node_id, _version, datastore ? datastore->describe() : "none", uptime, config->events_status_interval,
-                          config->advertised_transports(), config->advertised_cluster());
+  auto report = boost::json::parse(node_status_json(status, config->sip_node_id, _version, datastore ? datastore->describe() : "none", uptime,
+                                                    config->events_status_interval, config->advertised_transports(), config->advertised_cluster()))
+                    .as_object();
+
+  // This node's address as a STUN server sees it: reported, not advertised. Null until one has answered.
+  if (const auto finding = _address_discovery ? _address_discovery->finding() : std::nullopt) {
+    boost::json::array verified_by;
+    for (const auto& node : _address_discovery->verified_by()) verified_by.push_back(boost::json::string(node));
+    report["discovered"] = {{"address", finding->address}, {"port", finding->port}, {"source", finding->source}, {"verified_by", std::move(verified_by)}};
+  } else {
+    report["discovered"] = nullptr;
+  }
+
+  // Whether peers reach this node's inter-node listener, and which of theirs this node reaches.
+  if (_address_discovery && _address_discovery->cluster_unreachable()) {
+    if (auto* peer = report.if_contains("cluster"); peer != nullptr && peer->is_object()) peer->as_object()["reachable"] = false;
+  }
+
+  boost::json::array cluster_probes;
+  if (_address_discovery) {
+    for (const auto& [node, reached] : _address_discovery->cluster_probes()) cluster_probes.push_back({{"node", node}, {"reached", reached}});
+  }
+  report["cluster_probes"] = std::move(cluster_probes);
+
+  // The other nodes' discovered addresses this node has reached, which is how they learn theirs are good.
+  boost::json::array reaches;
+  if (_address_discovery) {
+    for (const auto& [node, address] : _address_discovery->reached()) reaches.push_back({{"node", node}, {"address", address}});
+  }
+  report["reaches"] = std::move(reaches);
+
+  // The media engine and what it can do. Null, not absent, for a node with no engine.
+  if (media) {
+    boost::json::object engine;
+    engine["engine"] = media->describe();
+
+    const auto capabilities = media->capabilities();
+    boost::json::array can;
+    if (capabilities.bridge) can.push_back("bridge");
+    if (capabilities.conference) can.push_back("conference");
+    if (capabilities.record) can.push_back("record");
+    if (capabilities.transcode) can.push_back("transcode");
+    engine["capabilities"] = std::move(can);
+
+    boost::json::array produces;
+    for (const auto profile : {media::Profile::PlainRtp, media::Profile::WebRtc, media::Profile::SrtpSdes}) {
+      if (media->produces(profile)) produces.push_back(boost::json::string(media::setting_name(profile)));
+    }
+    engine["produces"] = std::move(produces);
+
+    report["media"] = std::move(engine);
+  } else {
+    report["media"] = nullptr;
+  }
+
+  return boost::json::serialize(report);
 }
 
 void Core::_node_status_publish() {
-  // Degraded rather than ok where the datastore is not there: a node that cannot read a
-  // registration is running but is not serving, and a health report that called that ok
-  // would be the most misleading thing this node says.
+  // A node without its datastore is running but not serving: degraded.
   const auto status = (datastore && datastore->is_connected()) ? "ok" : "degraded";
+
+  if (_address_discovery) _address_discovery->review();
 
   events->publish_state(events::topics::node_status(config->sip_node_id), node_status_json(status));
 
@@ -1069,15 +1129,9 @@ void Core::_node_status_schedule() {
   });
 }
 
-// A UDP flow is made by the first datagram from an address and has nothing to end it: no
-// socket, no close, no error on the read. Without this the channel registry and the
-// server's own map grow for the life of the process, no `closed` is ever published for a
-// UDP flow, and anything counting channels counts wrongly and forever - and the map is
-// keyed by a remote address a datagram can claim to be from, so on a public listener it is
-// a way to grow a node's memory from off the network.
-//
-// Only unreliable flows are swept. A TCP, TLS or WebSocket flow ends when its socket does,
-// and sweeping one that is merely quiet would close a registration's path home.
+// A UDP flow is created by the first datagram from an address and nothing ends it, so idle
+// ones are closed here; otherwise spoofed source addresses could grow the registry without
+// bound. Reliable flows end with their socket and are never swept.
 void Core::flow_sweep_start() { _flow_sweep_schedule(); }
 
 void Core::_flow_sweep_schedule() {
@@ -1089,8 +1143,7 @@ void Core::_flow_sweep_schedule() {
   const auto timeout = config->sip_flow_idle_timeout;
   if (timeout == 0) return;
 
-  // A quarter of the timeout, never more often than every fifteen seconds: a pass is a walk
-  // over every live channel, and being a quarter late to forget one costs nothing.
+  // Every quarter of the timeout, and at most every fifteen seconds.
   const auto interval = std::max<std::uint32_t>(timeout / 4, 15);
 
   std::weak_ptr<Core> weak_self = weak_from_this();
@@ -1106,25 +1159,21 @@ void Core::_flow_sweep() {
   const auto timeout = config->sip_flow_idle_timeout;
 
   if (timeout > 0) {
-    // The injectable clock, as the call sweep uses: an idle timeout measured against the
-    // real one is five minutes of waiting per test case. In production it is
-    // steady_clock::now(), which is exactly what Channel::touch stamps.
+    // The injectable clock, which is also what Channel::touch stamps.
     const auto now = _timer_source->now();
 
-    // Collected before anything is closed: closing a channel unregisters it, which erases
-    // from the map being walked.
+    // close() erases from _channels, so collect first.
     std::vector<std::shared_ptr<Channel>> idle;
 
     for (const auto& [endpoint, channel] : _channels) {
       if (!channel || !channel->_connection) continue;
 
-      // A reliable transport has a socket to tell us, and its silence means nothing.
       if (channel->_connection->is_reliable()) continue;
 
       const auto quiet_for = std::chrono::duration_cast<std::chrono::seconds>(now - channel->last_activity()).count();
       if (quiet_for < static_cast<std::int64_t>(timeout)) continue;
 
-      // One channel can be filed under several names. Closing it once is enough.
+      // A channel can be filed under several names.
       if (std::find(idle.begin(), idle.end(), channel) == idle.end()) idle.push_back(channel);
     }
 
@@ -1146,15 +1195,15 @@ void Core::_call_sweep_schedule() {
   const auto media_timeout = media ? config->sip_media_timeout : 0;
   const auto max_duration = config->sip_max_call_duration;
 
-  if (media_timeout == 0 && max_duration == 0) return;
+  if (!_watching_since) _watching_since = _timer_source->now();
 
-  // A quarter of whichever bound is shorter, so a call is noticed within a quarter of the
-  // limit that catches it, and never more often than every fifteen seconds: each pass is
-  // a walk over every live call and a round trip to the engine for each one of them.
+  // Every quarter of the shorter bound, and at most every fifteen seconds: each pass
+  // queries the engine once per live call. With neither, the pass only looks for calls
+  // left by a node that has gone, once a minute.
   std::uint32_t shortest = media_timeout;
   if (max_duration > 0 && (shortest == 0 || max_duration < shortest)) shortest = max_duration;
 
-  const auto interval = std::max<std::uint32_t>(shortest / 4, 15);
+  const auto interval = shortest == 0 ? 60 : std::max<std::uint32_t>(shortest / 4, 15);
 
   std::weak_ptr<Core> weak_self = weak_from_this();
 
@@ -1172,17 +1221,15 @@ void Core::_call_sweep() {
 
   const bool ask_media = media_timeout > 0 && media && media->is_connected();
 
-  // Confirmed dialogs only. A call still being set up has relay ports and no media by
-  // definition - nothing flows until somebody answers - and what bounds that is timer C
-  // and timer B, not this.
+  // Confirmed dialogs only: a call being set up has no media yet and is bounded by timers
+  // B and C.
   std::unordered_set<std::string> seen;
 
   for (const auto& dialog : dialogs()->all()) {
     if (!dialog || dialog->state != types::Dialog::State::Confirmed) continue;
     if (!seen.insert(dialog->call_id).second) continue;
 
-    // The cap first, because it needs nothing but the clock and it applies to calls the
-    // media question cannot reach.
+    // The duration cap applies to every call, anchored or not.
     if (max_duration > 0 && dialog->confirmed_monotonic.time_since_epoch().count() != 0) {
       const auto up_for = std::chrono::duration_cast<std::chrono::seconds>(now - dialog->confirmed_monotonic).count();
 
@@ -1206,23 +1253,101 @@ void Core::_call_sweep() {
 
       const auto idle = idle_seconds_of(held.value);
 
-      // No reading is not the same as a long one. An engine holding nothing for this
-      // call, or one whose query says nothing about idleness, leaves the call alone.
+      // No reading leaves the call alone.
       if (!idle.has_value() || *idle < media_timeout) return;
 
       self->_end_held_call(call_id, "has carried no media for " + std::to_string(*idle) + "s");
     });
   }
 
+  _orphan_sweep();
   _call_sweep_schedule();
 }
 
-void Core::_end_held_call(const std::string& call_id, const std::string& reason) {
-  _logger->info("Call " + call_id + " " + reason + " - letting it go");
+void Core::_orphan_sweep() {
+  const auto interval = config->events_status_interval;
+  if (!datastore || interval == 0 || !_watching_since) return;
 
-  // Terminating the dialogs is the whole of it: the change callback is what writes the
-  // call record and releases the engine's ports, exactly as it does when a session timer
-  // lapses. No BYE goes anywhere (RFC 4028 section 8.3).
+  // A node that has just started has heard nobody, and every other node would look gone.
+  const auto watch = std::chrono::seconds(interval * 3);
+  if (_timer_source->now() - *_watching_since < watch) return;
+
+  const auto& self_id = config->sip_node_id;
+
+  std::set<std::string> live{self_id};
+  for (const auto& node : _nodes->list(watch)) {
+    if (!node.stale && node.status == "ok") live.insert(node.id);
+  }
+
+  // One node does it, so the engine is asked once per call.
+  if (*live.begin() != self_id) return;
+
+  std::weak_ptr<Core> weak_self = weak_from_this();
+
+  datastore->call_list(_strand, [weak_self, live](plugins::Result<std::vector<std::shared_ptr<Call>>> listed) {
+    auto self = weak_self.lock();
+    if (!self || !listed.ok) return;
+
+    for (const auto& call : listed.value) {
+      if (!call || call->state == Call::State::Closed || call->node.empty()) continue;
+
+      // This node's own calls from before it restarted have lost their dialogs too.
+      const bool orphan =
+          call->node == self->config->sip_node_id ? !self->call_get(call->id) && call->created_at < self->_constructed_at : live.count(call->node) == 0;
+      if (orphan) self->_settle_orphan(call);
+    }
+  });
+}
+
+void Core::_settle_orphan(const std::shared_ptr<Call>& call) {
+  // Media end to end never touched the node, and no node can see it.
+  if (call->media_engine.empty()) return _close_orphan(call, "its node has gone and its media was not anchored", false);
+
+  if (!media || !media->is_connected()) return;
+
+  const auto media_timeout = config->sip_media_timeout;
+  std::weak_ptr<Core> weak_self = weak_from_this();
+
+  // Anchored media outlives the node that set it up, so the call is over only when the media is.
+  media->query(_strand, call, [weak_self, call, media_timeout](plugins::Result<std::string> held) {
+    auto self = weak_self.lock();
+    if (!self || !held.ok) return;
+
+    if (held_of(held.value) == false) return self->_close_orphan(call, "its node has gone and the engine holds nothing for it", false);
+
+    const auto idle = idle_seconds_of(held.value);
+    if (media_timeout > 0 && idle && *idle >= media_timeout) {
+      self->_close_orphan(call, "its node has gone and it has carried no media for " + std::to_string(*idle) + "s", true);
+    }
+  });
+}
+
+void Core::_close_orphan(const std::shared_ptr<Call>& call, const std::string& reason, bool release) {
+  _logger->info("Closing call " + call->id + " of node " + call->node + ": " + reason);
+
+  if (release && media) {
+    media->release(_strand, call, [this, self = shared_from_this(), call](plugins::Status status) {
+      if (!status.ok) _logger->warn("Cannot release the media for call " + call->id + " - " + status.error);
+    });
+  }
+
+  call->state = Call::State::Closed;
+  call->ended_at = std::time(nullptr);
+
+  datastore->call_update(_strand, call, [this, self = shared_from_this(), call](plugins::Status status) {
+    if (!status.ok) _logger->error("Cannot close call " + call->id + " - " + status.error);
+  });
+
+  events->publish(events::topics::call_state(call->id), Call::state_to_string(call->state));
+}
+
+void Core::_end_held_call(const std::string& call_id, const std::string& reason) {
+  _logger->info("Call " + call_id + " " + reason + " - ending it");
+
+  // This node's own policy, not an RFC 4028 lapse, so both ends are told. Their BYEs end the
+  // dialogs, which writes the record and releases the media (_on_dialog_change).
+  if (local_ua()->hang_up(call_id, reason)) return;
+
   for (const auto& dialog : dialogs()->all()) {
     if (dialog && dialog->call_id == call_id) dialogs()->terminate(dialog);
   }

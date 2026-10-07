@@ -9,22 +9,29 @@
 #include <gtest/gtest.h>
 
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/udp.hpp>
 #include <chrono>
+#include <cstdlib>
+#include <future>
 #include <memory>
 #include <string>
+#include <thread>
 
 #include "cli.h"
 #include "config.h"
 #include "datastores/datastore_drivers.h"
 #include "events/event_system_drivers.h"
+#include "events/topics.h"
+#include "global_io_context.h"
 #include "media/media_engine_drivers.h"
 #include "mocks/logger_mock.h"
+#include "stun.h"
 
 using namespace athenasip;
 
 namespace {
 
-// What main gives the checks: a connect, waited for. Here on a context of its own.
+// Runs a driver's connect to completion on a private io_context, as main does for --check.
 plugins::Status wait_for(const std::function<void(plugins::Executor, plugins::StatusHandler)>& start) {
   boost::asio::io_context io;
   auto status = plugins::Status::failure("the driver never answered");
@@ -62,7 +69,7 @@ struct CheckFixture {
 
 }  // namespace
 
-// The ten-line configuration: nothing external, and everything answers.
+// The default drivers (memory, local, builtin) need nothing external and pass.
 TEST(CliCheckTest, ANodeThatNeedsNothingExternalPasses) {
   CheckFixture f;
 
@@ -74,8 +81,7 @@ TEST(CliCheckTest, ANodeThatNeedsNothingExternalPasses) {
   EXPECT_TRUE(cli::passed(lines)) << cli::report(lines);
 }
 
-// A driver nobody wrote is said plainly, and the rest is still tried: one answer per thing,
-// not the first failure and silence.
+// An unknown driver scheme fails its own line; the remaining checks still run.
 TEST(CliCheckTest, AnUnknownDriverFailsAndTheRestIsStillTried) {
   CheckFixture f;
   f.config->db_url = "carrier-pigeon://loft";
@@ -94,8 +100,7 @@ TEST(CliCheckTest, AnUnknownDriverFailsAndTheRestIsStillTried) {
   EXPECT_FALSE(cli::passed(lines));
 }
 
-// A certificate a listener will ask for and cannot have is found here rather than by the
-// first client to connect.
+// A certificate file a TLS listener needs and cannot read fails the check.
 TEST(CliCheckTest, AMissingCertificateIsFound) {
   CheckFixture f;
   f.config->http_tls_enable = true;
@@ -110,7 +115,7 @@ TEST(CliCheckTest, AMissingCertificateIsFound) {
   EXPECT_FALSE(cli::passed(lines));
 }
 
-// A cluster's first node has nobody to find, and that is not a failure.
+// A cluster's first node has no peers, which is not a failure.
 TEST(CliCheckTest, AClusterOfOneHasNoPeersAndStillPasses) {
   CheckFixture f;
   f.config->cluster_enable = true;
@@ -122,7 +127,7 @@ TEST(CliCheckTest, AClusterOfOneHasNoPeersAndStillPasses) {
   EXPECT_TRUE(peers->ok);
 }
 
-// The report is printed, so a password in a URL is not.
+// Passwords in driver URLs are redacted from the report.
 TEST(CliCheckTest, APasswordInAUrlIsNotPrinted) {
   EXPECT_EQ(cli::redacted("memory://"), "memory://");
 
@@ -137,4 +142,112 @@ TEST(CliCheckTest, TheFlagIsRead) {
 
   EXPECT_TRUE(options.ok);
   EXPECT_TRUE(options.check);
+}
+
+namespace {
+
+// A STUN server on loopback, on its own thread, that says whoever asks is at 203.0.113.7.
+struct StunResponder {
+  boost::asio::io_context io;
+  boost::asio::ip::udp::socket socket{io, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0)};
+  std::thread thread;
+
+  StunResponder() {
+    thread = std::thread([this]() {
+      std::string request(2048, '\0');
+      boost::asio::ip::udp::endpoint from;
+      boost::system::error_code ec;
+      socket.non_blocking(true);
+      const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+      while (std::chrono::steady_clock::now() < until) {
+        const auto size = socket.receive_from(boost::asio::buffer(request), from, 0, ec);
+        if (!ec) {
+          request.resize(size);
+          if (auto response = stun::binding_response(request, boost::asio::ip::make_address("203.0.113.7"), 40000)) {
+            socket.send_to(boost::asio::buffer(*response), from, 0, ec);
+          }
+          return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      }
+    });
+  }
+
+  ~StunResponder() { thread.join(); }
+
+  std::string url() { return "stun:127.0.0.1:" + std::to_string(socket.local_endpoint().port()); }
+};
+
+}  // namespace
+
+// The address a stun: server sees is reported, so an operator knows what sip.public_address should be.
+TEST(CliCheckTest, ReportsTheAddressAStunServerSees) {
+  CheckFixture f;
+  StunResponder stun;
+  f.config->ice_servers.push_back({stun.url()});
+
+  const auto lines = f.run();
+
+  const auto* address = CheckFixture::find(lines, "public address");
+  ASSERT_NE(address, nullptr);
+  EXPECT_TRUE(address->ok);
+  EXPECT_NE(address->detail.find("203.0.113.7"), std::string::npos) << address->detail;
+}
+
+// A sip.public_address that is not what the world sees is the likely mistake, and fails the check.
+TEST(CliCheckTest, APublicAddressTheStunServerDisagreesWithFails) {
+  CheckFixture f;
+  StunResponder stun;
+  f.config->ice_servers.push_back({stun.url()});
+  f.config->sip_public_address = "198.51.100.1";
+
+  const auto lines = f.run();
+
+  const auto* address = CheckFixture::find(lines, "public address");
+  ASSERT_NE(address, nullptr);
+  EXPECT_FALSE(address->ok) << address->detail;
+}
+
+// What peers found when they tried this node is reported: a listener none can reach fails, since peers will not
+// forward to it. Runs against a real broker, which keeps the peer's status retained; skips without
+// ATHENA_TEST_MQTT_URL.
+TEST(CliCheckTest, SaysWhetherPeersReachThisNode) {
+  const char* broker = std::getenv("ATHENA_TEST_MQTT_URL");
+  if (broker == nullptr) GTEST_SKIP() << "ATHENA_TEST_MQTT_URL is not set";
+
+  CheckFixture f;
+  const auto url = std::string(broker) + "?prefix=check-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "/";
+
+  auto publisher = events::EventSystem::create_driver(f.logger, url);
+  ASSERT_NE(publisher, nullptr);
+  f.config->sip_node_id = "node-b-publisher";
+  ASSERT_TRUE(publisher->configure(f.config->plugin_root("events", "mqtt"), *f.config));
+  f.config->sip_node_id = "test-node";
+  std::promise<plugins::Status> connecting;
+  auto connected_future = connecting.get_future();
+  publisher->connect(detail::get_global_io_context().get_executor(), [&connecting](plugins::Status status) { connecting.set_value(std::move(status)); });
+  const auto connected = connected_future.get();
+  ASSERT_TRUE(connected.ok) << connected.error;
+  publisher->publish_state(events::topics::node_status("node-b"),
+                           R"({"status":"ok","node":"node-b","version":"1.0.0","at":"2026-10-04T10:00:00Z","transports":[],)"
+                           R"("cluster_probes":[{"node":"test-node","reached":false}]})");
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  publisher->close();
+
+  f.config->events_url = url;
+  f.config->cluster_enable = true;
+
+  // As main runs it: a driver that keeps working after connecting, as MQTT does, needs an executor that outlives
+  // the connect.
+  const auto lines = cli::check(f.logger, f.config, [](const std::function<void(plugins::Executor, plugins::StatusHandler)>& start) {
+    std::promise<plugins::Status> promise;
+    auto future = promise.get_future();
+    start(detail::get_global_io_context().get_executor(), [&promise](plugins::Status status) { promise.set_value(std::move(status)); });
+    return future.get();
+  });
+
+  const auto* reached = CheckFixture::find(lines, "reached by peers");
+  ASSERT_NE(reached, nullptr) << cli::report(lines);
+  EXPECT_FALSE(reached->ok);
+  EXPECT_NE(reached->detail.find("node-b"), std::string::npos) << reached->detail;
 }

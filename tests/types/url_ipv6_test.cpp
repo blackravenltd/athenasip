@@ -10,9 +10,8 @@
 
 using namespace athenasip::types;
 
-// RFC 3986 3.2.2: "A host identified by an IPv6 literal address is represented inside
-// square brackets without any embedded leading or trailing whitespace." The brackets are
-// what keep the address's own colons from being read as the port separator.
+// RFC 3986 3.2.2: an IPv6 literal host is in square brackets, which keep its colons from being read as the
+// port separator.
 TEST(URLIpv6Test, ABracketedLiteralIsTheHostAndTheColonAfterItThePort) {
   URL url("redis://[::1]:6380/3");
 
@@ -23,8 +22,7 @@ TEST(URLIpv6Test, ABracketedLiteralIsTheHostAndTheColonAfterItThePort) {
   EXPECT_EQ(url.path, "/3");
 }
 
-// The host is handed to drivers to connect to, so it is the address, not the URL
-// spelling of it.
+// The host is handed to drivers to connect to, so it is the address without brackets.
 TEST(URLIpv6Test, TheHostIsTheAddressWithoutItsBrackets) {
   URL url("mqtt://[2001:db8::10]");
 
@@ -44,8 +42,7 @@ TEST(URLIpv6Test, UserinfoBeforeALiteralStillParses) {
   EXPECT_EQ(*url.port, 6399);
 }
 
-// And back again: a host with a colon in it goes out in brackets, or the URL written down
-// would not read back as the one that was meant.
+// A host with a colon in it is written back in brackets, so the URL round-trips.
 TEST(URLIpv6Test, ALiteralIsWrittenBackInBrackets) {
   URL url("redis://[::1]:6380/3");
   EXPECT_EQ(url.to_string(), "redis://[::1]:6380/3");
@@ -61,12 +58,10 @@ TEST(URLIpv6Test, SomethingOtherThanAPortAfterTheBracketIsRefused) {
   EXPECT_FALSE(URL("redis://[::1]:port").is_valid());
 }
 
-// The thing the plan recorded: an unbracketed literal is not a host and a port, it is
-// ambiguous, and reading it as host "" port ":1" was the bug. RFC 3986 requires the
-// brackets, so it is refused rather than guessed at.
+// RFC 3986 3.2.2: an unbracketed literal is ambiguous, so it is refused rather than guessed at.
 TEST(URLIpv6Test, AnUnbracketedLiteralIsRefusedRatherThanGuessed) { EXPECT_FALSE(URL("redis://::1:6379").is_valid()); }
 
-// IPv4 and names are as they were.
+// IPv4 addresses and names need no brackets.
 TEST(URLIpv6Test, IPv4AndNamesAreUnchanged) {
   URL v4("redis://127.0.0.1:6399");
   ASSERT_TRUE(v4.is_valid());

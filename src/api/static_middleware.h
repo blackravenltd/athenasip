@@ -18,32 +18,22 @@
 
 #include "./admin_api.h"
 
-// Assuming these namespaces are already defined:
 namespace http = boost::beast::http;
 
-// Options struct for the static middleware.
 struct StaticOptions {
   std::vector<std::string> default_file{"index.html", "index.htm"};
   std::string prefix{"/"};
 
-  // A client-side router keeps real paths, and a reload of one asks this node for a
-  // document that is not on disk. Answering it with the document that knows how to
-  // route it is what makes every page of the client work when it is arrived at
-  // directly rather than only when it is navigated to.
-  //
-  // Only for a path with no extension, because a missing asset has to stay missing: a
-  // bundle that answers 200 with HTML in it is far worse to debug than one that 404s.
-  // Empty turns it off.
+  // For a client-side router: a GET for an extensionless path that is not on disk is
+  // answered with this document. Paths with an extension are never substituted, so a
+  // missing asset stays a 404. Empty turns it off.
   std::string fallback{"index.html"};
 
-  // Prefixes the fallback never applies under. An unknown path below the API is a 404
-  // about the API, and answering it with a web page would be a lie about what this node
-  // serves.
+  // Prefixes the fallback never applies under: an unknown API path stays a 404.
   std::vector<std::string> fallback_excludes{"api/"};
 
-  // What a built web client is made of. A browser refuses a module script that does not
-  // arrive as JavaScript and will not render an SVG that does not arrive as
-  // image/svg+xml, so a type missing here is a file the client cannot use.
+  // Browsers refuse module scripts and SVG served with the wrong type, so every file type
+  // a built web client uses must be listed.
   std::unordered_map<std::string, std::string> mime_types = {{".html", "text/html"},
                                                              {".htm", "text/html"},
                                                              {".css", "text/css"},
@@ -67,35 +57,27 @@ namespace athenasip::api {
 
 class StaticMiddleware {
  public:
-  // This function is intended to be a static member of your server class (e.g. AdminAPI).
-  // It returns a HttpMiddleware function that serves static files from disk.
+  // Returns a middleware that serves static files from base_path.
   static HttpMiddleware add(const std::string& base_path, const StaticOptions& opts = StaticOptions()) {
     return
         [base_path, opts](const http::request<http::string_body>& req, const std::string&, std::shared_ptr<http::response<http::string_body>> res,
                          std::function<void(bool)> next) {
-          // The target is a URI reference, not a path. A query and a fragment are
-          // separate components of it (RFC 3986 sections 3.4 and 3.5) and neither is
-          // part of the file being asked for, so "bundle.js?v=2" is a request for
-          // bundle.js. Every built web application cache-busts this way, and the admin
-          // client is one.
+          // The target is a URI reference: drop the query and fragment (RFC 3986 3.4, 3.5),
+          // so the cache-busting "bundle.js?v=2" serves bundle.js.
           std::string target = std::string(req.target());
           if (const auto separator = target.find_first_of("?#"); separator != std::string::npos) target.erase(separator);
 
-          // Percent-encoding is deliberately not decoded. Nothing under a document root
-          // needs it, and a decoder here would have to be followed by the traversal
-          // check below rather than preceded by it, which is the order that has caught
-          // out every server that got this wrong.
+          // Percent-encoding is deliberately not decoded: nothing under a document root needs
+          // it, and decoding would have to come before the traversal check below.
 
-          // 1. If the request target does not begin with opts.prefix, skip processing.
           if (target.find(opts.prefix) != 0) {
             next(true);
             return;
           }
 
-          // 2. Remove the prefix from the target to get the relative path.
           std::string relative_path = target.substr(opts.prefix.size());
 
-          // Sanitize: split the relative path into segments and reject any with forbidden parts.
+          // Reject traversal and home-directory segments.
           std::istringstream iss(relative_path);
           std::string segment;
           while (std::getline(iss, segment, '/')) {
@@ -108,24 +90,19 @@ class StaticMiddleware {
           namespace fs = std::filesystem;
           std::string full_path;
 
-          // Whether a path with nothing behind it should be answered with the routing
-          // document. Decided here, where the relative path is known and before any of
-          // the ways of not finding a file.
+          // Whether a path with no file behind it may be answered with the fallback document.
           const auto routable = [&]() {
             if (opts.fallback.empty()) return false;
 
-            // A page view and nothing else. A write to a path that does not exist is
-            // not one, whatever the path looks like.
+            // Page views only.
             if (req.method() != http::verb::get && req.method() != http::verb::head) return false;
 
             for (const auto& excluded : opts.fallback_excludes) {
               if (relative_path.rfind(excluded, 0) == 0) return false;
             }
 
-            // A route is made of names. An empty segment means the path was malformed
-            // rather than navigated to - "//etc/hosts" is somebody trying the root as a
-            // prefix, not a page of the client - and standing in for it would answer a
-            // probe with 200.
+            // An empty segment ("//etc/hosts") is a malformed path or a probe, not a client
+            // route.
             std::istringstream segments(relative_path);
             std::string segment;
             std::string last_segment;
@@ -139,9 +116,8 @@ class StaticMiddleware {
             return !last_segment.empty() && last_segment.find('.') == std::string::npos;
           }();
 
-          // The routing document stands in for the path, so from here on it is what is
-          // being served: its own type, its own contents, and the same document-root
-          // check as anything else.
+          // Substitutes the fallback document for the path; it then passes the same
+          // document-root check as any other file.
           const auto route_or_pass_on = [&]() {
             if (!routable) return false;
 
@@ -153,8 +129,7 @@ class StaticMiddleware {
             return true;
           };
 
-          // 3. Construct the file path.
-          // If relative_path is empty or ends with '/', try default files.
+          // A directory path serves the first default file that exists.
           if (relative_path.empty() || (!relative_path.empty() && relative_path.back() == '/')) {
             bool found = false;
             for (const auto& df : opts.default_file) {
@@ -182,12 +157,9 @@ class StaticMiddleware {
             }
           }
 
-          // 4. Ensure the file really is within the document root. Resolving it first
-          // is what catches a symlink, whose path says nothing about where it goes.
-          //
-          // Compared as paths and not as strings: "/srv/public-secrets/x" begins with
-          // "/srv/public" and is not inside it, so a prefix comparison hands out a
-          // sibling directory to anybody who can get a link into the root.
+          // The file must be inside the document root. Canonicalising first catches symlinks,
+          // and comparing as paths rather than strings keeps "/srv/public-secrets" out of
+          // "/srv/public".
           try {
             const fs::path canonical_base = fs::canonical(base_path);
             const fs::path canonical_file = fs::canonical(full_path);
@@ -203,13 +175,11 @@ class StaticMiddleware {
             return;
           }
 
-          // 5. Check if the file exists and is a regular file.
           if (!fs::exists(full_path) || !fs::is_regular_file(full_path)) {
             next(true);
             return;
           }
 
-          // 6. Open and read the file content.
           std::ifstream file(full_path, std::ios::binary | std::ios::ate);
           if (!file) {
             next(true);
@@ -223,11 +193,9 @@ class StaticMiddleware {
             return;
           }
 
-          // 7. Set the response body and headers.
           res->body() = file_content;
           res->set(http::field::content_length, std::to_string(file_size));
 
-          // Determine MIME type based on file extension.
           std::string mime_type = "application/octet-stream";
           auto dot_pos = full_path.find_last_of('.');
           if (dot_pos != std::string::npos) {
@@ -237,7 +205,6 @@ class StaticMiddleware {
           }
           res->set(http::field::content_type, mime_type);
 
-          // Serve it
           next(false);
         };
   }

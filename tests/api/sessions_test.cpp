@@ -28,19 +28,12 @@ using athenasip::api::Sessions;
 
 namespace {
 
-// What the tests say a password is. Hashed at a low iteration count because these are
-// statements about sessions, not about PBKDF2, and 600000 iterations per login would
-// make the file take a minute.
+// Hashed at a low iteration count: these tests are about sessions, not PBKDF2.
 constexpr const char* kPassword = "correct horse battery staple";
 constexpr std::uint32_t kIterations = 1000;
 
-// A clock the test moves. Idle expiry is a rule about elapsed time and nothing else, so
-// watching it against a real clock is an hour of waiting per case.
-//
-// It starts at the real time rather than at a round number, because the datastore prunes
-// a session on the absolute expiry written on the record and does that against the real
-// clock. That is the seam exactly where the contract puts it: the store decides whether
-// a record has outlived its absolute expiry, and this decides everything else.
+// A clock the test moves, for idle expiry. It starts at the real time because the datastore prunes a session
+// on its absolute expiry against the real clock.
 struct ManualClock {
   std::time_t now = std::time(nullptr);
 
@@ -52,7 +45,7 @@ struct ManualClock {
   }
 };
 
-// A store that cannot answer, for the difference between "no" and "I could not ask".
+// A store that cannot answer, to tell "no" from "I could not ask".
 class UnavailableDatastore : public datastores::MemoryDatastore {
  public:
   using MemoryDatastore::MemoryDatastore;
@@ -93,7 +86,7 @@ struct Fixture {
     return user;
   }
 
-  // The contract is async; a test is a statement about what came back, so it waits.
+  // Blocks for the async answer.
   Sessions::Login login(const std::string& username, const std::string& password) {
     std::promise<Sessions::Login> promise;
     auto future = promise.get_future();
@@ -115,7 +108,7 @@ struct Fixture {
     return future.get();
   }
 
-  // What the store holds for a token, which is what a dump of it would hand over.
+  // What the store holds for a token.
   std::shared_ptr<types::Session> stored(const std::string& token) { return store->session_get(Sessions::token_hash(token)); }
 };
 
@@ -158,8 +151,7 @@ TEST(SessionsTest, WhatIsStoredIsTheHashAndNotTheToken) {
   const auto answer = fixture.login("tom", kPassword);
   ASSERT_TRUE(answer.ok());
 
-  // A dump of the store hands over neither the token nor anything that can be turned
-  // back into one.
+  // The store holds neither the token nor anything that can be turned back into one.
   EXPECT_EQ(fixture.store->session_get(answer.value.token), nullptr);
 
   auto held = fixture.stored(answer.value.token);
@@ -196,8 +188,7 @@ TEST(SessionsTest, AUsernameIsMatchedWhateverCaseItWasTypedIn) {
   const auto answer = fixture.login("TOM", kPassword);
   ASSERT_TRUE(answer.ok());
 
-  // Filed under the key, so revoking by username finds it; the user still carries the
-  // spelling it was created with.
+  // Filed under the case-folded key, so revoking by username finds it; the user keeps its original spelling.
   auto held = fixture.stored(answer.value.token);
   ASSERT_NE(held, nullptr);
   EXPECT_EQ(held->username, "tom");
@@ -218,8 +209,7 @@ TEST(SessionsTest, AnUnknownUserAWrongPasswordAndADisabledUserAreOneAnswer) {
   const auto wrong = fixture.login("tom", "not it");
   const auto disabled = fixture.login("sam", kPassword);
 
-  // Which of the three it was is not something the caller can tell, because between
-  // them they are a list of who is a user here.
+  // The caller cannot tell which of the three it was: that would reveal who is a user here.
   EXPECT_EQ(unknown.outcome, Sessions::Outcome::refused);
   EXPECT_EQ(wrong.outcome, Sessions::Outcome::refused);
   EXPECT_EQ(disabled.outcome, Sessions::Outcome::refused);
@@ -251,7 +241,7 @@ TEST(SessionsTest, AStoreThatCannotBeAskedIsNotARefusal) {
   auto logger = std::make_shared<MockLogger>();
   Fixture fixture(Sessions::Lifetimes{3600, 600}, std::make_shared<UnavailableDatastore>(logger, std::make_shared<types::URL>("memory://")));
 
-  // A 401 for a store that is down would tell an administrator to check their password.
+  // A store that is down is unavailable, not a refusal.
   EXPECT_EQ(fixture.login("tom", kPassword).outcome, Sessions::Outcome::unavailable);
   EXPECT_EQ(fixture.resolve(std::string(64, 'a')).outcome, Sessions::Outcome::unavailable);
 }
@@ -322,8 +312,7 @@ TEST(SessionsTest, ASessionIdleTooLongIsRefusedAndGone) {
 
   EXPECT_EQ(fixture.resolve(answer.value.token).outcome, Sessions::Outcome::refused);
 
-  // Deleted rather than left for the store, which prunes on the absolute expiry alone:
-  // an idle session would otherwise sit there for the rest of its lifetime.
+  // Deleted here: the store prunes on the absolute expiry alone.
   EXPECT_EQ(fixture.stored(answer.value.token), nullptr);
 }
 
@@ -337,8 +326,7 @@ TEST(SessionsTest, UsingASessionMovesTheIdleWindowAlong) {
   fixture.clock.advance(300);
   ASSERT_TRUE(fixture.resolve(answer.value.token).ok());
 
-  // 700 seconds after the login, which is past the idle timeout measured from then, and
-  // 400 after the last use, which is not.
+  // 700 seconds after the login, past the idle timeout from then, but only 400 after the last use.
   fixture.clock.advance(400);
   EXPECT_TRUE(fixture.resolve(answer.value.token).ok());
 }
@@ -352,9 +340,7 @@ TEST(SessionsTest, TheIdleWindowIsNotRewrittenOnEveryRequest) {
 
   const auto issued_at = fixture.stored(answer.value.token)->last_seen_at;
 
-  // A write per authenticated request is what this avoids: inside a tenth of the idle
-  // window the record is left alone, because all the value decides is whether that
-  // window has passed.
+  // Within a tenth of the idle window the record is not rewritten, avoiding a write per authenticated request.
   fixture.clock.advance(30);
   ASSERT_TRUE(fixture.resolve(answer.value.token).ok());
   EXPECT_EQ(fixture.stored(answer.value.token)->last_seen_at, issued_at);
@@ -400,8 +386,7 @@ TEST(SessionsTest, DisablingAUserStopsTheSessionsItAlreadyHeld) {
   user->disabled = true;
   ASSERT_TRUE(fixture.store->user_update(user));
 
-  // Immediate rather than eventual, which is the whole reason the roles are not carried
-  // on the session.
+  // Immediate: the roles are not carried on the session.
   EXPECT_EQ(fixture.resolve(answer.value.token).outcome, Sessions::Outcome::refused);
 }
 
@@ -423,7 +408,7 @@ TEST(SessionsTest, LogoutEndsTheSessionItWasGiven) {
 TEST(SessionsTest, LogoutOfATokenThatNamesNothingIsSuccess) {
   Fixture fixture;
 
-  // The state the caller asked for is that the session is gone, and it is.
+  // The session is gone, which is what the caller asked for.
   EXPECT_TRUE(fixture.logout("").ok);
 }
 

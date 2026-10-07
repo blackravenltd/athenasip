@@ -13,9 +13,8 @@
 
 namespace athenasip::types {
 
-// A URL in the RFC 3986 generic syntax, as far as AthenaSIP reads one: every URL here
-// names a driver and the address it talks to, so the hier-part is always an authority
-// and a scheme with no "://" after it is not one of ours.
+// A URL in RFC 3986 generic syntax, as far as AthenaSIP reads one: every URL names a driver and the address it talks
+// to, so a scheme must be followed by "://" and an authority.
 class URL {
  public:
   std::string scheme;
@@ -42,8 +41,7 @@ class URL {
  private:
   bool _valid{false};
 
-  // The well-known port for a scheme, or nothing for a scheme that has none. RFC 3986
-  // 3.1 makes the scheme case-insensitive, so the lookup is too.
+  // The well-known port for a scheme, if it has one. The lookup is case-insensitive (RFC 3986 3.1).
   static std::optional<uint16_t> _default_port(const std::string& scheme);
 
   static const std::map<std::string, uint16_t> defaultPorts;

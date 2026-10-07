@@ -57,3 +57,4 @@ docker/generated/
 __pycache__/
 *.pyc
 test/e2e/generated-cluster/
+test/suite/results/

@@ -23,8 +23,7 @@ using namespace athenasip;
 
 namespace {
 
-// Subscribing is a round trip by contract, so a test that wants a subscription before
-// it publishes waits for one. SyncEventSystem is the only thing here allowed to wait.
+// A bus with the subscription round trip already made.
 SyncEventSystem connected_bus() {
   SyncEventSystem bus(std::make_shared<events::LocalEventSystem>(std::make_shared<MockLogger>()));
   EXPECT_TRUE(bus.connect());
@@ -33,7 +32,6 @@ SyncEventSystem connected_bus() {
 
 }  // namespace
 
-// Publishing an event triggers a subscribed callback.
 TEST(EventSystemTest, PublishTriggersSubscription) {
   auto bus = connected_bus();
 
@@ -47,8 +45,7 @@ TEST(EventSystemTest, PublishTriggersSubscription) {
   EXPECT_TRUE(waitForCondition(callback_called, std::chrono::milliseconds(100)));
 }
 
-// The fire-and-forget publish delivers the same event, and answers nothing: a caller on
-// the call path announces what happened without waiting for the bus.
+// The fire-and-forget publish delivers the same event and answers nothing.
 TEST(EventSystemTest, FireAndForgetPublishTriggersSubscription) {
   auto bus = connected_bus();
 
@@ -61,7 +58,6 @@ TEST(EventSystemTest, FireAndForgetPublishTriggersSubscription) {
   EXPECT_TRUE(waitForCondition(callback_called, std::chrono::milliseconds(100)));
 }
 
-// Unsubscribing prevents the callback from being invoked.
 TEST(EventSystemTest, UnsubscribePreventsCallback) {
   auto bus = connected_bus();
 
@@ -76,7 +72,6 @@ TEST(EventSystemTest, UnsubscribePreventsCallback) {
   EXPECT_FALSE(waitForCondition(callback_called, std::chrono::milliseconds(100)));
 }
 
-// unsubscribe_all stops every callback.
 TEST(EventSystemTest, UnsubscribeAllPreventsCallbacks) {
   auto bus = connected_bus();
 
@@ -93,7 +88,6 @@ TEST(EventSystemTest, UnsubscribeAllPreventsCallbacks) {
   EXPECT_FALSE(waitForCondition(callback2_called, std::chrono::milliseconds(100)));
 }
 
-// Several subscriptions to the same event are all triggered.
 TEST(EventSystemTest, MultipleSubscriptionsTriggered) {
   auto bus = connected_bus();
 
@@ -113,7 +107,7 @@ TEST(EventSystemTest, MultipleSubscriptionsTriggered) {
   EXPECT_EQ(call_count.load(), 2);
 }
 
-// A publish to a closed bus is refused rather than silently dropped.
+// A publish to a closed bus is refused, not silently dropped.
 TEST(EventSystemTest, PublishWhileClosedFails) {
   auto bus = connected_bus();
   bus.close();

@@ -6,6 +6,7 @@
 //
 #include "admin_api.h"
 
+#include <array>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ssl.hpp>
 #include <boost/asio/steady_timer.hpp>
@@ -14,6 +15,7 @@
 #include <boost/beast/version.hpp>
 #include <boost/json.hpp>
 #include <chrono>
+#include <deque>
 #include <iostream>
 #include <memory>
 #include <thread>
@@ -28,12 +30,7 @@ namespace net = boost::asio;
 
 namespace athenasip::api {
 
-// --------------------------
-// HttpSession Implementation
-// --------------------------
-
-// One request and its response, over a plain socket or a TLS stream: the chain neither
-// knows nor cares which.
+// One request and its response, over a plain socket or a TLS stream.
 template <typename Stream>
 class HttpSession : public std::enable_shared_from_this<HttpSession<Stream>> {
  public:
@@ -55,9 +52,14 @@ class HttpSession : public std::enable_shared_from_this<HttpSession<Stream>> {
   http::request<http::string_body> _req;
   std::string _remote;
 
-  // Ten seconds for a client to finish a handshake it started, as the SIP TLS listener
-  // allows: a connection that opens and says nothing is not held for ever.
+  // Bounds the TLS handshake at ten seconds, as the SIP TLS listener does; a stream's keep-alive after that.
   net::steady_timer _deadline{_server._io_context};
+
+  // A stream's state, on the listener's one thread.
+  std::shared_ptr<ResponseStream> _out;
+  std::deque<std::string> _queued;
+  bool _writing = false;
+  std::array<char, 512> _discard{};
 
   void _start(tcp::socket&) { do_read(); }
 
@@ -81,16 +83,13 @@ class HttpSession : public std::enable_shared_from_this<HttpSession<Stream>> {
     });
   }
 
-  // Asynchronously read an HTTP request.
   void do_read() {
     auto self = this->shared_from_this();
     http::async_read(_stream, _buffer, _req, [this, self](boost::system::error_code ec, std::size_t bytes_transferred) {
       (void)bytes_transferred;  // Unused
       if (!ec) {
-        // Create a default HTTP response.
         _logger->debug(std::string(http::to_string(_req.method())) + " " + std::string(_req.target()));
         auto res = std::make_shared<http::response<http::string_body>>(http::status::ok, _req.version());
-        // Begin processing the middleware chain from index 0.
         process_middleware_chain(0, res);
       } else {
         _server._logger->error("Error reading request: " + ec.message());
@@ -98,34 +97,111 @@ class HttpSession : public std::enable_shared_from_this<HttpSession<Stream>> {
     });
   }
 
-  // Recursively process the middleware chain.
-  // If a middleware calls next(false), the chain stops and the response is sent.
+  // Runs the middleware at index; next(true) moves on, next(false) sends the response.
   void process_middleware_chain(std::size_t index, std::shared_ptr<http::response<http::string_body>> res) {
     if (index < _server.middlewares.size()) {
-      // self, because a middleware may answer asynchronously - the provisioning routes go
-      // to the datastore and come back when it does - and the session has to outlive the
-      // wait. Without it the chain is only safe for middleware that answers inline.
+      // self keeps the session alive while a middleware answers asynchronously.
       auto self = this->shared_from_this();
 
       auto next = [this, self, index, res](bool continueChain) {
         if (continueChain) {
           process_middleware_chain(index + 1, res);
         } else {
-          res->prepare_payload();
-          // Middleware has halted further processing; send the response.
-          do_write(res);
+          respond(res);
         }
       };
-      // Invoke the middleware at the current index.
       _server.middlewares[index](_req, _remote, res, next);
     } else {
-      // All middleware have been processed; send the response.
-      res->prepare_payload();
-      do_write(res);
+      respond(res);
     }
   }
 
-  // Asynchronously write the response and shutdown the socket.
+  void respond(std::shared_ptr<http::response<http::string_body>> res) {
+    if (_server._streams) {
+      if (auto start = _server._streams->take(res.get())) return do_stream(res, std::move(start));
+    }
+    res->prepare_payload();
+    do_write(res);
+  }
+
+  // Server-Sent Events: the headers with no length, then the body as the handler writes it, until the client
+  // goes. A comment every fifteen seconds finds a client that went without closing.
+  void do_stream(std::shared_ptr<http::response<http::string_body>> res, StreamStart start) {
+    auto self = this->shared_from_this();
+
+    auto header = std::make_shared<http::response<http::empty_body>>(res->result(), res->version());
+    for (const auto& field : *res) header->set(field.name_string(), field.value());
+    header->set(http::field::content_type, "text/event-stream");
+    header->set(http::field::cache_control, "no-cache");
+    header->set(http::field::connection, "close");
+    header->chunked(false);
+
+    auto serializer = std::make_shared<http::response_serializer<http::empty_body>>(*header);
+    http::async_write_header(_stream, *serializer, [this, self, header, serializer, start](boost::system::error_code ec, std::size_t) {
+      if (ec) return;
+
+      _out = std::make_shared<ResponseStream>();
+      std::weak_ptr<HttpSession> weak = this->shared_from_this();
+      _out->attach([weak, executor = _stream.get_executor()](std::string data) {
+        net::post(executor, [weak, data = std::move(data)]() mutable {
+          if (auto session = weak.lock()) session->_enqueue(std::move(data));
+        });
+      });
+
+      _watch_close();
+      _keep_alive();
+      start(_out);
+    });
+  }
+
+  void _enqueue(std::string data) {
+    if (!_out || !_out->open()) return;
+    _queued.push_back(std::move(data));
+    if (!_writing) _write_next();
+  }
+
+  void _write_next() {
+    if (_queued.empty()) {
+      _writing = false;
+      return;
+    }
+    _writing = true;
+    auto self = this->shared_from_this();
+    auto data = std::make_shared<std::string>(std::move(_queued.front()));
+    _queued.pop_front();
+    net::async_write(_stream, net::buffer(*data), [this, self, data](boost::system::error_code ec, std::size_t) {
+      if (ec) return _end_stream();
+      _write_next();
+    });
+  }
+
+  // The client sends nothing more; a read that ends is the client going.
+  void _watch_close() {
+    auto self = this->shared_from_this();
+    _stream.async_read_some(net::buffer(_discard), [this, self](boost::system::error_code ec, std::size_t) {
+      if (ec) return _end_stream();
+      _watch_close();
+    });
+  }
+
+  void _keep_alive() {
+    auto self = this->shared_from_this();
+    _deadline.expires_after(std::chrono::seconds(15));
+    _deadline.async_wait([this, self](boost::system::error_code ec) {
+      if (ec || !_out || !_out->open()) return;
+      _enqueue(": keep-alive\n\n");
+      _keep_alive();
+    });
+  }
+
+  void _end_stream() {
+    if (!_out || !_out->open()) return;
+    _deadline.cancel();
+    _out->close();
+    boost::system::error_code ignored;
+    beast::get_lowest_layer(_stream).close(ignored);
+  }
+
   void do_write(std::shared_ptr<http::response<http::string_body>> res) {
     auto self = this->shared_from_this();
     http::async_write(_stream, *res, [this, self, res](boost::system::error_code ec, std::size_t) {
@@ -139,8 +215,8 @@ class HttpSession : public std::enable_shared_from_this<HttpSession<Stream>> {
     socket.shutdown(tcp::socket::shutdown_send, ec);
   }
 
-  // A TLS connection is closed by saying so (close_notify), or a client cannot tell a
-  // response that ended from one that was cut off.
+  // TLS closes with close_notify, so a client can tell a complete response from a
+  // truncated one.
   void _finish(net::ssl::stream<tcp::socket>& stream) {
     auto self = this->shared_from_this();
     stream.async_shutdown([this, self](boost::system::error_code) {
@@ -150,11 +226,6 @@ class HttpSession : public std::enable_shared_from_this<HttpSession<Stream>> {
   }
 };
 
-// ----------------------
-// AdminAPI Implementation
-// ----------------------
-
-// Constructor: sets up the listening endpoint and prepares the acceptor.
 AdminAPI::AdminAPI(std::shared_ptr<athenasip::loggers::Logger> logger, const std::string& bind_address, unsigned short port)
     : _logger(std::make_shared<loggers::LoggerScoped>("admin_api", logger)),
       _bind_address(bind_address),
@@ -198,8 +269,7 @@ bool AdminAPI::_listen(tcp::acceptor& acceptor, const std::string& bind_address,
 bool AdminAPI::tls_enable(const std::string& bind_address, unsigned short port, const std::string& cert, const std::string& key) {
   auto context = std::make_shared<net::ssl::context>(net::ssl::context::tls_server);
 
-  // The one loader every secure listener on the node uses, so this one refuses the same
-  // protocol versions the SIP listeners do.
+  // The loader every secure listener uses, so the same protocol versions are refused.
   if (!servers::load_tls_certificates(_logger, *context, cert, key)) return false;
   if (!_listen(_tls_acceptor, bind_address, port, *_logger)) return false;
 
@@ -208,7 +278,6 @@ bool AdminAPI::tls_enable(const std::string& bind_address, unsigned short port, 
   return true;
 }
 
-// Destructor: stops the server.
 AdminAPI::~AdminAPI() { stop(); }
 
 std::uint16_t AdminAPI::port() const {
@@ -225,7 +294,6 @@ std::uint16_t AdminAPI::tls_port() const {
   return ec ? 0 : endpoint.port();
 }
 
-// Start the server: begin accepting connections and run the io_context in a new thread.
 void AdminAPI::start() {
   _logger->debug("Starting AdminAPI server...");
   _do_accept();
@@ -235,7 +303,6 @@ void AdminAPI::start() {
   if (_tls_context) _logger->info("Listening for HTTPS on " + _tls_bind_address + ":" + std::to_string(tls_port()));
 }
 
-// Stop the server and join the thread.
 void AdminAPI::stop() {
   _logger->debug("Stopping AdminAPI server...");
   _io_context.stop();
@@ -246,7 +313,6 @@ void AdminAPI::stop() {
   _logger->info("AdminAPI server stopped.");
 }
 
-// Begin accepting new connections asynchronously.
 void AdminAPI::_do_accept() {
   _acceptor.async_accept([this](boost::system::error_code ec, tcp::socket socket) {
     if (!ec) {
@@ -254,14 +320,12 @@ void AdminAPI::_do_accept() {
     } else {
       _logger->error("Accept error: " + ec.message());
     }
-    // Continue accepting new connections.
     _do_accept();
   });
 }
 
-// The same for HTTPS. The handshake is the session's, and asynchronous: a connection that
-// never finishes one holds up nobody else, which is what a synchronous handshake on the
-// accept path did to the SIP TLS listener before it was fixed.
+// The handshake is the session's and asynchronous, so a connection that never finishes
+// one holds up nobody else.
 void AdminAPI::_do_accept_tls() {
   _tls_acceptor.async_accept([this](boost::system::error_code ec, tcp::socket socket) {
     if (!ec) {
@@ -273,11 +337,6 @@ void AdminAPI::_do_accept_tls() {
   });
 }
 
-// ----------------------------------
-// Static Helper Middleware Functions
-// ----------------------------------
-
-// send_status_end: set HTTP status and message and end
 HttpMiddleware AdminAPI::send_status_end(uint16_t code, std::string message) {
   return [code, message](const http::request<http::string_body>& req, const std::string&, std::shared_ptr<http::response<http::string_body>> res,
                          std::function<void(bool)> next) {

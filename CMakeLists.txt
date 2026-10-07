@@ -1,13 +1,12 @@
 cmake_minimum_required(VERSION 3.23...4.2)
 
-project(athenasip VERSION 0.8.0 LANGUAGES CXX)
+project(athenasip VERSION 0.9.0 LANGUAGES CXX)
 
 option(ATHENA_BUILD_TESTING "Build test targets" OFF)
 set(ATHENA_SANITIZE "none" CACHE STRING "Sanitizer to build with: none, address, thread")
 set_property(CACHE ATHENA_SANITIZE PROPERTY STRINGS none address thread)
 
-# Single-config generators leave CMAKE_BUILD_TYPE empty, which means no optimisation
-# and no debug info. Packaging passes Release explicitly.
+# Single-config generators leave CMAKE_BUILD_TYPE empty: no optimisation, no debug info.
 get_property(ATHENA_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
 
 if(NOT ATHENA_MULTI_CONFIG AND NOT CMAKE_BUILD_TYPE)
@@ -61,6 +60,7 @@ if(APPLE)
             boost
             openssl@3
             yaml-cpp
+            libnghttp2
             googletest
         )
             execute_process(
@@ -98,6 +98,10 @@ find_package(OpenSSL REQUIRED COMPONENTS SSL Crypto)
 
 find_package(yaml-cpp CONFIG REQUIRED)
 
+# APNs speaks only HTTP/2.
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(NGHTTP2 REQUIRED IMPORTED_TARGET libnghttp2)
+
 if(TARGET yaml-cpp::yaml-cpp)
     set(ATHENA_YAML_TARGET yaml-cpp::yaml-cpp)
 elseif(TARGET yaml-cpp)
@@ -114,14 +118,11 @@ list(REMOVE_ITEM ATHENA_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp"
 )
 
-# Lua scripting is parked: the sources stay in the tree but are not built and the
-# runtime carries no Lua dependency until there is a real use for it.
+# Lua scripting is not built, and the runtime has no Lua dependency.
 list(FILTER ATHENA_SOURCES EXCLUDE REGEX "/src/script/")
 
-# RTPProxyClient speaks the rtpproxy text protocol and nothing constructs it: rtpengine
-# and its ng protocol are the flagship engine, and the MediaEngine contract is how a
-# driver reaches the server now. It stays in the tree as the starting point for an
-# rtpproxy driver and out of the build until someone writes one.
+# The rtpproxy client is not built: nothing constructs it. It is the starting point for
+# an rtpproxy MediaEngine driver.
 list(FILTER ATHENA_SOURCES EXCLUDE REGEX "/src/rtp/rtp_proxy_client")
 
 add_library(athena_core STATIC ${ATHENA_SOURCES})
@@ -153,12 +154,16 @@ target_link_libraries(athena_core
         Boost::charconv
         OpenSSL::SSL
         OpenSSL::Crypto
+        PkgConfig::NGHTTP2
         "${ATHENA_YAML_TARGET}"
 )
 
 add_executable(athenasip "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
 
 target_link_libraries(athenasip PRIVATE athena_core)
+
+# Plugin modules (plugins.path) use the server's own code, so it exports its symbols.
+set_target_properties(athenasip PROPERTIES ENABLE_EXPORTS ON)
 target_compile_features(athenasip PRIVATE cxx_std_20)
 
 if(MSVC AND TARGET OpenSSL::applink)
@@ -175,7 +180,25 @@ if(ATHENA_BUILD_TESTING)
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp"
     )
 
+    # The test modules are shared libraries of their own, loaded by the tests.
+    list(FILTER ATHENA_TEST_SOURCES EXCLUDE REGEX "/tests/modules/")
+
     add_executable(athenasip_tests ${ATHENA_TEST_SOURCES})
+    set_target_properties(athenasip_tests PROPERTIES ENABLE_EXPORTS ON)
+
+    # Each in a directory of its own, as plugins.path would name them. They are built against the headers and
+    # never link athena_core, which would give them a registry of their own.
+    foreach(module sample_module mismatched_module not_a_module)
+        add_library(${module} MODULE "${CMAKE_CURRENT_SOURCE_DIR}/tests/modules/${module}.cpp")
+        target_include_directories(${module} PRIVATE $<TARGET_PROPERTY:athena_core,INTERFACE_INCLUDE_DIRECTORIES>)
+        target_compile_features(${module} PRIVATE cxx_std_20)
+        set_target_properties(${module} PROPERTIES PREFIX "" LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/test-modules/${module}")
+        if(APPLE)
+            target_link_options(${module} PRIVATE "-undefined" "dynamic_lookup")
+        endif()
+        add_dependencies(athenasip_tests ${module})
+    endforeach()
+    target_compile_definitions(athenasip_tests PRIVATE ATHENA_TEST_MODULE_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-modules")
 
     target_link_libraries(athenasip_tests PRIVATE athena_core)
 
@@ -189,8 +212,7 @@ if(ATHENA_BUILD_TESTING)
 
     target_compile_features(athenasip_tests PRIVATE cxx_std_20)
 
-    # The TLS listener tests need real certificates, and the working directory a test
-    # runs in is the build tree rather than the source one.
+    # The TLS listener tests need the certificates, and tests run in the build tree.
     target_compile_definitions(athenasip_tests PRIVATE ATHENA_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 
     if(MSVC AND TARGET OpenSSL::applink)
@@ -202,14 +224,11 @@ if(ATHENA_BUILD_TESTING)
 endif()
 # --- Install ------------------------------------------------------------------------
 #
-# What a package puts on a host: the binary, a unit, and a configuration file that is
-# never overwritten once it exists. Principle 3 says a node should be easy to install,
-# and "easy" includes "upgrading does not silently replace what you configured".
+# The binary, a systemd unit, and a configuration file that is never overwritten.
 
 include(GNUInstallDirs)
 
-# Where a node's live configuration lives. /etc for a system prefix, and under the
-# prefix for anything else, so a --prefix=$HOME/opt install is self-contained.
+# Live configuration: /etc for a system prefix, under the prefix otherwise.
 if(NOT DEFINED ATHENA_CONFIG_INSTALL_DIR)
     if(CMAKE_INSTALL_PREFIX STREQUAL "/usr" OR CMAKE_INSTALL_PREFIX STREQUAL "/usr/local")
         set(ATHENA_CONFIG_INSTALL_DIR "/etc/athenasip")
@@ -220,18 +239,13 @@ endif()
 
 install(TARGETS athenasip RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
-# The example is installed as a reference under the docs, always, so a host carries the
-# annotated original whatever its live configuration has become.
+# The annotated example is always installed with the docs, as a reference.
 install(FILES config/config.example.yaml
         DESTINATION ${CMAKE_INSTALL_DOCDIR}
         RENAME config.example.yaml)
 
-# And as the live configuration only where there is none. An install that clobbered it
-# would take the node down on upgrade, which is the worst possible moment.
-#
-# DESTDIR is honoured by hand here, because install(CODE) writes the paths it is given
-# and nothing prepends it for us. Without this a packager staging a build would have
-# the real /etc/athenasip written by a build that was never meant to touch the host.
+# It becomes the live configuration only where none exists, so an upgrade never
+# replaces one. install(CODE) does not prepend DESTDIR, so it is applied by hand.
 install(CODE "
     set(ATHENA_CONFIG_DIR \"${ATHENA_CONFIG_INSTALL_DIR}\")
 
@@ -249,8 +263,8 @@ install(CODE "
     endif()
 ")
 
-# The unit, where systemd looks for one that came from a package rather than from an
-# administrator. ATHENA_SYSTEMD_UNIT_DIR moves it for a distribution that disagrees.
+# The systemd unit, in the directory for packaged units. ATHENA_SYSTEMD_UNIT_DIR
+# overrides it.
 if(NOT DEFINED ATHENA_SYSTEMD_UNIT_DIR)
     set(ATHENA_SYSTEMD_UNIT_DIR "${CMAKE_INSTALL_PREFIX}/lib/systemd/system")
 
@@ -260,8 +274,7 @@ if(NOT DEFINED ATHENA_SYSTEMD_UNIT_DIR)
 endif()
 
 if(UNIX AND NOT APPLE)
-    # Generated rather than copied, so ExecStart names where the binary actually went
-    # and the unit cannot drift from the install prefix.
+    # Generated, so ExecStart follows the install prefix.
     configure_file(packaging/athenasip.service.in
                    ${CMAKE_CURRENT_BINARY_DIR}/athenasip.service @ONLY)
 
