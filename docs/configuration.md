@@ -29,7 +29,7 @@ admin API and console need an [`http`](#http) section.
 
 | Command | What it does |
 |---|---|
-| `athenasip --print-config` | Prints the effective configuration (file, search path and defaults resolved) as YAML, names the file it came from, and exits. Plugin sections are copied through as written. |
+| `athenasip --print-config` | Prints the effective configuration (file, search path and defaults resolved) as YAML, names the file it came from, and exits. Plugin sections are copied through as written. The output is itself a configuration: saved and loaded, it runs the same node. |
 | `athenasip --check` | Tries the datastore, event bus, media engine, each certificate a listener needs and, in a cluster, a mutual-TLS handshake with each node that reports itself up. Prints `ok` or `FAIL` per item; exits 0 if all passed, 1 otherwise. Starts and changes nothing, so it is safe beside a running node. Passwords in URLs are masked. |
 
 ```

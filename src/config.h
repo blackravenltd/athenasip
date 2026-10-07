@@ -108,8 +108,6 @@ class Config {
   uint16_t sip_timer_j_server_non_invite_duration = 64;
   uint16_t sip_timer_k_non_invite_duration = 1;
 
-  bool sip_timer_reliable_transport_retransmits = false;
-
   // The longest any call is held, in seconds. Zero is no cap. It also cuts legitimate calls
   // of that length, so set it only where calls are known to be shorter.
   uint32_t sip_max_call_duration = 0;
