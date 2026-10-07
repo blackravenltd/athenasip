@@ -514,4 +514,25 @@ std::vector<std::string> unknown_config_keys(const YAML::Node& root, const Setti
   return found;
 }
 
+std::vector<std::string> unknown_config_keys_in(const YAML::Node& root, const std::string& section, const Settings& settings) {
+  std::vector<std::string> found;
+
+  // Assigning a YAML::Node writes through to the document, so the walk rebinds with reset().
+  YAML::Node node;
+  node.reset(root);
+  for (std::size_t start = 0; node && node.IsMap() && start <= section.size();) {
+    const auto end = std::min(section.find('.', start), section.size());
+    const YAML::Node& here = node;
+    node.reset(here[section.substr(start, end - start)]);
+    start = end + 1;
+  }
+  if (!node || !node.IsMap()) return found;
+
+  std::map<std::string, const Setting*> by_key;
+  for (const auto& setting : settings) by_key[setting.key] = &setting;
+
+  unknown_in(node, section, by_key, settings, found);
+  return found;
+}
+
 }  // namespace athenasip

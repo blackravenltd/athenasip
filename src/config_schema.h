@@ -35,4 +35,8 @@ std::string config_reference_markdown(const plugins::Settings& settings);
 // checked unless its keys are among the settings.
 std::vector<std::string> unknown_config_keys(const YAML::Node& root, const plugins::Settings& settings);
 
+// The same, inside one section only ("push.acme"): for a module's driver, which registers after the file was
+// first checked.
+std::vector<std::string> unknown_config_keys_in(const YAML::Node& root, const std::string& section, const plugins::Settings& settings);
+
 }  // namespace athenasip

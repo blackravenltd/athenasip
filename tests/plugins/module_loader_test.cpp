@@ -8,6 +8,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <memory>
 #include <string>
 
@@ -39,6 +40,18 @@ TEST(ModuleLoaderTest, AModulesDriversAreRegisteredAndCreated) {
   ASSERT_NE(service, nullptr);
   EXPECT_EQ(service->describe(), "sample 1.2.3");
   EXPECT_TRUE(service->accepts(push::Notification{"sample", "token", "", push::Notification::Reason::Request}));
+}
+
+// A module's driver describes its section as a built-in one does, so the reference, the editor schema and the
+// check for misspelt keys cover it.
+TEST(ModuleLoaderTest, AModulesDriverDescribesItsSection) {
+  auto logger = std::make_shared<MockLogger>();
+
+  plugins::load_modules(logger, {module_dir("sample_module")});
+
+  const auto settings = plugins::PluginRegistry::instance().settings();
+  const auto described = std::any_of(settings.begin(), settings.end(), [](const plugins::Setting& setting) { return setting.key == "push.sample.region"; });
+  EXPECT_TRUE(described);
 }
 
 // A module built against another contract version is refused, and never called.
