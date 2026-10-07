@@ -2785,3 +2785,25 @@ missed because its connection had silently died.
       the JSON Schema, and a misspelt key inside one is named
       (`'media.rtpengine.timeout' ... did you mean 'media.rtpengine.timeout_ms'?`). A
       driver that says nothing has its section left alone. `docs/plugins.md` shows how.
+- [x] **A module's driver describes its section too.** `ModuleHost::add<T>` forwards
+      `T::settings()` as the registry's does, and a module's section is checked for misspelt
+      keys once the module has loaded (`ModuleLoaderTest.AModulesDriverDescribesItsSection`,
+      `ConfigSchemaTest.AMisspeltKeyInAModulesSectionIsNamed`). Found by the documentation
+      audit below; v18 had not been released, so the contract version stays 18.
+
+### The README and documentation, as for a release (2026-10-07)
+
+- [x] **The README** drops the "ALPHA - DO NOT USE" banner and says what is there: clustering,
+      browsers and phones, mobile push, the plugin contract with modules, the configuration
+      checks. Its limits name what is not proven (push against the real services, more than
+      two nodes) or not built (conferencing, presence).
+- [x] **Quick-start guides**, one per way in, under `docs/quick-start/`: Docker, one node by
+      hand, a server on Linux (systemd, Redis, TLS, HTTPS), connecting phones, and calling
+      from a browser (rtpengine, WSS, TURN, the subscriber's config endpoint).
+      `docs/quick_start.md` is their index.
+- [x] **Every doc checked against the code** and corrected: the configuration search order,
+      `--check`'s public address line, `/metrics`, `--list-plugins`, the node certificate's
+      names, both WebSocket certificate errors, the source layout and the push kind in
+      architecture, the local UA in the call flow and glossary, the rtpengine pool's
+      defaults and ordering, the exit code for a missing password, and the stale `wss`
+      note in the interop fixture's README. Every relative link and anchor resolves.

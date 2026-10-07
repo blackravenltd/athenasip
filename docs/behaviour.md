@@ -51,7 +51,9 @@ A realm read from the API carries three versions:
 | `behaviour_effective` | The result on the node that answered |
 | `behaviour_default` | That node's server default |
 
-An unknown setting or value stops the node at startup, and is a 400 from the API.
+In the configuration file, a value the setting does not take stops the node at startup,
+and a setting it does not know is logged as a warning and ignored. The API answers 400 to
+either.
 
 ## The settings
 

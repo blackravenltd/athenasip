@@ -61,10 +61,11 @@ journalctl -u athenasip -f
 | `athenasip --print-config` | print the effective configuration, defaults resolved, and exit |
 | `athenasip --print-schema` | print every setting as a JSON Schema for an editor, or with `=markdown` as the reference, and exit |
 | `athenasip --check` | try the datastore, event bus, media engine, certificates and cluster peers, report, and exit |
+| `athenasip --list-plugins` | load the plugin modules in `plugins.path`, say which loaded, list every driver, and exit |
 | `athenasip --help` | every option |
 
-With no `--config`, the first of `$ATHENASIP_CONFIG`, `/etc/athenasip/config.yaml` and
-`~/.athenasip/config.yaml` that exists is read. The unit passes
+With no `--config`, the node reads `$ATHENASIP_CONFIG` when it is set, otherwise
+`/etc/athenasip/config.yaml` when it exists, otherwise `~/.athenasip/config.yaml`. The unit passes
 `--config /etc/athenasip/config.yaml`.
 
 ## Configuring it
@@ -83,8 +84,11 @@ Every listener's address and port is in the configuration. On a shared host, che
 defaults are free and bind to one address rather than `0.0.0.0`:
 
 ```bash
-ss -lntup | grep -E ':(5060|5061|8080|9500)\b'
+ss -lntup | grep -E ':(5060|5061|5062|8080|8443|9500)\b'
 ```
+
+The builtin media relay also needs its UDP range, 22000 to 23000 by default, free and open
+in the firewall ([Media](media.md#ports-to-open)).
 
 ## The first administrator
 
@@ -105,8 +109,9 @@ With `memory://` nothing outlives the process, so `--add-user` creates the user 
 carries on as the node. Use `redis://` for a node run by systemd.
 
 Realms and subscribers are provisioned over the admin API, signed in as that user:
-[quick_start.md](quick_start.md) has the calls and [authentication.md](authentication.md)
-the model.
+[One node by hand](quick-start/one-node.md#2-sign-in) has the calls and
+[authentication.md](authentication.md) the model. [A server on Linux](quick-start/linux-server.md)
+is this page as one walk-through.
 
 ## What the unit restricts
 

@@ -7,16 +7,14 @@ Milestones 1, 2 and 3 are complete apart from the items left under Milestone 3 b
 `0.8.0` (2026-10-03) carried a good part of Milestone 4 and most of Milestone 5:
 `COMPLETED.md` has every item with what shipped.
 
-Since `0.8.0`, on `develop` and deployed to both nodes: RFC 6026's Accepted state (a
-callee's retransmitted 2xx now reaches the caller), media addresses that may be names and
-follow `sip.localnet` for rtpengine too, `--reset-password`, `--check`, `log.level` and
-`log.format`, the node's media in its status, and two log lines that were errors and are
-not; `sip.allow_unencrypted: false` refusing plain listeners and dialling only TLS; and
-documentation that describes the code as it is. corvus-fi-1 runs `c6126d3`; corvus-gbni-1
-was deployed by hand from the same build. Not yet deployed: RFC 8599 push (registrar,
-proxy bucket, refresh pushes, `fcm://` and `webpush://`), unproven against a real service
-for want of credentials. 1141 unit tests (one skipped without a resolver) at the head of
-`develop`.
+Since `0.8.0`, on `develop` and deployed to both nodes (`3ff67db`, 2026-10-07): RFC 6026's
+Accepted state, media addresses that may be names, `--reset-password`, `--check`,
+`log.level` and `log.format`, `sip.allow_unencrypted: false`, RFC 8599 push (unproven
+against a real service for want of credentials), the second node and client failover, the
+rtpengine pool, the local UA that ends dead calls with a BYE, and the configuration schema
+with `--print-schema`. The README and documentation were checked against the code on
+2026-10-07 and the quick-start guides written. 1296 unit tests (one skipped without a
+resolver) at the head of `develop`.
 
 **Two live nodes**, neither production:
 - `corvus-fi-1` (10.35.1.20): builtin relay, AthenaPhone's usual home.

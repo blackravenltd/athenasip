@@ -42,7 +42,8 @@ standard requires, watch it fail, then fix the code.
 
 ## Dependencies
 
-Boost, OpenSSL and yaml-cpp, plus GoogleTest for the test build. Prefer writing
+Boost, OpenSSL, yaml-cpp and nghttp2 (only because APNs speaks nothing but HTTP/2), plus
+GoogleTest for the test build. Prefer writing
 something by hand over adding a library.
 
 ## Style
@@ -58,7 +59,8 @@ something by hand over adding a library.
   constructors. The only process global is `detail::get_global_io_context()`.
 - Each component logs through its own `LoggerScoped`.
 - Pluggable subsystems register through `register_driver<T>(logger, scheme)` and
-  `create_driver(logger, url)`; see [docs/plugins.md](docs/plugins.md).
+  `create_driver(logger, url)`, or from a shared library through
+  `ATHENASIP_PLUGIN_MODULE`; see [docs/plugins.md](docs/plugins.md).
 - Comments are sparse and explain intent, not mechanics.
 
 ## Plan

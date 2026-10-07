@@ -86,8 +86,10 @@ existing authority, because that would orphan every certificate it signed.
 athenasip --ca-node node-a --san 10.35.1.20 --san node-a.example.com
 ```
 
-This writes `node-a.key` and `node-a.crt` beside the authority. Give a `--san` for every
-address and host name another node reaches this one by. `--replace` issues again over an
+This writes `node-a.key` and `node-a.crt` beside the authority. The certificate always
+names the node ID, `node-a`; give a `--san` for every other address and host name another
+node reaches this one by. An address is written as an IP name and anything else as a DNS
+name, as peers check them. `--replace` issues again over an
 existing certificate, to renew it or change its names.
 
 Copy `ca.crt`, `node-a.crt` and `node-a.key` to node A. `ca.key` stays where it is.
