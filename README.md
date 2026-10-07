@@ -47,7 +47,7 @@ and TCP for evaluation; `sip.allow_unencrypted: false` limits a node to TLS and 
 * [Quick Start](docs/quick_start.md) - two subscribers calling each other
 * [Installation](docs/installation.md) - the binary, the configuration and the systemd unit
 * [Compiling](docs/compiling.md) - dependencies and build presets
-* [Configuration](docs/configuration.md)
+* [Configuration](docs/configuration.md) and its [reference](docs/configuration-reference.md)
 * [How a call works](docs/how-a-call-works.md) - one call through a node, step by step
 * [Media](docs/media.md) - the builtin relay and rtpengine, ports and addresses
 * [Running a cluster](docs/clustering.md) - two nodes, step by step

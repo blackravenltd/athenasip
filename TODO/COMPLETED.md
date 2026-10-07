@@ -2760,3 +2760,22 @@ missed because its connection had silently died.
 - [x] **`DELETE /api/v1/calls/{call}`**, under `manage-cluster`: 202 with the BYEs on their
       way, 404 for no live call, 409 for one not yet answered.
 
+
+### The configuration schema (2026-10-07)
+
+- [x] **`--print-config` prints what the loader reads.** The SIP timers were printed flat
+      under `sip` (`timer_t1_rtt_ms`), eight of them not at all, nor the ICE and TURN
+      settings; the output now loads back as the same configuration
+      (`ConfigTest.TheEffectiveConfigurationLoadsBackAsTheSame`). A reliable-transport
+      retransmit flag that nothing read is gone.
+- [x] **Every setting described once** (`src/config_schema.cpp`, `plugins::Setting`): type,
+      default, limits, meaning. Tests hold it to the loader: every setting set to something
+      other than its default comes back where the schema puts it, every stated default is
+      the node's, and nothing `--print-config` prints is undescribed.
+- [x] **`athenasip --print-schema`** prints a JSON Schema (draft 2020-12) for an editor;
+      `=markdown` prints `docs/configuration-reference.md`. Both are checked in and a test
+      fails when they fall behind. The shipped example, the harness configurations and both
+      nodes' files validate against it.
+- [x] **A misspelt key is warned about**, naming the one probably meant, from the same
+      section or by name from another (`'sip.media_anchor' ... did you mean
+      'behaviour.media_anchor'?`). A driver's own section is left to the driver.

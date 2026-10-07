@@ -59,6 +59,7 @@ journalctl -u athenasip -f
 | `athenasip --version` | print the version |
 | `athenasip --config PATH` | read a particular configuration |
 | `athenasip --print-config` | print the effective configuration, defaults resolved, and exit |
+| `athenasip --print-schema` | print every setting as a JSON Schema for an editor, or with `=markdown` as the reference, and exit |
 | `athenasip --check` | try the datastore, event bus, media engine, certificates and cluster peers, report, and exit |
 | `athenasip --help` | every option |
 

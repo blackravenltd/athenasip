@@ -22,6 +22,9 @@ struct Options {
   // Print the effective configuration, defaults included, and exit.
   bool print_config = false;
 
+  // Print every setting, as a JSON Schema ("json") or the reference ("markdown"), and exit.
+  std::string print_schema;
+
   // Try the datastore, event bus, media engine and cluster peers, report which answered,
   // and exit. Nothing is started.
   bool check = false;
@@ -95,6 +98,12 @@ inline Options parse(int argc, char* argv[]) {
       options.help = true;
     } else if (argument == "--print-config") {
       options.print_config = true;
+    } else if (argument == "--print-schema" || argument.rfind("--print-schema=", 0) == 0) {
+      options.print_schema = argument == "--print-schema" ? "json" : argument.substr(15);
+      if (options.print_schema != "json" && options.print_schema != "markdown") {
+        options.ok = false;
+        options.error = "--print-schema is json or markdown";
+      }
     } else if (argument == "--check") {
       options.check = true;
     } else if (argument == "--list-plugins") {
@@ -131,6 +140,9 @@ inline std::string usage() {
          "  -h, --help            print this and exit\n"
          "  --print-config        print the effective configuration and exit, with the\n"
          "                        file, the search path and the defaults all resolved\n"
+         "  --print-schema[=FORMAT] print every setting, with its default and limits, as\n"
+         "                        a JSON Schema for an editor (json, the default) or as\n"
+         "                        the reference (markdown), and exit\n"
          "\n"
          "Administration, which starts no listeners and exits when it is done:\n"
          "\n"
