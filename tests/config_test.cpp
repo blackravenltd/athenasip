@@ -691,7 +691,7 @@ TEST(ConfigTest, TheEffectiveConfigurationCarriesDefaultsNobodyWroteDown) {
 
   // Defaults the file did not set.
   EXPECT_NE(effective.find("session_min_se: 90"), std::string::npos);
-  EXPECT_NE(effective.find("timer_t1_rtt_ms: 500"), std::string::npos);
+  EXPECT_NE(effective.find("t1_rtt_ms: 500"), std::string::npos);
   EXPECT_NE(effective.find("url: local://"), std::string::npos);
 }
 
@@ -768,4 +768,48 @@ TEST(ConfigTest, TheShippedExampleConfigurationLoads) {
   // Monitors derive their staleness threshold from the status interval.
   EXPECT_EQ(config->events_status_interval, 30u);
   EXPECT_EQ(config->sip_flow_idle_timeout, 300u);
+}
+
+// What --print-config prints is a configuration: loaded back, it is the same one, so an operator can start from it.
+TEST(ConfigTest, TheEffectiveConfigurationLoadsBackAsTheSame) {
+  ConfigFile file(
+      "sip:\n  node_id: test-node\n  timers:\n    t1_rtt_ms: 250\n    b_invite_timeout: 32\n    k_non_invite_duration: 2\n"
+      "    c_invite_proxy_ms: 200000\n"
+      "udp:\n  port: 5070\n"
+      "http:\n  port: 8080\n  api:\n    ice_servers: [\"stun:stun.example.org:3478\", \"turn:turn.example.org:3478\"]\n"
+      "    turn_shared_secret: s3cret\n    turn_credential_ttl: 600\n");
+
+  bool ok = false;
+  auto config = file.load(ok);
+  ASSERT_TRUE(ok);
+
+  const auto effective = config->effective_yaml();
+  ConfigFile again(effective);
+  auto reloaded = again.load(ok);
+  ASSERT_TRUE(ok) << effective;
+
+  EXPECT_EQ(reloaded->effective_yaml(), effective);
+  EXPECT_EQ(reloaded->sip_timer_t1_rtt_ms, 250u);
+  EXPECT_EQ(reloaded->sip_timer_b_invite_timeout, 32u);
+  EXPECT_EQ(reloaded->sip_timer_k_non_invite_duration, 2u);
+  EXPECT_EQ(reloaded->sip_timer_c_invite_proxy_ms, 200000u);
+  ASSERT_EQ(reloaded->ice_servers.size(), 2u);
+  EXPECT_EQ(reloaded->ice_servers[1].url, "turn:turn.example.org:3478");
+  EXPECT_EQ(reloaded->turn_shared_secret, "s3cret");
+  EXPECT_EQ(reloaded->turn_credential_ttl, 600u);
+}
+
+// The shipped example, too: every default resolved, it still loads back as itself.
+TEST(ConfigTest, TheExampleConfigurationLoadsBackAsTheSame) {
+  auto logger = std::make_shared<MockLogger>();
+  auto config = std::make_shared<Config>(logger);
+  ASSERT_TRUE(config->load_from_yaml(std::string(ATHENA_TEST_SOURCE_DIR) + "/config/config.example.yaml"));
+
+  const auto effective = config->effective_yaml();
+  ConfigFile again(effective);
+  bool ok = false;
+  auto reloaded = again.load(ok);
+  ASSERT_TRUE(ok) << effective;
+
+  EXPECT_EQ(reloaded->effective_yaml(), effective);
 }

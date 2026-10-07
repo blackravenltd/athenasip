@@ -683,13 +683,22 @@ std::string Config::effective_yaml() const {
   out << YAML::Key << "connect_timeout_ms" << YAML::Value << sip_connect_timeout_ms;
   out << YAML::Key << "flow_idle_timeout" << YAML::Value << sip_flow_idle_timeout;
 
-  out << YAML::Key << "timer_t1_rtt_ms" << YAML::Value << sip_timer_t1_rtt_ms;
-  out << YAML::Key << "timer_t2_max_retransmit_interval_ms" << YAML::Value << sip_timer_t2_max_retransmit_interval_ms;
-  out << YAML::Key << "timer_t4_network_propagation_ms" << YAML::Value << sip_timer_t4_network_propagation_ms;
-  out << YAML::Key << "timer_b_invite_timeout" << YAML::Value << sip_timer_b_invite_timeout;
-  out << YAML::Key << "timer_c_invite_proxy_ms" << YAML::Value << sip_timer_c_invite_proxy_ms;
-  out << YAML::Key << "timer_f_non_invite_timeout" << YAML::Value << sip_timer_f_non_invite_timeout;
-  out << YAML::Key << "timer_reliable_transport_retransmits" << YAML::Value << sip_timer_reliable_transport_retransmits;
+  out << YAML::Key << "timers" << YAML::Value << YAML::BeginMap;
+  out << YAML::Key << "t1_rtt_ms" << YAML::Value << sip_timer_t1_rtt_ms;
+  out << YAML::Key << "t2_max_retransmit_interval_ms" << YAML::Value << sip_timer_t2_max_retransmit_interval_ms;
+  out << YAML::Key << "t4_network_propagation_ms" << YAML::Value << sip_timer_t4_network_propagation_ms;
+  out << YAML::Key << "a_invite_initial" << YAML::Value << sip_timer_a_invite_initial;
+  out << YAML::Key << "b_invite_timeout" << YAML::Value << sip_timer_b_invite_timeout;
+  out << YAML::Key << "d_invite_duration" << YAML::Value << sip_timer_d_invite_duration;
+  out << YAML::Key << "e_non_invite_initial" << YAML::Value << sip_timer_e_non_invite_initial;
+  out << YAML::Key << "f_non_invite_timeout" << YAML::Value << sip_timer_f_non_invite_timeout;
+  out << YAML::Key << "g_server_invite_initial" << YAML::Value << sip_timer_g_server_invite_initial;
+  out << YAML::Key << "h_server_invite_timeout" << YAML::Value << sip_timer_h_server_invite_timeout;
+  out << YAML::Key << "i_server_invite_duration" << YAML::Value << sip_timer_i_server_invite_duration;
+  out << YAML::Key << "j_server_non_invite_duration" << YAML::Value << sip_timer_j_server_non_invite_duration;
+  out << YAML::Key << "k_non_invite_duration" << YAML::Value << sip_timer_k_non_invite_duration;
+  out << YAML::Key << "c_invite_proxy_ms" << YAML::Value << sip_timer_c_invite_proxy_ms;
+  out << YAML::EndMap;
   out << YAML::EndMap;
 
   const auto listener = [&out](const std::string& name, bool enable, const std::string& address, std::uint16_t port, std::uint16_t public_port) {
@@ -801,6 +810,12 @@ std::string Config::effective_yaml() const {
   emit_limit("login_user", http_api_limit_login_user);
   emit_limit("session", http_api_limit_session);
   out << YAML::EndMap;
+
+  out << YAML::Key << "ice_servers" << YAML::Value << YAML::BeginSeq;
+  for (const auto& server : ice_servers) out << server.url;
+  out << YAML::EndSeq;
+  out << YAML::Key << "turn_shared_secret" << YAML::Value << turn_shared_secret;
+  out << YAML::Key << "turn_credential_ttl" << YAML::Value << turn_credential_ttl;
 
   out << YAML::EndMap;
 
