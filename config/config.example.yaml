@@ -17,8 +17,8 @@ sip:
   connect_timeout_ms: 4000
   flow_idle_timeout: 300          # keep above 32 (64 * T1), or UDP transactions lose their flow
 
-  # No BYE comes from an endpoint that lost power. These end such calls; the node never
-  # sends a BYE itself (RFC 4028 8.3).
+  # No BYE comes from an endpoint that lost power. These end such calls: media_timeout and
+  # max_call_duration send each end a BYE; a lapsed session timer sends none (RFC 4028 8.3).
   media_timeout: 300              # too short cuts calls on hold
   session_expires: 1800
   session_min_se: 90
