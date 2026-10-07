@@ -6,9 +6,26 @@ One YAML file. With no `--config`, the first of these that exists is read:
 2. `/etc/athenasip/config.yaml`
 3. `~/.athenasip/config.yaml`
 
-[`config/config.example.yaml`](../config/config.example.yaml) shows the settings in place.
+[`config/config.example.yaml`](../config/config.example.yaml) shows the settings in place,
+and the [reference](configuration-reference.md) lists every one with its default and limits.
 An unknown `behaviour` value, a missing required key or an unparseable value stops the
-node at startup.
+node at startup. A key the node does not know is logged as a warning naming the key that
+was probably meant (`'udp.prot' is not a setting, and is ignored - did you mean
+'udp.port'?`), and ignored.
+
+An editor can check the file as it is written. `athenasip --print-schema` prints the
+settings as a JSON Schema, the same as
+[`configuration.schema.json`](configuration.schema.json); with the YAML language server
+(VS Code's YAML extension, among others), save it beside the file and name it on the
+file's first line:
+
+```sh
+athenasip --print-schema > /etc/athenasip/configuration.schema.json
+```
+
+```yaml
+# yaml-language-server: $schema=configuration.schema.json
+```
 
 ## Minimal configuration
 
@@ -30,6 +47,7 @@ admin API and console need an [`http`](#http) section.
 | Command | What it does |
 |---|---|
 | `athenasip --print-config` | Prints the effective configuration (file, search path and defaults resolved) as YAML, names the file it came from, and exits. Plugin sections are copied through as written. The output is itself a configuration: saved and loaded, it runs the same node. |
+| `athenasip --print-schema` | Prints every setting with its type, default and limits as a JSON Schema; `--print-schema=markdown` prints the [reference](configuration-reference.md). Reads no file. |
 | `athenasip --check` | Tries the datastore, event bus, media engine, each certificate a listener needs and, in a cluster, a mutual-TLS handshake with each node that reports itself up. Prints `ok` or `FAIL` per item; exits 0 if all passed, 1 otherwise. Starts and changes nothing, so it is safe beside a running node. Passwords in URLs are masked. |
 
 ```

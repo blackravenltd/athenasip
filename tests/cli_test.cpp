@@ -109,6 +109,15 @@ TEST(CliTest, TheEffectiveConfigurationCanBeAskedFor) {
   EXPECT_EQ(options.config, "/etc/athenasip/config.yaml");
 }
 
+// --print-schema prints JSON by default; =markdown prints the reference. Anything else is a usage error.
+TEST(CliTest, TheSettingsCanBeAskedForAsASchemaOrAReference) {
+  EXPECT_EQ(parse_of({"--print-schema"}).print_schema, "json");
+  EXPECT_EQ(parse_of({"--print-schema=json"}).print_schema, "json");
+  EXPECT_EQ(parse_of({"--print-schema=markdown"}).print_schema, "markdown");
+  EXPECT_FALSE(parse_of({"--print-schema=xml"}).ok);
+  EXPECT_NE(athenasip::cli::usage().find("--print-schema"), std::string::npos);
+}
+
 // --ca-init, --ca-dir, --ca-node, --san and --replace drive the cluster CA.
 TEST(CliTest, TheClusterCaCanBeMadeAndUsed) {
   const auto init = parse_of({"--ca-init", "--ca-dir", "/srv/ca"});

@@ -33,6 +33,7 @@
 #include "cli_check.h"
 #include "cluster_ca.h"
 #include "config.h"
+#include "config_schema.h"
 #include "core.h"
 #include "datastores/datastore.h"
 #include "datastores/datastore_drivers.h"
@@ -157,6 +158,13 @@ int main(int argc, char* argv[]) {
 
   if (options.help) {
     std::cout << cli::usage();
+    return 0;
+  }
+
+  // The settings are the same whatever the file says, so no file is read.
+  if (!options.print_schema.empty()) {
+    const auto& settings = config_settings();
+    std::cout << (options.print_schema == "markdown" ? config_reference_markdown(settings) : config_schema_json(settings));
     return 0;
   }
 
