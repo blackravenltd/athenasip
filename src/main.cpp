@@ -49,6 +49,7 @@
 #include "plugins/module_loader.h"
 #include "plugins/plugin.h"
 #include "plugins/plugin_registry.h"
+#include "policy/policy_drivers.h"
 #include "push/push_service.h"
 #include "push/push_service_drivers.h"
 #include "rtp/rtp_relay.h"
@@ -198,6 +199,7 @@ int main(int argc, char* argv[]) {
   register_builtin_datastores(logger);
   register_builtin_event_systems(logger);
   media::register_builtin_media_engines(logger);
+  policy::register_builtin_policies(logger);
   push::register_builtin_push_services(logger);
 
   // The settings are the server's and the drivers' built in, whatever the file says, so no
@@ -438,9 +440,22 @@ int main(int argc, char* argv[]) {
     push_services.push_back(service);
   }
 
+  auto policy = policy::Policy::create_driver(logger, config->policy_url);
+  if (!policy || !configure_plugin(logger, policy, config)) {
+    logger->error(policy ? "Policy " + config->policy_url + " did not start" : "Unknown policy scheme: " + config->policy_url);
+    for (const auto& started : push_services) started->close();
+    media_engine->close();
+    datastore->close();
+    events->close();
+    return -2;
+  }
+
+  logger->info("Policy Driver: " + policy->describe());
+
   auto core = std::make_shared<Core>(logger, config, datastore, events);
   core->media_register(media_engine);
   for (const auto& service : push_services) core->push_register(service);
+  core->policy_register(policy);
 
   // The HTTP listener: admin API and static files.
   std::shared_ptr<api::Router> api_router;

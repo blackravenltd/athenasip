@@ -2816,3 +2816,41 @@ missed because its connection had silently died.
       architecture, the local UA in the call flow and glossary, the rtpengine pool's
       defaults and ordering, the exit code for a missing password, and the stale `wss`
       note in the interop fixture's README. Every relative link and anchor resolves.
+
+## Milestone 5 - Scripting and trunks
+
+The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.md`
+(2026-10-07); the plan is Milestone 5 in `ACTIVE.md`.
+
+### The seam (2026-10-08)
+
+- [x] **The `policy` plugin kind** (`src/policy/policy.h`, contract version 19). `Policy`
+      answers four questions the node used to answer inline - `authorize`, `route`,
+      `on_failure`, `register_` - with decision structs (`AuthDecision`, `RouteDecision`,
+      `Target`, `FailureDecision`, `RegisterDecision`) that the node carries out. A
+      `RequestView` gives the policy the message and what only the node knows: relay, from a
+      peer, a sealed flow token, a remaining Route. A `Host` lends it the datastore through
+      the strand, the node's own addresses and the configuration. `policy.url` picks the
+      driver; `docs/plugins.md` documents the kind.
+- [x] **`builtin://`** (`src/policy/builtin_policy.*`) holds what were `Proxy::_authorize`,
+      the realm, subscriber and binding lookups of `_determine_targets`, the relay rule of
+      `_authorize_relay`, and the registrar's realm, unserved-domain and expiry steps. It is
+      the default, and a `Core` built without a policy uses it, so every proxy and registrar
+      test runs against it unchanged and passes. The proxy keeps the mechanism: Digest
+      challenge and verification in one realm or any (`_authenticate`,
+      `_authenticate_any`), the Route and flow-token targets, the expansion of a subscriber
+      into bindings, push and peer forwarding, and the 16.7 rules. The OPTIONS answer for
+      the node itself stays native (RFC 3261 11.2), and the design says so.
+- [x] **After a failed branch the policy is asked** (`Proxy::_after_failure`): go on, stop
+      with the best so far, or try new targets first. 2xx and 6xx never reach it. A policy
+      that cannot decide there is taken to say go on; anywhere else it is a 500.
+- [x] **An off-node call follows the server's media policy.** A Request-URI in no realm here
+      got a default-constructed `MediaPolicy` (anchor, mirror) whatever `behaviour` said; the
+      route decision now carries the server's
+      (`ProxyMediaTest.ACallLeavingTheNodeFollowsTheServersMediaPolicy`).
+- [x] Tests: `tests/proxy_policy_test.cpp` drives the proxy and registrar through a scripted
+      policy (refusal with its code, a policy that cannot decide, a reply in place of
+      targets, targets the policy names, an empty route, stop and insert after a failure,
+      no question after a 2xx, a REGISTER refused before any challenge and one challenged
+      in the realm the policy names). 1307 unit tests, one skipped without a resolver. The
+      sipp harnesses were not run: Docker Desktop is paused.

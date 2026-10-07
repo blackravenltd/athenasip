@@ -603,6 +603,20 @@
         }
       }
     },
+    "policy": {
+      "description": "Who may call, and where a request goes. Each driver may have a section of its own here.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      },
+      "properties": {
+        "url": {
+          "description": "builtin:// serves this node's realms and nothing more, with no script.",
+          "type": "string",
+          "default": "builtin://"
+        }
+      }
+    },
     "plugins": {
       "description": "Plugin modules, loaded at start.",
       "type": "object",

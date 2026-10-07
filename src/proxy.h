@@ -21,6 +21,7 @@
 #include "headers/sip_identity_header.h"
 #include "loggers/logger.h"
 #include "media/media_engine.h"
+#include "policy/policy.h"
 #include "sip_message.h"
 #include "timer_source.h"
 #include "transaction_user.h"
@@ -244,7 +245,17 @@ class Proxy : public TransactionUser {
   void _rewrite_contact(const std::shared_ptr<SIPMessage>& message, const std::shared_ptr<Channel>& from) const;
   void _read_caller_profile(const std::shared_ptr<Context>& context, std::function<void()> then);
   bool _reoffer(const std::shared_ptr<Context>& context);
-  void _add_targets(const std::shared_ptr<Context>& context, std::vector<types::Location> bindings) const;
+  void _add_targets(const std::shared_ptr<Context>& context, std::vector<types::Location> bindings, std::vector<Target>& into) const;
+
+  // The policy's targets as branches, in order, reading the bindings of any subscriber whose the policy did not.
+  void _expand(const std::shared_ptr<Context>& context, std::vector<policy::Target> specs, std::size_t index, std::shared_ptr<std::vector<Target>> into,
+               std::function<void()> then);
+
+  // RFC 3261 16.7 step 4: the policy says what follows a branch's 3xx to 5xx.
+  void _after_failure(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response);
+
+  // What the policy is told about a request beyond the message itself.
+  std::shared_ptr<policy::RequestView> _view(const std::shared_ptr<SIPMessage>& request, bool relay) const;
   bool _try_other_flow(const std::shared_ptr<Context>& context);
   void _report_reoffer(const std::shared_ptr<Context>& context, bool took);
 
@@ -263,19 +274,21 @@ class Proxy : public TransactionUser {
   void _send_status(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request, std::uint16_t code,
                     const std::string& reason);
 
-  // Decides whether the request may be forwarded (RFC 3261 22.3). `then` runs only if it may; otherwise the
-  // request has been answered.
-  void _authorize(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction, std::function<void()> then);
+  // Asks the policy whether the request may be forwarded, and carries out its answer (RFC 3261 22.3). `then`
+  // runs only if it may; otherwise the request has been answered.
+  void _authorize(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction, bool relay,
+                  std::function<void()> then);
+
+  // Digest in one realm. With from_must_match the credentials must be the From's subscriber's.
   void _authenticate(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
-                     const std::shared_ptr<types::Realm>& realm, const std::shared_ptr<SIPUri>& caller, std::function<void()> then);
+                     const std::shared_ptr<types::Realm>& realm, bool from_must_match, std::function<void()> then);
   void _send_proxy_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
                              const std::shared_ptr<types::Realm>& realm);
 
-  // Who may have a REGISTER forwarded: a reliable connection one of this node's subscribers registered over, or
-  // credentials for one of its realms (RFC 3261 22.3). The From is the foreign address of record, so it does not
-  // decide.
-  void _authorize_relay(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
-                        std::function<void()> then);
+  // Digest in any realm this node serves: a reliable connection one of its subscribers registered over, or
+  // credentials for one of its realms. For a REGISTER to forward, whose From is the foreign address of record.
+  void _authenticate_any(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
+                         std::function<void()> then);
   void _send_relay_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request);
 
   // This node as the side facing `facing` sees it, with a flow token in the user part (RFC 5626 5.1): for

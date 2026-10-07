@@ -245,6 +245,20 @@ the driver for what a URL cannot express. [Plugins](plugins.md) describes the co
 
 Whether media is anchored at all is [`behaviour.media_anchor`](#behaviour).
 
+## `policy`
+
+Who may call, and where a request goes.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `url` | `builtin://` | The policy driver |
+
+`builtin://` serves this node's realms and nothing more, with no script: a caller whose
+From is in a realm here proves it with Digest, anybody may call into a realm here, a
+request for a realm here goes to its subscriber's devices and any other request goes to
+its Request-URI. It is what a node has always done. Scripted routing, and with it trunks,
+is being built ([design](design/scripting-1-the-node.md)).
+
 ## `plugins`
 
 | Key | Default | Meaning |

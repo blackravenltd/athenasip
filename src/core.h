@@ -39,6 +39,7 @@
 #include "media/reoffers.h"
 #include "node_directory.h"
 #include "plugins/plugin.h"
+#include "policy/policy.h"
 #include "push/push_service.h"
 #include "push_refresher.h"
 #include "rtp/rtp_relay_set.h"
@@ -251,6 +252,11 @@ class Core : public std::enable_shared_from_this<Core> {
   // Media engine
   void media_register(std::shared_ptr<media::MediaEngine> engine);
 
+  // Routing and authorisation policy (policy.url). builtin:// until one is registered, so a Core built without
+  // one, as the tests build it, behaves as a node with no script.
+  void policy_register(std::shared_ptr<policy::Policy> policy);
+  std::shared_ptr<policy::Policy> policy();
+
   // RFC 8599 push notification services, filed by pn-provider. None unless push.urls names some.
   void push_register(std::shared_ptr<push::PushService> service);
   std::shared_ptr<push::PushService> push_service(const std::string& provider) const;
@@ -339,6 +345,7 @@ class Core : public std::enable_shared_from_this<Core> {
   std::shared_ptr<PushRefresher> _push_refresher;
   std::shared_ptr<AddressDiscovery> _address_discovery;
   std::map<std::string, std::shared_ptr<push::PushService>> _push_services;
+  std::shared_ptr<policy::Policy> _policy;
   std::shared_ptr<dns::SipLocator> _locator;
   std::shared_ptr<Dialogs> _dialogs;
 

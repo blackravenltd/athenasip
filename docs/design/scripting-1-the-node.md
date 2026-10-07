@@ -34,7 +34,7 @@ marks what a script takes over; "mechanism" stays as it is.
 |---|---|---|---|
 | No Request-URI: 400 | `:161` | mechanism | |
 | Loop token and check (482) | `_loop_token :384`, `_is_loop :403` | mechanism | RFC 3261 16.3 |
-| Answer OPTIONS addressed to the node | `:175-191`, `_answer_options :1852` | decision | Whether to answer is policy; the 200 is built natively |
+| Answer OPTIONS addressed to the node | `:175-191`, `_answer_options :1852` | mechanism | RFC 3261 11.2: a request for the node itself, answered before authorisation as it always was |
 | Session timer: insert, require, 422 | `_apply_session_timer :1512` | mechanism | The values are `sip.session_expires`, `sip.session_min_se` and `sip.require_session_timer`, and stay configuration. Note that this runs before authorisation, so an unknown caller can get a 422; that is unchanged |
 | Route preprocessing, strict-router undo, flow token | `_preprocess_routes :423` | mechanism | RFC 3261 16.4 |
 | Authorisation | `_authorize :211` | decision | The whole of it; see below |

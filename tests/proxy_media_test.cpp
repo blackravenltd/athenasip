@@ -179,6 +179,22 @@ TEST(ProxyMediaTest, TheAnswerTheCallerReceivesNamesThisNode) {
   EXPECT_TRUE(in_port_range(sdp.media()[0].description.port)) << sdp.media()[0].description.port;
 }
 
+// A call leaving the node, to a Request-URI in no realm here, takes the server's media policy as a call into a
+// realm with no overrides does. It once took a fixed default and anchored whatever the server said.
+TEST(ProxyMediaTest, ACallLeavingTheNodeFollowsTheServersMediaPolicy) {
+  MediaFixture fixture;
+  fixture.config->behaviour.anchor = false;
+
+  auto raw = fixture.invite_with(MediaFixture::offer());
+  raw.replace(raw.find("INVITE sip:bob@example.com"), std::string("INVITE sip:bob@example.com").size(), "INVITE sip:bob@192.0.2.20:5060");
+  fixture.receive(fixture.caller, raw);
+
+  auto forwarded = ProxyFixture::request_with(fixture.callee_connection, "INVITE");
+  ASSERT_NE(forwarded, nullptr);
+  EXPECT_EQ(forwarded->header->request_uri->to_string(), "sip:bob@192.0.2.20:5060");
+  EXPECT_EQ(media_address(MediaFixture::sdp_of(forwarded), 0), "192.0.2.10");
+}
+
 // RFC 3261 16.6: a body that is not a session description is forwarded untouched.
 TEST(ProxyMediaTest, AMessageWithNoSessionDescriptionIsUntouched) {
   MediaFixture fixture;
