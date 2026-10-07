@@ -1,20 +1,21 @@
 # AthenaSIP - Active Work
 
-Work happens on `develop`; `main` carries the last release, and `0.8.0` is the current
+Work happens on `develop`; `main` carries the last release, and `0.9.0` is the current
 one. Line numbers refer to the current tree; update them as files move.
 
 Milestones 1, 2 and 3 are complete apart from the items left under Milestone 3 below.
 `0.8.0` (2026-10-03) carried a good part of Milestone 4 and most of Milestone 5:
 `COMPLETED.md` has every item with what shipped.
 
-Since `0.8.0`, on `develop` and deployed to both nodes (`3ff67db`, 2026-10-07): RFC 6026's
+`0.9.0` (2026-10-07) carried, since `0.8.0`: RFC 6026's
 Accepted state, media addresses that may be names, `--reset-password`, `--check`,
 `log.level` and `log.format`, `sip.allow_unencrypted: false`, RFC 8599 push (unproven
 against a real service for want of credentials), the second node and client failover, the
 rtpengine pool, the local UA that ends dead calls with a BYE, and the configuration schema
 with `--print-schema`. The README and documentation were checked against the code on
 2026-10-07 and the quick-start guides written. 1296 unit tests (one skipped without a
-resolver) at the head of `develop`.
+resolver) at the tag. Both nodes run `3ff67db`, which is `0.9.0` without the fix
+that lets a plugin module describe its settings.
 
 **Two live nodes**, neither production:
 - `corvus-fi-1` (10.35.1.20): builtin relay, AthenaPhone's usual home.
