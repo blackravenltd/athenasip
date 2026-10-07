@@ -30,7 +30,8 @@ for want of credentials. 1141 unit tests (one skipped without a resolver) at the
 with rtpengine 12 of 12, two nodes 15 of 15. That covers RFC 6026 and `allow_unencrypted`;
 push is after it and has no scenario yet.
 
-**Next:** Milestone 4's open item, the intermittent `across-cancel-ringing`; then Milestone 5.
+**Next:** Milestone 5's packaging. Milestone 4's intermittent `across-cancel-ringing` has not
+failed again in 18 runs; it stays open for the next failure's logs.
 
 **Once things are stable, video calling is a primary feature** (Tom, 2026-10-03), not a
 later extra: principle 6 already says so, and this is the reminder that it is next in line
@@ -399,7 +400,9 @@ its last scenario.
       not in four runs on its own; it passed at `67a4b75`). Cause unknown: the logs were
       overwritten by the next harness run before they were read. Run the full harness until
       it fails again, and read `cluster-across-cancel-ringing*.log` and both nodes' logs
-      before naming a cause.
+      before naming a cause. Not reproduced since (2026-10-06, at `ed9141f`): 15 runs on its
+      own and three of the full harness, the third cut short by Docker Desktop pausing after
+      `across-ws-flow`. Left open, so the next failure's logs are kept and read.
 
 ---
 
