@@ -70,6 +70,20 @@ ApnsPushService::ApnsPushService(std::shared_ptr<loggers::Logger> logger, std::s
 
 std::string ApnsPushService::name() const { return "apns"; }
 
+plugins::Settings ApnsPushService::settings() {
+  using namespace plugins::define;
+  return {
+      section("apns", "Apple Push Notification service, for apns:// in push.urls."),
+      required(text("apns.key_file", "", "The APNs key Apple issues (AuthKey_<key ID>.p8).")),
+      required(text("apns.key_id", "", "The key's ten-character ID.")),
+      required(text("apns.team_id", "", "The developer team's ten-character ID.")),
+      choice("apns.environment", "production", {"production", "sandbox"}, "sandbox for an app built for development."),
+      integer("apns.ttl", "60", "Seconds APNs keeps trying to deliver the push. 0 is now or not at all.", 0),
+      text("apns.api_base", "", "Only to go through a proxy: an https URL. Empty follows environment."),
+      text("apns.ca_file", "", "More CA certificates to trust, beside the system's."),
+  };
+}
+
 std::string ApnsPushService::version() const { return "0.0.1"; }
 
 bool ApnsPushService::configure(const YAML::Node& own_root, const Config& system) {

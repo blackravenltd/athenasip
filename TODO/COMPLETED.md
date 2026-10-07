@@ -2779,3 +2779,9 @@ missed because its connection had silently died.
 - [x] **A misspelt key is warned about**, naming the one probably meant, from the same
       section or by name from another (`'sip.media_anchor' ... did you mean
       'behaviour.media_anchor'?`). A driver's own section is left to the driver.
+- [x] **Drivers describe their own sections** with a static `settings()`, which
+      `PluginRegistry::add<T>` picks up (contract version 18). `mqtt`, `builtin`,
+      `rtpengine`, `apns`, `fcm` and `webpush` do; their sections are in the reference and
+      the JSON Schema, and a misspelt key inside one is named
+      (`'media.rtpengine.timeout' ... did you mean 'media.rtpengine.timeout_ms'?`). A
+      driver that says nothing has its section left alone. `docs/plugins.md` shows how.

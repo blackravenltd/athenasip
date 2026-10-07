@@ -13,11 +13,17 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <set>
 #include <sstream>
 #include <string>
 
 #include "config.h"
+#include "datastores/datastore_drivers.h"
+#include "events/event_system_drivers.h"
+#include "media/media_engine_drivers.h"
 #include "mocks/logger_mock.h"
+#include "plugins/plugin_registry.h"
+#include "push/push_service_drivers.h"
 
 using namespace athenasip;
 using plugins::Setting;
@@ -120,6 +126,15 @@ void leaves(const YAML::Node& node, const std::string& prefix, std::vector<std::
       out.push_back(key);
     }
   }
+}
+
+// As main does before it reads the file.
+void register_builtin_drivers() {
+  auto logger = std::make_shared<MockLogger>();
+  datastores::register_builtin_datastores(logger);
+  events::register_builtin_event_systems(logger);
+  media::register_builtin_media_engines(logger);
+  push::register_builtin_push_services(logger);
 }
 
 std::string read_file(const std::string& relative) {
@@ -233,6 +248,7 @@ TEST(ConfigSchemaTest, ADriversOwnSectionIsLeftToTheDriver) {
 }
 
 TEST(ConfigSchemaTest, TheShippedExampleHasNoUnknownKeys) {
+  register_builtin_drivers();
   auto logger = std::make_shared<MockLogger>();
   Config config(logger);
   ASSERT_TRUE(config.load_from_yaml(std::string(ATHENA_TEST_SOURCE_DIR) + "/config/config.example.yaml"));
@@ -262,6 +278,45 @@ TEST(ConfigSchemaTest, TheJsonSchemaDescribesTheFile) {
 // The reference and the schema in docs/ are what the server generates, so neither falls behind it. To refresh
 // them: athenasip --print-schema > docs/configuration.schema.json, and --print-schema=markdown for the reference.
 TEST(ConfigSchemaTest, TheDocumentedReferenceIsCurrent) {
-  EXPECT_EQ(read_file("docs/configuration-reference.md"), config_reference_markdown(config_settings()));
-  EXPECT_EQ(read_file("docs/configuration.schema.json"), config_schema_json(config_settings()));
+  register_builtin_drivers();
+  EXPECT_EQ(read_file("docs/configuration-reference.md"), config_reference_markdown(all_config_settings()));
+  EXPECT_EQ(read_file("docs/configuration.schema.json"), config_schema_json(all_config_settings()));
+}
+
+// A driver that describes its section has its keys checked like the server's.
+TEST(ConfigSchemaTest, AMisspeltKeyInADriversSectionIsNamed) {
+  register_builtin_drivers();
+  Loaded loaded(
+      "sip:\n  node_id: test-node\n"
+      "media:\n  url: \"rtpengine://127.0.0.1:2223\"\n  rtpengine:\n    timeout: 500\n    attempts: 3\n");
+  ASSERT_TRUE(loaded.ok);
+
+  const auto warnings = loaded.warnings();
+  EXPECT_NE(warnings.find("'media.rtpengine.timeout' is not a setting, and is ignored - did you mean 'media.rtpengine.timeout_ms'?"), std::string::npos)
+      << warnings;
+  EXPECT_EQ(warnings.find("attempts"), std::string::npos) << warnings;
+}
+
+// A driver's section is the one named after it (Plugin::name()), under its kind's: that is the section it is
+// handed.
+TEST(ConfigSchemaTest, EachDriversSectionIsNamedAfterIt) {
+  register_builtin_drivers();
+  auto logger = std::make_shared<MockLogger>();
+
+  std::set<std::string> named;
+  for (const auto& registration : plugins::PluginRegistry::instance().list()) {
+    auto plugin = plugins::PluginRegistry::instance().create(logger, registration.kind, registration.scheme + "://127.0.0.1:2223");
+    ASSERT_NE(plugin, nullptr) << registration.scheme;
+    named.insert(registration.kind + "." + plugin->name());
+  }
+
+  std::size_t sections = 0;
+  for (const auto& setting : plugins::PluginRegistry::instance().settings()) {
+    if (setting.type != Setting::Type::Section || std::count(setting.key.begin(), setting.key.end(), '.') != 1) continue;
+    EXPECT_TRUE(named.count(setting.key)) << setting.key << " is not named after a driver of its kind";
+    ++sections;
+  }
+
+  // mqtt, builtin, rtpengine, apns, fcm and webpush.
+  EXPECT_EQ(sections, 6u);
 }

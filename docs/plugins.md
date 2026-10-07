@@ -67,6 +67,25 @@ media:
 section, undefined when absent. `system` is the whole server configuration (node id,
 timers). Returning `false` stops startup.
 
+A driver can describe its section with a static `settings()`. The registry picks it up
+when the driver registers, and the section then joins the
+[reference](configuration-reference.md), the editor schema from `athenasip --print-schema`,
+and the warning for a misspelt key. Keys start at the section's own name; the registry
+puts them under the kind's section:
+
+```cpp
+static plugins::Settings settings() {
+  using namespace plugins::define;
+  return {
+      section("acme", "The acme:// media engine."),
+      required(text("acme.api_key_file", "", "The key the Acme console issues.")),
+      integer("acme.timeout_ms", "500", "How long to wait for an answer, in milliseconds.", 1),
+  };
+}
+```
+
+Without it the section is still handed to the driver, and the node leaves its keys alone.
+
 ## Lifecycle
 
 ```

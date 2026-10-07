@@ -425,10 +425,6 @@ authentication from session issue to the OpenAPI document, and the one-command s
       hand-written and speaks the whole documented API, with a contract test against
       `docs/api/openapi.yaml` passing. Generation is what is left, and every operation in
       the document now carries an `operationId` for it.
-- [ ] Drivers describe their own sections (`media.rtpengine`, `events.mqtt`, `push.apns`
-      and the rest) with `plugins::Setting`, as the server describes its own in
-      `src/config_schema.cpp`, so they join the reference, the JSON Schema and the
-      misspelt-key warning. It changes the plugin contract, so `API_VERSION` moves.
 - [ ] Packaging: Docker image, Debian package, Homebrew formula. In-tree plugins ship
       compiled in; the packages also carry the SDK headers.
 

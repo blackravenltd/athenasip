@@ -161,13 +161,6 @@ int main(int argc, char* argv[]) {
     return 0;
   }
 
-  // The settings are the same whatever the file says, so no file is read.
-  if (!options.print_schema.empty()) {
-    const auto& settings = config_settings();
-    std::cout << (options.print_schema == "markdown" ? config_reference_markdown(settings) : config_schema_json(settings));
-    return 0;
-  }
-
   // The cluster CA needs no configuration and starts nothing.
   if (options.ca_init || !options.ca_node.empty()) {
     auto dir = options.ca_dir;
@@ -188,7 +181,8 @@ int main(int argc, char* argv[]) {
 
   // An administrative command logs at WARN so its answer is the whole output. A node logs
   // at DEBUG until the configuration sets the level.
-  const auto administering = !options.add_user.empty() || !options.reset_password.empty() || options.print_config || options.check || options.list_plugins;
+  const auto administering = !options.add_user.empty() || !options.reset_password.empty() || options.print_config || options.check || options.list_plugins ||
+                             !options.print_schema.empty();
 
   auto logger = std::make_shared<loggers::LoggerStdIO>(administering ? LogLevel::WARN : LogLevel::DEBUG);
 
@@ -204,6 +198,14 @@ int main(int argc, char* argv[]) {
   register_builtin_event_systems(logger);
   media::register_builtin_media_engines(logger);
   push::register_builtin_push_services(logger);
+
+  // The settings are the server's and the drivers' built in, whatever the file says, so no
+  // file is read.
+  if (!options.print_schema.empty()) {
+    const auto settings = all_config_settings();
+    std::cout << (options.print_schema == "markdown" ? config_reference_markdown(settings) : config_schema_json(settings));
+    return 0;
+  }
 
   auto config = std::make_shared<Config>(logger);
 

@@ -32,7 +32,7 @@ bool Config::load_from_yaml(const std::string& filename) {
   _root = config;
 
   // A misspelt key would otherwise leave its default in place without a word.
-  for (const auto& unknown : unknown_config_keys(config, config_settings())) _logger->warn(unknown);
+  for (const auto& unknown : unknown_config_keys(config, all_config_settings())) _logger->warn(unknown);
 
   // sip
   if (!config["sip"]) {

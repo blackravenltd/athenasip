@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace athenasip::plugins {
@@ -18,8 +19,9 @@ namespace athenasip::plugins {
 struct Setting {
   enum class Type { Section, Boolean, Integer, String, List, Choice };
 
-  // Dotted, from the top of the file ("sip.timers.t1_rtt_ms"), or for a driver's own keys
-  // from the top of its section ("timeout_ms").
+  // Dotted, from the top of the file ("sip.timers.t1_rtt_ms"). A driver's start at its own
+  // section, named after the driver ("rtpengine", "rtpengine.timeout_ms"); the registry puts
+  // them under the section for its kind.
   std::string key;
   Type type = Type::String;
   std::string description;
@@ -51,5 +53,78 @@ struct Setting {
 };
 
 using Settings = std::vector<Setting>;
+
+// Shorthand for writing settings down: define::integer("rtpengine.timeout_ms", "500", "...", 1).
+namespace define {
+
+inline Setting section(std::string key, std::string description, bool open = false) {
+  Setting setting;
+  setting.key = std::move(key);
+  setting.type = Setting::Type::Section;
+  setting.description = std::move(description);
+  setting.open = open;
+  return setting;
+}
+
+inline Setting boolean(std::string key, std::string fallback, std::string description) {
+  Setting setting;
+  setting.key = std::move(key);
+  setting.type = Setting::Type::Boolean;
+  setting.fallback = std::move(fallback);
+  setting.description = std::move(description);
+  return setting;
+}
+
+inline Setting integer(std::string key, std::string fallback, std::string description, std::optional<std::int64_t> minimum = std::nullopt,
+                       std::optional<std::int64_t> maximum = std::nullopt, bool or_zero = false) {
+  Setting setting;
+  setting.key = std::move(key);
+  setting.type = Setting::Type::Integer;
+  setting.fallback = std::move(fallback);
+  setting.description = std::move(description);
+  setting.minimum = minimum;
+  setting.maximum = maximum;
+  setting.or_zero = or_zero;
+  return setting;
+}
+
+inline Setting port(std::string key, std::string fallback, std::string description) {
+  return integer(std::move(key), std::move(fallback), std::move(description), 0, 65535);
+}
+
+inline Setting text(std::string key, std::string fallback, std::string description) {
+  Setting setting;
+  setting.key = std::move(key);
+  setting.type = Setting::Type::String;
+  setting.fallback = std::move(fallback);
+  setting.description = std::move(description);
+  return setting;
+}
+
+inline Setting list(std::string key, std::string description) {
+  Setting setting;
+  setting.key = std::move(key);
+  setting.type = Setting::Type::List;
+  setting.fallback = "[]";
+  setting.description = std::move(description);
+  return setting;
+}
+
+inline Setting choice(std::string key, std::string fallback, std::vector<std::string> choices, std::string description) {
+  Setting setting;
+  setting.key = std::move(key);
+  setting.type = Setting::Type::Choice;
+  setting.fallback = std::move(fallback);
+  setting.choices = std::move(choices);
+  setting.description = std::move(description);
+  return setting;
+}
+
+inline Setting required(Setting setting) {
+  setting.required = true;
+  return setting;
+}
+
+}  // namespace define
 
 }  // namespace athenasip::plugins
