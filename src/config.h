@@ -299,6 +299,9 @@ class Config {
   //       health_check_interval: 5
   YAML::Node plugin_root(const std::string& kind, const std::string& name) const;
 
+  // The whole file as read.
+  const YAML::Node& root() const { return _root; }
+
   // The configuration in effect, defaults included, as YAML: what `athenasip --print-config`
   // prints. Plugin sections are copied through from the file.
   std::string effective_yaml() const;

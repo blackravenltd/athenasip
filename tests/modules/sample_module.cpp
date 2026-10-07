@@ -25,6 +25,11 @@ class SamplePushService : public athenasip::push::PushService {
   std::string name() const override { return "sample"; }
   std::string version() const override { return "1.2.3"; }
 
+  static athenasip::plugins::Settings settings() {
+    using namespace athenasip::plugins::define;
+    return {section("sample", "The sample push service."), text("sample.region", "eu", "Where the pushes go.")};
+  }
+
   bool accepts(const athenasip::push::Notification& notification) const override { return !notification.prid.empty(); }
 
   void send(athenasip::plugins::Executor on, athenasip::push::Notification notification, athenasip::plugins::StatusHandler handler) override {

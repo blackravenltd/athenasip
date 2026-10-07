@@ -68,9 +68,10 @@ section, undefined when absent. `system` is the whole server configuration (node
 timers). Returning `false` stops startup.
 
 A driver can describe its section with a static `settings()`. The registry picks it up
-when the driver registers, and the section then joins the
+when the driver registers, compiled in or from a module, and the section then joins the
 [reference](configuration-reference.md), the editor schema from `athenasip --print-schema`,
-and the warning for a misspelt key. Keys start at the section's own name; the registry
+and the warning for a misspelt key. A module's section is checked once the module has
+loaded; `--print-schema` loads no modules, so it describes the built-in drivers only. Keys start at the section's own name; the registry
 puts them under the kind's section:
 
 ```cpp
@@ -189,6 +190,9 @@ void register_acme(athenasip::plugins::ModuleHost& host) {
 ATHENASIP_PLUGIN_MODULE("acme", register_acme)
 ```
 
+The kinds are named in `plugins::kinds` (`datastore`, `events`, `media`), and the push
+service's in `push::kind`.
+
 Rules:
 
 - Build against the server's `src/` headers with the same compiler, standard library and
@@ -229,7 +233,8 @@ Tests are GoogleTest under `tests/`, mirroring `src/`; see [Testing](testing.md)
 | Helper | Use |
 |---|---|
 | `tests/helpers/sync_datastore_helper.h`, `sync_event_system_helper.h`, `sync_media_engine_helper.h` | Blocking views of a driver, for asserting on what it holds |
-| `tests/plugins/plugin_registry_test.cpp` | The registry's own tests |
+| `tests/helpers/fake_push_service_helper.h` | A push service that records what it was asked to send |
+| `tests/plugins/plugin_registry_test.cpp`, `module_loader_test.cpp` | The registry's and the module loader's own tests |
 
 Test the async rules themselves (handler on the given executor, never inline, failures
 reported) by calling the driver directly.

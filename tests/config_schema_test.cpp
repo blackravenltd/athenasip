@@ -297,6 +297,19 @@ TEST(ConfigSchemaTest, AMisspeltKeyInADriversSectionIsNamed) {
   EXPECT_EQ(warnings.find("attempts"), std::string::npos) << warnings;
 }
 
+// A module registers after the file was read, so its section is checked on its own once it has: the same
+// warning, for that section only.
+TEST(ConfigSchemaTest, AMisspeltKeyInAModulesSectionIsNamed) {
+  const auto root = YAML::Load("sip:\n  nodeid: x\npush:\n  sample:\n    regoin: eu\n");
+  plugins::Settings settings = {plugins::define::section("push.sample", "A module's service."),
+                                plugins::define::text("push.sample.region", "eu", "Where the pushes go.")};
+
+  const auto warnings = unknown_config_keys_in(root, "push.sample", settings);
+
+  ASSERT_EQ(warnings.size(), 1u);
+  EXPECT_EQ(warnings[0], "'push.sample.regoin' is not a setting, and is ignored - did you mean 'push.sample.region'?");
+}
+
 // A driver's section is the one named after it (Plugin::name()), under its kind's: that is the section it is
 // handed.
 TEST(ConfigSchemaTest, EachDriversSectionIsNamedAfterIt) {

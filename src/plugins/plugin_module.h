@@ -32,16 +32,24 @@ class ModuleHost {
  public:
   virtual ~ModuleHost() = default;
 
-  // As PluginRegistry::add: the factory constructs the driver for a URL with this scheme.
-  virtual void add(std::string kind, std::string scheme, PluginRegistry::Factory factory) = 0;
+  // As PluginRegistry::add: the factory constructs the driver for a URL with this scheme, and the settings
+  // describe its section.
+  virtual void add(std::string kind, std::string scheme, PluginRegistry::Factory factory, Settings settings) = 0;
 
   virtual std::shared_ptr<loggers::Logger> logger() = 0;
 
+  // A driver describes its section with an optional static `plugins::Settings settings()`, as a built-in one does.
   template <typename T>
   void add(std::string kind, std::string scheme) {
-    add(std::move(kind), std::move(scheme), [](std::shared_ptr<loggers::Logger> logger, std::shared_ptr<types::URL> url) -> std::shared_ptr<Plugin> {
-      return std::static_pointer_cast<Plugin>(std::make_shared<T>(std::move(logger), std::move(url)));
-    });
+    Settings settings;
+    if constexpr (requires { T::settings(); }) settings = T::settings();
+
+    add(
+        std::move(kind), std::move(scheme),
+        [](std::shared_ptr<loggers::Logger> logger, std::shared_ptr<types::URL> url) -> std::shared_ptr<Plugin> {
+          return std::static_pointer_cast<Plugin>(std::make_shared<T>(std::move(logger), std::move(url)));
+        },
+        std::move(settings));
   }
 };
 

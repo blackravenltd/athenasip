@@ -59,9 +59,9 @@ class RegistryHost : public ModuleHost {
  public:
   explicit RegistryHost(std::shared_ptr<loggers::Logger> logger) : _logger(std::move(logger)) {}
 
-  void add(std::string kind, std::string scheme, PluginRegistry::Factory factory) override {
+  void add(std::string kind, std::string scheme, PluginRegistry::Factory factory, Settings settings) override {
     registered.push_back(kind + " " + scheme + "://");
-    PluginRegistry::instance().add(_logger, std::move(kind), std::move(scheme), std::move(factory));
+    PluginRegistry::instance().add(_logger, std::move(kind), std::move(scheme), std::move(factory), std::move(settings));
   }
 
   std::shared_ptr<loggers::Logger> logger() override { return _logger; }

@@ -7,6 +7,7 @@
 #include <termios.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <boost/asio.hpp>
 #include <boost/asio/signal_set.hpp>
 #include <boost/asio/ssl.hpp>
@@ -248,7 +249,16 @@ int main(int argc, char* argv[]) {
   }
 
   // Plugin modules register beside the drivers built in, before anything is constructed.
+  const auto described = all_config_settings();
   const auto modules = plugins::load_modules(logger, config->plugins_path);
+
+  // The file was checked before the modules' drivers described their sections, so those are checked now.
+  const auto settings = all_config_settings();
+  for (const auto& setting : settings) {
+    if (setting.type != plugins::Setting::Type::Section) continue;
+    if (std::any_of(described.begin(), described.end(), [&setting](const plugins::Setting& known) { return known.key == setting.key; })) continue;
+    for (const auto& unknown : unknown_config_keys_in(config->root(), setting.key, settings)) logger->warn(unknown);
+  }
 
   if (options.list_plugins) {
     for (const auto& module : modules) {
