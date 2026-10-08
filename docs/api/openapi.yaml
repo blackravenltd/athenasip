@@ -1721,6 +1721,18 @@ components:
               type: string
             port:
               type: integer
+        policy:
+          type: object
+          description: |
+            The routing policy the node last reported on the bus: its driver and, for scripts, a
+            SHA-256 of the scripts it loaded. The nodes of one cluster should agree. Absent for a
+            node that has reported none, and in the list a client is given.
+          properties:
+            driver:
+              type: string
+              example: lua 1.0.0
+            fingerprint:
+              type: string
       example:
         id: sip-0001
         self: true

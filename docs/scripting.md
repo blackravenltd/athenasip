@@ -97,7 +97,7 @@ answers 422 with the same. A reload that worked logs `Policy reloaded: lua 1.0.0
 <fingerprint>`, the fingerprint's first twelve characters.
 
 The fingerprint is a SHA-256 of every script the node loaded. It is in the node status
-(`policy.fingerprint`, [Events](events.md#node-status)), so the nodes of a cluster can be
+(`policy.fingerprint`, [Events](events.md#node-status)) and in `GET /api/v1/nodes`, so the nodes of a cluster can be
 seen to run the same rules. Each node reads its own scripts:
 copy them to every node and reload each.
 
