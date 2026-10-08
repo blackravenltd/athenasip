@@ -157,6 +157,16 @@ PBKDF2-HMAC-SHA256 from OpenSSL with a random per-user salt and a constant-time
 comparison. The iteration count is stored with the hash, so it can be raised without
 invalidating existing passwords. A password is never logged or returned.
 
+## Trunk passwords
+
+A trunk's password is the credential a carrier issued this node, and the node answers the
+carrier's challenges with it. A Digest response is made with the realm the carrier names in
+its challenge, which is not known in advance, so the password is kept as given in the
+datastore, not as a hash. The API never returns it (`password_set` says whether one is
+held) and no script can read it, but anyone who can read the datastore can. Keep Redis on a
+loopback or private address with a password (`redis://:password@host`), and give
+`manage-trunks` to as few users as possible.
+
 ## Transport
 
 The plain `http` listener sends credentials in the clear. Enable
