@@ -21,9 +21,11 @@ and the TLS use-after-free that corrupted the heap on every closed TLS connectio
 nodes run `a08cc6d` (deployed 2026-10-08). node-a runs `lua://` with
 `athenasip.trunks` from `/etc/athenasip/scripts/main.lua` and a trunk `node-b` to
 node-b (registering as node-b's subscriber 1003, outbound proxy 10.102.1.50); its
-previous configuration is `/etc/athenasip/config.yaml.before-lua`. `test/interop/call.py`
-placed 30 of 30 calls through them: local, out through the trunk with node-b challenging,
-and in through it.
+previous configuration is `/etc/athenasip/config.yaml.before-lua`. node-a runs `3bb2911`;
+node-b runs `a08cc6d`, without the rtcp-mux fix (`6a163a1`) that a call from AthenaPhone to a
+plain-RTP phone needs, until the maintainer says yes to deploying it. A probe on node-a
+(`athenasip-probe.timer`) runs `test/interop/verify.py test/interop/live.json` every 15
+minutes and publishes `athenasip/probes/node-a/calls`.
 
 **Two live nodes**, neither production:
 - `node-a` (10.101.1.20): builtin relay, AthenaPhone's usual home.
