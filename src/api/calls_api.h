@@ -35,6 +35,7 @@ class CallsAPI : public std::enable_shared_from_this<CallsAPI> {
   void _records(RouteContext context);
   void _get(RouteContext context);
   void _hang_up(RouteContext context);
+  void _policy_reload(RouteContext context);
   void _media(RouteContext context);
   void _reoffers(RouteContext context);
   void _qualify(RouteContext context);

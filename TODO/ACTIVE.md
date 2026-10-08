@@ -450,12 +450,10 @@ Done (`COMPLETED.md`, 2026-10-08): the engine, the library, `lua://` with the st
 scripts built into the binary, the permanent proof, and `--check`. What is left:
 
 - [ ] The three harnesses under `policy.url: lua://`, once Docker is back.
-- [ ] Reload from outside: `SIGHUP` and `POST /api/v1/policy/reload` calling
-      `LuaPolicy::reload`, which exists and is tested; nothing calls it yet.
 - [ ] `athenasip --explain <file>`: a request from a file through `authorize` and `route`
       against the live store, printing each decision.
-- [ ] Each node's scripts' hash in `nodes/<id>/status`, so the console can flag a node
-      whose scripts differ.
+- [ ] The console flags a node whose `policy.fingerprint` differs from the others' (the
+      admin session's).
 
 ### Trunk mechanism
 

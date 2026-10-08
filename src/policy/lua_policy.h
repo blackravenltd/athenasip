@@ -42,7 +42,10 @@ class LuaPolicy final : public Policy {
   void register_(plugins::Executor on, std::shared_ptr<RequestView> request, plugins::Handler<RegisterDecision> handler) override;
 
   // Loads the scripts again. The running ones stay if the new ones fail. Empty on success, else the error.
-  std::string reload() { return _engine ? _engine->load() : "no scripts are loaded"; }
+  std::string reload() override { return _engine ? _engine->load() : "no scripts are loaded"; }
+
+  // A digest of the scripts that loaded.
+  std::string fingerprint() const override { return _engine ? _engine->fingerprint() : std::string(); }
 
   const std::shared_ptr<script::LuaEngine>& engine() const { return _engine; }
 

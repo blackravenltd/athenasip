@@ -81,8 +81,33 @@ void CallsAPI::register_routes(Router& router) {
   router.add(http::verb::get, "/api/v1/media/reoffers", {view_cluster_status}, [self](RouteContext c) { self->_reoffers(std::move(c)); });
   router.add(http::verb::get, "/api/v1/qualify", {view_cluster_status}, [self](RouteContext c) { self->_qualify(std::move(c)); });
 
+  // This node's policy only: each node of a cluster reads its own scripts.
+  router.add(http::verb::post, "/api/v1/policy/reload", {manage_cluster}, [self](RouteContext c) { self->_policy_reload(std::move(c)); });
+
   // Outside /api/v1, where Prometheus expects it, behind the same credential.
   router.add(http::verb::get, "/metrics", {view_cluster_status}, [self](RouteContext c) { self->_metrics(std::move(c)); });
+}
+
+void CallsAPI::_policy_reload(RouteContext context) {
+  auto core = _core.lock();
+  if (!core) {
+    write_error(context.response, http::status::service_unavailable, "unavailable", "the node is shutting down");
+    return context.done();
+  }
+
+  core->post([core, context]() mutable {
+    const auto error = core->policy_reload();
+    if (!error.empty()) {
+      write_error(context.response, http::status::unprocessable_entity, "policy_not_reloaded", error);
+      return context.done();
+    }
+
+    boost::json::object out;
+    out["driver"] = core->policy()->describe();
+    if (const auto fingerprint = core->policy()->fingerprint(); !fingerprint.empty()) out["fingerprint"] = fingerprint;
+    write_json(context.response, http::status::ok, out);
+    context.done();
+  });
 }
 
 void CallsAPI::_list(RouteContext context) {

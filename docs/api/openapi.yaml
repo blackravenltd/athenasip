@@ -78,6 +78,8 @@ tags:
     description: What the node is carrying now, and what its media engine relayed for it
   - name: media
     description: The media engine and the node's counters
+  - name: policy
+    description: Who may call and where a call goes (docs/scripting.md)
 
 paths:
   /health:
@@ -689,6 +691,43 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+
+  /policy/reload:
+    post:
+      operationId: reloadPolicy
+      tags: [policy]
+      summary: Read the routing scripts again
+      description: |
+        Has this node's policy read its rules again, as `systemctl reload` does. Takes
+        `manage-cluster`. For `lua://` the scripts load into a new state; calls already being
+        decided finish on the old one. Scripts that do not load are refused with the error,
+        and the ones in force stay. Each node of a cluster reads its own scripts: reload
+        each.
+      responses:
+        "200":
+          description: The rules now in force
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [driver]
+                properties:
+                  driver:
+                    type: string
+                    example: lua 1.0.0
+                  fingerprint:
+                    type: string
+                    description: SHA-256 of the scripts loaded, absent for builtin://
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          description: The scripts did not load; `message` has the file and line
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /media:
     get:

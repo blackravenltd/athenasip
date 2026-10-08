@@ -15,6 +15,7 @@
 #include <utility>
 
 #include "../loggers/logger_scoped.h"
+#include "../util.h"
 #include "lua_library.h"
 #include "standard_scripts.h"
 
@@ -59,6 +60,10 @@ struct LuaEngine::Generation {
 
   // Instructions run while loading, which no hook call owns.
   std::uint64_t loading = 0;
+
+  // Every script read while loading, name and text, for the fingerprint.
+  std::string sources;
+  std::string fingerprint;
 
   ~Generation() {
     if (L) lua_close(L);
@@ -164,11 +169,13 @@ int LuaEngine::_load_chunk(lua_State* L, const std::string& relative) {
     std::stringstream body;
     body << in.rdbuf();
     const auto text = body.str();
+    if (_loading) _loading->sources += relative + "\n" + text + "\n";
 
     return luaL_loadbufferx(L, text.data(), text.size(), ("@" + file.string()).c_str(), "t");
   }
 
   if (const char* body = standard_script(relative)) {
+    if (_loading) _loading->sources += relative + "\n" + body + "\n";
     return luaL_loadbufferx(L, body, std::char_traits<char>::length(body), ("@(standard)/" + relative).c_str(), "t");
   }
 
@@ -298,10 +305,14 @@ std::string LuaEngine::load() {
 
   if (!error.empty()) return error;
 
+  generation->fingerprint = Util::sha256(generation->sources);
+  generation->sources.clear();
   _current = std::move(generation);
   _logger->info("Loaded " + _entry + " (" + std::to_string(_current->used / 1024) + " KB)");
   return {};
 }
+
+std::string LuaEngine::fingerprint() const { return _current ? _current->fingerprint : std::string(); }
 
 bool LuaEngine::defines(const std::string& hook) const {
   if (!_current) return false;

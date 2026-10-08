@@ -2902,3 +2902,10 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       (`CliCheckTest.AScriptThatDoesNotCompileFailsTheCheckWithItsLine`).
 - [x] `docs/scripting.md` is the reference; Lua is in `docs/compiling.md`, the Linux
       quick start, `CONTRIBUTING.md`, `CLAUDE.md` and the Dockerfile.
+- [x] **Reload from outside.** `SIGHUP`, so `systemctl reload` (the unit gains
+      `ExecReload`), and `POST /api/v1/policy/reload` (`manage-cluster`, 422 with the
+      script's line when the new scripts do not load) call `Core::policy_reload`, which keeps
+      the rules in force on failure and publishes the node's status at once on success.
+      `Policy` gains `reload()` and `fingerprint()`; `lua://`'s fingerprint is the SHA-256 of
+      every script it loaded, and the node status carries `policy: {driver, fingerprint}` so
+      a console can see nodes that disagree (`tests/api/policy_reload_test.cpp`).

@@ -63,6 +63,10 @@ class LuaEngine : public std::enable_shared_from_this<LuaEngine> {
   void config_set(const Config* config) { _config = config; }
   const Config* config() const { return _host ? &_host->config() : _config; }
 
+  // SHA-256 of every script the running state loaded, names and text, in the order loaded. Two nodes with the
+  // same scripts have the same fingerprint.
+  std::string fingerprint() const;
+
   // Whether the running scripts define a global function of this name.
   bool defines(const std::string& hook) const;
 

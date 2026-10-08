@@ -608,13 +608,15 @@ int main(int argc, char* argv[]) {
   // Ask the stun: servers in http.api.ice_servers where this node is, for --check and the node status.
   core->post([core]() { core->address_discovery()->start(); });
 
-  // SIGINT and SIGTERM (what systemctl stop sends) shut the node down cleanly. SIGHUP is logged and ignored.
+  // SIGINT and SIGTERM (what systemctl stop sends) shut the node down cleanly. SIGHUP (systemctl reload) has the
+  // policy read its rules again.
   boost::asio::io_context signal_wait_context;
   boost::asio::signal_set signals(signal_wait_context, SIGINT, SIGTERM, SIGHUP);
   wait_for_signal(signals, [&](int signal_number) {
     switch (signal_number) {
       case SIGHUP:
-        logger->debug("Received Signal SIGHUP");
+        logger->info("Received SIGHUP - reloading the policy");
+        core->call_on_strand([&core]() { core->policy_reload(); });
         break;
 
       case SIGINT:

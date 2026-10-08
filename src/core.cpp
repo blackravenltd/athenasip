@@ -680,6 +680,18 @@ std::shared_ptr<policy::Policy> Core::policy() {
   return _policy;
 }
 
+std::string Core::policy_reload() {
+  auto error = policy()->reload();
+  if (!error.empty()) {
+    _logger->error("The policy did not reload, and the rules in force stay - " + error);
+    return error;
+  }
+
+  _logger->info("Policy reloaded: " + policy()->describe() + (policy()->fingerprint().empty() ? "" : ", scripts " + policy()->fingerprint().substr(0, 12)));
+  if (_node_status_timer) _node_status_publish();
+  return {};
+}
+
 void Core::push_register(std::shared_ptr<push::PushService> service) {
   if (service) _push_services[service->name()] = std::move(service);
 }
@@ -1095,6 +1107,14 @@ std::string Core::node_status_json(const std::string& status) const {
   auto report = boost::json::parse(node_status_json(status, config->sip_node_id, _version, datastore ? datastore->describe() : "none", uptime,
                                                     config->events_status_interval, config->advertised_transports(), config->advertised_cluster()))
                     .as_object();
+
+  // The policy, and what identifies its rules: nodes of one cluster should agree.
+  if (_policy) {
+    boost::json::object policy;
+    policy["driver"] = _policy->describe();
+    if (const auto fingerprint = _policy->fingerprint(); !fingerprint.empty()) policy["fingerprint"] = fingerprint;
+    report["policy"] = std::move(policy);
+  }
 
   // This node's address as a STUN server sees it: reported, not advertised. Null until one has answered.
   if (const auto finding = _address_discovery ? _address_discovery->finding() : std::nullopt) {
