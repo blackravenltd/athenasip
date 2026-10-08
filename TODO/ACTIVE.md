@@ -20,7 +20,7 @@ with `--print-schema`. The README and documentation were checked against the cod
 end - the TLS use-after-free that corrupted the heap on every closed TLS connection, the
 rtcp-mux fix for a WebRTC caller whose callee needs plain RTP, and the automatic live
 tests. 1391 unit tests at the tag. The sipp harnesses were not run on the tagged tree, and
-not yet under `lua://` (Docker). corvus-fi-1 runs `3bb2911` with `lua://` and
+not yet under `lua://` (Docker). corvus-fi-1 runs `2283182` (deployed 2026-10-09) with `lua://` and
 `athenasip.trunks` from `/etc/athenasip/scripts/main.lua` and a trunk `macnessa` to
 corvus-gbni-1 (registering as gbni's subscriber 1003, outbound proxy 10.44.1.50); its
 previous configuration is `/etc/athenasip/config.yaml.before-lua`. gbni-1 runs `a08cc6d`,
