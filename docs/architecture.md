@@ -15,8 +15,10 @@ udp/tcp/tls/ws/wss Server -> Connection -> Channel     transport          s18, R
                s10, 3327,      s16, 3263   s12, 4028   (OPTIONS)    (BYE)
                5626            6026
                     |             |
+                    +-- Policy ---+        who may, and where to: builtin:// or lua://
+                    |   (async)   |
                 Datastore    MediaEngine       EventSystem: observability only
-                (async)      (async)
+                (async)      (async)          TrunkRegistrar: registers to carriers
 
 Core = composition root + the strand
 ```
@@ -32,6 +34,9 @@ Core = composition root + the strand
 | `src/channel.*` | `Channel`: SIP framing and parsing over one connection |
 | `src/transactions/` | The four RFC 3261 17 state machines and the matcher |
 | `src/registrar.*`, `src/proxy.*`, `src/dialogs.*`, `src/qualifier.*`, `src/local_ua.*` | Transaction users. `LocalUA` ends a call with a BYE to each end, sent through the proxy as the far end would send it. |
+| `src/policy/` | The policy interface, the decisions it returns, and the `builtin://` and `lua://` drivers |
+| `src/script/`, `scripts/` | The Lua engine and the library a script is given; the standard scripts, built into the binary |
+| `src/trunk_registrar.*`, `src/digest.*` | Registering to carriers, and answering their challenges ([Scripting](scripting.md#trunks)) |
 | `src/dns/` | RFC 3263 server location: NAPTR, SRV, A/AAAA |
 | `src/datastores/`, `src/events/`, `src/media/`, `src/push/` | Plugin interfaces and the in-tree drivers. `src/push/` also holds the HTTP/2 and HTTPS clients and the JWT signing the push services use. |
 | `src/push_refresher.*` | Pushes a sleeping client to refresh its registration before it lapses (RFC 8599) |
@@ -42,7 +47,7 @@ Core = composition root + the strand
 | `src/api/` | The admin HTTP API, and the subscriber's own routes under `/api/v1/subscriber/{realm}/`, which take Digest |
 | `src/config.*`, `src/config_schema.*` | The configuration file, and the description of every setting that the reference, the editor schema and the misspelt-key warning come from |
 | `src/cli*`, `src/main.cpp` | Command line and startup |
-| `src/types/`, `src/headers/`, `src/sdp.h` | Realms, subscribers, bindings and calls; SIP headers; session descriptions |
+| `src/types/`, `src/headers/`, `src/sdp.h` | Realms, subscribers, trunks, bindings and calls; SIP headers; session descriptions |
 | `tests/` | GoogleTest, mirroring `src/` ([Testing](testing.md)) |
 
 ## Threading
@@ -52,6 +57,10 @@ Core = composition root + the strand
 | The Core strand | All signalling: transaction users, and the registries Core owns. Nothing here blocks. |
 | Each server's `io_context` thread | Socket reads, writes and closes. The strand hands socket work to `Connection::executor()`. |
 | The admin API's own executor | Provisioning. It calls the datastore directly, so it cannot hold up a call. |
+
+A Lua policy runs on the strand too, each hook call in its own coroutine: one that reads
+the datastore sleeps until the answer comes, and the strand serves other calls meanwhile.
+Budgets of instructions, time and memory stop a script that would hold it.
 
 This is why every plugin operation is asynchronous: it takes the caller's executor and
 answers through a handler ([Plugins](plugins.md)).
@@ -78,8 +87,8 @@ a web client.
 
 ## Plugins
 
-`Datastore`, `EventSystem`, `MediaEngine` and `PushService` are plugin kinds in one
-registry keyed by `(kind, URL scheme)`.
+`Datastore`, `EventSystem`, `MediaEngine`, `PushService` and `Policy` are plugin kinds in
+one registry keyed by `(kind, URL scheme)`.
 
 | Kind | No external service | For a cluster or production |
 |---|---|---|
@@ -87,10 +96,24 @@ registry keyed by `(kind, URL scheme)`.
 | `events` | `local://` | `mqtt://` |
 | `media` | `builtin://` | `rtpengine://`, one engine or a pool |
 | `push` | (off) | `apns://`, `fcm://`, `webpush://` |
+| `policy` | `builtin://` | `lua://`, for trunks or anything the node's own realms are not enough for |
 
 None is privileged; anything else is a plugin written against the same versioned, async
 contract, with its own YAML section, compiled in or loaded as a shared library at start.
 [Plugins](plugins.md) is the contract.
+
+## Deciding and doing
+
+The node does the SIP: transactions, challenges, forwarding, forking, retries, media and
+every rule RFC 3261 fixes. The policy decides: whether a request needs proving and how,
+where a call goes, what to try after a failure, and whether a REGISTER is taken. It
+returns a decision and never touches a message or a transaction, so no policy can make the
+node break the standard. Requests inside a dialog, ACK, CANCEL and anything with a Route
+are routed by the node without asking.
+
+`builtin://` serves the node's own realms. `lua://` asks Lua scripts the same questions,
+and its standard scripts answer exactly as `builtin://` does: the unit suite runs against
+both and fails on any difference ([Scripting](scripting.md)).
 
 ## Clustering
 
@@ -101,6 +124,11 @@ is an endpoint and authenticates with Digest.
 
 The event bus is never on the call path. Nodes discover each other through the retained
 `nodes/<id>/status` messages ([Events](events.md)).
+
+Each node runs its own policy. With `lua://`, every node should run the same scripts:
+the node status carries their fingerprint, so a difference shows. Each trunk that
+registers is registered by one node at a time, under a lease in the datastore; another
+node takes over when that one stops.
 
 **Bindings are shared; flows are not.** Any node can read a binding, but the connection a
 client registered on lives on one node, recorded as `Location.node_id` and

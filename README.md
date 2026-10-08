@@ -55,7 +55,17 @@ next step:
 * [A server on Linux](docs/quick-start/linux-server.md)
 * [Connecting phones](docs/quick-start/phones.md)
 * [Calling from a browser](docs/quick-start/browser.md)
+* [Your first trunk](docs/quick-start/first-trunk.md)
 * [Running a cluster](docs/clustering.md)
+
+## Companion projects
+
+* [AthenaSIP Admin](https://github.com/blackravenltd/athenasip-admin) - the administration
+  console, with a phone in the browser. A static React bundle the node serves beside its
+  admin API (`docker/up.sh --console`). Alpha.
+* [AthenaPhone](https://github.com/blackravenltd/athenaphone) - an open source SIP
+  softphone for Android, audio and video over UDP, TCP, TLS or WebSocket with WebRTC
+  media, for AthenaSIP or any standards-compliant SIP server. Working, not yet released.
 
 ## Limits
 

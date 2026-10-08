@@ -16,6 +16,7 @@ as the node writes them; `<...>` stands for the part that varies.
 | `GET /api/v1/calls` | Calls in progress on this node, with media packet counts |
 | `GET /api/v1/nodes` | The nodes this node knows of, and their status |
 | `GET /api/v1/media`, `/api/v1/media/reoffers` | The media engine; callees that refused the first media offer |
+| `GET /api/v1/trunks` | Each trunk, and whether the node registering it has it registered |
 
 The status endpoints need a session with the `view-cluster-status` role; looking up a
 realm or its subscribers needs the realm roles ([Authentication](authentication.md)).
@@ -102,6 +103,34 @@ media engine. [Media](media.md#is-media-flowing) has the other tools.
 
 An iOS app using VoIP push is never pushed to refresh its registration; it must do that
 itself. [Configuration](configuration.md#push) has each service's settings.
+
+## Routing scripts
+
+With `lua://`, a script that fails answers the caller 500 and logs where. `athenasip --check`
+loads the scripts the way the node does.
+
+| Response or symptom | Log | Cause and fix |
+|---|---|---|
+| The node does not start | `The scripts did not load - <file>:<line>: <error>` | A syntax or runtime error in a script, or `init()` failing. Fix the line and start again. |
+| 500 | `The policy could not route <method> to <uri> - <file>:<line>: <error>`, with a traceback; `The policy could not authorise ...` from `authorize` | A hook raised. A failing `on_failure` is taken as `"next"` instead. |
+| 500 | `route() ran past its limit of <n> instructions` or `route() took longer than <n> ms` | A loop that does not end, or a store that is slow. Raise `policy.lua.instruction_limit` or `timeout_ms` only for a script that needs it. |
+| A change to a script makes no difference | `The policy did not reload, and the rules in force stay - <error>` | The new scripts did not load; the old ones still run. Or the node was never told: `systemctl reload athenasip`. |
+| Nodes of a cluster decide differently | Their `policy.fingerprint` in the node status differs | They run different scripts. Copy the same ones to each and reload each. |
+
+## Trunks
+
+[Your first trunk](quick-start/first-trunk.md#when-it-does-not-work) has the common cases.
+
+| Response or symptom | Log | Cause and fix |
+|---|---|---|
+| `registration.state` is `failed` | `Cannot register to trunk <name> - <reason>` | `no answer` or `no flow to <address>`: the carrier cannot be reached, a firewall or the `uri`. `the carrier refused the trunk's credentials`: the username or password. |
+| Nothing registers | No `Registering to trunk` line on any node | The trunk has no `register.enabled`, or the datastore cannot hold the lease (`Cannot read the trunks - <error>`). |
+| TLS to the carrier fails | `Cannot load <file> for TLS to a trunk - <error>` | The trunk's `tls_ca` cannot be read by the service user. |
+| A call out is 404 | `No trunk carries <number> - 404` | No trunk's `prefixes` match the number, after `country` is applied. |
+| A call out is 403 | `Trunk <name> refused this node's credentials - 403` | The carrier rejected the answer to its challenge: the credentials, or a carrier that also checks the From (`from_domain`, `caller_id`). |
+| A call out is 403 | `Trunk <name> challenged with nothing this node can answer` | The carrier asks for a Digest algorithm the node does not support, or the trunk has no username. |
+| A call in is 404 | `Trunk <name> brought in <number>, which goes nowhere - 404` | The number is in no `numbers` list and the trunk has no `default`. Add it as the carrier sends it. |
+| A call in is challenged | (a 407 to the carrier) | It came from an address not in the trunk's `inbound_addresses`. |
 
 ## Cluster nodes do not see each other
 

@@ -31,6 +31,11 @@ Alice                         AthenaSIP                          Bob
 The node is a proxy: it forwards requests and responses, and never answers a call itself.
 It can end one, by sending each end a BYE ([Hanging up](#hanging-up)).
 
+Who must prove themselves and where a call goes are the policy's decisions. This page
+follows the default, `builtin://`, which serves the node's own realms; with `lua://` a
+script makes them instead ([Scripting](scripting.md)), and the node carries out the rest
+the same way.
+
 ## Registration
 
 A phone tells the node where it is with a REGISTER, for a limited time.
