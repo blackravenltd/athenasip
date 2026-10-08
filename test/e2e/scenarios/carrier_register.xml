@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+
+<!--
+  The carrier's registrar. RFC 3261 10 and 22.4: the node registers to a trunk that asks
+  for it, answers the 401 with the trunk's credentials, and is granted an hour, so it does
+  not refresh while the harness runs.
+-->
+<scenario name="Carrier: challenge the node's REGISTER, then grant it">
+
+  <recv request="REGISTER"/>
+
+  <send>
+    <![CDATA[
+
+      SIP/2.0 401 Unauthorized
+      [last_Via:]
+      [last_From:]
+      [last_To:];tag=carrier-reg-[call_number]
+      [last_Call-ID:]
+      [last_CSeq:]
+      WWW-Authenticate: Digest realm="carrier.example", nonce="r3g[call_number]", algorithm=MD5, qop="auth"
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <recv request="REGISTER">
+    <action>
+      <verifyauth assign_to="verified" username="4420" password="carrier-secret"/>
+      <!-- The Contact is the trunk's username, where the carrier will send calls. -->
+      <ereg regexp="sip:4420@" search_in="hdr" header="Contact:" check_it="true" assign_to="contact"/>
+    </action>
+  </recv>
+
+  <nop hide="true" test="verified" next="granted"/>
+
+  <!-- Credentials that do not verify: wait for nothing, and the run fails. -->
+  <recv request="NOTHING" timeout="100"/>
+
+  <label id="granted"/>
+
+  <send>
+    <![CDATA[
+
+      SIP/2.0 200 OK
+      [last_Via:]
+      [last_From:]
+      [last_To:];tag=carrier-reg-[call_number]
+      [last_Call-ID:]
+      [last_CSeq:]
+      [last_Contact:];expires=3600
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <Reference variables="contact"/>
+
+</scenario>

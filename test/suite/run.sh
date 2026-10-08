@@ -95,6 +95,8 @@ if [[ "$SIPP" == "yes" ]]; then
   step "sipp, one node" test/e2e/run.sh
   step "sipp, one node with rtpengine" test/e2e/run.sh --rtpengine
   step "sipp, two nodes" test/e2e/cluster.sh
+  step "sipp, one node on the standard Lua scripts" test/e2e/run.sh --lua
+  step "sipp, trunks to a carrier" test/e2e/trunk.sh
 fi
 
 # --- Against a live node ---------------------------------------------------------------

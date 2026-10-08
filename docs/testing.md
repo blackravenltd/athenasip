@@ -26,6 +26,9 @@ cmake --preset tsan && cmake --build build-tsan -j8 && ./build-tsan/athenasip_te
 
 test/e2e/run.sh
 test/e2e/run.sh --rtpengine
+test/e2e/run.sh --lua
+test/e2e/cluster.sh --lua
+test/e2e/trunk.sh
 test/suite/run.sh
 ```
 
@@ -127,7 +130,13 @@ test/e2e/run.sh                      # one node, built-in relay
 test/e2e/run.sh --rtpengine          # the same, with rtpengine on the media path
 test/e2e/run.sh register             # only scenarios whose name contains "register"
 test/e2e/cluster.sh                  # two nodes, one Redis, one broker
+test/e2e/run.sh --lua                # any of them on the standard Lua scripts
+test/e2e/trunk.sh                    # trunks to sipp as a carrier
 ```
+
+`--lua` runs any of them with the node on the standard Lua scripts instead of
+`builtin://`, and `test/e2e/trunk.sh` runs trunks against sipp as a carrier: registering,
+calling out through a challenge, failing over to a second trunk, and a call in.
 
 Logs land in `test/e2e/results/`. [`test/e2e/README.md`](../test/e2e/README.md) has the
 scenarios, what each proves and how to add one.
