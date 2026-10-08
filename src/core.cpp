@@ -239,7 +239,8 @@ std::shared_ptr<Channel> Core::channel_find(const std::string& flow_id) {
 
 // RFC 3261 16.6 step 7 and 18.1. Outbound sockets run on the global io_context; the answer
 // is posted back to the strand.
-void Core::channel_connect(std::string transport, std::string host, std::uint16_t port, plugins::Handler<std::shared_ptr<Channel>> handler) {
+void Core::channel_connect(std::string transport, std::string host, std::uint16_t port, plugins::Handler<std::shared_ptr<Channel>> handler,
+                           std::optional<std::string> trunk_ca) {
   using ChannelResult = plugins::Result<std::shared_ptr<Channel>>;
 
   transport = Util::to_lower(transport);
@@ -254,17 +255,21 @@ void Core::channel_connect(std::string transport, std::string host, std::uint16_
 
   if (transport == "udp") return _connect_datagram(host, port, std::move(handler));
 
-  // Outbound TLS is only to cluster peers, with the cluster's certificates.
-  if (transport == "tls" && !_cluster_tls) {
-    return handler(ChannelResult::failure("cannot open an outbound tls flow without the cluster's certificates"));
-  }
-
   if (transport != "tcp" && transport != "tls") {
     return handler(ChannelResult::failure("cannot open an outbound " + transport + " flow"));
   }
 
+  // Outbound TLS is to cluster peers, with the cluster's certificates, or to a trunk, verified as any TLS server is.
+  // Nothing else: a TLS flow this node opens is to something it has a reason to trust.
   const bool secure = transport == "tls";
-  auto cluster_tls = _cluster_tls;
+  std::shared_ptr<boost::asio::ssl::context> cluster_tls;
+  if (secure) {
+    cluster_tls = trunk_ca ? _trunk_tls_for(*trunk_ca) : _cluster_tls;
+    if (!cluster_tls) {
+      return handler(ChannelResult::failure(trunk_ca ? "cannot load the CA " + *trunk_ca + " for TLS to a trunk"
+                                                     : "cannot open an outbound tls flow without the cluster's certificates"));
+    }
+  }
 
   auto& io_context = detail::get_global_io_context();
 
@@ -329,6 +334,26 @@ void Core::channel_connect(std::string transport, std::string host, std::uint16_
       });
 }
 
+std::shared_ptr<boost::asio::ssl::context> Core::_trunk_tls_for(const std::string& ca) {
+  if (const auto found = _trunk_tls.find(ca); found != _trunk_tls.end()) return found->second;
+
+  auto context = std::make_shared<boost::asio::ssl::context>(boost::asio::ssl::context::tls_client);
+  try {
+    if (ca.empty()) {
+      context->set_default_verify_paths();
+    } else {
+      context->load_verify_file(ca);
+    }
+    context->set_verify_mode(boost::asio::ssl::verify_peer);
+  } catch (const std::exception& e) {
+    _logger->error("Cannot load " + (ca.empty() ? std::string("the system's CA store") : ca) + " for TLS to a trunk - " + e.what());
+    return nullptr;
+  }
+
+  _trunk_tls[ca] = context;
+  return context;
+}
+
 bool Core::cluster_tls_set(const std::string& ca, const std::string& cert, const std::string& key) {
   auto context = std::make_shared<boost::asio::ssl::context>(boost::asio::ssl::context::tls_client);
   if (!servers::load_tls_certificates(_logger, *context, cert, key) || !servers::require_peer_certificates(_logger, *context, ca)) return false;
@@ -365,7 +390,7 @@ void Core::_secure_flow(std::shared_ptr<boost::asio::ip::tcp::socket> socket, st
 
     boost::asio::post(self->_strand, [self, channel, key]() { self->channel_alias(key, channel); });
 
-    self->_logger->info("Opened TLS flow to " + key + ", node " + connection->peer_identity());
+    self->_logger->info("Opened TLS flow to " + key + (cluster ? ", node " + connection->peer_identity() : ""));
     answer(ChannelResult::success(channel));
   });
 }

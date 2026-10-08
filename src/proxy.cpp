@@ -796,6 +796,22 @@ void Proxy::_forward_target(const std::shared_ptr<Context>& context, const Targe
 
   if (auto channel = target.flow.lock(); channel && channel->_connection) return _forward_to(context, target, channel);
 
+  // A trunk is read before a flow is opened to it: TLS to it is verified against its CA, not the cluster's.
+  if (!target.trunk.empty() && !target.tls_ca) {
+    auto self = shared_from_this();
+    return core->datastore->trunk_get(core->strand(), target.trunk, [this, self, context, target](plugins::Result<std::shared_ptr<types::Trunk>> found) {
+      if (context->answered || context->cancelled) return;
+      if (!found.ok || !found.value) {
+        _logger->info("Trunk " + target.trunk + (found.ok ? " does not exist" : " could not be read - " + found.error));
+        return _unreachable(context);
+      }
+
+      auto read = target;
+      read.tls_ca = found.value->tls_ca;
+      _forward_target(context, read);
+    });
+  }
+
   // RFC 3261 16.6 step 7: open a flow to a hop this node has none to (a trunk, a peer node, or a client whose
   // connection has closed).
   const auto hop = _next_hop_of(*target.next_hop);
@@ -831,18 +847,20 @@ void Proxy::_connect_hops(const std::shared_ptr<Context>& context, const Target&
   const auto hop = hops[index];
   auto self = shared_from_this();
 
-  core->channel_connect(hop.transport, hop.address, hop.port,
-                        [this, self, context, target, hops = std::move(hops), index, hop](plugins::Result<std::shared_ptr<Channel>> opened) mutable {
-                          if (!opened.ok || !opened.value || !opened.value->_connection) {
-                            _logger->info("No flow to " + target.next_hop->to_string() + " at " + hop.transport + "://" + hop.address + ":" +
-                                          std::to_string(hop.port) + " - " + opened.error);
-                            return _connect_hops(context, target, std::move(hops), index + 1);
-                          }
+  core->channel_connect(
+      hop.transport, hop.address, hop.port,
+      [this, self, context, target, hops = std::move(hops), index, hop](plugins::Result<std::shared_ptr<Channel>> opened) mutable {
+        if (!opened.ok || !opened.value || !opened.value->_connection) {
+          _logger->info("No flow to " + target.next_hop->to_string() + " at " + hop.transport + "://" + hop.address + ":" + std::to_string(hop.port) + " - " +
+                        opened.error);
+          return _connect_hops(context, target, std::move(hops), index + 1);
+        }
 
-                          context->hops_left.assign(hops.begin() + static_cast<std::ptrdiff_t>(index) + 1, hops.end());
-                          context->hop_target = target;
-                          _forward_to(context, target, opened.value);
-                        });
+        context->hops_left.assign(hops.begin() + static_cast<std::ptrdiff_t>(index) + 1, hops.end());
+        context->hop_target = target;
+        _forward_to(context, target, opened.value);
+      },
+      target.tls_ca);
 }
 
 // RFC 3263 4.3: retries the current target at the next DNS hop. False when there is none.
