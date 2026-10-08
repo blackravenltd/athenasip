@@ -756,6 +756,11 @@ std::shared_ptr<PushRefresher> Core::push_refresher() {
   return _push_refresher;
 }
 
+std::shared_ptr<TrunkRegistrar> Core::trunk_registrar() {
+  if (!_trunk_registrar) _trunk_registrar = std::make_shared<TrunkRegistrar>(_logger->base_logger(), weak_from_this());
+  return _trunk_registrar;
+}
+
 std::shared_ptr<Qualifier> Core::qualifier() {
   if (!_qualifier) _qualifier = std::make_shared<Qualifier>(_logger->base_logger(), weak_from_this());
   return _qualifier;

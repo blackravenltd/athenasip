@@ -101,6 +101,10 @@ class SyncDatastore {
         [this](auto on, auto handler) { _store->trunk_list(std::move(on), std::move(handler)); });
   }
 
+  bool lease(const std::string& name, const std::string& holder, std::uint32_t seconds) {
+    return _value<bool>([this, name, holder, seconds](auto on, auto handler) { _store->lease(std::move(on), name, holder, seconds, std::move(handler)); });
+  }
+
   bool session_create(athenasip::types::Session session) {
     return _status([this, session](auto on, auto handler) { _store->session_create(std::move(on), session, std::move(handler)); });
   }

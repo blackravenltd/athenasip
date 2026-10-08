@@ -439,6 +439,24 @@ void RedisDatastore::user_list(plugins::Executor on, plugins::Handler<std::vecto
       });
 }
 
+// One script, so taking and renewing are atomic: two nodes asking at once cannot both win.
+void RedisDatastore::lease(plugins::Executor on, std::string name, std::string holder, std::uint32_t seconds, plugins::Handler<bool> handler) {
+  static constexpr const char* kTake = R"lua(
+    local held = redis.call('GET', KEYS[1])
+    if not held then redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2]) return 1 end
+    if held == ARGV[1] then redis.call('EXPIRE', KEYS[1], ARGV[2]) return 1 end
+    return 0
+  )lua";
+
+  boost::redis::request request;
+  request.push("EVAL", kTake, 1, "athena:lease:" + name, holder, seconds);
+
+  _async_integer("EVAL", std::move(request), [this, on, handler](RedisError error, std::int64_t taken) mutable {
+    if (error) return _complete(on, handler, plugins::Result<bool>::failure(error.message()));
+    _complete(on, handler, plugins::Result<bool>::success(taken == 1));
+  });
+}
+
 // A trunk is one JSON value under its key, with an index of names, as a user is.
 void RedisDatastore::trunk_get(plugins::Executor on, std::string name, plugins::Handler<std::shared_ptr<types::Trunk>> handler) {
   using Answer = plugins::Result<std::shared_ptr<types::Trunk>>;

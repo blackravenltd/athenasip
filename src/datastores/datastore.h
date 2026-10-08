@@ -146,6 +146,16 @@ class Datastore : public plugins::Plugin {
     _unsupported<std::vector<std::shared_ptr<types::Trunk>>>(std::move(on), std::move(handler), "trunk_list");
   }
 
+  // A named lease, held by one holder at a time until it lapses: how one node of a cluster takes a job, such as
+  // registering to a trunk. Answers whether `holder` holds it now; a holder that already did has it renewed for
+  // `seconds`. Optional; a node without it does the job itself.
+  virtual void lease(plugins::Executor on, std::string name, std::string holder, std::uint32_t seconds, plugins::Handler<bool> handler) {
+    (void)name;
+    (void)holder;
+    (void)seconds;
+    _unsupported<bool>(std::move(on), std::move(handler), "lease");
+  }
+
   // Subscribers.
   virtual void subscriber_get(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity,
                               plugins::Handler<std::shared_ptr<types::Subscriber>> handler) = 0;

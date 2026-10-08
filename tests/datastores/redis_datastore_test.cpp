@@ -856,3 +856,22 @@ TEST(RedisDatastoreTest, ATrunkRoundTrips) {
   EXPECT_FALSE(datastore->trunk_delete(trunk->name)) << "nothing left to delete";
   EXPECT_FALSE(datastore->trunk_update(trunk)) << "nothing left to update";
 }
+
+// One holder at a time: another is refused while the lease runs, and the holder renews it.
+TEST(RedisDatastoreTest, ALeaseHasOneHolder) {
+  REQUIRE_REDIS(datastore);
+  const auto name = "trunk-register-acme" + unique_suffix();
+  EXPECT_TRUE(datastore->lease(name, "node-a", 30));
+  EXPECT_FALSE(datastore->lease(name, "node-b", 30));
+  EXPECT_TRUE(datastore->lease(name, "node-a", 30)) << "renewed";
+}
+
+// A lease that has lapsed goes to whoever asks next.
+TEST(RedisDatastoreTest, ALapsedLeaseIsTakenOver) {
+  REQUIRE_REDIS(datastore);
+  const auto name = "trunk-register-lapsed" + unique_suffix();
+  EXPECT_TRUE(datastore->lease(name, "node-a", 1));
+  std::this_thread::sleep_for(std::chrono::milliseconds(2100));
+  EXPECT_TRUE(datastore->lease(name, "node-b", 30));
+  EXPECT_FALSE(datastore->lease(name, "node-a", 30));
+}

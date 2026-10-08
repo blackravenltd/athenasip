@@ -2954,3 +2954,15 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       names no node (`ClusterTlsTest.ANodeOpensTlsToATrunkUnderTheTrunksAuthority`, and its
       refusal when the CA does not match). The known deviation "outbound TLS is to cluster
       peers only" is now "to cluster peers and trunks".
+- [x] **Registering to a trunk** (`src/trunk_registrar.*`). Every 30 seconds the node reads
+      the trunks; for each that asks to be registered it takes a 90-second datastore lease
+      (`Datastore::lease`, atomic in Redis by one script, in memory by a map), so one node
+      of a cluster registers and another takes over when the lease lapses. The REGISTER is
+      RFC 3261 10.2's: the carrier's domain as Request-URI, the trunk's address of record,
+      one Call-ID and a rising CSeq, a Contact at this node's advertised address. A 401 or
+      407 is answered with the trunk's credentials, once, and again only for a stale nonce;
+      a 423 asks again for the carrier's minimum; a 2xx is refreshed a minute early, or at
+      three quarters of a grant of two minutes or less; a failure is retried after 30
+      seconds, doubling to ten minutes. Each trunk's state is published, retained, as
+      `trunks/<name>/status`. Started by `main` once the listeners are up.
+      `tests/trunk_registrar_test.cpp`, and the lease in both stores.

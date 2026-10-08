@@ -8,9 +8,11 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <ctime>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "../helpers/sync_datastore_helper.h"
@@ -734,4 +736,23 @@ TEST(MemoryDatastoreTest, ATrunkRoundTrips) {
   EXPECT_EQ(datastore->trunk_get(trunk->name), nullptr);
   EXPECT_FALSE(datastore->trunk_delete(trunk->name)) << "nothing left to delete";
   EXPECT_FALSE(datastore->trunk_update(trunk)) << "nothing left to update";
+}
+
+// One holder at a time: another is refused while the lease runs, and the holder renews it.
+TEST(MemoryDatastoreTest, ALeaseHasOneHolder) {
+  auto datastore = make_datastore();
+  const auto name = "trunk-register-acme";
+  EXPECT_TRUE(datastore->lease(name, "node-a", 30));
+  EXPECT_FALSE(datastore->lease(name, "node-b", 30));
+  EXPECT_TRUE(datastore->lease(name, "node-a", 30)) << "renewed";
+}
+
+// A lease that has lapsed goes to whoever asks next.
+TEST(MemoryDatastoreTest, ALapsedLeaseIsTakenOver) {
+  auto datastore = make_datastore();
+  const auto name = "trunk-register-lapsed";
+  EXPECT_TRUE(datastore->lease(name, "node-a", 1));
+  std::this_thread::sleep_for(std::chrono::milliseconds(2100));
+  EXPECT_TRUE(datastore->lease(name, "node-b", 30));
+  EXPECT_FALSE(datastore->lease(name, "node-a", 30));
 }
