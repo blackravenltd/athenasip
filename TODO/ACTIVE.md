@@ -21,9 +21,11 @@ and the TLS use-after-free that corrupted the heap on every closed TLS connectio
 nodes run `a08cc6d` (deployed 2026-10-08). corvus-fi-1 runs `lua://` with
 `athenasip.trunks` from `/etc/athenasip/scripts/main.lua` and a trunk `macnessa` to
 corvus-gbni-1 (registering as gbni's subscriber 1003, outbound proxy 10.44.1.50); its
-previous configuration is `/etc/athenasip/config.yaml.before-lua`. `test/interop/call.py`
-placed 30 of 30 calls through them: local, out through the trunk with gbni-1 challenging,
-and in through it.
+previous configuration is `/etc/athenasip/config.yaml.before-lua`. fi-1 runs `3bb2911`;
+gbni-1 runs `a08cc6d`, without the rtcp-mux fix (`6a163a1`) that a call from AthenaPhone to a
+plain-RTP phone needs, until Tom says yes to deploying it. A probe on fi-1
+(`athenasip-probe.timer`) runs `test/interop/verify.py test/interop/live.json` every 15
+minutes and publishes `athenasip/probes/corvus-fi-1/calls`.
 
 **Two live nodes**, neither production:
 - `corvus-fi-1` (10.35.1.20): builtin relay, AthenaPhone's usual home.

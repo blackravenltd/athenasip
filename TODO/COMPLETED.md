@@ -3051,3 +3051,27 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       through. The failures on the way were the test client's: it took a retransmitted 407
       for the answer to its credentialed INVITE, and each failure cascaded into the next run
       while the node tried the stale bindings the runs left.
+
+### Automatic live testing, and a real phone (2026-10-08)
+
+- [x] **`test/interop/verify.py` with `test/interop/live.json`**: every node's health,
+      registration on every transport, local calls on all five transports and mixed, and the
+      trunk both ways. Dedicated probe subscribers 1901 and 1902 on both nodes, with their
+      password only on the nodes (`/root/.athenasip-probe-password`), so automated calls never
+      ring a person. 15 of 15.
+- [x] **A recurring probe on fi-1**: `athenasip-probe.timer` runs verify.py every 15 minutes
+      and publishes the result, retained, as `athenasip/probes/corvus-fi-1/calls` on the site
+      broker for T.O.M.S to alert on.
+- [x] **`call.py` behaves as a UA must over UDP**: requests retransmitted from T1, a 2xx
+      until its ACK, repeated requests answered again. The site link to gbni-1 loses the odd
+      datagram, and a client that sent each request once failed whole calls on it. Its callee
+      refuses an offer it cannot take with 488, as a plain-RTP phone does.
+- [x] **`test/interop/phone.py`**: calls to and from AthenaPhone on an Android phone over adb.
+      Found a node bug: **a WebRTC caller whose callee needed plain RTP had no media**. After
+      the 488 and the re-offer on the same rtpengine call, `rtcp-mux: [demux]` made rtpengine
+      drop `a=rtcp-mux` from the answer to the caller, which libwebrtc refuses, leaving it in
+      have-local-offer. Shown in a full message log of the call, reproduced against rtpengine
+      12.5 over its control port, and fixed by asking for `[demux, accept]` in an offer
+      (`6a163a1`, unit test red first). Calls in to the phone had media all along: ICE and
+      DTLS-SRTP completed on rtpengine. AthenaPhone's own findings (media sessions left
+      running after a call ends before ICE connects) went to its session.
