@@ -214,3 +214,56 @@ TEST(ClusterTlsTest, ACertificateFromAnotherAuthorityNamesNoNode) {
   servers::TLSConnection connection(server, true);
   EXPECT_EQ(connection.peer_identity(), "") << "verified, but not against the cluster";
 }
+
+namespace {
+
+// A carrier's TLS listener: its own certificate from its own authority, asking nothing of the client.
+struct CarrierFixture : CoreFixture {
+  Certificates certificates;
+  std::shared_ptr<servers::TLSServer> server;
+
+  CarrierFixture() {
+    server = std::make_shared<servers::TLSServer>(logger, core, "127.0.0.1", 0);
+    EXPECT_TRUE(server->set_certificates(certificates.file(certificates.outsider, "node-x.crt"), certificates.file(certificates.outsider, "node-x.key")));
+    server->start();
+  }
+
+  ~CarrierFixture() {
+    on_strand([this]() { core->channel_close_all(); });
+    settle();
+    server->stop();
+  }
+
+  plugins::Result<std::shared_ptr<Channel>> connect(std::optional<std::string> trunk_ca) {
+    std::promise<plugins::Result<std::shared_ptr<Channel>>> promise;
+    auto future = promise.get_future();
+    core->post([&]() {
+      core->channel_connect(
+          "tls", "127.0.0.1", server->port(), [&promise](plugins::Result<std::shared_ptr<Channel>> result) { promise.set_value(std::move(result)); }, trunk_ca);
+    });
+    return future.get();
+  }
+};
+
+}  // namespace
+
+// TLS to a trunk is verified against the trunk's CA and the address dialled, and the carrier is never a node.
+TEST(ClusterTlsTest, ANodeOpensTlsToATrunkUnderTheTrunksAuthority) {
+  CarrierFixture f;
+
+  const auto opened = f.connect(f.certificates.file(f.certificates.outsider, "ca.crt"));
+  ASSERT_TRUE(opened.ok) << opened.error;
+  EXPECT_EQ(opened.value->peer_node(), "") << "a carrier is not a cluster peer";
+}
+
+// A carrier whose certificate the trunk's CA did not sign is refused, as any TLS server would be.
+TEST(ClusterTlsTest, ATrunkWhoseCertificateDoesNotVerifyIsRefused) {
+  CarrierFixture f;
+  EXPECT_FALSE(f.connect(f.certificates.file(f.certificates.cluster, "ca.crt")).ok);
+}
+
+// Without a trunk to trust and without the cluster's certificates, no TLS flow is opened at all.
+TEST(ClusterTlsTest, TlsToAnythingElseIsStillRefused) {
+  CarrierFixture f;
+  EXPECT_FALSE(f.connect(std::nullopt).ok);
+}

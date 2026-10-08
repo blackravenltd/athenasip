@@ -98,6 +98,9 @@ class Proxy : public TransactionUser {
 
     // The trunk this target leaves by: its challenges are answered with the trunk's credentials.
     std::string trunk;
+
+    // TLS to a trunk is verified against this CA file, empty for the system's store. Set once the trunk is read.
+    std::optional<std::string> tls_ca;
   };
 
   // The response context (16.7). Kept alive by the client transaction callbacks.

@@ -157,7 +157,10 @@ class Core : public std::enable_shared_from_this<Core> {
   // dialled, UDP leaves by a listener's socket, and TLS needs cluster_tls_set and reaches
   // only cluster peers. Bounded by Config::sip_connect_timeout_ms. The handler runs on the
   // strand.
-  void channel_connect(std::string transport, std::string host, std::uint16_t port, plugins::Handler<std::shared_ptr<Channel>> handler);
+  // trunk_ca: TLS to a trunk, verified against this CA file or, empty, the system's store, with no client
+  // certificate. Without it, outbound TLS is to cluster peers only, with the cluster's certificates.
+  void channel_connect(std::string transport, std::string host, std::uint16_t port, plugins::Handler<std::shared_ptr<Channel>> handler,
+                       std::optional<std::string> trunk_ca = std::nullopt);
 
   // A second registry name for a channel: the name it was dialled by, so a hop named by
   // hostname reuses its connection.
@@ -388,6 +391,10 @@ class Core : public std::enable_shared_from_this<Core> {
   void _secure_flow(std::shared_ptr<boost::asio::ip::tcp::socket> socket, std::shared_ptr<boost::asio::ssl::context> context, const std::string& host,
                     const std::string& key, std::function<void(plugins::Result<std::shared_ptr<Channel>>)> answer);
   std::shared_ptr<boost::asio::ssl::context> _cluster_tls;
+
+  // Client contexts for TLS to trunks, by CA file ("" for the system's store), built on first use.
+  std::map<std::string, std::shared_ptr<boost::asio::ssl::context>> _trunk_tls;
+  std::shared_ptr<boost::asio::ssl::context> _trunk_tls_for(const std::string& ca);
 
   // channel_connect's UDP half.
   void _connect_datagram(std::string host, std::uint16_t port, plugins::Handler<std::shared_ptr<Channel>> handler);

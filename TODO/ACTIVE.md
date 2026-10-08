@@ -338,8 +338,9 @@ none of them is mistaken for compliance. **Re-checked against the tree on 2026-1
   false` turns all of it off, and where it cannot anchor the message travels on untouched.
 - With `behaviour.rewrite_contact` on (off by default) the Contact an endpoint wrote is
   replaced with the address its message came from, as Asterisk and Kamailio do.
-- Outbound TLS is to cluster peers only, with the cluster's certificates. To any other host
-  it is refused rather than faked.
+- Outbound TLS is to cluster peers, with the cluster's certificates, and to trunks,
+  verified against the trunk's CA or the system's store. To any other host, such as one
+  an arbitrary Request-URI names, it is refused rather than faked.
 - Record-Route is written twice on every dialog-forming request rather than only where
   the interfaces differ. RFC 5658 requires the pair in that case and permits it in
   every case; the flow token in each value is what makes a call to a browser routable
@@ -458,8 +459,8 @@ scripts built into the binary, the permanent proof, and `--check`. What is left:
 ### Trunk mechanism
 
 Done (`COMPLETED.md`, 2026-10-08): `digest::respond`, trunks in the datastore,
-`/api/v1/trunks` with `manage-trunks`, trunks in scripts, and answering a carrier's
-challenge with the CSeq kept right for the rest of the dialog.
+`/api/v1/trunks` with `manage-trunks`, trunks in scripts, answering a carrier's
+challenge with the CSeq kept right for the rest of the dialog, and TLS to a trunk.
 
 - [ ] Free-form `attributes` on `Realm` and `Subscriber` too, over the API and in scripts,
       as trunks have them. Console pages for trunks and attributes are the admin session's.
@@ -468,9 +469,6 @@ challenge with the CSeq kept right for the rest of the dialog.
       200 granted, backoff on failure; one node per trunk by a datastore lease, the others
       taking over when it lapses, on `PushRefresher::_due`'s re-read-the-store pattern;
       `trunks/<name>/status` on the bus; registration state in the API's trunk read.
-- [ ] Outbound TLS to a trunk: a second client context, the system store or the trunk's
-      CA, host name verified; chosen by the target. Anything else over TLS stays refused;
-      WS and WSS outbound stay refused.
 - [ ] The smaller primitives: header edits on the forwarded copy behind the guard list,
       `set_from` without touching the tag, `ring_timeout` per target on timer C's path,
       `counter_incr` and `counter_get` on the datastore, `RequestView::source`, the trunk

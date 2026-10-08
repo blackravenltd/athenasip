@@ -2947,3 +2947,10 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
 - [x] **A request from a trunk** is trusted by the policy with `AuthDecision::Trusted`
       (`athenasip.auth.trusted{trunk =}`), recorded on the request as `trunk`, and seen by
       `route` as `request.trunk`. `uri:with{}` makes a changed copy of a URI.
+- [x] **TLS to a trunk.** `Core::channel_connect` takes the trunk's CA (empty for the
+      system's store) and opens TLS verified against it and the address dialled, with no
+      client certificate; the proxy reads a trunk before opening a flow to it. Without a
+      trunk to trust, outbound TLS is still to cluster peers only. A carrier's connection
+      names no node (`ClusterTlsTest.ANodeOpensTlsToATrunkUnderTheTrunksAuthority`, and its
+      refusal when the CA does not match). The known deviation "outbound TLS is to cluster
+      peers only" is now "to cluster peers and trunks".
