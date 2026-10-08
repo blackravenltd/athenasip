@@ -12,11 +12,13 @@
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/ssl.hpp>
 #include <chrono>
+#include <future>
 #include <mutex>
 #include <thread>
 
 #include "address_discovery.h"
 #include "datastores/datastore.h"
+#include "dns/resolver.h"
 #include "events/event_system.h"
 #include "events/topics.h"
 #include "global_io_context.h"
@@ -26,6 +28,8 @@
 #include "policy/policy.h"
 #include "servers/tls_context.h"
 #include "stun.h"
+#include "types/sip_uri.h"
+#include "types/trunk.h"
 #include "types/url.h"
 
 namespace athenasip::cli {
@@ -52,6 +56,15 @@ CheckLine check_plugin(const std::string& what, const std::string& url, std::sha
   if (!keep_open || !connected.ok) plugin->close();
 
   return connected.ok ? line(true, what, where) : line(false, what, where + " - " + connected.error);
+}
+
+// Blocks for one async answer, from the global io context.
+template <typename T, typename Start>
+plugins::Result<T> wait_for(Start start) {
+  std::promise<plugins::Result<T>> promise;
+  auto future = promise.get_future();
+  start(detail::get_global_io_context().get_executor(), [&promise](plugins::Result<T> result) { promise.set_value(std::move(result)); });
+  return future.get();
 }
 
 // Creates and configures the policy as main does. For lua:// that loads the scripts and runs their init(), so a
@@ -198,7 +211,10 @@ CheckLine check_address(const Config& config) {
 std::vector<CheckLine> check(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<Config> config, const ConnectAndWait& connect_and_wait) {
   std::vector<CheckLine> lines;
 
-  lines.push_back(check_plugin("datastore", config->db_url, datastores::Datastore::create_driver(logger, config->db_url), config, connect_and_wait));
+  // Held open for the trunks, read below.
+  auto datastore = datastores::Datastore::create_driver(logger, config->db_url);
+  lines.push_back(check_plugin("datastore", config->db_url, datastore, config, connect_and_wait, true));
+  const auto datastore_open = datastore && lines.back().ok;
 
   // Node statuses are retained on the bus, so listening briefly discovers the peers.
   auto nodes = std::make_shared<NodeDirectory>();
@@ -216,6 +232,13 @@ std::vector<CheckLine> check(std::shared_ptr<loggers::Logger> logger, std::share
 
   lines.push_back(check_plugin("media", config->media_url, media::MediaEngine::create_driver(logger, config->media_url), config, connect_and_wait));
   lines.push_back(check_policy(logger, config));
+
+  if (datastore_open) {
+    auto servers = dns::UdpResolver::servers_from("/etc/resolv.conf");
+    auto locator = std::make_shared<dns::SipLocator>(std::make_shared<dns::UdpResolver>(logger, std::move(servers)));
+    for (auto& trunk : check_trunks(datastore, locator)) lines.push_back(std::move(trunk));
+    datastore->close();
+  }
 
   // Every certificate a listener will load, so a missing file is found before a client is.
   if (config->tls_enable) lines.push_back(check_certificate(logger, "tls certificate", config->tls_cert_pem_filename, config->tls_key_pem_filename));
@@ -271,6 +294,42 @@ std::vector<CheckLine> check(std::shared_ptr<loggers::Logger> logger, std::share
 
   lines.push_back(check_address(*config));
 
+  return lines;
+}
+
+std::vector<CheckLine> check_trunks(const std::shared_ptr<datastores::Datastore>& datastore, const std::shared_ptr<dns::SipLocator>& locator) {
+  std::vector<CheckLine> lines;
+
+  const auto listed = wait_for<std::vector<std::shared_ptr<types::Trunk>>>(
+      [&datastore](plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::Trunk>>> handler) {
+        datastore->trunk_list(std::move(on), std::move(handler));
+      });
+  if (!listed.ok) {
+    if (listed.error.find("does not support") == std::string::npos) lines.push_back(line(false, "trunks", "cannot read them - " + listed.error));
+    return lines;
+  }
+
+  for (const auto& trunk : listed.value) {
+    const auto what = "trunk " + trunk->name;
+    const auto& next = trunk->proxy.empty() ? trunk->uri : trunk->proxy;
+    const types::SIPUri uri(next);
+    if (!uri.valid || uri.host.empty()) {
+      lines.push_back(line(false, what, next + " does not parse"));
+      continue;
+    }
+
+    const auto located = wait_for<std::vector<dns::Hop>>(
+        [&locator, &uri](plugins::Executor on, plugins::Handler<std::vector<dns::Hop>> handler) { locator->locate(std::move(on), uri, std::move(handler)); });
+    if (!located.ok) {
+      lines.push_back(line(false, what, next + " - " + located.error));
+    } else if (located.value.empty()) {
+      lines.push_back(line(false, what, next + " - DNS gives nowhere to send it"));
+    } else {
+      std::string hops;
+      for (const auto& hop : located.value) hops += (hops.empty() ? "" : ", ") + hop.transport + " " + hop.address + ":" + std::to_string(hop.port);
+      lines.push_back(line(true, what, next + " - " + hops));
+    }
+  }
   return lines;
 }
 

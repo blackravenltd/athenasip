@@ -23,13 +23,18 @@
 #include "cli.h"
 #include "config.h"
 #include "datastores/datastore_drivers.h"
+#include "datastores/memory_datastore.h"
+#include "dns/sip_locator.h"
 #include "events/event_system_drivers.h"
 #include "events/topics.h"
 #include "global_io_context.h"
+#include "helpers/fake_resolver_helper.h"
+#include "helpers/sync_datastore_helper.h"
 #include "media/media_engine_drivers.h"
 #include "mocks/logger_mock.h"
 #include "policy/policy_drivers.h"
 #include "stun.h"
+#include "types/trunk.h"
 
 using namespace athenasip;
 
@@ -291,4 +296,44 @@ TEST(CliCheckTest, TheStandardScriptsPassTheCheck) {
   const auto* policy = CheckFixture::find(lines, "policy");
   ASSERT_NE(policy, nullptr);
   EXPECT_TRUE(policy->ok) << policy->detail;
+}
+
+// RFC 3263: a trunk's next hop is located as the node would locate it, its proxy before its URI, and one that
+// resolves nowhere fails the check.
+TEST(CliCheckTest, EachTrunkIsLocated) {
+  auto logger = std::make_shared<MockLogger>();
+  auto datastore = std::make_shared<datastores::MemoryDatastore>(logger, std::make_shared<types::URL>("memory://"));
+  SyncDatastore store(datastore);
+  ASSERT_TRUE(store.connect());
+
+  const auto add = [&store](const std::string& name, const std::string& uri, const std::string& proxy) {
+    auto trunk = std::make_shared<types::Trunk>();
+    trunk->name = name;
+    trunk->uri = uri;
+    trunk->proxy = proxy;
+    return store.trunk_create(trunk);
+  };
+  ASSERT_TRUE(add("acme", "sip:sip.acme.example", ""));
+  ASSERT_TRUE(add("by-proxy", "sip:sip.nowhere.example", "sip:203.0.113.10:5070"));
+  ASSERT_TRUE(add("gone", "sip:sip.gone.example", ""));
+
+  auto resolver = std::make_shared<FakeResolver>();
+  resolver->srv("_sip._udp.sip.acme.example", 10, 0, 5060, "edge.acme.example");
+  resolver->a("edge.acme.example", "198.51.100.7");
+
+  const auto lines = cli::check_trunks(datastore, std::make_shared<dns::SipLocator>(resolver));
+
+  const auto* acme = CheckFixture::find(lines, "trunk acme");
+  ASSERT_NE(acme, nullptr);
+  EXPECT_TRUE(acme->ok) << acme->detail;
+  EXPECT_NE(acme->detail.find("udp 198.51.100.7:5060"), std::string::npos) << acme->detail;
+
+  const auto* proxy = CheckFixture::find(lines, "trunk by-proxy");
+  ASSERT_NE(proxy, nullptr);
+  EXPECT_TRUE(proxy->ok) << proxy->detail;
+  EXPECT_NE(proxy->detail.find("203.0.113.10:5070"), std::string::npos) << proxy->detail;
+
+  const auto* gone = CheckFixture::find(lines, "trunk gone");
+  ASSERT_NE(gone, nullptr);
+  EXPECT_FALSE(gone->ok) << gone->detail;
 }
