@@ -5,7 +5,8 @@ provides and where the decisions leave the C++. This one is the Lua engine behin
 `lua://` policy driver, the API it gives a script, the standard scripts that reproduce
 today's behaviour exactly, and the scripts that do what today's node cannot.
 
-Written 2026-10-07 against `0.9.0`.
+Built in `0.10.0`: [Scripting](../scripting.md) is the reference for what shipped, and
+`TODO/COMPLETED.md` records where it differs from this design. Written 2026-10-07 against `0.9.0`.
 
 ## The engine
 

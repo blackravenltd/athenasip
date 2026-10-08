@@ -114,7 +114,9 @@ push:                             # off with no urls
   #   subject: mailto:admin@example.com
 
 policy:
-  url: "builtin://"               # lua:// makes routing a script: docs/scripting.md
+  url: "builtin://"               # lua:// makes routing a script, and runs trunks: docs/scripting.md
+  # lua:
+  #   path: [/etc/athenasip/scripts]  # your main.lua; without one, the standard script, as builtin://
 
 behaviour:                        # a realm can override each over the API
   media_anchor: true              # false leaves media end to end, which fails behind NAT

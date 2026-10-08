@@ -24,10 +24,11 @@ and nothing on the call path waits for it.
 | `calls/<call_id>/register` | A call is created | no | The call id |
 | `calls/<call_id>/state` | A call changes state | no | The state |
 | `calls/<call_id>/unregister` | A call ends | no | The call id |
+| `trunks/<name>/status` | The node registering a trunk starts, succeeds or fails | yes | [Trunk status](#trunk-status) |
 
 `<transport>` is `udp`, `tcp`, `tls`, `ws` or `wss`. `<endpoint>` is `host:port`.
 
-Only the node status is retained. A consumer that was not subscribed when any other event
+Only the node and trunk statuses are retained. A consumer that was not subscribed when any other event
 was published has missed it.
 
 ## Node status
@@ -51,6 +52,7 @@ was published has missed it.
 | `transports` | One entry per enabled SIP listener, at `sip.public_address` when set; empty in a will |
 | `media` | Engine name and version, its capabilities (`bridge`, `conference`, `record`, `transcode`) and the profiles it produces (`rtp`, `webrtc`, `srtp`); `null` with no engine; absent in a will |
 | `cluster` | Where peers reach the inter-node listener; absent outside a cluster and in a will |
+| `policy` | `{"driver": "lua 1.0.0", "fingerprint": "<sha-256>"}`: the policy, and for `lua://` a SHA-256 of the scripts it loaded. Nodes of one cluster should agree. |
 
 Every node subscribes to `nodes/+/status`, and `GET /api/v1/nodes` lists what it has
 heard. A report not repeated within three status intervals is stale; a monitor should
@@ -109,3 +111,20 @@ events:
 
 `client_id`, `keep_alive`, `connect_timeout_ms` and `prefix` are also accepted as URL query
 parameters; the `events.mqtt` section wins where both are given.
+
+## Trunk status
+
+```json
+{"trunk":"acme","node":"sip-0001","state":"registered","detail":"200 OK","expires_at":1791200000,"at":"2026-10-08T09:58:59Z"}
+```
+
+| Field | |
+|---|---|
+| `trunk` | The trunk's name |
+| `node` | The node registering it; one node of a cluster at a time |
+| `state` | `registering`, `registered` or `failed` |
+| `detail` | Why it failed, or the response that answered |
+| `expires_at` | Unix seconds when the carrier's binding lapses; `0` unless registered |
+| `at` | When the node composed the message |
+
+`GET /api/v1/trunks` gives the same, as each trunk's `registration`.
