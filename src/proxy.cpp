@@ -732,6 +732,7 @@ void Proxy::_after_failure(const std::shared_ptr<Context>& context, const std::s
   state.tried = context->next;
   state.remaining = context->targets.size() - std::min(context->next, context->targets.size());
   state.best = context->best ? static_cast<std::uint16_t>(context->best->header->response_code) : 0;
+  state.trunk = context->current.trunk;
 
   auto self = shared_from_this();
   core->policy()->on_failure(core->strand(), _view(context->request, false), response, state,

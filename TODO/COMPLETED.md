@@ -2997,3 +2997,25 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
   UBSan's `vptr` check from the uninstrumented library, a false positive suppressed with
   `vptr:boost/json/*`, `vptr:boost/container/*` and `vptr:*memory_resource*`
   (`docs/testing.md`).
+
+### Trunk scripts (2026-10-08)
+
+- [x] **`athenasip.trunks`** (`scripts/athenasip/trunks.lua`): trunks from their records
+      alone, with a one-line `main.lua`. In: a request from a trunk's `inbound_addresses`
+      is that trunk's, and the number dialled (from the Request-URI, or the To when that is
+      the Contact registered) names a subscriber through the trunk's `numbers`. Out: a caller
+      in one of this node's realms dialling a number no subscriber has goes out by every
+      trunk whose `prefixes` match, longest prefix then `priority` first, each dialled as it
+      wants (`dial_format`), with the first trunk's `caller_id` as the From and
+      `P-Asserted-Identity`. 404, 410, 484, 486, 600, 603 or 604 from a trunk ends the
+      search; any other failure tries the next trunk. A national number is read through the
+      trunk's `country`. `policy::ForkState` gains the failed branch's `trunk`, which
+      `on_failure` sees as `state.trunk`.
+- [x] **Examples** under `docs/scripting/examples/`: a hunt group with ring timeouts, out of
+      hours to an on-call mobile, a blocklist, emergency numbers by the trunk marked for
+      them, and following a redirect. A test loads every one.
+- [x] `tests/policy/trunks_script_test.cpp`: in by address and by number, the To when the
+      Request-URI is the registered Contact, an unknown number refused, the best trunk first,
+      longest prefix then priority, a stranger not calling out, busy ending the search and a
+      failing trunk not, and every example loading. The test host the equivalence tests used
+      is shared from `tests/helpers/policy_host_helper.h`.

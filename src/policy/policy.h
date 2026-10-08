@@ -213,6 +213,9 @@ struct ForkState {
   std::size_t tried = 0;
   std::size_t remaining = 0;
   std::uint16_t best = 0;
+
+  // The trunk the failed branch left by, empty when it was not a trunk.
+  std::string trunk;
 };
 
 // What to do after a branch ends in 3xx to 5xx. 2xx and 6xx end a fork whatever a policy says (RFC 3261 16.7).

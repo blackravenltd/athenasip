@@ -178,6 +178,58 @@ end
 The node's tests run against both `builtin://` and the standard scripts, and fail if they
 answer any request differently.
 
+## Trunks without writing Lua
+
+`athenasip.trunks` runs calls in and out through trunks from nothing but the trunks kept
+over the API. Its `main.lua` is one line:
+
+```lua
+authorize, route, on_failure, register = require("athenasip.trunks").hooks()
+```
+
+and a trunk for a UK carrier, created with `POST /api/v1/trunks`, looks like this:
+
+```json
+{
+  "name": "acme",
+  "uri": "sip:sip.acme.example;transport=tls",
+  "username": "4420xxxx",
+  "password": "...",
+  "register": {"enabled": true, "expires": 300, "contact_user": "4420xxxx"},
+  "inbound_addresses": ["203.0.113.0/24"],
+  "attributes": {
+    "prefixes": ["+44"],
+    "country": "44",
+    "caller_id": "+442071234567",
+    "numbers": {"+442071234567": "sip:reception@example.com"}
+  }
+}
+```
+
+| Attribute | Meaning |
+|---|---|
+| `prefixes` | The numbers it carries, in E.164. The longest prefix that matches wins. |
+| `priority` | Among trunks with the same match, lower first (default 100) |
+| `country` | The country code, for reading a national number: `020 7123 4567` is `+442071234567` in `44` |
+| `dial_format` | `e164` (default) or `digits`, without the `+`, as the carrier wants the number |
+| `caller_id` | The number presented calling out, set as the From and asserted in `P-Asserted-Identity` |
+| `numbers` | The numbers it brings in, each to an address of record |
+| `default` | Where a number in no list goes; without it such a call is refused |
+
+What it does:
+
+- **In**: a request from a trunk's `inbound_addresses` is that trunk's. The number dialled,
+  from the Request-URI or, when that is the Contact the node registered, from the To, names a
+  subscriber through `numbers`. Anything else is refused 404.
+- **Out**: a caller in one of the node's realms dialling a number that is no subscriber goes
+  out by every trunk that carries it, best first. 404, 410, 484, 486, 600, 603 or 604 from a
+  trunk is the answer; any other failure tries the next trunk.
+- Everything else is `athenasip.standard`.
+
+`docs/scripting/examples/` has scripts built on it: a hunt group, out-of-hours routing to an
+on-call mobile, a blocklist, emergency numbers, and following a redirect. The tests load
+every one.
+
 ## What a script cannot do
 
 - No `io`, `debug` or `package`; of `os`, only `date`, `time` and `clock`; no `load`,

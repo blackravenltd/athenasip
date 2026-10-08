@@ -477,11 +477,8 @@ registering to a trunk with a lease per trunk.
 
 ### Trunk scripts and the harness
 
-- [ ] `athenasip/trunks.lua` (outbound by prefix with failover, inbound by DID, caller id
-      and P-Asserted-Identity, 503 and 480 skip a carrier, 486, 603 and 404 are final) and
-      the examples under `docs/scripting/examples/`: peering by address, out of hours, a
-      hunt sequence, subscriber-set forwarding, rate limits, a blocklist, emergency
-      numbers, following a 302.
+Done (`COMPLETED.md`, 2026-10-08): `athenasip.trunks` and the examples.
+
 - [ ] sipp as the carrier: a registrar that challenges and grants 300 seconds, a UAS that
       answers the INVITE 407 then 180 and 200, an inbound INVITE from the carrier's address
       to a mapped number, a carrier answering 503 so the second trunk is tried. This is

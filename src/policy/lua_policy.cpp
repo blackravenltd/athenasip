@@ -425,6 +425,10 @@ void LuaPolicy::on_failure(plugins::Executor on, std::shared_ptr<RequestView> re
         lua_setfield(L, -2, "remaining");
         lua_pushinteger(L, state.best);
         lua_setfield(L, -2, "best");
+        if (!state.trunk.empty()) {
+          lua_pushlstring(L, state.trunk.data(), state.trunk.size());
+          lua_setfield(L, -2, "trunk");
+        }
         return 3;
       },
       [on, handler](lua_State* L, int results, const std::string& error) {
