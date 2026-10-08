@@ -33,6 +33,14 @@ unsigned positive_or(const YAML::Node& node, unsigned fallback) {
   return static_cast<unsigned>(value);
 }
 
+// Separate RTCP towards a leg that is not WebRTC (demux). In an offer, accept keeps rtcp-mux on the offering leg when
+// it asked for it: without it a re-offer on the same call, as after a 488, makes rtpengine drop rtcp-mux from the
+// answer to that leg, and a WebRTC offerer refuses an answer without it (RFC 8834 5.1.3).
+Bencode demuxed(bool answering) {
+  if (answering) return Bencode::list({Bencode(std::string("demux"))});
+  return Bencode::list({Bencode(std::string("demux")), Bencode(std::string("accept"))});
+}
+
 // Maps a profile onto rtpengine's flags (RFC 8838, RFC 8842, RFC 5764). With no flags rtpengine mirrors what it was
 // handed, which is wrong when the two legs differ. Towards a browser DTLS is passive, because the browser starts the
 // handshake, and rtcp-mux is required (RFC 5761).
@@ -52,14 +60,14 @@ void apply_profile(Bencode& command, Flags::Profile profile, bool source_wants_m
       command.set("ICE", Bencode(std::string("remove")));
       command.set("DTLS", Bencode(std::string("off")));
       command.set("transport-protocol", Bencode(std::string("RTP/SAVP")));
-      command.set("rtcp-mux", Bencode::list({Bencode(std::string("demux"))}));
+      command.set("rtcp-mux", demuxed(answering));
       return;
 
     case Flags::Profile::PlainRtp:
       command.set("ICE", Bencode(std::string("remove")));
       command.set("DTLS", Bencode(std::string("off")));
       command.set("transport-protocol", Bencode(std::string("RTP/AVP")));
-      command.set("rtcp-mux", Bencode::list({Bencode(std::string("demux"))}));
+      command.set("rtcp-mux", demuxed(answering));
       return;
 
     case Flags::Profile::Mirror:
