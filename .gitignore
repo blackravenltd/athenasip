@@ -57,4 +57,5 @@ docker/generated/
 __pycache__/
 *.pyc
 test/e2e/generated-cluster/
+test/e2e/generated-lua/
 test/suite/results/
