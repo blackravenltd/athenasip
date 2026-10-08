@@ -2976,3 +2976,24 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       any `athenasip.route` target), for hunt sequences: a branch that rings that long is
       cancelled (RFC 3261 9.1) and its 487 fails it; one that never answered is given up as
       a 408 without a CANCEL. Unlike timer C, a provisional does not restart it.
+
+### An intermittent crash, found with the sanitizers (2026-10-08)
+
+- [x] **A closed TLS connection freed its stream under a pending read.** The unit suite
+      aborted in 2 runs of 15, at a different test each time, with the allocator reporting a
+      damaged free list; a crash report from 2026-10-06 had the same shape inside OpenSSL. It
+      could not be pinned from the reports, which is what the sanitizers are kept for. ASan
+      named it at once: `TLSConnection` gave `ssl::stream::async_read_some` a handler that
+      held nothing, an SSL operation refers to its stream, and `Channel::close()` let go of
+      the last reference while the read was pending, as a close always does. The read's
+      completion then ran on freed memory. This is on every TLS connection the node closes,
+      in production too. The handlers now hold the stream, as the WebSocket connection's
+      already did. 15 runs of the suite after: no failure.
+- [x] **`seconds::max()` as "never stale" overflowed** when `NodeDirectory` compared it with a
+      nanosecond duration (UBSan, under `--check`). It is tested for before comparing.
+- [x] A test's process-lifetime executor (`tests/api/events_api_test.cpp`) was destroyed at
+      exit under its detached thread; it is never destroyed now.
+- Sanitizer run: ASan and UBSan, 1385 tests, no reports. Boost.JSON's memory resource trips
+  UBSan's `vptr` check from the uninstrumented library, a false positive suppressed with
+  `vptr:boost/json/*`, `vptr:boost/container/*` and `vptr:*memory_resource*`
+  (`docs/testing.md`).

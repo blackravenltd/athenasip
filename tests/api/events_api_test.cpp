@@ -29,13 +29,15 @@ using namespace athenasip;
 namespace {
 
 // The local bus answers on whatever executor it is given; this one runs on its own thread for the connect.
+// For the life of the process and never destroyed: its thread is detached, and an io_context destroyed at exit
+// would be destroyed under it.
 plugins::Executor admin_executor() {
-  static boost::asio::io_context io;
-  static auto guard = boost::asio::make_work_guard(io);
-  static std::thread runner([]() { io.run(); });
-  static bool detached = (runner.detach(), true);
-  (void)detached;
-  return io.get_executor();
+  static auto* io = new boost::asio::io_context;
+  static auto* guard = new boost::asio::executor_work_guard<boost::asio::io_context::executor_type>(io->get_executor());
+  static bool started = (std::thread([]() { io->run(); }).detach(), true);
+  (void)guard;
+  (void)started;
+  return io->get_executor();
 }
 
 struct EventsFixture {

@@ -52,7 +52,9 @@ class TLSConnection : public Connection {
   boost::asio::any_io_executor executor() override { return _ssl_socket->lowest_layer().get_executor(); }
 
   virtual void async_read_some(boost::asio::mutable_buffer buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) override {
-    _ssl_socket->async_read_some(buffer, [this, handler](boost::system::error_code ec, std::size_t length) {
+    // The handler holds the stream: an SSL operation refers to its stream, and the channel may let go of this
+    // connection while a read is still pending, which a close always does.
+    _ssl_socket->async_read_some(buffer, [stream = _ssl_socket, handler](boost::system::error_code ec, std::size_t length) {
       if (ec == boost::asio::ssl::error::stream_truncated) {
         ec = boost::asio::error::operation_aborted;
       }
@@ -61,7 +63,7 @@ class TLSConnection : public Connection {
   }
 
   virtual void async_write_some(boost::asio::const_buffer buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) override {
-    _ssl_socket->async_write_some(buffer, [this, handler](boost::system::error_code ec, std::size_t length) { handler(ec, length); });
+    _ssl_socket->async_write_some(buffer, [stream = _ssl_socket, handler](boost::system::error_code ec, std::size_t length) { handler(ec, length); });
   }
 
   virtual boost::asio::ip::tcp::endpoint local_endpoint() override { return _local_endpoint; }
