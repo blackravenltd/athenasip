@@ -561,6 +561,35 @@ int store_trunk(lua_State* L) {
   });
 }
 
+// A shared counter changed by delta, 1 when not given, lapsing `seconds` after it was made when given: the new value.
+int store_counter_add(lua_State* L) {
+  std::string name = luaL_checkstring(L, 1);
+  const auto delta = static_cast<std::int64_t>(luaL_optinteger(L, 2, 1));
+  const auto seconds = luaL_optinteger(L, 3, 0);
+  luaL_argcheck(L, !name.empty(), 1, "a counter needs a name");
+  luaL_argcheck(L, seconds >= 0 && seconds <= 31536000, 3, "seconds is 0 to a year");
+
+  auto& host = host_of(L);
+  return LuaEngine::await(L, [&host, name, delta, seconds](LuaEngine::Answer answer) {
+    host.counter_add(name, delta, static_cast<std::uint32_t>(seconds), [answer](plugins::Result<std::int64_t> added) {
+      if (!added.ok) return answer(false, push_failure(added));
+      answer(true, [value = added.value](lua_State* L) { return lua_pushinteger(L, static_cast<lua_Integer>(value)), 1; });
+    });
+  });
+}
+
+// A shared counter's value: 0 for one never made, or lapsed.
+int store_counter(lua_State* L) {
+  std::string name = luaL_checkstring(L, 1);
+  auto& host = host_of(L);
+  return LuaEngine::await(L, [&host, name](LuaEngine::Answer answer) {
+    host.counter_get(name, [answer](plugins::Result<std::int64_t> read) {
+      if (!read.ok) return answer(false, push_failure(read));
+      answer(true, [value = read.value](lua_State* L) { return lua_pushinteger(L, static_cast<lua_Integer>(value)), 1; });
+    });
+  });
+}
+
 // Every trunk, in name order.
 int store_trunks(lua_State* L) {
   auto& host = host_of(L);
@@ -787,8 +816,13 @@ void open_library(lua_State* L) {
   lua_setfield(L, -2, "log");
 
   lua_newtable(L);
-  set_functions(L,
-                {{"realm", store_realm}, {"subscriber", store_subscriber}, {"locations", store_locations}, {"trunk", store_trunk}, {"trunks", store_trunks}});
+  set_functions(L, {{"realm", store_realm},
+                    {"subscriber", store_subscriber},
+                    {"locations", store_locations},
+                    {"trunk", store_trunk},
+                    {"trunks", store_trunks},
+                    {"counter_add", store_counter_add},
+                    {"counter", store_counter}});
   lua_setfield(L, -2, "store");
 
   lua_newtable(L);

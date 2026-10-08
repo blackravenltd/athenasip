@@ -457,6 +457,37 @@ void RedisDatastore::lease(plugins::Executor on, std::string name, std::string h
   });
 }
 
+// One script, so adding and starting the window are atomic. A counter with no window that comes back to nothing
+// is removed, so counting up and down leaves no key behind.
+void RedisDatastore::counter_add(plugins::Executor on, std::string name, std::int64_t delta, std::uint32_t seconds, plugins::Handler<std::int64_t> handler) {
+  static constexpr const char* kAdd = R"lua(
+    local value = redis.call('INCRBY', KEYS[1], ARGV[1])
+    local lapses = redis.call('TTL', KEYS[1])
+    if tonumber(ARGV[2]) > 0 and lapses < 0 then redis.call('EXPIRE', KEYS[1], ARGV[2]) end
+    if value == 0 and lapses < 0 and tonumber(ARGV[2]) == 0 then redis.call('DEL', KEYS[1]) end
+    return value
+  )lua";
+
+  boost::redis::request request;
+  request.push("EVAL", kAdd, 1, "athena:counter:" + name, delta, seconds);
+
+  _async_integer("EVAL", std::move(request), [this, on, handler](RedisError error, std::int64_t value) mutable {
+    if (error) return _complete(on, handler, plugins::Result<std::int64_t>::failure(error.message()));
+    _complete(on, handler, plugins::Result<std::int64_t>::success(value));
+  });
+}
+
+void RedisDatastore::counter_get(plugins::Executor on, std::string name, plugins::Handler<std::int64_t> handler) {
+  _async_get("athena:counter:" + name, [this, on, name, handler](RedisError error, std::optional<std::string> value) mutable {
+    if (error) return _complete(on, handler, plugins::Result<std::int64_t>::failure(error.message()));
+    try {
+      _complete(on, handler, plugins::Result<std::int64_t>::success(value ? std::stoll(*value) : 0));
+    } catch (const std::exception&) {
+      _complete(on, handler, plugins::Result<std::int64_t>::failure("counter " + name + " holds something that is not a number"));
+    }
+  });
+}
+
 // A trunk is one JSON value under its key, with an index of names, as a user is.
 void RedisDatastore::trunk_get(plugins::Executor on, std::string name, plugins::Handler<std::shared_ptr<types::Trunk>> handler) {
   using Answer = plugins::Result<std::shared_ptr<types::Trunk>>;
