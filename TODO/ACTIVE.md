@@ -20,14 +20,15 @@ with `--print-schema`. The README and documentation were checked against the cod
 end - the TLS use-after-free that corrupted the heap on every closed TLS connection, the
 rtcp-mux fix for a WebRTC caller whose callee needs plain RTP, and the automatic live
 tests. 1391 unit tests at the tag. The sipp harnesses were not run on the tagged tree, and
-not yet under `lua://` (Docker). corvus-fi-1 runs `2283182` (deployed 2026-10-09) with `lua://` and
+not yet under `lua://` (Docker). Both nodes run `5fbf3f3` (deployed 2026-10-09); corvus-fi-1 runs with `lua://` and
 `athenasip.trunks` from `/etc/athenasip/scripts/main.lua` and a trunk `macnessa` to
 corvus-gbni-1 (registering as gbni's subscriber 1003, outbound proxy 10.44.1.50); its
-previous configuration is `/etc/athenasip/config.yaml.before-lua`. gbni-1 runs `a08cc6d`,
-without the rtcp-mux fix (`6a163a1`) that a call from AthenaPhone to a plain-RTP phone
-needs, until Tom says yes to deploying it. A probe on fi-1 (`athenasip-probe.timer`) runs
+previous configuration is `/etc/athenasip/config.yaml.before-lua`. gbni-1 runs
+`builtin://`, its binary built on fi-1, the previous one kept as
+`/usr/local/bin/athenasip.previous`. A probe on fi-1 (`athenasip-probe.timer`) runs
 `test/interop/verify.py test/interop/live.json` every 15 minutes and publishes
-`athenasip/probes/corvus-fi-1/calls`.
+`athenasip/probes/corvus-fi-1/calls`. A manual run of verify.py at the same time as the
+probe fails some checks: both use subscribers 1901 and 1902.
 
 **Two live nodes**, neither production:
 - `corvus-fi-1` (10.35.1.20): builtin relay, AthenaPhone's usual home.
