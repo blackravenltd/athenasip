@@ -156,7 +156,7 @@ A trunk is a carrier or a PBX, kept over the API (`/api/v1/trunks`, role
 | `uri` | Where calls and the REGISTER go, located by RFC 3263: `sip:sip.acme.example;transport=tls` |
 | `proxy` | An outbound proxy, where they are sent instead of where `uri` says |
 | `username`, `password` | For the carrier's challenges. The password is written, never returned. |
-| `register` | `{enabled, expires, contact_user}`: whether the node registers to the carrier, for how long (60 to 86400 seconds), and the user part of the Contact it registers, where the carrier sends calls |
+| `register` | `{enabled, expires, contact_user}`: whether the node registers to the carrier, for how long (60 to 86400 seconds), and the user part of the Contact it registers, where the carrier sends calls; the username when not set |
 | `inbound_addresses` | The addresses or CIDR ranges the carrier's calls come from |
 | `tls_ca` | A CA file for TLS to the carrier; empty is the system's store |
 | `attributes` | Anything a script reads; the node reads none of it |
@@ -168,7 +168,8 @@ reported is the trunk's `registration` in the API (`registering`, `registered` o
 changed trunk is registered again; a removed one, or one no longer registering, is
 unregistered.
 
-A script sees `name`, `uri`, `username`, `registers`, `contact_user`,
+A script sees `name`, `uri`, `username`, `registers`, `contact_user` (the user part of the
+Contact registered, which is the username when the trunk does not set one),
 `inbound_addresses` and `attributes`, the free-form object set over the API, as plain Lua
 tables. `trunk:admits(address)` says whether an address is in its inbound ranges. Its
 password is the node's, for answering the carrier's challenges, and no script reads it.

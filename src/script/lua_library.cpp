@@ -475,7 +475,7 @@ int trunk_index(lua_State* L) {
   }
   if (key == "username") return push_text_or_nil(L, trunk.username), 1;
   if (key == "registers") return lua_pushboolean(L, trunk.register_enabled), 1;
-  if (key == "contact_user") return push_text_or_nil(L, trunk.contact_user), 1;
+  if (key == "contact_user") return push_text_or_nil(L, trunk.registered_user()), 1;
   if (key == "inbound_addresses") {
     lua_createtable(L, static_cast<int>(trunk.inbound_addresses.size()), 0);
     lua_Integer i = 0;
