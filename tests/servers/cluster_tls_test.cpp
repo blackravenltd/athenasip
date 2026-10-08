@@ -17,6 +17,7 @@
 #include "../helpers/core_fixture_helper.h"
 #include "channel.h"
 #include "cluster_ca.h"
+#include "servers/tls_connection.h"
 #include "servers/tls_server.h"
 
 using namespace athenasip;
@@ -163,4 +164,53 @@ TEST(ClusterTlsTest, ANodeRefusesAPeerFromAnotherAuthority) {
   });
 
   EXPECT_FALSE(f.connect(f.server->port()).ok);
+}
+
+// A certificate that verifies is not a cluster member unless it verified against the cluster. A connection made
+// under any other authority - a carrier's, the system store - names no node, or the carrier would be trusted as
+// a peer and skip authentication.
+TEST(ClusterTlsTest, ACertificateFromAnotherAuthorityNamesNoNode) {
+  Certificates certificates;
+  const auto file = [&certificates](const std::string& name) { return certificates.file(certificates.outsider, name); };
+
+  net::io_context io;
+  ssl::context server_context(ssl::context::tls_server);
+  server_context.use_certificate_chain_file(file("node-x.crt"));
+  server_context.use_private_key_file(file("node-x.key"), ssl::context::pem);
+  server_context.load_verify_file(file("ca.crt"));
+  server_context.set_verify_mode(ssl::verify_peer | ssl::verify_fail_if_no_peer_cert);
+
+  ssl::context client_context(ssl::context::tls_client);
+  client_context.use_certificate_chain_file(file("node-x.crt"));
+  client_context.use_private_key_file(file("node-x.key"), ssl::context::pem);
+  client_context.load_verify_file(file("ca.crt"));
+  client_context.set_verify_mode(ssl::verify_peer);
+
+  tcp::acceptor acceptor(io, tcp::endpoint(net::ip::make_address("127.0.0.1"), 0));
+  auto server = std::make_shared<ssl::stream<tcp::socket>>(io, server_context);
+  ssl::stream<tcp::socket> client(io, client_context);
+
+  boost::system::error_code server_error = net::error::would_block;
+  boost::system::error_code client_error = net::error::would_block;
+  acceptor.async_accept(server->lowest_layer(), [&](const boost::system::error_code& ec) {
+    if (ec) {
+      server_error = ec;
+      return;
+    }
+    server->async_handshake(ssl::stream_base::server, [&](const boost::system::error_code& done) { server_error = done; });
+  });
+  client.lowest_layer().async_connect(acceptor.local_endpoint(), [&](const boost::system::error_code& ec) {
+    if (ec) {
+      client_error = ec;
+      return;
+    }
+    client.async_handshake(ssl::stream_base::client, [&](const boost::system::error_code& done) { client_error = done; });
+  });
+  io.run_for(std::chrono::seconds(5));
+
+  ASSERT_FALSE(server_error) << server_error.message();
+  ASSERT_FALSE(client_error) << client_error.message();
+
+  servers::TLSConnection connection(server, true);
+  EXPECT_EQ(connection.peer_identity(), "") << "verified, but not against the cluster";
 }

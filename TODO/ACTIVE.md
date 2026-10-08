@@ -441,12 +441,8 @@ Digest response for the carrier's realm cannot be made from anything less.
 ### The seam
 
 Done (`COMPLETED.md`, 2026-10-08): the `policy` kind, `builtin://`, the question after a
-failed branch, and the off-node media policy.
-
-- [ ] Close before any outbound TLS to a non-peer exists: `Channel::peer_node()` is the
-      verified peer certificate's CN (`servers/tls_connection.h:83-91`) and `_authorize`
-      trusts any channel with one. Set `peer_identity` only when the chain ends at the
-      cluster CA, which means the connection records which context verified it.
+failed branch, the off-node media policy, and a TLS peer named as a node only under the
+cluster CA.
 
 ### The engine
 

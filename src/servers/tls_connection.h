@@ -21,9 +21,11 @@ namespace athenasip::servers {
 
 class TLSConnection : public Connection {
  public:
-  // handshaken: a flow this node opened, whose client handshake has already run.
-  TLSConnection(std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> ssl_socket, bool handshaken = false)
-      : _ssl_socket(ssl_socket), _handshaken(handshaken) {
+  // handshaken: a flow whose handshake has already run. cluster: the context verified the peer against the
+  // cluster CA, so its certificate names a node. Under any other context a verified certificate names nobody: a
+  // carrier is not a peer.
+  TLSConnection(std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> ssl_socket, bool handshaken = false, bool cluster = false)
+      : _ssl_socket(ssl_socket), _handshaken(handshaken), _cluster(cluster) {
     // The error_code forms, as in TCPConnection: a peer that has gone has no address.
     boost::system::error_code gone;
     _local_endpoint = _ssl_socket->lowest_layer().local_endpoint(gone);
@@ -79,8 +81,10 @@ class TLSConnection : public Connection {
   virtual std::string transport_name() const override { return "tls"; }
 
  protected:
-  // The verified peer certificate's common name, when the context asked for one.
+  // The verified peer certificate's common name, when the context was the cluster's.
   void _read_peer() {
+    if (!_cluster) return;
+
     X509* certificate = SSL_get1_peer_certificate(_ssl_socket->native_handle());
     if (certificate == nullptr) return;
 
@@ -95,6 +99,7 @@ class TLSConnection : public Connection {
   boost::asio::ip::tcp::endpoint _local_endpoint;
   boost::asio::ip::tcp::endpoint _remote_endpoint;
   bool _handshaken = false;
+  bool _cluster = false;
   std::string _peer;
 };
 
