@@ -332,6 +332,8 @@ int response_index(lua_State* L) {
 
 // -- Realms, subscribers and bindings
 
+void push_json(lua_State* L, const boost::json::value& value);
+
 void push_behaviour(lua_State* L, const types::MediaPolicy& media, std::uint32_t qualify, bool rewrite_contact) {
   lua_createtable(L, 0, 4);
   set_boolean(L, "media_anchor", media.anchor);
@@ -360,6 +362,8 @@ int realm_index(lua_State* L) {
     return 1;
   }
 
+  if (key == "attributes") return push_json(L, realm.attributes), 1;
+
   // The realm over the server's defaults.
   if (key == "behaviour_effective") {
     const auto& config = config_of(L);
@@ -382,6 +386,7 @@ int subscriber_index(lua_State* L) {
     return push_uri(L, uri), 1;
   }
   if (key == "realm") return push_text(L, uri ? Util::to_lower(uri->host) : ""), 1;
+  if (key == "attributes") return push_json(L, subscriber.attributes), 1;
   if (key == "media_profile") {
     if (!subscriber.media_profile) return lua_pushnil(L), 1;
     return push_text(L, types::MediaPolicy::to_string(*subscriber.media_profile)), 1;

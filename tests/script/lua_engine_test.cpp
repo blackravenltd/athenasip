@@ -411,3 +411,14 @@ TEST(LuaEngineTest, AScriptCannotEditTheHeadersTheNodeOwns) {
   EXPECT_EQ(view->edits[0].name, "P-Asserted-Identity");
   EXPECT_EQ(view->edits[1].op, policy::HeaderEdit::Op::From);
 }
+
+// A realm's attributes reach a script as plain tables.
+TEST(LuaEngineTest, AScriptReadsARealmsAttributes) {
+  EngineFixture f;
+  auto realm = std::make_shared<types::Realm>("example.com");
+  realm->attributes = boost::json::parse(R"({"country": "44", "blocked": ["^%+4490"]})").as_object();
+  f.host->realms["example.com"] = realm;
+
+  ASSERT_EQ(f.load("function answer() local r = athenasip.store.realm('example.com') return r.attributes.country, r.attributes.blocked[1] end"), "");
+  EXPECT_EQ(f.call("answer").values, (std::vector<std::string>{"44", "^%+4490"}));
+}
