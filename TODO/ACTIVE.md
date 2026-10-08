@@ -20,7 +20,7 @@ with `--print-schema`. The README and documentation were checked against the cod
 end - the TLS use-after-free that corrupted the heap on every closed TLS connection, the
 rtcp-mux fix for a WebRTC caller whose callee needs plain RTP, and the automatic live
 tests. 1391 unit tests at the tag. The sipp harnesses were not run on the tagged tree, and
-not yet under `lua://` (Docker). node-a runs `3bb2911` with `lua://` and
+not yet under `lua://` (Docker). node-a runs `2283182` (deployed 2026-10-09) with `lua://` and
 `athenasip.trunks` from `/etc/athenasip/scripts/main.lua` and a trunk `node-b` to
 node-b (registering as node-b's subscriber 1003, outbound proxy 10.102.1.50); its
 previous configuration is `/etc/athenasip/config.yaml.before-lua`. node-b runs `a08cc6d`,
