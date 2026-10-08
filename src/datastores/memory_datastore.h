@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <ctime>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -50,6 +51,12 @@ class MemoryDatastore : public Datastore {
   void user_update(plugins::Executor on, std::shared_ptr<types::User> user, plugins::StatusHandler handler) override;
   void user_delete(plugins::Executor on, std::string username, plugins::StatusHandler handler) override;
   void user_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::User>>> handler) override;
+
+  void trunk_get(plugins::Executor on, std::string name, plugins::Handler<std::shared_ptr<types::Trunk>> handler) override;
+  void trunk_create(plugins::Executor on, std::shared_ptr<types::Trunk> trunk, plugins::StatusHandler handler) override;
+  void trunk_update(plugins::Executor on, std::shared_ptr<types::Trunk> trunk, plugins::StatusHandler handler) override;
+  void trunk_delete(plugins::Executor on, std::string name, plugins::StatusHandler handler) override;
+  void trunk_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::Trunk>>> handler) override;
 
   void session_create(plugins::Executor on, types::Session session, plugins::StatusHandler handler) override;
   void session_get(plugins::Executor on, std::string token_hash, plugins::Handler<std::shared_ptr<types::Session>> handler) override;
@@ -133,6 +140,7 @@ class MemoryDatastore : public Datastore {
 
   std::unordered_map<std::string, std::shared_ptr<types::Realm>> _realms;
   std::unordered_map<std::string, std::shared_ptr<types::User>> _users;
+  std::map<std::string, types::Trunk> _trunks;
   std::unordered_map<std::string, types::Session> _sessions;
   std::unordered_map<std::string, std::shared_ptr<types::Subscriber>> _subscribers;
   std::unordered_map<std::string, types::Location> _locations;

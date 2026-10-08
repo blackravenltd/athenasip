@@ -79,6 +79,28 @@ class SyncDatastore {
         [this](auto on, auto handler) { _store->user_list(std::move(on), std::move(handler)); });
   }
 
+  std::shared_ptr<athenasip::types::Trunk> trunk_get(const std::string& name) {
+    return _value<std::shared_ptr<athenasip::types::Trunk>>(
+        [this, name](auto on, auto handler) { _store->trunk_get(std::move(on), name, std::move(handler)); });
+  }
+
+  bool trunk_create(std::shared_ptr<athenasip::types::Trunk> trunk) {
+    return _status([this, trunk](auto on, auto handler) { _store->trunk_create(std::move(on), trunk, std::move(handler)); });
+  }
+
+  bool trunk_update(std::shared_ptr<athenasip::types::Trunk> trunk) {
+    return _status([this, trunk](auto on, auto handler) { _store->trunk_update(std::move(on), trunk, std::move(handler)); });
+  }
+
+  bool trunk_delete(const std::string& name) {
+    return _status([this, name](auto on, auto handler) { _store->trunk_delete(std::move(on), name, std::move(handler)); });
+  }
+
+  std::vector<std::shared_ptr<athenasip::types::Trunk>> trunk_list() {
+    return _value<std::vector<std::shared_ptr<athenasip::types::Trunk>>>(
+        [this](auto on, auto handler) { _store->trunk_list(std::move(on), std::move(handler)); });
+  }
+
   bool session_create(athenasip::types::Session session) {
     return _status([this, session](auto on, auto handler) { _store->session_create(std::move(on), session, std::move(handler)); });
   }
