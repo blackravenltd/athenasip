@@ -3030,3 +3030,24 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       over the API on create and update (replaced whole when given, refused unless an object),
       stored by both drivers, returned in reads, and read by scripts as `realm.attributes` and
       `subscriber.attributes`. In the OpenAPI document.
+
+### Live, on both nodes (2026-10-08)
+
+- [x] **Deployed** `a08cc6d` to both nodes with Lua 5.4.7 installed (Tom, in chat). fi-1's
+      `--check` and gbni-1's pass; `systemctl reload` reloads the policy.
+- [x] **`test/interop/call.py`**: one whole call between two subscribers over UDP against live
+      nodes, checking each end's view (challenge, 200 for its own CSeq, ACK through the
+      Record-Route, BYE, and on the far side an ACK with its INVITE's CSeq and a BYE above it).
+      `--callee-hangs-up` sends the BYE from the far end.
+- [x] **Calls through fi-1** under `builtin://`, then `lua://` with the standard scripts:
+      identical.
+- [x] **A real trunk**: fi-1 using gbni-1 as its carrier (`proxy` added to trunks for it: a
+      carrier addressed by its domain and reached at another address). fi-1 registered as
+      gbni-1's subscriber 1003 through a Digest challenge and refreshes every four minutes.
+      Out: fi-1's 1001 dialling `+1002` left by the trunk as `1002`, gbni-1 challenged the
+      INVITE, fi-1 answered, and the far side saw INVITE 3, ACK 3, BYE 4 while the caller saw
+      2 and 3 throughout. In: gbni-1's 1001 calling 1003 reached fi-1's 1002 by the trunk's
+      `numbers`. The far end hanging up kept its own CSeq. 30 calls of the three kinds, all
+      through. The failures on the way were the test client's: it took a retransmitted 407
+      for the answer to its credentialed INVITE, and each failure cascaded into the next run
+      while the node tried the stale bindings the runs left.

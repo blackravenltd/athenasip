@@ -185,7 +185,7 @@ class Agent:
             if authorization:
                 lines.append(f"Authorization: {authorization}")
             self.send(CRLF.join(lines + ["Content-Length: 0", "", ""]))
-            response, _ = self.wait(lambda m: m.is_response and m.get("call-id") == call_id and m.code >= 200)
+            response, _ = self.wait(lambda m: m.is_response and m.get("call-id") == call_id and m.cseq == cseq and m.code >= 200)
             if response.code == 200:
                 return
             if response.code != 401 or authorization:
@@ -216,11 +216,12 @@ def sdp(address, port):
 
 
 class Callee(threading.Thread):
-    """Answers the first INVITE after ringing, then the BYE. Records what it was sent."""
+    """Answers the first INVITE after ringing, then the BYE, or hangs up itself. Records what it was sent."""
 
-    def __init__(self, agent):
+    def __init__(self, agent, hangs_up=False, hold=1.0):
         super().__init__(daemon=True)
         self.agent, self.seen, self.error = agent, [], None
+        self.hangs_up, self.hold, self.bye_answer = hangs_up, hold, None
 
     def run(self):
         a = self.agent
@@ -233,11 +234,25 @@ class Callee(threading.Thread):
             a.send(reply(invite, 200, "OK", a.user, [f"Contact: <sip:{a.user}@{a.local}>", "Content-Type: application/sdp"], sdp(ip, 40000)), source)
             ack, _ = a.wait(lambda m: not m.is_response and m.method == "ACK", timeout=10)
             self.seen.append(ack)
+            if self.hangs_up:
+                time.sleep(self.hold)
+                return self._hang_up(invite, source)
             bye, source = a.wait(lambda m: not m.is_response and m.method == "BYE", timeout=20)
             self.seen.append(bye)
             a.send(reply(bye, 200, "OK", a.user), source)
         except Exception as error:  # noqa: BLE001 - reported by the caller
             self.error = error
+
+    def _hang_up(self, invite, source):
+        """RFC 3261 15.1.1, from the callee: its own CSeq space, the route set as recorded, the caller's Contact."""
+        a = self.agent
+        to_tag = a.user + "x"
+        target = invite.get("contact").strip("<>").split(">")[0]
+        lines = [f"BYE {target} SIP/2.0", f"Via: SIP/2.0/UDP {a.local};branch=z9hG4bK{token()};rport", "Max-Forwards: 70"]
+        lines += [f"Route: {r}" for r in invite.all("record-route")]
+        lines += [f"From: {invite.get('to')};tag={to_tag}", f"To: {invite.get('from')}", f"Call-ID: {invite.get('call-id')}", "CSeq: 1 BYE"]
+        a.send(CRLF.join(lines + ["Content-Length: 0", "", ""]), source)
+        self.bye_answer, _ = a.wait(lambda m: m.is_response and m.method == "BYE" and m.code >= 200, timeout=15)
 
 
 def call(caller, callee_thread, dial, hold):
@@ -265,9 +280,13 @@ def call(caller, callee_thread, dial, hold):
             lines.append(f"Proxy-Authorization: {authorization}")
         return CRLF.join(lines + [f"Content-Length: {len(offer)}", "", offer])
 
+    # A final answer to this INVITE, not a retransmission of one to the INVITE before it.
+    def final_for(number):
+        return lambda m: m.is_response and m.get("call-id") == call_id and m.method == "INVITE" and m.cseq == number and m.code >= 200
+
     branch = "z9hG4bK" + token()
     a.send(invite_text(branch, cseq, None))
-    response, _ = a.wait(lambda m: m.is_response and m.get("call-id") == call_id and m.code >= 200, timeout=15)
+    response, _ = a.wait(final_for(cseq), timeout=15)
     if response.code == 407:
         step("challenged 407", True)
         # 17.1.1.3: the 407 is ACKed on its own transaction, same branch.
@@ -278,7 +297,7 @@ def call(caller, callee_thread, dial, hold):
         cseq += 1
         branch = "z9hG4bK" + token()
         a.send(invite_text(branch, cseq, authorization))
-        response, _ = a.wait(lambda m: m.is_response and m.get("call-id") == call_id and m.code >= 200, timeout=30)
+        response, _ = a.wait(final_for(cseq), timeout=30)
 
     step("answered 200", response.code == 200, response.start)
     step("200 is for the caller's own INVITE", response.cseq == cseq, f"CSeq {response.cseq}, sent {cseq}")
@@ -295,6 +314,20 @@ def call(caller, callee_thread, dial, hold):
         return CRLF.join(lines + ["Content-Length: 0", "", ""])
 
     a.send(in_dialog("ACK", cseq, "z9hG4bK" + token()))
+
+    if callee_thread.hangs_up:
+        bye, source = a.wait(lambda m: not m.is_response and m.method == "BYE", timeout=20)
+        step("callee's BYE reached the caller", True, f"CSeq {bye.cseq}")
+        a.send(reply(bye, 200, "OK", a.user), source)
+        callee_thread.join(timeout=5)
+        if callee_thread.error:
+            step("callee's BYE was answered", False, str(callee_thread.error))
+        answer = callee_thread.bye_answer
+        step("callee's BYE answered 200 in its own CSeq space", answer is not None and answer.code == 200 and answer.cseq == 1,
+             answer.start if answer else "nothing")
+        step("caller saw the callee's own CSeq", bye.cseq == 1, f"CSeq {bye.cseq}")
+        return steps
+
     time.sleep(hold)
 
     bye_branch = "z9hG4bK" + token()
@@ -333,6 +366,7 @@ def main():
     parser.add_argument("--password", default="athenaphone")
     parser.add_argument("--dial", help="the Request-URI dialled; the callee's address of record by default")
     parser.add_argument("--hold", type=float, default=1.0, help="seconds between the ACK and the BYE")
+    parser.add_argument("--callee-hangs-up", action="store_true", help="the callee sends the BYE")
     args = parser.parse_args()
 
     caller_user, caller_node = args.caller.split("@")
@@ -347,7 +381,7 @@ def main():
         callee.register()
         caller.register()
         print(f"Calling {dial} from {caller_user}@{caller_realm}, answered by {callee_user}@{callee_realm}", flush=True)
-        thread = Callee(callee)
+        thread = Callee(callee, args.callee_hangs_up, args.hold)
         thread.start()
         call(caller, thread, dial, args.hold)
         print("\nThe call went through.")

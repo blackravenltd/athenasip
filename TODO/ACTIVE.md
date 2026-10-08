@@ -14,8 +14,16 @@ against a real service for want of credentials), the second node and client fail
 rtpengine pool, the local UA that ends dead calls with a BYE, and the configuration schema
 with `--print-schema`. The README and documentation were checked against the code on
 2026-10-07 and the quick-start guides written. 1296 unit tests (one skipped without a
-resolver) at the tag. Both nodes run `3ff67db`, which is `0.9.0` without the fix
-that lets a plugin module describe its settings.
+resolver) at the tag.
+
+Since `0.9.0`, on `develop`: Milestone 5's policy seam, the Lua engine, trunks end to end,
+and the TLS use-after-free that corrupted the heap on every closed TLS connection. Both
+nodes run `a08cc6d` (deployed 2026-10-08). corvus-fi-1 runs `lua://` with
+`athenasip.trunks` from `/etc/athenasip/scripts/main.lua` and a trunk `macnessa` to
+corvus-gbni-1 (registering as gbni's subscriber 1003, outbound proxy 10.44.1.50); its
+previous configuration is `/etc/athenasip/config.yaml.before-lua`. `test/interop/call.py`
+placed 30 of 30 calls through them: local, out through the trunk with gbni-1 challenging,
+and in through it.
 
 **Two live nodes**, neither production:
 - `corvus-fi-1` (10.35.1.20): builtin relay, AthenaPhone's usual home.
