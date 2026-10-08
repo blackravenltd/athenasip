@@ -33,6 +33,11 @@ struct Options {
   // drivers there are for each kind, and exit.
   bool list_plugins = false;
 
+  // Put a request read from a file to the configured policy against the live store, say what it decided, and
+  // exit. explain_from is where it is taken to have come from.
+  std::string explain;
+  std::string explain_from;
+
   // Create an administrator in the datastore and exit, without starting a listener. The way
   // back in when the API is unreachable or every admin password is lost.
   std::string add_user;
@@ -110,6 +115,8 @@ inline Options parse(int argc, char* argv[]) {
       options.list_plugins = true;
     } else if (takes("--config", "a path", options.config) || takes("-c", "a path", options.config)) {
       // Handled; any error is already recorded.
+    } else if (takes("--explain", "a file holding a SIP request", options.explain)) {
+    } else if (takes("--from", "an address, as udp:203.0.113.5:5060", options.explain_from)) {
     } else if (takes("--reset-password", "a username", options.reset_password)) {
     } else if (takes("--add-user", "a username", options.add_user)) {
     } else if (takes("--display-name", "a name", options.display_name)) {
@@ -149,6 +156,11 @@ inline std::string usage() {
          "  --check               try the datastore, the event bus, the media engine, the\n"
          "                        certificates and the cluster's other nodes, say which\n"
          "                        of them answered, and exit; nothing is started\n"
+         "  --explain FILE        put the SIP request in FILE to the routing policy, against\n"
+         "                        the datastore, say what it decided at each step, and\n"
+         "                        exit; nothing is sent\n"
+         "  --from ADDRESS        where that request came from: udp:203.0.113.5:5060, or\n"
+         "                        tls:203.0.113.5; 192.0.2.1 over UDP when not given\n"
          "  --list-plugins        load the modules in plugins.path, say which loaded and\n"
          "                        why any did not, list every driver, and exit\n"
          "  --add-user NAME       create an administrator in the configured datastore and\n"
