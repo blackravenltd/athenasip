@@ -460,11 +460,9 @@ cluster CA.
 ### The engine
 
 Done (`COMPLETED.md`, 2026-10-08): the engine, the library, `lua://` with the standard
-scripts built into the binary, the permanent proof, and `--check`. What is left:
+scripts built into the binary, the permanent proof, `--check`, `--explain`, and the three
+harnesses under `lua://` (2026-10-09). What is left:
 
-- [ ] The three harnesses under `policy.url: lua://`, once Docker is back.
-- [ ] `athenasip --explain <file>`: a request from a file through `authorize` and `route`
-      against the live store, printing each decision.
 - [ ] The console flags a node whose `policy.fingerprint` differs from the others' (the
       admin session's).
 
@@ -473,28 +471,21 @@ scripts built into the binary, the permanent proof, and `--check`. What is left:
 Done (`COMPLETED.md`, 2026-10-08): `digest::respond`, trunks in the datastore,
 `/api/v1/trunks` with `manage-trunks`, trunks in scripts, answering a carrier's
 challenge with the CSeq kept right for the rest of the dialog, TLS to a trunk,
-registering to a trunk with a lease per trunk, its state in the API, and unregistering.
+registering to a trunk with a lease per trunk, its state in the API, and unregistering;
+then (2026-10-09) counters, the trunk on each leg of a call, per-trunk metrics, and
+`--check` and `--check-trunks` for trunks.
 
 - [ ] Console pages for trunks and for attributes: the admin session's.
-- [ ] The smaller primitives: header edits on the forwarded copy behind the guard list,
-      `set_from` without touching the tag, `ring_timeout` per target on timer C's path,
-      `counter_incr` and `counter_get` on the datastore, `RequestView::source`, the trunk
-      on each leg of a call record, per-trunk metrics, `--check` resolving each trunk and
-      `--check-trunks` sending OPTIONS.
 
 ### Trunk scripts and the harness
 
-Done (`COMPLETED.md`, 2026-10-08): `athenasip.trunks` and the examples.
+Done (`COMPLETED.md`, 2026-10-08 and 2026-10-09): `athenasip.trunks`, the examples, and
+the sipp carrier harness.
 
-- [ ] sipp as the carrier: a registrar that challenges and grants 300 seconds, a UAS that
-      answers the INVITE 407 then 180 and 200, an inbound INVITE from the carrier's address
-      to a mapped number, a carrier answering 503 so the second trunk is tried. This is
-      Milestone 3's trunk scenario.
 - [ ] `on_call_ended(call)` as a notification hook, for concurrency counters; first
       candidate for a sixth hook, after the five have been used.
-- [ ] Run `docs/quick-start/first-trunk.md` step by step against a real carrier, and
-      against the sipp carrier scenario when it exists. Its steps are the ones the fi-1 to
-      gbni-1 trunk took, with gbni-1 as the carrier.
+- [ ] Run `docs/quick-start/first-trunk.md` step by step against a real carrier. Its
+      steps are the ones the fi-1 to gbni-1 trunk and `test/e2e/trunk.sh` took.
 
 ---
 

@@ -3085,3 +3085,37 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       (`6a163a1`, unit test red first). Calls in to the phone had media all along: ICE and
       DTLS-SRTP completed on rtpengine. AthenaPhone's own findings (media sessions left
       running after a call ends before ICE connects) went to its session.
+
+### Milestone 5 continued (2026-10-09)
+
+- [x] **A trunk with no `contact_user` refused its carrier's calls**: it registered its
+      username as the Contact's user part, but scripts saw `contact_user` as nil, so
+      `athenasip.trunks` did not recognise a call to that Contact and answered 404. Found
+      writing the first-trunk guide; `Trunk::registered_user()` is now the one rule for the
+      registrar and scripts (`d771a9f`, test red first).
+- [x] **The three harnesses under `lua://`**: `run.sh --lua` and `cluster.sh --lua` mount
+      each node's configuration with `policy.url: lua://` and no scripts of its own. One node
+      13 of 13, with rtpengine 15 of 15, two nodes 17 of 17.
+- [x] **`athenasip --explain FILE [--from ADDRESS]`**: a request put to the policy against the
+      live datastore, each decision in words. Run on fi-1 against its trunk.
+- [x] **Trunks in `--check`**, each located by RFC 3263, and **`--check-trunks`**, which
+      sends each an OPTIONS from a socket of its own (UDP with retransmissions, TCP, TLS
+      against the trunk's CA). fi-1's trunk to gbni-1 answered 200 in 362 ms.
+- [x] **The trunk on each leg of a call** in the record and the calls API, and per-trunk
+      metrics: calls active, registered, and final responses by code.
+- [x] **Counters the cluster shares**: `athenasip.store.counter_add` and `counter`, on
+      `Datastore::counter_add` and `counter_get` (an atomic Redis script, a window that
+      lapses).
+- [x] **`test/e2e/trunk.sh`, sipp as the carrier**: registering through a 401, a call out
+      with the challenge answered and the trunk's caller ID, failover on 503 to a second
+      trunk in its own number format, and a call in by the registered Contact. 4 of 4. The
+      carrier challenges the INVITE with 401 because sipp's `verifyauth` reads only
+      `Authorization`; the unit tests answer a 407.
+- [x] **fi-1 crash-looped for about twenty minutes after a deploy** (SEGV on every REGISTER,
+      15 restarts). Not a code fault: rsync keeps the Mac's timestamps, and a header changed
+      on the Mac while fi-1 was compiling the previous sync arrived older than the objects
+      built from the old copy, so `lua_library.cpp.o` kept the old `policy::Host` vtable and
+      called `counter_get` for `config()`. Found with gdb on the node; fixed by touching the
+      changed files and rebuilding, then verify.py 15 of 15. The deploy steps now touch
+      what changed since the last deploy.
+
