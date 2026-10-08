@@ -23,6 +23,7 @@
 #include "../types/sip_identity.h"
 #include "../types/sip_uri.h"
 #include "../types/subscriber.h"
+#include "../types/trunk.h"
 #include "../types/url.h"
 #include "../types/user.h"
 
@@ -117,6 +118,42 @@ class Datastore : public plugins::Plugin {
   virtual void session_delete_for_user(plugins::Executor on, std::string username, plugins::StatusHandler handler) {
     (void)username;
     _unsupported(std::move(on), std::move(handler), "session_delete_for_user");
+  }
+
+  // Trunks (types/trunk.h), by name without regard to case. Optional, as users are. create fails if the trunk
+  // exists and update if it does not, so the API can answer 409 or 404.
+  virtual void trunk_get(plugins::Executor on, std::string name, plugins::Handler<std::shared_ptr<types::Trunk>> handler) {
+    (void)name;
+    _unsupported<std::shared_ptr<types::Trunk>>(std::move(on), std::move(handler), "trunk_get");
+  }
+
+  virtual void trunk_create(plugins::Executor on, std::shared_ptr<types::Trunk> trunk, plugins::StatusHandler handler) {
+    (void)trunk;
+    _unsupported(std::move(on), std::move(handler), "trunk_create");
+  }
+
+  virtual void trunk_update(plugins::Executor on, std::shared_ptr<types::Trunk> trunk, plugins::StatusHandler handler) {
+    (void)trunk;
+    _unsupported(std::move(on), std::move(handler), "trunk_update");
+  }
+
+  virtual void trunk_delete(plugins::Executor on, std::string name, plugins::StatusHandler handler) {
+    (void)name;
+    _unsupported(std::move(on), std::move(handler), "trunk_delete");
+  }
+
+  virtual void trunk_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::Trunk>>> handler) {
+    _unsupported<std::vector<std::shared_ptr<types::Trunk>>>(std::move(on), std::move(handler), "trunk_list");
+  }
+
+  // A named lease, held by one holder at a time until it lapses: how one node of a cluster takes a job, such as
+  // registering to a trunk. Answers whether `holder` holds it now; a holder that already did has it renewed for
+  // `seconds`. Optional; a node without it does the job itself.
+  virtual void lease(plugins::Executor on, std::string name, std::string holder, std::uint32_t seconds, plugins::Handler<bool> handler) {
+    (void)name;
+    (void)holder;
+    (void)seconds;
+    _unsupported<bool>(std::move(on), std::move(handler), "lease");
   }
 
   // Subscribers.

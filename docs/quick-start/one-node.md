@@ -22,9 +22,8 @@ athenasip --add-user you --role manage-admin-users --role manage-realms \
 Or with the image, whose configuration is the same example:
 
 ```
-docker build -t athenasip .
 docker run --rm -it -p 5060:5060/udp -p 5060:5060/tcp -p 9500:9500 -p 8080:8080 \
-  -p 22000-23000:22000-23000/udp athenasip --add-user you --role manage-admin-users \
+  -p 22000-23000:22000-23000/udp tomcully/athenasip --add-user you --role manage-admin-users \
   --role manage-realms --role manage-realm-subscribers --role view-cluster-status
 ```
 

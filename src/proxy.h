@@ -21,6 +21,7 @@
 #include "headers/sip_identity_header.h"
 #include "loggers/logger.h"
 #include "media/media_engine.h"
+#include "policy/policy.h"
 #include "sip_message.h"
 #include "timer_source.h"
 #include "transaction_user.h"
@@ -94,6 +95,15 @@ class Proxy : public TransactionUser {
 
     // RFC 8599: a binding this node pushes to before forwarding. The pn-* parameters are on its contact.
     std::optional<types::Location> push;
+
+    // The trunk this target leaves by: its challenges are answered with the trunk's credentials.
+    std::string trunk;
+
+    // TLS to a trunk is verified against this CA file, empty for the system's store. Set once the trunk is read.
+    std::optional<std::string> tls_ca;
+
+    // The policy's limit on how long this branch rings.
+    std::optional<std::chrono::seconds> ring_timeout;
   };
 
   // The response context (16.7). Kept alive by the client transaction callbacks.
@@ -133,6 +143,19 @@ class Proxy : public TransactionUser {
 
     // A final response has gone upstream; late branch answers are not forwarded.
     bool answered = false;
+
+    // Added to the CSeq of every copy forwarded, and taken off every response before it goes upstream: one for each
+    // challenge a trunk made and this node answered (RFC 3261 22.2). Starts at the dialog's for an in-dialog request.
+    std::uint32_t cseq_offset = 0;
+
+    // The branch in flight has had its challenge answered; a second challenge is a failure.
+    bool challenge_answered = false;
+
+    // The policy's edits, applied to every copy forwarded.
+    std::vector<policy::HeaderEdit> edits;
+
+    // Ends a branch that has rung for its target's ring_timeout. Unlike timer C, a provisional does not reset it.
+    std::shared_ptr<Timer> ring_timer;
 
     // The realm's media policy, when target determination found a realm. In-dialog requests use the call's.
     std::optional<types::MediaPolicy> media_policy;
@@ -244,7 +267,26 @@ class Proxy : public TransactionUser {
   void _rewrite_contact(const std::shared_ptr<SIPMessage>& message, const std::shared_ptr<Channel>& from) const;
   void _read_caller_profile(const std::shared_ptr<Context>& context, std::function<void()> then);
   bool _reoffer(const std::shared_ptr<Context>& context);
-  void _add_targets(const std::shared_ptr<Context>& context, std::vector<types::Location> bindings) const;
+  void _add_targets(const std::shared_ptr<Context>& context, std::vector<types::Location> bindings, std::vector<Target>& into) const;
+
+  // The policy's targets as branches, in order, reading the bindings of any subscriber whose the policy did not.
+  void _expand(const std::shared_ptr<Context>& context, std::vector<policy::Target> specs, std::size_t index, std::shared_ptr<std::vector<Target>> into,
+               std::function<void()> then);
+
+  // The rest of 16.7 for a branch that ended in 3xx to 5xx: DNS and flow failover, the 488 re-offer, the policy.
+  void _branch_failed(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response);
+
+  // RFC 3261 22.2 and 22.3 as a client: a trunk challenged the branch; send it again with the trunk's credentials.
+  void _answer_challenge(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response, const std::shared_ptr<SIPMessage>& sent);
+
+  // What the caller is told of a trunk that challenged and could not be answered.
+  std::shared_ptr<SIPMessage> _trunk_refused(const std::shared_ptr<Context>& context) const;
+
+  // RFC 3261 16.7 step 4: the policy says what follows a branch's 3xx to 5xx.
+  void _after_failure(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response);
+
+  // What the policy is told about a request beyond the message itself.
+  std::shared_ptr<policy::RequestView> _view(const std::shared_ptr<SIPMessage>& request, bool relay) const;
   bool _try_other_flow(const std::shared_ptr<Context>& context);
   void _report_reoffer(const std::shared_ptr<Context>& context, bool took);
 
@@ -256,6 +298,9 @@ class Proxy : public TransactionUser {
   void _timer_c_start(const std::shared_ptr<Context>& context);
   void _timer_c_cancel(const std::shared_ptr<Context>& context);
   void _on_timer_c(const std::shared_ptr<Context>& context);
+  void _ring_timer_start(const std::shared_ptr<Context>& context);
+  void _ring_timer_cancel(const std::shared_ptr<Context>& context);
+  void _on_ring_timeout(const std::shared_ptr<Context>& context);
 
   // RFC 3261 16.10: forwards a CANCEL that has no response context.
   void _forward_cancel_statelessly(const std::shared_ptr<SIPMessage>& cancel, const std::shared_ptr<transactions::TransactionBase>& transaction);
@@ -263,19 +308,21 @@ class Proxy : public TransactionUser {
   void _send_status(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request, std::uint16_t code,
                     const std::string& reason);
 
-  // Decides whether the request may be forwarded (RFC 3261 22.3). `then` runs only if it may; otherwise the
-  // request has been answered.
-  void _authorize(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction, std::function<void()> then);
+  // Asks the policy whether the request may be forwarded, and carries out its answer (RFC 3261 22.3). `then`
+  // runs only if it may; otherwise the request has been answered.
+  void _authorize(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction, bool relay,
+                  std::function<void()> then);
+
+  // Digest in one realm. With from_must_match the credentials must be the From's subscriber's.
   void _authenticate(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
-                     const std::shared_ptr<types::Realm>& realm, const std::shared_ptr<SIPUri>& caller, std::function<void()> then);
+                     const std::shared_ptr<types::Realm>& realm, bool from_must_match, std::function<void()> then);
   void _send_proxy_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
                              const std::shared_ptr<types::Realm>& realm);
 
-  // Who may have a REGISTER forwarded: a reliable connection one of this node's subscribers registered over, or
-  // credentials for one of its realms (RFC 3261 22.3). The From is the foreign address of record, so it does not
-  // decide.
-  void _authorize_relay(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
-                        std::function<void()> then);
+  // Digest in any realm this node serves: a reliable connection one of its subscribers registered over, or
+  // credentials for one of its realms. For a REGISTER to forward, whose From is the foreign address of record.
+  void _authenticate_any(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
+                         std::function<void()> then);
   void _send_relay_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request);
 
   // This node as the side facing `facing` sees it, with a flow token in the user part (RFC 5626 5.1): for

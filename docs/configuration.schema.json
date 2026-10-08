@@ -603,6 +603,58 @@
         }
       }
     },
+    "policy": {
+      "description": "Who may call, and where a request goes. Each driver may have a section of its own here.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      },
+      "properties": {
+        "url": {
+          "description": "builtin:// serves this node's realms and nothing more, with no script. lua:// runs scripts (docs/scripting.md).",
+          "type": "string",
+          "default": "builtin://"
+        },
+        "lua": {
+          "description": "The lua:// policy: routing and authorisation as Lua scripts (docs/scripting.md).",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "description": "Directories searched, in order, for the entry script and for require. The standard scripts are searched last.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            },
+            "entry": {
+              "description": "The script that defines the hooks. With none on the path, the standard one, which behaves as builtin://.",
+              "type": "string",
+              "default": "main.lua"
+            },
+            "instruction_limit": {
+              "description": "Lua instructions one hook call may run, not counting time waiting on the store.",
+              "type": "integer",
+              "minimum": 1000,
+              "default": 1000000
+            },
+            "timeout_ms": {
+              "description": "How long one hook call may take, waiting included, in milliseconds.",
+              "type": "integer",
+              "minimum": 1,
+              "default": 5000
+            },
+            "memory_limit_mb": {
+              "description": "Megabytes the scripts may hold.",
+              "type": "integer",
+              "minimum": 1,
+              "default": 64
+            }
+          }
+        }
+      }
+    },
     "plugins": {
       "description": "Plugin modules, loaded at start.",
       "type": "object",

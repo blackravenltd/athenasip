@@ -12,7 +12,7 @@ The build dependencies:
 
 ```
 apt install build-essential cmake pkg-config git wget ca-certificates \
-  libssl-dev libyaml-cpp-dev libnghttp2-dev
+  libssl-dev libyaml-cpp-dev libnghttp2-dev liblua5.4-dev
 ```
 
 AthenaSIP needs Boost 1.87 or newer. Debian 13 ships 1.83, so build the three libraries it

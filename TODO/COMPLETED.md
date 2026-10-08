@@ -14,6 +14,16 @@ week, under Milestone 1. Everything after that is dated as it landed.
 
 Newest first. The detail is below, oldest first.
 
+- **0.10.0** (2026-10-08): routing that is scripted, and trunks. Every decision about
+  who may do what and where a call goes is asked of a policy plugin: `builtin://`, the
+  default, is the node's behaviour as it was, and `lua://` runs Lua 5.4 scripts in a
+  sandbox with budgets, whose standard scripts are proven to decide exactly as `builtin://`
+  does. Trunks to carriers, kept over the API: registering, answering their challenges,
+  TLS with their own CA, routing by prefix with failover, numbers brought in to
+  subscribers, all from `athenasip.trunks` without writing Lua. A heap corruption on every
+  closed TLS connection fixed; a WebRTC caller whose callee needs plain RTP now has media.
+  Live calls are checked automatically every 15 minutes. The sipp harnesses were not run
+  on the tagged tree (Docker).
 - **0.9.0** (2026-10-07): a second node that takes over, and phones woken for a call.
   A client whose node dies registers again through the other; an rtpengine pool keeps
   media going when an engine dies; the node ends dead calls itself with a BYE, and an
@@ -2816,3 +2826,262 @@ missed because its connection had silently died.
       architecture, the local UA in the call flow and glossary, the rtpengine pool's
       defaults and ordering, the exit code for a missing password, and the stale `wss`
       note in the interop fixture's README. Every relative link and anchor resolves.
+
+## Milestone 5 - Scripting and trunks
+
+The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.md`
+(2026-10-07); the plan is Milestone 5 in `ACTIVE.md`.
+
+### The seam (2026-10-08)
+
+- [x] **The `policy` plugin kind** (`src/policy/policy.h`, contract version 19). `Policy`
+      answers four questions the node used to answer inline - `authorize`, `route`,
+      `on_failure`, `register_` - with decision structs (`AuthDecision`, `RouteDecision`,
+      `Target`, `FailureDecision`, `RegisterDecision`) that the node carries out. A
+      `RequestView` gives the policy the message and what only the node knows: relay, from a
+      peer, a sealed flow token, a remaining Route. A `Host` lends it the datastore through
+      the strand, the node's own addresses and the configuration. `policy.url` picks the
+      driver; `docs/plugins.md` documents the kind.
+- [x] **`builtin://`** (`src/policy/builtin_policy.*`) holds what were `Proxy::_authorize`,
+      the realm, subscriber and binding lookups of `_determine_targets`, the relay rule of
+      `_authorize_relay`, and the registrar's realm, unserved-domain and expiry steps. It is
+      the default, and a `Core` built without a policy uses it, so every proxy and registrar
+      test runs against it unchanged and passes. The proxy keeps the mechanism: Digest
+      challenge and verification in one realm or any (`_authenticate`,
+      `_authenticate_any`), the Route and flow-token targets, the expansion of a subscriber
+      into bindings, push and peer forwarding, and the 16.7 rules. The OPTIONS answer for
+      the node itself stays native (RFC 3261 11.2), and the design says so.
+- [x] **After a failed branch the policy is asked** (`Proxy::_after_failure`): go on, stop
+      with the best so far, or try new targets first. 2xx and 6xx never reach it. A policy
+      that cannot decide there is taken to say go on; anywhere else it is a 500.
+- [x] **An off-node call follows the server's media policy.** A Request-URI in no realm here
+      got a default-constructed `MediaPolicy` (anchor, mirror) whatever `behaviour` said; the
+      route decision now carries the server's
+      (`ProxyMediaTest.ACallLeavingTheNodeFollowsTheServersMediaPolicy`).
+- [x] Tests: `tests/proxy_policy_test.cpp` drives the proxy and registrar through a scripted
+      policy (refusal with its code, a policy that cannot decide, a reply in place of
+      targets, targets the policy names, an empty route, stop and insert after a failure,
+      no question after a 2xx, a REGISTER refused before any challenge and one challenged
+      in the realm the policy names). 1307 unit tests, one skipped without a resolver. The
+      sipp harnesses were not run: Docker Desktop is paused.
+- [x] **A TLS peer is a node only under the cluster CA.** `TLSConnection` read the subject
+      CN of any certificate that verified, and the proxy trusts a channel with one as a cluster
+      peer, which skips authentication. Nothing reached it yet - the client listener asks for
+      no certificate and outbound TLS went only to peers - but a trunk context verifying a
+      carrier against the system store would have made the carrier a peer. The connection now
+      takes a `cluster` flag, set by the inter-node listener and by `_secure_flow` under the
+      cluster context, and names nobody without it
+      (`ClusterTlsTest.ACertificateFromAnotherAuthorityNamesNoNode`, red before the fix).
+
+### The engine (2026-10-08)
+
+- [x] **The Lua engine** (`src/script/lua_engine.*`, replacing the stubs that were never
+      built). Lua 5.4 from the system (Homebrew `lua@5.4`, Debian `liblua5.4-dev`), bound by
+      hand. One state per load with a counting allocator; a coroutine per hook call; a store
+      lookup issues the asynchronous datastore call and yields, and the answer resumes it by
+      a post, never inline. Budgets for instructions (counted every 1000, waiting excluded),
+      wall clock and memory. An error carries the script's file, line and a traceback. A
+      reload that fails keeps the running scripts; a call in flight finishes on the state it
+      started on. No `io`, `debug`, `package`, `load`, `loadfile` or `dofile`; of `os`, the
+      clock only; `require` confined to `policy.lua.path` and the standard scripts, with
+      names that cannot climb out of a directory. 15 tests in `tests/script/`.
+- [x] **The library** (`src/script/lua_library.*`): the request (method, URIs, From, To,
+      `in_dialog`, the node's flags, the source, headers), the response for `on_failure`,
+      URIs, realms with `behaviour` and `behaviour_effective`, subscribers, bindings,
+      `athenasip.store`, `.node`, `.config` (parsed values, then the file, then the
+      schema's default), `.log` with the script's file and line, `.sip`. Objects handed to a
+      hook refuse use once the call has ended. The answers (`athenasip.auth`, `.route`,
+      `.register`) are made by `scripts/athenasip/prelude.lua`, which checks its arguments.
+- [x] **`lua://`** (`src/policy/lua_policy.*`) with `policy.lua.path`, `.entry`,
+      `.instruction_limit`, `.timeout_ms`, `.memory_limit_mb`. The standard scripts
+      (`scripts/main.lua`, `scripts/athenasip/standard.lua`) are built into the binary by
+      CMake, so a node always has the ones that match it, and installed to
+      `share/athenasip/scripts` to read and copy. `standard.lua` is `builtin_policy.cpp`
+      line for line. A script with no `on_failure` goes on, as builtin does.
+- [x] **The proof, kept**: `ATHENA_TEST_POLICY=lua` runs any test against the standard
+      scripts; the whole suite passes that way (1323). `PolicyEquivalenceTest` runs the
+      proxy, registrar, dialog and core suites in a child under the scripts, and feeds both
+      drivers the same requests against one store, comparing every field of every decision,
+      store failures included. Two positive controls before believing it: `standard.lua`
+      refusing every INVITE failed 112 of those tests, and a one-word change to a reason
+      phrase failed the differential. The first control also found two tests that indexed
+      an empty list when nothing was forwarded (`proxy_flow_routing_test.cpp`); they assert
+      first now.
+- [x] **`athenasip --check`** creates the policy as the node does, so a script that does
+      not compile fails the check with its file and line
+      (`CliCheckTest.AScriptThatDoesNotCompileFailsTheCheckWithItsLine`).
+- [x] `docs/scripting.md` is the reference; Lua is in `docs/compiling.md`, the Linux
+      quick start, `CONTRIBUTING.md`, `CLAUDE.md` and the Dockerfile.
+- [x] **Reload from outside.** `SIGHUP`, so `systemctl reload` (the unit gains
+      `ExecReload`), and `POST /api/v1/policy/reload` (`manage-cluster`, 422 with the
+      script's line when the new scripts do not load) call `Core::policy_reload`, which keeps
+      the rules in force on failure and publishes the node's status at once on success.
+      `Policy` gains `reload()` and `fingerprint()`; `lua://`'s fingerprint is the SHA-256 of
+      every script it loaded, and the node status carries `policy: {driver, fingerprint}` so
+      a console can see nodes that disagree (`tests/api/policy_reload_test.cpp`).
+
+### Trunk mechanism (2026-10-08)
+
+- [x] **`digest::respond`**, the client half of Digest: MD5 and SHA-256, plain or -sess,
+      qop=auth when offered, opaque echoed; `digest::preferred` takes SHA-256 over MD5
+      (RFC 8760 2.4). The RFC 2617 3.5 and RFC 7616 3.9.1 worked examples reproduce exactly,
+      and what it answers, the node's own `verify` accepts. qop is written as a token in
+      credentials (RFC 3261 25.1).
+- [x] **Trunks in the datastore** (`types::Trunk`): URI, credentials kept as given (a
+      Digest response for the carrier's realm needs the password), registration (enabled,
+      expires, contact user), inbound CIDR ranges, a CA for TLS, free-form `attributes`.
+      `trunk_get/_create/_update/_delete/_list` on the contract, defaulted to unsupported;
+      `memory://` and `redis://` implement them (one JSON value per trunk and an index, as
+      users are).
+- [x] **`/api/v1/trunks`** (`src/api/trunks_api.*`) with a sixth role, `manage-trunks`: list,
+      create, read, partial update, delete. The password is write-only (`password_set`
+      instead); names, URIs, ranges and expiry are checked on the way in; a trunk that
+      registers must have someone to register as. In the OpenAPI document with
+      `operationId`s for the console's generated client.
+- [x] **Scripts read trunks**: `athenasip.store.trunk(name)` and `.trunks()`, attributes as
+      plain tables, `trunk:admits(address)`, `athenasip.sip.in_range(range, address)`. No
+      script can read a trunk's password.
+- [x] **A carrier's challenge is answered here.** A target the policy names with a trunk
+      (`policy::Target::trunk`, `athenasip.route.trunk`) has its 401 or 407 answered by
+      the node with the trunk's credentials: the same request, a new branch, CSeq + 1, the
+      2xx ACKed by the transaction as every non-2xx is (`Proxy::_answer_challenge`). The
+      raise is kept as the context's `cseq_offset`, added to every copy forwarded and taken
+      off every response at the door, and on the dialog with its trunk, so the ACK, the BYE
+      and a re-INVITE from the caller go on in the carrier's space and their responses come
+      back in the caller's. The dialog travels on the request (`SIPMessage::dialog`),
+      captured before the dialog table ends it on a BYE, which is when it is needed most. A
+      challenge that cannot be answered, or a second one, is a 403 to the caller, who has no
+      answer to a challenge meant for this node. A challenge from anything that is not a
+      trunk goes upstream as before (`tests/proxy_trunk_test.cpp`; a control that dropped
+      the dialog from a BYE failed it, sending CSeq 2 to a carrier that had seen 2).
+- [x] **A request from a trunk** is trusted by the policy with `AuthDecision::Trusted`
+      (`athenasip.auth.trusted{trunk =}`), recorded on the request as `trunk`, and seen by
+      `route` as `request.trunk`. `uri:with{}` makes a changed copy of a URI.
+- [x] **TLS to a trunk.** `Core::channel_connect` takes the trunk's CA (empty for the
+      system's store) and opens TLS verified against it and the address dialled, with no
+      client certificate; the proxy reads a trunk before opening a flow to it. Without a
+      trunk to trust, outbound TLS is still to cluster peers only. A carrier's connection
+      names no node (`ClusterTlsTest.ANodeOpensTlsToATrunkUnderTheTrunksAuthority`, and its
+      refusal when the CA does not match). The known deviation "outbound TLS is to cluster
+      peers only" is now "to cluster peers and trunks".
+- [x] **Registering to a trunk** (`src/trunk_registrar.*`). Every 30 seconds the node reads
+      the trunks; for each that asks to be registered it takes a 90-second datastore lease
+      (`Datastore::lease`, atomic in Redis by one script, in memory by a map), so one node
+      of a cluster registers and another takes over when the lease lapses. The REGISTER is
+      RFC 3261 10.2's: the carrier's domain as Request-URI, the trunk's address of record,
+      one Call-ID and a rising CSeq, a Contact at this node's advertised address. A 401 or
+      407 is answered with the trunk's credentials, once, and again only for a stale nonce;
+      a 423 asks again for the carrier's minimum; a 2xx is refreshed a minute early, or at
+      three quarters of a grant of two minutes or less; a failure is retried after 30
+      seconds, doubling to ten minutes. Each trunk's state is published, retained, as
+      `trunks/<name>/status`. Started by `main` once the listeners are up.
+      `tests/trunk_registrar_test.cpp`, and the lease in both stores.
+- [x] **Header edits from a policy**, for caller ID towards a carrier: `request:set_header`,
+      `:add_header`, `:remove_header` and `:set_from{display, user, host}` in `route` become
+      `policy::HeaderEdit`s that the proxy applies to every copy it forwards, never the
+      request as received. `HeaderEdit::guarded` refuses Via, Route, Record-Route, Path,
+      CSeq, Call-ID, Max-Forwards, Content-Length, Content-Type, Contact, From and To, by name
+      and compact form; `set_from` keeps the tag.
+- [x] **A ring timeout per target** (`policy::Target::ring_timeout`, `{ring_timeout =}` on
+      any `athenasip.route` target), for hunt sequences: a branch that rings that long is
+      cancelled (RFC 3261 9.1) and its 487 fails it; one that never answered is given up as
+      a 408 without a CANCEL. Unlike timer C, a provisional does not restart it.
+
+### An intermittent crash, found with the sanitizers (2026-10-08)
+
+- [x] **A closed TLS connection freed its stream under a pending read.** The unit suite
+      aborted in 2 runs of 15, at a different test each time, with the allocator reporting a
+      damaged free list; a crash report from 2026-10-06 had the same shape inside OpenSSL. It
+      could not be pinned from the reports, which is what the sanitizers are kept for. ASan
+      named it at once: `TLSConnection` gave `ssl::stream::async_read_some` a handler that
+      held nothing, an SSL operation refers to its stream, and `Channel::close()` let go of
+      the last reference while the read was pending, as a close always does. The read's
+      completion then ran on freed memory. This is on every TLS connection the node closes,
+      in production too. The handlers now hold the stream, as the WebSocket connection's
+      already did. 15 runs of the suite after: no failure.
+- [x] **`seconds::max()` as "never stale" overflowed** when `NodeDirectory` compared it with a
+      nanosecond duration (UBSan, under `--check`). It is tested for before comparing.
+- [x] A test's process-lifetime executor (`tests/api/events_api_test.cpp`) was destroyed at
+      exit under its detached thread; it is never destroyed now.
+- Sanitizer run: ASan and UBSan, 1385 tests, no reports. Boost.JSON's memory resource trips
+  UBSan's `vptr` check from the uninstrumented library, a false positive suppressed with
+  `vptr:boost/json/*`, `vptr:boost/container/*` and `vptr:*memory_resource*`
+  (`docs/testing.md`).
+
+### Trunk scripts (2026-10-08)
+
+- [x] **`athenasip.trunks`** (`scripts/athenasip/trunks.lua`): trunks from their records
+      alone, with a one-line `main.lua`. In: a request from a trunk's `inbound_addresses`
+      is that trunk's, and the number dialled (from the Request-URI, or the To when that is
+      the Contact registered) names a subscriber through the trunk's `numbers`. Out: a caller
+      in one of this node's realms dialling a number no subscriber has goes out by every
+      trunk whose `prefixes` match, longest prefix then `priority` first, each dialled as it
+      wants (`dial_format`), with the first trunk's `caller_id` as the From and
+      `P-Asserted-Identity`. 404, 410, 484, 486, 600, 603 or 604 from a trunk ends the
+      search; any other failure tries the next trunk. A national number is read through the
+      trunk's `country`. `policy::ForkState` gains the failed branch's `trunk`, which
+      `on_failure` sees as `state.trunk`.
+- [x] **Examples** under `docs/scripting/examples/`: a hunt group with ring timeouts, out of
+      hours to an on-call mobile, a blocklist, emergency numbers by the trunk marked for
+      them, and following a redirect. A test loads every one.
+- [x] `tests/policy/trunks_script_test.cpp`: in by address and by number, the To when the
+      Request-URI is the registered Contact, an unknown number refused, the best trunk first,
+      longest prefix then priority, a stranger not calling out, busy ending the search and a
+      failing trunk not, and every example loading. The test host the equivalence tests used
+      is shared from `tests/helpers/policy_host_helper.h`.
+- [x] **A trunk's registration in the API**: every node hears the retained
+      `trunks/+/status` (`TrunkStatuses`), and a trunk read carries `registration`
+      (node, state, detail, expiry) from whichever node holds it, null when none does.
+- [x] **Unregistering**: a trunk that stops registering, or is deleted, has its binding at the
+      carrier removed with Expires 0 on the same Call-ID, tried once, and its retained status
+      cleared. A node that loses the lease to another sends nothing: the binding is now the
+      other node's.
+- [x] **Attributes on realms and subscribers**, as trunks have them: a free-form object set
+      over the API on create and update (replaced whole when given, refused unless an object),
+      stored by both drivers, returned in reads, and read by scripts as `realm.attributes` and
+      `subscriber.attributes`. In the OpenAPI document.
+
+### Live, on both nodes (2026-10-08)
+
+- [x] **Deployed** `a08cc6d` to both nodes with Lua 5.4.7 installed (Tom, in chat). fi-1's
+      `--check` and gbni-1's pass; `systemctl reload` reloads the policy.
+- [x] **`test/interop/call.py`**: one whole call between two subscribers over UDP against live
+      nodes, checking each end's view (challenge, 200 for its own CSeq, ACK through the
+      Record-Route, BYE, and on the far side an ACK with its INVITE's CSeq and a BYE above it).
+      `--callee-hangs-up` sends the BYE from the far end.
+- [x] **Calls through fi-1** under `builtin://`, then `lua://` with the standard scripts:
+      identical.
+- [x] **A real trunk**: fi-1 using gbni-1 as its carrier (`proxy` added to trunks for it: a
+      carrier addressed by its domain and reached at another address). fi-1 registered as
+      gbni-1's subscriber 1003 through a Digest challenge and refreshes every four minutes.
+      Out: fi-1's 1001 dialling `+1002` left by the trunk as `1002`, gbni-1 challenged the
+      INVITE, fi-1 answered, and the far side saw INVITE 3, ACK 3, BYE 4 while the caller saw
+      2 and 3 throughout. In: gbni-1's 1001 calling 1003 reached fi-1's 1002 by the trunk's
+      `numbers`. The far end hanging up kept its own CSeq. 30 calls of the three kinds, all
+      through. The failures on the way were the test client's: it took a retransmitted 407
+      for the answer to its credentialed INVITE, and each failure cascaded into the next run
+      while the node tried the stale bindings the runs left.
+
+### Automatic live testing, and a real phone (2026-10-08)
+
+- [x] **`test/interop/verify.py` with `test/interop/live.json`**: every node's health,
+      registration on every transport, local calls on all five transports and mixed, and the
+      trunk both ways. Dedicated probe subscribers 1901 and 1902 on both nodes, with their
+      password only on the nodes (`/root/.athenasip-probe-password`), so automated calls never
+      ring a person. 15 of 15.
+- [x] **A recurring probe on fi-1**: `athenasip-probe.timer` runs verify.py every 15 minutes
+      and publishes the result, retained, as `athenasip/probes/corvus-fi-1/calls` on the site
+      broker for T.O.M.S to alert on.
+- [x] **`call.py` behaves as a UA must over UDP**: requests retransmitted from T1, a 2xx
+      until its ACK, repeated requests answered again. The site link to gbni-1 loses the odd
+      datagram, and a client that sent each request once failed whole calls on it. Its callee
+      refuses an offer it cannot take with 488, as a plain-RTP phone does.
+- [x] **`test/interop/phone.py`**: calls to and from AthenaPhone on an Android phone over adb.
+      Found a node bug: **a WebRTC caller whose callee needed plain RTP had no media**. After
+      the 488 and the re-offer on the same rtpengine call, `rtcp-mux: [demux]` made rtpengine
+      drop `a=rtcp-mux` from the answer to the caller, which libwebrtc refuses, leaving it in
+      have-local-offer. Shown in a full message log of the call, reproduced against rtpengine
+      12.5 over its control port, and fixed by asking for `[demux, accept]` in an offer
+      (`6a163a1`, unit test red first). Calls in to the phone had media all along: ICE and
+      DTLS-SRTP completed on rtpengine. AthenaPhone's own findings (media sessions left
+      running after a call ends before ICE connects) went to its session.

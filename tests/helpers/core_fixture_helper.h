@@ -7,6 +7,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstdlib>
 #include <future>
 #include <memory>
 #include <string>
@@ -20,6 +21,7 @@
 #include "datastores/memory_datastore.h"
 #include "events/local_event_system.h"
 #include "headers/uint_header.h"
+#include "policy/lua_policy.h"
 #include "sync_datastore_helper.h"
 #include "sync_event_system_helper.h"
 #include "timer_source.h"
@@ -54,6 +56,12 @@ struct CoreFixture {
 
     core = std::make_shared<athenasip::Core>(logger, config, datastore, event_system);
     core->timer_source_set(timers);
+
+    // ATHENA_TEST_POLICY=lua runs every test against the standard scripts instead of builtin://, which must give
+    // the same answers (tests/policy/policy_equivalence_test.cpp runs the suite that way).
+    if (const char* policy = std::getenv("ATHENA_TEST_POLICY"); policy != nullptr && std::string(policy) == "lua") {
+      core->policy_register(std::make_shared<athenasip::policy::LuaPolicy>(logger, nullptr));
+    }
   }
 
   // Core's registries are strand-confined, so a test reaches them the way a server does.

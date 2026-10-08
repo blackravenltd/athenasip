@@ -1,0 +1,25 @@
+{
+  "comment": "The two live nodes. The probe subscribers 1901 and 1902 exist on both; their password is in password_file on each node. fi-1 has a trunk 'macnessa' to gbni-1: +190 numbers leave by it, and gbni-1's 1003 comes in to fi-1's 1902.",
+  "nodes": {
+    "fi-1": {"host": "10.35.1.20", "realm": "10.35.1.20", "http": 8080},
+    "gbni-1": {"host": "10.44.1.50", "realm": "macnessa.athenasip.org", "http": 8080}
+  },
+  "password_file": "/root/.athenasip-probe-password",
+  "registrations": [
+    {"node": "fi-1", "user": "1901"},
+    {"node": "gbni-1", "user": "1901"}
+  ],
+  "calls": [
+    {"name": "fi-1 local, udp", "caller": "1901@fi-1", "callee": "1902@fi-1", "transports": "udp:udp"},
+    {"name": "fi-1 local, tcp", "caller": "1901@fi-1", "callee": "1902@fi-1", "transports": "tcp:tcp"},
+    {"name": "fi-1 local, tls", "caller": "1901@fi-1", "callee": "1902@fi-1", "transports": "tls:tls"},
+    {"name": "fi-1 local, ws", "caller": "1901@fi-1", "callee": "1902@fi-1", "transports": "ws:ws"},
+    {"name": "fi-1 local, wss to tls, callee hangs up", "caller": "1901@fi-1", "callee": "1902@fi-1", "transports": "wss:tls", "callee_hangs_up": true},
+    {"name": "gbni-1 local, udp", "caller": "1901@gbni-1", "callee": "1902@gbni-1", "transports": "udp:udp"},
+    {"name": "gbni-1 local, tls to wss", "caller": "1901@gbni-1", "callee": "1902@gbni-1", "transports": "tls:wss"},
+    {"name": "trunk out, fi-1 to gbni-1, udp", "caller": "1901@fi-1", "callee": "1902@gbni-1", "transports": "udp:udp", "dial": "sip:+1902@10.35.1.20"},
+    {"name": "trunk out, fi-1 to gbni-1, tls", "caller": "1901@fi-1", "callee": "1902@gbni-1", "transports": "tls:tls", "dial": "sip:+1902@10.35.1.20"},
+    {"name": "trunk in, gbni-1 to fi-1, udp", "caller": "1901@gbni-1", "callee": "1902@fi-1", "transports": "udp:udp", "dial": "sip:1003@macnessa.athenasip.org"},
+    {"name": "trunk in, wss, callee hangs up", "caller": "1901@gbni-1", "callee": "1902@fi-1", "transports": "wss:wss", "dial": "sip:1003@macnessa.athenasip.org", "callee_hangs_up": true}
+  ]
+}

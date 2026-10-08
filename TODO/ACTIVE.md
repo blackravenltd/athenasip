@@ -1,10 +1,10 @@
 # AthenaSIP - Active Work
 
-Work happens on `develop`; `main` carries the last release, and `0.9.0` is the current
+Work happens on `develop`; `main` carries the last release, and `0.10.0` is the current
 one. Line numbers refer to the current tree; update them as files move.
 
 Milestones 1, 2 and 3 are complete apart from the items left under Milestone 3 below.
-`0.8.0` (2026-10-03) carried a good part of Milestone 4 and most of Milestone 5:
+`0.8.0` (2026-10-03) carried a good part of Milestone 4 and most of what is now Milestone 6:
 `COMPLETED.md` has every item with what shipped.
 
 `0.9.0` (2026-10-07) carried, since `0.8.0`: RFC 6026's
@@ -13,9 +13,21 @@ Accepted state, media addresses that may be names, `--reset-password`, `--check`
 against a real service for want of credentials), the second node and client failover, the
 rtpengine pool, the local UA that ends dead calls with a BYE, and the configuration schema
 with `--print-schema`. The README and documentation were checked against the code on
-2026-10-07 and the quick-start guides written. 1296 unit tests (one skipped without a
-resolver) at the tag. Both nodes run `3ff67db`, which is `0.9.0` without the fix
-that lets a plugin module describe its settings.
+2026-10-07 and the quick-start guides written.
+
+`0.10.0` (2026-10-08) carried, since `0.9.0`: most of Milestone 5 - the policy seam with
+`builtin://` as the default, the Lua engine and its standard scripts, and trunks end to
+end - the TLS use-after-free that corrupted the heap on every closed TLS connection, the
+rtcp-mux fix for a WebRTC caller whose callee needs plain RTP, and the automatic live
+tests. 1391 unit tests at the tag. The sipp harnesses were not run on the tagged tree, and
+not yet under `lua://` (Docker). corvus-fi-1 runs `3bb2911` with `lua://` and
+`athenasip.trunks` from `/etc/athenasip/scripts/main.lua` and a trunk `macnessa` to
+corvus-gbni-1 (registering as gbni's subscriber 1003, outbound proxy 10.44.1.50); its
+previous configuration is `/etc/athenasip/config.yaml.before-lua`. gbni-1 runs `a08cc6d`,
+without the rtcp-mux fix (`6a163a1`) that a call from AthenaPhone to a plain-RTP phone
+needs, until Tom says yes to deploying it. A probe on fi-1 (`athenasip-probe.timer`) runs
+`test/interop/verify.py test/interop/live.json` every 15 minutes and publishes
+`athenasip/probes/corvus-fi-1/calls`.
 
 **Two live nodes**, neither production:
 - `corvus-fi-1` (10.35.1.20): builtin relay, AthenaPhone's usual home.
@@ -29,13 +41,15 @@ that lets a plugin module describe its settings.
 with rtpengine 12 of 12, two nodes 15 of 15. That covers RFC 6026 and `allow_unencrypted`;
 push is after it and has no scenario yet.
 
-**Next:** Milestone 5's packaging. Milestone 4's intermittent `across-cancel-ringing` has not
+**Next:** Milestone 5, scripting and trunks, decided on 2026-10-07 and designed in
+`docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.md`. Packaging moves
+behind it as Milestone 6. Milestone 4's intermittent `across-cancel-ringing` has not
 failed again in 18 runs; it stays open for the next failure's logs.
 
 **Once things are stable, video calling is a primary feature** (Tom, 2026-10-03), not a
 later extra: principle 6 already says so, and this is the reminder that it is next in line
 behind stability rather than behind everything else. The work is the video items under
-Milestone 3 (verify video against AthenaPhone) and Milestone 6 (the web client), and
+Milestone 3 (verify video against AthenaPhone) and Milestone 7 (the web client), and
 nothing built before then may assume a call is audio only.
 
 Milestones are in priority order and so are the items inside each one: work top to
@@ -138,6 +152,18 @@ Dated, and not reopened without asking.
   comes later behind the same URI scheme.
 - (2026-09-17) Lua scripting stays parked and out of the build path until there is a
   real use. When it returns it is a routing-policy plugin, not a core feature.
+  **Superseded 2026-10-07 (Tom):** routing and authorisation are decisions a policy makes
+  and the node carries out, and a script is how a deployment expresses them, because a
+  configuration option for every case makes a configuration nobody can read and still
+  cannot express the next case. `policy` is a plugin kind with five hooks (`authorize`,
+  `route`, `on_failure`, `register`, `init`). Two drivers ship and both stay: `builtin://`
+  is today's behaviour in C++ and the default, so a plain node runs no script;
+  `lua://` runs Lua 5.4 scripts, and the standard scripts reproduce `builtin://` exactly,
+  which a fixture in the tree keeps checked. Trunks are records in the datastore plus
+  scripts, never configuration. The SIP mechanics (transactions, Via, Record-Route, flow
+  tokens, Digest verification, nonces, media anchoring, the RFC 3261 16.7 rules) stay
+  native and cannot be reached from a script. Design: `docs/design/scripting-1-the-node.md`
+  and `scripting-2-the-engine.md`.
 - (2026-09-17) Core runs on a single strand. Servers post into it.
 - (2026-09-20) Nodes can sit behind a load balancer, and the shape it forces is this. A
   binding shares; a flow does not: the Redis row is readable by any node, but the socket
@@ -296,9 +322,11 @@ udp/tcp/tls/ws/wss servers -> Connection -> Channel     transport   s18, RFC 358
 Core = composition root + the strand
 ```
 
-Everything below the transaction users is a plugin: datastores, event systems and media
-engines today, routing policy and others later. They hang off the TU layer and register
-through one contract, so adding a kind or an implementation touches nothing above it.
+Everything below the transaction users is a plugin: datastores, event systems, media
+engines and push services today, policy (Milestone 5) next. They hang off the TU layer
+and register through one contract, so adding a kind or an implementation touches nothing
+above it. Policy is the one kind the transaction users call upwards into: the proxy and
+registrar ask it who a caller is and where a request goes, and act on the answer.
 
 The tree matches the diagram. The local UA (`src/local_ua.*`) is the fourth transaction user:
 it sends a BYE to both ends of a call this node ends, through the proxy.
@@ -322,8 +350,9 @@ none of them is mistaken for compliance. **Re-checked against the tree on 2026-1
   false` turns all of it off, and where it cannot anchor the message travels on untouched.
 - With `behaviour.rewrite_contact` on (off by default) the Contact an endpoint wrote is
   replaced with the address its message came from, as Asterisk and Kamailio do.
-- Outbound TLS is to cluster peers only, with the cluster's certificates. To any other host
-  it is refused rather than faked.
+- Outbound TLS is to cluster peers, with the cluster's certificates, and to trunks,
+  verified against the trunk's CA or the system's store. To any other host, such as one
+  an arbitrary Request-URI names, it is refused rather than faked.
 - Record-Route is written twice on every dialog-forming request rather than only where
   the interfaces differ. RFC 5658 requires the pair in that case and permits it in
   every case; the flow token in each value is what makes a call to a browser routable
@@ -358,11 +387,9 @@ including the behaviour profiles it led to. What is left of it is below.
 
 ### After that
 
-The trunk scenario waits on trunks existing.
+The trunk scenario is Milestone 5's last item: trunks are built there, and the scenario
+with it. Today an off-node call goes wherever its Request-URI says.
 
-- [ ] A harness scenario for a trunk, once a trunk is something the node can be
-      configured with: an authenticated subscriber calling a number that leaves by it, and
-      a call arriving from it. Today an off-node call goes wherever its Request-URI says.
 - [ ] The phone's media across the internet: AthenaPhone on mobile data to
       macnessa.athenasip.org. The 2026-10-04 run's phone leg went over the link between
       the two sites.
@@ -405,7 +432,72 @@ its last scenario.
 
 ---
 
-## Milestone 5 - Batteries included
+## Milestone 5 - Scripting and trunks
+
+Goal: a deployment connects to a carrier, routes numbers out by prefix with failover and
+in by DID, and expresses any other routing it needs, by writing records over the API and,
+where the standard behaviour is not enough, a Lua script; and a node that needs none of
+that runs exactly as it does today, with no script loaded.
+
+The design is in `docs/design/scripting-1-the-node.md` (the seam between decision and
+mechanism, the hooks, the `policy` kind, and the eleven pieces of mechanism a trunk needs)
+and `docs/design/scripting-2-the-engine.md` (the Lua engine, the library, the standard
+scripts and the examples). The order below is the design's migration, and each step
+leaves the unit suite and the three harnesses green.
+
+Decisions made with it, dated 2026-10-07 under Decisions: `builtin://` stays and is the
+default; Lua 5.4 from the system package (Debian `liblua5.4-dev`, Homebrew `lua@5.4`),
+bound by hand, no sol2 or LuaBridge; scripts are files per node and the node publishes
+their hash so the console can flag drift; the trunk password is stored as given because a
+Digest response for the carrier's realm cannot be made from anything less.
+
+### The seam
+
+Done (`COMPLETED.md`, 2026-10-08): the `policy` kind, `builtin://`, the question after a
+failed branch, the off-node media policy, and a TLS peer named as a node only under the
+cluster CA.
+
+### The engine
+
+Done (`COMPLETED.md`, 2026-10-08): the engine, the library, `lua://` with the standard
+scripts built into the binary, the permanent proof, and `--check`. What is left:
+
+- [ ] The three harnesses under `policy.url: lua://`, once Docker is back.
+- [ ] `athenasip --explain <file>`: a request from a file through `authorize` and `route`
+      against the live store, printing each decision.
+- [ ] The console flags a node whose `policy.fingerprint` differs from the others' (the
+      admin session's).
+
+### Trunk mechanism
+
+Done (`COMPLETED.md`, 2026-10-08): `digest::respond`, trunks in the datastore,
+`/api/v1/trunks` with `manage-trunks`, trunks in scripts, answering a carrier's
+challenge with the CSeq kept right for the rest of the dialog, TLS to a trunk,
+registering to a trunk with a lease per trunk, its state in the API, and unregistering.
+
+- [ ] Console pages for trunks and for attributes: the admin session's.
+- [ ] The smaller primitives: header edits on the forwarded copy behind the guard list,
+      `set_from` without touching the tag, `ring_timeout` per target on timer C's path,
+      `counter_incr` and `counter_get` on the datastore, `RequestView::source`, the trunk
+      on each leg of a call record, per-trunk metrics, `--check` resolving each trunk and
+      `--check-trunks` sending OPTIONS.
+
+### Trunk scripts and the harness
+
+Done (`COMPLETED.md`, 2026-10-08): `athenasip.trunks` and the examples.
+
+- [ ] sipp as the carrier: a registrar that challenges and grants 300 seconds, a UAS that
+      answers the INVITE 407 then 180 and 200, an inbound INVITE from the carrier's address
+      to a mapped number, a carrier answering 503 so the second trunk is tried. This is
+      Milestone 3's trunk scenario.
+- [ ] `on_call_ended(call)` as a notification hook, for concurrency counters; first
+      candidate for a sixth hook, after the five have been used.
+- [ ] Documentation still to write: a quick-start guide for a first trunk, once the sipp
+      carrier scenario has proved the steps.
+
+---
+
+## Milestone 6 - Batteries included
 
 Goal: a newcomer runs one command and has a working, secure, administrable SIP server
 in ten minutes.
@@ -432,7 +524,7 @@ authentication from session issue to the OpenAPI document, and the one-command s
 
 ---
 
-## Milestone 6 - Conferencing, presence, web client
+## Milestone 7 - Conferencing, presence, web client
 
 - [ ] RFC 4579 conference focus routing: conference URIs per realm, authorisation, route
       to a focus. FreeSWITCH `conference` as the first focus, configured by the admin API.
@@ -464,9 +556,6 @@ authentication from session issue to the OpenAPI document, and the one-command s
 
 Kept in the tree or history, not on any milestone:
 
-- Lua scripting (`src/script/`): not compiled, `on_message`/`send_message` are TODOs,
-  `luaL_openlibs` disabled, no example scripts. Revisit when routing policy needs more than location lookup,
-  and then as a routing-policy plugin through the plugin contract.
 - `RTPProxyClient` (`src/rtp/rtp_proxy_client.*`): rtpproxy text protocol. Out of the
   build path since 2026-09-21, the way Lua is. May become an `rtpproxy://` driver with
   `bridge` only; not a priority.

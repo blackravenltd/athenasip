@@ -81,6 +81,14 @@ class RedisDatastore : public Datastore {
   void user_delete(plugins::Executor on, std::string username, plugins::StatusHandler handler) override;
   void user_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::User>>> handler) override;
 
+  void trunk_get(plugins::Executor on, std::string name, plugins::Handler<std::shared_ptr<types::Trunk>> handler) override;
+  void trunk_create(plugins::Executor on, std::shared_ptr<types::Trunk> trunk, plugins::StatusHandler handler) override;
+  void trunk_update(plugins::Executor on, std::shared_ptr<types::Trunk> trunk, plugins::StatusHandler handler) override;
+  void trunk_delete(plugins::Executor on, std::string name, plugins::StatusHandler handler) override;
+  void trunk_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::Trunk>>> handler) override;
+
+  void lease(plugins::Executor on, std::string name, std::string holder, std::uint32_t seconds, plugins::Handler<bool> handler) override;
+
   void session_create(plugins::Executor on, types::Session session, plugins::StatusHandler handler) override;
   void session_get(plugins::Executor on, std::string token_hash, plugins::Handler<std::shared_ptr<types::Session>> handler) override;
   void session_delete(plugins::Executor on, std::string token_hash, plugins::StatusHandler handler) override;
@@ -150,6 +158,7 @@ class RedisDatastore : public Datastore {
   static std::string _location_key(std::uint64_t subscriber_id, const std::string& user, const std::string& host, std::uint16_t port);
   static std::string _nonce_key(const std::string& nonce);
   static std::string _user_key(const std::string& username);
+  static std::string _trunk_key(const std::string& name);
   static std::string _session_key(const std::string& token_hash);
   static std::string _call_key(const std::string& call_id);
   static std::shared_ptr<types::Subscriber> _parse_subscriber(const std::string& value, std::shared_ptr<types::SIPIdentity> identity);
@@ -159,6 +168,7 @@ class RedisDatastore : public Datastore {
   static std::string _location_index_key(std::uint64_t subscriber_id);
   static std::string _call_index_key();
   static std::string _user_index_key();
+  static std::string _trunk_index_key();
 
   // Every session a user holds, so revoking by username never needs KEYS. A session that
   // reaches its own expiry leaves its hash behind here; the listing side removes it.

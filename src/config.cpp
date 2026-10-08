@@ -326,6 +326,9 @@ bool Config::load_from_yaml(const std::string& filename) {
     if (media["url"]) media_url = media["url"].as<std::string>();
   }
 
+  // policy
+  if (YAML::Node policy = config["policy"]; policy && policy["url"]) policy_url = policy["url"].as<std::string>();
+
   // plugins
   if (YAML::Node plugins = config["plugins"]; plugins && plugins["path"]) {
     try {
@@ -745,6 +748,11 @@ std::string Config::effective_yaml() const {
   out << YAML::Key << "media" << YAML::Value << YAML::BeginMap;
   out << YAML::Key << "url" << YAML::Value << media_url;
   emit_plugin_sections(out, _root, "media", {"url"});
+  out << YAML::EndMap;
+
+  out << YAML::Key << "policy" << YAML::Value << YAML::BeginMap;
+  out << YAML::Key << "url" << YAML::Value << policy_url;
+  emit_plugin_sections(out, _root, "policy", {"url"});
   out << YAML::EndMap;
 
   out << YAML::Key << "plugins" << YAML::Value << YAML::BeginMap;

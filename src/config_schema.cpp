@@ -109,6 +109,10 @@ Settings build() {
   s.push_back(section("media", "The media engine that relays calls. Each driver may have a section of its own here.", true));
   s.push_back(text("media.url", "builtin://", "builtin:// relays RTP; WebRTC (ICE, DTLS, SRTP) needs rtpengine://host:port."));
 
+  s.push_back(section("policy", "Who may call, and where a request goes. Each driver may have a section of its own here.", true));
+  s.push_back(
+      text("policy.url", "builtin://", "builtin:// serves this node's realms and nothing more, with no script. lua:// runs scripts (docs/scripting.md)."));
+
   s.push_back(section("plugins", "Plugin modules, loaded at start."));
   Setting plugin_path = list("plugins.path", "Directories of plugin modules (.so, .dylib, .dll).");
   plugin_path.or_single = true;

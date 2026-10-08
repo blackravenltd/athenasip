@@ -46,6 +46,15 @@ std::string ha1_sha256_of(const std::string& user, const std::string& realm_name
 // Reads a realm's behaviour section: what it does differently from the server's default.
 // Only what was given is changed, and a setting given as null goes back to inheriting.
 // Returns empty on success, otherwise what was wrong.
+// attributes, replaced whole when given. Empty when it applied, else what is wrong.
+std::string read_attributes(const boost::json::object& body, boost::json::object& attributes) {
+  const auto it = body.find("attributes");
+  if (it == body.end()) return {};
+  if (!it->value().is_object()) return "attributes is an object";
+  attributes = it->value().as_object();
+  return {};
+}
+
 std::string read_behaviour(const boost::json::object& body, types::Behaviour& behaviour) {
   // These belong in the behaviour section; at the top level they are refused, not ignored.
   for (const auto* moved : {"media_anchor", "media_profiles"}) {
@@ -216,7 +225,7 @@ void ProvisioningAPI::_realm_create(RouteContext context) {
   if (const auto timeout = uint_field(*body, "registration_timeout")) realm->registration_timeout = *timeout;
   if (const auto minimum = uint_field(*body, "registration_minimum")) realm->registration_minimum = *minimum;
 
-  if (const auto refused = read_behaviour(*body, realm->behaviour); !refused.empty()) {
+  if (auto refused = read_behaviour(*body, realm->behaviour); !refused.empty() || !(refused = read_attributes(*body, realm->attributes)).empty()) {
     write_error(context.response, http::status::bad_request, "invalid_request", refused);
     return context.done();
   }
@@ -259,7 +268,7 @@ void ProvisioningAPI::_realm_update(RouteContext context) {
     if (const auto timeout = uint_field(*body, "registration_timeout")) realm->registration_timeout = *timeout;
     if (const auto minimum = uint_field(*body, "registration_minimum")) realm->registration_minimum = *minimum;
 
-    if (const auto refused = read_behaviour(*body, realm->behaviour); !refused.empty()) {
+    if (auto refused = read_behaviour(*body, realm->behaviour); !refused.empty() || !(refused = read_attributes(*body, realm->attributes)).empty()) {
       write_error(context.response, http::status::bad_request, "invalid_request", refused);
       return context.done();
     }
@@ -359,7 +368,7 @@ void ProvisioningAPI::_subscriber_create(RouteContext context) {
     if (ha1) subscriber->ha1 = *ha1;
     if (const auto imported = string_field(*body, "ha1_sha256")) subscriber->ha1_sha256 = *imported;
 
-    if (const auto why = read_behaviour(*body, *subscriber); !why.empty()) {
+    if (auto why = read_behaviour(*body, *subscriber); !why.empty() || !(why = read_attributes(*body, subscriber->attributes)).empty()) {
       write_error(context.response, http::status::bad_request, "invalid_request", why);
       return context.done();
     }
@@ -406,44 +415,44 @@ void ProvisioningAPI::_subscriber_update(RouteContext context) {
   const auto user = context.parameter("user");
 
   auto self = shared_from_this();
-  _datastore->subscriber_get(_executor, identity_of(realm_name, user),
-                             [self, context, body, realm_name, user](plugins::Result<std::shared_ptr<types::Subscriber>> result) mutable {
-                               if (!result.ok) {
-                                 write_error(context.response, http::status::internal_server_error, "datastore_error", result.error);
-                                 return context.done();
-                               }
+  _datastore->subscriber_get(
+      _executor, identity_of(realm_name, user), [self, context, body, realm_name, user](plugins::Result<std::shared_ptr<types::Subscriber>> result) mutable {
+        if (!result.ok) {
+          write_error(context.response, http::status::internal_server_error, "datastore_error", result.error);
+          return context.done();
+        }
 
-                               if (!result.value) {
-                                 write_error(context.response, http::status::not_found, "not_found", "no such subscriber");
-                                 return context.done();
-                               }
+        if (!result.value) {
+          write_error(context.response, http::status::not_found, "not_found", "no such subscriber");
+          return context.done();
+        }
 
-                               auto subscriber = result.value;
+        auto subscriber = result.value;
 
-                               if (const auto password = string_field(*body, "password")) {
-                                 subscriber->ha1 = ha1_of(user, realm_name, *password);
-                                 subscriber->ha1_sha256 = ha1_sha256_of(user, realm_name, *password);
-                               }
+        if (const auto password = string_field(*body, "password")) {
+          subscriber->ha1 = ha1_of(user, realm_name, *password);
+          subscriber->ha1_sha256 = ha1_sha256_of(user, realm_name, *password);
+        }
 
-                               if (const auto ha1 = string_field(*body, "ha1")) subscriber->ha1 = *ha1;
-                               if (const auto sha256 = string_field(*body, "ha1_sha256")) subscriber->ha1_sha256 = *sha256;
+        if (const auto ha1 = string_field(*body, "ha1")) subscriber->ha1 = *ha1;
+        if (const auto sha256 = string_field(*body, "ha1_sha256")) subscriber->ha1_sha256 = *sha256;
 
-                               // Read before anything is written, so a refusal changes nothing.
-                               if (const auto why = read_behaviour(*body, *subscriber); !why.empty()) {
-                                 write_error(context.response, http::status::bad_request, "invalid_request", why);
-                                 return context.done();
-                               }
+        // Read before anything is written, so a refusal changes nothing.
+        if (auto why = read_behaviour(*body, *subscriber); !why.empty() || !(why = read_attributes(*body, subscriber->attributes)).empty()) {
+          write_error(context.response, http::status::bad_request, "invalid_request", why);
+          return context.done();
+        }
 
-                               self->_datastore->subscriber_update(self->_executor, subscriber, [context, subscriber](plugins::Status status) mutable {
-                                 if (!status.ok) {
-                                   write_error(context.response, http::status::internal_server_error, "datastore_error", status.error);
-                                   return context.done();
-                                 }
+        self->_datastore->subscriber_update(self->_executor, subscriber, [context, subscriber](plugins::Status status) mutable {
+          if (!status.ok) {
+            write_error(context.response, http::status::internal_server_error, "datastore_error", status.error);
+            return context.done();
+          }
 
-                                 write_json(context.response, http::status::ok, _subscriber_json(*subscriber));
-                                 context.done();
-                               });
-                             });
+          write_json(context.response, http::status::ok, _subscriber_json(*subscriber));
+          context.done();
+        });
+      });
 }
 
 void ProvisioningAPI::_subscriber_delete(RouteContext context) {
@@ -851,6 +860,8 @@ boost::json::object ProvisioningAPI::_realm_json(const types::Realm& realm) cons
   // The server's default on its own: what "inherit" would give.
   object["behaviour_default"] = policy_json(_config->behaviour, _config->behaviour_qualify_interval, _config->behaviour_rewrite_contact);
 
+  object["attributes"] = realm.attributes;
+
   // nonce_secret is never returned.
   return object;
 }
@@ -870,6 +881,7 @@ boost::json::object ProvisioningAPI::_subscriber_json(const types::Subscriber& s
   behaviour["media_profile"] =
       subscriber.media_profile ? boost::json::value(types::MediaPolicy::to_string(*subscriber.media_profile)) : boost::json::value(nullptr);
   object["behaviour"] = std::move(behaviour);
+  object["attributes"] = subscriber.attributes;
 
   // ha1 is never returned.
   return object;

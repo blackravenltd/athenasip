@@ -179,6 +179,9 @@ class Config {
   // media.url
   std::string media_url = "builtin://";  // or "rtpengine://host:port"
 
+  // policy.url: who may call and where a request goes. builtin:// serves this node's realms and nothing more.
+  std::string policy_url = "builtin://";
+
   // plugins.path: directories of plugin modules (.so, .dylib, .dll) loaded at start. None by default.
   std::vector<std::string> plugins_path;
 

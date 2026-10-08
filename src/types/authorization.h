@@ -127,7 +127,9 @@ class Authorization {
   // credentials; this server writes challenges, so it is quoted here.
   static bool is_token_parameter(const std::string& name) {
     const auto lowered = Util::to_lower(name);
-    return lowered == "algorithm" || lowered == "stale" || lowered == "nc";
+    // qop is a token in credentials (RFC 3261 25.1 message-qop, RFC 7616 3.4); only a challenge's qop-options is
+    // quoted, and this node writes no qop into a challenge.
+    return lowered == "algorithm" || lowered == "stale" || lowered == "nc" || lowered == "qop";
   }
 
   std::string to_string() const {

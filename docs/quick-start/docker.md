@@ -11,8 +11,11 @@ cd athenasip
 docker/up.sh
 ```
 
-The first run builds the image, which takes several minutes. When it finishes it prints
-the addresses, the credentials and what to do next.
+The first run pulls the image for the release checked out,
+[`tomcully/athenasip`](https://hub.docker.com/r/tomcully/athenasip) on Docker Hub, and the
+images it runs beside. When it finishes it prints the addresses, the credentials and what
+to do next. `docker/up.sh --build` builds the image from the checkout instead, which takes
+several minutes and is what to use on a branch with changes of its own.
 
 ## What you get
 
@@ -59,6 +62,7 @@ docker/up.sh down        # stop, keeping the data
 docker/up.sh             # start again
 docker/up.sh --reset     # stop and delete the data
 docker/up.sh --console   # also serve a build of the admin console on the API port
+docker/up.sh --build     # build the node's image from the checkout rather than pull it
 ```
 
 `--console` serves `../athenasip-admin/build`, or the directory in `ATHENA_CONSOLE_DIR`.

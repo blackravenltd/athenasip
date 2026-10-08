@@ -19,6 +19,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/athenasip --config @ATHENA_CONFIG_INSTALL_DIR@/config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
 
 User=athenasip
 Group=athenasip

@@ -41,6 +41,9 @@ class TLSServer : public Server {
   std::shared_ptr<std::thread> _thread;
   boost::asio::ssl::context ctx;
 
+  // Set by require_peer_certificates: every connection is a peer under the cluster CA.
+  bool _cluster = false;
+
   // How long a connection has to finish its handshake before it is closed.
   static constexpr std::chrono::seconds kHandshakeDeadline{10};
 };
