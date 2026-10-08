@@ -20,6 +20,10 @@ using namespace athenasip::types;
 
 namespace athenasip {
 
+namespace types {
+struct Dialog;
+}
+
 class Channel;
 class Call;
 
@@ -43,9 +47,16 @@ class SIPMessage {
   std::shared_ptr<SIPUri> contact;
   bool authenticated = false;
 
+  // The trunk the policy trusted this request as coming from, by name; empty for anything else.
+  std::string trunk;
+
   // The request belonged to a known dialog when it arrived (RFC 3261 12.2.2). Recorded
   // before the dialog table sees it, because a BYE removes its dialog there.
   bool in_known_dialog = false;
+
+  // That dialog, held from before the dialog table saw the request: a BYE has ended it there by the time the
+  // request is routed, and what the dialog recorded is still needed to forward the BYE.
+  std::shared_ptr<types::Dialog> dialog;
 
   std::string to_string() const;
   void print() const;

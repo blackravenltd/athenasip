@@ -95,6 +95,9 @@ class Proxy : public TransactionUser {
 
     // RFC 8599: a binding this node pushes to before forwarding. The pn-* parameters are on its contact.
     std::optional<types::Location> push;
+
+    // The trunk this target leaves by: its challenges are answered with the trunk's credentials.
+    std::string trunk;
   };
 
   // The response context (16.7). Kept alive by the client transaction callbacks.
@@ -134,6 +137,13 @@ class Proxy : public TransactionUser {
 
     // A final response has gone upstream; late branch answers are not forwarded.
     bool answered = false;
+
+    // Added to the CSeq of every copy forwarded, and taken off every response before it goes upstream: one for each
+    // challenge a trunk made and this node answered (RFC 3261 22.2). Starts at the dialog's for an in-dialog request.
+    std::uint32_t cseq_offset = 0;
+
+    // The branch in flight has had its challenge answered; a second challenge is a failure.
+    bool challenge_answered = false;
 
     // The realm's media policy, when target determination found a realm. In-dialog requests use the call's.
     std::optional<types::MediaPolicy> media_policy;
@@ -250,6 +260,15 @@ class Proxy : public TransactionUser {
   // The policy's targets as branches, in order, reading the bindings of any subscriber whose the policy did not.
   void _expand(const std::shared_ptr<Context>& context, std::vector<policy::Target> specs, std::size_t index, std::shared_ptr<std::vector<Target>> into,
                std::function<void()> then);
+
+  // The rest of 16.7 for a branch that ended in 3xx to 5xx: DNS and flow failover, the 488 re-offer, the policy.
+  void _branch_failed(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response);
+
+  // RFC 3261 22.2 and 22.3 as a client: a trunk challenged the branch; send it again with the trunk's credentials.
+  void _answer_challenge(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response, const std::shared_ptr<SIPMessage>& sent);
+
+  // What the caller is told of a trunk that challenged and could not be answered.
+  std::shared_ptr<SIPMessage> _trunk_refused(const std::shared_ptr<Context>& context) const;
 
   // RFC 3261 16.7 step 4: the policy says what follows a branch's 3xx to 5xx.
   void _after_failure(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response);

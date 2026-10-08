@@ -49,14 +49,18 @@ struct RequestView {
 
   // A Route header remains once this node's own entries are taken off (RFC 3261 16.4).
   bool has_route = false;
+
+  // After authorize: the trunk the policy trusted the request as coming from, by name; empty otherwise.
+  std::string trunk;
 };
 
 // How the caller of an out-of-dialog request is to be proved. The node challenges and verifies; the policy only
 // says which proof applies.
 struct AuthDecision {
   enum class Kind {
-    Accept,  // already proved, or nothing to prove
-    Digest,  // RFC 3261 22.3 in a realm this node serves
+    Accept,   // already proved, or nothing to prove
+    Digest,   // RFC 3261 22.3 in a realm this node serves
+    Trusted,  // from a trunk, proved by where it came from; `trunk` names it
     Reject,
   };
 
@@ -69,11 +73,19 @@ struct AuthDecision {
   // subscriber registered over is trusted, and credentials for any subscriber pass.
   bool from_must_match = true;
 
+  // Trusted.
+  std::string trunk;
+
   // Reject.
   std::uint16_t code = 403;
   std::string reason = "Forbidden";
 
   static AuthDecision accept() { return AuthDecision{Kind::Accept}; }
+  static AuthDecision trusted(std::string trunk) {
+    AuthDecision decision{Kind::Trusted};
+    decision.trunk = std::move(trunk);
+    return decision;
+  }
   static AuthDecision digest(std::shared_ptr<types::Realm> realm, bool from_must_match = true) {
     AuthDecision decision{Kind::Digest};
     decision.realm = std::move(realm);
@@ -105,16 +117,20 @@ struct Target {
   std::shared_ptr<types::SIPUri> uri;
   std::shared_ptr<types::SIPUri> next_hop;
 
+  // Uri: the trunk this leaves by, by name. The node answers its challenges with the trunk's credentials.
+  std::string trunk;
+
   static Target of(std::shared_ptr<types::Subscriber> subscriber, std::optional<std::vector<types::Location>> bindings = std::nullopt) {
     Target target{Kind::Subscriber};
     target.subscriber = std::move(subscriber);
     target.bindings = std::move(bindings);
     return target;
   }
-  static Target to(std::shared_ptr<types::SIPUri> uri, std::shared_ptr<types::SIPUri> next_hop = nullptr) {
+  static Target to(std::shared_ptr<types::SIPUri> uri, std::shared_ptr<types::SIPUri> next_hop = nullptr, std::string trunk = {}) {
     Target target{Kind::Uri};
     target.uri = std::move(uri);
     target.next_hop = std::move(next_hop);
+    target.trunk = std::move(trunk);
     return target;
   }
 };
