@@ -33,6 +33,38 @@ namespace athenasip::policy {
 
 inline constexpr char kind[] = "policy";
 
+// A change to the copies the node forwards, never to the request as it arrived. The headers that carry the
+// transaction, the dialog and the route are not for a policy to touch (HeaderEdit::guarded).
+struct HeaderEdit {
+  enum class Op {
+    Set,     // every value of the header replaced by this one
+    Add,     // one more value
+    Remove,  // every value gone
+    From,    // the From's display name, user or host; never its tag
+  };
+
+  Op op = Op::Set;
+  std::string name;
+  std::string value;
+
+  // From.
+  std::optional<std::string> display;
+  std::optional<std::string> user;
+  std::optional<std::string> host;
+
+  // Whether a header is one a policy may not edit: Via, Route, Record-Route, Path, CSeq, Call-ID, Max-Forwards,
+  // Content-Length, Content-Type, Contact, From (through Op::From only) and To, by their names and compact forms.
+  static bool guarded(const std::string& name) {
+    std::string lowered;
+    for (const char c : name) lowered.push_back(static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c));
+    for (const char* forbidden : {"via", "v", "route", "record-route", "path", "cseq", "call-id", "i", "max-forwards", "content-length", "l", "content-type",
+                                  "c", "contact", "m", "from", "f", "to", "t"}) {
+      if (lowered == forbidden) return true;
+    }
+    return false;
+  }
+};
+
 // A request as the policy sees it: the message, and what the node knows about it that the message does not
 // say. The node acts on a policy's answer; a policy never sends anything.
 struct RequestView {
@@ -52,6 +84,9 @@ struct RequestView {
 
   // After authorize: the trunk the policy trusted the request as coming from, by name; empty otherwise.
   std::string trunk;
+
+  // Made by route, applied to every copy forwarded.
+  std::vector<HeaderEdit> edits;
 };
 
 // How the caller of an out-of-dialog request is to be proved. The node challenges and verifies; the policy only

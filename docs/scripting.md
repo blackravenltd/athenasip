@@ -76,6 +76,14 @@ retried request as it saw the first.
 | `source` | `{transport =, address =, port =, reliable =, authenticated =, flow =}` |
 | `request:header(name)` | The first value of a header, as text, or `nil` |
 | `request:headers(name)` | Every value of a header, as a list |
+| `request:set_header(name, value)` | In `route`: every value of a header replaced, on what the node forwards |
+| `request:add_header(name, value)`, `request:remove_header(name)` | The same, adding a value or removing them all |
+| `request:set_from{display =, user =, host =}` | The From the far end sees, for caller ID. Its tag stays: it names the dialog. |
+
+The edits apply to every copy the node forwards, never to the request as it arrived, and a
+script cannot touch the headers that carry the transaction, the dialog or the route: Via,
+Route, Record-Route, Path, CSeq, Call-ID, Max-Forwards, Content-Length, Content-Type,
+Contact, To, and From except through `set_from`. Trying is an error naming the header.
 
 `on_failure` also gets `response` (`code`, `reason`, `:header()`, `:headers()`) and
 `state` (`tried`, `remaining`, `best`).

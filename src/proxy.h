@@ -148,6 +148,9 @@ class Proxy : public TransactionUser {
     // The branch in flight has had its challenge answered; a second challenge is a failure.
     bool challenge_answered = false;
 
+    // The policy's edits, applied to every copy forwarded.
+    std::vector<policy::HeaderEdit> edits;
+
     // The realm's media policy, when target determination found a realm. In-dialog requests use the call's.
     std::optional<types::MediaPolicy> media_policy;
 

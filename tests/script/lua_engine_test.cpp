@@ -383,3 +383,31 @@ TEST(LuaEngineTest, AScriptReadsATrunkButNotItsPassword) {
   ASSERT_TRUE(outcome.finished) << outcome.error;
   EXPECT_EQ(outcome.values, (std::vector<std::string>{"acme", "sip.acme.example", "nil", "+1", "10", "true", "false", "1", "true"}));
 }
+
+// A script edits what the node forwards, but never the headers that carry the transaction, the dialog or the route.
+TEST(LuaEngineTest, AScriptCannotEditTheHeadersTheNodeOwns) {
+  EngineFixture f;
+  ASSERT_EQ(f.load(R"(
+    function edit(request)
+      request:set_header("P-Asserted-Identity", "<sip:+442012345678@example.com>")
+      request:set_from{user = "+442012345678"}
+      local refused = {}
+      for _, name in ipairs({"Via", "CSeq", "call-id", "Contact", "To", "Record-Route", "f"}) do
+        if not pcall(request.set_header, request, name, "x") then refused[#refused + 1] = name end
+      end
+      return table.concat(refused, ",")
+    end
+  )"),
+            "");
+
+  auto view = std::make_shared<policy::RequestView>();
+  view->message = std::make_shared<SIPMessage>();
+  view->message->header = std::make_shared<SIPHeader>("INVITE sip:bob@example.com SIP/2.0\r\nCall-ID: edits\r\n");
+
+  const auto outcome = f.call("edit", [view](lua_State* L, const std::shared_ptr<bool>& live) { return script::push_request(L, view, live), 1; });
+  ASSERT_TRUE(outcome.finished) << outcome.error;
+  EXPECT_EQ(outcome.values, std::vector<std::string>{"Via,CSeq,call-id,Contact,To,Record-Route,f"});
+  ASSERT_EQ(view->edits.size(), 2u);
+  EXPECT_EQ(view->edits[0].name, "P-Asserted-Identity");
+  EXPECT_EQ(view->edits[1].op, policy::HeaderEdit::Op::From);
+}

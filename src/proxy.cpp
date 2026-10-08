@@ -110,6 +110,41 @@ void shift_cseq(const std::shared_ptr<SIPMessage>& message, std::int64_t delta) 
   cseq->sequence = moved < 0 ? 0 : static_cast<std::uint64_t>(moved);
 }
 
+// The policy's changes to a forwarded copy. HeaderEdit::guarded headers were refused before they got here.
+void apply_edits(const std::shared_ptr<SIPMessage>& copy, const std::vector<policy::HeaderEdit>& edits) {
+  for (const auto& edit : edits) {
+    switch (edit.op) {
+      case policy::HeaderEdit::Op::Set:
+        copy->header->clear(edit.name);
+        copy->header->add(edit.name, edit.value);
+        break;
+      case policy::HeaderEdit::Op::Add:
+        copy->header->add(edit.name, edit.value);
+        break;
+      case policy::HeaderEdit::Op::Remove:
+        copy->header->clear(edit.name);
+        break;
+      case policy::HeaderEdit::Op::From: {
+        if (!copy->header->contains("From")) break;
+        auto from = copy->header->headers_map["From"][0]->as<SIPIdentityHeader>();
+        if (from == nullptr || from->value == nullptr || from->value->uri == nullptr) break;
+
+        // A copy, so the request as received keeps the From it arrived with. The tag stays: it names the dialog.
+        auto identity = std::make_shared<SIPIdentity>(*from->value);
+        identity->uri = std::make_shared<SIPUri>(*from->value->uri);
+        if (edit.display) identity->display_name = edit.display->empty() ? std::nullopt : std::optional<std::string>(*edit.display);
+        if (edit.user) identity->uri->user = *edit.user;
+        if (edit.host) identity->uri->host = *edit.host;
+        identity->wrapped = true;
+
+        copy->header->clear("From");
+        copy->header->add("From", std::make_shared<SIPIdentityHeader>(identity));
+        break;
+      }
+    }
+  }
+}
+
 std::size_t wire_size(const std::shared_ptr<SIPMessage>& message) {
   message->header->clear("Content-Length");
   message->header->add("Content-Length", std::make_shared<UIntHeader>(message->body.size()));
@@ -532,7 +567,8 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
 
   // RFC 3261 16.5: the policy names the targets.
   auto self = shared_from_this();
-  core->policy()->route(core->strand(), _view(request, false), [this, self, context](plugins::Result<policy::RouteDecision> decided) {
+  auto view = _view(request, false);
+  core->policy()->route(core->strand(), view, [this, self, context, view](plugins::Result<policy::RouteDecision> decided) {
     auto core = _core.lock();
     if (!core) return;
 
@@ -546,6 +582,8 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
 
     auto& decision = decided.value;
     if (decision.kind == policy::RouteDecision::Kind::Reply) return _send_status(context->server, request, decision.code, decision.reason);
+
+    context->edits = view->edits;
 
     // Read once here rather than per message with a body, and kept on the call for in-dialog requests, which ask
     // the policy nothing.
@@ -897,6 +935,8 @@ void Proxy::_forward_to(const std::shared_ptr<Context>& context, const Target& t
 
   // The CSeq space the far end has seen, raised by each challenge this node answered for it.
   if (context->cseq_offset != 0) shift_cseq(copy, static_cast<std::int64_t>(context->cseq_offset));
+
+  apply_edits(copy, context->edits);
 
   if (context->rewrite_contact) _rewrite_contact(copy, context->request->channel.lock());
 
