@@ -13,9 +13,11 @@
 #include <boost/asio/ssl.hpp>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <future>
 #include <iostream>
 #include <optional>
+#include <sstream>
 #include <string>
 
 #include "api/admin_api.h"
@@ -33,6 +35,7 @@
 #include "cli.h"
 #include "cli_add_user.h"
 #include "cli_check.h"
+#include "cli_explain.h"
 #include "cluster_ca.h"
 #include "config.h"
 #include "config_schema.h"
@@ -185,7 +188,7 @@ int main(int argc, char* argv[]) {
   // An administrative command logs at WARN so its answer is the whole output. A node logs
   // at DEBUG until the configuration sets the level.
   const auto administering = !options.add_user.empty() || !options.reset_password.empty() || options.print_config || options.check || options.list_plugins ||
-                             !options.print_schema.empty();
+                             !options.print_schema.empty() || !options.explain.empty();
 
   auto logger = std::make_shared<loggers::LoggerStdIO>(administering ? LogLevel::WARN : LogLevel::DEBUG);
 
@@ -317,6 +320,37 @@ int main(int argc, char* argv[]) {
   if (!datastore_connected.ok) {
     logger->error("Datastore Connection Failed: " + config->db_url + " - " + datastore_connected.error);
     return -3;
+  }
+
+  // --explain needs the datastore and the policy, and a Core to lend the policy what it decides with; it starts no
+  // listener and joins no bus.
+  if (!options.explain.empty()) {
+    const auto source = cli::parse_explain_source(options.explain_from.empty() ? "udp:192.0.2.1:5060" : options.explain_from);
+    std::ifstream file(Util::expand_path(options.explain));
+    std::stringstream request;
+    request << file.rdbuf();
+    if (!source || !file) {
+      std::cerr << "athenasip: " << (!source ? "--from is an address, as udp:203.0.113.5:5060" : "cannot read " + options.explain) << "\n";
+      datastore->close();
+      return 2;
+    }
+
+    auto policy = policy::Policy::create_driver(logger, config->policy_url);
+    auto quiet = EventSystem::create_driver(logger, "local://");
+    if (!policy || !configure_plugin(logger, policy, config) || !quiet) {
+      std::cerr << "athenasip: the policy " << config->policy_url << " did not start\n";
+      datastore->close();
+      return 1;
+    }
+
+    auto core = std::make_shared<Core>(logger, config, datastore, quiet);
+    core->policy_register(policy);
+    for (const auto& transport : config->advertised_transports()) core->local_address_add(transport.address + ":" + std::to_string(transport.port));
+
+    const auto explained = cli::explain(logger, core, request.str(), *source);
+    std::cout << explained.text;
+    datastore->close();
+    return explained.ok ? 0 : 1;
   }
 
   // --reset-password and --add-user need only the datastore, then exit. They connect no
