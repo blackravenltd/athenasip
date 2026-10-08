@@ -42,6 +42,8 @@
 #include "core.h"
 #include "datastores/datastore.h"
 #include "datastores/datastore_drivers.h"
+#include "dns/resolver.h"
+#include "dns/sip_locator.h"
 #include "events/event_system.h"
 #include "events/event_system_drivers.h"
 #include "events/topics.h"
@@ -188,7 +190,7 @@ int main(int argc, char* argv[]) {
   // An administrative command logs at WARN so its answer is the whole output. A node logs
   // at DEBUG until the configuration sets the level.
   const auto administering = !options.add_user.empty() || !options.reset_password.empty() || options.print_config || options.check || options.list_plugins ||
-                             !options.print_schema.empty() || !options.explain.empty();
+                             !options.print_schema.empty() || !options.explain.empty() || options.check_trunks;
 
   auto logger = std::make_shared<loggers::LoggerStdIO>(administering ? LogLevel::WARN : LogLevel::DEBUG);
 
@@ -285,6 +287,28 @@ int main(int argc, char* argv[]) {
     // The configuration loaded, or this would not be reached.
     lines.insert(lines.begin(), cli::CheckLine{true, "configuration", config_path.string()});
     std::cout << cli::report(lines);
+    return cli::passed(lines) ? 0 : 1;
+  }
+
+  // --check-trunks: the trunks from the datastore, each located and sent an OPTIONS. Traffic to the carriers, so
+  // not part of --check.
+  if (options.check_trunks) {
+    auto store = Datastore::create_driver(logger, config->db_url);
+    if (!store || !configure_plugin(logger, store, config)) {
+      std::cerr << "athenasip: no datastore driver for " << cli::redacted(config->db_url) << "\n";
+      return 1;
+    }
+    const auto connected =
+        connect_and_wait([&store](plugins::Executor on, plugins::StatusHandler handler) { store->connect(std::move(on), std::move(handler)); });
+    if (!connected.ok) {
+      std::cerr << "athenasip: cannot reach the datastore - " << connected.error << "\n";
+      return 1;
+    }
+
+    auto locator = std::make_shared<dns::SipLocator>(std::make_shared<dns::UdpResolver>(logger, dns::UdpResolver::servers_from("/etc/resolv.conf")));
+    const auto lines = cli::check_trunks(store, locator, cli::options_probe);
+    store->close();
+    std::cout << (lines.empty() ? std::string("No trunks\n") : cli::report(lines));
     return cli::passed(lines) ? 0 : 1;
   }
 

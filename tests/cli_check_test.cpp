@@ -9,8 +9,11 @@
 #include <gtest/gtest.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/udp.hpp>
+#include <boost/asio/write.hpp>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -336,4 +339,127 @@ TEST(CliCheckTest, EachTrunkIsLocated) {
   const auto* gone = CheckFixture::find(lines, "trunk gone");
   ASSERT_NE(gone, nullptr);
   EXPECT_FALSE(gone->ok) << gone->detail;
+}
+
+namespace {
+
+// A SIP server for the probe: answers each request with `answer`, after ignoring the first `drop` of them.
+struct OptionsResponder {
+  boost::asio::io_context io;
+  boost::asio::ip::udp::socket udp{io, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0)};
+  boost::asio::ip::tcp::acceptor tcp{io, boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0)};
+  std::string answer = "SIP/2.0 200 OK\r\nContent-Length: 0\r\n\r\n";
+  std::atomic<int> drop{0};
+  std::atomic<int> heard{0};
+  std::string last;
+  std::thread thread;
+
+  void start() {
+    receive();
+    tcp.async_accept([this](boost::system::error_code ec, boost::asio::ip::tcp::socket socket) {
+      if (ec) return;
+      auto shared = std::make_shared<boost::asio::ip::tcp::socket>(std::move(socket));
+      auto buffer = std::make_shared<std::array<char, 4096>>();
+      shared->async_read_some(boost::asio::buffer(*buffer), [this, shared, buffer](boost::system::error_code ec, std::size_t size) {
+        if (ec) return;
+        last.assign(buffer->data(), size);
+        heard++;
+        boost::asio::write(*shared, boost::asio::buffer(answer), ec);
+      });
+    });
+    thread = std::thread([this]() { io.run_for(std::chrono::seconds(10)); });
+  }
+
+  void receive() {
+    auto from = std::make_shared<boost::asio::ip::udp::endpoint>();
+    auto buffer = std::make_shared<std::array<char, 4096>>();
+    udp.async_receive_from(boost::asio::buffer(*buffer), *from, [this, from, buffer](boost::system::error_code ec, std::size_t size) {
+      if (ec) return;
+      last.assign(buffer->data(), size);
+      if (heard++ >= drop) udp.send_to(boost::asio::buffer(answer), *from, 0, ec);
+      receive();
+    });
+  }
+
+  ~OptionsResponder() {
+    io.stop();
+    if (thread.joinable()) thread.join();
+  }
+};
+
+}  // namespace
+
+// RFC 3261 17.1.2.2: over UDP an unanswered OPTIONS is sent again, and the answer counts whatever its code.
+TEST(CliCheckTest, TheProbeSendsAnOptionsAndSendsAgainOverUdp) {
+  OptionsResponder responder;
+  responder.drop = 1;
+  responder.answer = "SIP/2.0 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n";
+  responder.start();
+
+  types::Trunk trunk;
+  trunk.name = "acme";
+  trunk.uri = "sip:sip.acme.example";
+  const auto answered = cli::options_probe(trunk, dns::Hop{"udp", "127.0.0.1", responder.udp.local_endpoint().port()});
+
+  ASSERT_TRUE(answered.ok) << answered.error;
+  EXPECT_EQ(answered.value, "407 Proxy Authentication Required") << "a challenge is the carrier answering";
+  EXPECT_EQ(responder.heard, 2) << "the first was not answered, so it was sent again";
+  EXPECT_EQ(responder.last.rfind("OPTIONS sip:sip.acme.example SIP/2.0\r\n", 0), 0u) << responder.last;
+  EXPECT_NE(responder.last.find("Via: SIP/2.0/UDP 127.0.0.1:"), std::string::npos) << responder.last;
+  EXPECT_NE(responder.last.find("CSeq: 1 OPTIONS"), std::string::npos) << responder.last;
+}
+
+TEST(CliCheckTest, TheProbeSpeaksTcp) {
+  OptionsResponder responder;
+  responder.start();
+
+  types::Trunk trunk;
+  trunk.name = "acme";
+  trunk.uri = "sip:sip.acme.example;transport=tcp";
+  const auto answered = cli::options_probe(trunk, dns::Hop{"tcp", "127.0.0.1", responder.tcp.local_endpoint().port()});
+
+  ASSERT_TRUE(answered.ok) << answered.error;
+  EXPECT_EQ(answered.value, "200 OK");
+  EXPECT_NE(responder.last.find("Via: SIP/2.0/TCP "), std::string::npos) << responder.last;
+}
+
+TEST(CliCheckTest, AProbeNobodyAnswersFails) {
+  boost::asio::io_context io;
+  boost::asio::ip::udp::socket silent(io, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0));
+
+  types::Trunk trunk;
+  trunk.name = "acme";
+  trunk.uri = "sip:sip.acme.example";
+  const auto answered = cli::options_probe(trunk, dns::Hop{"udp", "127.0.0.1", silent.local_endpoint().port()});
+  EXPECT_FALSE(answered.ok);
+  EXPECT_EQ(answered.error, "no answer in 4 s");
+}
+
+// With a probe, each trunk's line says what its first hop answered.
+TEST(CliCheckTest, CheckTrunksReportsWhatEachTrunkAnswered) {
+  auto logger = std::make_shared<MockLogger>();
+  auto datastore = std::make_shared<datastores::MemoryDatastore>(logger, std::make_shared<types::URL>("memory://"));
+  SyncDatastore store(datastore);
+  ASSERT_TRUE(store.connect());
+  for (const auto& name : {"acme", "silent"}) {
+    auto trunk = std::make_shared<types::Trunk>();
+    trunk->name = name;
+    trunk->uri = "sip:203.0.113.10:5060";
+    ASSERT_TRUE(store.trunk_create(trunk));
+  }
+
+  const auto lines =
+      cli::check_trunks(datastore, std::make_shared<dns::SipLocator>(std::make_shared<FakeResolver>()), [](const types::Trunk& trunk, const dns::Hop&) {
+        return trunk.name == "acme" ? plugins::Result<std::string>::success("200 OK") : plugins::Result<std::string>::failure("no answer in 4 s");
+      });
+
+  const auto* acme = CheckFixture::find(lines, "trunk acme");
+  ASSERT_NE(acme, nullptr);
+  EXPECT_TRUE(acme->ok);
+  EXPECT_NE(acme->detail.find("udp 203.0.113.10:5060 answered 200 OK in "), std::string::npos) << acme->detail;
+
+  const auto* silent = CheckFixture::find(lines, "trunk silent");
+  ASSERT_NE(silent, nullptr);
+  EXPECT_FALSE(silent->ok);
+  EXPECT_NE(silent->detail.find("no answer in 4 s"), std::string::npos) << silent->detail;
 }

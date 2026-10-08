@@ -29,6 +29,9 @@ struct Options {
   // and exit. Nothing is started.
   bool check = false;
 
+  // Send each trunk an OPTIONS from a socket of its own, say which answered, and exit.
+  bool check_trunks = false;
+
   // Load the plugin modules in plugins.path, say which loaded and why any did not, and the
   // drivers there are for each kind, and exit.
   bool list_plugins = false;
@@ -111,6 +114,8 @@ inline Options parse(int argc, char* argv[]) {
       }
     } else if (argument == "--check") {
       options.check = true;
+    } else if (argument == "--check-trunks") {
+      options.check_trunks = true;
     } else if (argument == "--list-plugins") {
       options.list_plugins = true;
     } else if (takes("--config", "a path", options.config) || takes("-c", "a path", options.config)) {
@@ -156,6 +161,8 @@ inline std::string usage() {
          "  --check               try the datastore, the event bus, the media engine, the\n"
          "                        certificates and the cluster's other nodes, say which\n"
          "                        of them answered, and exit; nothing is started\n"
+         "  --check-trunks        send each trunk an OPTIONS from a socket of its own, say\n"
+         "                        which answered and how fast, and exit\n"
          "  --explain FILE        put the SIP request in FILE to the routing policy, against\n"
          "                        the datastore, say what it decided at each step, and\n"
          "                        exit; nothing is sent\n"
