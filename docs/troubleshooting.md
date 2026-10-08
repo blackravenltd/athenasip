@@ -10,7 +10,8 @@ as the node writes them; `<...>` stands for the part that varies.
 |---|---|
 | The log | Each refusal is logged with its reason and the code sent. Keep `log.level` at `debug` or `info` while investigating. |
 | `sip.log_messages: true` | Every SIP message in full, including the SDP. Digest headers are redacted. |
-| `athenasip --check` | Tries the datastore, event bus, media engine, every certificate and, in a cluster, each peer. Safe beside a running node. |
+| `athenasip --check` | Tries the datastore, event bus, media engine, routing scripts, every certificate and, in a cluster, each peer, and locates each trunk. Safe beside a running node. |
+| `athenasip --explain FILE` | What the routing policy decides for a request, step by step, against the live data ([Scripting](scripting.md#trying-a-request)) |
 | `athenasip --print-config` | The configuration the node actually reads, with defaults filled in, and which file it came from. |
 | `GET /api/v1/registrations` | Who is registered, from where, until when |
 | `GET /api/v1/calls` | Calls in progress on this node, with media packet counts |
@@ -107,7 +108,8 @@ itself. [Configuration](configuration.md#push) has each service's settings.
 ## Routing scripts
 
 With `lua://`, a script that fails answers the caller 500 and logs where. `athenasip --check`
-loads the scripts the way the node does.
+loads the scripts the way the node does, and `athenasip --explain` shows what they decide
+for one request.
 
 | Response or symptom | Log | Cause and fix |
 |---|---|---|
@@ -124,6 +126,7 @@ loads the scripts the way the node does.
 | Response or symptom | Log | Cause and fix |
 |---|---|---|
 | `registration.state` is `failed` | `Cannot register to trunk <name> - <reason>` | `no answer` or `no flow to <address>`: the carrier cannot be reached, a firewall or the `uri`. `the carrier refused the trunk's credentials`: the username or password. |
+| `--check` says `FAIL  trunk <name>  <uri> - DNS gives nowhere to send it` | | The trunk's `uri`, or its `proxy`, names a host with no SIP service in DNS and no address. Check the spelling, or give the carrier's address as `proxy`. |
 | Nothing registers | No `Registering to trunk` line on any node | The trunk has no `register.enabled`, or the datastore cannot hold the lease (`Cannot read the trunks - <error>`). |
 | TLS to the carrier fails | `Cannot load <file> for TLS to a trunk - <error>` | The trunk's `tls_ca` cannot be read by the service user. |
 | A call out is 404 | `No trunk carries <number> - 404` | No trunk's `prefixes` match the number, after `country` is applied. |

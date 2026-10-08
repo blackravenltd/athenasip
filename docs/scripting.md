@@ -39,6 +39,48 @@ and change the hook you need.
 `athenasip --check` loads the scripts and runs their `init()`, and fails with the file
 and line of the first error. Changing `policy.url` takes a restart.
 
+## Trying a request
+
+`athenasip --explain` puts a request from a file to the policy the configuration names,
+against the live datastore, and says what it decided at each step. It sends nothing and
+changes nothing, so it is safe beside a running node:
+
+```
+$ cat invite.txt
+INVITE sip:02071234567@example.com SIP/2.0
+Via: SIP/2.0/UDP 192.0.2.10;branch=z9hG4bK-1
+From: <sip:alice@example.com>;tag=1
+To: <sip:02071234567@example.com>
+Call-ID: try-1
+CSeq: 1 INVITE
+
+$ athenasip --explain invite.txt --from udp:192.0.2.10:5060
+Request    INVITE sip:02071234567@example.com
+From       <sip:alice@example.com>;tag=1
+Source     udp 192.0.2.10:5060
+Policy     lua 1.0.0, scripts 3f1c9a20b7d4
+
+authorize  digest: challenged for realm example.com, the credentials must be the From's; what follows assumes they are good
+route      forward, trying in turn:
+  1. sip:+442071234567@sip.acme.example, out by trunk acme, whose challenges the node answers
+           media anchored, profile mirror
+           Contact left alone
+           on what is forwarded: From: user +442071234567
+           on what is forwarded: set P-Asserted-Identity: <sip:+442071234567@sip.acme.example>
+```
+
+`athenasip --check` locates each trunk the same way, and fails one that resolves nowhere:
+
+```
+ok    policy                 lua 1.0.0 at lua://
+ok    trunk acme             sip:sip.acme.example;transport=tls - tls 198.51.100.7:5061
+```
+
+`--from` is where the request is taken to have come from, which decides whether it is a
+trunk's: `udp:203.0.113.5:5060`, `tls:203.0.113.5`, or an address alone for UDP on 5060.
+Line feeds alone are fine in the file. A request with a Route, an ACK, a CANCEL or one
+inside a dialog is said to be the node's to route. A script that raises prints its error.
+
 ## Changing the scripts
 
 Edit the scripts, then have the node read them again, without a restart:
