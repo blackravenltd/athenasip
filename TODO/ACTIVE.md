@@ -1,6 +1,6 @@
 # AthenaSIP - Active Work
 
-Work happens on `develop`; `main` carries the last release, and `0.9.0` is the current
+Work happens on `develop`; `main` carries the last release, and `0.10.0` is the current
 one. Line numbers refer to the current tree; update them as files move.
 
 Milestones 1, 2 and 3 are complete apart from the items left under Milestone 3 below.
@@ -13,19 +13,21 @@ Accepted state, media addresses that may be names, `--reset-password`, `--check`
 against a real service for want of credentials), the second node and client failover, the
 rtpengine pool, the local UA that ends dead calls with a BYE, and the configuration schema
 with `--print-schema`. The README and documentation were checked against the code on
-2026-10-07 and the quick-start guides written. 1296 unit tests (one skipped without a
-resolver) at the tag.
+2026-10-07 and the quick-start guides written.
 
-Since `0.9.0`, on `develop`: Milestone 5's policy seam, the Lua engine, trunks end to end,
-and the TLS use-after-free that corrupted the heap on every closed TLS connection. Both
-nodes run `a08cc6d` (deployed 2026-10-08). node-a runs `lua://` with
+`0.10.0` (2026-10-08) carried, since `0.9.0`: most of Milestone 5 - the policy seam with
+`builtin://` as the default, the Lua engine and its standard scripts, and trunks end to
+end - the TLS use-after-free that corrupted the heap on every closed TLS connection, the
+rtcp-mux fix for a WebRTC caller whose callee needs plain RTP, and the automatic live
+tests. 1391 unit tests at the tag. The sipp harnesses were not run on the tagged tree, and
+not yet under `lua://` (Docker). node-a runs `3bb2911` with `lua://` and
 `athenasip.trunks` from `/etc/athenasip/scripts/main.lua` and a trunk `node-b` to
 node-b (registering as node-b's subscriber 1003, outbound proxy 10.102.1.50); its
-previous configuration is `/etc/athenasip/config.yaml.before-lua`. node-a runs `3bb2911`;
-node-b runs `a08cc6d`, without the rtcp-mux fix (`6a163a1`) that a call from AthenaPhone to a
-plain-RTP phone needs, until the maintainer says yes to deploying it. A probe on node-a
-(`athenasip-probe.timer`) runs `test/interop/verify.py test/interop/live.json` every 15
-minutes and publishes `athenasip/probes/node-a/calls`.
+previous configuration is `/etc/athenasip/config.yaml.before-lua`. node-b runs `a08cc6d`,
+without the rtcp-mux fix (`6a163a1`) that a call from AthenaPhone to a plain-RTP phone
+needs, until the maintainer says yes to deploying it. A probe on node-a (`athenasip-probe.timer`) runs
+`test/interop/verify.py test/interop/live.json` every 15 minutes and publishes
+`athenasip/probes/node-a/calls`.
 
 **Two live nodes**, neither production:
 - `node-a` (10.101.1.20): builtin relay, AthenaPhone's usual home.
