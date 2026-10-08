@@ -22,6 +22,7 @@ That installs:
 | `/etc/athenasip/config.yaml` | the live configuration, only if there is not one already |
 | `/usr/local/share/doc/athenasip/config.example.yaml` | the annotated example, always |
 | `/lib/systemd/system/athenasip.service` | the unit (Linux only) |
+| `/usr/local/share/athenasip/scripts/` | the standard Lua scripts, to read and to start your own from; the node runs the copies built into it |
 
 Installing over an existing node keeps its configuration.
 
@@ -52,6 +53,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now athenasip
 systemctl status athenasip
 journalctl -u athenasip -f
+sudo systemctl reload athenasip     # read the routing scripts again, with lua://
 ```
 
 | | |
@@ -60,7 +62,7 @@ journalctl -u athenasip -f
 | `athenasip --config PATH` | read a particular configuration |
 | `athenasip --print-config` | print the effective configuration, defaults resolved, and exit |
 | `athenasip --print-schema` | print every setting as a JSON Schema for an editor, or with `=markdown` as the reference, and exit |
-| `athenasip --check` | try the datastore, event bus, media engine, certificates and cluster peers, report, and exit |
+| `athenasip --check` | try the datastore, event bus, media engine, routing scripts, certificates and cluster peers, report, and exit |
 | `athenasip --list-plugins` | load the plugin modules in `plugins.path`, say which loaded, list every driver, and exit |
 | `athenasip --help` | every option |
 
@@ -130,7 +132,7 @@ which an upgrade replaces.
 ```bash
 sudo systemctl disable --now athenasip
 sudo rm -f /lib/systemd/system/athenasip.service /usr/local/bin/athenasip
-sudo rm -rf /usr/local/share/doc/athenasip
+sudo rm -rf /usr/local/share/doc/athenasip /usr/local/share/athenasip
 sudo systemctl daemon-reload
 ```
 

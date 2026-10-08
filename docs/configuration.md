@@ -260,7 +260,10 @@ its Request-URI.
 
 `lua://` makes those decisions Lua scripts, in `policy.lua`; with no script of your own
 it runs the standard one, which does exactly what `builtin://` does.
-[Scripting](scripting.md) has the settings, the hooks and the library.
+Trunks to carriers need `lua://`, with the standard `athenasip.trunks` script or your own:
+[Your first trunk](quick-start/first-trunk.md). [Scripting](scripting.md) has the
+settings, the hooks and the library. Changing `url` takes a restart; changing the scripts
+takes `systemctl reload athenasip`.
 
 ## `plugins`
 

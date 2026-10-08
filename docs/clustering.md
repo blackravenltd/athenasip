@@ -8,13 +8,18 @@ the service with it. Any node serves any subscriber. Terms are in the
 
 | Shared, through | What |
 |---|---|
-| The datastore (Redis) | Realms, subscribers, bindings, administrators and their sessions, Digest nonces, call records |
-| The event bus (an MQTT broker) | Each node's status: whether it is up, its addresses, its inter-node listener. This is how nodes find each other. |
+| The datastore (Redis) | Realms, subscribers, trunks, bindings, administrators and their sessions, Digest nonces, call records, and which node registers each trunk |
+| The event bus (an MQTT broker) | Each node's status: whether it is up, its addresses, its inter-node listener and its policy. This is how nodes find each other. Each trunk's registration. |
 
 | Not shared | Why it matters |
 |---|---|
 | Connections | A phone's TCP, TLS or WebSocket connection is held by the node it registered through. A call for that phone arriving at another node is forwarded to the holding node over the inter-node listener. |
 | Calls in progress | A call lives on the nodes it passed through. If one of them dies, the call goes with it. |
+| Configuration and scripts | Each node reads its own file and, with `lua://`, its own scripts. Keep them the same on every node: a call may be decided by any of them. The node status carries the scripts' fingerprint, so a node running different ones shows. |
+
+A trunk that registers is registered by one node at a time, which holds a lease on it in
+Redis; when that node stops, another takes it over within two minutes. A carrier that
+sends calls to a fixed address can be given every node's address.
 
 So a cluster needs `redis://` and `mqtt://`. With `memory://` or `local://` each node is on
 its own.

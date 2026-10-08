@@ -5,7 +5,8 @@ and authorisation to be scripted, how the decisions leave the C++ and what the s
 are handed in their place. [Part 2](scripting-2-the-engine.md) is the Lua engine, the
 standard scripts that reproduce today's behaviour, and the scripts that go beyond it.
 
-Written 2026-10-07 against `0.9.0`. Line numbers are from that tag. It supersedes the
+Built in `0.10.0`: [Scripting](../scripting.md) is the reference for what shipped, and
+`TODO/COMPLETED.md` records where it differs from this design. Written 2026-10-07 against `0.9.0`. Line numbers are from that tag. It supersedes the
 decision of 2026-09-17 that Lua would return only as a routing-policy plugin: Tom decided
 on 2026-10-07 that scripting is how routing and authorisation are expressed, because the
 alternative, a configuration option for every case a deployment needs, makes for a
