@@ -251,13 +251,16 @@ Who may call, and where a request goes.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `url` | `builtin://` | The policy driver |
+| `url` | `builtin://` | `builtin://` or `lua://` |
 
 `builtin://` serves this node's realms and nothing more, with no script: a caller whose
 From is in a realm here proves it with Digest, anybody may call into a realm here, a
 request for a realm here goes to its subscriber's devices and any other request goes to
-its Request-URI. It is what a node has always done. Scripted routing, and with it trunks,
-is being built ([design](design/scripting-1-the-node.md)).
+its Request-URI.
+
+`lua://` makes those decisions Lua scripts, in `policy.lua`; with no script of your own
+it runs the standard one, which does exactly what `builtin://` does.
+[Scripting](scripting.md) has the settings, the hooks and the library.
 
 ## `plugins`
 

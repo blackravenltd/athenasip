@@ -179,7 +179,19 @@ Who may call, and where a request goes. Each driver may have a section of its ow
 
 | Setting | Takes | Default | |
 |---|---|---|---|
-| `policy.url` | text | `builtin://` | builtin:// serves this node's realms and nothing more, with no script. |
+| `policy.url` | text | `builtin://` | builtin:// serves this node's realms and nothing more, with no script. lua:// runs scripts (docs/scripting.md). |
+
+### `policy.lua`
+
+The lua:// policy: routing and authorisation as Lua scripts (docs/scripting.md).
+
+| Setting | Takes | Default | |
+|---|---|---|---|
+| `policy.lua.path` | list | `[]` | Directories searched, in order, for the entry script and for require. The standard scripts are searched last. |
+| `policy.lua.entry` | text | `main.lua` | The script that defines the hooks. With none on the path, the standard one, which behaves as builtin://. |
+| `policy.lua.instruction_limit` | integer, 1000 or more | `1000000` | Lua instructions one hook call may run, not counting time waiting on the store. |
+| `policy.lua.timeout_ms` | integer, 1 or more | `5000` | How long one hook call may take, waiting included, in milliseconds. |
+| `policy.lua.memory_limit_mb` | integer, 1 or more | `64` | Megabytes the scripts may hold. |
 
 ## `plugins`
 

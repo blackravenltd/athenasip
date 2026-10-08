@@ -2862,3 +2862,43 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       takes a `cluster` flag, set by the inter-node listener and by `_secure_flow` under the
       cluster context, and names nobody without it
       (`ClusterTlsTest.ACertificateFromAnotherAuthorityNamesNoNode`, red before the fix).
+
+### The engine (2026-10-08)
+
+- [x] **The Lua engine** (`src/script/lua_engine.*`, replacing the stubs that were never
+      built). Lua 5.4 from the system (Homebrew `lua@5.4`, Debian `liblua5.4-dev`), bound by
+      hand. One state per load with a counting allocator; a coroutine per hook call; a store
+      lookup issues the asynchronous datastore call and yields, and the answer resumes it by
+      a post, never inline. Budgets for instructions (counted every 1000, waiting excluded),
+      wall clock and memory. An error carries the script's file, line and a traceback. A
+      reload that fails keeps the running scripts; a call in flight finishes on the state it
+      started on. No `io`, `debug`, `package`, `load`, `loadfile` or `dofile`; of `os`, the
+      clock only; `require` confined to `policy.lua.path` and the standard scripts, with
+      names that cannot climb out of a directory. 15 tests in `tests/script/`.
+- [x] **The library** (`src/script/lua_library.*`): the request (method, URIs, From, To,
+      `in_dialog`, the node's flags, the source, headers), the response for `on_failure`,
+      URIs, realms with `behaviour` and `behaviour_effective`, subscribers, bindings,
+      `athenasip.store`, `.node`, `.config` (parsed values, then the file, then the
+      schema's default), `.log` with the script's file and line, `.sip`. Objects handed to a
+      hook refuse use once the call has ended. The answers (`athenasip.auth`, `.route`,
+      `.register`) are made by `scripts/athenasip/prelude.lua`, which checks its arguments.
+- [x] **`lua://`** (`src/policy/lua_policy.*`) with `policy.lua.path`, `.entry`,
+      `.instruction_limit`, `.timeout_ms`, `.memory_limit_mb`. The standard scripts
+      (`scripts/main.lua`, `scripts/athenasip/standard.lua`) are built into the binary by
+      CMake, so a node always has the ones that match it, and installed to
+      `share/athenasip/scripts` to read and copy. `standard.lua` is `builtin_policy.cpp`
+      line for line. A script with no `on_failure` goes on, as builtin does.
+- [x] **The proof, kept**: `ATHENA_TEST_POLICY=lua` runs any test against the standard
+      scripts; the whole suite passes that way (1323). `PolicyEquivalenceTest` runs the
+      proxy, registrar, dialog and core suites in a child under the scripts, and feeds both
+      drivers the same requests against one store, comparing every field of every decision,
+      store failures included. Two positive controls before believing it: `standard.lua`
+      refusing every INVITE failed 112 of those tests, and a one-word change to a reason
+      phrase failed the differential. The first control also found two tests that indexed
+      an empty list when nothing was forwarded (`proxy_flow_routing_test.cpp`); they assert
+      first now.
+- [x] **`athenasip --check`** creates the policy as the node does, so a script that does
+      not compile fails the check with its file and line
+      (`CliCheckTest.AScriptThatDoesNotCompileFailsTheCheckWithItsLine`).
+- [x] `docs/scripting.md` is the reference; Lua is in `docs/compiling.md`, the Linux
+      quick start, `CONTRIBUTING.md`, `CLAUDE.md` and the Dockerfile.

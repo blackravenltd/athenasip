@@ -98,6 +98,9 @@ find_package(OpenSSL REQUIRED COMPONENTS SSL Crypto)
 
 find_package(yaml-cpp CONFIG REQUIRED)
 
+# Routing and authorisation scripts (policy.url: lua://).
+find_package(Lua 5.4 EXACT REQUIRED)
+
 # APNs speaks only HTTP/2.
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(NGHTTP2 REQUIRED IMPORTED_TARGET libnghttp2)
@@ -118,8 +121,22 @@ list(REMOVE_ITEM ATHENA_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp"
 )
 
-# Lua scripting is not built, and the runtime has no Lua dependency.
-list(FILTER ATHENA_SOURCES EXCLUDE REGEX "/src/script/")
+# The standard scripts are built into the binary, so a node always has the ones that match it. Each edit to one
+# reconfigures.
+file(GLOB_RECURSE ATHENA_LUA_SCRIPTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/scripts/*.lua")
+list(SORT ATHENA_LUA_SCRIPTS)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${ATHENA_LUA_SCRIPTS})
+set(ATHENA_STANDARD_SCRIPTS "")
+foreach(script ${ATHENA_LUA_SCRIPTS})
+    file(RELATIVE_PATH script_name "${CMAKE_CURRENT_SOURCE_DIR}/scripts" "${script}")
+    file(READ "${script}" script_body)
+    string(APPEND ATHENA_STANDARD_SCRIPTS "    {\"${script_name}\", R\"athenasip_lua(${script_body})athenasip_lua\"},\n")
+endforeach()
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/script/standard_scripts.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/standard_scripts.h"
+    @ONLY
+)
 
 # The rtpproxy client is not built: nothing constructs it. It is the starting point for
 # an rtpproxy MediaEngine driver.
@@ -156,7 +173,10 @@ target_link_libraries(athena_core
         OpenSSL::Crypto
         PkgConfig::NGHTTP2
         "${ATHENA_YAML_TARGET}"
+        ${LUA_LIBRARIES}
 )
+
+target_include_directories(athena_core PUBLIC ${LUA_INCLUDE_DIR})
 
 add_executable(athenasip "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
 
@@ -215,6 +235,9 @@ if(ATHENA_BUILD_TESTING)
     # The TLS listener tests need the certificates, and tests run in the build tree.
     target_compile_definitions(athenasip_tests PRIVATE ATHENA_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 
+    # tests/policy runs the proxy and registrar tests again, in a child, against the standard scripts.
+    target_compile_definitions(athenasip_tests PRIVATE ATHENA_TEST_BINARY="$<TARGET_FILE:athenasip_tests>")
+
     if(MSVC AND TARGET OpenSSL::applink)
         target_link_libraries(athenasip_tests PRIVATE OpenSSL::applink)
     endif()
@@ -238,6 +261,9 @@ if(NOT DEFINED ATHENA_CONFIG_INSTALL_DIR)
 endif()
 
 install(TARGETS athenasip RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+# The standard scripts are in the binary; installed copies are to read and to start one's own from.
+install(DIRECTORY scripts/ DESTINATION ${CMAKE_INSTALL_DATADIR}/athenasip/scripts FILES_MATCHING PATTERN "*.lua")
 
 # The annotated example is always installed with the docs, as a reference.
 install(FILES config/config.example.yaml

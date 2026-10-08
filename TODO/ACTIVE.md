@@ -446,22 +446,16 @@ cluster CA.
 
 ### The engine
 
-- [ ] The Lua engine (`src/script/` replaced, not extended): one state per generation
-      with a counting allocator, a coroutine per hook call that yields on a store call and
-      resumes on the strand, instruction, wall-clock and memory budgets, errors answered
-      as 500 with file and line in the log, reload that refuses a broken script and never
-      switches a transaction mid-flight, `require` confined to `policy.lua.path`, no `io`,
-      `os.date` and `os.time` only.
-- [ ] The library: `request` as userdata with the fields in the design, header edits
-      with the guard list, `store`, `auth`, `route`, `register`, `node`, `config`, `sip`.
-- [ ] `lua://` and the standard scripts: `main.lua` and `athenasip/standard.lua`, every
-      line annotated with the C++ it reproduces, installed by `cmake --install`.
-- [ ] Proof, kept permanently: the proxy and registrar unit tests run against both
-      drivers; the three harnesses pass under `policy.url: lua://`; a differential fixture
-      in `tests/policy/` feeds recorded requests to both and asserts identical decisions,
-      the 500 paths included.
-- [ ] `athenasip --check` compiles the scripts and runs `init()`; `athenasip --explain
-      <file>` runs a request through `authorize` and `route` and prints each decision.
+Done (`COMPLETED.md`, 2026-10-08): the engine, the library, `lua://` with the standard
+scripts built into the binary, the permanent proof, and `--check`. What is left:
+
+- [ ] The three harnesses under `policy.url: lua://`, once Docker is back.
+- [ ] Reload from outside: `SIGHUP` and `POST /api/v1/policy/reload` calling
+      `LuaPolicy::reload`, which exists and is tested; nothing calls it yet.
+- [ ] `athenasip --explain <file>`: a request from a file through `authorize` and `route`
+      against the live store, printing each decision.
+- [ ] Each node's scripts' hash in `nodes/<id>/status`, so the console can flag a node
+      whose scripts differ.
 
 ### Trunk mechanism
 

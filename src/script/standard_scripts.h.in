@@ -1,0 +1,21 @@
+//
+// AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
+//
+// Copyright (C) 2026 Tom Cully <mail@tomcully.com>
+// Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
+//
+// Generated from standard_scripts.h.in and scripts/ by CMake. Do not edit the generated copy.
+#pragma once
+
+namespace athenasip::script {
+
+// The scripts under scripts/, by their path below it. Searched after policy.lua.path.
+struct StandardScript {
+  const char* name;
+  const char* body;
+};
+
+inline constexpr StandardScript kStandardScripts[] = {
+@ATHENA_STANDARD_SCRIPTS@};
+
+}  // namespace athenasip::script

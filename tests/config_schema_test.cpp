@@ -23,6 +23,7 @@
 #include "media/media_engine_drivers.h"
 #include "mocks/logger_mock.h"
 #include "plugins/plugin_registry.h"
+#include "policy/policy_drivers.h"
 #include "push/push_service_drivers.h"
 
 using namespace athenasip;
@@ -135,6 +136,7 @@ void register_builtin_drivers() {
   events::register_builtin_event_systems(logger);
   media::register_builtin_media_engines(logger);
   push::register_builtin_push_services(logger);
+  policy::register_builtin_policies(logger);
 }
 
 std::string read_file(const std::string& relative) {
@@ -330,6 +332,6 @@ TEST(ConfigSchemaTest, EachDriversSectionIsNamedAfterIt) {
     ++sections;
   }
 
-  // mqtt, builtin, rtpengine, apns, fcm and webpush.
-  EXPECT_EQ(sections, 6u);
+  // mqtt, builtin, rtpengine, apns, fcm, webpush and lua.
+  EXPECT_EQ(sections, 7u);
 }
