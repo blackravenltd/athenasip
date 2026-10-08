@@ -10,10 +10,14 @@
 
 #include "../loggers/logger.h"
 #include "builtin_policy.h"
+#include "lua_policy.h"
 #include "policy.h"
 
 namespace athenasip::policy {
 
-inline void register_builtin_policies(std::shared_ptr<loggers::Logger> logger) { Policy::register_driver<BuiltinPolicy>(logger, "builtin"); }
+inline void register_builtin_policies(std::shared_ptr<loggers::Logger> logger) {
+  Policy::register_driver<BuiltinPolicy>(logger, "builtin");
+  Policy::register_driver<LuaPolicy>(logger, "lua");
+}
 
 }  // namespace athenasip::policy

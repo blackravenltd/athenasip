@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         ca-certificates \
         cmake \
+        liblua5.4-dev \
         libnghttp2-dev \
         libssl-dev \
         libyaml-cpp-dev \
@@ -37,6 +38,7 @@ RUN set -eux; \
 WORKDIR /src
 COPY CMakeLists.txt ./
 COPY src ./src
+COPY scripts ./scripts
 
 # CMake needs packaging/ and config/ at configure time for its install rules, though
 # the image copies the binary out rather than installing.
@@ -55,6 +57,7 @@ FROM debian:trixie-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
+        liblua5.4-0 \
         libnghttp2-14 \
         libssl3 \
         libyaml-cpp0.8 \

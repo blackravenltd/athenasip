@@ -26,8 +26,8 @@ hooks are questions with answers.
 
 The engine holds one `lua_State` built with `lua_newstate` and a custom allocator that
 counts bytes against `policy.lua.memory_limit` (default 64 MB) and refuses beyond it. On
-load it opens `base`, `string`, `table`, `math` and `utf8`, and from `os` only `date` and
-`time`; removes `dofile`, `loadfile` and `load`; installs its own `require` that searches
+load it opens `base`, `string`, `table`, `math` and `utf8`, and from `os` only `date`,
+`time` and `clock`; removes `dofile`, `loadfile` and `load`; installs its own `require` that searches
 `policy.lua.path` only; then runs the entry file and `init()`.
 
 A reload (`SIGHUP`, or `POST /api/v1/policy/reload`) builds a second state the same way.

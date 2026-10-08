@@ -22,6 +22,8 @@
 #include "global_io_context.h"
 #include "media/media_engine.h"
 #include "node_directory.h"
+#include "policy/lua_policy.h"
+#include "policy/policy.h"
 #include "servers/tls_context.h"
 #include "stun.h"
 #include "types/url.h"
@@ -50,6 +52,19 @@ CheckLine check_plugin(const std::string& what, const std::string& url, std::sha
   if (!keep_open || !connected.ok) plugin->close();
 
   return connected.ok ? line(true, what, where) : line(false, what, where + " - " + connected.error);
+}
+
+// Creates and configures the policy as main does. For lua:// that loads the scripts and runs their init(), so a
+// script that does not compile is found here, with its file and line, rather than at the first call.
+CheckLine check_policy(const std::shared_ptr<loggers::Logger>& logger, const std::shared_ptr<Config>& config) {
+  auto policy = policy::Policy::create_driver(logger, config->policy_url);
+  if (!policy) return line(false, "policy", "no driver for " + config->policy_url);
+
+  const auto where = policy->describe() + " at " + config->policy_url;
+  if (policy->configure(config->plugin_root(policy->kind(), policy->name()), *config)) return line(true, "policy", where);
+
+  const auto lua = std::dynamic_pointer_cast<policy::LuaPolicy>(policy);
+  return line(false, "policy", where + " - " + (lua && !lua->error().empty() ? lua->error() : std::string("the driver refused its configuration")));
 }
 
 // Loads a certificate and key the way the listener that uses them does.
@@ -200,6 +215,7 @@ std::vector<CheckLine> check(std::shared_ptr<loggers::Logger> logger, std::share
   }
 
   lines.push_back(check_plugin("media", config->media_url, media::MediaEngine::create_driver(logger, config->media_url), config, connect_and_wait));
+  lines.push_back(check_policy(logger, config));
 
   // Every certificate a listener will load, so a missing file is found before a client is.
   if (config->tls_enable) lines.push_back(check_certificate(logger, "tls certificate", config->tls_cert_pem_filename, config->tls_key_pem_filename));

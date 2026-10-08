@@ -42,8 +42,8 @@ standard requires, watch it fail, then fix the code.
 
 ## Dependencies
 
-Boost, OpenSSL, yaml-cpp and nghttp2 (only because APNs speaks nothing but HTTP/2), plus
-GoogleTest for the test build. Prefer writing
+Boost, OpenSSL, yaml-cpp, nghttp2 (only because APNs speaks nothing but HTTP/2) and Lua
+5.4 (scripting), plus GoogleTest for the test build. Prefer writing
 something by hand over adding a library.
 
 ## Style

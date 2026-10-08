@@ -73,6 +73,13 @@ ATHENA_TEST_REDIS_URL=redis://127.0.0.1:6399 \
 ATHENA_TEST_MQTT_URL=mqtt://127.0.0.1:1883 ./build-tests/athenasip_tests
 ```
 
+Every test runs against the `builtin://` policy. `ATHENA_TEST_POLICY=lua` runs them
+against the standard Lua scripts instead, which must pass the same tests:
+`PolicyEquivalenceTest` does that for the proxy, registrar, dialog and core suites in a
+child process, and feeds both drivers the same requests to compare their decisions. A
+change to `src/policy/builtin_policy.cpp` or `scripts/athenasip/standard.lua` needs the
+same change in the other.
+
 ### Writing one
 
 Tests come from the RFCs and the SIP concepts, never from the current behaviour. Write

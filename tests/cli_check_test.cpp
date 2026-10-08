@@ -7,11 +7,14 @@
 #include "cli_check.h"
 
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/udp.hpp>
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <future>
 #include <memory>
 #include <string>
@@ -25,6 +28,7 @@
 #include "global_io_context.h"
 #include "media/media_engine_drivers.h"
 #include "mocks/logger_mock.h"
+#include "policy/policy_drivers.h"
 #include "stun.h"
 
 using namespace athenasip;
@@ -50,6 +54,7 @@ struct CheckFixture {
     datastores::register_builtin_datastores(logger);
     events::register_builtin_event_systems(logger);
     media::register_builtin_media_engines(logger);
+    policy::register_builtin_policies(logger);
 
     config->sip_node_id = "test-node";
     config->db_url = "memory://";
@@ -250,4 +255,40 @@ TEST(CliCheckTest, SaysWhetherPeersReachThisNode) {
   ASSERT_NE(reached, nullptr) << cli::report(lines);
   EXPECT_FALSE(reached->ok);
   EXPECT_NE(reached->detail.find("node-b"), std::string::npos) << reached->detail;
+}
+
+// lua:// loads its scripts at --check, so one that does not compile is found there, with its file and line.
+TEST(CliCheckTest, AScriptThatDoesNotCompileFailsTheCheckWithItsLine) {
+  const auto root = std::filesystem::temp_directory_path() / ("athenasip-check-" + std::to_string(::getpid()));
+  std::filesystem::create_directories(root / "scripts");
+  std::ofstream(root / "scripts" / "main.lua") << "-- routing\nfunction route(request\n";
+  std::ofstream(root / "config.yaml") << "sip:\n  node_id: test-node\npolicy:\n  url: \"lua://\"\n  lua:\n    path: [\"" << (root / "scripts").string()
+                                      << "\"]\n";
+
+  CheckFixture f;
+  ASSERT_TRUE(f.config->load_from_yaml((root / "config.yaml").string()));
+  f.config->db_url = "memory://";
+  f.config->events_url = "local://";
+  f.config->media_url = "builtin://";
+
+  const auto lines = f.run();
+  std::filesystem::remove_all(root);
+
+  const auto* policy = CheckFixture::find(lines, "policy");
+  ASSERT_NE(policy, nullptr);
+  EXPECT_FALSE(policy->ok);
+  EXPECT_NE(policy->detail.find("main.lua:3"), std::string::npos) << policy->detail;
+  EXPECT_FALSE(cli::passed(lines));
+}
+
+// With no main.lua of its own, lua:// runs the standard scripts, which load.
+TEST(CliCheckTest, TheStandardScriptsPassTheCheck) {
+  CheckFixture f;
+  f.config->policy_url = "lua://";
+
+  const auto lines = f.run();
+
+  const auto* policy = CheckFixture::find(lines, "policy");
+  ASSERT_NE(policy, nullptr);
+  EXPECT_TRUE(policy->ok) << policy->detail;
 }
