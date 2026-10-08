@@ -21,8 +21,12 @@ struct Trunk {
   // Letters, digits, '.', '-' and '_': what a script names it by. Matched without regard to case.
   std::string name;
 
-  // Where calls and the REGISTER go: sip:sip.carrier.example;transport=tls. Located by RFC 3263.
+  // The carrier's domain, which calls and the REGISTER are addressed to: sip:sip.carrier.example;transport=tls.
+  // Located by RFC 3263 unless there is a proxy.
   std::string uri;
+
+  // An outbound proxy: where calls and the REGISTER are sent when not where the URI says. Empty for none.
+  std::string proxy;
 
   // The carrier's credentials, for its challenges (RFC 3261 22.2). No username, no answer. The password is kept as
   // given: answering a challenge needs it with the realm the challenge names, which is not known before.

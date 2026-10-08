@@ -1484,6 +1484,10 @@ components:
           type: string
           description: Where calls and the REGISTER go, located by RFC 3263
           example: sip:sip.acme.example;transport=tls
+        proxy:
+          type: string
+          description: An outbound proxy, where calls and the REGISTER are sent instead of where the URI says
+          example: sip:203.0.113.10:5060
         username:
           type: string
           description: For the carrier's challenges

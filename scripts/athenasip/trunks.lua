@@ -16,6 +16,7 @@
 --   country       country code, for reading a national number dialled ("020 7123 4567" in "44")
 --   dial_format   "e164" (default, +442071234567) or "digits" (442071234567), as the carrier wants the number
 --   caller_id     the number presented when calling out, in E.164
+--   from_domain   the host of the From when calling out, for a carrier that authenticates the From as its own
 --   numbers       the numbers it brings in, each to an address of record: {"+442071234567": "sip:alice@example.com"}
 --   default       where a number in no list goes; without it, such a call is refused
 --
@@ -138,8 +139,9 @@ function trunks.outbound(request, realm)
   -- The first trunk's caller ID, asserted to the carrier (RFC 3325 9.1).
   local first = candidates[1].trunk
   local caller_id = first.attributes.caller_id
+  local from_domain = first.attributes.from_domain
   if caller_id then
-    request:set_from{user = as_dialled(first, caller_id)}
+    request:set_from{user = as_dialled(first, caller_id), host = from_domain}
     request:set_header("P-Asserted-Identity", "<sip:" .. as_dialled(first, caller_id) .. "@" .. first.uri.host .. ">")
   end
 

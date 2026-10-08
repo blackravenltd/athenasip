@@ -72,6 +72,17 @@ std::string TrunksAPI::apply(const boost::json::object& body, types::Trunk& trun
     return "uri is required";
   }
 
+  if (const auto* proxy = field(body, "proxy")) {
+    if (!proxy->is_string()) return "proxy is a SIP URI, or empty for none";
+    const std::string text(proxy->as_string());
+    if (!text.empty()) {
+      const types::SIPUri parsed{text};
+      const auto scheme = Util::to_lower(parsed.scheme);
+      if (!parsed.valid || (scheme != "sip" && scheme != "sips") || parsed.host.empty()) return "proxy is a sip: or sips: URI with a host";
+    }
+    trunk.proxy = text;
+  }
+
   if (const auto username = string_field(body, "username")) trunk.username = *username;
   if (const auto password = string_field(body, "password")) trunk.password = *password;
   if (const auto ca = string_field(body, "tls_ca")) trunk.tls_ca = *ca;
