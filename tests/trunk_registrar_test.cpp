@@ -12,6 +12,7 @@
 #include <chrono>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "digest.h"
@@ -195,8 +196,8 @@ TEST(TrunkRegistrarTest, OnlyTheNodeHoldingTheLeaseRegisters) {
   EXPECT_TRUE(f.registers().empty());
 }
 
-// A trunk that no longer asks to be registered is left alone.
-TEST(TrunkRegistrarTest, ATrunkThatStopsAskingIsNoLongerRegistered) {
+// A trunk that no longer asks to be registered has its binding removed (RFC 3261 10.2.2), then is left alone.
+TEST(TrunkRegistrarTest, ATrunkThatStopsAskingIsUnregistered) {
   RegistrarFixture f;
   f.start();
   f.answer(f.registers()[0], 200, "OK", "Expires: 3600\r\n");
@@ -206,5 +207,32 @@ TEST(TrunkRegistrarTest, ATrunkThatStopsAskingIsNoLongerRegistered) {
   ASSERT_TRUE(f.store->trunk_update(acme));
 
   f.advance(TrunkRegistrar::kScan);
+  const auto sent = f.registers();
+  ASSERT_EQ(sent.size(), 2u);
+  EXPECT_EQ(first(sent[1], "Expires"), "0");
+  EXPECT_EQ(first(sent[1], "Call-ID"), first(sent[0], "Call-ID"));
+
+  f.answer(sent[1], 200, "OK");
+  EXPECT_TRUE(f.on_strand([&f]() { return f.core->trunk_registrar()->statuses().empty(); }));
+
+  f.advance(TrunkRegistrar::kScan);
+  EXPECT_EQ(f.registers().size(), 2u) << "nothing more is sent";
+}
+
+// A node that loses the lease stops without unregistering: the binding is now the other node's to keep.
+TEST(TrunkRegistrarTest, ANodeThatLosesTheLeaseSendsNothing) {
+  RegistrarFixture f;
+  f.start();
+  f.answer(f.registers()[0], 200, "OK", "Expires: 3600\r\n");
+
+  // Another node takes the lease once this one's has lapsed.
+  f.on_strand([&f]() { f.core->trunk_registrar()->stop(); });
+  ASSERT_TRUE(f.store->lease("trunk-register:acme", "test-node", 1));
+  std::this_thread::sleep_for(std::chrono::milliseconds(2100));
+  ASSERT_TRUE(f.store->lease("trunk-register:acme", "another-node", 90));
+
+  f.on_strand([&f]() { f.core->trunk_registrar()->scan(); });
+  f.settle();
+  EXPECT_EQ(f.registers().size(), 1u);
   EXPECT_TRUE(f.on_strand([&f]() { return f.core->trunk_registrar()->statuses().empty(); }));
 }

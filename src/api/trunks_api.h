@@ -14,6 +14,7 @@
 #include "datastores/datastore.h"
 #include "loggers/logger.h"
 #include "plugins/plugin.h"
+#include "trunk_registrar.h"
 #include "types/trunk.h"
 
 namespace athenasip::api {
@@ -26,8 +27,12 @@ class TrunksAPI : public std::enable_shared_from_this<TrunksAPI> {
 
   void register_routes(Router& router);
 
-  // A trunk as the API shows it: everything but the password, and whether one is set.
-  static boost::json::object to_json(const types::Trunk& trunk);
+  // Where the registrations the nodes report are read from. Without it a trunk shows none.
+  void statuses_register(std::shared_ptr<TrunkStatuses> statuses) { _statuses = std::move(statuses); }
+
+  // A trunk as the API shows it: everything but the password, and whether one is set, and its registration as
+  // the node holding it last reported it.
+  boost::json::object to_json(const types::Trunk& trunk) const;
 
   // Applies a request body to a trunk: on a create every field, on an update only those given. Empty when it
   // applied, else what is wrong, for a 400.
@@ -43,6 +48,7 @@ class TrunksAPI : public std::enable_shared_from_this<TrunksAPI> {
   std::shared_ptr<loggers::Logger> _logger;
   std::shared_ptr<datastores::Datastore> _datastore;
   plugins::Executor _executor;
+  std::shared_ptr<TrunkStatuses> _statuses;
 };
 
 }  // namespace athenasip::api

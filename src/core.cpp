@@ -1089,6 +1089,17 @@ void Core::node_status_start() {
         if (!subscribed.ok) _logger->warn("Cannot listen for the other nodes - " + subscribed.error);
       });
 
+  // And which node has each trunk registered.
+  std::weak_ptr<TrunkStatuses> weak_trunks = _trunk_statuses;
+  events->subscribe(
+      _strand, "trunks/+/status",
+      [weak_trunks](std::string topic, std::string message) {
+        if (auto trunks = weak_trunks.lock()) trunks->observe(topic, message);
+      },
+      [this, self = shared_from_this()](plugins::Result<std::shared_ptr<events::Subscription>> subscribed) {
+        if (!subscribed.ok) _logger->warn("Cannot listen for the trunks' registrations - " + subscribed.error);
+      });
+
   _node_status_publish();
 }
 
