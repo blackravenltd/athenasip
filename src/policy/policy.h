@@ -265,6 +265,13 @@ class Policy : public plugins::Plugin {
   // A REGISTER, before it is challenged.
   virtual void register_(plugins::Executor on, std::shared_ptr<RequestView> request, plugins::Handler<RegisterDecision> handler) = 0;
 
+  // Reads its rules again, on the Core strand. Empty on success, else why not, with the rules in force unchanged.
+  virtual std::string reload() { return {}; }
+
+  // What identifies the rules in force, for a cluster to see that its nodes agree. Empty when the rules are the
+  // driver's own code.
+  virtual std::string fingerprint() const { return {}; }
+
   template <typename T, typename = std::enable_if_t<std::is_base_of_v<Policy, T>>>
   static void register_driver(std::shared_ptr<loggers::Logger> logger, std::string scheme) {
     plugins::PluginRegistry::instance().add<T>(std::move(logger), policy::kind, std::move(scheme));

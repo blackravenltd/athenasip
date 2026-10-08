@@ -257,6 +257,10 @@ class Core : public std::enable_shared_from_this<Core> {
   void policy_register(std::shared_ptr<policy::Policy> policy);
   std::shared_ptr<policy::Policy> policy();
 
+  // Has the policy read its rules again (SIGHUP, POST /api/v1/policy/reload). On the strand. Empty on success, else
+  // why not; the rules in force stay until a reload succeeds. A success is reported in the node's status at once.
+  std::string policy_reload();
+
   // RFC 8599 push notification services, filed by pn-provider. None unless push.urls names some.
   void push_register(std::shared_ptr<push::PushService> service);
   std::shared_ptr<push::PushService> push_service(const std::string& provider) const;
