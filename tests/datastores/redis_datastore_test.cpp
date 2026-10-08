@@ -876,6 +876,24 @@ TEST(RedisDatastoreTest, ALapsedLeaseIsTakenOver) {
   EXPECT_FALSE(datastore->lease(name, "node-a", 30));
 }
 
+// A shared counter counts up and down across the cluster, and one with a window starts again once it has passed.
+TEST(RedisDatastoreTest, ACounterCountsAndItsWindowLapses) {
+  REQUIRE_REDIS(datastore);
+  const auto calls = "calls-acme" + unique_suffix();
+  EXPECT_EQ(datastore->counter_get(calls), 0) << "never made is nothing";
+  EXPECT_EQ(datastore->counter_add(calls, 1), 1);
+  EXPECT_EQ(datastore->counter_add(calls, 1), 2);
+  EXPECT_EQ(datastore->counter_add(calls, -2), 0);
+  EXPECT_EQ(datastore->counter_get(calls), 0);
+
+  const auto minute = "minute-acme" + unique_suffix();
+  EXPECT_EQ(datastore->counter_add(minute, 1, 1), 1);
+  EXPECT_EQ(datastore->counter_add(minute, 1, 1), 2) << "a later add does not restart the window";
+  std::this_thread::sleep_for(std::chrono::milliseconds(2100));
+  EXPECT_EQ(datastore->counter_get(minute), 0);
+  EXPECT_EQ(datastore->counter_add(minute, 1, 1), 1) << "a new window";
+}
+
 // A realm's and a subscriber's attributes come back from Redis as they went in.
 TEST(RedisDatastoreTest, AttributesRoundTripThroughRedis) {
   REQUIRE_REDIS(datastore);

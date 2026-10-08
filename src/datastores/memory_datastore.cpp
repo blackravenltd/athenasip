@@ -519,6 +519,35 @@ void MemoryDatastore::lease(plugins::Executor on, std::string name, std::string 
   _complete(std::move(on), std::move(handler), plugins::Result<bool>::success(held));
 }
 
+void MemoryDatastore::counter_add(plugins::Executor on, std::string name, std::int64_t delta, std::uint32_t seconds, plugins::Handler<std::int64_t> handler) {
+  const auto now = std::time(nullptr);
+  std::int64_t value = 0;
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    auto found = _counters.find(name);
+    if (found != _counters.end() && found->second.second != 0 && found->second.second <= now) {
+      _counters.erase(found);
+      found = _counters.end();
+    }
+    if (found == _counters.end()) found = _counters.emplace(name, std::make_pair(std::int64_t{0}, seconds ? now + static_cast<std::time_t>(seconds) : 0)).first;
+
+    value = found->second.first += delta;
+    if (value == 0 && found->second.second == 0) _counters.erase(found);
+  }
+  _complete(std::move(on), std::move(handler), plugins::Result<std::int64_t>::success(value));
+}
+
+void MemoryDatastore::counter_get(plugins::Executor on, std::string name, plugins::Handler<std::int64_t> handler) {
+  const auto now = std::time(nullptr);
+  std::int64_t value = 0;
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    const auto found = _counters.find(name);
+    if (found != _counters.end() && (found->second.second == 0 || found->second.second > now)) value = found->second.first;
+  }
+  _complete(std::move(on), std::move(handler), plugins::Result<std::int64_t>::success(value));
+}
+
 void MemoryDatastore::user_get(plugins::Executor on, std::string username, plugins::Handler<std::shared_ptr<types::User>> handler) {
   _complete(std::move(on), std::move(handler), plugins::Result<std::shared_ptr<types::User>>::success(_user_get(username)));
 }

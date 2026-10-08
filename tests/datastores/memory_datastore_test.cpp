@@ -756,3 +756,19 @@ TEST(MemoryDatastoreTest, ALapsedLeaseIsTakenOver) {
   EXPECT_TRUE(datastore->lease(name, "node-b", 30));
   EXPECT_FALSE(datastore->lease(name, "node-a", 30));
 }
+
+// A shared counter counts up and down, and one with a window starts again once the window has passed.
+TEST(MemoryDatastoreTest, ACounterCountsAndItsWindowLapses) {
+  auto datastore = make_datastore();
+  EXPECT_EQ(datastore->counter_get("calls-acme"), 0) << "never made is nothing";
+  EXPECT_EQ(datastore->counter_add("calls-acme", 1), 1);
+  EXPECT_EQ(datastore->counter_add("calls-acme", 1), 2);
+  EXPECT_EQ(datastore->counter_add("calls-acme", -1), 1);
+  EXPECT_EQ(datastore->counter_get("calls-acme"), 1);
+
+  EXPECT_EQ(datastore->counter_add("minute-acme", 1, 1), 1);
+  EXPECT_EQ(datastore->counter_add("minute-acme", 1, 1), 2) << "a later add does not restart the window";
+  std::this_thread::sleep_for(std::chrono::milliseconds(2100));
+  EXPECT_EQ(datastore->counter_get("minute-acme"), 0);
+  EXPECT_EQ(datastore->counter_add("minute-acme", 1, 1), 1) << "a new window";
+}

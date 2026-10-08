@@ -688,6 +688,14 @@ class CorePolicyHost final : public policy::Host {
     if (auto core = _core.lock()) core->datastore->trunk_list(core->strand(), std::move(handler));
   }
 
+  void counter_add(std::string name, std::int64_t delta, std::uint32_t seconds, plugins::Handler<std::int64_t> handler) override {
+    if (auto core = _core.lock()) core->datastore->counter_add(core->strand(), std::move(name), delta, seconds, std::move(handler));
+  }
+
+  void counter_get(std::string name, plugins::Handler<std::int64_t> handler) override {
+    if (auto core = _core.lock()) core->datastore->counter_get(core->strand(), std::move(name), std::move(handler));
+  }
+
   bool names_this_node(const std::string& host, std::uint16_t port) const override {
     auto core = _core.lock();
     return core && core->is_local_address(host, port);

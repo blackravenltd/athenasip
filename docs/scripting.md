@@ -170,6 +170,8 @@ Everything is under the global `athenasip`.
 | `athenasip.store.locations(subscriber)` | The subscriber's bindings: `#bindings`, and `bindings[i]` with `contact`, `node_id`, `flow_id`, `registered_at`, `expires_at`, `instance`, `reg_id`, `push` |
 | `athenasip.store.trunk(name)` | The [trunk](#trunks), or `nil` |
 | `athenasip.store.trunks()` | Every trunk, in name order |
+| `athenasip.store.counter_add(name, delta, seconds)` | Adds `delta` (1 when left out, and it may be negative) to a counter every node of the cluster shares, and answers the new value. With `seconds`, the counter lapses that long after it was made, so it counts within a window. |
+| `athenasip.store.counter(name)` | A counter's value: 0 for one never made, or lapsed |
 | `athenasip.node.id`, `.public_address` | |
 | `athenasip.node.names(host, port)` | Whether an address is this node's own |
 | `athenasip.config.get("sip.forward_register")` | Any setting, by its dotted name; its default when the file does not set it |

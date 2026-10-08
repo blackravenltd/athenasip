@@ -105,6 +105,15 @@ class SyncDatastore {
     return _value<bool>([this, name, holder, seconds](auto on, auto handler) { _store->lease(std::move(on), name, holder, seconds, std::move(handler)); });
   }
 
+  std::int64_t counter_add(const std::string& name, std::int64_t delta, std::uint32_t seconds = 0) {
+    return _value<std::int64_t>(
+        [this, name, delta, seconds](auto on, auto handler) { _store->counter_add(std::move(on), name, delta, seconds, std::move(handler)); });
+  }
+
+  std::int64_t counter_get(const std::string& name) {
+    return _value<std::int64_t>([this, name](auto on, auto handler) { _store->counter_get(std::move(on), name, std::move(handler)); });
+  }
+
   bool session_create(athenasip::types::Session session) {
     return _status([this, session](auto on, auto handler) { _store->session_create(std::move(on), session, std::move(handler)); });
   }
