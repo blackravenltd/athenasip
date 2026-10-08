@@ -10,6 +10,7 @@ going through.
 | [A server on Linux](quick-start/linux-server.md) | A node run by systemd as its own user, data in Redis, TLS and HTTPS | A Debian or Ubuntu host |
 | [Connecting phones](quick-start/phones.md) | Desk phones and softphones registered and calling, on the node's network and off it | A running node |
 | [Calling from a browser](quick-start/browser.md) | Browsers calling each other and phones, through rtpengine, secure WebSocket and TURN | A running node, a certificate |
+| [Your first trunk](quick-start/first-trunk.md) | Calls out to phone numbers and in on your own number, through a SIP carrier, with no Lua written | A running node, a carrier account |
 | [Running a cluster](clustering.md) | Two nodes sharing subscribers, where a client whose node dies registers again through the other | Two hosts, Redis, an MQTT broker |
 
 If you are new to SIP, [How a call works](how-a-call-works.md) follows one call through a

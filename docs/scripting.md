@@ -10,8 +10,9 @@ checks passwords, forwards, forks, retries, anchors media and keeps RFC 3261's r
 script never touches a transaction, a Via or a Record-Route, and cannot send a message,
 so it cannot break a call in a way the standards forbid.
 
-Trunks, the reason scripting exists, are being built on top of this
-([design](design/scripting-1-the-node.md)).
+Trunks are built on it: the node registers to a carrier and answers its challenges, and a
+script, or the standard `athenasip.trunks` with no Lua written, decides which calls go
+where. [Your first trunk](quick-start/first-trunk.md) is the walk-through.
 
 ## Turning it on
 
@@ -36,7 +37,27 @@ and change the hook you need.
 | `memory_limit_mb` | `64` | Memory the scripts may hold |
 
 `athenasip --check` loads the scripts and runs their `init()`, and fails with the file
-and line of the first error.
+and line of the first error. Changing `policy.url` takes a restart.
+
+## Changing the scripts
+
+Edit the scripts, then have the node read them again, without a restart:
+
+```
+systemctl reload athenasip                                  # sends SIGHUP
+curl -X POST "$ATHENA_API/policy/reload" -H "Authorization: Bearer $TOKEN"   # role manage-cluster
+```
+
+The scripts load into a new state, and calls already being decided finish on the old one.
+Scripts that do not load are refused with the file and line, and the ones in force stay:
+the log says `The policy did not reload, and the rules in force stay - <error>`, and the API
+answers 422 with the same. A reload that worked logs `Policy reloaded: lua 1.0.0, scripts
+<fingerprint>`, the fingerprint's first twelve characters.
+
+The fingerprint is a SHA-256 of every script the node loaded. It is in the node status
+(`policy.fingerprint`, [Events](events.md#node-status)), so the nodes of a cluster can be
+seen to run the same rules. Each node reads its own scripts:
+copy them to every node and reload each.
 
 ## The hooks
 
@@ -44,7 +65,7 @@ The entry script defines up to five global functions.
 
 | Hook | Asked when | Returns |
 |---|---|---|
-| `authorize(request)` | A request that starts something reaches the node, or a REGISTER for another domain is to be forwarded | How the caller is proved: `athenasip.auth.accept()`, `.digest{}` or `.reject()` |
+| `authorize(request)` | A request that starts something reaches the node, or a REGISTER for another domain is to be forwarded | How the caller is proved: `athenasip.auth.accept()`, `.digest{}`, `.trusted{}` or `.reject()` |
 | `route(request)` | An authorised request has no Route and no flow token to follow | `athenasip.route.forward()` with targets, `athenasip.route.reply()`, a bare list of targets, or `nil` (480) |
 | `on_failure(request, response, state)` | A branch ended in 3xx to 5xx and there may be more to try | `"next"`, `"stop"`, or a list of targets to try first. Optional: without it, `"next"`. |
 | `register(request)` | A REGISTER arrives, before it is challenged | `athenasip.register.accept{}`, `.forward()` or `.reject()` |
@@ -127,7 +148,27 @@ a forwarding number, a caller ID, a blocklist.
 ### Trunks
 
 A trunk is a carrier or a PBX, kept over the API (`/api/v1/trunks`, role
-`manage-trunks`). A script sees `name`, `uri`, `username`, `registers`, `contact_user`,
+`manage-trunks`, described in the [API](api/openapi.yaml)):
+
+| Field | |
+|---|---|
+| `name` | Letters, digits, `.`, `_` and `-`, up to 64 |
+| `uri` | Where calls and the REGISTER go, located by RFC 3263: `sip:sip.acme.example;transport=tls` |
+| `proxy` | An outbound proxy, where they are sent instead of where `uri` says |
+| `username`, `password` | For the carrier's challenges. The password is written, never returned. |
+| `register` | `{enabled, expires, contact_user}`: whether the node registers to the carrier, for how long (60 to 86400 seconds), and the user part of the Contact it registers, where the carrier sends calls |
+| `inbound_addresses` | The addresses or CIDR ranges the carrier's calls come from |
+| `tls_ca` | A CA file for TLS to the carrier; empty is the system's store |
+| `attributes` | Anything a script reads; the node reads none of it |
+
+One node of a cluster registers each trunk that asks to be, holding a lease on it in the
+datastore; when that node stops, another takes over within two minutes. What it last
+reported is the trunk's `registration` in the API (`registering`, `registered` or
+`failed`, with the reason), and is published, retained, as `trunks/<name>/status`. A
+changed trunk is registered again; a removed one, or one no longer registering, is
+unregistered.
+
+A script sees `name`, `uri`, `username`, `registers`, `contact_user`,
 `inbound_addresses` and `attributes`, the free-form object set over the API, as plain Lua
 tables. `trunk:admits(address)` says whether an address is in its inbound ranges. Its
 password is the node's, for answering the carrier's challenges, and no script reads it.
@@ -218,6 +259,7 @@ and a trunk for a UK carrier, created with `POST /api/v1/trunks`, looks like thi
 | `country` | The country code, for reading a national number: `020 7123 4567` is `+442071234567` in `44` |
 | `dial_format` | `e164` (default) or `digits`, without the `+`, as the carrier wants the number |
 | `caller_id` | The number presented calling out, set as the From and asserted in `P-Asserted-Identity` |
+| `from_domain` | The host of that From, for a carrier that checks the From is its own |
 | `numbers` | The numbers it brings in, each to an address of record |
 | `default` | Where a number in no list goes; without it such a call is refused |
 

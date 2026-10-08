@@ -53,6 +53,18 @@ A subscriber and a user are never created from each other; see
 | **Qualify** | Sending OPTIONS to registered devices on an interval to see whether they are still there. |
 | **Behaviour** | The settings for choices SIP servers differ on, set per server, realm or subscriber. See [Behaviour](behaviour.md). |
 
+## Routing and trunks
+
+| Term | Meaning |
+|---|---|
+| **Policy** | The plugin that decides who may do what and where a call goes: `builtin` serves the node's own realms; `lua` asks scripts. The node carries out what it decides. See [Scripting](scripting.md). |
+| **Hook** | A question the node asks a Lua policy: `authorize`, `route`, `on_failure`, `register`. |
+| **Standard scripts** | The Lua scripts built into the node. `athenasip.standard` decides exactly as `builtin` does; `athenasip.trunks` adds trunks. |
+| **Trunk** | A connection to a carrier or another PBX that carries calls to and from phone numbers, kept over the API. The node registers to it and answers its challenges. |
+| **Carrier** | A telephone company's SIP service, reached by a trunk. |
+| **Attributes** | Free-form data on a realm, subscriber or trunk that scripts read and the node does not. |
+| **Fingerprint** | A SHA-256 of the scripts a node loaded, in its status, so a cluster's nodes can be seen to run the same rules. |
+
 ## Nodes and the cluster
 
 | Term | Meaning |
@@ -66,10 +78,10 @@ A subscriber and a user are never created from each other; see
 
 | Term | Meaning |
 |---|---|
-| **Plugin** | An implementation of a pluggable kind (datastore, event system, media engine, push service), registered under a URL scheme and selected by a URL in the config. |
+| **Plugin** | An implementation of a pluggable kind (datastore, event system, media engine, push service, policy), registered under a URL scheme and selected by a URL in the config. |
 | **Driver** | A particular plugin: "the Redis driver". |
 | **Module** | A shared library holding one or more drivers, loaded at start from `plugins.path`. |
-| **Datastore** | Where realms, subscribers, bindings, users, sessions and call records are kept: `memory` or `redis`. |
+| **Datastore** | Where realms, subscribers, trunks, bindings, users, sessions and call records are kept: `memory` or `redis`. |
 | **Event system, event bus** | Where a node publishes what is happening: `local` or `mqtt`. Observability and discovery only; no call waits on it. |
 | **Topic** | The name an event is published under, such as `nodes/<id>/status`. |
 | **Consumer** | Something that reads the event bus. Not called a subscriber. |

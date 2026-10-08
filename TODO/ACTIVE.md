@@ -492,8 +492,9 @@ Done (`COMPLETED.md`, 2026-10-08): `athenasip.trunks` and the examples.
       Milestone 3's trunk scenario.
 - [ ] `on_call_ended(call)` as a notification hook, for concurrency counters; first
       candidate for a sixth hook, after the five have been used.
-- [ ] Documentation still to write: a quick-start guide for a first trunk, once the sipp
-      carrier scenario has proved the steps.
+- [ ] Run `docs/quick-start/first-trunk.md` step by step against a real carrier, and
+      against the sipp carrier scenario when it exists. Its steps are the ones the node-a to
+      node-b trunk took, with node-b as the carrier.
 
 ---
 
