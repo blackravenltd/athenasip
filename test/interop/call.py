@@ -5,7 +5,7 @@
 # Copyright (C) 2026 Tom Cully <mail@tomcully.com>
 # Licensed under the GNU GPLv3 - see <https://www.gnu.org/licenses/gpl-3.0.html>
 #
-"""One whole call between two subscribers, over UDP, against live nodes.
+"""One whole call between two subscribers, over any transport, against live nodes.
 
 The callee registers and answers; the caller dials, answers the node's challenge, ACKs the
 2xx through the Record-Route it was given, and hangs up. Each end checks what RFC 3261
@@ -23,16 +23,23 @@ callee's, which is how a call through a trunk is tested:
 """
 
 import argparse
+import base64
 import hashlib
+import os
 import queue
 import random
 import socket
+import ssl
 import string
 import sys
 import threading
 import time
 
 CRLF = "\r\n"
+
+# Where each transport listens on the nodes, as their configurations have it.
+PORTS = {"udp": 5060, "tcp": 5060, "tls": 5061, "ws": 8088, "wss": 8089}
+CA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "tls", "ca", "snakeca.crt")
 
 
 def token(length=10):
@@ -115,35 +122,153 @@ def challenge_of(value):
     return parameters
 
 
-class Agent:
-    """One end: a UDP socket and what it has heard."""
+class Connection:
+    """One flow to a node: a UDP socket, or a TCP, TLS, WS or WSS connection read by a thread. Messages arrive on
+    `inbox` whole: a stream is framed by Content-Length (RFC 3261 18.3), a WebSocket by its frames (RFC 7118)."""
 
-    def __init__(self, name, user, node, realm, password, local_ip):
-        self.name, self.user, self.node, self.realm, self.password = name, user, node, realm, password
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.socket.bind((local_ip, 0))
-        self.socket.settimeout(0.2)
-        self.local = f"{local_ip}:{self.socket.getsockname()[1]}"
-        self.inbox = queue.Queue()
+    def __init__(self, transport, node, local_ip, inbox):
+        self.transport, self.node, self.inbox = transport, node, inbox
         self.running = True
-        self.thread = threading.Thread(target=self._read, daemon=True)
-        self.thread.start()
+        port = PORTS[transport]
+
+        if transport == "udp":
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.socket.bind((local_ip, 0))
+        else:
+            raw = socket.create_connection((node, port), 5)
+            if transport in ("tls", "wss"):
+                context = ssl.create_default_context(cafile=CA)
+                raw = context.wrap_socket(raw, server_hostname=node)
+            self.socket = raw
+            if transport in ("ws", "wss"):
+                self._upgrade(port)
+        self.socket.settimeout(0.2)
+        host, local_port = self.socket.getsockname()[:2]
+        self.local = f"{host}:{local_port}"
+        self.buffer = b""
+        threading.Thread(target=self._read, daemon=True).start()
+
+    def _upgrade(self, port):
+        key = base64.b64encode(os.urandom(16)).decode()
+        self.socket.sendall(CRLF.join([f"GET /ws HTTP/1.1", f"Host: {self.node}:{port}", "Upgrade: websocket", "Connection: Upgrade",
+                                       f"Sec-WebSocket-Key: {key}", "Sec-WebSocket-Version: 13", "Sec-WebSocket-Protocol: sip", "", ""]).encode())
+        response = b""
+        while b"\r\n\r\n" not in response:
+            chunk = self.socket.recv(65535)
+            if not chunk:
+                raise ConnectionError("closed during the WebSocket upgrade")
+            response += chunk
+        head, self.pending = response.split(b"\r\n\r\n", 1)
+        if b" 101 " not in head.split(b"\r\n", 1)[0]:
+            raise ConnectionError("the WebSocket upgrade was refused")
+
+    def send(self, text, to=None):
+        data = text.encode()
+        if self.transport == "udp":
+            self.socket.sendto(data, to or (self.node, PORTS["udp"]))
+        elif self.transport in ("ws", "wss"):
+            mask = os.urandom(4)
+            frame = bytearray([0x81])
+            if len(data) < 126:
+                frame.append(0x80 | len(data))
+            else:
+                frame.append(0x80 | 126)
+                frame += len(data).to_bytes(2, "big")
+            frame += mask + bytes(b ^ mask[i % 4] for i, b in enumerate(data))
+            self.socket.sendall(bytes(frame))
+        else:
+            self.socket.sendall(data)
 
     def _read(self):
+        if self.transport in ("ws", "wss"):
+            self.buffer = getattr(self, "pending", b"")
         while self.running:
             try:
-                data, source = self.socket.recvfrom(65535)
-            except socket.timeout:
+                if self.transport == "udp":
+                    data, source = self.socket.recvfrom(65535)
+                    if data.strip():
+                        self.inbox.put((Message(data.decode(errors="replace")), source))
+                    continue
+                chunk = self.socket.recv(65535)
+                if not chunk:
+                    return
+                self.buffer += chunk
+                self._frame()
+            except (socket.timeout, ssl.SSLWantReadError):
                 continue
             except OSError:
                 return
-            text = data.decode(errors="replace")
-            if text.strip():
-                self.inbox.put((Message(text), source))
+
+    def _frame(self):
+        while True:
+            if self.transport in ("ws", "wss"):
+                if len(self.buffer) < 2:
+                    return
+                length, offset = self.buffer[1] & 0x7F, 2
+                if length == 126:
+                    if len(self.buffer) < 4:
+                        return
+                    length, offset = int.from_bytes(self.buffer[2:4], "big"), 4
+                elif length == 127:
+                    if len(self.buffer) < 10:
+                        return
+                    length, offset = int.from_bytes(self.buffer[2:10], "big"), 10
+                if len(self.buffer) < offset + length:
+                    return
+                opcode, payload = self.buffer[0] & 0x0F, self.buffer[offset:offset + length]
+                self.buffer = self.buffer[offset + length:]
+                if opcode == 1 and payload.strip():
+                    self.inbox.put((Message(payload.decode(errors="replace")), None))
+                continue
+
+            # RFC 5626 4.4.1 keep-alives are CRLFs between messages.
+            self.buffer = self.buffer.lstrip(b"\r\n")
+            end = self.buffer.find(b"\r\n\r\n")
+            if end < 0:
+                return
+            head = self.buffer[:end].decode(errors="replace")
+            length = 0
+            for line in head.split(CRLF):
+                name, _, value = line.partition(":")
+                if name.strip().lower() in ("content-length", "l"):
+                    length = int(value.strip() or 0)
+            total = end + 4 + length
+            if len(self.buffer) < total:
+                return
+            text, self.buffer = self.buffer[:total].decode(errors="replace"), self.buffer[total:]
+            self.inbox.put((Message(text), None))
+
+    def close(self):
+        self.running = False
+        try:
+            self.socket.close()
+        except OSError:
+            pass
+
+
+class Agent:
+    """One end: a flow to its node and what it has heard down it."""
+
+    def __init__(self, name, user, node, realm, password, local_ip, transport="udp"):
+        self.name, self.user, self.node, self.realm, self.password = name, user, node, realm, password
+        self.transport = transport
+        self.inbox = queue.Queue()
+        self.connection = Connection(transport, node, local_ip, self.inbox)
+        self.local = self.connection.local
+
+    @property
+    def via(self):
+        return f"SIP/2.0/{self.transport.upper()} {self.local}"
+
+    @property
+    def contact(self):
+        # RFC 7118 5: a WebSocket client's Contact names nothing reachable; the node uses the flow.
+        if self.transport in ("ws", "wss"):
+            return f"<sip:{self.user}@{token(8)}.invalid;transport={self.transport}>"
+        return f"<sip:{self.user}@{self.local}" + ("" if self.transport == "udp" else f";transport={self.transport}") + ">"
 
     def send(self, text, to=None):
-        host, port = (to or (self.node, 5060))
-        self.socket.sendto(text.encode(), (host, port))
+        self.connection.send(text, to)
 
     def wait(self, accept, timeout=10.0):
         """The next message accept() takes; others are answered or dropped as a UA would."""
@@ -179,9 +304,9 @@ class Agent:
         authorization = None
         for cseq in (1, 2):
             branch = "z9hG4bK" + token()
-            lines = [f"REGISTER {uri} SIP/2.0", f"Via: SIP/2.0/UDP {self.local};branch={branch};rport", "Max-Forwards: 70",
+            lines = [f"REGISTER {uri} SIP/2.0", f"Via: {self.via};branch={branch};rport", "Max-Forwards: 70",
                      f"From: <sip:{self.user}@{self.realm}>;tag={tag}", f"To: <sip:{self.user}@{self.realm}>", f"Call-ID: {call_id}",
-                     f"CSeq: {cseq} REGISTER", f"Contact: <sip:{self.user}@{self.local}>", "Expires: 120"]
+                     f"CSeq: {cseq} REGISTER", f"Contact: {self.contact}", "Expires: 120"]
             if authorization:
                 lines.append(f"Authorization: {authorization}")
             self.send(CRLF.join(lines + ["Content-Length: 0", "", ""]))
@@ -193,8 +318,7 @@ class Agent:
             authorization = self.credentials(challenge_of(response.get("www-authenticate")), "REGISTER", uri, "Authorization")
 
     def close(self):
-        self.running = False
-        self.socket.close()
+        self.connection.close()
 
 
 def reply(request, code, reason, user, extra=None, body=""):
@@ -231,7 +355,7 @@ class Callee(threading.Thread):
             a.send(reply(invite, 180, "Ringing", a.user), source)
             time.sleep(0.5)
             ip, port = a.local.split(":")
-            a.send(reply(invite, 200, "OK", a.user, [f"Contact: <sip:{a.user}@{a.local}>", "Content-Type: application/sdp"], sdp(ip, 40000)), source)
+            a.send(reply(invite, 200, "OK", a.user, [f"Contact: {a.contact}", "Content-Type: application/sdp"], sdp(ip, 40000)), source)
             ack, _ = a.wait(lambda m: not m.is_response and m.method == "ACK", timeout=10)
             self.seen.append(ack)
             if self.hangs_up:
@@ -248,7 +372,7 @@ class Callee(threading.Thread):
         a = self.agent
         to_tag = a.user + "x"
         target = invite.get("contact").strip("<>").split(">")[0]
-        lines = [f"BYE {target} SIP/2.0", f"Via: SIP/2.0/UDP {a.local};branch=z9hG4bK{token()};rport", "Max-Forwards: 70"]
+        lines = [f"BYE {target} SIP/2.0", f"Via: {a.via};branch=z9hG4bK{token()};rport", "Max-Forwards: 70"]
         lines += [f"Route: {r}" for r in invite.all("record-route")]
         lines += [f"From: {invite.get('to')};tag={to_tag}", f"To: {invite.get('from')}", f"Call-ID: {invite.get('call-id')}", "CSeq: 1 BYE"]
         a.send(CRLF.join(lines + ["Content-Length: 0", "", ""]), source)
@@ -273,9 +397,9 @@ def call(caller, callee_thread, dial, hold):
     authorization = None
 
     def invite_text(branch, cseq, authorization):
-        lines = [f"INVITE {dial} SIP/2.0", f"Via: SIP/2.0/UDP {a.local};branch={branch};rport", "Max-Forwards: 70",
+        lines = [f"INVITE {dial} SIP/2.0", f"Via: {a.via};branch={branch};rport", "Max-Forwards: 70",
                  f"From: <sip:{a.user}@{a.realm}>;tag={tag}", f"To: <{dial}>", f"Call-ID: {call_id}", f"CSeq: {cseq} INVITE",
-                 f"Contact: <sip:{a.user}@{a.local}>", "Content-Type: application/sdp"]
+                 f"Contact: {a.contact}", "Content-Type: application/sdp"]
         if authorization:
             lines.append(f"Proxy-Authorization: {authorization}")
         return CRLF.join(lines + [f"Content-Length: {len(offer)}", "", offer])
@@ -290,7 +414,7 @@ def call(caller, callee_thread, dial, hold):
     if response.code == 407:
         step("challenged 407", True)
         # 17.1.1.3: the 407 is ACKed on its own transaction, same branch.
-        a.send(CRLF.join([f"ACK {dial} SIP/2.0", f"Via: SIP/2.0/UDP {a.local};branch={branch};rport", "Max-Forwards: 70",
+        a.send(CRLF.join([f"ACK {dial} SIP/2.0", f"Via: {a.via};branch={branch};rport", "Max-Forwards: 70",
                           f"From: <sip:{a.user}@{a.realm}>;tag={tag}", f"To: {response.get('to')}", f"Call-ID: {call_id}",
                           f"CSeq: {cseq} ACK", "Content-Length: 0", "", ""]))
         authorization = a.credentials(challenge_of(response.get("proxy-authenticate")), "INVITE", dial, "Proxy-Authorization")
@@ -308,7 +432,7 @@ def call(caller, callee_thread, dial, hold):
     target = response.get("contact").strip("<>").split(">")[0]
 
     def in_dialog(method, number, branch):
-        lines = [f"{method} {target} SIP/2.0", f"Via: SIP/2.0/UDP {a.local};branch={branch};rport", "Max-Forwards: 70"]
+        lines = [f"{method} {target} SIP/2.0", f"Via: {a.via};branch={branch};rport", "Max-Forwards: 70"]
         lines += [f"Route: {r}" for r in route]
         lines += [f"From: <sip:{a.user}@{a.realm}>;tag={tag}", f"To: {to}", f"Call-ID: {call_id}", f"CSeq: {number} {method}"]
         return CRLF.join(lines + ["Content-Length: 0", "", ""])
@@ -367,6 +491,8 @@ def main():
     parser.add_argument("--dial", help="the Request-URI dialled; the callee's address of record by default")
     parser.add_argument("--hold", type=float, default=1.0, help="seconds between the ACK and the BYE")
     parser.add_argument("--callee-hangs-up", action="store_true", help="the callee sends the BYE")
+    parser.add_argument("--caller-transport", default="udp", choices=sorted(PORTS))
+    parser.add_argument("--callee-transport", default="udp", choices=sorted(PORTS))
     args = parser.parse_args()
 
     caller_user, caller_node = args.caller.split("@")
@@ -375,18 +501,19 @@ def main():
     callee_realm = args.callee_realm or callee_node
     dial = args.dial or f"sip:{callee_user}@{callee_realm}"
 
-    caller = Agent("caller", caller_user, caller_node, caller_realm, args.password, local_ip_towards(caller_node))
-    callee = Agent("callee", callee_user, callee_node, callee_realm, args.password, local_ip_towards(callee_node))
+    caller = Agent("caller", caller_user, caller_node, caller_realm, args.password, local_ip_towards(caller_node), args.caller_transport)
+    callee = Agent("callee", callee_user, callee_node, callee_realm, args.password, local_ip_towards(callee_node), args.callee_transport)
     try:
         callee.register()
         caller.register()
-        print(f"Calling {dial} from {caller_user}@{caller_realm}, answered by {callee_user}@{callee_realm}", flush=True)
+        print(f"Calling {dial} from {caller_user}@{caller_realm} over {args.caller_transport}, answered by {callee_user}@{callee_realm} "
+              f"over {args.callee_transport}", flush=True)
         thread = Callee(callee, args.callee_hangs_up, args.hold)
         thread.start()
         call(caller, thread, dial, args.hold)
         print("\nThe call went through.")
         return 0
-    except (AssertionError, TimeoutError, RuntimeError) as error:
+    except (AssertionError, TimeoutError, RuntimeError, OSError) as error:
         print(f"\nThe call failed: {error}")
         return 1
     finally:
