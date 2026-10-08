@@ -457,12 +457,11 @@ scripts built into the binary, the permanent proof, and `--check`. What is left:
 
 ### Trunk mechanism
 
-- [ ] `Trunk` in the datastore (`trunk_*` as defaulted virtuals; memory and redis),
-      `/api/v1/trunks` with a `manage-trunks` role, the password write-only; free-form
-      `attributes` on `Realm`, `Subscriber` and `Trunk`, over the API. Console pages are
-      the admin session's.
-- [ ] `digest::respond`: the client half (HA1 from username, realm and password; cnonce
-      and nc for `qop=auth`; MD5 or SHA-256 as offered).
+Done (`COMPLETED.md`, 2026-10-08): `digest::respond`, trunks in the datastore,
+`/api/v1/trunks` with `manage-trunks`, and trunks in scripts.
+
+- [ ] Free-form `attributes` on `Realm` and `Subscriber` too, over the API and in scripts,
+      as trunks have them. Console pages for trunks and attributes are the admin session's.
 - [ ] `TrunkRegistrar`: REGISTER to each trunk with registration enabled, on the
       Qualifier's pattern (`src/qualifier.cpp`), challenges answered, refreshed at what the
       200 granted, backoff on failure; one node per trunk by a datastore lease, the others

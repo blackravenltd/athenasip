@@ -56,6 +56,23 @@ class FakeHost final : public policy::Host {
     boost::asio::post(_io, [handler]() { handler(plugins::Result<std::vector<types::Location>>::success({})); });
   }
 
+  std::map<std::string, std::shared_ptr<types::Trunk>> trunk_records;
+
+  void trunk(std::string name, plugins::Handler<std::shared_ptr<types::Trunk>> handler) override {
+    boost::asio::post(_io, [this, name, handler]() {
+      const auto found = trunk_records.find(name);
+      handler(plugins::Result<std::shared_ptr<types::Trunk>>::success(found == trunk_records.end() ? nullptr : found->second));
+    });
+  }
+
+  void trunks(plugins::Handler<std::vector<std::shared_ptr<types::Trunk>>> handler) override {
+    boost::asio::post(_io, [this, handler]() {
+      std::vector<std::shared_ptr<types::Trunk>> all;
+      for (const auto& [name, trunk] : trunk_records) all.push_back(trunk);
+      handler(plugins::Result<std::vector<std::shared_ptr<types::Trunk>>>::success(std::move(all)));
+    });
+  }
+
   bool names_this_node(const std::string& host, std::uint16_t port) const override { return host == "192.0.2.1" && port == 5060; }
 
   const Config& config() const override { return *_config; }
@@ -338,4 +355,31 @@ TEST(LuaEngineTest, ARequestKeptPastItsCallIsRefused) {
 
   const auto second = f.call("later");
   EXPECT_NE(second.error.find("ended"), std::string::npos) << second.error;
+}
+
+// A script reads a trunk's settings and attributes, never its password, and asks whether an address is the trunk's.
+TEST(LuaEngineTest, AScriptReadsATrunkButNotItsPassword) {
+  EngineFixture f;
+  auto acme = std::make_shared<types::Trunk>();
+  acme->name = "acme";
+  acme->uri = "sip:sip.acme.example";
+  acme->password = "s3cret";
+  acme->inbound_addresses = {"203.0.113.0/24"};
+  acme->attributes = boost::json::parse(R"({"prefixes": ["+44", "+1"], "country": "44", "priority": 10})").as_object();
+  f.host->trunk_records["acme"] = acme;
+
+  ASSERT_EQ(f.load(R"(
+    function answer()
+      local trunk = athenasip.store.trunk("acme")
+      local all = athenasip.store.trunks()
+      return trunk.name, trunk.uri.host, tostring(trunk.password), trunk.attributes.prefixes[2], trunk.attributes.priority,
+             trunk:admits("203.0.113.9"), trunk:admits("192.0.2.1"), #all,
+             athenasip.sip.in_range({"10.0.0.0/8", "203.0.113.0/24"}, "203.0.113.1")
+    end
+  )"),
+            "");
+
+  const auto outcome = f.call("answer");
+  ASSERT_TRUE(outcome.finished) << outcome.error;
+  EXPECT_EQ(outcome.values, (std::vector<std::string>{"acme", "sip.acme.example", "nil", "+1", "10", "true", "false", "1", "true"}));
 }

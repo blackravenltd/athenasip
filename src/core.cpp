@@ -655,6 +655,14 @@ class CorePolicyHost final : public policy::Host {
     if (auto core = _core.lock()) core->location_list(subscriber_id, std::move(handler));
   }
 
+  void trunk(std::string name, plugins::Handler<std::shared_ptr<types::Trunk>> handler) override {
+    if (auto core = _core.lock()) core->datastore->trunk_get(core->strand(), std::move(name), std::move(handler));
+  }
+
+  void trunks(plugins::Handler<std::vector<std::shared_ptr<types::Trunk>>> handler) override {
+    if (auto core = _core.lock()) core->datastore->trunk_list(core->strand(), std::move(handler));
+  }
+
   bool names_this_node(const std::string& host, std::uint16_t port) const override {
     auto core = _core.lock();
     return core && core->is_local_address(host, port);

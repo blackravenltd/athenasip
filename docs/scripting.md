@@ -96,16 +96,27 @@ Everything is under the global `athenasip`.
 | `athenasip.store.realm(name)` | The realm, or `nil` |
 | `athenasip.store.subscriber(aor)` | The subscriber for an address of record (a URI or its text), or `nil` |
 | `athenasip.store.locations(subscriber)` | The subscriber's bindings: `#bindings`, and `bindings[i]` with `contact`, `node_id`, `flow_id`, `registered_at`, `expires_at`, `instance`, `reg_id`, `push` |
+| `athenasip.store.trunk(name)` | The [trunk](#trunks), or `nil` |
+| `athenasip.store.trunks()` | Every trunk, in name order |
 | `athenasip.node.id`, `.public_address` | |
 | `athenasip.node.names(host, port)` | Whether an address is this node's own |
 | `athenasip.config.get("sip.forward_register")` | Any setting, by its dotted name; its default when the file does not set it |
 | `athenasip.config.behaviour` | The server's `{media_anchor, media_profile, qualify_interval, rewrite_contact}` |
 | `athenasip.log.debug/info/warn/error(text)` | To the node's log, with the script's file and line. `print` logs at info. |
 | `athenasip.sip.uri(text)` | Parses a URI |
+| `athenasip.sip.in_range(range, address)` | Whether an address is in a CIDR range, or in any of a list of them |
 
 A realm has `name`, `id`, `registration_timeout`, `registration_minimum`, `behaviour`
 (what it set itself) and `behaviour_effective` (over the server's). A subscriber has `id`,
 `aor`, `uri`, `realm` and `media_profile`.
+
+### Trunks
+
+A trunk is a carrier or a PBX, kept over the API (`/api/v1/trunks`, role
+`manage-trunks`). A script sees `name`, `uri`, `username`, `registers`, `contact_user`,
+`inbound_addresses` and `attributes`, the free-form object set over the API, as plain Lua
+tables. `trunk:admits(address)` says whether an address is in its inbound ranges. Its
+password is the node's, for answering the carrier's challenges, and no script reads it.
 
 The store lookups wait for the datastore without holding up the node: each hook call runs
 in its own coroutine, which sleeps until the answer comes. A store that fails raises an

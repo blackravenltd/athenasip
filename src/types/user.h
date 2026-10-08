@@ -24,9 +24,12 @@ inline constexpr const char* manage_admin_users = "manage-admin-users";
 inline constexpr const char* manage_realms = "manage-realms";
 inline constexpr const char* manage_realm_subscribers = "manage-realm-subscribers";
 inline constexpr const char* manage_cluster = "manage-cluster";
+inline constexpr const char* manage_trunks = "manage-trunks";
 
 // Every role, for validating a request.
-inline std::vector<std::string> all() { return {view_cluster_status, manage_admin_users, manage_realms, manage_realm_subscribers, manage_cluster}; }
+inline std::vector<std::string> all() {
+  return {view_cluster_status, manage_admin_users, manage_realms, manage_realm_subscribers, manage_cluster, manage_trunks};
+}
 
 inline bool is_known(const std::string& role) {
   const auto known = all();

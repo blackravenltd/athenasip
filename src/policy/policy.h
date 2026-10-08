@@ -23,6 +23,7 @@
 #include "../types/realm.h"
 #include "../types/sip_identity.h"
 #include "../types/subscriber.h"
+#include "../types/trunk.h"
 
 namespace athenasip {
 class Config;
@@ -227,6 +228,8 @@ class Host {
   virtual void realm(std::string name, plugins::Handler<std::shared_ptr<types::Realm>> handler) = 0;
   virtual void subscriber(std::shared_ptr<types::SIPIdentity> identity, plugins::Handler<std::shared_ptr<types::Subscriber>> handler) = 0;
   virtual void locations(std::uint64_t subscriber_id, plugins::Handler<std::vector<types::Location>> handler) = 0;
+  virtual void trunk(std::string name, plugins::Handler<std::shared_ptr<types::Trunk>> handler) = 0;
+  virtual void trunks(plugins::Handler<std::vector<std::shared_ptr<types::Trunk>>> handler) = 0;
 
   // Whether a host and port are one of this node's own addresses.
   virtual bool names_this_node(const std::string& host, std::uint16_t port) const = 0;

@@ -2909,3 +2909,25 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       `Policy` gains `reload()` and `fingerprint()`; `lua://`'s fingerprint is the SHA-256 of
       every script it loaded, and the node status carries `policy: {driver, fingerprint}` so
       a console can see nodes that disagree (`tests/api/policy_reload_test.cpp`).
+
+### Trunk mechanism (2026-10-08)
+
+- [x] **`digest::respond`**, the client half of Digest: MD5 and SHA-256, plain or -sess,
+      qop=auth when offered, opaque echoed; `digest::preferred` takes SHA-256 over MD5
+      (RFC 8760 2.4). The RFC 2617 3.5 and RFC 7616 3.9.1 worked examples reproduce exactly,
+      and what it answers, the node's own `verify` accepts. qop is written as a token in
+      credentials (RFC 3261 25.1).
+- [x] **Trunks in the datastore** (`types::Trunk`): URI, credentials kept as given (a
+      Digest response for the carrier's realm needs the password), registration (enabled,
+      expires, contact user), inbound CIDR ranges, a CA for TLS, free-form `attributes`.
+      `trunk_get/_create/_update/_delete/_list` on the contract, defaulted to unsupported;
+      `memory://` and `redis://` implement them (one JSON value per trunk and an index, as
+      users are).
+- [x] **`/api/v1/trunks`** (`src/api/trunks_api.*`) with a sixth role, `manage-trunks`: list,
+      create, read, partial update, delete. The password is write-only (`password_set`
+      instead); names, URIs, ranges and expiry are checked on the way in; a trunk that
+      registers must have someone to register as. In the OpenAPI document with
+      `operationId`s for the console's generated client.
+- [x] **Scripts read trunks**: `athenasip.store.trunk(name)` and `.trunks()`, attributes as
+      plain tables, `trunk:admits(address)`, `athenasip.sip.in_range(range, address)`. No
+      script can read a trunk's password.
