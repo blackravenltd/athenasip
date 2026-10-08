@@ -1133,6 +1133,7 @@ std::string RedisDatastore::_serialise_call(const std::shared_ptr<Call>& call) {
     entry["caller_tag"] = participant.dialog ? participant.dialog->caller_tag : "";
     entry["callee_tag"] = participant.dialog ? participant.dialog->callee_tag : "";
     entry["originator"] = participant.originator;
+    if (!participant.trunk.empty()) entry["trunk"] = participant.trunk;
     participants.push_back(std::move(entry));
   }
 
@@ -1172,6 +1173,8 @@ std::shared_ptr<Call> RedisDatastore::_parse_call(const std::string& value) cons
       auto& participant = call->add_participant(std::make_shared<types::SIPIdentity>(json_string(participant_obj, "identity")), nullptr,
                                                 participant_obj.at("originator").as_bool());
       participant.node_id = json_string(participant_obj, "node_id");
+      // Absent from a record written before trunks, and from any leg that ran over none.
+      if (const auto* trunk = participant_obj.if_contains("trunk"); trunk != nullptr && trunk->is_string()) participant.trunk = trunk->as_string().c_str();
 
       const auto call_id = json_string(participant_obj, "call_id");
 

@@ -283,6 +283,11 @@ class Core : public std::enable_shared_from_this<Core> {
   // What the nodes have said of their trunk registrations, from the bus.
   std::shared_ptr<TrunkStatuses> trunk_statuses() const { return _trunk_statuses; }
 
+  // The final responses branches sent out by each trunk have ended in, by trunk and code, since this node started.
+  // For the metrics. On the strand.
+  void trunk_response_count(const std::string& trunk, std::uint16_t code) { _trunk_responses[{trunk, code}]++; }
+  const std::map<std::pair<std::string, std::uint16_t>, std::uint64_t>& trunk_responses() const { return _trunk_responses; }
+
   // RFC 3261 10.3 step 1: a REGISTER for a domain this node does not serve, for the proxy to forward.
   void register_forward(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction);
 
@@ -359,6 +364,7 @@ class Core : public std::enable_shared_from_this<Core> {
   std::shared_ptr<PushRefresher> _push_refresher;
   std::shared_ptr<TrunkRegistrar> _trunk_registrar;
   std::shared_ptr<TrunkStatuses> _trunk_statuses = std::make_shared<TrunkStatuses>();
+  std::map<std::pair<std::string, std::uint16_t>, std::uint64_t> _trunk_responses;
   std::shared_ptr<AddressDiscovery> _address_discovery;
   std::map<std::string, std::shared_ptr<push::PushService>> _push_services;
   std::shared_ptr<policy::Policy> _policy;

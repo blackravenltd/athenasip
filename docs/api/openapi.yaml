@@ -951,6 +951,11 @@ paths:
         - `athenasip_transactions_active` (gauge)
         - `athenasip_media_packets_relayed_total` (counter), only when the media engine
           can count; absent rather than zero when it cannot
+        - `athenasip_trunk_calls_active{trunk}` (gauge), calls this node carries over each trunk
+        - `athenasip_trunk_registered{trunk}` (gauge), 1 when this node holds the trunk's
+          registration and the carrier granted it, for the trunks this node registers
+        - `athenasip_trunk_responses_total{trunk,code}` (counter), the final responses that
+          branches sent out by each trunk ended in, since the node started
       responses:
         "200":
           description: The counters
@@ -2054,6 +2059,10 @@ components:
           enum: [webrtc, plain-rtp, srtp-sdes]
           nullable: true
           description: What the leg's own session description said it is, null until it has said
+        trunk:
+          type: string
+          nullable: true
+          description: The trunk this leg runs over, by name - the one the call came in by or left by - or null
 
     CallMedia:
       type: object

@@ -79,6 +79,9 @@ class Call {
 
     // The party that started the call.
     bool originator = false;
+
+    // The trunk this leg runs over, by name: the one the call came in by, or left by. Empty for anything else.
+    std::string trunk;
   };
 
   std::string id;
