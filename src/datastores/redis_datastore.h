@@ -87,6 +87,8 @@ class RedisDatastore : public Datastore {
   void trunk_delete(plugins::Executor on, std::string name, plugins::StatusHandler handler) override;
   void trunk_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::Trunk>>> handler) override;
 
+  void lease(plugins::Executor on, std::string name, std::string holder, std::uint32_t seconds, plugins::Handler<bool> handler) override;
+
   void session_create(plugins::Executor on, types::Session session, plugins::StatusHandler handler) override;
   void session_get(plugins::Executor on, std::string token_hash, plugins::Handler<std::shared_ptr<types::Session>> handler) override;
   void session_delete(plugins::Executor on, std::string token_hash, plugins::StatusHandler handler) override;

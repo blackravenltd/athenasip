@@ -460,15 +460,15 @@ scripts built into the binary, the permanent proof, and `--check`. What is left:
 
 Done (`COMPLETED.md`, 2026-10-08): `digest::respond`, trunks in the datastore,
 `/api/v1/trunks` with `manage-trunks`, trunks in scripts, answering a carrier's
-challenge with the CSeq kept right for the rest of the dialog, and TLS to a trunk.
+challenge with the CSeq kept right for the rest of the dialog, TLS to a trunk, and
+registering to a trunk with a lease per trunk.
 
 - [ ] Free-form `attributes` on `Realm` and `Subscriber` too, over the API and in scripts,
       as trunks have them. Console pages for trunks and attributes are the admin session's.
-- [ ] `TrunkRegistrar`: REGISTER to each trunk with registration enabled, on the
-      Qualifier's pattern (`src/qualifier.cpp`), challenges answered, refreshed at what the
-      200 granted, backoff on failure; one node per trunk by a datastore lease, the others
-      taking over when it lapses, on `PushRefresher::_due`'s re-read-the-store pattern;
-      `trunks/<name>/status` on the bus; registration state in the API's trunk read.
+- [ ] A trunk's registration state in the API's trunk read and the console, from the
+      retained `trunks/<name>/status` the registrar publishes.
+- [ ] Unregister (Expires 0) when a trunk stops registering or is deleted, rather than
+      leaving the carrier's binding to lapse.
 - [ ] The smaller primitives: header edits on the forwarded copy behind the guard list,
       `set_from` without touching the tag, `ring_timeout` per target on timer C's path,
       `counter_incr` and `counter_get` on the datastore, `RequestView::source`, the trunk

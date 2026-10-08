@@ -505,6 +505,20 @@ void MemoryDatastore::trunk_list(plugins::Executor on, plugins::Handler<std::vec
   _complete(std::move(on), std::move(handler), plugins::Result<std::vector<std::shared_ptr<types::Trunk>>>::success(std::move(trunks)));
 }
 
+void MemoryDatastore::lease(plugins::Executor on, std::string name, std::string holder, std::uint32_t seconds, plugins::Handler<bool> handler) {
+  const auto now = std::time(nullptr);
+  bool held = false;
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    auto& lease = _leases[name];
+    if (lease.first.empty() || lease.first == holder || lease.second <= now) {
+      lease = {holder, now + static_cast<std::time_t>(seconds)};
+      held = true;
+    }
+  }
+  _complete(std::move(on), std::move(handler), plugins::Result<bool>::success(held));
+}
+
 void MemoryDatastore::user_get(plugins::Executor on, std::string username, plugins::Handler<std::shared_ptr<types::User>> handler) {
   _complete(std::move(on), std::move(handler), plugins::Result<std::shared_ptr<types::User>>::success(_user_get(username)));
 }

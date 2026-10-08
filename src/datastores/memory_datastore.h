@@ -58,6 +58,8 @@ class MemoryDatastore : public Datastore {
   void trunk_delete(plugins::Executor on, std::string name, plugins::StatusHandler handler) override;
   void trunk_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::Trunk>>> handler) override;
 
+  void lease(plugins::Executor on, std::string name, std::string holder, std::uint32_t seconds, plugins::Handler<bool> handler) override;
+
   void session_create(plugins::Executor on, types::Session session, plugins::StatusHandler handler) override;
   void session_get(plugins::Executor on, std::string token_hash, plugins::Handler<std::shared_ptr<types::Session>> handler) override;
   void session_delete(plugins::Executor on, std::string token_hash, plugins::StatusHandler handler) override;
@@ -141,6 +143,9 @@ class MemoryDatastore : public Datastore {
   std::unordered_map<std::string, std::shared_ptr<types::Realm>> _realms;
   std::unordered_map<std::string, std::shared_ptr<types::User>> _users;
   std::map<std::string, types::Trunk> _trunks;
+
+  // name -> holder and when the lease lapses.
+  std::map<std::string, std::pair<std::string, std::time_t>> _leases;
   std::unordered_map<std::string, types::Session> _sessions;
   std::unordered_map<std::string, std::shared_ptr<types::Subscriber>> _subscribers;
   std::unordered_map<std::string, types::Location> _locations;

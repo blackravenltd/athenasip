@@ -612,6 +612,9 @@ int main(int argc, char* argv[]) {
   // Ask the stun: servers in http.api.ice_servers where this node is, for --check and the node status.
   core->post([core]() { core->address_discovery()->start(); });
 
+  // Register to the trunks that ask for it, now the listeners are up to take the calls that follow.
+  core->post([core]() { core->trunk_registrar()->start(); });
+
   // SIGINT and SIGTERM (what systemctl stop sends) shut the node down cleanly. SIGHUP (systemctl reload) has the
   // policy read its rules again.
   boost::asio::io_context signal_wait_context;

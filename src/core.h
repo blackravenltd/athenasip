@@ -48,6 +48,7 @@
 #include "timer_source.h"
 #include "transactions/transaction_base.h"
 #include "transactions/transaction_matcher.h"
+#include "trunk_registrar.h"
 
 using namespace athenasip::types;
 using namespace athenasip::datastores;
@@ -276,6 +277,9 @@ class Core : public std::enable_shared_from_this<Core> {
   // Refresh pushes for push bindings (RFC 8599 5.5).
   std::shared_ptr<PushRefresher> push_refresher();
 
+  // Registers this node to the trunks that ask for it (TrunkRegistrar). Started by main once the listeners are up.
+  std::shared_ptr<TrunkRegistrar> trunk_registrar();
+
   // RFC 3261 10.3 step 1: a REGISTER for a domain this node does not serve, for the proxy to forward.
   void register_forward(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction);
 
@@ -350,6 +354,7 @@ class Core : public std::enable_shared_from_this<Core> {
   std::shared_ptr<Qualifier> _qualifier;
   std::shared_ptr<LocalUA> _local_ua;
   std::shared_ptr<PushRefresher> _push_refresher;
+  std::shared_ptr<TrunkRegistrar> _trunk_registrar;
   std::shared_ptr<AddressDiscovery> _address_discovery;
   std::map<std::string, std::shared_ptr<push::PushService>> _push_services;
   std::shared_ptr<policy::Policy> _policy;
