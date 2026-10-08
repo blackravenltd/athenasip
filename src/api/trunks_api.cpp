@@ -42,10 +42,14 @@ void TrunksAPI::register_routes(Router& router) {
   router.add(http::verb::delete_, "/api/v1/trunks/{trunk}", {manage_trunks}, [self](RouteContext c) { self->_delete(std::move(c)); });
 }
 
-boost::json::object TrunksAPI::to_json(const types::Trunk& trunk) {
+boost::json::object TrunksAPI::to_json(const types::Trunk& trunk) const {
   auto out = trunk.to_json();
   out.erase("password");
   out["password_set"] = !trunk.password.empty();
+
+  // {node, state, detail, expires_at, at}; null when no node registers to it, or none has said yet.
+  const auto report = trunk.register_enabled && _statuses ? _statuses->find(trunk.name) : std::nullopt;
+  out["registration"] = report ? boost::json::value(*report) : boost::json::value(nullptr);
   return out;
 }
 
@@ -111,14 +115,15 @@ std::string TrunksAPI::apply(const boost::json::object& body, types::Trunk& trun
 }
 
 void TrunksAPI::_list(RouteContext context) {
-  _datastore->trunk_list(_executor, [context](plugins::Result<std::vector<std::shared_ptr<types::Trunk>>> found) mutable {
+  auto self = shared_from_this();
+  _datastore->trunk_list(_executor, [self, context](plugins::Result<std::vector<std::shared_ptr<types::Trunk>>> found) mutable {
     if (!found.ok) {
       write_error(context.response, http::status::internal_server_error, "datastore_error", found.error);
       return context.done();
     }
 
     boost::json::array out;
-    for (const auto& trunk : found.value) out.push_back(to_json(*trunk));
+    for (const auto& trunk : found.value) out.push_back(self->to_json(*trunk));
     write_json(context.response, http::status::ok, out);
     context.done();
   });
@@ -138,19 +143,21 @@ void TrunksAPI::_create(RouteContext context) {
   }
   trunk->created_at = std::time(nullptr);
 
-  _datastore->trunk_create(_executor, trunk, [context, trunk](plugins::Status status) mutable {
+  auto self = shared_from_this();
+  _datastore->trunk_create(_executor, trunk, [self, context, trunk](plugins::Status status) mutable {
     if (!status.ok) {
       write_error(context.response, http::status::conflict, "conflict", "trunk " + trunk->name + " already exists");
       return context.done();
     }
-    write_json(context.response, http::status::created, to_json(*trunk));
+    write_json(context.response, http::status::created, self->to_json(*trunk));
     context.done();
   });
 }
 
 void TrunksAPI::_get(RouteContext context) {
   const auto name = context.parameter("trunk");
-  _datastore->trunk_get(_executor, name, [context, name](plugins::Result<std::shared_ptr<types::Trunk>> found) mutable {
+  auto self = shared_from_this();
+  _datastore->trunk_get(_executor, name, [self, context, name](plugins::Result<std::shared_ptr<types::Trunk>> found) mutable {
     if (!found.ok) {
       write_error(context.response, http::status::internal_server_error, "datastore_error", found.error);
       return context.done();
@@ -159,7 +166,7 @@ void TrunksAPI::_get(RouteContext context) {
       write_error(context.response, http::status::not_found, "not_found", "no trunk " + name);
       return context.done();
     }
-    write_json(context.response, http::status::ok, to_json(*found.value));
+    write_json(context.response, http::status::ok, self->to_json(*found.value));
     context.done();
   });
 }
@@ -189,12 +196,12 @@ void TrunksAPI::_update(RouteContext context) {
       return context.done();
     }
 
-    self->_datastore->trunk_update(self->_executor, trunk, [context, trunk](plugins::Status status) mutable {
+    self->_datastore->trunk_update(self->_executor, trunk, [self, context, trunk](plugins::Status status) mutable {
       if (!status.ok) {
         write_error(context.response, http::status::not_found, "not_found", "no trunk " + trunk->name);
         return context.done();
       }
-      write_json(context.response, http::status::ok, to_json(*trunk));
+      write_json(context.response, http::status::ok, self->to_json(*trunk));
       context.done();
     });
   });

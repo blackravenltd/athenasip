@@ -75,6 +75,31 @@ bool stale(const types::Authorization& challenge) {
 
 }  // namespace
 
+void TrunkStatuses::observe(const std::string& topic, const std::string& message) {
+  // trunks/<name>/status
+  const auto first = topic.find('/');
+  const auto last = topic.rfind('/');
+  if (first == std::string::npos || last == first) return;
+  const auto name = topic.substr(first + 1, last - first - 1);
+
+  boost::system::error_code error;
+  auto parsed = boost::json::parse(message, error);
+
+  std::lock_guard<std::mutex> lock(_mutex);
+  if (error || !parsed.is_object()) {
+    _reports.erase(name);
+    return;
+  }
+  _reports[name] = parsed.as_object();
+}
+
+std::optional<boost::json::object> TrunkStatuses::find(const std::string& name) const {
+  std::lock_guard<std::mutex> lock(_mutex);
+  const auto found = _reports.find(types::Trunk::normalise(name));
+  if (found == _reports.end()) return std::nullopt;
+  return found->second;
+}
+
 TrunkRegistrar::TrunkRegistrar(std::shared_ptr<loggers::Logger> logger, std::weak_ptr<Core> core)
     : _logger(std::make_shared<loggers::LoggerScoped>("trunks", std::move(logger))), _core(std::move(core)) {}
 
@@ -136,7 +161,7 @@ void TrunkRegistrar::scan() {
                              [this, self, trunk](plugins::Result<bool> held) {
                                // A store with no leases serves one node, which registers.
                                if (!held.ok || held.value) return _keep(*trunk);
-                               _drop(trunk->key());
+                               _drop(trunk->key(), false);
                              });
     }
 
@@ -144,7 +169,7 @@ void TrunkRegistrar::scan() {
     for (const auto& [key, registration] : _registrations) {
       if (std::find(wanted.begin(), wanted.end(), key) == wanted.end()) gone.push_back(key);
     }
-    for (const auto& key : gone) _drop(key);
+    for (const auto& key : gone) _drop(key, true);
   });
 }
 
@@ -157,6 +182,16 @@ void TrunkRegistrar::_keep(const types::Trunk& trunk) {
 
   if (found != _registrations.end()) {
     auto& registration = found->second;
+
+    // Asked to register again while its binding was being removed: it registers after all.
+    if (registration.leaving) {
+      registration.leaving = false;
+      registration.trunk = trunk;
+      registration.expires = trunk.register_expires;
+      if (registration.timer) registration.timer->cancel();
+      return _register(key);
+    }
+
     const auto& was = registration.trunk;
     const bool changed = was.uri != trunk.uri || was.username != trunk.username || was.password != trunk.password || was.contact_user != trunk.contact_user ||
                          was.register_expires != trunk.register_expires || was.tls_ca != trunk.tls_ca;
@@ -182,13 +217,35 @@ void TrunkRegistrar::_keep(const types::Trunk& trunk) {
   _register(key);
 }
 
-void TrunkRegistrar::_drop(const std::string& name) {
+void TrunkRegistrar::_drop(const std::string& name, bool unregister) {
+  auto found = _registrations.find(name);
+  if (found == _registrations.end()) return;
+  auto& registration = found->second;
+  if (registration.timer) registration.timer->cancel();
+
+  if (unregister && registration.status.state == "registered") {
+    if (registration.leaving) return;
+    _logger->info("Trunk " + registration.trunk.name + " no longer registers - removing its binding at the carrier");
+    registration.leaving = true;
+    registration.expires = 0;
+    registration.failures = 0;
+    return _register(name);
+  }
+
+  _gone(name);
+}
+
+void TrunkRegistrar::_gone(const std::string& name) {
   auto found = _registrations.find(name);
   if (found == _registrations.end()) return;
 
-  // The carrier's binding lapses of itself, and another node may now hold it: nothing is sent.
   if (found->second.timer) found->second.timer->cancel();
   _logger->info("No longer registering to trunk " + found->second.trunk.name);
+
+  // A retained status for a trunk nobody registers would be shown for ever; an empty one clears it.
+  if (found->second.leaving) {
+    if (auto core = _core.lock(); core && core->events) core->events->publish_state(events::topics::trunk_status(found->second.trunk.key()), "");
+  }
   _registrations.erase(found);
 }
 
@@ -339,6 +396,11 @@ void TrunkRegistrar::_on_answer(const std::string& name, const std::shared_ptr<C
     }
   }
 
+  if (registration.leaving) {
+    if (code < 200 || code >= 300) _logger->info("Trunk " + trunk.name + " did not remove its binding (" + std::to_string(code) + "); it lapses");
+    return _gone(name);
+  }
+
   if (code < 200 || code >= 300) return _failed(name, std::to_string(code) + " " + response->header->response_message);
 
   auto core = _core.lock();
@@ -363,6 +425,9 @@ void TrunkRegistrar::_failed(const std::string& name, const std::string& why) {
   auto found = _registrations.find(name);
   if (found == _registrations.end()) return;
   auto& registration = found->second;
+
+  // Removing a binding is tried once: if it cannot be, the binding lapses at the carrier.
+  if (registration.leaving) return _gone(name);
 
   ++registration.failures;
   registration.status = Status{"failed", why, 0};

@@ -6,11 +6,13 @@
 //
 #pragma once
 
+#include <boost/json.hpp>
 #include <chrono>
 #include <cstdint>
 #include <ctime>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 
@@ -25,6 +27,20 @@ namespace athenasip {
 
 class Core;
 class Channel;
+
+// What every node has said of the trunks it registers to, from the retained trunks/<name>/status on the bus, for
+// the API to show whichever node holds a trunk. Read from any thread.
+class TrunkStatuses {
+ public:
+  void observe(const std::string& topic, const std::string& message);
+
+  // The last report for a trunk, by its name as stored; nothing when no node has reported it.
+  std::optional<boost::json::object> find(const std::string& name) const;
+
+ private:
+  mutable std::mutex _mutex;
+  std::map<std::string, boost::json::object> _reports;
+};
 
 // RFC 3261 10 as a client: this node registers to each trunk that asks for it, so the carrier knows where to send
 // calls. One node of a cluster does, by a lease in the datastore; another takes over when the lease lapses. The
@@ -75,13 +91,19 @@ class TrunkRegistrar : public std::enable_shared_from_this<TrunkRegistrar> {
     std::uint32_t failures = 0;
     bool in_flight = false;
 
+    // Sending Expires 0, and gone once it is answered.
+    bool leaving = false;
+
     Status status;
   };
 
   void _schedule_scan();
   void _keep(const types::Trunk& trunk);
-  void _drop(const std::string& name);
+  // Stops registering. With unregister, the carrier's binding is removed first (Expires 0, RFC 3261 10.2.2): the
+  // trunk no longer asks to be registered. Without, another node has the lease and the binding is now its.
+  void _drop(const std::string& name, bool unregister);
 
+  void _gone(const std::string& name);
   void _register(const std::string& name);
   void _send(const std::string& name, const std::shared_ptr<Channel>& channel, const std::optional<types::Authorization>& credentials, bool proxy_auth);
   void _on_answer(const std::string& name, const std::shared_ptr<Channel>& channel, const std::shared_ptr<SIPMessage>& request,

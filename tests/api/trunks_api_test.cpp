@@ -167,3 +167,18 @@ TEST(TrunksApiTest, TrunksTakeManageTrunks) {
   EXPECT_EQ(f.request(http::verb::post, "/api/v1/trunks", TrunksFixture::acme(), "client-token").status, 403u);
   EXPECT_EQ(f.request(http::verb::get, "/api/v1/trunks", "", "").status, 401u);
 }
+
+// The registration the node holding a trunk last reported, for an operator to see without reading a log.
+TEST(TrunksApiTest, ATrunkShowsItsRegistrationAsTheNodeHoldingItReported) {
+  TrunksFixture f;
+  auto statuses = std::make_shared<TrunkStatuses>();
+  f.trunks->statuses_register(statuses);
+  ASSERT_EQ(f.request(http::verb::post, "/api/v1/trunks", TrunksFixture::acme()).status, 201u);
+
+  EXPECT_TRUE(f.request(http::verb::get, "/api/v1/trunks/acme").json().at("registration").is_null()) << "nobody has said yet";
+
+  statuses->observe("trunks/acme/status", R"({"trunk": "acme", "node": "sip-0001", "state": "registered", "detail": "200 OK", "expires_at": 1})");
+  const auto registration = f.request(http::verb::get, "/api/v1/trunks/acme").json().at("registration").as_object();
+  EXPECT_EQ(registration.at("node").as_string(), "sip-0001");
+  EXPECT_EQ(registration.at("state").as_string(), "registered");
+}

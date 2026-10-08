@@ -3019,3 +3019,10 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       longest prefix then priority, a stranger not calling out, busy ending the search and a
       failing trunk not, and every example loading. The test host the equivalence tests used
       is shared from `tests/helpers/policy_host_helper.h`.
+- [x] **A trunk's registration in the API**: every node hears the retained
+      `trunks/+/status` (`TrunkStatuses`), and a trunk read carries `registration`
+      (node, state, detail, expiry) from whichever node holds it, null when none does.
+- [x] **Unregistering**: a trunk that stops registering, or is deleted, has its binding at the
+      carrier removed with Expires 0 on the same Call-ID, tried once, and its retained status
+      cleared. A node that loses the lease to another sends nothing: the binding is now the
+      other node's.

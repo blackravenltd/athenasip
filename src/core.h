@@ -280,6 +280,9 @@ class Core : public std::enable_shared_from_this<Core> {
   // Registers this node to the trunks that ask for it (TrunkRegistrar). Started by main once the listeners are up.
   std::shared_ptr<TrunkRegistrar> trunk_registrar();
 
+  // What the nodes have said of their trunk registrations, from the bus.
+  std::shared_ptr<TrunkStatuses> trunk_statuses() const { return _trunk_statuses; }
+
   // RFC 3261 10.3 step 1: a REGISTER for a domain this node does not serve, for the proxy to forward.
   void register_forward(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction);
 
@@ -355,6 +358,7 @@ class Core : public std::enable_shared_from_this<Core> {
   std::shared_ptr<LocalUA> _local_ua;
   std::shared_ptr<PushRefresher> _push_refresher;
   std::shared_ptr<TrunkRegistrar> _trunk_registrar;
+  std::shared_ptr<TrunkStatuses> _trunk_statuses = std::make_shared<TrunkStatuses>();
   std::shared_ptr<AddressDiscovery> _address_discovery;
   std::map<std::string, std::shared_ptr<push::PushService>> _push_services;
   std::shared_ptr<policy::Policy> _policy;

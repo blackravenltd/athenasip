@@ -1525,6 +1525,24 @@ components:
               type: boolean
             created_at:
               type: integer
+            registration:
+              type: object
+              nullable: true
+              description: |
+                What the node registering to the trunk last reported; null when the trunk does not
+                register or no node has reported yet.
+              properties:
+                node:
+                  type: string
+                state:
+                  type: string
+                  enum: [registering, registered, failed]
+                detail:
+                  type: string
+                expires_at:
+                  type: integer
+                at:
+                  type: string
 
     User:
       type: object
