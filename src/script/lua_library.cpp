@@ -215,6 +215,53 @@ int message_headers(lua_State* L, const SIPMessage& message) {
   return 1;
 }
 
+// request:set_header(name, value), :add_header, :remove_header, :set_from{}. Only to the copies forwarded, and
+// never the headers that carry the transaction, the dialog or the route.
+policy::RequestView& editable(lua_State* L, const char* what, bool named) {
+  auto& view = *check_box<policy::RequestView>(L, 1, kRequest)->value;
+  if (named) {
+    const std::string name = luaL_checkstring(L, 2);
+    if (policy::HeaderEdit::guarded(name)) luaL_error(L, "request:%s: %s is the node's to write, not a script's", what, name.c_str());
+  }
+  return view;
+}
+
+int request_set_header(lua_State* L) {
+  auto& view = editable(L, "set_header", true);
+  view.edits.push_back(policy::HeaderEdit{policy::HeaderEdit::Op::Set, luaL_checkstring(L, 2), luaL_checkstring(L, 3)});
+  return 0;
+}
+
+int request_add_header(lua_State* L) {
+  auto& view = editable(L, "add_header", true);
+  view.edits.push_back(policy::HeaderEdit{policy::HeaderEdit::Op::Add, luaL_checkstring(L, 2), luaL_checkstring(L, 3)});
+  return 0;
+}
+
+int request_remove_header(lua_State* L) {
+  auto& view = editable(L, "remove_header", true);
+  view.edits.push_back(policy::HeaderEdit{policy::HeaderEdit::Op::Remove, luaL_checkstring(L, 2), {}});
+  return 0;
+}
+
+int request_set_from(lua_State* L) {
+  auto& view = editable(L, "set_from", false);
+  luaL_checktype(L, 2, LUA_TTABLE);
+
+  policy::HeaderEdit edit{policy::HeaderEdit::Op::From, "From", {}};
+  const auto read = [L](const char* key) -> std::optional<std::string> {
+    std::optional<std::string> out;
+    if (lua_getfield(L, 2, key) == LUA_TSTRING) out = lua_tostring(L, -1);
+    lua_pop(L, 1);
+    return out;
+  };
+  edit.display = read("display");
+  edit.user = read("user");
+  edit.host = read("host");
+  view.edits.push_back(std::move(edit));
+  return 0;
+}
+
 int request_header(lua_State* L) { return message_header(L, *check_box<policy::RequestView>(L, 1, kRequest)->value->message); }
 int request_headers(lua_State* L) { return message_headers(L, *check_box<policy::RequestView>(L, 1, kRequest)->value->message); }
 
@@ -262,6 +309,10 @@ int request_index(lua_State* L) {
   if (key == "source") return push_source(L, message), 1;
   if (key == "header") return lua_pushcfunction(L, request_header), 1;
   if (key == "headers") return lua_pushcfunction(L, request_headers), 1;
+  if (key == "set_header") return lua_pushcfunction(L, request_set_header), 1;
+  if (key == "add_header") return lua_pushcfunction(L, request_add_header), 1;
+  if (key == "remove_header") return lua_pushcfunction(L, request_remove_header), 1;
+  if (key == "set_from") return lua_pushcfunction(L, request_set_from), 1;
   return lua_pushnil(L), 1;
 }
 

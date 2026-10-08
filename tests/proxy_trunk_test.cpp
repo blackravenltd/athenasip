@@ -35,7 +35,11 @@ class TrunkPolicy final : public policy::Policy {
     _complete(on, handler, plugins::Result<policy::AuthDecision>::success(policy::AuthDecision::accept()));
   }
 
+  // What the script would have done with request:set_from and request:set_header.
+  std::vector<policy::HeaderEdit> edits;
+
   void route(plugins::Executor on, std::shared_ptr<policy::RequestView> request, plugins::Handler<policy::RouteDecision> handler) override {
+    request->edits = edits;
     auto uri = std::make_shared<types::SIPUri>("sip:" + request->message->header->request_uri->user + "@192.0.2.30:5060");
     _complete(on, handler, plugins::Result<policy::RouteDecision>::success(policy::RouteDecision::forward({policy::Target::to(uri, nullptr, "acme")})));
   }
@@ -58,10 +62,11 @@ std::string first(const std::shared_ptr<SIPMessage>& message, const std::string&
 struct TrunkFixture : ProxyFixture {
   std::shared_ptr<MockConnection> carrier_connection;
   std::shared_ptr<Channel> carrier;
+  std::shared_ptr<TrunkPolicy> policy = std::make_shared<TrunkPolicy>();
 
   TrunkFixture() {
     carrier = make_channel("192.0.2.30", &carrier_connection);
-    on_strand([this]() { core->policy_register(std::make_shared<TrunkPolicy>()); });
+    on_strand([this]() { core->policy_register(policy); });
 
     auto acme = std::make_shared<types::Trunk>();
     acme->name = "acme";
@@ -202,4 +207,28 @@ TEST(ProxyTrunkTest, AChallengeFromSomethingThatIsNotATrunkGoesToTheCaller) {
   f.receive(f.callee, f.response_from_callee(407, "Proxy Authentication Required", "bob", "", kChallenge));
 
   EXPECT_NE(ProxyFixture::response_with(f.caller_connection, 407), nullptr);
+}
+
+// Caller ID for the carrier: the From's user and display changed and an asserted identity added on the copy that
+// leaves, the From's tag kept, and the caller's own request untouched (RFC 3325 9.1).
+TEST(ProxyTrunkTest, ThePolicySetsTheCallerIdTheCarrierSees) {
+  TrunkFixture f;
+  policy::HeaderEdit from{policy::HeaderEdit::Op::From, "From", {}};
+  from.user = "+442012345678";
+  from.display = "Reception";
+  f.policy->edits = {from, policy::HeaderEdit{policy::HeaderEdit::Op::Set, "P-Asserted-Identity", "<sip:+442012345678@example.com>"},
+                     policy::HeaderEdit{policy::HeaderEdit::Op::Remove, "User-Agent", {}}};
+
+  auto invite = f.invite_to_number();
+  invite.insert(invite.find("\r\n") + 2, "User-Agent: Alice's phone\r\n");
+  f.receive(f.caller, invite);
+
+  const auto sent = f.to_carrier("INVITE");
+  ASSERT_EQ(sent.size(), 1u);
+  const auto from_header = first(sent[0], "From");
+  EXPECT_NE(from_header.find("sip:+442012345678@example.com"), std::string::npos) << from_header;
+  EXPECT_NE(from_header.find("Reception"), std::string::npos) << from_header;
+  EXPECT_NE(from_header.find("tag=alice"), std::string::npos) << "the tag names the dialog: " << from_header;
+  EXPECT_EQ(first(sent[0], "P-Asserted-Identity"), "<sip:+442012345678@example.com>");
+  EXPECT_FALSE(sent[0]->header->contains("User-Agent"));
 }

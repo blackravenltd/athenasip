@@ -2966,3 +2966,9 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       seconds, doubling to ten minutes. Each trunk's state is published, retained, as
       `trunks/<name>/status`. Started by `main` once the listeners are up.
       `tests/trunk_registrar_test.cpp`, and the lease in both stores.
+- [x] **Header edits from a policy**, for caller ID towards a carrier: `request:set_header`,
+      `:add_header`, `:remove_header` and `:set_from{display, user, host}` in `route` become
+      `policy::HeaderEdit`s that the proxy applies to every copy it forwards, never the
+      request as received. `HeaderEdit::guarded` refuses Via, Route, Record-Route, Path,
+      CSeq, Call-ID, Max-Forwards, Content-Length, Content-Type, Contact, From and To, by name
+      and compact form; `set_from` keeps the tag.
