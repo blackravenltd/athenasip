@@ -20,14 +20,15 @@ with `--print-schema`. The README and documentation were checked against the cod
 end - the TLS use-after-free that corrupted the heap on every closed TLS connection, the
 rtcp-mux fix for a WebRTC caller whose callee needs plain RTP, and the automatic live
 tests. 1391 unit tests at the tag. The sipp harnesses were not run on the tagged tree, and
-not yet under `lua://` (Docker). node-a runs `2283182` (deployed 2026-10-09) with `lua://` and
+not yet under `lua://` (Docker). Both nodes run `5fbf3f3` (deployed 2026-10-09); node-a runs with `lua://` and
 `athenasip.trunks` from `/etc/athenasip/scripts/main.lua` and a trunk `node-b` to
 node-b (registering as node-b's subscriber 1003, outbound proxy 10.102.1.50); its
-previous configuration is `/etc/athenasip/config.yaml.before-lua`. node-b runs `a08cc6d`,
-without the rtcp-mux fix (`6a163a1`) that a call from AthenaPhone to a plain-RTP phone
-needs, until the maintainer says yes to deploying it. A probe on node-a (`athenasip-probe.timer`) runs
+previous configuration is `/etc/athenasip/config.yaml.before-lua`. node-b runs
+`builtin://`, its binary built on node-a, the previous one kept as
+`/usr/local/bin/athenasip.previous`. A probe on node-a (`athenasip-probe.timer`) runs
 `test/interop/verify.py test/interop/live.json` every 15 minutes and publishes
-`athenasip/probes/node-a/calls`.
+`athenasip/probes/node-a/calls`. A manual run of verify.py at the same time as the
+probe fails some checks: both use subscribers 1901 and 1902.
 
 **Two live nodes**, neither production:
 - `node-a` (10.101.1.20): builtin relay, AthenaPhone's usual home.
