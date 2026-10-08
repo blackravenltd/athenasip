@@ -314,7 +314,7 @@ void TrunkRegistrar::_send(const std::string& name, const std::shared_ptr<Channe
   types::SIPUri registrar(trunk.uri);
   registrar.user.clear();
   const auto user = trunk.username.empty() ? trunk.contact_user : trunk.username;
-  const auto contact_user = trunk.contact_user.empty() ? user : trunk.contact_user;
+  const auto& contact_user = trunk.registered_user();
   const auto scheme = Util::to_lower(registrar.scheme) == "sips" ? std::string("sips") : std::string("sip");
   const auto aor = scheme + ":" + user + "@" + registrar.host;
 
@@ -409,7 +409,7 @@ void TrunkRegistrar::_on_answer(const std::string& name, const std::shared_ptr<C
   if (!core) return;
 
   const auto advertised = core->advertised_for(*channel);
-  const auto contact_user = trunk.contact_user.empty() ? trunk.username : trunk.contact_user;
+  const auto& contact_user = trunk.registered_user();
   const auto lifetime = granted(*response, contact_user, advertised.host, advertised.port).value_or(registration.expires);
   if (lifetime == 0) return _failed(name, "the carrier granted no time");
 

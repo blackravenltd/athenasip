@@ -39,6 +39,9 @@ struct Trunk {
   std::uint32_t register_expires = 300;
   std::string contact_user;
 
+  // The user part of the Contact registered: contact_user, else the username.
+  const std::string& registered_user() const { return contact_user.empty() ? username : contact_user; }
+
   // The addresses a request from this trunk arrives from, as CIDR ranges. A request from one of them is the trunk.
   std::vector<std::string> inbound_addresses;
 
