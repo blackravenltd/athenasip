@@ -193,8 +193,8 @@ void TrunkRegistrar::_keep(const types::Trunk& trunk) {
     }
 
     const auto& was = registration.trunk;
-    const bool changed = was.uri != trunk.uri || was.username != trunk.username || was.password != trunk.password || was.contact_user != trunk.contact_user ||
-                         was.register_expires != trunk.register_expires || was.tls_ca != trunk.tls_ca;
+    const bool changed = was.uri != trunk.uri || was.proxy != trunk.proxy || was.username != trunk.username || was.password != trunk.password ||
+                         was.contact_user != trunk.contact_user || was.register_expires != trunk.register_expires || was.tls_ca != trunk.tls_ca;
     registration.trunk = trunk;
     if (!changed) return;
 
@@ -256,8 +256,10 @@ void TrunkRegistrar::_register(const std::string& name) {
   auto found = _registrations.find(name);
   if (found == _registrations.end() || found->second.in_flight) return;
 
-  const types::SIPUri uri(found->second.trunk.uri);
-  if (!uri.valid || uri.host.empty()) return _failed(name, "its URI " + found->second.trunk.uri + " does not parse");
+  // Sent to the outbound proxy when there is one, else where the trunk's URI says.
+  const auto& sent_to = found->second.trunk.proxy.empty() ? found->second.trunk.uri : found->second.trunk.proxy;
+  const types::SIPUri uri(sent_to);
+  if (!uri.valid || uri.host.empty()) return _failed(name, "its URI " + sent_to + " does not parse");
 
   found->second.in_flight = true;
   const auto tls_ca = found->second.trunk.tls_ca;

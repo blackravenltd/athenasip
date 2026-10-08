@@ -90,6 +90,7 @@ boost::json::object Trunk::to_json() const {
   boost::json::object out;
   out["name"] = name;
   out["uri"] = uri;
+  out["proxy"] = proxy;
   out["username"] = username;
   out["password"] = password;
   out["register"] = {{"enabled", register_enabled}, {"expires", register_expires}, {"contact_user", contact_user}};
@@ -110,6 +111,7 @@ Trunk Trunk::from_json(const boost::json::object& stored) {
   if (trunk.name.empty()) throw std::runtime_error("a trunk with no name");
 
   trunk.uri = text(stored, "uri");
+  trunk.proxy = text(stored, "proxy");
   trunk.username = text(stored, "username");
   trunk.password = text(stored, "password");
   trunk.tls_ca = text(stored, "tls_ca");

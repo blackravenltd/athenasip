@@ -236,3 +236,19 @@ TEST(TrunkRegistrarTest, ANodeThatLosesTheLeaseSendsNothing) {
   EXPECT_EQ(f.registers().size(), 1u);
   EXPECT_TRUE(f.on_strand([&f]() { return f.core->trunk_registrar()->statuses().empty(); }));
 }
+
+// A carrier registered to by its domain through an outbound proxy: the REGISTER names the domain and goes to the
+// proxy.
+TEST(TrunkRegistrarTest, ARegisterGoesThroughTheTrunksOutboundProxy) {
+  RegistrarFixture f;
+  auto acme = f.store->trunk_get("acme");
+  acme->uri = "sip:acme.example";
+  acme->proxy = "sip:192.0.2.30:5060";
+  ASSERT_TRUE(f.store->trunk_update(acme));
+
+  f.start();
+  const auto sent = f.registers();
+  ASSERT_EQ(sent.size(), 1u) << "sent to the proxy, which is the carrier channel here";
+  EXPECT_EQ(sent[0]->header->request_uri->to_string(), "sip:acme.example");
+  EXPECT_NE(first(sent[0], "To").find("sip:4420@acme.example"), std::string::npos);
+}

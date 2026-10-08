@@ -469,6 +469,10 @@ int trunk_index(lua_State* L) {
 
   if (key == "name") return push_text(L, trunk.name), 1;
   if (key == "uri") return push_uri(L, std::make_shared<types::SIPUri>(trunk.uri)), 1;
+  if (key == "proxy") {
+    if (trunk.proxy.empty()) return lua_pushnil(L), 1;
+    return push_uri(L, std::make_shared<types::SIPUri>(trunk.proxy)), 1;
+  }
   if (key == "username") return push_text_or_nil(L, trunk.username), 1;
   if (key == "registers") return lua_pushboolean(L, trunk.register_enabled), 1;
   if (key == "contact_user") return push_text_or_nil(L, trunk.contact_user), 1;

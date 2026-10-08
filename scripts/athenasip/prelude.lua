@@ -63,13 +63,14 @@ function a.route.uri(uri, options)
   return {target = "uri", uri = uri, next_hop = options.next_hop, trunk = options.trunk, ring_timeout = options.ring_timeout}
 end
 
--- Out by a trunk: the trunk's URI with options.user (the number dialled) as its user part.
+-- Out by a trunk: the trunk's URI with options.user (the number dialled) as its user part, sent to its outbound
+-- proxy when it has one.
 function a.route.trunk(trunk, options)
   check(type(trunk) == "userdata" and a.is_trunk(trunk), "route.trunk: a trunk from athenasip.store")
   options = options or {}
   local uri = trunk.uri
   if options.user then uri = uri:with{user = options.user} end
-  return {target = "uri", uri = uri, trunk = trunk.name, ring_timeout = options.ring_timeout}
+  return {target = "uri", uri = uri, next_hop = trunk.proxy, trunk = trunk.name, ring_timeout = options.ring_timeout}
 end
 
 -- The targets, tried in turn. options.media: {media_anchor =, media_profile =}, as athenasip.config.behaviour and
