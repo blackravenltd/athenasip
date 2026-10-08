@@ -51,3 +51,5 @@ docker build -t athenasip .
 ```
 
 The image builds Boost from source and runs one node with `config/config.example.yaml`.
+Each release is published as [`tomcully/athenasip`](https://hub.docker.com/r/tomcully/athenasip),
+tagged with its version and `latest`, for `linux/amd64` and `linux/arm64`.
