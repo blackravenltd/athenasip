@@ -27,6 +27,7 @@
 #include "api/sessions.h"
 #include "api/static_middleware.h"
 #include "api/subscriber_auth.h"
+#include "api/trunks_api.h"
 #include "api/users_api.h"
 #include "build_version.h"
 #include "cli.h"
@@ -49,6 +50,7 @@
 #include "plugins/module_loader.h"
 #include "plugins/plugin.h"
 #include "plugins/plugin_registry.h"
+#include "policy/policy_drivers.h"
 #include "push/push_service.h"
 #include "push/push_service_drivers.h"
 #include "rtp/rtp_relay.h"
@@ -198,6 +200,7 @@ int main(int argc, char* argv[]) {
   register_builtin_datastores(logger);
   register_builtin_event_systems(logger);
   media::register_builtin_media_engines(logger);
+  policy::register_builtin_policies(logger);
   push::register_builtin_push_services(logger);
 
   // The settings are the server's and the drivers' built in, whatever the file says, so no
@@ -438,9 +441,22 @@ int main(int argc, char* argv[]) {
     push_services.push_back(service);
   }
 
+  auto policy = policy::Policy::create_driver(logger, config->policy_url);
+  if (!policy || !configure_plugin(logger, policy, config)) {
+    logger->error(policy ? "Policy " + config->policy_url + " did not start" : "Unknown policy scheme: " + config->policy_url);
+    for (const auto& started : push_services) started->close();
+    media_engine->close();
+    datastore->close();
+    events->close();
+    return -2;
+  }
+
+  logger->info("Policy Driver: " + policy->describe());
+
   auto core = std::make_shared<Core>(logger, config, datastore, events);
   core->media_register(media_engine);
   for (const auto& service : push_services) core->push_register(service);
+  core->policy_register(policy);
 
   // The HTTP listener: admin API and static files.
   std::shared_ptr<api::Router> api_router;
@@ -491,6 +507,10 @@ int main(int argc, char* argv[]) {
 
       auto users = std::make_shared<api::UsersAPI>(logger, datastore, adminAPI->executor(), sessions);
       users->register_routes(*api_router);
+
+      auto trunks = std::make_shared<api::TrunksAPI>(logger, datastore, adminAPI->executor());
+      trunks->statuses_register(core->trunk_statuses());
+      trunks->register_routes(*api_router);
 
       // Live calls, the media engine and /metrics, read from Core on its strand.
       auto calls = std::make_shared<api::CallsAPI>(logger, core, adminAPI->executor());
@@ -593,13 +613,18 @@ int main(int argc, char* argv[]) {
   // Ask the stun: servers in http.api.ice_servers where this node is, for --check and the node status.
   core->post([core]() { core->address_discovery()->start(); });
 
-  // SIGINT and SIGTERM (what systemctl stop sends) shut the node down cleanly. SIGHUP is logged and ignored.
+  // Register to the trunks that ask for it, now the listeners are up to take the calls that follow.
+  core->post([core]() { core->trunk_registrar()->start(); });
+
+  // SIGINT and SIGTERM (what systemctl stop sends) shut the node down cleanly. SIGHUP (systemctl reload) has the
+  // policy read its rules again.
   boost::asio::io_context signal_wait_context;
   boost::asio::signal_set signals(signal_wait_context, SIGINT, SIGTERM, SIGHUP);
   wait_for_signal(signals, [&](int signal_number) {
     switch (signal_number) {
       case SIGHUP:
-        logger->debug("Received Signal SIGHUP");
+        logger->info("Received SIGHUP - reloading the policy");
+        core->call_on_strand([&core]() { core->policy_reload(); });
         break;
 
       case SIGINT:

@@ -46,7 +46,9 @@ TEST(ProxyFlowRoutingTest, EveryBranchGoesDownTheFlowOfTheBindingItIsFor) {
   auto& first = desk_first ? f.desk : f.mobile;
   auto& first_connection = desk_first ? f.desk_connection : f.mobile_connection;
 
-  auto forwarded = ProxyFixture::requests_with(first_connection, "INVITE").front();
+  const auto sent = ProxyFixture::requests_with(first_connection, "INVITE");
+  ASSERT_FALSE(sent.empty()) << "the INVITE reached neither device";
+  auto forwarded = sent.front();
 
   std::string busy = "SIP/2.0 486 Busy Here\r\n";
   for (const auto& via : forwarded->header->headers_map["Via"]) busy += "Via: " + via->to_string() + "\r\n";
@@ -86,7 +88,9 @@ TEST(ProxyFlowRoutingTest, TheSecondBranchReachesTheOtherDevice) {
   auto& second_connection = desk_first ? f.mobile_connection : f.desk_connection;
 
   // The first device declines, so the fork moves on.
-  auto forwarded = ProxyFixture::requests_with(first_connection, "INVITE").front();
+  const auto sent = ProxyFixture::requests_with(first_connection, "INVITE");
+  ASSERT_FALSE(sent.empty()) << "the INVITE reached neither device";
+  auto forwarded = sent.front();
 
   std::string busy = "SIP/2.0 486 Busy Here\r\n";
   for (const auto& via : forwarded->header->headers_map["Via"]) busy += "Via: " + via->to_string() + "\r\n";

@@ -20,8 +20,10 @@
 #include "../mocks/logger_mock.h"
 #include "types/password.h"
 #include "types/session.h"
+#include "types/trunk.h"
 #include "types/url.h"
 #include "types/user.h"
+#include "util.h"
 
 using namespace athenasip;
 using athenasip::datastores::RedisDatastore;
@@ -811,4 +813,84 @@ TEST(RedisDatastoreTest, ARoleThisBuildDoesNotKnowIsCarriedNotDropped) {
   EXPECT_FALSE(found->has_role(types::roles::manage_cluster));
 
   EXPECT_TRUE(datastore->user_delete(username));
+}
+
+// A trunk is stored whole and given back as stored, password and attributes included, and found by its name
+// whatever its case.
+TEST(RedisDatastoreTest, ATrunkRoundTrips) {
+  REQUIRE_REDIS(datastore);
+  auto trunk = std::make_shared<types::Trunk>();
+  trunk->name = "Acme" + unique_suffix();
+  trunk->uri = "sip:sip.acme.example;transport=tls";
+  trunk->username = "4420";
+  trunk->password = "s3cret";
+  trunk->register_enabled = true;
+  trunk->register_expires = 600;
+  trunk->contact_user = "4420";
+  trunk->inbound_addresses = {"203.0.113.0/24", "2001:db8::/32"};
+  trunk->attributes["prefixes"] = boost::json::array{"+44", "+1"};
+  ASSERT_TRUE(datastore->trunk_create(trunk));
+
+  const auto found = datastore->trunk_get(Util::to_upper(trunk->name));
+  ASSERT_NE(found, nullptr);
+  EXPECT_EQ(found->name, trunk->name);
+  EXPECT_EQ(found->uri, trunk->uri);
+  EXPECT_EQ(found->password, "s3cret");
+  EXPECT_TRUE(found->register_enabled);
+  EXPECT_EQ(found->register_expires, 600u);
+  EXPECT_EQ(found->inbound_addresses, trunk->inbound_addresses);
+  EXPECT_EQ(found->attributes, trunk->attributes);
+
+  EXPECT_FALSE(datastore->trunk_create(trunk)) << "a second trunk of the same name is a conflict";
+
+  found->password = "changed";
+  ASSERT_TRUE(datastore->trunk_update(found));
+  EXPECT_EQ(datastore->trunk_get(trunk->name)->password, "changed");
+
+  bool listed = false;
+  for (const auto& each : datastore->trunk_list()) listed = listed || each->name == trunk->name;
+  EXPECT_TRUE(listed);
+
+  ASSERT_TRUE(datastore->trunk_delete(trunk->name));
+  EXPECT_EQ(datastore->trunk_get(trunk->name), nullptr);
+  EXPECT_FALSE(datastore->trunk_delete(trunk->name)) << "nothing left to delete";
+  EXPECT_FALSE(datastore->trunk_update(trunk)) << "nothing left to update";
+}
+
+// One holder at a time: another is refused while the lease runs, and the holder renews it.
+TEST(RedisDatastoreTest, ALeaseHasOneHolder) {
+  REQUIRE_REDIS(datastore);
+  const auto name = "trunk-register-acme" + unique_suffix();
+  EXPECT_TRUE(datastore->lease(name, "node-a", 30));
+  EXPECT_FALSE(datastore->lease(name, "node-b", 30));
+  EXPECT_TRUE(datastore->lease(name, "node-a", 30)) << "renewed";
+}
+
+// A lease that has lapsed goes to whoever asks next.
+TEST(RedisDatastoreTest, ALapsedLeaseIsTakenOver) {
+  REQUIRE_REDIS(datastore);
+  const auto name = "trunk-register-lapsed" + unique_suffix();
+  EXPECT_TRUE(datastore->lease(name, "node-a", 1));
+  std::this_thread::sleep_for(std::chrono::milliseconds(2100));
+  EXPECT_TRUE(datastore->lease(name, "node-b", 30));
+  EXPECT_FALSE(datastore->lease(name, "node-a", 30));
+}
+
+// A realm's and a subscriber's attributes come back from Redis as they went in.
+TEST(RedisDatastoreTest, AttributesRoundTripThroughRedis) {
+  REQUIRE_REDIS(datastore);
+  const auto name = "attributes-" + unique_suffix() + ".example";
+
+  auto realm = std::make_shared<types::Realm>(name);
+  realm->nonce_secret = "secret";
+  realm->attributes = boost::json::parse(R"({"country": "44", "blocked": ["^%+4490"]})").as_object();
+  ASSERT_TRUE(datastore->realm_create(realm));
+  EXPECT_EQ(datastore->realm_get_by_name(name)->attributes, realm->attributes);
+
+  auto subscriber = make_subscriber(5270, "sip:dave@" + name);
+  subscriber->attributes = boost::json::parse(R"({"forward_to": "sip:erin@example.com"})").as_object();
+  ASSERT_TRUE(datastore->subscriber_create(subscriber));
+  EXPECT_EQ(datastore->subscriber_get(subscriber->identity)->attributes, subscriber->attributes);
+
+  datastore->realm_delete(name);
 }

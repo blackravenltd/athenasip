@@ -20,8 +20,15 @@ every external piece it can use is a plugin behind one contract.
   TURN credentials are minted per client.
 * **Mobile push.** Phones that sleep are woken for a call through Apple Push, Firebase
   Cloud Messaging or Web Push (RFC 8599).
-* **Pluggable by contract.** The datastore, event bus, media engine and push services are
-  plugin kinds in a registry keyed by URL scheme. The contract is versioned and async, the
+* **Routing you can script.** Who may call and where a call goes is a policy: the
+  built-in one serves the node's own realms, and `lua://` makes it Lua scripts that can do
+  anything else. The standard scripts behave exactly as the built-in policy, and the tests
+  hold them to it.
+* **Trunks.** Carriers and PBXs are records over the API. The node registers to them,
+  answers their challenges and opens TLS to them itself; `athenasip.trunks` routes numbers
+  out by prefix and in by number with no Lua written ([Scripting](docs/scripting.md)).
+* **Pluggable by contract.** The datastore, event bus, media engine, push services and
+  routing policy are plugin kinds in a registry keyed by URL scheme. The contract is versioned and async, the
   in-tree drivers use the same contract an external one would, and a plugin can be a
   shared library loaded at start.
 * **API-driven.** Realms, subscribers and administrators are provisioned over a JSON API
@@ -56,6 +63,7 @@ next step:
   again through the other. A call in progress on a node that dies ends with it.
 * Push is tested against local stand-ins for Apple, Firebase and Web Push, not yet
   against the real services.
+* Trunks are tested against local stand-ins for a carrier, not yet against a real one.
 * Conferencing and presence are not built yet.
 * The example configuration enables plaintext UDP and TCP so a first call is easy;
   `sip.allow_unencrypted: false` limits a node to TLS and secure WebSocket.
@@ -71,6 +79,7 @@ next step:
 * [Running a cluster](docs/clustering.md) - two nodes, step by step
 * [Troubleshooting](docs/troubleshooting.md) - from the symptom to the cause
 * [Behaviour](docs/behaviour.md) - the choices SIP servers differ on
+* [Scripting](docs/scripting.md) - routing in Lua, and trunks
 * [Authentication](docs/authentication.md) - SIP Digest and the admin plane
 * [Certificates](docs/certificates.md) - TLS for clients and the cluster's certificate authority
 * [Architecture](docs/architecture.md)

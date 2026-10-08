@@ -25,6 +25,9 @@ inline std::string node_transaction(const std::string& node_id, const std::strin
 
 inline std::string subscriber_status(const std::string& uri) { return "subscribers/" + uri + "/status"; }
 
+// Retained: whether the node holding a trunk's registration has it registered.
+inline std::string trunk_status(const std::string& name) { return "trunks/" + name + "/status"; }
+
 inline std::string call_register(const std::string& call_id) { return "calls/" + call_id + "/register"; }
 
 inline std::string call_unregister(const std::string& call_id) { return "calls/" + call_id + "/unregister"; }

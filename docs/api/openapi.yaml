@@ -78,6 +78,10 @@ tags:
     description: What the node is carrying now, and what its media engine relayed for it
   - name: media
     description: The media engine and the node's counters
+  - name: policy
+    description: Who may call and where a call goes (docs/scripting.md)
+  - name: trunks
+    description: The carriers and PBXs calls leave by and arrive from
 
 paths:
   /health:
@@ -689,6 +693,157 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+
+  /trunks:
+    get:
+      operationId: listTrunks
+      tags: [trunks]
+      summary: Every trunk
+      description: Takes `manage-trunks`. Passwords are never returned.
+      responses:
+        "200":
+          description: The trunks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Trunk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: createTrunk
+      tags: [trunks]
+      summary: Add a trunk
+      description: |
+        Takes `manage-trunks`. `name` and `uri` are required. Which calls use the trunk is the
+        routing policy's to say ([Scripting](../scripting.md)); `attributes` is where a
+        script finds what it needs to.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrunkWrite"
+      responses:
+        "201":
+          description: The trunk as stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Trunk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /trunks/{trunk}:
+    parameters:
+      - name: trunk
+        in: path
+        required: true
+        schema:
+          type: string
+        description: The trunk's name, matched without regard to case
+    get:
+      operationId: getTrunk
+      tags: [trunks]
+      summary: One trunk
+      responses:
+        "200":
+          description: The trunk
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Trunk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: updateTrunk
+      tags: [trunks]
+      summary: Change a trunk
+      description: Only the fields given change. The name cannot.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrunkWrite"
+      responses:
+        "200":
+          description: The trunk as stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Trunk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteTrunk
+      tags: [trunks]
+      summary: Remove a trunk
+      responses:
+        "204":
+          description: Removed
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /policy/reload:
+    post:
+      operationId: reloadPolicy
+      tags: [policy]
+      summary: Read the routing scripts again
+      description: |
+        Has this node's policy read its rules again, as `systemctl reload` does. Takes
+        `manage-cluster`. For `lua://` the scripts load into a new state; calls already being
+        decided finish on the old one. Scripts that do not load are refused with the error,
+        and the ones in force stay. Each node of a cluster reads its own scripts: reload
+        each.
+      responses:
+        "200":
+          description: The rules now in force
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [driver]
+                properties:
+                  driver:
+                    type: string
+                    example: lua 1.0.0
+                  fingerprint:
+                    type: string
+                    description: SHA-256 of the scripts loaded, absent for builtin://
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          description: The scripts did not load; `message` has the file and line
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
 
   /media:
     get:
@@ -1316,6 +1471,82 @@ components:
         - manage-realms
         - manage-realm-subscribers
         - manage-cluster
+        - manage-trunks
+
+    TrunkWrite:
+      type: object
+      properties:
+        name:
+          type: string
+          pattern: "^[A-Za-z0-9._-]{1,64}$"
+          example: acme
+        uri:
+          type: string
+          description: Where calls and the REGISTER go, located by RFC 3263
+          example: sip:sip.acme.example;transport=tls
+        proxy:
+          type: string
+          description: An outbound proxy, where calls and the REGISTER are sent instead of where the URI says
+          example: sip:203.0.113.10:5060
+        username:
+          type: string
+          description: For the carrier's challenges
+        password:
+          type: string
+          description: Written, never returned
+        register:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+            expires:
+              type: integer
+              minimum: 60
+              maximum: 86400
+            contact_user:
+              type: string
+              description: The user part of the Contact registered, where the carrier sends calls
+        inbound_addresses:
+          type: array
+          description: Addresses or CIDR ranges a call from the trunk comes from
+          items:
+            type: string
+            example: 203.0.113.0/24
+        tls_ca:
+          type: string
+          description: A CA file for TLS to the trunk; empty is the system's store
+        attributes:
+          type: object
+          description: Anything a routing script reads; the node reads none of it
+          additionalProperties: true
+
+    Trunk:
+      allOf:
+        - $ref: "#/components/schemas/TrunkWrite"
+        - type: object
+          properties:
+            password_set:
+              type: boolean
+            created_at:
+              type: integer
+            registration:
+              type: object
+              nullable: true
+              description: |
+                What the node registering to the trunk last reported; null when the trunk does not
+                register or no node has reported yet.
+              properties:
+                node:
+                  type: string
+                state:
+                  type: string
+                  enum: [registering, registered, failed]
+                detail:
+                  type: string
+                expires_at:
+                  type: integer
+                at:
+                  type: string
 
     User:
       type: object
@@ -1511,6 +1742,12 @@ components:
     Realm:
       type: object
       properties:
+        attributes:
+          type: object
+          additionalProperties: true
+          description: |
+            Anything a routing script reads (docs/scripting.md); the node reads none of it.
+            Settable on create and update, replaced whole when given.
         name:
           type: string
         id:
@@ -1597,6 +1834,10 @@ components:
       type: object
       required: [name]
       properties:
+        attributes:
+          type: object
+          additionalProperties: true
+          description: Anything a routing script reads; replaced whole when given
         name:
           type: string
         nonce_secret:
@@ -1614,6 +1855,10 @@ components:
     RealmUpdate:
       type: object
       properties:
+        attributes:
+          type: object
+          additionalProperties: true
+          description: Anything a routing script reads; replaced whole when given
         nonce_secret:
           type: string
         nonce_expiry:
@@ -1665,6 +1910,12 @@ components:
     Subscriber:
       type: object
       properties:
+        attributes:
+          type: object
+          additionalProperties: true
+          description: |
+            Anything a routing script reads (docs/scripting.md); the node reads none of it.
+            Settable on create and update, replaced whole when given.
         id:
           type: integer
           format: int64
@@ -1732,6 +1983,10 @@ components:
       required: [user]
       description: One of `password` or `ha1` is required.
       properties:
+        attributes:
+          type: object
+          additionalProperties: true
+          description: Anything a routing script reads; replaced whole when given
         user:
           type: string
         password:
@@ -1747,6 +2002,10 @@ components:
       type: object
       description: Any of `password` or `ha1`, and `behaviour`.
       properties:
+        attributes:
+          type: object
+          additionalProperties: true
+          description: Anything a routing script reads; replaced whole when given
         password:
           type: string
         ha1:

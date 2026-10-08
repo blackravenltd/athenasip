@@ -1,0 +1,25 @@
+{
+  "comment": "The two live nodes. The probe subscribers 1901 and 1902 exist on both; their password is in password_file on each node. node-a has a trunk 'node-b' to node-b: +190 numbers leave by it, and node-b's 1003 comes in to node-a's 1902.",
+  "nodes": {
+    "node-a": {"host": "10.101.1.20", "realm": "10.101.1.20", "http": 8080},
+    "node-b": {"host": "10.102.1.50", "realm": "node-b.example.com", "http": 8080}
+  },
+  "password_file": "/root/.athenasip-probe-password",
+  "registrations": [
+    {"node": "node-a", "user": "1901"},
+    {"node": "node-b", "user": "1901"}
+  ],
+  "calls": [
+    {"name": "node-a local, udp", "caller": "1901@node-a", "callee": "1902@node-a", "transports": "udp:udp"},
+    {"name": "node-a local, tcp", "caller": "1901@node-a", "callee": "1902@node-a", "transports": "tcp:tcp"},
+    {"name": "node-a local, tls", "caller": "1901@node-a", "callee": "1902@node-a", "transports": "tls:tls"},
+    {"name": "node-a local, ws", "caller": "1901@node-a", "callee": "1902@node-a", "transports": "ws:ws"},
+    {"name": "node-a local, wss to tls, callee hangs up", "caller": "1901@node-a", "callee": "1902@node-a", "transports": "wss:tls", "callee_hangs_up": true},
+    {"name": "node-b local, udp", "caller": "1901@node-b", "callee": "1902@node-b", "transports": "udp:udp"},
+    {"name": "node-b local, tls to wss", "caller": "1901@node-b", "callee": "1902@node-b", "transports": "tls:wss"},
+    {"name": "trunk out, node-a to node-b, udp", "caller": "1901@node-a", "callee": "1902@node-b", "transports": "udp:udp", "dial": "sip:+1902@10.101.1.20"},
+    {"name": "trunk out, node-a to node-b, tls", "caller": "1901@node-a", "callee": "1902@node-b", "transports": "tls:tls", "dial": "sip:+1902@10.101.1.20"},
+    {"name": "trunk in, node-b to node-a, udp", "caller": "1901@node-b", "callee": "1902@node-a", "transports": "udp:udp", "dial": "sip:1003@node-b.example.com"},
+    {"name": "trunk in, wss, callee hangs up", "caller": "1901@node-b", "callee": "1902@node-a", "transports": "wss:wss", "dial": "sip:1003@node-b.example.com", "callee_hangs_up": true}
+  ]
+}

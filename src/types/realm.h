@@ -6,6 +6,7 @@
 //
 #pragma once
 
+#include <boost/json.hpp>
 #include <cstdint>
 #include <optional>
 #include <regex>
@@ -103,6 +104,9 @@ class Realm {
 
   // What this realm does differently from the server's default.
   Behaviour behaviour;
+
+  // Anything a routing script wants to know about the realm. The node reads none of it.
+  boost::json::object attributes;
 
   std::string to_string() const;
 };

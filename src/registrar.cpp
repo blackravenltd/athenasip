@@ -141,63 +141,42 @@ void Registrar::on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<
 
   auto aor = to->value;
 
-  auto self = shared_from_this();
-  core->realm_get_by_name(Util::to_lower(aor->uri->host), [this, self, request, transaction, aor](plugins::Result<std::shared_ptr<types::Realm>> found) {
-    // A datastore failure is a 500; only a realm that is not served is a 404.
-    if (!found.ok) {
-      _logger->error("REGISTER could not read the realm - " + found.error);
-      return _send_status(transaction, request, 500, "Server Internal Error");
-    }
-
-    if (found.value) return _on_realm(request, transaction, aor, found.value);
-    _on_unserved(request, transaction, aor);
-  });
-}
-
-// RFC 3261 10.3 step 1: a Request-URI for a domain this node holds no bindings for is forwarded there, this node
-// being a proxy too, when sip.forward_register allows. A Request-URI naming this node or one of its realms is
-// step 5's 404: the address of record is not valid here.
-void Registrar::_on_unserved(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
-                             std::shared_ptr<types::SIPIdentity> aor) {
-  auto core = _core.lock();
-  if (!core) return;
-
-  const auto& uri = request->header->request_uri;
-  const std::uint16_t port = uri ? uri->port.value_or(Util::to_lower(uri->scheme) == "sips" ? 5061 : 5060) : 0;
-  if (!uri || core->is_local_address(uri->host, port)) return _on_realm(request, transaction, aor, nullptr);
+  auto view = std::make_shared<policy::RequestView>();
+  view->message = request;
 
   auto self = shared_from_this();
-  core->realm_get_by_name(Util::to_lower(uri->host), [this, self, request, transaction, aor](plugins::Result<std::shared_ptr<types::Realm>> found) {
+  core->policy()->register_(core->strand(), view, [this, self, request, transaction, aor](plugins::Result<policy::RegisterDecision> decided) {
     auto core = _core.lock();
     if (!core) return;
 
-    if (!found.ok) {
-      _logger->error("REGISTER could not read the realm - " + found.error);
+    // A datastore failure, or a policy that could not decide, is a 500.
+    if (!decided.ok) {
+      _logger->error("REGISTER could not be decided - " + decided.error);
       return _send_status(transaction, request, 500, "Server Internal Error");
     }
 
-    if (found.value) return _on_realm(request, transaction, aor, nullptr);
-
-    if (core->config->sip_forward_register != "subscribers") {
-      _logger->info("REGISTER for " + request->header->request_uri->to_string() + ", a domain not served here, and sip.forward_register is never - 403");
-      return _send_status(transaction, request, 403, "Forbidden");
+    const auto& decision = decided.value;
+    switch (decision.kind) {
+      case policy::RegisterDecision::Kind::Reject:
+        return _send_status(transaction, request, decision.code, decision.reason);
+      case policy::RegisterDecision::Kind::Forward:
+        return core->register_forward(request, transaction);
+      case policy::RegisterDecision::Kind::Accept:
+        if (!decision.realm) {
+          _logger->error("REGISTER accepted by the policy with no realm - 500");
+          return _send_status(transaction, request, 500, "Server Internal Error");
+        }
+        return _on_realm(request, transaction, aor, decision.realm, Terms{decision.max_expires, decision.min_expires, decision.qualify_interval});
     }
-
-    core->register_forward(request, transaction);
   });
 }
 
+// RFC 3261 10.3 steps 4 to 6. An unknown subscriber in a served realm is challenged, so REGISTER cannot
+// enumerate subscribers.
 void Registrar::_on_realm(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
-                          std::shared_ptr<types::SIPIdentity> aor, std::shared_ptr<types::Realm> realm) {
+                          std::shared_ptr<types::SIPIdentity> aor, std::shared_ptr<types::Realm> realm, Terms terms) {
   auto core = _core.lock();
   if (!core) return;
-
-  // RFC 3261 10.3 step 5: an unserved domain is a 404. An unknown subscriber in a served
-  // realm is challenged instead, so REGISTER cannot enumerate subscribers.
-  if (!realm) {
-    _logger->info("REGISTER for unserved domain " + aor->uri->host + " - 404");
-    return _send_status(transaction, request, 404, "Not Found");
-  }
 
   if (!request->header->contains("Authorization")) {
     _logger->info("REGISTER with no Authorization - challenging");
@@ -213,7 +192,7 @@ void Registrar::_on_realm(std::shared_ptr<SIPMessage> request, std::shared_ptr<t
   }
 
   auto self = shared_from_this();
-  core->nonce_check(auth->fields["nonce"], [this, self, request, transaction, aor, realm, auth](plugins::Result<bool> checked) {
+  core->nonce_check(auth->fields["nonce"], [this, self, request, transaction, aor, realm, auth, terms](plugins::Result<bool> checked) {
     if (!checked.ok) {
       _logger->error("REGISTER could not check the nonce - " + checked.error);
       return _send_status(transaction, request, 500, "Server Internal Error");
@@ -224,29 +203,30 @@ void Registrar::_on_realm(std::shared_ptr<SIPMessage> request, std::shared_ptr<t
       return _send_challenge(transaction, request, realm);
     }
 
-    _on_nonce_checked(request, transaction, aor, realm, auth);
+    _on_nonce_checked(request, transaction, aor, realm, auth, terms);
   });
 }
 
 void Registrar::_on_nonce_checked(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
-                                  std::shared_ptr<types::SIPIdentity> aor, std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Authorization> auth) {
+                                  std::shared_ptr<types::SIPIdentity> aor, std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Authorization> auth,
+                                  Terms terms) {
   auto core = _core.lock();
   if (!core) return;
 
   auto self = shared_from_this();
-  core->subscriber_get(aor, [this, self, request, transaction, aor, realm, auth](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
+  core->subscriber_get(aor, [this, self, request, transaction, aor, realm, auth, terms](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
     if (!found.ok) {
       _logger->error("REGISTER could not read the subscriber - " + found.error);
       return _send_status(transaction, request, 500, "Server Internal Error");
     }
 
-    _on_subscriber(request, transaction, aor, realm, auth, found.value);
+    _on_subscriber(request, transaction, aor, realm, auth, found.value, terms);
   });
 }
 
 void Registrar::_on_subscriber(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
                                std::shared_ptr<types::SIPIdentity> aor, std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Authorization> auth,
-                               std::shared_ptr<types::Subscriber> subscriber) {
+                               std::shared_ptr<types::Subscriber> subscriber, Terms terms) {
   if (!subscriber) {
     _logger->info("REGISTER for unknown subscriber " + aor->to_string() + " - challenging");
     return _send_challenge(transaction, request, realm);
@@ -262,16 +242,16 @@ void Registrar::_on_subscriber(std::shared_ptr<SIPMessage> request, std::shared_
   // The connection now belongs to this subscriber; see Channel::authenticated_as.
   if (auto channel = request->channel.lock()) channel->authenticated_as(aor->uri->to_string());
 
-  _apply_bindings(request, transaction, realm, subscriber);
+  _apply_bindings(request, transaction, subscriber, terms);
 }
 
 void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
-                                std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Subscriber> subscriber) {
+                                std::shared_ptr<types::Subscriber> subscriber, Terms terms) {
   auto core = _core.lock();
   if (!core) return;
 
-  const auto requested = _requested_expiry(request, realm);
-  const auto expires = _granted_expiry(requested, realm);
+  const auto requested = _requested_expiry(request, terms);
+  const auto expires = _granted_expiry(requested, terms);
 
   // A REGISTER with no Contact queries the current bindings (RFC 3261 10.2.2); step 7 does
   // not apply.
@@ -304,7 +284,7 @@ void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared
   }
 
   auto bindings = std::make_shared<std::vector<Binding>>();
-  const auto qualify = realm ? realm->behaviour.qualify_over(core->config->behaviour_qualify_interval) : core->config->behaviour_qualify_interval;
+  const auto qualify = terms.qualify_interval;
   const bool pushed_elsewhere = pushed_by_another_proxy(request);
 
   for (const auto& header : request->header->headers_map["Contact"]) {
@@ -323,12 +303,12 @@ void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared
     }
 
     // Step 7: the first contact that is too brief refuses the whole request.
-    if (_is_too_brief(contact_requested, realm)) {
+    if (_is_too_brief(contact_requested, terms)) {
       _logger->info("REGISTER asked for " + std::to_string(contact_requested) + "s, below the realm minimum - 423");
-      return _send_interval_too_brief(transaction, request, realm ? realm->registration_minimum : 0);
+      return _send_interval_too_brief(transaction, request, terms.min_expires);
     }
 
-    Binding binding{contact->value->uri, _granted_expiry(contact_requested, realm), qualify};
+    Binding binding{contact->value->uri, _granted_expiry(contact_requested, terms), qualify};
 
     // RFC 8599 5.6.1: a contact with a pn-provider asks for push, or with no pn-prid asks only whether it is
     // supported. This node is the registrar and knows no other proxy pushes, so an unsupported service is a
@@ -351,7 +331,7 @@ void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared
         const auto minimum = core->config->push_minimum_expiry();
         if (contact_requested < minimum) {
           _logger->info("REGISTER asked for push with " + std::to_string(contact_requested) + "s, too brief to be woken in time - 423");
-          return _send_interval_too_brief(transaction, request, std::max(minimum, realm ? realm->registration_minimum : 0u));
+          return _send_interval_too_brief(transaction, request, std::max(minimum, terms.min_expires));
         }
 
         // The realm may grant less than was asked; then the binding registers without push (5.6.1.1).
@@ -479,7 +459,7 @@ void Registrar::_store_binding(std::shared_ptr<SIPMessage> request, std::shared_
       binding.instance, binding.reg_id, binding.push);
 }
 
-std::uint32_t Registrar::_requested_expiry(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<types::Realm>& realm) const {
+std::uint32_t Registrar::_requested_expiry(const std::shared_ptr<SIPMessage>& request, const Terms& terms) const {
   if (request->header->contains("Contact")) {
     auto contact = request->header->headers_map["Contact"][0]->as<SIPIdentityHeader>();
     if (contact != nullptr && contact->value != nullptr) {
@@ -501,20 +481,20 @@ std::uint32_t Registrar::_requested_expiry(const std::shared_ptr<SIPMessage>& re
 
   // RFC 3261 10.3 step 7: with neither, the local default applies, which is the realm's
   // maximum.
-  return realm && realm->registration_timeout > 0 ? realm->registration_timeout : kDefaultMaximumExpiry;
+  return terms.max_expires > 0 ? terms.max_expires : kDefaultMaximumExpiry;
 }
 
-std::uint32_t Registrar::_granted_expiry(std::uint32_t requested, const std::shared_ptr<types::Realm>& realm) const {
-  const std::uint32_t maximum = realm && realm->registration_timeout > 0 ? realm->registration_timeout : kDefaultMaximumExpiry;
+std::uint32_t Registrar::_granted_expiry(std::uint32_t requested, const Terms& terms) const {
+  const std::uint32_t maximum = terms.max_expires > 0 ? terms.max_expires : kDefaultMaximumExpiry;
   return std::min(requested, maximum);
 }
 
-bool Registrar::_is_too_brief(std::uint32_t requested, const std::shared_ptr<types::Realm>& realm) const {
-  if (!realm || realm->registration_minimum == 0) return false;
+bool Registrar::_is_too_brief(std::uint32_t requested, const Terms& terms) const {
+  if (terms.min_expires == 0) return false;
 
   // RFC 3261 10.3 step 7: too brief only if greater than zero (zero is a removal), under an
   // hour, and below the realm's minimum.
-  return requested > 0 && requested < kNeverTooBrief && requested < realm->registration_minimum;
+  return requested > 0 && requested < kNeverTooBrief && requested < terms.min_expires;
 }
 
 std::string Registrar::_path_of(const std::shared_ptr<SIPMessage>& request) const {

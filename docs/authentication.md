@@ -82,7 +82,8 @@ do nothing.
 | `manage-admin-users` | Create, change and remove users and their roles. Its holder can grant itself any role. |
 | `manage-realms` | Create, change and remove realms |
 | `manage-realm-subscribers` | Create, change and remove subscribers in a realm |
-| `manage-cluster` | End live calls |
+| `manage-cluster` | End live calls, reload the routing scripts |
+| `manage-trunks` | Create, change and remove trunks, and set their passwords |
 
 ### Routes and roles
 
@@ -98,7 +99,8 @@ reference.
 | `POST /realms`, `PUT`/`DELETE /realms/{realm}` | `manage-realms` |
 | `/realms/{realm}/subscribers[/{user}]` | `manage-realm-subscribers` |
 | `/users[/{user}]`, `DELETE /users/{user}/sessions` | `manage-admin-users` |
-| `DELETE /calls/{call}` | `manage-cluster` |
+| `DELETE /calls/{call}`, `POST /policy/reload` | `manage-cluster` |
+| `/trunks[/{trunk}]` | `manage-trunks` |
 | `GET /subscriber/{realm}/config`, `GET /subscriber/{realm}/registrations`, `PUT /subscriber/{realm}/password` | The subscriber itself, with Digest (below) |
 
 Refusals:
@@ -154,6 +156,16 @@ pbkdf2-sha256$600000$<base64 salt>$<base64 hash>
 PBKDF2-HMAC-SHA256 from OpenSSL with a random per-user salt and a constant-time
 comparison. The iteration count is stored with the hash, so it can be raised without
 invalidating existing passwords. A password is never logged or returned.
+
+## Trunk passwords
+
+A trunk's password is the credential a carrier issued this node, and the node answers the
+carrier's challenges with it. A Digest response is made with the realm the carrier names in
+its challenge, which is not known in advance, so the password is kept as given in the
+datastore, not as a hash. The API never returns it (`password_set` says whether one is
+held) and no script can read it, but anyone who can read the datastore can. Keep Redis on a
+loopback or private address with a password (`redis://:password@host`), and give
+`manage-trunks` to as few users as possible.
 
 ## Transport
 

@@ -22,6 +22,7 @@
 #include "events/topics.h"
 #include "expiry_set.h"
 #include "local_ua.h"
+#include "policy/builtin_policy.h"
 #include "proxy.h"
 #include "push/push_parameters.h"
 #include "qualifier.h"
@@ -238,7 +239,8 @@ std::shared_ptr<Channel> Core::channel_find(const std::string& flow_id) {
 
 // RFC 3261 16.6 step 7 and 18.1. Outbound sockets run on the global io_context; the answer
 // is posted back to the strand.
-void Core::channel_connect(std::string transport, std::string host, std::uint16_t port, plugins::Handler<std::shared_ptr<Channel>> handler) {
+void Core::channel_connect(std::string transport, std::string host, std::uint16_t port, plugins::Handler<std::shared_ptr<Channel>> handler,
+                           std::optional<std::string> trunk_ca) {
   using ChannelResult = plugins::Result<std::shared_ptr<Channel>>;
 
   transport = Util::to_lower(transport);
@@ -253,17 +255,21 @@ void Core::channel_connect(std::string transport, std::string host, std::uint16_
 
   if (transport == "udp") return _connect_datagram(host, port, std::move(handler));
 
-  // Outbound TLS is only to cluster peers, with the cluster's certificates.
-  if (transport == "tls" && !_cluster_tls) {
-    return handler(ChannelResult::failure("cannot open an outbound tls flow without the cluster's certificates"));
-  }
-
   if (transport != "tcp" && transport != "tls") {
     return handler(ChannelResult::failure("cannot open an outbound " + transport + " flow"));
   }
 
+  // Outbound TLS is to cluster peers, with the cluster's certificates, or to a trunk, verified as any TLS server is.
+  // Nothing else: a TLS flow this node opens is to something it has a reason to trust.
   const bool secure = transport == "tls";
-  auto cluster_tls = _cluster_tls;
+  std::shared_ptr<boost::asio::ssl::context> cluster_tls;
+  if (secure) {
+    cluster_tls = trunk_ca ? _trunk_tls_for(*trunk_ca) : _cluster_tls;
+    if (!cluster_tls) {
+      return handler(ChannelResult::failure(trunk_ca ? "cannot load the CA " + *trunk_ca + " for TLS to a trunk"
+                                                     : "cannot open an outbound tls flow without the cluster's certificates"));
+    }
+  }
 
   auto& io_context = detail::get_global_io_context();
 
@@ -328,6 +334,26 @@ void Core::channel_connect(std::string transport, std::string host, std::uint16_
       });
 }
 
+std::shared_ptr<boost::asio::ssl::context> Core::_trunk_tls_for(const std::string& ca) {
+  if (const auto found = _trunk_tls.find(ca); found != _trunk_tls.end()) return found->second;
+
+  auto context = std::make_shared<boost::asio::ssl::context>(boost::asio::ssl::context::tls_client);
+  try {
+    if (ca.empty()) {
+      context->set_default_verify_paths();
+    } else {
+      context->load_verify_file(ca);
+    }
+    context->set_verify_mode(boost::asio::ssl::verify_peer);
+  } catch (const std::exception& e) {
+    _logger->error("Cannot load " + (ca.empty() ? std::string("the system's CA store") : ca) + " for TLS to a trunk - " + e.what());
+    return nullptr;
+  }
+
+  _trunk_tls[ca] = context;
+  return context;
+}
+
 bool Core::cluster_tls_set(const std::string& ca, const std::string& cert, const std::string& key) {
   auto context = std::make_shared<boost::asio::ssl::context>(boost::asio::ssl::context::tls_client);
   if (!servers::load_tls_certificates(_logger, *context, cert, key) || !servers::require_peer_certificates(_logger, *context, ca)) return false;
@@ -345,8 +371,10 @@ void Core::_secure_flow(std::shared_ptr<boost::asio::ip::tcp::socket> socket, st
   auto stream = std::make_shared<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>>(std::move(*socket), *context);
   stream->set_verify_callback(boost::asio::ssl::host_name_verification(host));
 
+  const bool cluster = context == _cluster_tls;
+
   std::weak_ptr<Core> weak_self = weak_from_this();
-  stream->async_handshake(boost::asio::ssl::stream_base::client, [weak_self, stream, key, answer](const boost::system::error_code& ec) {
+  stream->async_handshake(boost::asio::ssl::stream_base::client, [weak_self, stream, key, answer, cluster](const boost::system::error_code& ec) {
     if (ec) {
       boost::system::error_code ignored;
       stream->lowest_layer().close(ignored);
@@ -356,13 +384,13 @@ void Core::_secure_flow(std::shared_ptr<boost::asio::ip::tcp::socket> socket, st
     auto self = weak_self.lock();
     if (!self) return;
 
-    auto connection = std::make_shared<servers::TLSConnection>(stream, true);
+    auto connection = std::make_shared<servers::TLSConnection>(stream, true, cluster);
     auto channel = std::make_shared<Channel>(self->_logger->base_logger(), self, connection);
     channel->start();
 
     boost::asio::post(self->_strand, [self, channel, key]() { self->channel_alias(key, channel); });
 
-    self->_logger->info("Opened TLS flow to " + key + ", node " + connection->peer_identity());
+    self->_logger->info("Opened TLS flow to " + key + (cluster ? ", node " + connection->peer_identity() : ""));
     answer(ChannelResult::success(channel));
   });
 }
@@ -633,6 +661,70 @@ Core::Advertised Core::advertised_for(const Channel& channel) const {
   return out;
 }
 
+namespace {
+
+// What a policy decides with: the datastore through the strand, and the node's own addresses and configuration.
+class CorePolicyHost final : public policy::Host {
+ public:
+  explicit CorePolicyHost(std::weak_ptr<Core> core) : _core(std::move(core)) {}
+
+  void realm(std::string name, plugins::Handler<std::shared_ptr<Realm>> handler) override {
+    if (auto core = _core.lock()) core->realm_get_by_name(std::move(name), std::move(handler));
+  }
+
+  void subscriber(std::shared_ptr<SIPIdentity> identity, plugins::Handler<std::shared_ptr<Subscriber>> handler) override {
+    if (auto core = _core.lock()) core->subscriber_get(std::move(identity), std::move(handler));
+  }
+
+  void locations(std::uint64_t subscriber_id, plugins::Handler<std::vector<types::Location>> handler) override {
+    if (auto core = _core.lock()) core->location_list(subscriber_id, std::move(handler));
+  }
+
+  void trunk(std::string name, plugins::Handler<std::shared_ptr<types::Trunk>> handler) override {
+    if (auto core = _core.lock()) core->datastore->trunk_get(core->strand(), std::move(name), std::move(handler));
+  }
+
+  void trunks(plugins::Handler<std::vector<std::shared_ptr<types::Trunk>>> handler) override {
+    if (auto core = _core.lock()) core->datastore->trunk_list(core->strand(), std::move(handler));
+  }
+
+  bool names_this_node(const std::string& host, std::uint16_t port) const override {
+    auto core = _core.lock();
+    return core && core->is_local_address(host, port);
+  }
+
+  // The Core owns the policy, so it is alive whenever the policy asks.
+  const Config& config() const override { return *_core.lock()->config; }
+
+ private:
+  std::weak_ptr<Core> _core;
+};
+
+}  // namespace
+
+void Core::policy_register(std::shared_ptr<policy::Policy> policy) {
+  if (!policy) return;
+  policy->attach(std::make_shared<CorePolicyHost>(weak_from_this()));
+  _policy = std::move(policy);
+}
+
+std::shared_ptr<policy::Policy> Core::policy() {
+  if (!_policy) policy_register(std::make_shared<policy::BuiltinPolicy>(_logger, nullptr));
+  return _policy;
+}
+
+std::string Core::policy_reload() {
+  auto error = policy()->reload();
+  if (!error.empty()) {
+    _logger->error("The policy did not reload, and the rules in force stay - " + error);
+    return error;
+  }
+
+  _logger->info("Policy reloaded: " + policy()->describe() + (policy()->fingerprint().empty() ? "" : ", scripts " + policy()->fingerprint().substr(0, 12)));
+  if (_node_status_timer) _node_status_publish();
+  return {};
+}
+
 void Core::push_register(std::shared_ptr<push::PushService> service) {
   if (service) _push_services[service->name()] = std::move(service);
 }
@@ -664,6 +756,11 @@ std::shared_ptr<PushRefresher> Core::push_refresher() {
   return _push_refresher;
 }
 
+std::shared_ptr<TrunkRegistrar> Core::trunk_registrar() {
+  if (!_trunk_registrar) _trunk_registrar = std::make_shared<TrunkRegistrar>(_logger->base_logger(), weak_from_this());
+  return _trunk_registrar;
+}
+
 std::shared_ptr<Qualifier> Core::qualifier() {
   if (!_qualifier) _qualifier = std::make_shared<Qualifier>(_logger->base_logger(), weak_from_this());
   return _qualifier;
@@ -692,7 +789,8 @@ void Core::_deliver_to_tu(const std::shared_ptr<SIPMessage>& request, const std:
 
   // Retransmissions never get this far (RFC 3261 17.2.1), so the dialog tracker sees each
   // request once.
-  request->in_known_dialog = !request->header->contains("To") ? false : _dialogs->find(request) != nullptr;
+  request->dialog = request->header->contains("To") ? _dialogs->find(request) : nullptr;
+  request->in_known_dialog = request->dialog != nullptr;
   _dialogs->observe_request(request);
 
   const auto& method = request->header->request_method;
@@ -991,6 +1089,17 @@ void Core::node_status_start() {
         if (!subscribed.ok) _logger->warn("Cannot listen for the other nodes - " + subscribed.error);
       });
 
+  // And which node has each trunk registered.
+  std::weak_ptr<TrunkStatuses> weak_trunks = _trunk_statuses;
+  events->subscribe(
+      _strand, "trunks/+/status",
+      [weak_trunks](std::string topic, std::string message) {
+        if (auto trunks = weak_trunks.lock()) trunks->observe(topic, message);
+      },
+      [this, self = shared_from_this()](plugins::Result<std::shared_ptr<events::Subscription>> subscribed) {
+        if (!subscribed.ok) _logger->warn("Cannot listen for the trunks' registrations - " + subscribed.error);
+      });
+
   _node_status_publish();
 }
 
@@ -1048,6 +1157,14 @@ std::string Core::node_status_json(const std::string& status) const {
   auto report = boost::json::parse(node_status_json(status, config->sip_node_id, _version, datastore ? datastore->describe() : "none", uptime,
                                                     config->events_status_interval, config->advertised_transports(), config->advertised_cluster()))
                     .as_object();
+
+  // The policy, and what identifies its rules: nodes of one cluster should agree.
+  if (_policy) {
+    boost::json::object policy;
+    policy["driver"] = _policy->describe();
+    if (const auto fingerprint = _policy->fingerprint(); !fingerprint.empty()) policy["fingerprint"] = fingerprint;
+    report["policy"] = std::move(policy);
+  }
 
   // This node's address as a STUN server sees it: reported, not advertised. Null until one has answered.
   if (const auto finding = _address_discovery ? _address_discovery->finding() : std::nullopt) {

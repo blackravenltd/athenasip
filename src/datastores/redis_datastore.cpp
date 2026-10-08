@@ -439,6 +439,112 @@ void RedisDatastore::user_list(plugins::Executor on, plugins::Handler<std::vecto
       });
 }
 
+// One script, so taking and renewing are atomic: two nodes asking at once cannot both win.
+void RedisDatastore::lease(plugins::Executor on, std::string name, std::string holder, std::uint32_t seconds, plugins::Handler<bool> handler) {
+  static constexpr const char* kTake = R"lua(
+    local held = redis.call('GET', KEYS[1])
+    if not held then redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2]) return 1 end
+    if held == ARGV[1] then redis.call('EXPIRE', KEYS[1], ARGV[2]) return 1 end
+    return 0
+  )lua";
+
+  boost::redis::request request;
+  request.push("EVAL", kTake, 1, "athena:lease:" + name, holder, seconds);
+
+  _async_integer("EVAL", std::move(request), [this, on, handler](RedisError error, std::int64_t taken) mutable {
+    if (error) return _complete(on, handler, plugins::Result<bool>::failure(error.message()));
+    _complete(on, handler, plugins::Result<bool>::success(taken == 1));
+  });
+}
+
+// A trunk is one JSON value under its key, with an index of names, as a user is.
+void RedisDatastore::trunk_get(plugins::Executor on, std::string name, plugins::Handler<std::shared_ptr<types::Trunk>> handler) {
+  using Answer = plugins::Result<std::shared_ptr<types::Trunk>>;
+
+  _async_get(_trunk_key(name), [this, on, handler](RedisError error, std::optional<std::string> value) mutable {
+    if (error) return _complete(on, handler, Answer::failure(error.message()));
+    if (!value) return _complete(on, handler, Answer::success(nullptr));
+
+    try {
+      _complete(on, handler, Answer::success(std::make_shared<types::Trunk>(types::Trunk::from_json(boost::json::parse(*value).as_object()))));
+    } catch (const std::exception& ex) {
+      _logger->error("trunk_get: " + std::string(ex.what()));
+      _complete(on, handler, Answer::failure(ex.what()));
+    }
+  });
+}
+
+void RedisDatastore::trunk_create(plugins::Executor on, std::shared_ptr<types::Trunk> trunk, plugins::StatusHandler handler) {
+  if (!trunk || trunk->name.empty()) return _complete(on, handler, plugins::Status::failure("trunk_create: no trunk"));
+
+  const auto key = _trunk_key(trunk->name);
+  const auto name = trunk->key();
+  const auto body = boost::json::serialize(trunk->to_json());
+
+  _async_exists(key, [this, on, handler, key, name, body](RedisError error, bool exists) mutable {
+    if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
+    if (exists) return _complete(on, handler, plugins::Status::failure("trunk_create: " + name + " already exists"));
+
+    _async_set(key, body, [this, on, handler, name](RedisError error, bool ok) mutable {
+      if (error || !ok) return _complete(on, handler, plugins::Status::failure(error ? error.message() : "trunk_create: SET failed"));
+
+      _async_sadd(_trunk_index_key(), name, [this, on, handler](RedisError error, bool) mutable {
+        _complete(on, handler, error ? plugins::Status::failure(error.message()) : plugins::Status::success());
+      });
+    });
+  });
+}
+
+void RedisDatastore::trunk_update(plugins::Executor on, std::shared_ptr<types::Trunk> trunk, plugins::StatusHandler handler) {
+  if (!trunk || trunk->name.empty()) return _complete(on, handler, plugins::Status::failure("trunk_update: no trunk"));
+
+  const auto key = _trunk_key(trunk->name);
+  const auto name = trunk->key();
+  const auto body = boost::json::serialize(trunk->to_json());
+
+  _async_exists(key, [this, on, handler, key, name, body](RedisError error, bool exists) mutable {
+    if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
+    if (!exists) return _complete(on, handler, plugins::Status::failure("trunk_update: " + name + " does not exist"));
+
+    _async_set(key, body, [this, on, handler](RedisError error, bool ok) mutable {
+      _complete(on, handler, !error && ok ? plugins::Status::success() : plugins::Status::failure(error ? error.message() : "trunk_update: SET failed"));
+    });
+  });
+}
+
+void RedisDatastore::trunk_delete(plugins::Executor on, std::string name, plugins::StatusHandler handler) {
+  const auto normalised = types::Trunk::normalise(name);
+
+  _async_del(_trunk_key(name), [this, on, handler, normalised](RedisError error, std::int64_t removed) mutable {
+    if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
+
+    _async_srem(_trunk_index_key(), normalised, [this, on, handler, removed](RedisError error, bool) mutable {
+      if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
+      _complete(on, handler, _status(removed > 0, "trunk_delete"));
+    });
+  });
+}
+
+void RedisDatastore::trunk_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::Trunk>>> handler) {
+  using Answer = plugins::Result<std::vector<std::shared_ptr<types::Trunk>>>;
+
+  _read_index(
+      _trunk_index_key(), [](const std::string& name) { return _trunk_key(name); },
+      [this, on, handler](RedisError error, std::vector<std::pair<std::string, std::string>> records) mutable {
+        if (error) return _complete(on, handler, Answer::failure(error.message()));
+
+        std::vector<std::shared_ptr<types::Trunk>> trunks;
+        for (const auto& [name, value] : records) {
+          try {
+            trunks.push_back(std::make_shared<types::Trunk>(types::Trunk::from_json(boost::json::parse(value).as_object())));
+          } catch (const std::exception& ex) {
+            _logger->error("trunk_list: skipping " + name + ": " + std::string(ex.what()));
+          }
+        }
+        _complete(on, handler, Answer::success(std::move(trunks)));
+      });
+}
+
 // Creating over a held hash replaces the record, which is how last_seen_at moves: the
 // contract has no session_update. Redis expires the record at its absolute expiry; idle
 // expiry is the caller's rule (Session::has_expired).
@@ -544,6 +650,9 @@ std::shared_ptr<types::Subscriber> RedisDatastore::_parse_subscriber(const std::
   // Optional: a subscriber imported as a bare MD5 hash has no SHA-256 credential.
   if (obj.if_contains("ha1_sha256")) subscriber->ha1_sha256 = json_string(obj, "ha1_sha256");
   if (obj.contains("media_profile")) subscriber->media_profile = types::MediaPolicy::parse_profiles(json_string(obj, "media_profile"));
+  if (const auto* attributes = obj.if_contains("attributes"); attributes != nullptr && attributes->is_object()) {
+    subscriber->attributes = attributes->as_object();
+  }
   return subscriber;
 }
 
@@ -890,6 +999,7 @@ std::string RedisDatastore::_serialise_realm(const std::shared_ptr<types::Realm>
   if (realm->behaviour.media_profile) obj["media_profiles"] = types::MediaPolicy::to_string(*realm->behaviour.media_profile);
   if (realm->behaviour.qualify_interval) obj["qualify_interval"] = *realm->behaviour.qualify_interval;
   if (realm->behaviour.rewrite_contact) obj["rewrite_contact"] = *realm->behaviour.rewrite_contact;
+  if (!realm->attributes.empty()) obj["attributes"] = realm->attributes;
   return boost::json::serialize(obj);
 }
 
@@ -912,6 +1022,7 @@ std::shared_ptr<types::Realm> RedisDatastore::_parse_realm(const std::string& va
     const auto seconds = qualify->to_number<std::int64_t>();
     if (types::Behaviour::valid_qualify_interval(seconds)) realm->behaviour.qualify_interval = static_cast<std::uint32_t>(seconds);
   }
+  if (const auto* attributes = obj.if_contains("attributes"); attributes != nullptr && attributes->is_object()) realm->attributes = attributes->as_object();
 
   return realm;
 }
@@ -993,6 +1104,7 @@ std::string RedisDatastore::_serialise_subscriber(const std::shared_ptr<types::S
 
   // Written only when the subscriber chose one; absent takes the realm's.
   if (subscriber->media_profile) obj["media_profile"] = types::MediaPolicy::to_string(*subscriber->media_profile);
+  if (!subscriber->attributes.empty()) obj["attributes"] = subscriber->attributes;
   obj["uri"] = subscriber->identity->uri->to_string();
   return boost::json::serialize(obj);
 }
@@ -1447,6 +1559,10 @@ std::string RedisDatastore::_user_key(const std::string& username) { return "ath
 std::string RedisDatastore::_session_key(const std::string& token_hash) { return "athena:session:" + token_hash; }
 
 std::string RedisDatastore::_user_index_key() { return "athena:index:users"; }
+
+std::string RedisDatastore::_trunk_key(const std::string& name) { return "athena:trunk:" + types::Trunk::normalise(name); }
+
+std::string RedisDatastore::_trunk_index_key() { return "athena:index:trunks"; }
 
 std::string RedisDatastore::_session_index_key(const std::string& username) { return "athena:index:sessions:" + types::User::normalise(username); }
 

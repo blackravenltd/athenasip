@@ -39,6 +39,7 @@
 #include "media/reoffers.h"
 #include "node_directory.h"
 #include "plugins/plugin.h"
+#include "policy/policy.h"
 #include "push/push_service.h"
 #include "push_refresher.h"
 #include "rtp/rtp_relay_set.h"
@@ -47,6 +48,7 @@
 #include "timer_source.h"
 #include "transactions/transaction_base.h"
 #include "transactions/transaction_matcher.h"
+#include "trunk_registrar.h"
 
 using namespace athenasip::types;
 using namespace athenasip::datastores;
@@ -156,7 +158,10 @@ class Core : public std::enable_shared_from_this<Core> {
   // dialled, UDP leaves by a listener's socket, and TLS needs cluster_tls_set and reaches
   // only cluster peers. Bounded by Config::sip_connect_timeout_ms. The handler runs on the
   // strand.
-  void channel_connect(std::string transport, std::string host, std::uint16_t port, plugins::Handler<std::shared_ptr<Channel>> handler);
+  // trunk_ca: TLS to a trunk, verified against this CA file or, empty, the system's store, with no client
+  // certificate. Without it, outbound TLS is to cluster peers only, with the cluster's certificates.
+  void channel_connect(std::string transport, std::string host, std::uint16_t port, plugins::Handler<std::shared_ptr<Channel>> handler,
+                       std::optional<std::string> trunk_ca = std::nullopt);
 
   // A second registry name for a channel: the name it was dialled by, so a hop named by
   // hostname reuses its connection.
@@ -251,6 +256,15 @@ class Core : public std::enable_shared_from_this<Core> {
   // Media engine
   void media_register(std::shared_ptr<media::MediaEngine> engine);
 
+  // Routing and authorisation policy (policy.url). builtin:// until one is registered, so a Core built without
+  // one, as the tests build it, behaves as a node with no script.
+  void policy_register(std::shared_ptr<policy::Policy> policy);
+  std::shared_ptr<policy::Policy> policy();
+
+  // Has the policy read its rules again (SIGHUP, POST /api/v1/policy/reload). On the strand. Empty on success, else
+  // why not; the rules in force stay until a reload succeeds. A success is reported in the node's status at once.
+  std::string policy_reload();
+
   // RFC 8599 push notification services, filed by pn-provider. None unless push.urls names some.
   void push_register(std::shared_ptr<push::PushService> service);
   std::shared_ptr<push::PushService> push_service(const std::string& provider) const;
@@ -262,6 +276,12 @@ class Core : public std::enable_shared_from_this<Core> {
 
   // Refresh pushes for push bindings (RFC 8599 5.5).
   std::shared_ptr<PushRefresher> push_refresher();
+
+  // Registers this node to the trunks that ask for it (TrunkRegistrar). Started by main once the listeners are up.
+  std::shared_ptr<TrunkRegistrar> trunk_registrar();
+
+  // What the nodes have said of their trunk registrations, from the bus.
+  std::shared_ptr<TrunkStatuses> trunk_statuses() const { return _trunk_statuses; }
 
   // RFC 3261 10.3 step 1: a REGISTER for a domain this node does not serve, for the proxy to forward.
   void register_forward(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction);
@@ -337,8 +357,11 @@ class Core : public std::enable_shared_from_this<Core> {
   std::shared_ptr<Qualifier> _qualifier;
   std::shared_ptr<LocalUA> _local_ua;
   std::shared_ptr<PushRefresher> _push_refresher;
+  std::shared_ptr<TrunkRegistrar> _trunk_registrar;
+  std::shared_ptr<TrunkStatuses> _trunk_statuses = std::make_shared<TrunkStatuses>();
   std::shared_ptr<AddressDiscovery> _address_discovery;
   std::map<std::string, std::shared_ptr<push::PushService>> _push_services;
+  std::shared_ptr<policy::Policy> _policy;
   std::shared_ptr<dns::SipLocator> _locator;
   std::shared_ptr<Dialogs> _dialogs;
 
@@ -377,6 +400,10 @@ class Core : public std::enable_shared_from_this<Core> {
   void _secure_flow(std::shared_ptr<boost::asio::ip::tcp::socket> socket, std::shared_ptr<boost::asio::ssl::context> context, const std::string& host,
                     const std::string& key, std::function<void(plugins::Result<std::shared_ptr<Channel>>)> answer);
   std::shared_ptr<boost::asio::ssl::context> _cluster_tls;
+
+  // Client contexts for TLS to trunks, by CA file ("" for the system's store), built on first use.
+  std::map<std::string, std::shared_ptr<boost::asio::ssl::context>> _trunk_tls;
+  std::shared_ptr<boost::asio::ssl::context> _trunk_tls_for(const std::string& ca);
 
   // channel_connect's UDP half.
   void _connect_datagram(std::string host, std::uint16_t port, plugins::Handler<std::shared_ptr<Channel>> handler);

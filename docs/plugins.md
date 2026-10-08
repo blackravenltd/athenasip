@@ -9,6 +9,7 @@ drivers in the tree use the same contract an external one does, and none is priv
 | `events` | `events::EventSystem` (`src/events/event_system.h`) | `local://`, `mqtt://` |
 | `media` | `media::MediaEngine` (`src/media/media_engine.h`) | `builtin://`, `rtpengine://` |
 | `push` | `push::PushService` (`src/push/push_service.h`) | `apns://`, `fcm://`, `webpush://` |
+| `policy` | `policy::Policy` (`src/policy/policy.h`) | `builtin://` |
 
 A kind is a string, so a plugin can introduce a new one. A plugin is either compiled into
 the server or built as a module (a shared library) the server loads at start: see
@@ -20,7 +21,7 @@ Every plugin derives from `plugins::Plugin` (`src/plugins/plugin.h`) through the
 for its kind:
 
 ```cpp
-std::string kind() const;           // "datastore", "events", "media", "push"; set by the interface
+std::string kind() const;           // "datastore", "events", "media", "push", "policy"; set by the interface
 std::string name() const;           // the implementation: "redis", whatever scheme selected it
 std::string version() const;        // the driver's version, not the server's
 std::uint32_t api_version() const;  // the contract it was built against; do not override
@@ -44,7 +45,8 @@ The key is `(kind, scheme)`, so one scheme can name a driver of each kind. Regis
 pair again replaces the driver. A driver may be registered under several schemes. The
 built-ins are registered from `main()` by the `register_builtin_*` functions in
 `src/datastores/datastore_drivers.h`, `src/events/event_system_drivers.h`,
-`src/media/media_engine_drivers.h` and `src/push/push_service_drivers.h`; add yours there,
+`src/media/media_engine_drivers.h`, `src/push/push_service_drivers.h` and
+`src/policy/policy_drivers.h`; add yours there,
 or build it as a module.
 
 `Datastore::create_driver(logger, url)` constructs the driver for a URL.
@@ -167,6 +169,21 @@ is never on the call path, so callers do not wait on it. Use
   waits for the client to register again either way.
 - `connect` and `close` default to nothing; credentials are read in `configure`.
 
+### Policy
+
+- A policy decides and the node acts. `authorize` says how a caller is to be proved
+  (accept, Digest in a realm, or reject); `route` names the targets or a reply; `on_failure`
+  says what follows a branch's 3xx to 5xx; `register_` accepts a REGISTER into a realm with
+  its lifetimes, forwards it, or refuses it. The node challenges, verifies, forwards and
+  forks; nothing in the policy touches a transaction.
+- `attach(host)` hands the policy what it decides with: the datastore through the Core
+  strand, the node's own addresses and the configuration.
+- A failed `Result` means the policy could not decide. The node answers 500, except after
+  a failed branch, where it goes on to the next target.
+- In-dialog requests, ACK and CANCEL, and requests that carry a Route or a flow token,
+  are not routed by the policy: RFC 3261 12.2 and 16.4 fix their path.
+- One policy runs per node, from `policy.url`; `builtin://` when none is configured.
+
 Where a rule like these matters, it is stated at the operation's declaration: read the
 comment, not only the signature.
 
@@ -190,8 +207,8 @@ void register_acme(athenasip::plugins::ModuleHost& host) {
 ATHENASIP_PLUGIN_MODULE("acme", register_acme)
 ```
 
-The kinds are named in `plugins::kinds` (`datastore`, `events`, `media`), and the push
-service's in `push::kind`.
+The kinds are named in `plugins::kinds` (`datastore`, `events`, `media`), the push
+service's in `push::kind` and the policy's in `policy::kind`.
 
 Rules:
 

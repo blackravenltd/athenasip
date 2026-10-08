@@ -6,6 +6,7 @@
 //
 #pragma once
 
+#include <boost/json.hpp>
 #include <optional>
 #include <regex>
 #include <sstream>
@@ -34,5 +35,9 @@ class Subscriber {
   // description produced towards the leg, above the realm and the transport and below what the leg itself has said.
   // Empty takes the realm's behaviour.
   std::optional<MediaPolicy::Profiles> media_profile;
+
+  // Anything a routing script wants to know about the subscriber: a forwarding number, a caller ID. The node
+  // reads none of it.
+  boost::json::object attributes;
 };
 }  // namespace athenasip::types

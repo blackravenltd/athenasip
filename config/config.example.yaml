@@ -113,6 +113,9 @@ push:                             # off with no urls
   #   vapid_private_key: /etc/athenasip/vapid.pem
   #   subject: mailto:admin@example.com
 
+policy:
+  url: "builtin://"               # lua:// makes routing a script: docs/scripting.md
+
 behaviour:                        # a realm can override each over the API
   media_anchor: true              # false leaves media end to end, which fails behind NAT
   media_profile: mirror

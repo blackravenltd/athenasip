@@ -508,10 +508,15 @@ TEST(RtpengineMediaEngineTest, ThePlainRtpProfileStripsWhatAPhoneCannotUse) {
   EXPECT_EQ(request->string_at("DTLS"), "off");
   EXPECT_EQ(request->string_at("transport-protocol"), "RTP/AVP");
 
+  // Separate RTCP towards the phone (demux), and the browser's rtcp-mux kept on its own leg (accept). Without accept a
+  // re-offer after a 488 makes rtpengine drop rtcp-mux from the answer to the browser, which a WebRTC stack refuses
+  // (RFC 8834 5.1.3), so a browser or AthenaPhone calling a desk phone had no media. Found on a live call
+  // (2026-10-08) and reproduced against rtpengine 12.5 directly.
   const auto* mux = request->find("rtcp-mux");
   ASSERT_NE(mux, nullptr);
-  ASSERT_EQ(mux->values().size(), 1u);
+  ASSERT_EQ(mux->values().size(), 2u);
   EXPECT_EQ(mux->values()[0].string(), "demux");
+  EXPECT_EQ(mux->values()[1].string(), "accept");
 
   engine->close();
 }

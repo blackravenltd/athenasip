@@ -21,9 +21,11 @@ namespace athenasip::servers {
 
 class TLSConnection : public Connection {
  public:
-  // handshaken: a flow this node opened, whose client handshake has already run.
-  TLSConnection(std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> ssl_socket, bool handshaken = false)
-      : _ssl_socket(ssl_socket), _handshaken(handshaken) {
+  // handshaken: a flow whose handshake has already run. cluster: the context verified the peer against the
+  // cluster CA, so its certificate names a node. Under any other context a verified certificate names nobody: a
+  // carrier is not a peer.
+  TLSConnection(std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> ssl_socket, bool handshaken = false, bool cluster = false)
+      : _ssl_socket(ssl_socket), _handshaken(handshaken), _cluster(cluster) {
     // The error_code forms, as in TCPConnection: a peer that has gone has no address.
     boost::system::error_code gone;
     _local_endpoint = _ssl_socket->lowest_layer().local_endpoint(gone);
@@ -50,7 +52,9 @@ class TLSConnection : public Connection {
   boost::asio::any_io_executor executor() override { return _ssl_socket->lowest_layer().get_executor(); }
 
   virtual void async_read_some(boost::asio::mutable_buffer buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) override {
-    _ssl_socket->async_read_some(buffer, [this, handler](boost::system::error_code ec, std::size_t length) {
+    // The handler holds the stream: an SSL operation refers to its stream, and the channel may let go of this
+    // connection while a read is still pending, which a close always does.
+    _ssl_socket->async_read_some(buffer, [stream = _ssl_socket, handler](boost::system::error_code ec, std::size_t length) {
       if (ec == boost::asio::ssl::error::stream_truncated) {
         ec = boost::asio::error::operation_aborted;
       }
@@ -59,7 +63,7 @@ class TLSConnection : public Connection {
   }
 
   virtual void async_write_some(boost::asio::const_buffer buffer, std::function<void(const boost::system::error_code&, std::size_t)> handler) override {
-    _ssl_socket->async_write_some(buffer, [this, handler](boost::system::error_code ec, std::size_t length) { handler(ec, length); });
+    _ssl_socket->async_write_some(buffer, [stream = _ssl_socket, handler](boost::system::error_code ec, std::size_t length) { handler(ec, length); });
   }
 
   virtual boost::asio::ip::tcp::endpoint local_endpoint() override { return _local_endpoint; }
@@ -79,8 +83,10 @@ class TLSConnection : public Connection {
   virtual std::string transport_name() const override { return "tls"; }
 
  protected:
-  // The verified peer certificate's common name, when the context asked for one.
+  // The verified peer certificate's common name, when the context was the cluster's.
   void _read_peer() {
+    if (!_cluster) return;
+
     X509* certificate = SSL_get1_peer_certificate(_ssl_socket->native_handle());
     if (certificate == nullptr) return;
 
@@ -95,6 +101,7 @@ class TLSConnection : public Connection {
   boost::asio::ip::tcp::endpoint _local_endpoint;
   boost::asio::ip::tcp::endpoint _remote_endpoint;
   bool _handshaken = false;
+  bool _cluster = false;
   std::string _peer;
 };
 
