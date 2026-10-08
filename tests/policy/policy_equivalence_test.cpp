@@ -47,6 +47,16 @@ class TestHost final : public policy::Host {
     _core->location_list(subscriber_id, std::move(handler));
   }
 
+  void trunk(std::string name, plugins::Handler<std::shared_ptr<types::Trunk>> handler) override {
+    if (down) return fail(handler);
+    _core->datastore->trunk_get(_core->strand(), std::move(name), std::move(handler));
+  }
+
+  void trunks(plugins::Handler<std::vector<std::shared_ptr<types::Trunk>>> handler) override {
+    if (down) return fail(handler);
+    _core->datastore->trunk_list(_core->strand(), std::move(handler));
+  }
+
   bool names_this_node(const std::string& host, std::uint16_t port) const override { return _core->is_local_address(host, port); }
 
   const Config& config() const override { return *_core->config; }

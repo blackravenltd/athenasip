@@ -32,14 +32,15 @@ TEST(UserTest, AUserWithNoRolesCanDoNothing) {
   for (const auto& role : roles::all()) EXPECT_FALSE(user.has_role(role)) << role;
 }
 
-TEST(UserTest, TheRolesAreTheFiveAndNothingElse) {
-  EXPECT_EQ(roles::all().size(), 5u);
+TEST(UserTest, TheRolesAreTheSixAndNothingElse) {
+  EXPECT_EQ(roles::all().size(), 6u);
 
   EXPECT_TRUE(roles::is_known("view-cluster-status"));
   EXPECT_TRUE(roles::is_known("manage-admin-users"));
   EXPECT_TRUE(roles::is_known("manage-realms"));
   EXPECT_TRUE(roles::is_known("manage-realm-subscribers"));
   EXPECT_TRUE(roles::is_known("manage-cluster"));
+  EXPECT_TRUE(roles::is_known("manage-trunks"));
 
   // Scope-style names and typos are not roles.
   EXPECT_FALSE(roles::is_known("admin"));

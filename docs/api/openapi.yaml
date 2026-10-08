@@ -80,6 +80,8 @@ tags:
     description: The media engine and the node's counters
   - name: policy
     description: Who may call and where a call goes (docs/scripting.md)
+  - name: trunks
+    description: The carriers and PBXs calls leave by and arrive from
 
 paths:
   /health:
@@ -691,6 +693,120 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+
+  /trunks:
+    get:
+      operationId: listTrunks
+      tags: [trunks]
+      summary: Every trunk
+      description: Takes `manage-trunks`. Passwords are never returned.
+      responses:
+        "200":
+          description: The trunks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Trunk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: createTrunk
+      tags: [trunks]
+      summary: Add a trunk
+      description: |
+        Takes `manage-trunks`. `name` and `uri` are required. Which calls use the trunk is the
+        routing policy's to say ([Scripting](../scripting.md)); `attributes` is where a
+        script finds what it needs to.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrunkWrite"
+      responses:
+        "201":
+          description: The trunk as stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Trunk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /trunks/{trunk}:
+    parameters:
+      - name: trunk
+        in: path
+        required: true
+        schema:
+          type: string
+        description: The trunk's name, matched without regard to case
+    get:
+      operationId: getTrunk
+      tags: [trunks]
+      summary: One trunk
+      responses:
+        "200":
+          description: The trunk
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Trunk"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      operationId: updateTrunk
+      tags: [trunks]
+      summary: Change a trunk
+      description: Only the fields given change. The name cannot.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrunkWrite"
+      responses:
+        "200":
+          description: The trunk as stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Trunk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteTrunk
+      tags: [trunks]
+      summary: Remove a trunk
+      responses:
+        "204":
+          description: Removed
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /policy/reload:
     post:
@@ -1355,6 +1471,60 @@ components:
         - manage-realms
         - manage-realm-subscribers
         - manage-cluster
+        - manage-trunks
+
+    TrunkWrite:
+      type: object
+      properties:
+        name:
+          type: string
+          pattern: "^[A-Za-z0-9._-]{1,64}$"
+          example: acme
+        uri:
+          type: string
+          description: Where calls and the REGISTER go, located by RFC 3263
+          example: sip:sip.acme.example;transport=tls
+        username:
+          type: string
+          description: For the carrier's challenges
+        password:
+          type: string
+          description: Written, never returned
+        register:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+            expires:
+              type: integer
+              minimum: 60
+              maximum: 86400
+            contact_user:
+              type: string
+              description: The user part of the Contact registered, where the carrier sends calls
+        inbound_addresses:
+          type: array
+          description: Addresses or CIDR ranges a call from the trunk comes from
+          items:
+            type: string
+            example: 203.0.113.0/24
+        tls_ca:
+          type: string
+          description: A CA file for TLS to the trunk; empty is the system's store
+        attributes:
+          type: object
+          description: Anything a routing script reads; the node reads none of it
+          additionalProperties: true
+
+    Trunk:
+      allOf:
+        - $ref: "#/components/schemas/TrunkWrite"
+        - type: object
+          properties:
+            password_set:
+              type: boolean
+            created_at:
+              type: integer
 
     User:
       type: object

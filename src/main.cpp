@@ -27,6 +27,7 @@
 #include "api/sessions.h"
 #include "api/static_middleware.h"
 #include "api/subscriber_auth.h"
+#include "api/trunks_api.h"
 #include "api/users_api.h"
 #include "build_version.h"
 #include "cli.h"
@@ -506,6 +507,9 @@ int main(int argc, char* argv[]) {
 
       auto users = std::make_shared<api::UsersAPI>(logger, datastore, adminAPI->executor(), sessions);
       users->register_routes(*api_router);
+
+      auto trunks = std::make_shared<api::TrunksAPI>(logger, datastore, adminAPI->executor());
+      trunks->register_routes(*api_router);
 
       // Live calls, the media engine and /metrics, read from Core on its strand.
       auto calls = std::make_shared<api::CallsAPI>(logger, core, adminAPI->executor());

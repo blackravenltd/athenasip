@@ -8,6 +8,7 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <algorithm>
 #include <cstring>
 #include <new>
 #include <string>
@@ -18,6 +19,7 @@
 #include "../config_schema.h"
 #include "../headers/sip_identity_header.h"
 #include "../loggers/logger.h"
+#include "../types/trunk.h"
 #include "../util.h"
 #include "lua_engine.h"
 
@@ -31,6 +33,7 @@ constexpr char kUri[] = "athenasip.uri";
 constexpr char kRealm[] = "athenasip.realm";
 constexpr char kSubscriber[] = "athenasip.subscriber";
 constexpr char kBindings[] = "athenasip.bindings";
+constexpr char kTrunk[] = "athenasip.trunk";
 
 // A node object inside a Lua userdata. live, when set, is the hook call's: a request kept in a global past its call
 // refuses use rather than describe a message long gone.
@@ -341,6 +344,73 @@ int bindings_index(lua_State* L) {
   return 1;
 }
 
+// JSON as Lua: objects and arrays as tables (arrays from 1), null as nil.
+void push_json(lua_State* L, const boost::json::value& value) {
+  switch (value.kind()) {
+    case boost::json::kind::object: {
+      const auto& object = value.as_object();
+      lua_createtable(L, 0, static_cast<int>(object.size()));
+      for (const auto& [key, member] : object) {
+        push_json(L, member);
+        lua_setfield(L, -2, std::string(key).c_str());
+      }
+      return;
+    }
+    case boost::json::kind::array: {
+      const auto& array = value.as_array();
+      lua_createtable(L, static_cast<int>(array.size()), 0);
+      lua_Integer i = 0;
+      for (const auto& member : array) {
+        push_json(L, member);
+        lua_rawseti(L, -2, ++i);
+      }
+      return;
+    }
+    case boost::json::kind::string:
+      return push_text(L, std::string(value.as_string()));
+    case boost::json::kind::int64:
+      return lua_pushinteger(L, value.as_int64());
+    case boost::json::kind::uint64:
+      return lua_pushinteger(L, static_cast<lua_Integer>(value.as_uint64()));
+    case boost::json::kind::double_:
+      return lua_pushnumber(L, value.as_double());
+    case boost::json::kind::bool_:
+      return lua_pushboolean(L, value.as_bool());
+    case boost::json::kind::null:
+      return lua_pushnil(L);
+  }
+}
+
+int trunk_admits(lua_State* L) {
+  const auto& trunk = *check_box<types::Trunk>(L, 1, kTrunk)->value;
+  lua_pushboolean(L, trunk.admits(luaL_checkstring(L, 2)));
+  return 1;
+}
+
+// Everything but the password, which is the node's to answer challenges with and no script's to read.
+int trunk_index(lua_State* L) {
+  const auto& trunk = *check_box<types::Trunk>(L, 1, kTrunk)->value;
+  const std::string key = luaL_checkstring(L, 2);
+
+  if (key == "name") return push_text(L, trunk.name), 1;
+  if (key == "uri") return push_uri(L, std::make_shared<types::SIPUri>(trunk.uri)), 1;
+  if (key == "username") return push_text_or_nil(L, trunk.username), 1;
+  if (key == "registers") return lua_pushboolean(L, trunk.register_enabled), 1;
+  if (key == "contact_user") return push_text_or_nil(L, trunk.contact_user), 1;
+  if (key == "inbound_addresses") {
+    lua_createtable(L, static_cast<int>(trunk.inbound_addresses.size()), 0);
+    lua_Integer i = 0;
+    for (const auto& range : trunk.inbound_addresses) {
+      push_text(L, range);
+      lua_rawseti(L, -2, ++i);
+    }
+    return 1;
+  }
+  if (key == "attributes") return push_json(L, trunk.attributes), 1;
+  if (key == "admits") return lua_pushcfunction(L, trunk_admits), 1;
+  return lua_pushnil(L), 1;
+}
+
 // -- athenasip.store: each lookup yields until the datastore answers.
 
 policy::Host& host_of(lua_State* L) {
@@ -393,6 +463,42 @@ int store_locations(lua_State* L) {
       if (!found.ok) return answer(false, push_failure(found));
       answer(true, [bindings = std::make_shared<std::vector<types::Location>>(std::move(found.value))](lua_State* L) {
         return push_box(L, bindings, nullptr, kBindings), 1;
+      });
+    });
+  });
+}
+
+int store_trunk(lua_State* L) {
+  std::string name = luaL_checkstring(L, 1);
+  auto& host = host_of(L);
+  return LuaEngine::await(L, [&host, name](LuaEngine::Answer answer) {
+    host.trunk(name, [answer](plugins::Result<std::shared_ptr<types::Trunk>> found) {
+      if (!found.ok) return answer(false, push_failure(found));
+      answer(true, [trunk = found.value](lua_State* L) {
+        if (!trunk) return lua_pushnil(L), 1;
+        return push_box(L, trunk, nullptr, kTrunk), 1;
+      });
+    });
+  });
+}
+
+// Every trunk, in name order.
+int store_trunks(lua_State* L) {
+  auto& host = host_of(L);
+  return LuaEngine::await(L, [&host](LuaEngine::Answer answer) {
+    host.trunks([answer](plugins::Result<std::vector<std::shared_ptr<types::Trunk>>> found) {
+      if (!found.ok) return answer(false, push_failure(found));
+
+      auto trunks = std::move(found.value);
+      std::sort(trunks.begin(), trunks.end(), [](const auto& a, const auto& b) { return a->key() < b->key(); });
+      answer(true, [trunks = std::move(trunks)](lua_State* L) {
+        lua_createtable(L, static_cast<int>(trunks.size()), 0);
+        lua_Integer i = 0;
+        for (const auto& trunk : trunks) {
+          push_box(L, trunk, nullptr, kTrunk);
+          lua_rawseti(L, -2, ++i);
+        }
+        return 1;
       });
     });
   });
@@ -504,6 +610,22 @@ int log(lua_State* L) {
 
 // -- athenasip.sip
 
+// Whether an address is in a CIDR range, or in any of a list of them.
+int sip_in_range(lua_State* L) {
+  const std::string address = luaL_checkstring(L, 2);
+  if (lua_type(L, 1) == LUA_TSTRING) return lua_pushboolean(L, types::in_range(lua_tostring(L, 1), address)), 1;
+
+  luaL_checktype(L, 1, LUA_TTABLE);
+  const auto count = luaL_len(L, 1);
+  for (lua_Integer i = 1; i <= count; ++i) {
+    lua_geti(L, 1, i);
+    const bool inside = lua_type(L, -1) == LUA_TSTRING && types::in_range(lua_tostring(L, -1), address);
+    lua_pop(L, 1);
+    if (inside) return lua_pushboolean(L, 1), 1;
+  }
+  return lua_pushboolean(L, 0), 1;
+}
+
 int sip_uri(lua_State* L) {
   auto uri = to_uri(L, 1);
   if (!uri) return luaL_argerror(L, 1, "the text of a SIP URI");
@@ -574,6 +696,7 @@ void open_library(lua_State* L) {
   make_metatable(L, kRealm, realm_index, collect<types::Realm>);
   make_metatable(L, kSubscriber, subscriber_index, collect<types::Subscriber>);
   make_metatable(L, kBindings, bindings_index, collect<std::vector<types::Location>>, {{"__len", bindings_length}});
+  make_metatable(L, kTrunk, trunk_index, collect<types::Trunk>);
 
   lua_newtable(L);
 
@@ -584,11 +707,12 @@ void open_library(lua_State* L) {
   lua_setfield(L, -2, "log");
 
   lua_newtable(L);
-  set_functions(L, {{"realm", store_realm}, {"subscriber", store_subscriber}, {"locations", store_locations}});
+  set_functions(L,
+                {{"realm", store_realm}, {"subscriber", store_subscriber}, {"locations", store_locations}, {"trunk", store_trunk}, {"trunks", store_trunks}});
   lua_setfield(L, -2, "store");
 
   lua_newtable(L);
-  set_functions(L, {{"uri", sip_uri}});
+  set_functions(L, {{"uri", sip_uri}, {"in_range", sip_in_range}});
   lua_setfield(L, -2, "sip");
 
   set_lazy_table(L, "node", node_index, {{"names", node_names}});
