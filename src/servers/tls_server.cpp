@@ -23,7 +23,10 @@ TLSServer::TLSServer(std::shared_ptr<Logger> logger, std::shared_ptr<Core> core,
 
 bool TLSServer::set_certificates(std::string cert, std::string key) { return load_tls_certificates(_logger, ctx, cert, key); }
 
-bool TLSServer::require_peer_certificates(const std::string& ca) { return athenasip::servers::require_peer_certificates(_logger, ctx, ca); }
+bool TLSServer::require_peer_certificates(const std::string& ca) {
+  _cluster = athenasip::servers::require_peer_certificates(_logger, ctx, ca);
+  return _cluster;
+}
 
 void TLSServer::start() {
   _logger->debug("Starting...");
@@ -86,7 +89,7 @@ void TLSServer::_handle_accept(const boost::system::error_code& error, std::shar
         return;
       }
 
-      std::shared_ptr<Connection> connection = std::make_shared<TLSConnection>(ssl_socket, true);
+      std::shared_ptr<Connection> connection = std::make_shared<TLSConnection>(ssl_socket, true, _cluster);
       auto channel = std::make_shared<Channel>(_logger->base_logger(), _core, connection);
       _logger->info("Incoming TLS Connection Accepted: " + name + (connection->peer_identity().empty() ? "" : ", node " + connection->peer_identity()));
 

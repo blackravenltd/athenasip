@@ -2854,3 +2854,11 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       no question after a 2xx, a REGISTER refused before any challenge and one challenged
       in the realm the policy names). 1307 unit tests, one skipped without a resolver. The
       sipp harnesses were not run: Docker Desktop is paused.
+- [x] **A TLS peer is a node only under the cluster CA.** `TLSConnection` read the subject
+      CN of any certificate that verified, and the proxy trusts a channel with one as a cluster
+      peer, which skips authentication. Nothing reached it yet - the client listener asks for
+      no certificate and outbound TLS went only to peers - but a trunk context verifying a
+      carrier against the system store would have made the carrier a peer. The connection now
+      takes a `cluster` flag, set by the inter-node listener and by `_secure_flow` under the
+      cluster context, and names nobody without it
+      (`ClusterTlsTest.ACertificateFromAnotherAuthorityNamesNoNode`, red before the fix).

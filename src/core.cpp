@@ -346,8 +346,10 @@ void Core::_secure_flow(std::shared_ptr<boost::asio::ip::tcp::socket> socket, st
   auto stream = std::make_shared<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>>(std::move(*socket), *context);
   stream->set_verify_callback(boost::asio::ssl::host_name_verification(host));
 
+  const bool cluster = context == _cluster_tls;
+
   std::weak_ptr<Core> weak_self = weak_from_this();
-  stream->async_handshake(boost::asio::ssl::stream_base::client, [weak_self, stream, key, answer](const boost::system::error_code& ec) {
+  stream->async_handshake(boost::asio::ssl::stream_base::client, [weak_self, stream, key, answer, cluster](const boost::system::error_code& ec) {
     if (ec) {
       boost::system::error_code ignored;
       stream->lowest_layer().close(ignored);
@@ -357,7 +359,7 @@ void Core::_secure_flow(std::shared_ptr<boost::asio::ip::tcp::socket> socket, st
     auto self = weak_self.lock();
     if (!self) return;
 
-    auto connection = std::make_shared<servers::TLSConnection>(stream, true);
+    auto connection = std::make_shared<servers::TLSConnection>(stream, true, cluster);
     auto channel = std::make_shared<Channel>(self->_logger->base_logger(), self, connection);
     channel->start();
 
