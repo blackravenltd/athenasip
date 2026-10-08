@@ -72,6 +72,7 @@ retried request as it saw the first.
 | `has_flow_token` | Carries a token this node sealed in its own Record-Route or Path |
 | `has_route` | A Route header remains after this node's own were taken off |
 | `relay` | A REGISTER for a domain not served here (`authorize` only) |
+| `trunk` | After `authorize`: the trunk `athenasip.auth.trusted` named, or `nil` |
 | `source` | `{transport =, address =, port =, reliable =, authenticated =, flow =}` |
 | `request:header(name)` | The first value of a header, as text, or `nil` |
 | `request:headers(name)` | Every value of a header, as a list |
@@ -83,8 +84,8 @@ A request belongs to its call. Kept in a global and used later, it raises an err
 
 ### URIs
 
-`scheme`, `user`, `host`, `port` (`nil` when absent), `transport`, `uri:param(name)` and
-`tostring(uri)`. Two URIs compare equal by RFC 3261 19.1.4. `athenasip.sip.uri(text)`
+`scheme`, `user`, `host`, `port` (`nil` when absent), `transport`, `uri:param(name)`,
+`uri:with{user =, host =, port =}` (a changed copy) and `tostring(uri)`. Two URIs compare equal by RFC 3261 19.1.4. `athenasip.sip.uri(text)`
 parses one; anywhere a URI is taken, its text works too.
 
 ## The library
@@ -118,6 +119,13 @@ A trunk is a carrier or a PBX, kept over the API (`/api/v1/trunks`, role
 tables. `trunk:admits(address)` says whether an address is in its inbound ranges. Its
 password is the node's, for answering the carrier's challenges, and no script reads it.
 
+When a carrier answers a call routed to its trunk with 401 or 407, the node answers the
+challenge itself with the trunk's credentials, in a new request with the next CSeq (RFC
+3261 22.2), and the caller never sees it. For the rest of that call the node keeps each end
+in its own CSeq space: requests from the caller go to the carrier raised by one for each
+challenge answered, and responses come back lowered. A challenge the node cannot answer,
+or one that refuses its answer, reaches the caller as 403.
+
 The store lookups wait for the datastore without holding up the node: each hook call runs
 in its own coroutine, which sleeps until the answer comes. A store that fails raises an
 error, which `pcall` catches like any other.
@@ -127,10 +135,12 @@ error, which `pcall` catches like any other.
 | | |
 |---|---|
 | `athenasip.auth.accept()` | |
+| `athenasip.auth.trusted{trunk = name}` | A request from a trunk, proved by where it came from; `route` sees `request.trunk` |
 | `athenasip.auth.digest{realm = realm, from_must_match = true}` | `realm = "*"` is any realm here, with a challenge for each. `from_must_match = false` accepts any subscriber's credentials, and any connection a subscriber registered over. |
 | `athenasip.auth.reject(code, reason)` | |
 | `athenasip.route.subscriber(subscriber, {bindings = b})` | Every device of a subscriber, in the node's order, by push or through another node as needed |
-| `athenasip.route.uri(uri, {next_hop = uri})` | One URI, located by RFC 3263 |
+| `athenasip.route.uri(uri, {next_hop = uri, trunk = name})` | One URI, located by RFC 3263; with `trunk`, the node answers that trunk's challenges |
+| `athenasip.route.trunk(trunk, {user = number})` | Out by a trunk: its URI with the number as the user part |
 | `athenasip.route.forward(targets, {media = m, rewrite_contact = r})` | `media` as `config.behaviour` and `behaviour_effective` give it |
 | `athenasip.route.reply(code, reason)` | Also `athenasip.route.reject` |
 | `athenasip.register.accept{realm =, max_expires =, min_expires =, qualify =}` | |

@@ -8,8 +8,12 @@
 // the same store, must get the same decisions from both, failures included. A change to either that the other does
 // not follow fails here.
 #include <gtest/gtest.h>
+#include <unistd.h>
+#include <yaml-cpp/yaml.h>
 
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <future>
 #include <memory>
@@ -276,4 +280,44 @@ TEST(PolicyEquivalenceTest, TheProxyAndRegistrarTestsPassUnderTheStandardScripts
   const std::string command = std::string("ATHENA_TEST_POLICY=lua '") + ATHENA_TEST_BINARY +
                               "' --gtest_brief=1 --gtest_filter='Proxy*:Registrar*:LocalUa*:Core*:Dialogs*:Calls*' > /dev/null 2>&1";
   EXPECT_EQ(std::system(command.c_str()), 0) << "run: " << command;
+}
+
+// A script routes out by a trunk with athenasip.route.trunk, and trusts a request in from one with auth.trusted.
+TEST(LuaPolicyTest, AScriptRoutesOutByATrunkAndTrustsOneIn) {
+  EquivalenceFixture f;
+
+  auto acme = std::make_shared<types::Trunk>();
+  acme->name = "acme";
+  acme->uri = "sip:sip.acme.example;transport=tls";
+  ASSERT_TRUE(f.store->trunk_create(acme));
+
+  const auto scripts = std::filesystem::temp_directory_path() / ("athenasip-trunk-" + std::to_string(::getpid()));
+  std::filesystem::create_directories(scripts);
+  std::ofstream(scripts / "main.lua") << R"(
+    function authorize(request) return athenasip.auth.trusted{trunk = "acme"} end
+    function route(request)
+      return athenasip.route.forward({athenasip.route.trunk(athenasip.store.trunk("acme"), {user = request.uri.user})})
+    end
+    function register(request) return athenasip.register.reject(403) end
+  )";
+
+  auto lua = std::make_shared<policy::LuaPolicy>(f.logger, nullptr);
+  YAML::Node own;
+  own["path"].push_back(scripts.string());
+  ASSERT_TRUE(lua->configure(own, *f.config)) << lua->error();
+  lua->attach(f.host);
+  std::filesystem::remove_all(scripts);
+
+  const auto invite = EquivalenceFixture::view(request("INVITE", "sip:+442071234567@example.com", "sip:alice@example.com", "sip:+442071234567@example.com"));
+
+  const auto auth = f.ask<policy::AuthDecision>([&](plugins::Executor on, plugins::Handler<policy::AuthDecision> h) { lua->authorize(on, invite, h); });
+  ASSERT_TRUE(auth.ok) << auth.error;
+  EXPECT_EQ(auth.value.kind, policy::AuthDecision::Kind::Trusted);
+  EXPECT_EQ(auth.value.trunk, "acme");
+
+  const auto route = f.ask<policy::RouteDecision>([&](plugins::Executor on, plugins::Handler<policy::RouteDecision> h) { lua->route(on, invite, h); });
+  ASSERT_TRUE(route.ok) << route.error;
+  ASSERT_EQ(route.value.targets.size(), 1u);
+  EXPECT_EQ(route.value.targets[0].trunk, "acme");
+  EXPECT_EQ(route.value.targets[0].uri->to_string(), "sip:+442071234567@sip.acme.example;transport=tls");
 }

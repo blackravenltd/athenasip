@@ -33,6 +33,12 @@ function a.auth.digest(options)
   }
 end
 
+-- A request from a trunk, proved by where it came from (trunk:admits). route then sees request.trunk.
+function a.auth.trusted(options)
+  check(type(options) == "table" and type(options.trunk) == "string", "auth.trusted takes {trunk = name}")
+  return {decision = "auth", kind = "trusted", trunk = options.trunk}
+end
+
 function a.auth.reject(code, reason)
   check(math.type(code) == "integer" and code >= 300 and code <= 699, "auth.reject: the code is a final failure, 300 to 699")
   return {decision = "auth", kind = "reject", code = code, reason = reason}
@@ -48,11 +54,21 @@ function a.route.subscriber(subscriber, options)
   return {target = "subscriber", subscriber = subscriber, bindings = options.bindings}
 end
 
--- One URI, located by RFC 3263. options.next_hop: where to send it, when not where the URI says.
+-- One URI, located by RFC 3263. options.next_hop: where to send it, when not where the URI says. options.trunk:
+-- the trunk it leaves by, whose challenges the node answers.
 function a.route.uri(uri, options)
   check(uri ~= nil, "route.uri: a URI, or its text")
   options = options or {}
-  return {target = "uri", uri = uri, next_hop = options.next_hop}
+  return {target = "uri", uri = uri, next_hop = options.next_hop, trunk = options.trunk}
+end
+
+-- Out by a trunk: the trunk's URI with options.user (the number dialled) as its user part.
+function a.route.trunk(trunk, options)
+  check(type(trunk) == "userdata" and a.is_trunk(trunk), "route.trunk: a trunk from athenasip.store")
+  options = options or {}
+  local uri = trunk.uri
+  if options.user then uri = uri:with{user = options.user} end
+  return {target = "uri", uri = uri, trunk = trunk.name}
 end
 
 -- The targets, tried in turn. options.media: {media_anchor =, media_profile =}, as athenasip.config.behaviour and

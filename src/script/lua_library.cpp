@@ -138,6 +138,23 @@ int uri_equal(lua_State* L) {
   return 1;
 }
 
+// A copy with the fields given changed: uri:with{user = "+442071234567"}.
+int uri_with(lua_State* L) {
+  const auto& original = *check_box<types::SIPUri>(L, 1, kUri)->value;
+  luaL_checktype(L, 2, LUA_TTABLE);
+
+  auto copy = std::make_shared<types::SIPUri>(original);
+  if (lua_getfield(L, 2, "user") == LUA_TSTRING) copy->user = lua_tostring(L, -1);
+  lua_pop(L, 1);
+  if (lua_getfield(L, 2, "host") == LUA_TSTRING) copy->host = lua_tostring(L, -1);
+  lua_pop(L, 1);
+  if (lua_getfield(L, 2, "port") == LUA_TNUMBER) copy->port = static_cast<std::uint16_t>(lua_tointeger(L, -1));
+  lua_pop(L, 1);
+
+  push_uri(L, copy);
+  return 1;
+}
+
 int uri_index(lua_State* L) {
   const auto& uri = *check_box<types::SIPUri>(L, 1, kUri)->value;
   const std::string key = luaL_checkstring(L, 2);
@@ -152,6 +169,7 @@ int uri_index(lua_State* L) {
   if (key == "transport") return push_text_or_nil(L, uri.has_parameter("transport") ? Util::to_lower(uri.parameter("transport")) : ""), 1;
   if (key == "param") return lua_pushcfunction(L, uri_param), 1;
   if (key == "tostring") return lua_pushcfunction(L, uri_tostring), 1;
+  if (key == "with") return lua_pushcfunction(L, uri_with), 1;
   return lua_pushnil(L), 1;
 }
 
@@ -240,6 +258,7 @@ int request_index(lua_State* L) {
   if (key == "has_flow_token") return lua_pushboolean(L, view.valid_flow_token), 1;
   if (key == "has_route") return lua_pushboolean(L, view.has_route), 1;
   if (key == "relay") return lua_pushboolean(L, view.relay), 1;
+  if (key == "trunk") return push_text_or_nil(L, view.trunk), 1;
   if (key == "source") return push_source(L, message), 1;
   if (key == "header") return lua_pushcfunction(L, request_header), 1;
   if (key == "headers") return lua_pushcfunction(L, request_headers), 1;
@@ -635,6 +654,7 @@ int sip_uri(lua_State* L) {
 
 int is_realm(lua_State* L) { return lua_pushboolean(L, test_box<types::Realm>(L, 1, kRealm) != nullptr), 1; }
 int is_subscriber(lua_State* L) { return lua_pushboolean(L, test_box<types::Subscriber>(L, 1, kSubscriber) != nullptr), 1; }
+int is_trunk(lua_State* L) { return lua_pushboolean(L, test_box<types::Trunk>(L, 1, kTrunk) != nullptr), 1; }
 
 void set_functions(lua_State* L, std::initializer_list<luaL_Reg> functions) {
   for (const auto& entry : functions) {
@@ -700,7 +720,7 @@ void open_library(lua_State* L) {
 
   lua_newtable(L);
 
-  set_functions(L, {{"is_realm", is_realm}, {"is_subscriber", is_subscriber}});
+  set_functions(L, {{"is_realm", is_realm}, {"is_subscriber", is_subscriber}, {"is_trunk", is_trunk}});
 
   lua_newtable(L);
   set_functions(L, {{"debug", log<0>}, {"info", log<1>}, {"warn", log<2>}, {"error", log<3>}});

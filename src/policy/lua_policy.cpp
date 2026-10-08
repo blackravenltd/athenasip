@@ -149,7 +149,7 @@ std::optional<Target> target_at(lua_State* L, int idx, std::string& error) {
       }
     }
     lua_pop(L, 1);
-    return Target::to(std::move(uri), std::move(next_hop));
+    return Target::to(std::move(uri), std::move(next_hop), text_field(L, idx, "trunk"));
   }
 
   error = "a target is a table from athenasip.route.subscriber or athenasip.route.uri";
@@ -213,6 +213,12 @@ plugins::Result<AuthDecision> auth_from(lua_State* L, int results) {
     auto realm = script::to_realm(L, -1);
     lua_pop(L, 1);
     return plugins::Result<AuthDecision>::success(AuthDecision::digest(std::move(realm), boolean_field(L, idx, "from_must_match").value_or(true)));
+  }
+
+  if (kind == "trusted") {
+    const auto trunk = text_field(L, idx, "trunk");
+    if (trunk.empty()) return refused<AuthDecision>("authorize", "a trusted decision with no trunk");
+    return plugins::Result<AuthDecision>::success(AuthDecision::trusted(trunk));
   }
 
   if (kind == "reject") {

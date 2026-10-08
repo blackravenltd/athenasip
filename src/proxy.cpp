@@ -100,6 +100,16 @@ bool has_sdp(const std::shared_ptr<SIPMessage>& message) {
 }
 
 // The size of the message on the wire. Sets Content-Length first, as the transport will.
+// Moves a message's CSeq number by delta, for the CSeq spaces either side of an answered challenge.
+void shift_cseq(const std::shared_ptr<SIPMessage>& message, std::int64_t delta) {
+  if (!message->header->contains("CSeq")) return;
+  auto cseq = message->header->headers_map["CSeq"][0]->as<headers::CSeqHeader>();
+  if (cseq == nullptr) return;
+
+  const auto moved = static_cast<std::int64_t>(cseq->sequence) + delta;
+  cseq->sequence = moved < 0 ? 0 : static_cast<std::uint64_t>(moved);
+}
+
 std::size_t wire_size(const std::shared_ptr<SIPMessage>& message) {
   message->header->clear("Content-Length");
   message->header->add("Content-Length", std::make_shared<UIntHeader>(message->body.size()));
@@ -211,6 +221,7 @@ std::shared_ptr<policy::RequestView> Proxy::_view(const std::shared_ptr<SIPMessa
   view->message = request;
   view->relay = relay;
   view->has_route = request->header->contains("Route");
+  view->trunk = request->trunk;
 
   if (const auto channel = request->channel.lock(); channel && !channel->peer_node().empty()) view->from_peer = true;
   if (auto core = _core.lock(); core && !request->flow_token.empty()) view->valid_flow_token = !core->flow_tokens().open(request->flow_token).empty();
@@ -234,6 +245,9 @@ void Proxy::_authorize(const std::shared_ptr<SIPMessage>& request, const std::sh
     const auto& decision = decided.value;
     switch (decision.kind) {
       case policy::AuthDecision::Kind::Accept:
+        return then();
+      case policy::AuthDecision::Kind::Trusted:
+        request->trunk = decision.trunk;
         return then();
       case policy::AuthDecision::Kind::Reject:
         return _send_status(transaction, request, decision.code, decision.reason);
@@ -456,6 +470,14 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
     context->rewrite_contact = core->config->behaviour_rewrite_contact;
   }
 
+  // A request from the caller of a call that left by a trunk goes on in the CSeq space the trunk has seen, and the
+  // trunk's challenges are answered for it as they were for the INVITE.
+  std::string trunk;
+  if (const auto& dialog = request->dialog; dialog && !dialog->trunk.empty() && dialog->is_from_caller(tag_of(request, "From"))) {
+    trunk = dialog->trunk;
+    context->cseq_offset = dialog->cseq_offset;
+  }
+
   // RFC 4028 8.1: remembered for 8.2. Read after _apply_session_timer, so the interval is the one forwarded.
   context->session_timer_supported = has_option_tag(request, "Supported", "timer");
   if (auto* session = session_field_of(request, "Session-Expires"); session != nullptr) context->session_interval = session->delta_seconds;
@@ -467,6 +489,7 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
 
     if (next_hop) {
       Target target;
+      target.trunk = trunk;
       target.uri = request->header->request_uri;
       target.next_hop = next_hop;
       target.flow = _flow_to(*next_hop);
@@ -483,6 +506,7 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
   // Contact may not be reachable (a browser's never is).
   if (auto flow = core->channel_for_token(request->flow_token)) {
     Target target;
+    target.trunk = trunk;
     target.uri = request->header->request_uri;
     target.next_hop = request->header->request_uri;
     target.flow = flow;
@@ -496,6 +520,7 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
   if (!request->flow_token.empty()) {
     if (auto hop = _datagram_hop(core->flow_tokens().open(request->flow_token))) {
       Target target;
+      target.trunk = trunk;
       target.uri = request->header->request_uri;
       target.next_hop = hop;
       target.flow = _flow_to(*hop);
@@ -558,6 +583,7 @@ void Proxy::_expand(const std::shared_ptr<Context>& context, std::vector<policy:
       target.uri = spec.uri;
       target.next_hop = spec.next_hop ? spec.next_hop : spec.uri;
       target.flow = _flow_to(*target.next_hop);
+      target.trunk = spec.trunk;
       into->push_back(std::move(target));
     }
     return _expand(context, std::move(specs), index + 1, std::move(into), std::move(then));
@@ -584,6 +610,73 @@ void Proxy::_expand(const std::shared_ptr<Context>& context, std::vector<policy:
           _add_targets(context, std::move(bindings.value), *into);
         }
         _expand(context, std::move(specs), index + 1, std::move(into), std::move(then));
+      });
+}
+
+void Proxy::_answer_challenge(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response, const std::shared_ptr<SIPMessage>& sent) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  context->challenge_answered = true;
+  const auto trunk_name = context->current.trunk;
+
+  auto self = shared_from_this();
+  core->datastore->trunk_get(
+      core->strand(), trunk_name, [this, self, context, response, sent, trunk_name](plugins::Result<std::shared_ptr<types::Trunk>> found) {
+        auto core = _core.lock();
+        if (!core) return;
+
+        if (!found.ok || !found.value || found.value->username.empty()) {
+          _logger->info("Trunk " + trunk_name + " challenged, and " +
+                        (!found.ok     ? "it could not be read - " + found.error
+                         : found.value ? "it has no username to answer with"
+                                       : "it no longer exists"));
+          return _branch_failed(context, _trunk_refused(context));
+        }
+
+        // A CANCEL, or another branch's answer, may have come while the trunk was read.
+        if (context->answered || context->cancelled) return _branch_failed(context, _trunk_refused(context));
+
+        const bool proxy = response->header->response_code == 407;
+        const std::string asking = proxy ? "Proxy-Authenticate" : "WWW-Authenticate";
+
+        std::vector<types::Authorization> challenges;
+        if (response->header->contains(asking)) {
+          for (const auto& value : response->header->headers_map[asking]) challenges.emplace_back(value->to_string());
+        }
+
+        const auto challenge = digest::preferred(challenges);
+        const auto copy = sent->clone();
+        const auto uri = copy->header->request_uri ? copy->header->request_uri->to_string() : std::string();
+        const auto& trunk = *found.value;
+        const auto answer =
+            challenge ? digest::respond(*challenge, trunk.username, trunk.password, copy->header->request_method, uri, Util::generate_random_string("", 16), 1)
+                      : std::nullopt;
+
+        if (!answer) {
+          _logger->info("Trunk " + trunk_name + " challenged with nothing this node can answer");
+          return _branch_failed(context, _trunk_refused(context));
+        }
+
+        auto channel = context->forwarded_flow.lock();
+        if (!channel) return _branch_failed(context, _trunk_refused(context));
+
+        // RFC 3261 22.2: the same request with the credentials, a new transaction (a new branch) and the next CSeq.
+        const auto branch = std::string(kMagicCookie) + context->loop_token + "." + Util::generate_random_string("", 12);
+        if (copy->header->contains("Via")) {
+          if (auto via = copy->header->headers_map["Via"][0]->as<ViaHeader>()) via->parameters["branch"] = branch;
+        }
+        copy->branch = branch;
+        shift_cseq(copy, 1);
+        ++context->cseq_offset;
+
+        copy->header->add(proxy ? "Proxy-Authorization" : "Authorization", answer->to_string());
+
+        // An in-dialog request raises the dialog's offset for the requests after it.
+        if (const auto& dialog = context->request->dialog; dialog && dialog->trunk == trunk_name) dialog->cseq_offset = context->cseq_offset;
+
+        _logger->info("Trunk " + trunk_name + " challenged (" + std::to_string(response->header->response_code) + ") - answering as " + trunk.username);
+        _write_forward(context, copy, channel);
       });
 }
 
@@ -692,6 +785,7 @@ void Proxy::_forward_target(const std::shared_ptr<Context>& context, const Targe
   context->hop_target.reset();
   context->current = target;
   context->offered.reset();
+  context->challenge_answered = false;
 
   // RFC 5626 5.3: a dead outbound flow fails, and the client's next flow takes its place.
   if (target.dead) {
@@ -782,6 +876,9 @@ void Proxy::_forward_to(const std::shared_ptr<Context>& context, const Target& t
     _logger->info("Max-Forwards exhausted - 483");
     return _send_status(context->server, context->request, 483, "Too Many Hops");
   }
+
+  // The CSeq space the far end has seen, raised by each challenge this node answered for it.
+  if (context->cseq_offset != 0) shift_cseq(copy, static_cast<std::int64_t>(context->cseq_offset));
 
   if (context->rewrite_contact) _rewrite_contact(copy, context->request->channel.lock());
 
@@ -889,6 +986,9 @@ void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::sha
     response->header->remove_value("Via", [&top](std::shared_ptr<headers::Header> header) { return header == top; });
   }
 
+  // Back into the caller's CSeq space before anything upstream sees it, the dialog tracker included.
+  if (context->cseq_offset != 0) shift_cseq(response, -static_cast<std::int64_t>(context->cseq_offset));
+
   const int code = response->header->response_code;
 
   // RFC 4028 8.2 runs before the dialog tracker, which reads the session interval from this response.
@@ -921,6 +1021,7 @@ void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::sha
   }
 
   _timer_c_cancel(context);
+  const auto sent = context->forwarded;
   context->forwarded = nullptr;
   context->client = nullptr;
 
@@ -944,6 +1045,14 @@ void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::sha
       if (call && answered_over && !answered_over->peer_node().empty()) {
         if (const auto callee = call->participant_index(false)) call->participants[*callee].node_id = answered_over->peer_node();
       }
+
+      // A call that left by a trunk keeps the trunk and the CSeq raise for its in-dialog requests.
+      if (core && !context->current.trunk.empty()) {
+        if (auto dialog = core->dialogs()->find(response)) {
+          dialog->trunk = context->current.trunk;
+          dialog->cseq_offset = context->cseq_offset;
+        }
+      }
     }
     context->best = response;
     context->answered = true;
@@ -951,6 +1060,28 @@ void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::sha
     _forward_response(context, response);
     return;
   }
+
+  // RFC 3261 22.2, 22.3: a trunk asking who this node is gets the trunk's credentials, once per branch. The challenge
+  // is the trunk's to this node, not to the caller, who has no answer to it: one that cannot be answered, or was
+  // answered and refused, is a 403.
+  if ((code == 401 || code == 407) && !context->current.trunk.empty()) {
+    if (!context->challenge_answered && sent) return _answer_challenge(context, response, sent);
+    _logger->info("Trunk " + context->current.trunk + " refused this node's credentials - 403");
+    return _branch_failed(context, _trunk_refused(context));
+  }
+
+  _branch_failed(context, response);
+}
+
+std::shared_ptr<SIPMessage> Proxy::_trunk_refused(const std::shared_ptr<Context>& context) const {
+  auto refused = context->request->generate_response();
+  refused->header->response_code = 403;
+  refused->header->response_message = "Forbidden";
+  return refused;
+}
+
+void Proxy::_branch_failed(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response) {
+  const int code = response->header->response_code;
 
   // Serial forking: keep the lowest code as the best response and try the next target.
   if (!context->best || code < context->best->header->response_code) context->best = response;

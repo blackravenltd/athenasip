@@ -759,7 +759,8 @@ void Core::_deliver_to_tu(const std::shared_ptr<SIPMessage>& request, const std:
 
   // Retransmissions never get this far (RFC 3261 17.2.1), so the dialog tracker sees each
   // request once.
-  request->in_known_dialog = !request->header->contains("To") ? false : _dialogs->find(request) != nullptr;
+  request->dialog = request->header->contains("To") ? _dialogs->find(request) : nullptr;
+  request->in_known_dialog = request->dialog != nullptr;
   _dialogs->observe_request(request);
 
   const auto& method = request->header->request_method;

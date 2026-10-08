@@ -458,7 +458,8 @@ scripts built into the binary, the permanent proof, and `--check`. What is left:
 ### Trunk mechanism
 
 Done (`COMPLETED.md`, 2026-10-08): `digest::respond`, trunks in the datastore,
-`/api/v1/trunks` with `manage-trunks`, and trunks in scripts.
+`/api/v1/trunks` with `manage-trunks`, trunks in scripts, and answering a carrier's
+challenge with the CSeq kept right for the rest of the dialog.
 
 - [ ] Free-form `attributes` on `Realm` and `Subscriber` too, over the API and in scripts,
       as trunks have them. Console pages for trunks and attributes are the admin session's.
@@ -467,11 +468,6 @@ Done (`COMPLETED.md`, 2026-10-08): `digest::respond`, trunks in the datastore,
       200 granted, backoff on failure; one node per trunk by a datastore lease, the others
       taking over when it lapses, on `PushRefresher::_due`'s re-read-the-store pattern;
       `trunks/<name>/status` on the bus; registration state in the API's trunk read.
-- [ ] Answering a carrier's 401 or 407 on a call: retry the branch with credentials and
-      CSeq + 1, then a `Dialog::cseq_offset` per side applied in `_prepare_forward` and
-      `_on_response` for the rest of the dialog, and again on a later challenge. The
-      largest piece of mechanism in the milestone; Kamailio's `uac` module is the
-      precedent.
 - [ ] Outbound TLS to a trunk: a second client context, the system store or the trunk's
       CA, host name verified; chosen by the target. Anything else over TLS stays refused;
       WS and WSS outbound stay refused.

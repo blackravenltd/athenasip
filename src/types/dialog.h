@@ -75,6 +75,12 @@ struct Dialog {
   // When the session lapses unless refreshed. Steady clock, so a wall-clock step cannot extend a call.
   std::chrono::steady_clock::time_point session_deadline{};
 
+  // The trunk the callee is, when the call left by one. A carrier that challenged a request was answered with that
+  // request's CSeq raised by one, and requests from the caller carry the sum of those raises for the rest of the
+  // dialog, as responses to them lose it (RFC 3261 22.2: a new request for the credentials, the same dialog).
+  std::string trunk;
+  std::uint32_t cseq_offset = 0;
+
   // When the callee answered, on the steady clock: what a maximum call duration is measured from. `confirmed_at`
   // is the wall-clock time for the call record.
   std::chrono::steady_clock::time_point confirmed_monotonic{};

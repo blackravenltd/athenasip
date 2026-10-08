@@ -2931,3 +2931,19 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
 - [x] **Scripts read trunks**: `athenasip.store.trunk(name)` and `.trunks()`, attributes as
       plain tables, `trunk:admits(address)`, `athenasip.sip.in_range(range, address)`. No
       script can read a trunk's password.
+- [x] **A carrier's challenge is answered here.** A target the policy names with a trunk
+      (`policy::Target::trunk`, `athenasip.route.trunk`) has its 401 or 407 answered by
+      the node with the trunk's credentials: the same request, a new branch, CSeq + 1, the
+      2xx ACKed by the transaction as every non-2xx is (`Proxy::_answer_challenge`). The
+      raise is kept as the context's `cseq_offset`, added to every copy forwarded and taken
+      off every response at the door, and on the dialog with its trunk, so the ACK, the BYE
+      and a re-INVITE from the caller go on in the carrier's space and their responses come
+      back in the caller's. The dialog travels on the request (`SIPMessage::dialog`),
+      captured before the dialog table ends it on a BYE, which is when it is needed most. A
+      challenge that cannot be answered, or a second one, is a 403 to the caller, who has no
+      answer to a challenge meant for this node. A challenge from anything that is not a
+      trunk goes upstream as before (`tests/proxy_trunk_test.cpp`; a control that dropped
+      the dialog from a BYE failed it, sending CSeq 2 to a carrier that had seen 2).
+- [x] **A request from a trunk** is trusted by the policy with `AuthDecision::Trusted`
+      (`athenasip.auth.trusted{trunk =}`), recorded on the request as `trunk`, and seen by
+      `route` as `request.trunk`. `uri:with{}` makes a changed copy of a URI.
