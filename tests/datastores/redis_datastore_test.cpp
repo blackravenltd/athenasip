@@ -875,3 +875,22 @@ TEST(RedisDatastoreTest, ALapsedLeaseIsTakenOver) {
   EXPECT_TRUE(datastore->lease(name, "node-b", 30));
   EXPECT_FALSE(datastore->lease(name, "node-a", 30));
 }
+
+// A realm's and a subscriber's attributes come back from Redis as they went in.
+TEST(RedisDatastoreTest, AttributesRoundTripThroughRedis) {
+  REQUIRE_REDIS(datastore);
+  const auto name = "attributes-" + unique_suffix() + ".example";
+
+  auto realm = std::make_shared<types::Realm>(name);
+  realm->nonce_secret = "secret";
+  realm->attributes = boost::json::parse(R"({"country": "44", "blocked": ["^%+4490"]})").as_object();
+  ASSERT_TRUE(datastore->realm_create(realm));
+  EXPECT_EQ(datastore->realm_get_by_name(name)->attributes, realm->attributes);
+
+  auto subscriber = make_subscriber(5270, "sip:dave@" + name);
+  subscriber->attributes = boost::json::parse(R"({"forward_to": "sip:erin@example.com"})").as_object();
+  ASSERT_TRUE(datastore->subscriber_create(subscriber));
+  EXPECT_EQ(datastore->subscriber_get(subscriber->identity)->attributes, subscriber->attributes);
+
+  datastore->realm_delete(name);
+}

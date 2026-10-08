@@ -3026,3 +3026,7 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       carrier removed with Expires 0 on the same Call-ID, tried once, and its retained status
       cleared. A node that loses the lease to another sends nothing: the binding is now the
       other node's.
+- [x] **Attributes on realms and subscribers**, as trunks have them: a free-form object set
+      over the API on create and update (replaced whole when given, refused unless an object),
+      stored by both drivers, returned in reads, and read by scripts as `realm.attributes` and
+      `subscriber.attributes`. In the OpenAPI document.

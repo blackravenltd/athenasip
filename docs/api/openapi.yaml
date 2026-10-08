@@ -1738,6 +1738,12 @@ components:
     Realm:
       type: object
       properties:
+        attributes:
+          type: object
+          additionalProperties: true
+          description: |
+            Anything a routing script reads (docs/scripting.md); the node reads none of it.
+            Settable on create and update, replaced whole when given.
         name:
           type: string
         id:
@@ -1824,6 +1830,10 @@ components:
       type: object
       required: [name]
       properties:
+        attributes:
+          type: object
+          additionalProperties: true
+          description: Anything a routing script reads; replaced whole when given
         name:
           type: string
         nonce_secret:
@@ -1841,6 +1851,10 @@ components:
     RealmUpdate:
       type: object
       properties:
+        attributes:
+          type: object
+          additionalProperties: true
+          description: Anything a routing script reads; replaced whole when given
         nonce_secret:
           type: string
         nonce_expiry:
@@ -1892,6 +1906,12 @@ components:
     Subscriber:
       type: object
       properties:
+        attributes:
+          type: object
+          additionalProperties: true
+          description: |
+            Anything a routing script reads (docs/scripting.md); the node reads none of it.
+            Settable on create and update, replaced whole when given.
         id:
           type: integer
           format: int64
@@ -1959,6 +1979,10 @@ components:
       required: [user]
       description: One of `password` or `ha1` is required.
       properties:
+        attributes:
+          type: object
+          additionalProperties: true
+          description: Anything a routing script reads; replaced whole when given
         user:
           type: string
         password:
@@ -1974,6 +1998,10 @@ components:
       type: object
       description: Any of `password` or `ha1`, and `behaviour`.
       properties:
+        attributes:
+          type: object
+          additionalProperties: true
+          description: Anything a routing script reads; replaced whole when given
         password:
           type: string
         ha1:

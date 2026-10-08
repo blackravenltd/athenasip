@@ -463,8 +463,7 @@ Done (`COMPLETED.md`, 2026-10-08): `digest::respond`, trunks in the datastore,
 challenge with the CSeq kept right for the rest of the dialog, TLS to a trunk,
 registering to a trunk with a lease per trunk, its state in the API, and unregistering.
 
-- [ ] Free-form `attributes` on `Realm` and `Subscriber` too, over the API and in scripts,
-      as trunks have them. Console pages for trunks and attributes are the admin session's.
+- [ ] Console pages for trunks and for attributes: the admin session's.
 - [ ] The smaller primitives: header edits on the forwarded copy behind the guard list,
       `set_from` without touching the tag, `ring_timeout` per target on timer C's path,
       `counter_incr` and `counter_get` on the datastore, `RequestView::source`, the trunk

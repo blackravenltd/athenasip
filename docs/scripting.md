@@ -116,8 +116,13 @@ Everything is under the global `athenasip`.
 | `athenasip.sip.in_range(range, address)` | Whether an address is in a CIDR range, or in any of a list of them |
 
 A realm has `name`, `id`, `registration_timeout`, `registration_minimum`, `behaviour`
-(what it set itself) and `behaviour_effective` (over the server's). A subscriber has `id`,
-`aor`, `uri`, `realm` and `media_profile`.
+(what it set itself), `behaviour_effective` (over the server's) and `attributes`. A
+subscriber has `id`, `aor`, `uri`, `realm`, `media_profile` and `attributes`.
+
+`attributes` is a free-form object set over the API on a realm, a subscriber or a trunk
+(`"attributes": {"forward_to": "sip:bob@example.com"}`), which a script reads as plain Lua
+tables. The node reads none of it, so it is where a deployment keeps what its scripts need:
+a forwarding number, a caller ID, a blocklist.
 
 ### Trunks
 

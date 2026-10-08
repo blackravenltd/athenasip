@@ -687,7 +687,6 @@ TEST(ProvisioningApiTest, ABodyThatIsNotJsonIsRefused) {
 
 // --- GET /subscriber/{realm}/config ---
 
-
 // Named, a realm says what it expects of a client registering in it: the lifetime it grants and the shortest it
 // takes (RFC 3261 10.3 step 7), and how many RFC 5626 flows to keep, one per node up to two (section 4.2).
 TEST(ProvisioningApiTest, SubscriberConfigSaysWhatARealmExpects) {
@@ -903,4 +902,25 @@ TEST(ProvisioningApiTest, AnEmptyPasswordIsRefused) {
   seed_alice(f);
 
   EXPECT_EQ(f.as_subscriber(http::verb::put, "/api/v1/subscriber/example.com/password", "alice", "secret", R"({"password":""})").status, 400u);
+}
+
+// A realm and a subscriber carry attributes for scripts: stored as given, returned, replaced whole on update, and
+// only an object.
+TEST(ProvisioningApiTest, RealmsAndSubscribersCarryAttributesForScripts) {
+  ApiFixture f;
+
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com","attributes":{"country":"44"}})").status, 201u);
+  EXPECT_EQ(f.get("/api/v1/realms/example.com").json().at("attributes").at("country").as_string(), "44");
+  EXPECT_EQ(f.store->realm_get_by_name("example.com")->attributes.at("country").as_string(), "44");
+
+  ASSERT_EQ(
+      f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice","password":"secret","attributes":{"forward_to":"sip:bob@example.com"}})").status,
+      201u);
+  ASSERT_EQ(f.put("/api/v1/realms/example.com/subscribers/alice", R"({"attributes":{"caller_id":"+442012345678"}})").status, 200u);
+
+  const auto alice = f.get("/api/v1/realms/example.com/subscribers/alice").json().at("attributes").as_object();
+  EXPECT_FALSE(alice.contains("forward_to")) << "replaced whole";
+  EXPECT_EQ(alice.at("caller_id").as_string(), "+442012345678");
+
+  EXPECT_EQ(f.put("/api/v1/realms/example.com", R"({"attributes":"country=44"})").status, 400u);
 }
