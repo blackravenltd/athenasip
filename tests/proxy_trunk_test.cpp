@@ -30,9 +30,15 @@ class TrunkPolicy final : public policy::Policy {
   std::string name() const override { return "trunk-test"; }
   std::string version() const override { return "0.0.0"; }
 
+  // Whether a request from the carrier's address is trusted as the trunk's, as athenasip.trunks does.
+  bool trust_carrier = false;
+
   void authorize(plugins::Executor on, std::shared_ptr<policy::RequestView> request, plugins::Handler<policy::AuthDecision> handler) override {
-    (void)request;
-    _complete(on, handler, plugins::Result<policy::AuthDecision>::success(policy::AuthDecision::accept()));
+    const auto channel = request->message->channel.lock();
+    const bool from_carrier = channel && channel->_connection->remote_endpoint().address().to_string() == "192.0.2.30";
+    _complete(
+        on, handler,
+        plugins::Result<policy::AuthDecision>::success(trust_carrier && from_carrier ? policy::AuthDecision::trusted("acme") : policy::AuthDecision::accept()));
   }
 
   // What the script would have done with request:set_from and request:set_header.
@@ -231,4 +237,41 @@ TEST(ProxyTrunkTest, ThePolicySetsTheCallerIdTheCarrierSees) {
   EXPECT_NE(from_header.find("tag=alice"), std::string::npos) << "the tag names the dialog: " << from_header;
   EXPECT_EQ(first(sent[0], "P-Asserted-Identity"), "<sip:+442012345678@example.com>");
   EXPECT_FALSE(sent[0]->header->contains("User-Agent"));
+}
+
+// The call record says which trunk each leg ran over: a call that left by a trunk has it on the callee's leg.
+TEST(ProxyTrunkTest, TheCallRecordNamesTheTrunkACallLeftBy) {
+  TrunkFixture f;
+
+  f.receive(f.caller, f.invite_to_number());
+  f.receive(f.carrier, TrunkFixture::reply(f.to_carrier("INVITE")[0], 200, "OK", "Contact: <sip:+442071234567@192.0.2.30:5060>\r\n"));
+
+  const auto legs = f.on_strand([&f]() {
+    std::vector<std::pair<bool, std::string>> out;
+    if (auto call = f.core->call_get("call-proxy")) {
+      for (const auto& participant : call->participants) out.emplace_back(participant.originator, participant.trunk);
+    }
+    return out;
+  });
+  ASSERT_EQ(legs.size(), 2u);
+  for (const auto& [originator, trunk] : legs) EXPECT_EQ(trunk, originator ? "" : "acme") << (originator ? "the caller's leg" : "the callee's leg");
+}
+
+// A call that came in by a trunk has it on the caller's leg.
+TEST(ProxyTrunkTest, TheCallRecordNamesTheTrunkACallCameInBy) {
+  TrunkFixture f;
+  f.policy->trust_carrier = true;
+
+  auto raw = f.invite("z9hG4bK-in", "sip:+442071234567@example.com");
+  f.receive(f.carrier, raw);
+  const auto out = f.to_carrier("INVITE");
+  ASSERT_FALSE(out.empty());
+  f.receive(f.carrier, TrunkFixture::reply(out.back(), 200, "OK", "Contact: <sip:+442071234567@192.0.2.30:5060>\r\n"));
+
+  const auto caller_trunk = f.on_strand([&f]() {
+    auto call = f.core->call_get("call-proxy");
+    const auto index = call ? call->participant_index(true) : std::nullopt;
+    return index ? call->participants[*index].trunk : std::string("(no call)");
+  });
+  EXPECT_EQ(caller_trunk, "acme");
 }

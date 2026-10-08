@@ -1112,6 +1112,14 @@ void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::sha
         if (const auto callee = call->participant_index(false)) call->participants[*callee].node_id = answered_over->peer_node();
       }
 
+      if (core && !context->current.trunk.empty()) core->trunk_response_count(context->current.trunk, static_cast<std::uint16_t>(code));
+
+      // For the record: the trunk the call came in by, and the one the answering branch left by.
+      if (call) {
+        if (const auto caller = call->participant_index(true)) call->participants[*caller].trunk = context->request->trunk;
+        if (const auto callee = call->participant_index(false)) call->participants[*callee].trunk = context->current.trunk;
+      }
+
       // A call that left by a trunk keeps the trunk and the CSeq raise for its in-dialog requests.
       if (core && !context->current.trunk.empty()) {
         if (auto dialog = core->dialogs()->find(response)) {
@@ -1148,6 +1156,10 @@ std::shared_ptr<SIPMessage> Proxy::_trunk_refused(const std::shared_ptr<Context>
 
 void Proxy::_branch_failed(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response) {
   const int code = response->header->response_code;
+
+  if (!context->current.trunk.empty()) {
+    if (auto core = _core.lock()) core->trunk_response_count(context->current.trunk, static_cast<std::uint16_t>(code));
+  }
 
   // Serial forking: keep the lowest code as the best response and try the next target.
   if (!context->best || code < context->best->header->response_code) context->best = response;
