@@ -14,6 +14,16 @@ week, under Milestone 1. Everything after that is dated as it landed.
 
 Newest first. The detail is below, oldest first.
 
+- **0.10.0** (2026-10-08): routing that is scripted, and trunks. Every decision about
+  who may do what and where a call goes is asked of a policy plugin: `builtin://`, the
+  default, is the node's behaviour as it was, and `lua://` runs Lua 5.4 scripts in a
+  sandbox with budgets, whose standard scripts are proven to decide exactly as `builtin://`
+  does. Trunks to carriers, kept over the API: registering, answering their challenges,
+  TLS with their own CA, routing by prefix with failover, numbers brought in to
+  subscribers, all from `athenasip.trunks` without writing Lua. A heap corruption on every
+  closed TLS connection fixed; a WebRTC caller whose callee needs plain RTP now has media.
+  Live calls are checked automatically every 15 minutes. The sipp harnesses were not run
+  on the tagged tree (Docker).
 - **0.9.0** (2026-10-07): a second node that takes over, and phones woken for a call.
   A client whose node dies registers again through the other; an rtpengine pool keeps
   media going when an engine dies; the node ends dead calls itself with a BYE, and an
