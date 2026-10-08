@@ -110,6 +110,13 @@ change against a node.
 - With Homebrew's GoogleTest, ASan reports a false `container-overflow` inside
   GoogleTest before any test runs, because the library is not built with ASan. Run with
   `ASAN_OPTIONS=detect_container_overflow=0`.
+- UBSan's `vptr` check fails on Boost.JSON's memory resource, which comes from the
+  uninstrumented Boost library. Suppress it:
+
+  ```bash
+  printf 'vptr:boost/json/*\nvptr:boost/container/*\nvptr:*memory_resource*\n' > /tmp/ubsan.supp
+  UBSAN_OPTIONS=suppressions=/tmp/ubsan.supp ASAN_OPTIONS=detect_container_overflow=0 ./build-asan/athenasip_tests
+  ```
 
 ## The sipp harness
 

@@ -90,6 +90,17 @@ bool NodeDirectory::observe(const std::string& topic, const std::string& message
   return true;
 }
 
+namespace {
+
+// seconds::max() is "never stale". Compared as it stands it would be converted to the clock's nanoseconds, which
+// overflows.
+bool is_stale(std::chrono::steady_clock::duration silent, std::chrono::seconds stale_after) {
+  if (stale_after == std::chrono::seconds::max()) return false;
+  return silent > std::chrono::duration_cast<std::chrono::steady_clock::duration>(stale_after);
+}
+
+}  // namespace
+
 std::optional<NodeDirectory::Node> NodeDirectory::find(const std::string& id, std::chrono::seconds stale_after,
                                                        std::chrono::steady_clock::time_point now) const {
   std::lock_guard<std::mutex> lock(_mutex);
@@ -98,7 +109,7 @@ std::optional<NodeDirectory::Node> NodeDirectory::find(const std::string& id, st
   if (found == _nodes.end()) return std::nullopt;
 
   auto node = found->second;
-  node.stale = now - node.heard > stale_after;
+  node.stale = is_stale(now - node.heard, stale_after);
   return node;
 }
 
@@ -110,7 +121,7 @@ std::vector<NodeDirectory::Node> NodeDirectory::list(std::chrono::seconds stale_
 
   for (const auto& [id, node] : _nodes) {
     out.push_back(node);
-    out.back().stale = now - node.heard > stale_after;
+    out.back().stale = is_stale(now - node.heard, stale_after);
   }
 
   return out;
