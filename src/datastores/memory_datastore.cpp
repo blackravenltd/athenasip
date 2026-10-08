@@ -455,6 +455,56 @@ void MemoryDatastore::realm_list(plugins::Executor on, plugins::Handler<std::vec
   _complete(std::move(on), std::move(handler), plugins::Result<std::vector<std::shared_ptr<types::Realm>>>::success(_realm_list()));
 }
 
+// Copies in and out, as a networked driver gives: a caller that changes a trunk without writing it back changes
+// nothing stored.
+void MemoryDatastore::trunk_get(plugins::Executor on, std::string name, plugins::Handler<std::shared_ptr<types::Trunk>> handler) {
+  std::shared_ptr<types::Trunk> found;
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (const auto it = _trunks.find(types::Trunk::normalise(name)); it != _trunks.end()) found = std::make_shared<types::Trunk>(it->second);
+  }
+  _complete(std::move(on), std::move(handler), plugins::Result<std::shared_ptr<types::Trunk>>::success(std::move(found)));
+}
+
+void MemoryDatastore::trunk_create(plugins::Executor on, std::shared_ptr<types::Trunk> trunk, plugins::StatusHandler handler) {
+  bool created = false;
+  if (trunk && !trunk->name.empty()) {
+    std::lock_guard<std::mutex> lock(_mutex);
+    created = _trunks.emplace(trunk->key(), *trunk).second;
+  }
+  _complete(std::move(on), std::move(handler), _status(created, "trunk_create"));
+}
+
+void MemoryDatastore::trunk_update(plugins::Executor on, std::shared_ptr<types::Trunk> trunk, plugins::StatusHandler handler) {
+  bool updated = false;
+  if (trunk) {
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (auto it = _trunks.find(trunk->key()); it != _trunks.end()) {
+      it->second = *trunk;
+      updated = true;
+    }
+  }
+  _complete(std::move(on), std::move(handler), _status(updated, "trunk_update"));
+}
+
+void MemoryDatastore::trunk_delete(plugins::Executor on, std::string name, plugins::StatusHandler handler) {
+  bool deleted = false;
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    deleted = _trunks.erase(types::Trunk::normalise(name)) != 0;
+  }
+  _complete(std::move(on), std::move(handler), _status(deleted, "trunk_delete"));
+}
+
+void MemoryDatastore::trunk_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::Trunk>>> handler) {
+  std::vector<std::shared_ptr<types::Trunk>> trunks;
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    for (const auto& [key, trunk] : _trunks) trunks.push_back(std::make_shared<types::Trunk>(trunk));
+  }
+  _complete(std::move(on), std::move(handler), plugins::Result<std::vector<std::shared_ptr<types::Trunk>>>::success(std::move(trunks)));
+}
+
 void MemoryDatastore::user_get(plugins::Executor on, std::string username, plugins::Handler<std::shared_ptr<types::User>> handler) {
   _complete(std::move(on), std::move(handler), plugins::Result<std::shared_ptr<types::User>>::success(_user_get(username)));
 }

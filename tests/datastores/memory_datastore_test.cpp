@@ -19,8 +19,10 @@
 #include "config.h"
 #include "types/password.h"
 #include "types/session.h"
+#include "types/trunk.h"
 #include "types/url.h"
 #include "types/user.h"
+#include "util.h"
 
 using namespace athenasip;
 using athenasip::datastores::MemoryDatastore;
@@ -690,4 +692,46 @@ TEST(MemoryDatastoreTest, EndedCallsAreForgottenAfterTheRetention) {
   EXPECT_EQ(datastore.call_get("long-ago"), nullptr);
   EXPECT_NE(datastore.call_get("just-now"), nullptr);
   EXPECT_NE(datastore.call_get("still-up"), nullptr);
+}
+
+// A trunk is stored whole and given back as stored, password and attributes included, and found by its name
+// whatever its case.
+TEST(MemoryDatastoreTest, ATrunkRoundTrips) {
+  auto datastore = make_datastore();
+  auto trunk = std::make_shared<types::Trunk>();
+  trunk->name = "Acme";
+  trunk->uri = "sip:sip.acme.example;transport=tls";
+  trunk->username = "4420";
+  trunk->password = "s3cret";
+  trunk->register_enabled = true;
+  trunk->register_expires = 600;
+  trunk->contact_user = "4420";
+  trunk->inbound_addresses = {"203.0.113.0/24", "2001:db8::/32"};
+  trunk->attributes["prefixes"] = boost::json::array{"+44", "+1"};
+  ASSERT_TRUE(datastore->trunk_create(trunk));
+
+  const auto found = datastore->trunk_get(Util::to_upper(trunk->name));
+  ASSERT_NE(found, nullptr);
+  EXPECT_EQ(found->name, trunk->name);
+  EXPECT_EQ(found->uri, trunk->uri);
+  EXPECT_EQ(found->password, "s3cret");
+  EXPECT_TRUE(found->register_enabled);
+  EXPECT_EQ(found->register_expires, 600u);
+  EXPECT_EQ(found->inbound_addresses, trunk->inbound_addresses);
+  EXPECT_EQ(found->attributes, trunk->attributes);
+
+  EXPECT_FALSE(datastore->trunk_create(trunk)) << "a second trunk of the same name is a conflict";
+
+  found->password = "changed";
+  ASSERT_TRUE(datastore->trunk_update(found));
+  EXPECT_EQ(datastore->trunk_get(trunk->name)->password, "changed");
+
+  bool listed = false;
+  for (const auto& each : datastore->trunk_list()) listed = listed || each->name == trunk->name;
+  EXPECT_TRUE(listed);
+
+  ASSERT_TRUE(datastore->trunk_delete(trunk->name));
+  EXPECT_EQ(datastore->trunk_get(trunk->name), nullptr);
+  EXPECT_FALSE(datastore->trunk_delete(trunk->name)) << "nothing left to delete";
+  EXPECT_FALSE(datastore->trunk_update(trunk)) << "nothing left to update";
 }
