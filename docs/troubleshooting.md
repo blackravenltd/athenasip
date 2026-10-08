@@ -11,6 +11,7 @@ as the node writes them; `<...>` stands for the part that varies.
 | The log | Each refusal is logged with its reason and the code sent. Keep `log.level` at `debug` or `info` while investigating. |
 | `sip.log_messages: true` | Every SIP message in full, including the SDP. Digest headers are redacted. |
 | `athenasip --check` | Tries the datastore, event bus, media engine, routing scripts, every certificate and, in a cluster, each peer, and locates each trunk. Safe beside a running node. |
+| `athenasip --check-trunks` | Whether each trunk's carrier answers an OPTIONS, and how fast. Sends to the carriers, so it is not part of `--check`. |
 | `athenasip --explain FILE` | What the routing policy decides for a request, step by step, against the live data ([Scripting](scripting.md#trying-a-request)) |
 | `athenasip --print-config` | The configuration the node actually reads, with defaults filled in, and which file it came from. |
 | `GET /api/v1/registrations` | Who is registered, from where, until when |
@@ -127,6 +128,7 @@ for one request.
 |---|---|---|
 | `registration.state` is `failed` | `Cannot register to trunk <name> - <reason>` | `no answer` or `no flow to <address>`: the carrier cannot be reached, a firewall or the `uri`. `the carrier refused the trunk's credentials`: the username or password. |
 | `--check` says `FAIL  trunk <name>  <uri> - DNS gives nowhere to send it` | | The trunk's `uri`, or its `proxy`, names a host with no SIP service in DNS and no address. Check the spelling, or give the carrier's address as `proxy`. |
+| `--check-trunks` says `no answer in 4 s` | | The carrier is not reachable from this host on that transport and port, or ignores OPTIONS from an address it does not know. A firewall on either side is the usual cause. |
 | Nothing registers | No `Registering to trunk` line on any node | The trunk has no `register.enabled`, or the datastore cannot hold the lease (`Cannot read the trunks - <error>`). |
 | TLS to the carrier fails | `Cannot load <file> for TLS to a trunk - <error>` | The trunk's `tls_ca` cannot be read by the service user. |
 | A call out is 404 | `No trunk carries <number> - 404` | No trunk's `prefixes` match the number, after `country` is applied. |

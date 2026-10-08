@@ -6,12 +6,16 @@
 //
 #include "cli_check.h"
 
+#include <array>
 #include <boost/asio/connect.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/ssl.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/write.hpp>
 #include <chrono>
+#include <functional>
 #include <future>
 #include <mutex>
 #include <thread>
@@ -31,6 +35,7 @@
 #include "types/sip_uri.h"
 #include "types/trunk.h"
 #include "types/url.h"
+#include "util.h"
 
 namespace athenasip::cli {
 
@@ -297,7 +302,8 @@ std::vector<CheckLine> check(std::shared_ptr<loggers::Logger> logger, std::share
   return lines;
 }
 
-std::vector<CheckLine> check_trunks(const std::shared_ptr<datastores::Datastore>& datastore, const std::shared_ptr<dns::SipLocator>& locator) {
+std::vector<CheckLine> check_trunks(const std::shared_ptr<datastores::Datastore>& datastore, const std::shared_ptr<dns::SipLocator>& locator,
+                                    const TrunkProbe& probe) {
   std::vector<CheckLine> lines;
 
   const auto listed = wait_for<std::vector<std::shared_ptr<types::Trunk>>>(
@@ -324,13 +330,163 @@ std::vector<CheckLine> check_trunks(const std::shared_ptr<datastores::Datastore>
       lines.push_back(line(false, what, next + " - " + located.error));
     } else if (located.value.empty()) {
       lines.push_back(line(false, what, next + " - DNS gives nowhere to send it"));
-    } else {
+    } else if (!probe) {
       std::string hops;
       for (const auto& hop : located.value) hops += (hops.empty() ? "" : ", ") + hop.transport + " " + hop.address + ":" + std::to_string(hop.port);
       lines.push_back(line(true, what, next + " - " + hops));
+    } else {
+      const auto& hop = located.value.front();
+      const auto where = hop.transport + " " + hop.address + ":" + std::to_string(hop.port);
+      const auto started = std::chrono::steady_clock::now();
+      const auto answered = probe(*trunk, hop);
+      const auto took = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
+      lines.push_back(answered.ok ? line(true, what, where + " answered " + answered.value + " in " + std::to_string(took) + " ms")
+                                  : line(false, what, where + " - " + answered.error));
     }
   }
   return lines;
+}
+
+plugins::Result<std::string> options_probe(const types::Trunk& trunk, const dns::Hop& hop) {
+  using Answer = plugins::Result<std::string>;
+
+  boost::system::error_code bad;
+  const auto address = boost::asio::ip::make_address(hop.address, bad);
+  if (bad) return Answer::failure(hop.address + " is not an address");
+
+  const types::SIPUri target(trunk.uri);
+  const auto request = [&](const std::string& transport, const std::string& sent_by) {
+    std::string raw = "OPTIONS " + std::string(target.scheme == "sips" ? "sips:" : "sip:") + target.host + " SIP/2.0\r\n";
+    raw += "Via: SIP/2.0/" + Util::to_upper(transport) + " " + sent_by + ";branch=z9hG4bK" + Util::generate_random_string("", 16) + ";rport\r\n";
+    raw += "Max-Forwards: 70\r\n";
+    raw += "From: <sip:athenasip-check@" + sent_by.substr(0, sent_by.rfind(':')) + ">;tag=" + Util::generate_random_string("", 10) + "\r\n";
+    raw += "To: <" + std::string(target.scheme == "sips" ? "sips:" : "sip:") + target.host + ">\r\n";
+    raw += "Call-ID: " + Util::generate_random_string("", 20) + "\r\nCSeq: 1 OPTIONS\r\nAccept: application/sdp\r\nContent-Length: 0\r\n\r\n";
+    return raw;
+  };
+  const auto start_line = [](const std::string& response) {
+    const auto end = response.find("\r\n");
+    return response.substr(0, end).rfind("SIP/2.0 ", 0) == 0 ? response.substr(8, end - 8) : std::string();
+  };
+  const auto endpoint_name = [](const auto& endpoint) {
+    const auto host = endpoint.address().is_v6() ? "[" + endpoint.address().to_string() + "]" : endpoint.address().to_string();
+    return host + ":" + std::to_string(endpoint.port());
+  };
+
+  boost::asio::io_context io;
+  std::string answer;
+  boost::system::error_code failed = boost::asio::error::timed_out;
+
+  if (hop.transport == "udp") {
+    boost::asio::ip::udp::socket socket(io);
+    const boost::asio::ip::udp::endpoint remote(address, hop.port);
+    socket.open(remote.protocol(), bad);
+    if (!bad) socket.connect(remote, bad);
+    if (bad) return Answer::failure(bad.message());
+
+    const auto sent = request("udp", endpoint_name(socket.local_endpoint()));
+    std::array<char, 8192> buffer{};
+    socket.async_receive(boost::asio::buffer(buffer), [&](boost::system::error_code ec, std::size_t size) {
+      failed = ec;
+      if (!ec) answer.assign(buffer.data(), size);
+      io.stop();
+    });
+
+    // RFC 3261 17.1.2.2: sent again after T1, then doubling, until an answer.
+    boost::asio::steady_timer again(io);
+    auto interval = std::make_shared<std::chrono::milliseconds>(500);
+    std::function<void()> send = [&]() {
+      socket.send(boost::asio::buffer(sent), 0, bad);
+      again.expires_after(*interval);
+      *interval = std::min(*interval * 2, std::chrono::milliseconds(4000));
+      again.async_wait([&](boost::system::error_code ec) {
+        if (!ec) send();
+      });
+    };
+    send();
+    io.run_for(std::chrono::seconds(4));
+  } else {
+    boost::asio::ssl::context context(boost::asio::ssl::context::tls_client);
+    const bool tls = hop.transport == "tls";
+    if (tls) {
+      context.set_verify_mode(boost::asio::ssl::verify_peer);
+      if (trunk.tls_ca.empty()) {
+        context.set_default_verify_paths();
+      } else {
+        context.load_verify_file(trunk.tls_ca, bad);
+        if (bad) return Answer::failure("cannot load " + trunk.tls_ca + " - " + bad.message());
+      }
+    }
+
+    boost::asio::ssl::stream<tcp::socket> stream(io, context);
+    if (tls) {
+      stream.set_verify_callback(boost::asio::ssl::host_name_verification(target.host));
+      SSL_set_tlsext_host_name(stream.native_handle(), target.host.c_str());
+    }
+
+    std::string sent;
+    std::array<char, 8192> buffer{};
+    std::function<void()> read = [&]() {
+      const auto on_read = [&](boost::system::error_code ec, std::size_t size) {
+        if (ec) {
+          failed = ec;
+          return io.stop();
+        }
+        answer.append(buffer.data(), size);
+        if (answer.find("\r\n\r\n") != std::string::npos) {
+          failed = {};
+          return io.stop();
+        }
+        read();
+      };
+      if (tls) {
+        stream.async_read_some(boost::asio::buffer(buffer), on_read);
+      } else {
+        stream.next_layer().async_read_some(boost::asio::buffer(buffer), on_read);
+      }
+    };
+    const auto write = [&]() {
+      sent = request(hop.transport, endpoint_name(stream.next_layer().local_endpoint()));
+      const auto on_written = [&](boost::system::error_code ec, std::size_t) {
+        if (ec) {
+          failed = ec;
+          return io.stop();
+        }
+        read();
+      };
+      if (tls) {
+        boost::asio::async_write(stream, boost::asio::buffer(sent), on_written);
+      } else {
+        boost::asio::async_write(stream.next_layer(), boost::asio::buffer(sent), on_written);
+      }
+    };
+
+    stream.next_layer().async_connect(tcp::endpoint(address, hop.port), [&](boost::system::error_code ec) {
+      if (ec) {
+        failed = ec;
+        return io.stop();
+      }
+      if (!tls) return write();
+      stream.async_handshake(boost::asio::ssl::stream_base::client, [&](boost::system::error_code ec) {
+        if (ec) {
+          failed = ec;
+          return io.stop();
+        }
+        write();
+      });
+    });
+    io.run_for(std::chrono::seconds(4));
+
+    boost::system::error_code ignored;
+    stream.next_layer().close(ignored);
+  }
+
+  if (failed == boost::asio::error::timed_out || (!failed && answer.empty())) return Answer::failure("no answer in 4 s");
+  if (failed) return Answer::failure(failed.message());
+
+  const auto status = start_line(answer);
+  if (status.empty()) return Answer::failure("answered with something that is not a SIP response");
+  return Answer::success(status);
 }
 
 std::string report(const std::vector<CheckLine>& lines) {

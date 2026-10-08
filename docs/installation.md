@@ -63,6 +63,7 @@ sudo systemctl reload athenasip     # read the routing scripts again, with lua:/
 | `athenasip --print-config` | print the effective configuration, defaults resolved, and exit |
 | `athenasip --print-schema` | print every setting as a JSON Schema for an editor, or with `=markdown` as the reference, and exit |
 | `athenasip --check` | try the datastore, event bus, media engine, routing scripts, trunks, certificates and cluster peers, report, and exit |
+| `athenasip --check-trunks` | send each trunk an OPTIONS from a socket of its own, say which answered and how fast, and exit |
 | `athenasip --explain FILE [--from ADDRESS]` | put a SIP request from a file to the routing policy, say what it decided, and exit; nothing is sent |
 | `athenasip --list-plugins` | load the plugin modules in `plugins.path`, say which loaded, list every driver, and exit |
 | `athenasip --help` | every option |
