@@ -111,10 +111,12 @@ services:
       start_period: 2s
 
   athenasip:
+    # The published image of this checkout's release, which up.sh names; up.sh --build
+    # builds this tree instead.
     build:
       context: .
       dockerfile: Dockerfile
-    image: athenasip:quickstart
+    image: ${ATHENA_IMAGE:-tomcully/athenasip:latest}
     container_name: athenasip
     networks:
       - athenasip

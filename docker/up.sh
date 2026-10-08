@@ -9,6 +9,7 @@
 #
 #   docker/up.sh             bring the stack up, seed it, say what to do next
 #   docker/up.sh --console   also serve the admin console, built in its own repository
+#   docker/up.sh --build     build the node's image from this tree rather than pull it
 #   docker/up.sh down        take it down, keeping the data
 #   docker/up.sh --reset     take it down and delete the data too
 #
@@ -24,10 +25,12 @@ ROOT="$(cd "$HERE/.." && pwd)"
 ACTION="up"
 SERVE_CONSOLE="no"
 RESET="no"
+BUILD="no"
 
 for argument in "$@"; do
   case "$argument" in
     --console) SERVE_CONSOLE="yes" ;;
+    --build)   BUILD="yes" ;;
     --reset)   ACTION="down"; RESET="yes" ;;
     up|down)   ACTION="$argument" ;;
     *) echo "Unknown argument: $argument" >&2; exit 1 ;;
@@ -201,8 +204,24 @@ MSG
     ;;
 esac
 
-echo "Building and starting..."
-compose up -d --build --wait
+# The image published for this checkout's release, unless asked to build this tree: a
+# checkout between releases has changes the published image does not.
+VERSION="$(sed -n 's/^project(athenasip VERSION \([0-9.]*\).*/\1/p' "$ROOT/CMakeLists.txt")"
+if [[ "$BUILD" == "yes" ]]; then
+  export ATHENA_IMAGE="athenasip:local"
+  echo "Building this tree and starting..."
+  compose up -d --build --wait
+else
+  export ATHENA_IMAGE="${ATHENA_IMAGE:-tomcully/athenasip:${VERSION}}"
+  echo "Pulling ${ATHENA_IMAGE} and starting..."
+  if ! compose pull athenasip; then
+    echo "${ATHENA_IMAGE} is not published; building this tree instead."
+    export ATHENA_IMAGE="athenasip:local"
+    compose up -d --build --wait
+  else
+    compose up -d --wait
+  fi
+fi
 
 # The first administrator, created inside the container; the password goes in on stdin.
 # Exit 3 means it already exists, which is fine on a second run.
