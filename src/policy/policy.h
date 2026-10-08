@@ -6,6 +6,7 @@
 //
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -154,6 +155,10 @@ struct Target {
 
   // Uri: the trunk this leaves by, by name. The node answers its challenges with the trunk's credentials.
   std::string trunk;
+
+  // How long an INVITE branch may ring before the node gives up on it and moves on: a CANCEL if it rang, a 408 to
+  // the policy either way. Unset is timer C (RFC 3261 16.8), minutes.
+  std::optional<std::chrono::seconds> ring_timeout;
 
   static Target of(std::shared_ptr<types::Subscriber> subscriber, std::optional<std::vector<types::Location>> bindings = std::nullopt) {
     Target target{Kind::Subscriber};

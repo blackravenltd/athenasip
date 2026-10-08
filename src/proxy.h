@@ -101,6 +101,9 @@ class Proxy : public TransactionUser {
 
     // TLS to a trunk is verified against this CA file, empty for the system's store. Set once the trunk is read.
     std::optional<std::string> tls_ca;
+
+    // The policy's limit on how long this branch rings.
+    std::optional<std::chrono::seconds> ring_timeout;
   };
 
   // The response context (16.7). Kept alive by the client transaction callbacks.
@@ -150,6 +153,9 @@ class Proxy : public TransactionUser {
 
     // The policy's edits, applied to every copy forwarded.
     std::vector<policy::HeaderEdit> edits;
+
+    // Ends a branch that has rung for its target's ring_timeout. Unlike timer C, a provisional does not reset it.
+    std::shared_ptr<Timer> ring_timer;
 
     // The realm's media policy, when target determination found a realm. In-dialog requests use the call's.
     std::optional<types::MediaPolicy> media_policy;
@@ -292,6 +298,9 @@ class Proxy : public TransactionUser {
   void _timer_c_start(const std::shared_ptr<Context>& context);
   void _timer_c_cancel(const std::shared_ptr<Context>& context);
   void _on_timer_c(const std::shared_ptr<Context>& context);
+  void _ring_timer_start(const std::shared_ptr<Context>& context);
+  void _ring_timer_cancel(const std::shared_ptr<Context>& context);
+  void _on_ring_timeout(const std::shared_ptr<Context>& context);
 
   // RFC 3261 16.10: forwards a CANCEL that has no response context.
   void _forward_cancel_statelessly(const std::shared_ptr<SIPMessage>& cancel, const std::shared_ptr<transactions::TransactionBase>& transaction);

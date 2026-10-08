@@ -622,6 +622,7 @@ void Proxy::_expand(const std::shared_ptr<Context>& context, std::vector<policy:
       target.next_hop = spec.next_hop ? spec.next_hop : spec.uri;
       target.flow = _flow_to(*target.next_hop);
       target.trunk = spec.trunk;
+      target.ring_timeout = spec.ring_timeout;
       into->push_back(std::move(target));
     }
     return _expand(context, std::move(specs), index + 1, std::move(into), std::move(then));
@@ -632,9 +633,11 @@ void Proxy::_expand(const std::shared_ptr<Context>& context, std::vector<policy:
   // The first subscriber's profile is the callee's, for what the engine offers it.
   if (!context->callee_profile) context->callee_profile = spec.subscriber->media_profile;
 
-  // RFC 5626: each binding is reached down the flow it registered over.
+  // RFC 5626: each binding is reached down the flow it registered over, and rings for as long as the policy said.
   if (spec.bindings) {
+    const auto from = into->size();
     _add_targets(context, std::move(*spec.bindings), *into);
+    for (auto i = from; i < into->size(); ++i) (*into)[i].ring_timeout = spec.ring_timeout;
     return _expand(context, std::move(specs), index + 1, std::move(into), std::move(then));
   }
 
@@ -645,7 +648,9 @@ void Proxy::_expand(const std::shared_ptr<Context>& context, std::vector<policy:
         if (!bindings.ok) {
           _logger->error("Could not read the bindings for " + context->request->header->request_uri->to_string() + " - " + bindings.error);
         } else {
+          const auto from = into->size();
           _add_targets(context, std::move(bindings.value), *into);
+          for (auto i = from; i < into->size(); ++i) (*into)[i].ring_timeout = specs[index].ring_timeout;
         }
         _expand(context, std::move(specs), index + 1, std::move(into), std::move(then));
       });
@@ -1024,6 +1029,7 @@ void Proxy::_write_forward(const std::shared_ptr<Context>& context, const std::s
 
   // RFC 3261 16.6 step 11: timer C is set for each proxied INVITE.
   _timer_c_start(context);
+  _ring_timer_start(context);
 }
 
 void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response) {
@@ -1079,6 +1085,7 @@ void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::sha
   }
 
   _timer_c_cancel(context);
+  _ring_timer_cancel(context);
   const auto sent = context->forwarded;
   context->forwarded = nullptr;
   context->client = nullptr;
@@ -1899,6 +1906,50 @@ void Proxy::_on_timer_c(const std::shared_ptr<Context>& context) {
   }
 
   _forward_next(context);
+}
+
+void Proxy::_ring_timer_start(const std::shared_ptr<Context>& context) {
+  _ring_timer_cancel(context);
+
+  auto core = _core.lock();
+  if (!core || !context->client || !context->current.ring_timeout) return;
+  if (context->request->header->request_method != "INVITE") return;
+
+  std::weak_ptr<TransactionUser> weak_self = weak_from_this();
+  std::weak_ptr<Context> weak_context = context;
+  context->ring_timer = core->timer_source()->schedule(*context->current.ring_timeout, [weak_self, weak_context]() {
+    auto self = std::static_pointer_cast<Proxy>(weak_self.lock());
+    auto held = weak_context.lock();
+    if (self && held) self->_on_ring_timeout(held);
+  });
+}
+
+void Proxy::_ring_timer_cancel(const std::shared_ptr<Context>& context) {
+  if (!context->ring_timer) return;
+  context->ring_timer->cancel();
+  context->ring_timer = nullptr;
+}
+
+// A branch that rang as long as the policy allows ends as timer C would end it (RFC 3261 16.8): a CANCEL if it rang,
+// whose 487 then fails the branch, else the transaction given up and a 408.
+void Proxy::_on_ring_timeout(const std::shared_ptr<Context>& context) {
+  context->ring_timer = nullptr;
+  if (context->answered || context->cancelled || !context->client) return;
+
+  _logger->info("The branch to " + (context->current.uri ? context->current.uri->to_string() : std::string("a target")) + " rang for " +
+                std::to_string(context->current.ring_timeout->count()) + "s - moving on");
+
+  if (context->provisional) return _cancel_branch(context);
+
+  _timer_c_cancel(context);
+  context->client->terminate();
+  context->client = nullptr;
+  context->forwarded = nullptr;
+
+  auto timeout = context->request->generate_response();
+  timeout->header->response_code = 408;
+  timeout->header->response_message = "Request Timeout";
+  _branch_failed(context, timeout);
 }
 
 void Proxy::_cancel_branch(const std::shared_ptr<Context>& context) {
