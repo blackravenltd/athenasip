@@ -48,10 +48,11 @@ a.route = {}
 
 -- Every device of an address of record, in the node's order, pushed or reached through a peer node as needed.
 -- options.bindings: the bindings already read from athenasip.store, so the node need not read them again.
+-- options.ring_timeout, on this and the others: seconds an INVITE may ring there before the node moves on.
 function a.route.subscriber(subscriber, options)
   check(type(subscriber) == "userdata" and a.is_subscriber(subscriber), "route.subscriber: a subscriber from athenasip.store")
   options = options or {}
-  return {target = "subscriber", subscriber = subscriber, bindings = options.bindings}
+  return {target = "subscriber", subscriber = subscriber, bindings = options.bindings, ring_timeout = options.ring_timeout}
 end
 
 -- One URI, located by RFC 3263. options.next_hop: where to send it, when not where the URI says. options.trunk:
@@ -59,7 +60,7 @@ end
 function a.route.uri(uri, options)
   check(uri ~= nil, "route.uri: a URI, or its text")
   options = options or {}
-  return {target = "uri", uri = uri, next_hop = options.next_hop, trunk = options.trunk}
+  return {target = "uri", uri = uri, next_hop = options.next_hop, trunk = options.trunk, ring_timeout = options.ring_timeout}
 end
 
 -- Out by a trunk: the trunk's URI with options.user (the number dialled) as its user part.
@@ -68,7 +69,7 @@ function a.route.trunk(trunk, options)
   options = options or {}
   local uri = trunk.uri
   if options.user then uri = uri:with{user = options.user} end
-  return {target = "uri", uri = uri, trunk = trunk.name}
+  return {target = "uri", uri = uri, trunk = trunk.name, ring_timeout = options.ring_timeout}
 end
 
 -- The targets, tried in turn. options.media: {media_anchor =, media_profile =}, as athenasip.config.behaviour and

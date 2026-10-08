@@ -244,3 +244,46 @@ TEST(ProxyPolicyTest, ARegisterThePolicyAcceptsIsChallengedInItsRealm) {
   ASSERT_TRUE(challenge->header->contains("WWW-Authenticate"));
   EXPECT_NE(challenge->header->headers_map["WWW-Authenticate"][0]->to_string().find("realm=\"example.com\""), std::string::npos);
 }
+
+// A hunt: a branch that rings for its ring_timeout is cancelled (RFC 3261 9.1) and the next target is tried.
+TEST(ProxyPolicyTest, ABranchThatRingsTooLongIsCancelledAndTheNextTried) {
+  PolicyFixture fixture;
+  fixture.policy->on_route = [](const policy::RequestView&) {
+    auto bob = policy::Target::to(uri("sip:bob@192.0.2.20:5060"));
+    bob.ring_timeout = std::chrono::seconds(20);
+    return decided(policy::RouteDecision::forward({bob, policy::Target::to(uri("sip:carol@192.0.2.30:5060"))}));
+  };
+
+  fixture.receive(fixture.caller, fixture.invite());
+  fixture.receive(fixture.callee, fixture.response_from_callee(180, "Ringing"));
+
+  fixture.timers->advance(std::chrono::seconds(19));
+  fixture.settle();
+  EXPECT_EQ(ProxyFixture::request_with(fixture.callee_connection, "CANCEL"), nullptr);
+
+  // A provisional does not restart it, as it does timer C (16.7 step 2).
+  fixture.timers->advance(std::chrono::seconds(1));
+  fixture.settle();
+  ASSERT_NE(ProxyFixture::request_with(fixture.callee_connection, "CANCEL"), nullptr);
+
+  fixture.receive(fixture.callee, fixture.response_from_callee(487, "Request Terminated"));
+  EXPECT_NE(ProxyFixture::request_with(fixture.carol_connection, "INVITE"), nullptr);
+}
+
+// A branch that never answered at all is given up without a CANCEL, which may not be sent before a provisional.
+TEST(ProxyPolicyTest, ABranchThatNeverAnswersIsGivenUpAtItsRingTimeout) {
+  PolicyFixture fixture;
+  fixture.policy->on_route = [](const policy::RequestView&) {
+    auto bob = policy::Target::to(uri("sip:bob@192.0.2.20:5060"));
+    bob.ring_timeout = std::chrono::seconds(5);
+    return decided(policy::RouteDecision::forward({bob, policy::Target::to(uri("sip:carol@192.0.2.30:5060"))}));
+  };
+
+  fixture.receive(fixture.caller, fixture.invite());
+  fixture.timers->advance(std::chrono::seconds(5));
+  fixture.settle();
+
+  EXPECT_EQ(ProxyFixture::request_with(fixture.callee_connection, "CANCEL"), nullptr);
+  EXPECT_EQ(fixture.policy->failures_seen, std::vector<std::uint16_t>{408});
+  EXPECT_NE(ProxyFixture::request_with(fixture.carol_connection, "INVITE"), nullptr);
+}

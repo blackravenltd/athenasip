@@ -2972,3 +2972,7 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       request as received. `HeaderEdit::guarded` refuses Via, Route, Record-Route, Path,
       CSeq, Call-ID, Max-Forwards, Content-Length, Content-Type, Contact, From and To, by name
       and compact form; `set_from` keeps the tag.
+- [x] **A ring timeout per target** (`policy::Target::ring_timeout`, `{ring_timeout =}` on
+      any `athenasip.route` target), for hunt sequences: a branch that rings that long is
+      cancelled (RFC 3261 9.1) and its 487 fails it; one that never answered is given up as
+      a 408 without a CANCEL. Unlike timer C, a provisional does not restart it.

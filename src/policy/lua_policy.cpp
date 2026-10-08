@@ -126,7 +126,9 @@ std::optional<Target> target_at(lua_State* L, int idx, std::string& error) {
 
     std::optional<std::vector<types::Location>> read;
     if (bindings) read = *bindings;
-    return Target::of(std::move(subscriber), std::move(read));
+    auto target = Target::of(std::move(subscriber), std::move(read));
+    if (const auto ring = integer_field(L, idx, "ring_timeout"); ring && *ring > 0) target.ring_timeout = std::chrono::seconds(*ring);
+    return target;
   }
 
   if (kind == "uri") {
@@ -149,7 +151,9 @@ std::optional<Target> target_at(lua_State* L, int idx, std::string& error) {
       }
     }
     lua_pop(L, 1);
-    return Target::to(std::move(uri), std::move(next_hop), text_field(L, idx, "trunk"));
+    auto target = Target::to(std::move(uri), std::move(next_hop), text_field(L, idx, "trunk"));
+    if (const auto ring = integer_field(L, idx, "ring_timeout"); ring && *ring > 0) target.ring_timeout = std::chrono::seconds(*ring);
+    return target;
   }
 
   error = "a target is a table from athenasip.route.subscriber or athenasip.route.uri";

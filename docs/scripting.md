@@ -147,6 +147,7 @@ error, which `pcall` catches like any other.
 | `athenasip.auth.digest{realm = realm, from_must_match = true}` | `realm = "*"` is any realm here, with a challenge for each. `from_must_match = false` accepts any subscriber's credentials, and any connection a subscriber registered over. |
 | `athenasip.auth.reject(code, reason)` | |
 | `athenasip.route.subscriber(subscriber, {bindings = b})` | Every device of a subscriber, in the node's order, by push or through another node as needed |
+| `{ring_timeout = seconds}` | On any target: how long an INVITE may ring there before the node moves on, with a CANCEL if it rang. Unset is timer C, three minutes. |
 | `athenasip.route.uri(uri, {next_hop = uri, trunk = name})` | One URI, located by RFC 3263; with `trunk`, the node answers that trunk's challenges |
 | `athenasip.route.trunk(trunk, {user = number})` | Out by a trunk: its URI with the number as the user part |
 | `athenasip.route.forward(targets, {media = m, rewrite_contact = r})` | `media` as `config.behaviour` and `behaviour_effective` give it |
