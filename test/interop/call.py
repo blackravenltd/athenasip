@@ -253,6 +253,7 @@ class Agent:
         self.name, self.user, self.node, self.realm, self.password = name, user, node, realm, password
         self.transport = transport
         self.inbox = queue.Queue()
+        self.acks, self.answered = {}, {}
         self.connection = Connection(transport, node, local_ip, self.inbox)
         self.local = self.connection.local
 
@@ -270,19 +271,47 @@ class Agent:
     def send(self, text, to=None):
         self.connection.send(text, to)
 
-    def wait(self, accept, timeout=10.0):
-        """The next message accept() takes; others are answered or dropped as a UA would."""
+    def wait(self, accept, timeout=10.0, resend=None, until=None, to=None):
+        """The next message accept() takes; others are answered or dropped as a UA would.
+
+        Over UDP, `resend` is sent again at T1, doubling to T2 (RFC 3261 17.1.1.2, 17.1.2.2, 13.3.1.4) until a
+        message until() takes, or accept() when there is no until: a lost datagram is the transport's normal
+        failure, and every UA survives one."""
         deadline = time.time() + timeout
+        interval, next_send = 0.5, time.time() + 0.5
+        stopped = resend is None or self.transport != "udp"
+        until = until or accept
         while time.time() < deadline:
+            wake = min(deadline, next_send) if not stopped else deadline
             try:
-                message, source = self.inbox.get(timeout=max(0.05, deadline - time.time()))
+                message, source = self.inbox.get(timeout=max(0.05, wake - time.time()))
             except queue.Empty:
-                break
+                if not stopped and time.time() >= next_send:
+                    self.send(resend, to)
+                    interval = min(interval * 2, 4.0)
+                    next_send = time.time() + interval
+                continue
+            if until(message):
+                stopped = True
             if accept(message):
                 return message, source
             if not message.is_response and message.method == "OPTIONS":
                 self.send(reply(message, 200, "OK", self.user), source)
+            # A 2xx sent again means the ACK was lost: it is sent again (13.2.2.4).
+            if message.is_response and message.method == "INVITE" and 200 <= message.code < 300:
+                ack = self.acks.get(message.get("call-id"))
+                if ack:
+                    self.send(ack)
+            # A request sent again means its answer was lost: answered again.
+            answered = self.answered.get((message.get("call-id"), message.get("cseq"))) if not message.is_response else None
+            if answered:
+                self.send(answered, source)
         raise TimeoutError(f"{self.name}: nothing arrived in {timeout}s")
+
+    def answer(self, request, text, source):
+        """Sends a response, and keeps it to send again if the request comes again."""
+        self.answered[(request.get("call-id"), request.get("cseq"))] = text
+        self.send(text, source)
 
     def credentials(self, challenge, method, uri, header_value):
         algorithm = challenge.get("algorithm", "MD5")
@@ -309,8 +338,9 @@ class Agent:
                      f"CSeq: {cseq} REGISTER", f"Contact: {self.contact}", "Expires: 120"]
             if authorization:
                 lines.append(f"Authorization: {authorization}")
-            self.send(CRLF.join(lines + ["Content-Length: 0", "", ""]))
-            response, _ = self.wait(lambda m: m.is_response and m.get("call-id") == call_id and m.cseq == cseq and m.code >= 200)
+            text = CRLF.join(lines + ["Content-Length: 0", "", ""])
+            self.send(text)
+            response, _ = self.wait(lambda m: m.is_response and m.get("call-id") == call_id and m.cseq == cseq and m.code >= 200, resend=text)
             if response.code == 200:
                 return
             if response.code != 401 or authorization:
@@ -346,24 +376,39 @@ class Callee(threading.Thread):
         super().__init__(daemon=True)
         self.agent, self.seen, self.error = agent, [], None
         self.hangs_up, self.hold, self.bye_answer = hangs_up, hold, None
+        self.refused = []
 
     def run(self):
         a = self.agent
         try:
-            invite, source = a.wait(lambda m: not m.is_response and m.method == "INVITE", timeout=30)
+            # A plain-RTP phone: an offer it cannot take is refused with 488 (RFC 3261 13.3.1.1), and the node may
+            # offer again with plain RTP.
+            while True:
+                invite, source = a.wait(lambda m: not m.is_response and m.method == "INVITE", timeout=30)
+                media = [line for line in invite.body.split(CRLF) if line.startswith("m=")]
+                if not media or all(" RTP/AVP " in line for line in media):
+                    break
+                self.refused.append(invite)
+                a.answer(invite, reply(invite, 488, "Not Acceptable Here", a.user), source)
             self.seen.append(invite)
-            a.send(reply(invite, 180, "Ringing", a.user), source)
+            a.answer(invite, reply(invite, 180, "Ringing", a.user), source)
             time.sleep(0.5)
             ip, port = a.local.split(":")
-            a.send(reply(invite, 200, "OK", a.user, [f"Contact: {a.contact}", "Content-Type: application/sdp"], sdp(ip, 40000)), source)
-            ack, _ = a.wait(lambda m: not m.is_response and m.method == "ACK", timeout=10)
+            ok = reply(invite, 200, "OK", a.user, [f"Contact: {a.contact}", "Content-Type: application/sdp"], sdp(ip, 40000))
+            a.answer(invite, ok, source)
+            ack, _ = a.wait(lambda m: not m.is_response and m.method == "ACK", timeout=10, resend=ok, to=source)
             self.seen.append(ack)
             if self.hangs_up:
                 time.sleep(self.hold)
                 return self._hang_up(invite, source)
             bye, source = a.wait(lambda m: not m.is_response and m.method == "BYE", timeout=20)
             self.seen.append(bye)
-            a.send(reply(bye, 200, "OK", a.user), source)
+            a.answer(bye, reply(bye, 200, "OK", a.user), source)
+            # A BYE sent again because its 200 was lost is answered again for a while.
+            try:
+                a.wait(lambda m: False, timeout=2)
+            except TimeoutError:
+                pass
         except Exception as error:  # noqa: BLE001 - reported by the caller
             self.error = error
 
@@ -408,9 +453,13 @@ def call(caller, callee_thread, dial, hold):
     def final_for(number):
         return lambda m: m.is_response and m.get("call-id") == call_id and m.method == "INVITE" and m.cseq == number and m.code >= 200
 
+    def any_for(number):
+        return lambda m: m.is_response and m.get("call-id") == call_id and m.method == "INVITE" and m.cseq == number
+
     branch = "z9hG4bK" + token()
-    a.send(invite_text(branch, cseq, None))
-    response, _ = a.wait(final_for(cseq), timeout=15)
+    text = invite_text(branch, cseq, None)
+    a.send(text)
+    response, _ = a.wait(final_for(cseq), timeout=15, resend=text, until=any_for(cseq))
     if response.code == 407:
         step("challenged 407", True)
         # 17.1.1.3: the 407 is ACKed on its own transaction, same branch.
@@ -420,8 +469,9 @@ def call(caller, callee_thread, dial, hold):
         authorization = a.credentials(challenge_of(response.get("proxy-authenticate")), "INVITE", dial, "Proxy-Authorization")
         cseq += 1
         branch = "z9hG4bK" + token()
-        a.send(invite_text(branch, cseq, authorization))
-        response, _ = a.wait(final_for(cseq), timeout=30)
+        text = invite_text(branch, cseq, authorization)
+        a.send(text)
+        response, _ = a.wait(final_for(cseq), timeout=30, resend=text, until=any_for(cseq))
 
     step("answered 200", response.code == 200, response.start)
     step("200 is for the caller's own INVITE", response.cseq == cseq, f"CSeq {response.cseq}, sent {cseq}")
@@ -437,7 +487,9 @@ def call(caller, callee_thread, dial, hold):
         lines += [f"From: <sip:{a.user}@{a.realm}>;tag={tag}", f"To: {to}", f"Call-ID: {call_id}", f"CSeq: {number} {method}"]
         return CRLF.join(lines + ["Content-Length: 0", "", ""])
 
-    a.send(in_dialog("ACK", cseq, "z9hG4bK" + token()))
+    ack = in_dialog("ACK", cseq, "z9hG4bK" + token())
+    a.acks[call_id] = ack
+    a.send(ack)
 
     if callee_thread.hangs_up:
         bye, source = a.wait(lambda m: not m.is_response and m.method == "BYE", timeout=20)
@@ -455,8 +507,9 @@ def call(caller, callee_thread, dial, hold):
     time.sleep(hold)
 
     bye_branch = "z9hG4bK" + token()
-    a.send(in_dialog("BYE", cseq + 1, bye_branch))
-    bye_answer, _ = a.wait(lambda m: m.is_response and m.get("call-id") == call_id and m.method == "BYE" and m.code >= 200, timeout=15)
+    bye_text = in_dialog("BYE", cseq + 1, bye_branch)
+    a.send(bye_text)
+    bye_answer, _ = a.wait(lambda m: m.is_response and m.get("call-id") == call_id and m.method == "BYE" and m.code >= 200, timeout=15, resend=bye_text)
     step("BYE answered 200", bye_answer.code == 200, bye_answer.start)
     step("BYE answer in the caller's CSeq space", bye_answer.cseq == cseq + 1, f"CSeq {bye_answer.cseq}")
 
