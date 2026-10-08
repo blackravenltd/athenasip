@@ -8,7 +8,15 @@ test/e2e/run.sh --rtpengine     # the same, with rtpengine on the media path
 test/e2e/run.sh register        # only scenarios whose name contains "register"
 test/e2e/cluster.sh             # two nodes, calls across them
 test/e2e/cluster.sh across      # only cluster scenarios whose name contains "across"
+test/e2e/run.sh --lua           # any of the above on the standard Lua scripts
+test/e2e/cluster.sh --lua
+test/e2e/trunk.sh               # trunks to sipp as a carrier
 ```
+
+`--lua` mounts each node's configuration again with `policy.url: lua://` and no scripts
+of its own, so the node runs the standard scripts, which must decide as `builtin://`
+does: the scenarios are the same, and one that fails only with `--lua` is the scripts
+disagreeing (`lua.sh`).
 
 `--rtpengine` must come before a name filter. It needs only Docker. The first run
 builds the node image, including Boost from source; that layer is cached afterwards.
@@ -77,6 +85,25 @@ Mosquitto, joined with certificates from `--ca-init` and `--ca-node`
 | `one-node-tcp-flow`, `across-tcp-flow`, `one-node-ws-flow`, `across-ws-flow` | A callee reachable only down the TCP or WebSocket connection it registered on (`flow_callee.py`) |
 | `across-call-records` | Both nodes list the same call records, and a call across them names both |
 | `failover` | Last, because it kills node A: the callee registered through node A registers again through node B, and a new call reaches it within a minute |
+
+## Trunks
+
+`trunk.sh` runs one node on `athenasip.trunks` (`policy.url: lua://` with a one-line
+`main.lua`), sipp as a carrier at 172.31.0.20 and the subscribers at 172.31.0.21. It
+creates two trunks over the API, both to the carrier: `acme` (username `4420`, registers,
+`prefixes: ["+44"]`, `priority: 10`, caller ID `+442071234567`, which also brings
+`+442071234567` in to Bob) and `backup` (`priority: 20`, `dial_format: digits`).
+
+| Scenario | What it proves | Reference |
+|---|---|---|
+| `trunk-register` | The node registers to the trunk, answers the carrier's 401 with the trunk's credentials (checked by the carrier), registers its username as the Contact, and the API says `registered` | RFC 3261 10, 22.2 |
+| `trunk-out` | Alice dials `02071234567`; it leaves by `acme` as `+442071234567`, the carrier's challenge is answered by the node and never reaches Alice, and the From and P-Asserted-Identity carry the trunk's caller ID | RFC 3261 22.2; RFC 3325 9.1 |
+| `trunk-failover` | `acme` answers 503 and the call goes out by `backup`, in its digits-only format | RFC 3261 16.7 |
+| `trunk-in` | The carrier calls the Contact the node registered with the number in the To; it is not challenged, and reaches Bob | |
+
+The carrier challenges the INVITE with 401 rather than 407: sipp's `verifyauth` reads
+`Authorization` only. A 407 is answered the same way and is covered by
+`tests/proxy_trunk_test.cpp`.
 
 ## Adding a scenario
 
