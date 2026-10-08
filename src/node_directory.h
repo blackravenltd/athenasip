@@ -46,6 +46,9 @@ class NodeDirectory {
     // The other nodes' inter-node listeners this node has tried, and whether it got through: node id and result.
     std::vector<std::pair<std::string, bool>> cluster_probes;
 
+    // The policy it reported: {"driver", "fingerprint"}, the fingerprint only for scripts. Empty when it said none.
+    boost::json::object policy;
+
     std::chrono::steady_clock::time_point heard{};
 
     // Set by list() and find(): the last report is older than stale_after.

@@ -752,6 +752,11 @@ boost::json::array ProvisioningAPI::_nodes_json(bool usable_only) const {
   node["version"] = _version;
   node["transports"] = _local_transports();
 
+  // This node's policy from its own status on the bus, as the others' come, so the list compares like with like.
+  if (_nodes) {
+    if (const auto self = _nodes->find(_config->sip_node_id, std::chrono::seconds::max()); self && !self->policy.empty()) node["policy"] = self->policy;
+  }
+
   boost::json::array nodes;
   nodes.push_back(std::move(node));
 
@@ -770,6 +775,7 @@ boost::json::array ProvisioningAPI::_nodes_json(bool usable_only) const {
       entry["version"] = other.version;
       entry["at"] = other.at;
       entry["transports"] = other.transports;
+      if (!other.policy.empty()) entry["policy"] = other.policy;
 
       // For administrators; a client has no use for the inter-node listener.
       if (!usable_only && !other.cluster_address.empty()) {
