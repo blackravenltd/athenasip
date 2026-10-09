@@ -97,6 +97,7 @@ next step:
 * [Events](docs/events.md) - the topic scheme
 * [Glossary](docs/glossary.md)
 * [Testing](docs/testing.md)
+* [Releasing](docs/releasing.md) - the tag, the packages, the image and the Homebrew formula
 * [Admin API](docs/api/openapi.yaml)
 * [Interop fixture](test/interop/README.md) - a node to point a real SIP client at
 * [Contributing](CONTRIBUTING.md)
