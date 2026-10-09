@@ -4,6 +4,32 @@ A node is one binary, one configuration file and one systemd unit. The defaults 
 in-process datastore, event system and media relay, so a working node needs no Redis, no
 broker and no media server.
 
+## From the Debian package
+
+For Debian 13 (trixie) and its derivatives. Build the package in Docker from a checkout,
+then install it:
+
+```bash
+docker build --target deb --output dist .
+sudo apt install ./dist/athenasip_*.deb
+```
+
+`--platform linux/arm64` builds one for ARM. Boost is linked in statically, so the package
+depends only on what Debian ships: OpenSSL, yaml-cpp, nghttp2 and Lua.
+
+| | |
+|---|---|
+| `/usr/bin/athenasip` | the binary |
+| `/etc/athenasip/config.yaml` | the live configuration, from the annotated example, readable by the service account alone; an upgrade keeps your changes |
+| `/usr/lib/systemd/system/athenasip.service` | the unit |
+| `/usr/share/athenasip/scripts/` | the standard Lua scripts |
+| `/usr/share/doc/athenasip/` | the annotated example |
+
+It creates the `athenasip` service account and leaves the node stopped: set a datastore and
+the addresses in the configuration, make the first administrator, and start it, as below
+from [The first administrator](#the-first-administrator). An upgrade restarts a node that
+was running. `apt purge athenasip` removes the configuration and the node's state too.
+
 ## From source
 
 Dependencies are in [compiling.md](compiling.md).
