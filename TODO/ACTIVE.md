@@ -514,9 +514,11 @@ authentication from session issue to the OpenAPI document, and the one-command s
       the document now carries an `operationId` for it.
 - [ ] Packaging. Done (2026-10-09): the Docker image, published as `tomcully/athenasip`
       (0.10.0 and latest, amd64 only), and the Debian package (`docker build --target deb`),
-      tested installing, removing and purging in a clean trixie. Left: publishing the
-      package (a GitHub release asset, Tom's to make), arm64 builds of both, the Homebrew
-      formula (needs a tap repository), and the SDK headers in the packages.
+      for amd64 in Docker and arm64 on corvus-fi-1, each tested installing, removing and
+      purging in a clean trixie; and the Homebrew formula (`packaging/homebrew/`).
+      `docs/releasing.md` is the whole procedure. Left: Tom cutting the next release with it
+      (the tap repository, the GitHub release); an arm64 Docker image; trying the formula
+      once a tag exists to build it from; the SDK headers in the packages.
 
 ---
 
