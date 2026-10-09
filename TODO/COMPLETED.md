@@ -3118,4 +3118,11 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       called `counter_get` for `config()`. Found with gdb on the node; fixed by touching the
       changed files and rebuilding, then verify.py 15 of 15. The deploy steps now touch
       what changed since the last deploy.
+- [x] **The Debian package**: `cpack -G DEB` from the install rules, built by
+      `docker build --target deb` with Boost linked statically, so it depends only on
+      Debian's OpenSSL, yaml-cpp, nghttp2 and Lua (found by dpkg-shlibdeps). It makes the
+      `athenasip` account, keeps the configuration as a conffile readable by it alone, leaves
+      the node stopped on a first install and restarts it on an upgrade, and purges the
+      configuration and state. A `/usr` install puts the unit in `/usr/lib/systemd/system`.
+      Tested in a clean trixie container: install, `--check` as the account, remove, purge.
 

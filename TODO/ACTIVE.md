@@ -512,8 +512,11 @@ authentication from session issue to the OpenAPI document, and the one-command s
       hand-written and speaks the whole documented API, with a contract test against
       `docs/api/openapi.yaml` passing. Generation is what is left, and every operation in
       the document now carries an `operationId` for it.
-- [ ] Packaging: Docker image, Debian package, Homebrew formula. In-tree plugins ship
-      compiled in; the packages also carry the SDK headers.
+- [ ] Packaging. Done (2026-10-09): the Docker image, published as `tomcully/athenasip`
+      (0.10.0 and latest, amd64 only), and the Debian package (`docker build --target deb`),
+      tested installing, removing and purging in a clean trixie. Left: publishing the
+      package (a GitHub release asset, Tom's to make), arm64 builds of both, the Homebrew
+      formula (needs a tap repository), and the SDK headers in the packages.
 
 ---
 

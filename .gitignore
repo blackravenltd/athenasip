@@ -59,3 +59,4 @@ __pycache__/
 test/e2e/generated-cluster/
 test/e2e/generated-lua/
 test/suite/results/
+/dist/

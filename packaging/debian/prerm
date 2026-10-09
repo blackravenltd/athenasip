@@ -1,0 +1,16 @@
+#!/bin/sh
+#
+# AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
+#
+# Copyright (C) 2026 Tom Cully <mail@tomcully.com>
+# Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
+#
+# A node being removed stops; one being upgraded keeps running until postinst restarts it.
+
+set -e
+
+if [ "$1" = "remove" ] && [ -d /run/systemd/system ]; then
+  systemctl disable --now athenasip >/dev/null 2>&1 || true
+fi
+
+exit 0

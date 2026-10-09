@@ -294,7 +294,9 @@ install(CODE "
 if(NOT DEFINED ATHENA_SYSTEMD_UNIT_DIR)
     set(ATHENA_SYSTEMD_UNIT_DIR "${CMAKE_INSTALL_PREFIX}/lib/systemd/system")
 
-    if(CMAKE_INSTALL_PREFIX STREQUAL "/usr" OR CMAKE_INSTALL_PREFIX STREQUAL "/usr/local")
+    # /usr is a package's, which ships units in /usr/lib/systemd/system (Debian since trixie, every merged-/usr
+    # system). /usr/local is an install by hand, where systemd reads /lib.
+    if(CMAKE_INSTALL_PREFIX STREQUAL "/usr/local")
         set(ATHENA_SYSTEMD_UNIT_DIR "/lib/systemd/system")
     endif()
 endif()
@@ -307,3 +309,30 @@ if(UNIX AND NOT APPLE)
     install(FILES ${CMAKE_CURRENT_BINARY_DIR}/athenasip.service
             DESTINATION ${ATHENA_SYSTEMD_UNIT_DIR})
 endif()
+
+# --- Packages ---------------------------------------------------------------------
+#
+# cpack -G DEB: the install above as a Debian package. Configure with
+# -DCMAKE_INSTALL_PREFIX=/usr and -DBoost_USE_STATIC_LIBS=ON, so the package depends only on
+# what Debian ships; dpkg-shlibdeps names those. `docker build --target deb` does all of it.
+
+set(CPACK_PACKAGE_NAME athenasip)
+set(CPACK_PACKAGE_VENDOR "Tom Cully")
+set(CPACK_PACKAGE_CONTACT "Tom Cully <mail@tomcully.com>")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Secure, minimal, cloud-native SIP server")
+set(CPACK_PACKAGE_DESCRIPTION "A multi-master, clusterable SIP proxy and registrar, RFC 3261 in full, with routing in Lua and trunks to carriers.")
+set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/blackravenltd/athenasip")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+
+# The configuration and the unit are installed at absolute paths, which only DESTDIR staging packages.
+set(CPACK_SET_DESTDIR ON)
+
+set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+set(CPACK_DEBIAN_PACKAGE_SECTION net)
+set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "adduser")
+set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
+    "${CMAKE_CURRENT_SOURCE_DIR}/packaging/debian/conffiles;${CMAKE_CURRENT_SOURCE_DIR}/packaging/debian/postinst;${CMAKE_CURRENT_SOURCE_DIR}/packaging/debian/prerm;${CMAKE_CURRENT_SOURCE_DIR}/packaging/debian/postrm")
+set(CPACK_DEBIAN_PACKAGE_CONTROL_STRICT_PERMISSION TRUE)
+
+include(CPack)
