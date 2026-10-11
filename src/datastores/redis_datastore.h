@@ -27,6 +27,7 @@
 #include "../call.h"
 #include "../loggers/logger.h"
 #include "../loggers/logger_scoped.h"
+#include "../types/presence_record.h"
 #include "../types/session.h"
 #include "../types/url.h"
 #include "../types/user.h"
@@ -116,6 +117,16 @@ class RedisDatastore : public Datastore {
   void call_update(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) override;
   void call_get(plugins::Executor on, std::string id, plugins::Handler<std::shared_ptr<Call>> handler) override;
   void call_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<Call>>> handler) override;
+  void call_list_for_subscriber(plugins::Executor on, std::string aor, plugins::Handler<std::vector<std::shared_ptr<Call>>> handler) override;
+
+  bool supports_presence() const override { return true; }
+  void presence_put(plugins::Executor on, types::PresenceRecord record, std::uint32_t seconds, plugins::StatusHandler handler) override;
+  void presence_get(plugins::Executor on, types::PresenceRecord::Kind kind, std::string id,
+                    plugins::Handler<std::optional<types::PresenceRecord>> handler) override;
+  void presence_list(plugins::Executor on, std::string aor, types::PresenceRecord::Kind kind,
+                     plugins::Handler<std::vector<types::PresenceRecord>> handler) override;
+  void presence_delete(plugins::Executor on, types::PresenceRecord::Kind kind, std::string id, plugins::StatusHandler handler) override;
+  void presence_list_node(plugins::Executor on, std::string node_id, plugins::Handler<std::vector<types::PresenceRecord>> handler) override;
 
  private:
   using BoolCallback = std::function<void(RedisError error, bool value)>;
@@ -169,6 +180,22 @@ class RedisDatastore : public Datastore {
   static std::string _subscriber_index_key(const std::string& realm_name);
   static std::string _location_index_key(std::uint64_t subscriber_id);
   static std::string _call_index_key();
+
+  // The calls not yet closed that a subscriber is on, by call ID: what the dialog package reads.
+  static std::string _subscriber_calls_key(const std::string& aor);
+
+  // A presence record, and its two indexes: by presentity within its kind, and by holder across kinds. A holder's
+  // index names each record as "<kind>:<id>".
+  static std::string _presence_key(types::PresenceRecord::Kind kind, const std::string& id);
+  static std::string _presence_aor_index_prefix(types::PresenceRecord::Kind kind);
+  static std::string _presence_node_index_prefix();
+  static std::string _serialise_presence(const types::PresenceRecord& record);
+  static std::optional<types::PresenceRecord> _parse_presence(const std::string& value);
+
+  // Brings each subscriber's call index into line with the call: listed while it is open, removed once it is closed.
+  void _index_call_subscribers(const std::shared_ptr<Call>& call, plugins::Executor on, plugins::StatusHandler handler);
+  void _presence_records(std::string index, std::function<std::string(const std::string&)> key_of, std::function<bool(const types::PresenceRecord&)> keep,
+                         plugins::Executor on, plugins::Handler<std::vector<types::PresenceRecord>> handler);
   static std::string _user_index_key();
   static std::string _trunk_index_key();
 

@@ -920,11 +920,12 @@ void RedisDatastore::call_create(plugins::Executor on, std::shared_ptr<Call> cal
   const auto id = call->id;
   const auto index = _call_index_key();
 
-  _async_set(_call_key(id), _serialise_call(call), [this, on, handler, id, index](RedisError error, bool ok) mutable {
+  _async_set(_call_key(id), _serialise_call(call), [this, on, handler, id, index, call](RedisError error, bool ok) mutable {
     if (error || !ok) return _complete(on, handler, plugins::Status::failure(error ? error.message() : "call_create: SET failed"));
 
-    _async_sadd(index, id, [this, on, handler](RedisError error, bool) mutable {
-      _complete(on, handler, error ? plugins::Status::failure(error.message()) : plugins::Status::success());
+    _async_sadd(index, id, [this, on, handler, call](RedisError error, bool) mutable {
+      if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
+      _index_call_subscribers(call, on, handler);
     });
   });
 }
@@ -937,12 +938,13 @@ void RedisDatastore::call_update(plugins::Executor on, std::shared_ptr<Call> cal
   const auto body = _serialise_call(call);
   const bool ended = call->state == Call::State::Closed;
 
-  _async_exists(key, [this, on, handler, key, id, body, ended](RedisError error, bool exists) mutable {
+  _async_exists(key, [this, on, handler, key, id, body, ended, call](RedisError error, bool exists) mutable {
     if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
     if (!exists) return _complete(on, handler, plugins::Status::failure("call_update: " + id + " does not exist"));
 
-    auto written = [this, on, handler](RedisError error, bool ok) mutable {
-      _complete(on, handler, !error && ok ? plugins::Status::success() : plugins::Status::failure(error ? error.message() : "call_update: SET failed"));
+    auto written = [this, on, handler, call](RedisError error, bool ok) mutable {
+      if (error || !ok) return _complete(on, handler, plugins::Status::failure(error ? error.message() : "call_update: SET failed"));
+      _index_call_subscribers(call, on, handler);
     };
 
     // An ended call is a record kept for the retention period. call_list removes its id
@@ -1165,6 +1167,7 @@ std::string RedisDatastore::_serialise_call(const std::shared_ptr<Call>& call) {
     entry["callee_tag"] = participant.dialog ? participant.dialog->callee_tag : "";
     entry["originator"] = participant.originator;
     if (!participant.trunk.empty()) entry["trunk"] = participant.trunk;
+    if (!participant.subscriber.empty()) entry["subscriber"] = participant.subscriber;
     participants.push_back(std::move(entry));
   }
 
@@ -1206,6 +1209,10 @@ std::shared_ptr<Call> RedisDatastore::_parse_call(const std::string& value) cons
       participant.node_id = json_string(participant_obj, "node_id");
       // Absent from a record written before trunks, and from any leg that ran over none.
       if (const auto* trunk = participant_obj.if_contains("trunk"); trunk != nullptr && trunk->is_string()) participant.trunk = trunk->as_string().c_str();
+      // Absent from a record written before presence, and from a leg that is no subscriber of this cluster's.
+      if (const auto* subscriber = participant_obj.if_contains("subscriber"); subscriber != nullptr && subscriber->is_string()) {
+        participant.subscriber = subscriber->as_string().c_str();
+      }
 
       const auto call_id = json_string(participant_obj, "call_id");
 
@@ -1580,6 +1587,18 @@ std::string RedisDatastore::_location_index_key(std::uint64_t subscriber_id) { r
 
 std::string RedisDatastore::_call_index_key() { return "athena:index:calls"; }
 
+std::string RedisDatastore::_subscriber_calls_key(const std::string& aor) { return "athena:index:subscriber-calls:" + aor; }
+
+std::string RedisDatastore::_presence_key(types::PresenceRecord::Kind kind, const std::string& id) {
+  return std::string("athena:presence:") + types::PresenceRecord::to_string(kind) + ":" + id;
+}
+
+std::string RedisDatastore::_presence_aor_index_prefix(types::PresenceRecord::Kind kind) {
+  return std::string("athena:index:presence:") + types::PresenceRecord::to_string(kind) + ":";
+}
+
+std::string RedisDatastore::_presence_node_index_prefix() { return "athena:index:presence-node:"; }
+
 std::string RedisDatastore::_subscriber_key(const std::string& realm_name, const std::string& user) { return "athena:subscriber:" + realm_name + ":" + user; }
 
 std::string RedisDatastore::_location_key(std::uint64_t subscriber_id, const std::string& user, const std::string& host, std::uint16_t port) {
@@ -1605,6 +1624,218 @@ std::string RedisDatastore::_duration_ms(std::chrono::high_resolution_clock::tim
   oss << std::fixed << std::setprecision(3)
       << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
   return oss.str();
+}
+
+// One script for each subscriber on the call, so the index cannot be left half written by a node dying midway.
+void RedisDatastore::_index_call_subscribers(const std::shared_ptr<Call>& call, plugins::Executor on, plugins::StatusHandler handler) {
+  static constexpr const char* kIndex = R"lua(
+    for _, key in ipairs(KEYS) do
+      if ARGV[2] == '1' then redis.call('SADD', key, ARGV[1]) else redis.call('SREM', key, ARGV[1]) end
+    end
+    return #KEYS
+  )lua";
+
+  std::vector<std::string> keys;
+  for (const auto& participant : call->participants) {
+    if (!participant.subscriber.empty()) keys.push_back(_subscriber_calls_key(participant.subscriber));
+  }
+  if (keys.empty()) return _complete(on, handler, plugins::Status::success());
+
+  boost::redis::request request;
+  request.push_range("EVAL", [&] {
+    std::vector<std::string> args{kIndex, std::to_string(keys.size())};
+    args.insert(args.end(), keys.begin(), keys.end());
+    args.push_back(call->id);
+    args.push_back(call->state == Call::State::Closed ? "0" : "1");
+    return args;
+  }());
+
+  _async_integer("EVAL", std::move(request), [this, on, handler](RedisError error, std::int64_t) mutable {
+    _complete(on, handler, error ? plugins::Status::failure(error.message()) : plugins::Status::success());
+  });
+}
+
+void RedisDatastore::call_list_for_subscriber(plugins::Executor on, std::string aor, plugins::Handler<std::vector<std::shared_ptr<Call>>> handler) {
+  using Answer = plugins::Result<std::vector<std::shared_ptr<Call>>>;
+  if (aor.empty()) return _complete(on, handler, Answer::success({}));
+
+  const auto index = _subscriber_calls_key(aor);
+  _read_index(
+      index, [](const std::string& id) { return _call_key(id); },
+      [this, on, handler, aor, index](RedisError error, std::vector<std::pair<std::string, std::string>> records) mutable {
+        if (error) return _complete(on, handler, Answer::failure(error.message()));
+
+        std::vector<std::shared_ptr<Call>> calls;
+        for (const auto& [id, value] : records) {
+          std::shared_ptr<Call> call;
+          try {
+            call = _parse_call(value);
+          } catch (const std::exception& ex) {
+            _logger->error("call_list_for_subscriber: skipping " + id + ": " + std::string(ex.what()));
+            continue;
+          }
+
+          // The index trails the record when a write was lost: trust the record, and mend the index.
+          bool on_call = false;
+          for (const auto& participant : call->participants) on_call = on_call || participant.subscriber == aor;
+          if (call->state == Call::State::Closed || !on_call) {
+            _async_srem(index, id, [](RedisError, bool) {});
+            continue;
+          }
+          calls.push_back(std::move(call));
+        }
+        _complete(on, handler, Answer::success(std::move(calls)));
+      });
+}
+
+std::string RedisDatastore::_serialise_presence(const types::PresenceRecord& record) {
+  boost::json::object obj;
+  obj["kind"] = types::PresenceRecord::to_string(record.kind);
+  obj["id"] = record.id;
+  obj["aor"] = record.aor;
+  obj["node_id"] = record.node_id;
+  obj["content_type"] = record.content_type;
+  obj["body"] = record.body;
+  obj["expires_at"] = static_cast<std::int64_t>(record.expires_at);
+  return boost::json::serialize(obj);
+}
+
+std::optional<types::PresenceRecord> RedisDatastore::_parse_presence(const std::string& value) {
+  const auto parsed = boost::json::parse(value);
+  const auto& obj = parsed.as_object();
+
+  types::PresenceRecord record;
+  const auto kind = json_string(obj, "kind");
+  if (kind == types::PresenceRecord::to_string(types::PresenceRecord::Kind::Subscription)) {
+    record.kind = types::PresenceRecord::Kind::Subscription;
+  } else if (kind == types::PresenceRecord::to_string(types::PresenceRecord::Kind::Publication)) {
+    record.kind = types::PresenceRecord::Kind::Publication;
+  } else {
+    return std::nullopt;
+  }
+
+  record.id = json_string(obj, "id");
+  record.aor = json_string(obj, "aor");
+  record.node_id = json_string(obj, "node_id");
+  record.content_type = json_string(obj, "content_type");
+  record.body = json_string(obj, "body");
+  record.expires_at = static_cast<std::time_t>(json_uint64(obj, "expires_at"));
+  return record;
+}
+
+// One script, so a record and its indexes change together: a subscription moving to another holder leaves the old
+// holder's index in the same step. The old record is read for where it was indexed before.
+void RedisDatastore::presence_put(plugins::Executor on, types::PresenceRecord record, std::uint32_t seconds, plugins::StatusHandler handler) {
+  static constexpr const char* kPut = R"lua(
+    local old = redis.call('GET', KEYS[1])
+    if old then
+      local was = cjson.decode(old)
+      if was.aor ~= ARGV[4] then redis.call('SREM', ARGV[6] .. was.aor, ARGV[3]) end
+      if was.node_id ~= '' and was.node_id ~= ARGV[5] then redis.call('SREM', ARGV[7] .. was.node_id, ARGV[8]) end
+    end
+    redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+    redis.call('SADD', ARGV[6] .. ARGV[4], ARGV[3])
+    if ARGV[5] ~= '' then redis.call('SADD', ARGV[7] .. ARGV[5], ARGV[8]) end
+    return 1
+  )lua";
+
+  if (record.id.empty() || record.aor.empty() || seconds == 0) {
+    return _complete(on, handler, plugins::Status::failure("presence_put: a record needs an id, a presentity and a lifetime"));
+  }
+
+  record.expires_at = std::time(nullptr) + static_cast<std::time_t>(seconds);
+
+  boost::redis::request request;
+  request.push("EVAL", kPut, 1, _presence_key(record.kind, record.id), _serialise_presence(record), seconds, record.id, record.aor, record.node_id,
+               _presence_aor_index_prefix(record.kind), _presence_node_index_prefix(),
+               std::string(types::PresenceRecord::to_string(record.kind)) + ":" + record.id);
+
+  _async_integer("EVAL", std::move(request), [this, on, handler](RedisError error, std::int64_t) mutable {
+    _complete(on, handler, error ? plugins::Status::failure(error.message()) : plugins::Status::success());
+  });
+}
+
+void RedisDatastore::presence_get(plugins::Executor on, types::PresenceRecord::Kind kind, std::string id,
+                                  plugins::Handler<std::optional<types::PresenceRecord>> handler) {
+  using Answer = plugins::Result<std::optional<types::PresenceRecord>>;
+
+  _async_get(_presence_key(kind, id), [this, on, handler, id](RedisError error, std::optional<std::string> value) mutable {
+    if (error) return _complete(on, handler, Answer::failure(error.message()));
+    if (!value) return _complete(on, handler, Answer::success(std::nullopt));
+
+    try {
+      _complete(on, handler, Answer::success(_parse_presence(*value)));
+    } catch (const std::exception& ex) {
+      _complete(on, handler, Answer::failure("presence_get: " + id + " is unreadable: " + ex.what()));
+    }
+  });
+}
+
+void RedisDatastore::_presence_records(std::string index, std::function<std::string(const std::string&)> key_of,
+                                       std::function<bool(const types::PresenceRecord&)> keep, plugins::Executor on,
+                                       plugins::Handler<std::vector<types::PresenceRecord>> handler) {
+  using Answer = plugins::Result<std::vector<types::PresenceRecord>>;
+
+  _read_index(index, std::move(key_of),
+              [this, on, handler, index, keep = std::move(keep)](RedisError error, std::vector<std::pair<std::string, std::string>> found) mutable {
+                if (error) return _complete(on, handler, Answer::failure(error.message()));
+
+                std::vector<types::PresenceRecord> records;
+                for (const auto& [member, value] : found) {
+                  std::optional<types::PresenceRecord> record;
+                  try {
+                    record = _parse_presence(value);
+                  } catch (const std::exception& ex) {
+                    _logger->error("presence: skipping " + member + ": " + std::string(ex.what()));
+                    continue;
+                  }
+
+                  // An index that trails its record, after a write that was lost: trust the record, and mend the index.
+                  if (!record || !keep(*record)) {
+                    _async_srem(index, member, [](RedisError, bool) {});
+                    continue;
+                  }
+                  records.push_back(std::move(*record));
+                }
+                _complete(on, handler, Answer::success(std::move(records)));
+              });
+}
+
+void RedisDatastore::presence_list(plugins::Executor on, std::string aor, types::PresenceRecord::Kind kind,
+                                   plugins::Handler<std::vector<types::PresenceRecord>> handler) {
+  _presence_records(
+      _presence_aor_index_prefix(kind) + aor, [kind](const std::string& id) { return _presence_key(kind, id); },
+      [aor, kind](const types::PresenceRecord& record) { return record.kind == kind && record.aor == aor; }, std::move(on), std::move(handler));
+}
+
+void RedisDatastore::presence_list_node(plugins::Executor on, std::string node_id, plugins::Handler<std::vector<types::PresenceRecord>> handler) {
+  if (node_id.empty()) return _complete(on, handler, plugins::Result<std::vector<types::PresenceRecord>>::success({}));
+
+  // A holder's index names each record by kind and ID; the kind never contains the separator.
+  _presence_records(
+      _presence_node_index_prefix() + node_id, [](const std::string& member) { return std::string("athena:presence:") + member; },
+      [node_id](const types::PresenceRecord& record) { return record.node_id == node_id; }, std::move(on), std::move(handler));
+}
+
+void RedisDatastore::presence_delete(plugins::Executor on, types::PresenceRecord::Kind kind, std::string id, plugins::StatusHandler handler) {
+  static constexpr const char* kDelete = R"lua(
+    local old = redis.call('GET', KEYS[1])
+    if old then
+      local was = cjson.decode(old)
+      redis.call('SREM', ARGV[1] .. was.aor, ARGV[3])
+      if was.node_id ~= '' then redis.call('SREM', ARGV[2] .. was.node_id, ARGV[4]) end
+      redis.call('DEL', KEYS[1])
+    end
+    return 1
+  )lua";
+
+  boost::redis::request request;
+  request.push("EVAL", kDelete, 1, _presence_key(kind, id), _presence_aor_index_prefix(kind), _presence_node_index_prefix(), id,
+               std::string(types::PresenceRecord::to_string(kind)) + ":" + id);
+
+  _async_integer("EVAL", std::move(request), [this, on, handler](RedisError error, std::int64_t) mutable {
+    _complete(on, handler, error ? plugins::Status::failure(error.message()) : plugins::Status::success());
+  });
 }
 
 RedisError RedisDatastore::_not_connected_error() const {

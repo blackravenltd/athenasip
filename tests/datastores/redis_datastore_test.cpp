@@ -8,6 +8,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <ctime>
@@ -18,7 +19,9 @@
 
 #include "../helpers/sync_datastore_helper.h"
 #include "../mocks/logger_mock.h"
+#include "call.h"
 #include "types/password.h"
+#include "types/presence_record.h"
 #include "types/session.h"
 #include "types/trunk.h"
 #include "types/url.h"
@@ -911,4 +914,217 @@ TEST(RedisDatastoreTest, AttributesRoundTripThroughRedis) {
   EXPECT_EQ(datastore->subscriber_get(subscriber->identity)->attributes, subscriber->attributes);
 
   datastore->realm_delete(name);
+}
+
+// docs/design/presence.md: both canonical stores hold presence, so a node on either has it.
+TEST(RedisDatastoreTest, SupportsPresence) {
+  REQUIRE_REDIS(datastore);
+  EXPECT_TRUE(datastore->supports_presence());
+}
+
+namespace {
+
+using Kind = types::PresenceRecord::Kind;
+
+types::PresenceRecord make_presence(Kind kind, const std::string& id, const std::string& aor, const std::string& node_id = "") {
+  types::PresenceRecord record;
+  record.kind = kind;
+  record.id = id;
+  record.aor = aor;
+  record.node_id = node_id;
+  record.content_type = kind == Kind::Publication ? "application/pidf+xml" : "application/json";
+  record.body = "<presence entity=\"" + aor + "\"/>";
+  return record;
+}
+
+std::vector<std::string> sorted_ids(const std::vector<types::PresenceRecord>& records) {
+  std::vector<std::string> ids;
+  for (const auto& record : records) ids.push_back(record.id);
+  std::sort(ids.begin(), ids.end());
+  return ids;
+}
+
+}  // namespace
+
+// A record is given back as it was put, body untouched, with its expiry filled from the lifetime it was given.
+TEST(RedisDatastoreTest, APresenceRecordRoundTrips) {
+  REQUIRE_REDIS(datastore);
+  const auto x = unique_suffix();
+  const auto aor = "sip:1001-" + x + "@example.com";
+  const auto before = std::time(nullptr);
+  ASSERT_TRUE(datastore->presence_put(make_presence(Kind::Subscription, "sub-" + x, aor, "node-a"), 60));
+
+  const auto found = datastore->presence_get(Kind::Subscription, "sub-" + x);
+  ASSERT_TRUE(found.has_value());
+  EXPECT_EQ(found->kind, Kind::Subscription);
+  EXPECT_EQ(found->aor, aor);
+  EXPECT_EQ(found->node_id, "node-a");
+  EXPECT_EQ(found->content_type, "application/json");
+  EXPECT_EQ(found->body, "<presence entity=\"" + aor + "\"/>");
+  EXPECT_GE(found->expires_at, before + 60);
+  EXPECT_LE(found->expires_at, std::time(nullptr) + 60);
+
+  EXPECT_FALSE(datastore->presence_get(Kind::Subscription, "no-such-" + x).has_value()) << "nothing there is an empty answer";
+  EXPECT_TRUE(datastore->last_error().empty()) << "and not a failure";
+  EXPECT_FALSE(datastore->presence_get(Kind::Publication, "sub-" + x).has_value()) << "a kind is its own namespace";
+}
+
+// The notifier reads one presentity's subscriptions, or its publications, and nobody else's.
+TEST(RedisDatastoreTest, PresenceRecordsAreListedByPresentityAndKind) {
+  REQUIRE_REDIS(datastore);
+  const auto x = unique_suffix();
+  const auto a = "sip:1001-" + x + "@example.com";
+  const auto b = "sip:1002-" + x + "@example.com";
+  ASSERT_TRUE(datastore->presence_put(make_presence(Kind::Subscription, "sub-a1-" + x, a, "node-a"), 60));
+  ASSERT_TRUE(datastore->presence_put(make_presence(Kind::Subscription, "sub-a2-" + x, a, "node-b"), 60));
+  ASSERT_TRUE(datastore->presence_put(make_presence(Kind::Publication, "etag-a-" + x, a), 60));
+  ASSERT_TRUE(datastore->presence_put(make_presence(Kind::Subscription, "sub-b1-" + x, b, "node-a"), 60));
+
+  EXPECT_EQ(sorted_ids(datastore->presence_list(a, Kind::Subscription)), (std::vector<std::string>{"sub-a1-" + x, "sub-a2-" + x}));
+  EXPECT_EQ(sorted_ids(datastore->presence_list(a, Kind::Publication)), (std::vector<std::string>{"etag-a-" + x}));
+  EXPECT_EQ(sorted_ids(datastore->presence_list(b, Kind::Subscription)), (std::vector<std::string>{"sub-b1-" + x}));
+  EXPECT_TRUE(datastore->presence_list("sip:nobody-" + x + "@example.com", Kind::Subscription).empty());
+}
+
+// A subscription is listed under the node holding the watcher's flow, and moves with it.
+TEST(RedisDatastoreTest, ASubscriptionIsListedUnderItsHolderAndMovesWithIt) {
+  REQUIRE_REDIS(datastore);
+  const auto x = unique_suffix();
+  const auto aor = "sip:1001-" + x + "@example.com";
+  const auto node_a = "node-a-" + x;
+  const auto node_b = "node-b-" + x;
+  ASSERT_TRUE(datastore->presence_put(make_presence(Kind::Subscription, "sub-" + x, aor, node_a), 60));
+  ASSERT_TRUE(datastore->presence_put(make_presence(Kind::Publication, "etag-" + x, aor), 60));
+
+  EXPECT_EQ(sorted_ids(datastore->presence_list_node(node_a)), (std::vector<std::string>{"sub-" + x})) << "a publication has no holder";
+
+  ASSERT_TRUE(datastore->presence_put(make_presence(Kind::Subscription, "sub-" + x, aor, node_b), 60));
+  EXPECT_TRUE(datastore->presence_list_node(node_a).empty());
+  EXPECT_EQ(sorted_ids(datastore->presence_list_node(node_b)), (std::vector<std::string>{"sub-" + x}));
+  EXPECT_EQ(datastore->presence_get(Kind::Subscription, "sub-" + x)->node_id, node_b);
+  EXPECT_EQ(datastore->presence_list(aor, Kind::Subscription).size(), 1u) << "rewritten, not added";
+}
+
+// Deleting a record takes it out of every index, and deleting one that is not there is not an error.
+TEST(RedisDatastoreTest, DeletingAPresenceRecordTakesItOutOfEveryIndex) {
+  REQUIRE_REDIS(datastore);
+  const auto x = unique_suffix();
+  const auto aor = "sip:1001-" + x + "@example.com";
+  const auto node = "node-a-" + x;
+  ASSERT_TRUE(datastore->presence_put(make_presence(Kind::Subscription, "sub-" + x, aor, node), 60));
+
+  ASSERT_TRUE(datastore->presence_delete(Kind::Subscription, "sub-" + x));
+  EXPECT_FALSE(datastore->presence_get(Kind::Subscription, "sub-" + x).has_value());
+  EXPECT_TRUE(datastore->presence_list(aor, Kind::Subscription).empty());
+  EXPECT_TRUE(datastore->presence_list_node(node).empty());
+
+  EXPECT_TRUE(datastore->presence_delete(Kind::Subscription, "sub-" + x)) << "already gone";
+}
+
+// A record lapses at the end of its lifetime, from every index, with nobody deleting it.
+TEST(RedisDatastoreTest, APresenceRecordLapses) {
+  REQUIRE_REDIS(datastore);
+  const auto x = unique_suffix();
+  const auto aor = "sip:1001-" + x + "@example.com";
+  const auto node = "node-a-" + x;
+  ASSERT_TRUE(datastore->presence_put(make_presence(Kind::Subscription, "sub-" + x, aor, node), 1));
+  ASSERT_TRUE(datastore->presence_put(make_presence(Kind::Publication, "etag-" + x, aor), 1));
+  std::this_thread::sleep_for(std::chrono::milliseconds(2100));
+
+  EXPECT_FALSE(datastore->presence_get(Kind::Subscription, "sub-" + x).has_value());
+  EXPECT_TRUE(datastore->presence_list(aor, Kind::Subscription).empty());
+  EXPECT_TRUE(datastore->presence_list(aor, Kind::Publication).empty());
+  EXPECT_TRUE(datastore->presence_list_node(node).empty());
+}
+
+// Every subscription and publication has an expiry, an identity and a presentity.
+TEST(RedisDatastoreTest, APresenceRecordWithoutAnIdAPresentityOrALifetimeIsRefused) {
+  REQUIRE_REDIS(datastore);
+  const auto x = unique_suffix();
+  EXPECT_FALSE(datastore->presence_put(make_presence(Kind::Subscription, "", "sip:1001@example.com", "node-a"), 60));
+  EXPECT_FALSE(datastore->presence_put(make_presence(Kind::Subscription, "sub-" + x, "", "node-a"), 60));
+  EXPECT_FALSE(datastore->presence_put(make_presence(Kind::Subscription, "sub-" + x, "sip:1001@example.com", "node-a"), 0));
+  EXPECT_FALSE(datastore->presence_get(Kind::Subscription, "sub-" + x).has_value());
+}
+
+namespace {
+
+std::shared_ptr<Call> make_call(const std::string& id, Call::State state, const std::string& caller, const std::string& callee) {
+  auto call = std::make_shared<Call>();
+  call->id = id;
+  call->state = state;
+  call->add_participant(std::make_shared<types::SIPIdentity>("sip:caller@example.com"), nullptr, true);
+  call->add_participant(std::make_shared<types::SIPIdentity>("sip:callee@example.com"), nullptr, false);
+  call->participants[0].subscriber = caller;
+  call->participants[1].subscriber = callee;
+  return call;
+}
+
+std::vector<std::string> call_ids(const std::vector<std::shared_ptr<Call>>& calls) {
+  std::vector<std::string> ids;
+  for (const auto& call : calls) ids.push_back(call->id);
+  std::sort(ids.begin(), ids.end());
+  return ids;
+}
+
+}  // namespace
+
+// The subscriber each participant is survives the store, as the rest of the participant does.
+TEST(RedisDatastoreTest, AParticipantsSubscriberRoundTrips) {
+  REQUIRE_REDIS(datastore);
+  const auto x = unique_suffix();
+  ASSERT_TRUE(datastore->call_create(make_call("call-" + x, Call::State::Ringing, "sip:1001@example.com", "")));
+
+  const auto found = datastore->call_get("call-" + x);
+  ASSERT_NE(found, nullptr);
+  ASSERT_EQ(found->participants.size(), 2u);
+  EXPECT_EQ(found->participants[0].subscriber, "sip:1001@example.com");
+  EXPECT_EQ(found->participants[1].subscriber, "") << "a trunk or a foreign party is nobody";
+}
+
+// BLF reads a subscriber's calls from the call record: every call not yet closed with a participant that is the
+// subscriber, whichever end it is, and no call the subscriber is not on.
+TEST(RedisDatastoreTest, AnOpenCallIsFoundByEachOfItsSubscribers) {
+  REQUIRE_REDIS(datastore);
+  const auto x = unique_suffix();
+  const auto s1 = "sip:1001-" + x + "@example.com";
+  const auto s2 = "sip:1002-" + x + "@example.com";
+  const auto s3 = "sip:1003-" + x + "@example.com";
+  ASSERT_TRUE(datastore->call_create(make_call("call-1-" + x, Call::State::Ringing, s1, s2)));
+  ASSERT_TRUE(datastore->call_create(make_call("call-2-" + x, Call::State::Connected, s3, s1)));
+  ASSERT_TRUE(datastore->call_create(make_call("call-3-" + x, Call::State::Trying, "", s2)));
+
+  EXPECT_EQ(call_ids(datastore->call_list_for_subscriber(s1)), (std::vector<std::string>{"call-1-" + x, "call-2-" + x}));
+  EXPECT_EQ(call_ids(datastore->call_list_for_subscriber(s2)), (std::vector<std::string>{"call-1-" + x, "call-3-" + x}));
+  EXPECT_TRUE(datastore->call_list_for_subscriber("sip:1004-" + x + "@example.com").empty());
+}
+
+// A closed call is a record kept for its retention, and not a line in use.
+TEST(RedisDatastoreTest, AClosedCallIsNoLongerFoundByItsSubscribers) {
+  REQUIRE_REDIS(datastore);
+  const auto x = unique_suffix();
+  const auto s1 = "sip:1001-" + x + "@example.com";
+  const auto s2 = "sip:1002-" + x + "@example.com";
+  ASSERT_TRUE(datastore->call_create(make_call("call-" + x, Call::State::Connected, s1, s2)));
+
+  auto closed = make_call("call-" + x, Call::State::Closed, s1, s2);
+  closed->ended_at = std::time(nullptr);
+  ASSERT_TRUE(datastore->call_update(closed));
+
+  EXPECT_TRUE(datastore->call_list_for_subscriber(s1).empty());
+  EXPECT_TRUE(datastore->call_list_for_subscriber(s2).empty());
+  EXPECT_NE(datastore->call_get("call-" + x), nullptr) << "the record itself is kept";
+}
+
+// The proxy learns the callee's subscriber when it rings a binding, after the record was first written.
+TEST(RedisDatastoreTest, ASubscriberLearnedOnUpdateFindsTheCall) {
+  REQUIRE_REDIS(datastore);
+  const auto x = unique_suffix();
+  const auto s1 = "sip:1001-" + x + "@example.com";
+  const auto s2 = "sip:1002-" + x + "@example.com";
+  ASSERT_TRUE(datastore->call_create(make_call("call-" + x, Call::State::Trying, s1, "")));
+  EXPECT_TRUE(datastore->call_list_for_subscriber(s2).empty());
+
+  ASSERT_TRUE(datastore->call_update(make_call("call-" + x, Call::State::Ringing, s1, s2)));
+  EXPECT_EQ(call_ids(datastore->call_list_for_subscriber(s2)), (std::vector<std::string>{"call-" + x}));
 }
