@@ -7,7 +7,7 @@
 -- Trunks without writing Lua: everything here is driven by the trunks kept over the API and their attributes.
 -- Use it as the policy with a main.lua of one line:
 --
---   authorize, route, on_failure, register = require("athenasip.trunks").hooks()
+--   authorize, route, on_failure, register, watch = require("athenasip.trunks").hooks()
 --
 -- A trunk's attributes it reads, all optional:
 --
@@ -170,10 +170,12 @@ function trunks.on_failure(request, response, state)
 end
 
 trunks.register = std.register
+trunks.watch = std.watch
 
--- The four hooks, for a main.lua that wants exactly this.
+-- The hooks, for a main.lua that wants exactly this. One written for the first four still works: a script with no
+-- watch hook is given the standard rule.
 function trunks.hooks()
-  return trunks.authorize, trunks.route, trunks.on_failure, trunks.register
+  return trunks.authorize, trunks.route, trunks.on_failure, trunks.register, trunks.watch
 end
 
 return trunks

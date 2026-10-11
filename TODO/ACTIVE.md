@@ -586,9 +586,11 @@ NOTIFY.
 
 - [ ] The cluster, the rest: `test/e2e/cluster.sh` with a watcher on one node and a call on
       the other. Everything else of the cluster step is in (`COMPLETED.md`).
-- [ ] The policy hook for watchers, in `builtin://` and the standard scripts alike.
 - [ ] API and console: who is watching whom, and each subscriber's state.
-- [ ] sipp scenarios, and a Linphone or desk phone against a live node.
+- [ ] sipp scenarios, and a Linphone or desk phone against a live node. AthenaPhone agreed
+      on 2026-10-11 to be the real client once its PJSIP engine has presence: one
+      subscription per buddy for `presence` and `dialog`, PUBLISH of PIDF, BLF pickup with
+      Replaces from the dialog ids the node sends.
 - [ ] Documentation: a presence section in the docs and a quick start for BLF.
 
 ### State into the datastore

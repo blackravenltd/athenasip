@@ -279,6 +279,30 @@ struct RegisterDecision {
   }
 };
 
+// Whether a watcher is told a presentity's state, by this node as notifier (docs/design/presence.md).
+struct WatchDecision {
+  enum class Kind {
+    Accept,   // the node is the notifier
+    Reject,   // code and reason
+    Forward,  // not the node's: routed as any other request, as before presence
+  };
+
+  Kind kind = Kind::Reject;
+
+  // Reject.
+  std::uint16_t code = 403;
+  std::string reason = "Forbidden";
+
+  static WatchDecision accept() { return WatchDecision{Kind::Accept}; }
+  static WatchDecision forward() { return WatchDecision{Kind::Forward}; }
+  static WatchDecision reject(std::uint16_t code, std::string reason) {
+    WatchDecision decision{Kind::Reject};
+    decision.code = code;
+    decision.reason = std::move(reason);
+    return decision;
+  }
+};
+
 // What the node lends a policy to decide with. Handlers run on the Core strand.
 class Host {
  public:
@@ -330,6 +354,22 @@ class Policy : public plugins::Plugin {
 
   // A REGISTER, before it is challenged.
   virtual void register_(plugins::Executor on, std::shared_ptr<RequestView> request, plugins::Handler<RegisterDecision> handler) = 0;
+
+  // An authorised SUBSCRIBE for a package this node is the notifier for. `watcher` is the address of record the
+  // watcher was proven to be, empty if it was not; `presentity` the address of record watched. By default, a
+  // watcher proven in the presentity's own realm is accepted and anyone else refused 403 (decided 2026-10-11).
+  virtual void watch(plugins::Executor on, std::shared_ptr<RequestView> request, std::string watcher, std::string presentity, std::string package,
+                     plugins::Handler<WatchDecision> handler) {
+    (void)request;
+    (void)package;
+    const auto realm_of = [](const std::string& aor) {
+      const auto at = aor.rfind('@');
+      return at == std::string::npos ? std::string() : aor.substr(at + 1);
+    };
+    const bool same_realm = !watcher.empty() && !realm_of(watcher).empty() && realm_of(watcher) == realm_of(presentity);
+    _complete(std::move(on), std::move(handler),
+              plugins::Result<WatchDecision>::success(same_realm ? WatchDecision::accept() : WatchDecision::reject(403, "Forbidden")));
+  }
 
   // Reads its rules again, on the Core strand. Empty on success, else why not, with the rules in force unchanged.
   virtual std::string reload() { return {}; }

@@ -17,6 +17,7 @@
 #include "headers/sip_identity_header.h"
 #include "headers/string_header.h"
 #include "pidf.h"
+#include "policy/policy.h"
 #include "util.h"
 
 namespace athenasip {
@@ -382,7 +383,7 @@ void Notifier::on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<t
 
     auto identity = std::make_shared<types::SIPIdentity>(presentity);
     core->subscriber_get(
-        identity, [this, self, request, transaction, realm, presentity, package, expiry](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
+        identity, [this, self, request, transaction, presentity, package, expiry, otherwise](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
           if (!found.ok) {
             _logger->error("Cannot read " + presentity + " for a SUBSCRIBE - " + found.error);
             return _send_status(transaction, request, 500, "Server Internal Error");
@@ -392,15 +393,33 @@ void Notifier::on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<t
             return _send_status(transaction, request, 404, "Not Found");
           }
 
-          // Decided 2026-10-11: a watcher is a subscriber proven to be one, in the presentity's own realm.
-          const auto& watcher = request->authenticated_aor;
-          const auto at = watcher.rfind('@');
-          if (watcher.empty() || at == std::string::npos || watcher.substr(at + 1) != realm->name) {
-            _logger->info("SUBSCRIBE to " + presentity + " from " + (watcher.empty() ? std::string("an unproven watcher") : watcher) + " - 403");
-            return _send_status(transaction, request, 403, "Forbidden");
-          }
+          // Who may watch is the policy's (docs/design/presence.md): by default a subscriber proven in the
+          // presentity's own realm.
+          auto core = _core.lock();
+          if (!core) return;
+          auto view = std::make_shared<policy::RequestView>();
+          view->message = request;
 
-          _accept(request, transaction, presentity, package, expiry.granted);
+          const auto watcher = request->authenticated_aor;
+          core->policy()->watch(
+              core->strand(), view, watcher, presentity, package,
+              [this, self, request, transaction, presentity, package, expiry, watcher, otherwise](plugins::Result<policy::WatchDecision> decided) {
+                if (!decided.ok) {
+                  _logger->error("Whether " + watcher + " may watch " + presentity + " could not be decided - " + decided.error);
+                  return _send_status(transaction, request, 500, "Server Internal Error");
+                }
+
+                switch (decided.value.kind) {
+                  case policy::WatchDecision::Kind::Accept:
+                    return _accept(request, transaction, presentity, package, expiry.granted);
+                  case policy::WatchDecision::Kind::Forward:
+                    return otherwise();
+                  case policy::WatchDecision::Kind::Reject:
+                    _logger->info("SUBSCRIBE to " + presentity + " from " + (watcher.empty() ? std::string("an unproven watcher") : watcher) + " - " +
+                                  std::to_string(decided.value.code));
+                    return _send_status(transaction, request, decided.value.code, decided.value.reason);
+                }
+              });
         });
   });
 }

@@ -181,8 +181,10 @@ is never on the call path, so callers do not wait on it. Use
 - A policy decides and the node acts. `authorize` says how a caller is to be proved
   (accept, Digest in a realm, or reject); `route` names the targets or a reply; `on_failure`
   says what follows a branch's 3xx to 5xx; `register_` accepts a REGISTER into a realm with
-  its lifetimes, forwards it, or refuses it. The node challenges, verifies, forwards and
-  forks; nothing in the policy touches a transaction.
+  its lifetimes, forwards it, or refuses it; `watch` says whether a watcher is told a
+  presentity's state by the node as notifier, refused, or the SUBSCRIBE routed on, and has
+  a default (contract 21) that a policy written before it inherits. The node challenges,
+  verifies, forwards and forks; nothing in the policy touches a transaction.
 - `attach(host)` hands the policy what it decides with: the datastore through the Core
   strand, the node's own addresses and the configuration.
 - A failed `Result` means the policy could not decide. The node answers 500, except after

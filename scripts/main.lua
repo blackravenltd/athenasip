@@ -10,7 +10,7 @@
 -- the standard one for everything else:
 --
 --   local std = require "athenasip.standard"
---   authorize, on_failure, register = std.authorize, std.on_failure, std.register
+--   authorize, on_failure, register, watch = std.authorize, std.on_failure, std.register, std.watch
 --   function route(request)
 --     if request.uri.user == "reception" then
 --       return athenasip.route.forward({athenasip.route.uri("sip:desk@192.0.2.40")})
@@ -20,4 +20,4 @@
 
 local std = require "athenasip.standard"
 
-authorize, route, on_failure, register = std.authorize, std.route, std.on_failure, std.register
+authorize, route, on_failure, register, watch = std.authorize, std.route, std.on_failure, std.register, std.watch
