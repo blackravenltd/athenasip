@@ -48,17 +48,20 @@ class Notifier : public std::enable_shared_from_this<Notifier> {
   // The packages this node is the notifier for, as Allow-Events lists them (RFC 6665 7.2.2).
   static const char* packages() { return "dialog"; }
 
+  // The package the node composes published state for (RFC 3903), as a 489 to PUBLISH lists it.
+  static const char* published_packages() { return "presence"; }
+
   // The Request-URI parameter on the Contact the node gives a watcher, naming the subscription. It brings a
   // refresh to the notifier from any node that serves the realm.
   static constexpr const char* kSubscriptionParameter = "athena-sub";
 
   // Whether an authorised out-of-dialog request is the notifier's rather than the proxy's: a SUBSCRIBE for a package
-  // served here, addressed to an address of record (no Route left, no flow token), not forwarded by a peer, with
-  // presence on and a datastore that holds it.
+  // served here, or any PUBLISH, addressed to an address of record (no Route left, no flow token), not forwarded by a
+  // peer, with presence on and a datastore that holds it.
   bool wants(const SIPMessage& request) const;
 
   // A request `wants` took. `otherwise` routes it as before, when the Request-URI names no realm served here.
-  void on_subscribe(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::function<void()> otherwise);
+  void on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::function<void()> otherwise);
 
   // Whether a request is addressed to a Contact this notifier gave: inside a subscription's dialog, and its alone.
   static bool owns(const SIPMessage& request);
@@ -104,6 +107,15 @@ class Notifier : public std::enable_shared_from_this<Notifier> {
   };
 
   Expiry _expiry(const SIPMessage& request, bool initial) const;
+
+  // RFC 3903 6: the presentity publishing its own state, as an event state compositor. `previous` is the
+  // publication its SIP-If-Match named, if it named one.
+  void _publish(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::string presentity);
+  void _published(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::string presentity,
+                  std::optional<types::PresenceRecord> previous, std::uint32_t expires);
+
+  // Tells every node that a presentity's state is not what it was, once the change is stored.
+  void _signal(const std::string& aor, const std::string& why);
 
   void _accept(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::string presentity, std::string package,
                std::uint32_t expires);
