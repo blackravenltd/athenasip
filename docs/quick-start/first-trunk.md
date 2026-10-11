@@ -95,7 +95,16 @@ curl -X POST "$ATHENA_API/trunks" \
 between trunks, a number format for carriers that do not take a `+`, and a default for
 numbers no list names.
 
-## 4. Check it registered
+## 4. Check it answers and registered
+
+```
+sudo -u athenasip athenasip --config /etc/athenasip/config.yaml --check-trunks
+```
+
+sends the carrier an OPTIONS and says what it answered: `ok  trunk acme  udp 203.0.113.10:5060
+answered 200 OK in 31 ms`. A challenge (401 or 407) is an answer too. `no answer in 4 s` is
+an address or a firewall, and nothing after this will work until it answers.
+
 
 ```
 curl "$ATHENA_API/trunks/acme" -H "Authorization: Bearer $ATHENA_ADMIN_TOKEN"

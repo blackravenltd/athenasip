@@ -63,6 +63,8 @@ bool NodeDirectory::observe(const std::string& topic, const std::string& message
       node.cluster_port = static_cast<std::uint16_t>(port->as_int64());
   }
 
+  if (const auto* policy = report.if_contains("policy"); policy != nullptr && policy->is_object()) node.policy = policy->as_object();
+
   if (const auto* discovered = report.if_contains("discovered"); discovered != nullptr && discovered->is_object()) {
     node.discovered = string_of(discovered->as_object(), "address");
   }

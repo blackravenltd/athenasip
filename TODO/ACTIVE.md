@@ -1,56 +1,47 @@
 # AthenaSIP - Active Work
 
-Work happens on `develop`; `main` carries the last release, and `0.10.0` is the current
-one. Line numbers refer to the current tree; update them as files move.
+Work happens on `develop`; `main` carries the last release, `0.11.0` (2026-10-11), tagged
+with everything on `develop` at the time. `0.10.0` was merged to `main` (`11b69b1`) and
+published as an image but never tagged; found while cutting `0.11.0`. Line numbers refer to
+the current tree; update them as files move.
 
-Milestones 1, 2 and 3 are complete apart from the items left under Milestone 3 below.
-`0.8.0` (2026-10-03) carried a good part of Milestone 4 and most of what is now Milestone 6:
-`COMPLETED.md` has every item with what shipped.
+Milestones 1 and 2 are complete; 3 to 6 are complete apart from the items left under each
+below, almost all of which wait on a device, a carrier, Tom or the admin session.
+`COMPLETED.md` has every item with what shipped, and its Releases section the tags.
 
-`0.9.0` (2026-10-07) carried, since `0.8.0`: RFC 6026's
-Accepted state, media addresses that may be names, `--reset-password`, `--check`,
-`log.level` and `log.format`, `sip.allow_unencrypted: false`, RFC 8599 push (unproven
-against a real service for want of credentials), the second node and client failover, the
-rtpengine pool, the local UA that ends dead calls with a BYE, and the configuration schema
-with `--print-schema`. The README and documentation were checked against the code on
-2026-10-07 and the quick-start guides written.
+**Next: presence** (Milestone 7, taken ahead of conferencing at Tom's word on 2026-10-11).
+The decisions are under Decisions, and `docs/design/presence.md` (2026-10-11) is the design: where
+the notifier plugs in, the subscription dialog, each package's state, the cluster, the `watch` policy
+hook, the API and the build order the items below follow. Next is the datastore contract,
+then the RFC 6665 notifier core.
 
-`0.10.0` (2026-10-08) carried, since `0.9.0`: most of Milestone 5 - the policy seam with
-`builtin://` as the default, the Lua engine and its standard scripts, and trunks end to
-end - the TLS use-after-free that corrupted the heap on every closed TLS connection, the
-rtcp-mux fix for a WebRTC caller whose callee needs plain RTP, and the automatic live
-tests. 1391 unit tests at the tag. The sipp harnesses were not run on the tagged tree, and
-not yet under `lua://` (Docker). corvus-fi-1 runs `3bb2911` with `lua://` and
-`athenasip.trunks` from `/etc/athenasip/scripts/main.lua` and a trunk `macnessa` to
-corvus-gbni-1 (registering as gbni's subscriber 1003, outbound proxy 10.44.1.50); its
-previous configuration is `/etc/athenasip/config.yaml.before-lua`. gbni-1 runs `a08cc6d`,
-without the rtcp-mux fix (`6a163a1`) that a call from AthenaPhone to a plain-RTP phone
-needs, until Tom says yes to deploying it. A probe on fi-1 (`athenasip-probe.timer`) runs
-`test/interop/verify.py test/interop/live.json` every 15 minutes and publishes
-`athenasip/probes/corvus-fi-1/calls`.
+**Two live nodes**, neither production, both on `5fbf3f3` (deployed 2026-10-09):
+- `corvus-fi-1` (10.35.1.20): `lua://` with `athenasip.trunks` from
+  `/etc/athenasip/scripts/main.lua` (previous configuration `config.yaml.before-lua`), and a
+  trunk `macnessa` to gbni-1, registering as gbni's subscriber 1003 through 10.44.1.50.
+  Deploying there is standing-authorised; touch the files changed since the last deploy
+  before building (a stale object crash-looped it on 2026-10-09).
+- `corvus-gbni-1` (10.44.1.50) as `macnessa.athenasip.org` behind the other site's NAT:
+  `builtin://`, native rtpengine, the binary built on fi-1, the previous one kept as
+  `/usr/local/bin/athenasip.previous`. Each deploy there needs Tom's yes.
+- A probe on fi-1 (`athenasip-probe.timer`) runs `test/interop/verify.py
+  test/interop/live.json` every 15 minutes and publishes `athenasip/probes/corvus-fi-1/calls`.
+  A manual run at the same time as the probe fails some checks: both use subscribers 1901
+  and 1902.
+- TURN on both (2026-10-11): native coturn on 3478 UDP/TCP, relay 24000-24100, credentials
+  minted by each node under `http.api.turn_shared_secret` and handed out by
+  `/api/v1/subscriber/{realm}/config`. fi-1's is reachable only where 10.35.1.20 is; gbni-1's
+  needs the router to forward 3478 and 24000-24100 (Waiting on Tom).
 
-**Two live nodes**, neither production:
-- `corvus-fi-1` (10.35.1.20): builtin relay, AthenaPhone's usual home.
-- `corvus-gbni-1` (10.44.1.50) as `macnessa.athenasip.org`, behind the other site's NAT:
-  native rtpengine, the domain as `sip.public_address` and as the media address, DNS kept
-  current by manannan, the signalling and media ports forwarded and checked from outside.
-  A headless browser called AthenaPhone with video through it on 2026-10-04 and the
-  console's `e2e/phone-call.spec.ts` passed (`COMPLETED.md`).
+**What passes at `0.11.0`** (2026-10-11, the whole of `docs/testing.md`'s Before a release):
+the unit suite 1412 of 1413 (one skipped without a resolver), ASan with UBSan and TSan clean
+(1413 run, the Redis and MQTT tests skipped as documented); the sipp harnesses, one node 13
+of 13, with rtpengine 15 of 15, two nodes 17 of 17, one node and two nodes again under
+`--lua`, and trunks 4 of 4; the suite's smoke over every transport, the console and
+AthenaPhone specs, direct and relayed.
 
-**The sipp harnesses pass at `67a4b75`** (2026-10-04, Docker back): single node 12 of 12,
-with rtpengine 12 of 12, two nodes 15 of 15. That covers RFC 6026 and `allow_unencrypted`;
-push is after it and has no scenario yet.
-
-**Next:** Milestone 5, scripting and trunks, decided on 2026-10-07 and designed in
-`docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.md`. Packaging moves
-behind it as Milestone 6. Milestone 4's intermittent `across-cancel-ringing` has not
-failed again in 18 runs; it stays open for the next failure's logs.
-
-**Once things are stable, video calling is a primary feature** (Tom, 2026-10-03), not a
-later extra: principle 6 already says so, and this is the reminder that it is next in line
-behind stability rather than behind everything else. The work is the video items under
-Milestone 3 (verify video against AthenaPhone) and Milestone 7 (the web client), and
-nothing built before then may assume a call is audio only.
+**Once things are stable, video calling is a primary feature** (Tom, 2026-10-03): nothing
+built may assume a call is audio only.
 
 Milestones are in priority order and so are the items inside each one: work top to
 bottom, and say why when something is taken out of turn. Move items to `COMPLETED.md` as
@@ -66,6 +57,19 @@ session that has lost its context needs to see them first.
    local servers only. Proving them needs a Firebase service account (AthenaPhone on
    Android), an Apple APNs key with the app's Team ID and bundle ID (iOS), or a browser
    subscription.
+2. **The rest of the `0.11.0` release.** Tagged and pushed on 2026-10-11 (step 1 of
+   `docs/releasing.md`). Left, from step 2: the packages and the image built from the tag,
+   the `blackravenltd/homebrew-athenasip` tap repository, and the GitHub release, which Tom
+   makes. The two `.deb` files built on 2026-10-09 are from `develop` labelled 0.10.0 and
+   must not be published. Whether to tag `0.10.0` at `11b69b1` after the fact is Tom's call.
+3. **A real carrier account**, to run `docs/quick-start/first-trunk.md` against.
+4. **Router forwards for TURN at gbni-1**: UDP and TCP 3478, UDP 24000-24100 to 10.44.1.50,
+   so a browser outside that site can relay. Until then its turn: entry does not connect from
+   outside.
+5. **The phone (A85), when Tom lends it**: the browser call to AthenaPhone with
+   `ATHENA_INTEROP_PAGE_URL=https://10.44.1.50:8443` (plain http gives the page no
+   microphone), and Milestone 3's hold, DTMF and transfer checks. Check AthenaPhone is in
+   front before every tap.
 
 ## How to prove it
 
@@ -76,6 +80,10 @@ before it cannot, and the exact commands. The short version, cheapest first:
 ./build-tests/athenasip_tests    the unit suite, with Redis and MQTT set or they skip
 test/e2e/run.sh [--rtpengine]    the sipp scenarios, the second with a real engine
 test/e2e/cluster.sh              the same call across two nodes of a cluster
+test/e2e/run.sh --lua            any harness on the standard Lua scripts
+test/e2e/trunk.sh                trunks, with sipp as the carrier
+test/interop/verify.py live.json both live nodes, every transport and the trunk
+test/interop/phone.py            calls to and from AthenaPhone on the A85, over adb
 test/interop/up.sh --rtpengine   a node to point a real client at
 test/interop/browser.sh          two browsers calling, direct then relayed through coturn
 e2e/phone-call.spec.ts           (../athenasip-admin) a headless browser calls a real phone
@@ -98,7 +106,11 @@ was silently skipped, a TURN username no browser could use.
 ## Principles
 
 1. **Multi-master, clusterable, HA SIP server.** Any node serves any subscriber.
-   Registrations survive a node dying; in-flight dialogs on a dead node do not (v1).
+   Registrations survive a node dying. A dialog's state is in the datastore (2026-10-11),
+   but its signalling does not move to another node yet (Parked).
+   State lives in the datastore (Tom, 2026-10-11): the nodes share the datastore and the
+   event system, and that is what makes them a cluster. A node holds in memory only caches
+   of records, timers and its transport flows; the bus signals changes and is not storage.
 2. **Standards first.** RFC 3261 in full (sections 16 and 17, timers A-K), plus 3263,
    3327, 3581, 4028, 5626, 7118, 8866, and for WebRTC/conferencing 4575, 4579, 8843.
    Compliance is proven by a sipp harness, not asserted.
@@ -106,10 +118,11 @@ was silently skipped, a TURN username no browser could use.
    a ten-line config, one docker-compose, a CLI that generates the cluster CA and node
    certificates, and an admin UI that works out of the box. Every feature ships with
    the tooling and documentation that makes it easy, or it is not done.
-4. **IoC / plugin architecture.** `Datastore`, `EventSystem` and `MediaEngine` are
-   plugin kinds behind one registry keyed by (kind, URL scheme). Two implementations
+4. **IoC / plugin architecture.** `Datastore`, `EventSystem`, `MediaEngine`, `PushService`
+   and `Policy` are plugin kinds behind one registry keyed by (kind, URL scheme). Two implementations
    per kind: one built-in for zero-config single node, one canonical for production.
-5. **Canonical backends:** Redis (datastore), MQTT (events), rtpengine (media).
+5. **Canonical backends:** Redis (datastore), MQTT (events), rtpengine (media), Lua
+   (policy, beside the built-in default).
 6. **Web video calling and conferencing are first class.** AthenaPhone is the client
    for now; a web client follows. Everything in the signalling and media model must
    already allow for it.
@@ -294,6 +307,31 @@ Dated, and not reopened without asking.
   serving something checked in, which is preferred to a copied bundle going stale. The
   Playwright spec lives beside the page in that repository and this side brings the
   node, rtpengine and the subscribers up for it.
+- (2026-10-11) **All state lives in the datastore** (Tom). The nodes share the datastore
+  and the event system, and that is what makes them a cluster: it is part of the point of
+  the design. So every fact a node keeps is a record through the `Datastore` plugin, in
+  `memory://`, `redis://` or whatever driver is configured; a node's memory holds caches of
+  records, timers, and its own transport flows; and the bus signals that something changed
+  and is never storage, since it may drop a message (MQTT here is at most once) and a
+  reader must be able to read the fact back. One fact, one record: a feature that needs a
+  fact another record already holds extends that record rather than keeping a copy. The
+  retained `nodes/<id>/status` of the discovery decision stays: it is liveness, carried by
+  a will, and nothing reads it as a record of anything else. The items under "State into
+  the datastore" in Milestone 7 bring the tree to this. Dialog state is included: Tom said yes
+  the same day to putting it in the call record, which supersedes principle 1's v1 terms
+  for dialogs and leaves only the takeover of a live dialog's signalling parked.
+- (2026-10-11) Presence (Tom, answering three questions):
+  - **The node is the notifier for the `presence` and `dialog` event packages** of the
+    subscribers in its realms: it answers SUBSCRIBE (RFC 6665), accepts PUBLISH (RFC 3903),
+    keeps published state in the datastore, and sends the NOTIFYs. Line state for BLF
+    (RFC 4235) comes from the dialogs the node already tracks, so desk phones need no client
+    support. A SUBSCRIBE for any other package is forwarded to the devices, as before.
+  - **Watchers: the same realm by default.** Any subscriber may watch any other in its own
+    realm; anyone else is refused 403. A policy hook lets a script decide otherwise, as
+    routing does. No XCAP and no per-user rule documents.
+  - **No message-waiting indication for now**: nothing stores voicemail. A
+    `message-summary` SUBSCRIBE is forwarded like any other package, so a voicemail server
+    behind a trunk can still answer it.
 - (2026-10-06) The node sends a BYE to each end when it ends a call by its own policy
   (`sip.media_timeout`, `sip.max_call_duration`) or for an administrator
   (`DELETE /api/v1/calls/{call}`, `manage-cluster`), as Kamailio's dialog module does. It
@@ -323,13 +361,15 @@ Core = composition root + the strand
 ```
 
 Everything below the transaction users is a plugin: datastores, event systems, media
-engines and push services today, policy (Milestone 5) next. They hang off the TU layer
+engines, push services and the policy. They hang off the TU layer
 and register through one contract, so adding a kind or an implementation touches nothing
 above it. Policy is the one kind the transaction users call upwards into: the proxy and
 registrar ask it who a caller is and where a request goes, and act on the answer.
 
-The tree matches the diagram. The local UA (`src/local_ua.*`) is the fourth transaction user:
-it sends a BYE to both ends of a call this node ends, through the proxy.
+The tree matches the diagram, with the trunk registrar (`src/trunk_registrar.*`) beside
+the registrar as a UAC of its own. The local UA (`src/local_ua.*`) is the fourth transaction
+user: it sends a BYE to both ends of a call this node ends, through the proxy. Presence adds
+a fifth, the notifier.
 `docs/architecture.md` describes the shape for a reader; this section is the target.
 
 ### Known deviations from the standards
@@ -387,8 +427,7 @@ including the behaviour profiles it led to. What is left of it is below.
 
 ### After that
 
-The trunk scenario is Milestone 5's last item: trunks are built there, and the scenario
-with it. Today an off-node call goes wherever its Request-URI says.
+These need the phone or other devices (Waiting on Tom, 4).
 
 - [ ] The phone's media across the internet: AthenaPhone on mobile data to
       macnessa.athenasip.org. The 2026-10-04 run's phone leg went over the link between
@@ -460,11 +499,9 @@ cluster CA.
 ### The engine
 
 Done (`COMPLETED.md`, 2026-10-08): the engine, the library, `lua://` with the standard
-scripts built into the binary, the permanent proof, and `--check`. What is left:
+scripts built into the binary, the permanent proof, `--check`, `--explain`, and the three
+harnesses under `lua://` (2026-10-09). What is left:
 
-- [ ] The three harnesses under `policy.url: lua://`, once Docker is back.
-- [ ] `athenasip --explain <file>`: a request from a file through `authorize` and `route`
-      against the live store, printing each decision.
 - [ ] The console flags a node whose `policy.fingerprint` differs from the others' (the
       admin session's).
 
@@ -473,28 +510,21 @@ scripts built into the binary, the permanent proof, and `--check`. What is left:
 Done (`COMPLETED.md`, 2026-10-08): `digest::respond`, trunks in the datastore,
 `/api/v1/trunks` with `manage-trunks`, trunks in scripts, answering a carrier's
 challenge with the CSeq kept right for the rest of the dialog, TLS to a trunk,
-registering to a trunk with a lease per trunk, its state in the API, and unregistering.
+registering to a trunk with a lease per trunk, its state in the API, and unregistering;
+then (2026-10-09) counters, the trunk on each leg of a call, per-trunk metrics, and
+`--check` and `--check-trunks` for trunks.
 
 - [ ] Console pages for trunks and for attributes: the admin session's.
-- [ ] The smaller primitives: header edits on the forwarded copy behind the guard list,
-      `set_from` without touching the tag, `ring_timeout` per target on timer C's path,
-      `counter_incr` and `counter_get` on the datastore, `RequestView::source`, the trunk
-      on each leg of a call record, per-trunk metrics, `--check` resolving each trunk and
-      `--check-trunks` sending OPTIONS.
 
 ### Trunk scripts and the harness
 
-Done (`COMPLETED.md`, 2026-10-08): `athenasip.trunks` and the examples.
+Done (`COMPLETED.md`, 2026-10-08 and 2026-10-09): `athenasip.trunks`, the examples, and
+the sipp carrier harness.
 
-- [ ] sipp as the carrier: a registrar that challenges and grants 300 seconds, a UAS that
-      answers the INVITE 407 then 180 and 200, an inbound INVITE from the carrier's address
-      to a mapped number, a carrier answering 503 so the second trunk is tried. This is
-      Milestone 3's trunk scenario.
 - [ ] `on_call_ended(call)` as a notification hook, for concurrency counters; first
       candidate for a sixth hook, after the five have been used.
-- [ ] Run `docs/quick-start/first-trunk.md` step by step against a real carrier, and
-      against the sipp carrier scenario when it exists. Its steps are the ones the fi-1 to
-      gbni-1 trunk took, with gbni-1 as the carrier.
+- [ ] Run `docs/quick-start/first-trunk.md` step by step against a real carrier. Its
+      steps are the ones the fi-1 to gbni-1 trunk and `test/e2e/trunk.sh` took.
 
 ---
 
@@ -520,12 +550,102 @@ authentication from session issue to the OpenAPI document, and the one-command s
       hand-written and speaks the whole documented API, with a contract test against
       `docs/api/openapi.yaml` passing. Generation is what is left, and every operation in
       the document now carries an `operationId` for it.
-- [ ] Packaging: Docker image, Debian package, Homebrew formula. In-tree plugins ship
-      compiled in; the packages also carry the SDK headers.
+- [ ] Packaging. Done (2026-10-09): the Docker image, published as `tomcully/athenasip`
+      (0.10.0 and latest, amd64 only), and the Debian package (`docker build --target deb`),
+      for amd64 in Docker and arm64 on corvus-fi-1, each tested installing, removing and
+      purging in a clean trixie; and the Homebrew formula (`packaging/homebrew/`).
+      `docs/releasing.md` is the whole procedure. Left: Tom cutting the next release with it
+      (the tap repository, the GitHub release); an arm64 Docker image; trying the formula
+      once a tag exists to build it from; the SDK headers in the packages.
 
 ---
 
 ## Milestone 7 - Conferencing, presence, web client
+
+### Presence (next, decided 2026-10-11)
+
+The node is the notifier for `presence` and `dialog`; watchers are the same realm by
+default; no MWI (Decisions). The event bus carries state changes between nodes, as the
+2026-09-17 decision says it should, as a signal and never as state. All presence state,
+subscriptions included, is held through the `Datastore` plugin (Tom, 2026-10-11): a
+subscription names the node holding the watcher's flow, as a binding does, and outlives it.
+
+Where it plugs in, found 2026-10-11 and set out in the design document (verify with basemind
+before relying on it):
+`Core::_deliver_to_tu` (`src/core.cpp`) sends REGISTER to the registrar, CANCEL and
+everything else to the proxy. Out-of-dialog SUBSCRIBE and PUBLISH for a served realm's AOR
+are taken in the proxy after authorisation, in place of target determination
+(`Proxy::_proceed`), so they are proved as an INVITE is; the notifier's own in-dialog
+requests are taken in `_deliver_to_tu` before the proxy. A UAC request of the node's own is built and sent as
+`TrunkRegistrar::_send` does, through `Core::client_transaction_start`; the local UA
+(`src/local_ua.*`) is the other model, a request entering the proxy as if a peer sent it.
+Today SUBSCRIBE is simply proxied, and the proxy's `Allow` already lists SUBSCRIBE and
+NOTIFY.
+
+- [ ] The datastore contract: `subscriber` on `Call::Participant` and an index by it
+      (`call_list_by_subscriber`), and five optional presence methods for subscription and
+      publication records, in `memory://` and `redis://`; API version 20. A driver without
+      the five has presence off and says so.
+- [ ] RFC 6665 notifier core: SUBSCRIBE for a served AOR answered 200 (or 423 Interval Too
+      Brief, 403 for a watcher outside the realm), an immediate NOTIFY, refresh, unsubscribe
+      with a final NOTIFY, expiry; the subscription a datastore record naming the node and
+      flow that hold the watcher; NOTIFYs as UAC requests in the subscription dialog, down
+      that flow, from that node only.
+- [ ] The `dialog` package (RFC 4235) from the call records: BLF for desk phones. The
+      callee is the subscriber whose binding rang, set by the proxy.
+- [ ] PUBLISH (RFC 3903): entity tags, refresh, modify, remove, expiry; publications in the
+      datastore; changes on the bus.
+- [ ] The `presence` package (RFC 3856, PIDF RFC 3863): the publications composed, and a
+      subscriber with no bindings closed when nothing is published.
+- [ ] The cluster: a change heard on the bus notifies the watchers each node holds; a
+      reconcile every `presence.reconcile` seconds catches what the bus dropped; a refresh
+      reaching another node moves the subscription; a stale node's subscriptions are taken
+      over under a lease by the node holding the watcher's flow, and its open calls are left
+      out of what watchers see.
+- [ ] The policy hook for watchers, in `builtin://` and the standard scripts alike.
+- [ ] API and console: who is watching whom, and each subscriber's state.
+- [ ] sipp scenarios, and a Linphone or desk phone against a live node.
+- [ ] Documentation: a presence section in the docs and a quick start for BLF.
+
+### State into the datastore
+
+What the 2026-10-11 decision finds in the tree, checked on that day. Each item is small on
+its own; together they are what lets a node be replaced without anything being lost. In
+the order they matter:
+
+- [ ] **Open call records of a dead node.** Only the caller's node writes the record
+      (`src/call.h`, "Only `node`... writes it"), so a call whose node died stays open for
+      ever. The node holding the other leg closes the record when it ends that leg
+      (`Core::_end_held_call`), and a restarting node closes every open record that names
+      it. Presence needs this first (it is step 6 of the design), and so does the console's
+      calls list.
+- [ ] **Trunk registration status as a record.** Today each node keeps `_registrations`
+      and a `_reports` map rebuilt from the retained `trunks/<name>/status` topic
+      (`src/trunk_registrar.h:42,117`), and `/api/v1/trunks` answers from it: the bus as
+      storage. The status (registered by which node, until when, last failure) becomes a
+      field set on the trunk record or a record beside it, written by the holder of the
+      lease; the topic stays as the signal; the API reads the store. The Call-ID and CSeq
+      stay with the node, since a node that takes the lease over starts a registration of
+      its own (RFC 3261 10.2: a new UA, a new Contact).
+- [ ] **Re-offer reports** (`src/media/reoffers.h`, shown by `/api/v1/media/reoffers`)
+      are per node and vanish with it. Either a record with a retention, or an event the
+      console keeps; the decision rule says a record.
+- [ ] **Dialog state in the call record** (Tom, 2026-10-11: yes). `Dialogs`
+      (`src/dialogs.h:78`) holds each dialog's route set, targets, CSeqs and session timer
+      in memory, and the call record holds only the tags. The rest goes into the call
+      record at the moments it is already written, and the CSeqs as in-dialog requests
+      pass. Nothing on the call path waits for the write, as today. `Dialogs` becomes a
+      cache of those records, rebuilt from the store on a miss, so an in-dialog request
+      reaching another node finds its dialog.
+
+Per node by design, and not items: rate-limit buckets (`src/api/rate_limiter.h`, a node
+protecting itself), metrics counters (scraped per node), the DNS cache, address
+discovery (a node's own address), the qualifier's and push refresher's timers (derived
+from bindings in the store), channels and flow tokens (transport), the live `Call` and
+`Channel` objects (caches of records with sockets attached), and the node directory
+(liveness from the bus, as decided).
+
+### The rest
 
 - [ ] RFC 4579 conference focus routing: conference URIs per realm, authorisation, route
       to a focus. FreeSWITCH `conference` as the first focus, configured by the admin API.
@@ -535,11 +655,9 @@ authentication from session issue to the OpenAPI document, and the one-command s
       (basic SFU), then an SFU driver (Janus / mediasoup / LiveKit) behind the same URI
       scheme. The builtin relay stays `bridge` only: three legs on one latching port
       would forward each to the other two, which works and is not mixing.
-- [ ] Presence: SUBSCRIBE/NOTIFY (RFC 6665), `presence` (RFC 3856) and `dialog` packages
-      for BLF, `message-summary` for MWI, backed by MQTT fan-out.
 - [ ] RFC 6080 client configuration (SUBSCRIBE to `ua-profile`, NOTIFY pointing at
-      `/api/v1/subscriber/{realm}/config`), once the local UA can be a notifier for
-      presence. Little before then: it needs a SUBSCRIBE/NOTIFY UAS, and the profile format
+      `/api/v1/subscriber/{realm}/config`), once the notifier exists: it is one more
+      package on it. Little before then, and the profile format
       is each vendor's, so only our own clients would read it (Tom, 2026-10-05: if it costs
       little).
 - [ ] SIP MESSAGE relay.
@@ -560,7 +678,10 @@ Kept in the tree or history, not on any milestone:
 - `RTPProxyClient` (`src/rtp/rtp_proxy_client.*`): rtpproxy text protocol. Out of the
   build path since 2026-09-21, the way Lua is. May become an `rtpproxy://` driver with
   `bridge` only; not a priority.
-- Full dialog-state replication for mid-call node failover.
+- A node taking over a live dialog's signalling when the node in its Record-Route dies.
+  The dialog's state is in the call record (Milestone 7, State into the datastore, Tom
+  2026-10-11), so this is now routing and media, not replication: an in-dialog request
+  has to reach a surviving node, and that node has to take the media over.
 - Parallel forking. The fork is serial: one branch at a time, best response wins. 16.7's
   response context is written to hold more than one branch and the CANCEL path already
   walks it, so the change is in `_forward_next` rather than in the shape. Forking

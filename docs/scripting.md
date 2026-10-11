@@ -39,6 +39,48 @@ and change the hook you need.
 `athenasip --check` loads the scripts and runs their `init()`, and fails with the file
 and line of the first error. Changing `policy.url` takes a restart.
 
+## Trying a request
+
+`athenasip --explain` puts a request from a file to the policy the configuration names,
+against the live datastore, and says what it decided at each step. It sends nothing and
+changes nothing, so it is safe beside a running node:
+
+```
+$ cat invite.txt
+INVITE sip:02071234567@example.com SIP/2.0
+Via: SIP/2.0/UDP 192.0.2.10;branch=z9hG4bK-1
+From: <sip:alice@example.com>;tag=1
+To: <sip:02071234567@example.com>
+Call-ID: try-1
+CSeq: 1 INVITE
+
+$ athenasip --explain invite.txt --from udp:192.0.2.10:5060
+Request    INVITE sip:02071234567@example.com
+From       <sip:alice@example.com>;tag=1
+Source     udp 192.0.2.10:5060
+Policy     lua 1.0.0, scripts 3f1c9a20b7d4
+
+authorize  digest: challenged for realm example.com, the credentials must be the From's; what follows assumes they are good
+route      forward, trying in turn:
+  1. sip:+442071234567@sip.acme.example, out by trunk acme, whose challenges the node answers
+           media anchored, profile mirror
+           Contact left alone
+           on what is forwarded: From: user +442071234567
+           on what is forwarded: set P-Asserted-Identity: <sip:+442071234567@sip.acme.example>
+```
+
+`athenasip --check` locates each trunk the same way, and fails one that resolves nowhere:
+
+```
+ok    policy                 lua 1.0.0 at lua://
+ok    trunk acme             sip:sip.acme.example;transport=tls - tls 198.51.100.7:5061
+```
+
+`--from` is where the request is taken to have come from, which decides whether it is a
+trunk's: `udp:203.0.113.5:5060`, `tls:203.0.113.5`, or an address alone for UDP on 5060.
+Line feeds alone are fine in the file. A request with a Route, an ACK, a CANCEL or one
+inside a dialog is said to be the node's to route. A script that raises prints its error.
+
 ## Changing the scripts
 
 Edit the scripts, then have the node read them again, without a restart:
@@ -55,7 +97,7 @@ answers 422 with the same. A reload that worked logs `Policy reloaded: lua 1.0.0
 <fingerprint>`, the fingerprint's first twelve characters.
 
 The fingerprint is a SHA-256 of every script the node loaded. It is in the node status
-(`policy.fingerprint`, [Events](events.md#node-status)), so the nodes of a cluster can be
+(`policy.fingerprint`, [Events](events.md#node-status)) and in `GET /api/v1/nodes`, so the nodes of a cluster can be
 seen to run the same rules. Each node reads its own scripts:
 copy them to every node and reload each.
 
@@ -128,6 +170,8 @@ Everything is under the global `athenasip`.
 | `athenasip.store.locations(subscriber)` | The subscriber's bindings: `#bindings`, and `bindings[i]` with `contact`, `node_id`, `flow_id`, `registered_at`, `expires_at`, `instance`, `reg_id`, `push` |
 | `athenasip.store.trunk(name)` | The [trunk](#trunks), or `nil` |
 | `athenasip.store.trunks()` | Every trunk, in name order |
+| `athenasip.store.counter_add(name, delta, seconds)` | Adds `delta` (1 when left out, and it may be negative) to a counter every node of the cluster shares, and answers the new value. With `seconds`, the counter lapses that long after it was made, so it counts within a window. |
+| `athenasip.store.counter(name)` | A counter's value: 0 for one never made, or lapsed |
 | `athenasip.node.id`, `.public_address` | |
 | `athenasip.node.names(host, port)` | Whether an address is this node's own |
 | `athenasip.config.get("sip.forward_register")` | Any setting, by its dotted name; its default when the file does not set it |
@@ -156,7 +200,7 @@ A trunk is a carrier or a PBX, kept over the API (`/api/v1/trunks`, role
 | `uri` | Where calls and the REGISTER go, located by RFC 3263: `sip:sip.acme.example;transport=tls` |
 | `proxy` | An outbound proxy, where they are sent instead of where `uri` says |
 | `username`, `password` | For the carrier's challenges. The password is written, never returned. |
-| `register` | `{enabled, expires, contact_user}`: whether the node registers to the carrier, for how long (60 to 86400 seconds), and the user part of the Contact it registers, where the carrier sends calls |
+| `register` | `{enabled, expires, contact_user}`: whether the node registers to the carrier, for how long (60 to 86400 seconds), and the user part of the Contact it registers, where the carrier sends calls; the username when not set |
 | `inbound_addresses` | The addresses or CIDR ranges the carrier's calls come from |
 | `tls_ca` | A CA file for TLS to the carrier; empty is the system's store |
 | `attributes` | Anything a script reads; the node reads none of it |
@@ -168,7 +212,8 @@ reported is the trunk's `registration` in the API (`registering`, `registered` o
 changed trunk is registered again; a removed one, or one no longer registering, is
 unregistered.
 
-A script sees `name`, `uri`, `username`, `registers`, `contact_user`,
+A script sees `name`, `uri`, `username`, `registers`, `contact_user` (the user part of the
+Contact registered, which is the username when the trunk does not set one),
 `inbound_addresses` and `attributes`, the free-form object set over the API, as plain Lua
 tables. `trunk:admits(address)` says whether an address is in its inbound ranges. Its
 password is the node's, for answering the carrier's challenges, and no script reads it.

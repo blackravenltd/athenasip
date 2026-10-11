@@ -23,15 +23,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Debian's Boost is older than the 1.87 that boost::redis and boost::mqtt5 need, so it
-# is built here: only the compiled libraries the server links, plus the headers. Its own
-# layer, because it is slow and changes only with BOOST_VERSION.
+# is built here: only the compiled libraries the server links, plus the headers, shared for
+# the image and static for the Debian package. Its own layer, because it is slow and
+# changes only with BOOST_VERSION.
 RUN set -eux; \
     version_underscored="$(echo "${BOOST_VERSION}" | tr '.' '_')"; \
     wget -q "https://archives.boost.io/release/${BOOST_VERSION}/source/boost_${version_underscored}.tar.gz"; \
     tar xzf "boost_${version_underscored}.tar.gz"; \
     cd "boost_${version_underscored}"; \
     ./bootstrap.sh --with-libraries=thread,json,charconv; \
-    ./b2 -j"$(nproc)" --with-thread --with-json --with-charconv install; \
+    ./b2 -j"$(nproc)" --with-thread --with-json --with-charconv link=static,shared install; \
     cd ..; \
     rm -rf "boost_${version_underscored}" "boost_${version_underscored}.tar.gz"
 
@@ -44,6 +45,7 @@ COPY scripts ./scripts
 # the image copies the binary out rather than installing.
 COPY packaging ./packaging
 COPY config ./config
+COPY LICENSE ./
 
 # One compiler per 1.5 GB of available memory, at most one per core: a release build of the
 # HTTPS and JSON code takes about a gigabyte per job, and a Docker VM is often 8 GB.
@@ -52,6 +54,24 @@ RUN jobs=$(awk '/MemAvailable/ { print int($2 / 1500000) }' /proc/meminfo); \
     [ "${jobs}" -le "$(nproc)" ] || jobs=$(nproc); \
     cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"${jobs}"
 
+# The Debian package: `docker build --target deb --output dist .` leaves it in dist/. Boost is
+# linked in statically, so it depends only on what Debian ships.
+FROM build AS deb-build
+
+RUN apt-get update && apt-get install -y --no-install-recommends dpkg-dev file \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN jobs=$(awk '/MemAvailable/ { print int($2 / 1500000) }' /proc/meminfo); \
+    [ "${jobs}" -ge 1 ] || jobs=1; \
+    [ "${jobs}" -le "$(nproc)" ] || jobs=$(nproc); \
+    cmake -S . -B build-deb -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DBoost_USE_STATIC_LIBS=ON \
+    && cmake --build build-deb -j"${jobs}" \
+    && cd build-deb && cpack -G DEB
+
+FROM scratch AS deb
+COPY --from=deb-build /src/build-deb/*.deb /
+
+# The node. The last stage, so a plain `docker build` makes it.
 FROM debian:trixie-slim AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

@@ -1,0 +1,50 @@
+#!/bin/sh
+#
+# AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
+#
+# Copyright (C) 2026 Tom Cully <mail@tomcully.com>
+# Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
+#
+# The service account, and the configuration readable by it alone. The service is not
+# started: the example configuration is for a first look, and the first administrator is
+# made with athenasip --add-user before anyone can sign in.
+
+set -e
+
+if [ "$1" = "configure" ]; then
+  if ! getent passwd athenasip >/dev/null; then
+    adduser --system --group --home /var/lib/athenasip --no-create-home --shell /usr/sbin/nologin \
+      --gecos "AthenaSIP" athenasip >/dev/null
+  fi
+
+  chown root:athenasip /etc/athenasip
+  chmod 0750 /etc/athenasip
+  if [ -f /etc/athenasip/config.yaml ]; then
+    chown root:athenasip /etc/athenasip/config.yaml
+    chmod 0640 /etc/athenasip/config.yaml
+  fi
+
+  if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload >/dev/null || true
+    # An upgrade restarts a node that was running; a first install leaves it stopped.
+    if [ -n "$2" ] && systemctl is-active --quiet athenasip; then systemctl restart athenasip || true; fi
+  fi
+
+  if [ -z "$2" ]; then
+    cat <<'MSG'
+
+AthenaSIP is installed and not started. Next, edit /etc/athenasip/config.yaml (a
+datastore such as redis:// keeps what the node is told across restarts), then:
+
+  sudo -u athenasip athenasip --config /etc/athenasip/config.yaml --check
+  sudo -u athenasip athenasip --config /etc/athenasip/config.yaml --add-user admin
+  sudo systemctl enable --now athenasip
+
+/usr/share/doc/athenasip has the annotated example, and
+https://github.com/blackravenltd/athenasip/blob/main/docs/quick-start/linux-server.md the rest.
+
+MSG
+  fi
+fi
+
+exit 0

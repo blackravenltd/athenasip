@@ -14,6 +14,15 @@ week, under Milestone 1. Everything after that is dated as it landed.
 
 Newest first. The detail is below, oldest first.
 
+- **0.11.0** (2026-10-11): trunks you can check, and the node packaged. A trunk harness
+  with sipp as the carrier; `--explain` puts a request to the policy and says each decision
+  in words; `--check-trunks` sends each trunk an OPTIONS; counters the cluster shares for
+  scripts; the trunk on each leg of a call and per-trunk metrics; the policy in
+  `GET /api/v1/nodes`. A Debian package for amd64 and arm64, a Homebrew formula, and the
+  release procedure. The presence design, and the decision that all state lives in the
+  datastore. Every check in `docs/testing.md`'s Before a release passed on the tagged tree,
+  the sipp harnesses and sanitizers included. `0.10.0` before it was merged but never
+  tagged.
 - **0.10.0** (2026-10-08): routing that is scripted, and trunks. Every decision about
   who may do what and where a call goes is asked of a policy plugin: `builtin://`, the
   default, is the node's behaviour as it was, and `lua://` runs Lua 5.4 scripts in a
@@ -3085,3 +3094,66 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       (`6a163a1`, unit test red first). Calls in to the phone had media all along: ICE and
       DTLS-SRTP completed on rtpengine. AthenaPhone's own findings (media sessions left
       running after a call ends before ICE connects) went to its session.
+
+### Milestone 5 continued (2026-10-09)
+
+- [x] **A trunk with no `contact_user` refused its carrier's calls**: it registered its
+      username as the Contact's user part, but scripts saw `contact_user` as nil, so
+      `athenasip.trunks` did not recognise a call to that Contact and answered 404. Found
+      writing the first-trunk guide; `Trunk::registered_user()` is now the one rule for the
+      registrar and scripts (`d771a9f`, test red first).
+- [x] **The three harnesses under `lua://`**: `run.sh --lua` and `cluster.sh --lua` mount
+      each node's configuration with `policy.url: lua://` and no scripts of its own. One node
+      13 of 13, with rtpengine 15 of 15, two nodes 17 of 17.
+- [x] **`athenasip --explain FILE [--from ADDRESS]`**: a request put to the policy against the
+      live datastore, each decision in words. Run on fi-1 against its trunk.
+- [x] **Trunks in `--check`**, each located by RFC 3263, and **`--check-trunks`**, which
+      sends each an OPTIONS from a socket of its own (UDP with retransmissions, TCP, TLS
+      against the trunk's CA). fi-1's trunk to gbni-1 answered 200 in 362 ms.
+- [x] **The trunk on each leg of a call** in the record and the calls API, and per-trunk
+      metrics: calls active, registered, and final responses by code.
+- [x] **Counters the cluster shares**: `athenasip.store.counter_add` and `counter`, on
+      `Datastore::counter_add` and `counter_get` (an atomic Redis script, a window that
+      lapses).
+- [x] **`test/e2e/trunk.sh`, sipp as the carrier**: registering through a 401, a call out
+      with the challenge answered and the trunk's caller ID, failover on 503 to a second
+      trunk in its own number format, and a call in by the registered Contact. 4 of 4. The
+      carrier challenges the INVITE with 401 because sipp's `verifyauth` reads only
+      `Authorization`; the unit tests answer a 407.
+- [x] **fi-1 crash-looped for about twenty minutes after a deploy** (SEGV on every REGISTER,
+      15 restarts). Not a code fault: rsync keeps the Mac's timestamps, and a header changed
+      on the Mac while fi-1 was compiling the previous sync arrived older than the objects
+      built from the old copy, so `lua_library.cpp.o` kept the old `policy::Host` vtable and
+      called `counter_get` for `config()`. Found with gdb on the node; fixed by touching the
+      changed files and rebuilding, then verify.py 15 of 15. The deploy steps now touch
+      what changed since the last deploy.
+- [x] **The Debian package**: `cpack -G DEB` from the install rules, built by
+      `docker build --target deb` with Boost linked statically, so it depends only on
+      Debian's OpenSSL, yaml-cpp, nghttp2 and Lua (found by dpkg-shlibdeps). It makes the
+      `athenasip` account, keeps the configuration as a conffile readable by it alone, leaves
+      the node stopped on a first install and restarts it on an upgrade, and purges the
+      configuration and state. A `/usr` install puts the unit in `/usr/lib/systemd/system`.
+      Tested in a clean trixie container: install, `--check` as the account, remove, purge.
+
+### Presence designed, TURN on the nodes (2026-10-11)
+
+- [x] **`docs/design/presence.md`**: the notifier as the fifth transaction user, reached
+      from the proxy after authorisation for out-of-dialog SUBSCRIBE and PUBLISH and from
+      `_deliver_to_tu` for its own dialogs; NOTIFYs down the watcher's flow; the RFC 6665
+      subscription dialog; `dialog` from the node's own dialogs, counted against the
+      subscriber whose binding rang rather than the To; `presence` composed from
+      publications, or from registrations when nothing is published; PUBLISH by entity
+      tag; every fact in the datastore and none twice: subscriptions and publications as new
+      records (five optional contract methods), BLF state read from the call record there
+      is, which gains the subscriber on each participant and an index by it (API version
+      20); a subscription names the node holding the watcher's flow and is taken over when
+      that node dies; changes signalled on `presence/<aor>/changed`, with a periodic
+      reconcile because the bus may drop them; the `watch`
+      policy hook with `Forward` for a deployment's own presence server; the API, the
+      configuration and the build order.
+- [x] **TURN on both live nodes**, at Tom's word through the admin session: Debian coturn,
+      shared-secret credentials minted by each node and handed out with its ICE servers.
+      Proven on each with turnutils_uclient using a credential the node minted (allocated,
+      relayed, a wrong password refused). gbni-1 is unreachable from outside for TURN until
+      its router forwards the ports.
+

@@ -8,7 +8,9 @@
 
 #include <algorithm>
 #include <boost/asio/post.hpp>
+#include <map>
 #include <mutex>
+#include <set>
 #include <utility>
 #include <vector>
 
@@ -58,6 +60,20 @@ boost::json::value time_json(std::time_t when) {
 void metric(std::string& out, const std::string& name, const std::string& type, const std::string& help) {
   out += "# HELP " + name + " " + help + "\n";
   out += "# TYPE " + name + " " + type + "\n";
+}
+
+// A Prometheus label value: backslash, quote and line feed escaped.
+std::string label(const std::string& value) {
+  std::string out;
+  for (const char c : value) {
+    if (c == '\\' || c == '"') out += '\\';
+    if (c == '\n') {
+      out += "\\n";
+      continue;
+    }
+    out += c;
+  }
+  return out;
 }
 
 }  // namespace
@@ -314,6 +330,11 @@ boost::json::object CallsAPI::_call_json(const Call& call) {
     entry["identity"] = participant.identity && participant.identity->uri ? participant.identity->uri->to_string() : std::string();
     entry["originator"] = participant.originator;
     entry["profile"] = profile_json(participant.profile);
+    if (participant.trunk.empty()) {
+      entry["trunk"] = nullptr;
+    } else {
+      entry["trunk"] = participant.trunk;
+    }
     participants.push_back(std::move(entry));
   }
   out["participants"] = std::move(participants);
@@ -478,6 +499,35 @@ void CallsAPI::_metrics(RouteContext context) {
 
     metric(body, "athenasip_transactions_active", "gauge", "SIP transactions in progress.");
     body += "athenasip_transactions_active " + std::to_string(core->transaction_count()) + "\n";
+
+    // Per trunk: the calls on it now, whether this node holds its registration, and how its branches ended.
+    std::map<std::string, std::size_t> on_trunk;
+    for (const auto& call : core->call_list()) {
+      std::set<std::string> trunks;
+      for (const auto& participant : call->participants) {
+        if (!participant.trunk.empty()) trunks.insert(participant.trunk);
+      }
+      for (const auto& trunk : trunks) on_trunk[trunk]++;
+    }
+    if (!on_trunk.empty()) {
+      metric(body, "athenasip_trunk_calls_active", "gauge", "Calls this node is carrying over each trunk.");
+      for (const auto& [trunk, count] : on_trunk) body += "athenasip_trunk_calls_active{trunk=\"" + label(trunk) + "\"} " + std::to_string(count) + "\n";
+    }
+
+    if (const auto statuses = core->trunk_registrar()->statuses(); !statuses.empty()) {
+      metric(body, "athenasip_trunk_registered", "gauge", "1 when this node holds a trunk's registration and the carrier granted it.");
+      for (const auto& [trunk, status] : statuses) {
+        body += "athenasip_trunk_registered{trunk=\"" + label(trunk) + "\"} " + (status.state == "registered" ? "1" : "0") + "\n";
+      }
+    }
+
+    if (!core->trunk_responses().empty()) {
+      metric(body, "athenasip_trunk_responses_total", "counter", "Final responses to branches sent out by each trunk, by code.");
+      for (const auto& [key, count] : core->trunk_responses()) {
+        body +=
+            "athenasip_trunk_responses_total{trunk=\"" + label(key.first) + "\",code=\"" + std::to_string(key.second) + "\"} " + std::to_string(count) + "\n";
+      }
+    }
 
     // Omitted for an engine that cannot count, rather than reported as zero.
     if (core->media) {

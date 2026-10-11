@@ -156,6 +156,22 @@ class Datastore : public plugins::Plugin {
     _unsupported<bool>(std::move(on), std::move(handler), "lease");
   }
 
+  // A named counter the cluster shares, for a script's limits: adds `delta`, which may be negative, and answers the
+  // new value. With `seconds`, the counter lapses that long after it was made, so it counts within a window; 0
+  // keeps it until it is changed back to nothing. Optional.
+  virtual void counter_add(plugins::Executor on, std::string name, std::int64_t delta, std::uint32_t seconds, plugins::Handler<std::int64_t> handler) {
+    (void)name;
+    (void)delta;
+    (void)seconds;
+    _unsupported<std::int64_t>(std::move(on), std::move(handler), "counter_add");
+  }
+
+  // A counter's value: 0 for one never made, or lapsed.
+  virtual void counter_get(plugins::Executor on, std::string name, plugins::Handler<std::int64_t> handler) {
+    (void)name;
+    _unsupported<std::int64_t>(std::move(on), std::move(handler), "counter_get");
+  }
+
   // Subscribers.
   virtual void subscriber_get(plugins::Executor on, std::shared_ptr<types::SIPIdentity> identity,
                               plugins::Handler<std::shared_ptr<types::Subscriber>> handler) = 0;

@@ -86,13 +86,16 @@ def end_call():
 
 
 def media_up(since, timeout=10.0):
-    """Whether AthenaPhone has logged its media connected since a logcat time."""
+    """Whether AthenaPhone has logged its media connected since a logcat time.
+
+    The whole log is read and each line's time compared here: logcat's own -T depends on how
+    adb quotes the time for the phone's shell, and missed connections that rtpengine saw."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        # Quoted: adb joins its arguments into one command line for the phone's shell.
-        log = adb("logcat", "-d", "-T", f"'{since}'", "-s", "ReactNativeJS")
-        if "dtls=connected" in log:
-            return True
+        for line in adb("logcat", "-d", "-s", "ReactNativeJS").splitlines():
+            # "MM-DD HH:MM:SS.mmm", which sorts as text within a year.
+            if "dtls=connected" in line and line[:18] >= since[:18]:
+                return True
         time.sleep(1)
     return False
 

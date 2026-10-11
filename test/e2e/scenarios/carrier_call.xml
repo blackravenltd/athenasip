@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+
+<!--
+  The carrier answering a call out. RFC 3261 22.2: it challenges the node, which answers
+  with the trunk's credentials in a new INVITE with the next CSeq, the caller never seeing
+  the challenge. The caller ID is the trunk's, in the From and P-Asserted-Identity (RFC
+  3325 9.1). The challenge is a 401, which carriers send to an INVITE as often as a 407:
+  sipp's verifyauth reads Authorization and not Proxy-Authorization. The unit tests answer
+  a 407 (tests/proxy_trunk_test.cpp).
+-->
+<scenario name="Carrier: challenge the INVITE, then answer it">
+
+  <recv request="INVITE"/>
+
+  <send>
+    <![CDATA[
+
+      SIP/2.0 401 Unauthorized
+      [last_Via:]
+      [last_From:]
+      [last_To:];tag=carrier-[call_number]
+      [last_Call-ID:]
+      [last_CSeq:]
+      WWW-Authenticate: Digest realm="carrier.example", nonce="c4ll[call_number]", algorithm=MD5, qop="auth"
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <recv request="ACK"/>
+
+  <recv request="INVITE">
+    <action>
+      <verifyauth assign_to="verified" username="4420" password="carrier-secret"/>
+      <ereg regexp="sip:\+442071234567@" search_in="hdr" header="From:" check_it="true" assign_to="caller_id"/>
+      <ereg regexp="sip:\+442071234567@" search_in="hdr" header="P-Asserted-Identity:" check_it="true" assign_to="asserted"/>
+    </action>
+  </recv>
+
+  <nop hide="true" test="verified" next="answer"/>
+  <recv request="NOTHING" timeout="100"/>
+
+  <label id="answer"/>
+
+  <send>
+    <![CDATA[
+
+      SIP/2.0 180 Ringing
+      [last_Via:]
+      [last_From:]
+      [last_To:];tag=carrier-[call_number]
+      [last_Call-ID:]
+      [last_CSeq:]
+      [last_Record-Route:]
+      Contact: <sip:+442079460000@[local_ip]:[local_port];transport=[transport]>
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <send retrans="500">
+    <![CDATA[
+
+      SIP/2.0 200 OK
+      [last_Via:]
+      [last_From:]
+      [last_To:];tag=carrier-[call_number]
+      [last_Call-ID:]
+      [last_CSeq:]
+      [last_Record-Route:]
+      Contact: <sip:+442079460000@[local_ip]:[local_port];transport=[transport]>
+      Content-Type: application/sdp
+      Content-Length: [len]
+
+      v=0
+      o=carrier 53655765 2353687637 IN IP[local_ip_type] [local_ip]
+      s=-
+      c=IN IP[media_ip_type] [media_ip]
+      t=0 0
+      m=audio [media_port] RTP/AVP 0
+      a=rtpmap:0 PCMU/8000
+
+    ]]>
+  </send>
+
+  <recv request="ACK" crlf="true"/>
+
+  <recv request="BYE"/>
+
+  <send>
+    <![CDATA[
+
+      SIP/2.0 200 OK
+      [last_Via:]
+      [last_From:]
+      [last_To:]
+      [last_Call-ID:]
+      [last_CSeq:]
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <Reference variables="caller_id,asserted"/>
+
+</scenario>

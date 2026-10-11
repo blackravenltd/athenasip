@@ -1,0 +1,21 @@
+#!/bin/sh
+#
+# AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
+#
+# Copyright (C) 2026 Tom Cully <mail@tomcully.com>
+# Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
+#
+# Purging removes the configuration and the node's state. The account stays, as Debian
+# leaves system accounts: files elsewhere may still be owned by it.
+
+set -e
+
+if [ "$1" = "purge" ]; then
+  rm -rf /etc/athenasip /var/lib/athenasip /var/log/athenasip
+fi
+
+if [ -d /run/systemd/system ]; then
+  systemctl daemon-reload >/dev/null 2>&1 || true
+fi
+
+exit 0

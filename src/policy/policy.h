@@ -290,6 +290,10 @@ class Host {
   virtual void trunk(std::string name, plugins::Handler<std::shared_ptr<types::Trunk>> handler) = 0;
   virtual void trunks(plugins::Handler<std::vector<std::shared_ptr<types::Trunk>>> handler) = 0;
 
+  // The datastore's shared counters (Datastore::counter_add, counter_get).
+  virtual void counter_add(std::string name, std::int64_t delta, std::uint32_t seconds, plugins::Handler<std::int64_t> handler) = 0;
+  virtual void counter_get(std::string name, plugins::Handler<std::int64_t> handler) = 0;
+
   // Whether a host and port are one of this node's own addresses.
   virtual bool names_this_node(const std::string& host, std::uint16_t port) const = 0;
 
