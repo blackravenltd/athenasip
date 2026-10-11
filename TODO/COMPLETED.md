@@ -3204,3 +3204,26 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
 - [x] 19 tests from RFC 6665 and 4235, watched failing first; the suite 1452 of 1453, one
       skipped without a resolver; the notifier and proxy tests again under the Lua policy.
 
+### Presence, step 3: the dialog package, BLF (2026-10-11)
+
+- [x] **Each leg of a call names its subscriber**: the proxy sets the caller's once it is
+      proven (`authenticated_aor`) and the callee's as each branch goes out, from the binding
+      it rings, so a routed or serially forked call lights the line that is ringing and
+      frees the one before. Each binding target carries its subscriber
+      (`Proxy::Target::subscriber`); `Core::call_subscriber` writes the record when a leg is
+      named.
+- [x] **The record is signalled, not copied**: every write of a call record by the node the
+      caller reached publishes `presence/<aor>/changed` for each subscriber on it, after the
+      write. The AOR is percent-encoded in the topic, since a subscriber named `+4420...`
+      would be no MQTT topic name. The notifier listens, gathers a turn's changes into one,
+      and NOTIFYs the watchers this node holds.
+- [x] **`dialog-info` from the call records** (RFC 4235): each open call the presentity is on,
+      from its side, with `direction`, `trying`/`early`/`confirmed`/`terminated` (a callee
+      not yet rung is not reported, a closed call drops out of the full document), the
+      Call-ID and tags a pickup needs, and both identities.
+- [x] NOTIFYs on one subscription run one after another, each reading the record afresh, so
+      CSeq and version follow on whatever prompted them.
+- [x] 8 tests, written first; not run against the code without it, to save a rebuild. The
+      suite 1460 of 1461 with Redis and MQTT; the notifier, dialog, proxy and local UA tests
+      201 of 201 under the Lua policy.
+
