@@ -145,6 +145,9 @@ void Core::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shar
                                                    "{\"contact\":\"" + push::without_push_parameters(*contact).to_string() + "\",\"node\":\"" +
                                                        config->sip_node_id + "\",\"registered\":\"" + Util::get_zulu_time() + "\"}");
 
+                                   // A presentity that publishes nothing is as present as its bindings say.
+                                   events->publish(events::topics::presence_changed(subscriber->identity->uri->to_string()), "{\"binding\":\"written\"}");
+
                                    if (handler) handler(status);
                                  });
 }
@@ -162,6 +165,8 @@ void Core::subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::sh
       _logger->debug("No binding to remove for " + subscriber->identity->to_string());
     } else if (!status.ok) {
       _logger->error("Cannot unregister subscriber " + subscriber->identity->to_string() + " - " + status.error);
+    } else {
+      events->publish(events::topics::presence_changed(subscriber->identity->uri->to_string()), "{\"binding\":\"removed\"}");
     }
     if (handler) handler(status);
   });

@@ -6,6 +6,7 @@
 //
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <ctime>
 #include <deque>
@@ -46,7 +47,7 @@ class Notifier : public std::enable_shared_from_this<Notifier> {
   void changed(const std::string& aor);
 
   // The packages this node is the notifier for, as Allow-Events lists them (RFC 6665 7.2.2).
-  static const char* packages() { return "dialog"; }
+  static const char* packages() { return "presence, dialog"; }
 
   // The package the node composes published state for (RFC 3903), as a 489 to PUBLISH lists it.
   static const char* published_packages() { return "presence"; }
@@ -126,8 +127,9 @@ class Notifier : public std::enable_shared_from_this<Notifier> {
   void _end(const Subscription& subscription);
 
   // A NOTIFY in the subscription's dialog with its current state, down the watcher's flow. `state` is the
-  // Subscription-State; a terminated one ends the subscription once it is sent.
-  void _notify(Subscription subscription, std::string state);
+  // Subscription-State; a terminated one ends the subscription once it is sent. A `change` of a presentity's
+  // presence waits for the subscription's five-second window (RFC 3856 6.6.2); one answering a SUBSCRIBE does not.
+  void _notify(Subscription subscription, std::string state, bool change = false);
   void _send_notify(Subscription subscription, std::string state, std::string body, std::function<void()> done);
 
   // One NOTIFY at a time on a subscription, each reading the record afresh, so CSeq and version follow on.
@@ -141,6 +143,13 @@ class Notifier : public std::enable_shared_from_this<Notifier> {
 
   // RFC 4235: the presentity's calls, from its side.
   static std::string _dialog_info(const Subscription& subscription, const std::vector<std::shared_ptr<Call>>& calls);
+
+  // RFC 3856: what the presentity published, composed, or else what its registrations say.
+  void _presence(const Subscription& subscription, std::function<void(std::optional<std::string>)> then);
+
+  // The package's body type, and its document with nothing in it.
+  static std::string _content_type(const std::string& package);
+  static std::string _empty_document(const Subscription& subscription);
 
   void _look_again(const std::string& aor);
 
@@ -164,6 +173,14 @@ class Notifier : public std::enable_shared_from_this<Notifier> {
 
   // NOTIFYs waiting their turn, by subscription.
   std::map<std::string, std::deque<Task>> _queues;
+
+  // RFC 3856 6.6.2: when each presence subscription held here was last notified, and the change waiting for its
+  // window to open, if one is.
+  struct Window {
+    std::chrono::steady_clock::time_point last;
+    std::shared_ptr<Timer> waiting;
+  };
+  std::map<std::string, Window> _windows;
 };
 
 }  // namespace athenasip
