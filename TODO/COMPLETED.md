@@ -3360,3 +3360,13 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       or function they test to compile. The suite 1522 of 1523 with Redis and MQTT, the one
       skipped without a resolver; 318 of 319 under the Lua policy, the one skipped being the
       equivalence runner.
+
+### Presence, step 10: the documentation, and saying when presence cannot be had (2026-10-11)
+
+- [x] **A datastore that cannot hold presence is said**, as the design promised and nothing
+      did: a warning at start naming the driver, and a failing `presence` line in
+      `athenasip --check` that says to set `presence.enable: false` (`src/cli_check.cpp`,
+      `src/main.cpp`). Found while writing the user documentation against the code. 3 check
+      tests; the two that should fail were watched failing, and the one for presence off
+      passes either way. The suite 1525 of 1526 with Redis and MQTT, the one skipped without
+      a resolver.
