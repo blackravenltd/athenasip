@@ -250,8 +250,14 @@ void Proxy::_proceed(const std::shared_ptr<SIPMessage>& request, const std::shar
 
   auto self = shared_from_this();
   _authorize(request, transaction, false, [this, self, request, transaction, token]() {
-    // A SUBSCRIBE for a package the node is the notifier for is answered here, not routed (docs/design/presence.md).
     auto core = _core.lock();
+
+    // RFC 4235: the caller's line is the subscriber it was proven to be.
+    if (core && request->header->request_method == "INVITE" && !request->authenticated_aor.empty() && tag_of(request, "To").empty()) {
+      core->call_subscriber(value_of(request, "Call-ID"), true, request->authenticated_aor);
+    }
+
+    // A SUBSCRIBE for a package the node is the notifier for is answered here, not routed (docs/design/presence.md).
     if (core && core->notifier()->wants(*request)) {
       return core->notifier()->on_subscribe(request, transaction,
                                             [this, self, request, transaction, token]() { _determine_targets(request, transaction, token); });
@@ -644,27 +650,37 @@ void Proxy::_expand(const std::shared_ptr<Context>& context, std::vector<policy:
   // The first subscriber's profile is the callee's, for what the engine offers it.
   if (!context->callee_profile) context->callee_profile = spec.subscriber->media_profile;
 
+  // The subscriber whose bindings these are: the line that rings, whatever the To said.
+  const auto& identity = spec.subscriber->identity;
+  const auto subscriber = identity && identity->uri ? "sip:" + identity->uri->user + "@" + Util::to_lower(identity->uri->host) : std::string();
+
   // RFC 5626: each binding is reached down the flow it registered over, and rings for as long as the policy said.
   if (spec.bindings) {
     const auto from = into->size();
     _add_targets(context, std::move(*spec.bindings), *into);
-    for (auto i = from; i < into->size(); ++i) (*into)[i].ring_timeout = spec.ring_timeout;
+    for (auto i = from; i < into->size(); ++i) {
+      (*into)[i].ring_timeout = spec.ring_timeout;
+      (*into)[i].subscriber = subscriber;
+    }
     return _expand(context, std::move(specs), index + 1, std::move(into), std::move(then));
   }
 
   auto self = shared_from_this();
   const auto id = spec.subscriber->id;
-  core->location_list(
-      id, [this, self, context, specs = std::move(specs), index, into, then = std::move(then)](plugins::Result<std::vector<types::Location>> bindings) mutable {
-        if (!bindings.ok) {
-          _logger->error("Could not read the bindings for " + context->request->header->request_uri->to_string() + " - " + bindings.error);
-        } else {
-          const auto from = into->size();
-          _add_targets(context, std::move(bindings.value), *into);
-          for (auto i = from; i < into->size(); ++i) (*into)[i].ring_timeout = specs[index].ring_timeout;
-        }
-        _expand(context, std::move(specs), index + 1, std::move(into), std::move(then));
-      });
+  core->location_list(id, [this, self, context, specs = std::move(specs), index, into, then = std::move(then),
+                           subscriber](plugins::Result<std::vector<types::Location>> bindings) mutable {
+    if (!bindings.ok) {
+      _logger->error("Could not read the bindings for " + context->request->header->request_uri->to_string() + " - " + bindings.error);
+    } else {
+      const auto from = into->size();
+      _add_targets(context, std::move(bindings.value), *into);
+      for (auto i = from; i < into->size(); ++i) {
+        (*into)[i].ring_timeout = specs[index].ring_timeout;
+        (*into)[i].subscriber = subscriber;
+      }
+    }
+    _expand(context, std::move(specs), index + 1, std::move(into), std::move(then));
+  });
 }
 
 void Proxy::_answer_challenge(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response, const std::shared_ptr<SIPMessage>& sent) {
@@ -839,6 +855,11 @@ void Proxy::_forward_target(const std::shared_ptr<Context>& context, const Targe
   context->hops_left.clear();
   context->hop_target.reset();
   context->current = target;
+
+  // RFC 4235: the callee's line is the subscriber this branch rings. Only a new call has a callee to name.
+  if (!target.subscriber.empty() && context->request->header->request_method == "INVITE" && tag_of(context->request, "To").empty()) {
+    core->call_subscriber(value_of(context->request, "Call-ID"), false, target.subscriber);
+  }
   context->offered.reset();
   context->challenge_answered = false;
 

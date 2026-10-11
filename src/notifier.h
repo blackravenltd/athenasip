@@ -8,13 +8,16 @@
 
 #include <cstdint>
 #include <ctime>
+#include <deque>
 #include <functional>
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
+#include "call.h"
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
 #include "sip_message.h"
@@ -34,6 +37,13 @@ class Core;
 class Notifier : public std::enable_shared_from_this<Notifier> {
  public:
   Notifier(std::shared_ptr<loggers::Logger> logger, std::weak_ptr<Core> core);
+
+  // Listens on the bus for presentities whose state changed.
+  void start();
+
+  // A presentity's state changed: its watchers held here are sent the new state. Changes within one turn of the
+  // strand make one NOTIFY.
+  void changed(const std::string& aor);
 
   // The packages this node is the notifier for, as Allow-Events lists them (RFC 6665 7.2.2).
   static const char* packages() { return "dialog"; }
@@ -106,9 +116,21 @@ class Notifier : public std::enable_shared_from_this<Notifier> {
   // A NOTIFY in the subscription's dialog with its current state, down the watcher's flow. `state` is the
   // Subscription-State; a terminated one ends the subscription once it is sent.
   void _notify(Subscription subscription, std::string state);
+  void _send_notify(Subscription subscription, std::string state, std::string body, std::function<void()> done);
 
-  // The package's document for the presentity, at this subscription's version.
-  std::string _document(const Subscription& subscription) const;
+  // One NOTIFY at a time on a subscription, each reading the record afresh, so CSeq and version follow on.
+  using Task = std::function<void(std::function<void()> done)>;
+  void _serially(const std::string& id, Task task);
+  void _run_next(const std::string& id);
+
+  // The package's document for the presentity, at this subscription's version, read from the datastore. Empty
+  // when the state could not be read.
+  void _document(const Subscription& subscription, std::function<void(std::optional<std::string>)> then);
+
+  // RFC 4235: the presentity's calls, from its side.
+  static std::string _dialog_info(const Subscription& subscription, const std::vector<std::shared_ptr<Call>>& calls);
+
+  void _look_again(const std::string& aor);
 
   void _schedule(const Subscription& subscription);
   void _expired(const std::string& id);
@@ -124,6 +146,12 @@ class Notifier : public std::enable_shared_from_this<Notifier> {
 
   // The one thing held in memory: when each subscription this node holds lapses.
   std::map<std::string, std::shared_ptr<Timer>> _timers;
+
+  // Presentities changed in this turn of the strand, looked at once at its end.
+  std::set<std::string> _pending;
+
+  // NOTIFYs waiting their turn, by subscription.
+  std::map<std::string, std::deque<Task>> _queues;
 };
 
 }  // namespace athenasip

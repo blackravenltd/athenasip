@@ -233,6 +233,10 @@ class Core : public std::enable_shared_from_this<Core> {
   // The notifier for the presence packages (docs/design/presence.md). See Notifier.
   std::shared_ptr<Notifier> notifier();
 
+  // Which subscriber a leg of a live call is (the caller, or the callee), learned as the proxy proves one and rings
+  // the other. The call record is written with it, for the dialog package (RFC 4235).
+  void call_subscriber(const std::string& call_id, bool caller, const std::string& aor);
+
   // A request this node originates, routed by the proxy as if it had arrived. Its answer comes back to on_final
   // rather than going anywhere. On the strand.
   void local_request(std::shared_ptr<SIPMessage> request, transactions::TransactionBase::SendFn on_final);
@@ -378,6 +382,9 @@ class Core : public std::enable_shared_from_this<Core> {
 
   // Keeps the Call record in step with the dialog it is a leg of.
   void _on_dialog_change(const std::shared_ptr<types::Dialog>& dialog);
+
+  // Writes the call record, then signals each subscriber on it, and any in `also`, that their line changed.
+  void _call_record_write(const std::shared_ptr<Call>& call, std::vector<std::string> also = {});
 
   std::unordered_map<std::string, std::shared_ptr<Call>> _calls;
 

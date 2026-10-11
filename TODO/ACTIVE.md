@@ -13,8 +13,8 @@ below, almost all of which wait on a device, a carrier, Tom or the admin session
 The decisions are under Decisions, and `docs/design/presence.md` (2026-10-11) is the design: where
 the notifier plugs in, the subscription dialog, each package's state, the cluster, the `watch` policy
 hook, the API and the build order the items below follow. The datastore contract is in
-(2026-10-11, `COMPLETED.md`), and so is the RFC 6665 notifier core; next is the `dialog`
-package.
+(2026-10-11, `COMPLETED.md`), and so are the RFC 6665 notifier core and the `dialog`
+package, which is BLF on one node; next is PUBLISH.
 
 **Two live nodes**, neither production, both on `5fbf3f3` (deployed 2026-10-09):
 - `corvus-fi-1` (10.35.1.20): `lua://` with `athenasip.trunks` from
@@ -583,8 +583,6 @@ requests are taken in `_deliver_to_tu` before the proxy. A UAC request of the no
 Today SUBSCRIBE is simply proxied, and the proxy's `Allow` already lists SUBSCRIBE and
 NOTIFY.
 
-- [ ] The `dialog` package (RFC 4235) from the call records: BLF for desk phones. The
-      callee is the subscriber whose binding rang, set by the proxy.
 - [ ] PUBLISH (RFC 3903): entity tags, refresh, modify, remove, expiry; publications in the
       datastore; changes on the bus.
 - [ ] The `presence` package (RFC 3856, PIDF RFC 3863): the publications composed, and a

@@ -780,8 +780,52 @@ std::shared_ptr<LocalUA> Core::local_ua() {
   return _local_ua;
 }
 
+void Core::call_subscriber(const std::string& call_id, bool caller, const std::string& aor) {
+  auto call = call_get(call_id);
+  if (!call) return;
+
+  std::vector<std::string> was;
+  bool changed = false;
+  for (auto& participant : call->participants) {
+    if (participant.originator != caller || participant.subscriber == aor) continue;
+    if (!participant.subscriber.empty()) was.push_back(participant.subscriber);
+    participant.subscriber = aor;
+    changed = true;
+  }
+
+  // A serial fork moving on to another subscriber frees the line of the one before.
+  if (changed) _call_record_write(call, std::move(was));
+}
+
+void Core::_call_record_write(const std::shared_ptr<Call>& call, std::vector<std::string> also) {
+  // Only the node the caller reached keeps the record, and so signals the lines on it.
+  if (!call->from_node.empty()) return;
+
+  for (const auto& participant : call->participants) {
+    if (!participant.subscriber.empty()) also.push_back(participant.subscriber);
+  }
+
+  datastore->call_update(_strand, call, [this, self = shared_from_this(), call, also = std::move(also)](plugins::Status status) {
+    if (!status.ok) {
+      _logger->error("Cannot update call " + call->id + " - " + status.error);
+      return;
+    }
+
+    // After the write, so whoever looks again reads it.
+    std::vector<std::string> signalled;
+    for (const auto& aor : also) {
+      if (std::find(signalled.begin(), signalled.end(), aor) != signalled.end()) continue;
+      signalled.push_back(aor);
+      events->publish(events::topics::presence_changed(aor), "{\"call\":\"" + call->id + "\"}");
+    }
+  });
+}
+
 std::shared_ptr<Notifier> Core::notifier() {
-  if (!_notifier) _notifier = std::make_shared<Notifier>(_logger->base_logger(), weak_from_this());
+  if (!_notifier) {
+    _notifier = std::make_shared<Notifier>(_logger->base_logger(), weak_from_this());
+    _notifier->start();
+  }
   return _notifier;
 }
 
@@ -1033,11 +1077,7 @@ void Core::_on_dialog_change(const std::shared_ptr<types::Dialog>& dialog) {
 
   events->publish(events::topics::call_state(call->id), Call::state_to_string(call->state));
 
-  if (call->from_node.empty()) {
-    datastore->call_update(_strand, call, [this, self = shared_from_this(), call](plugins::Status status) {
-      if (!status.ok) _logger->error("Cannot update call " + call->id + " - " + status.error);
-    });
-  }
+  _call_record_write(call);
 
   if (call->state != Call::State::Closed) return;
 

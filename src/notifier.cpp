@@ -13,6 +13,7 @@
 
 #include "channel.h"
 #include "core.h"
+#include "events/topics.h"
 #include "headers/sip_identity_header.h"
 #include "headers/string_header.h"
 #include "util.h"
@@ -92,6 +93,56 @@ std::string xml_escape(const std::string& text) {
 
 Notifier::Notifier(std::shared_ptr<loggers::Logger> logger, std::weak_ptr<Core> core)
     : _logger(std::make_shared<loggers::LoggerScoped>("notifier", std::move(logger))), _core(std::move(core)) {}
+
+void Notifier::start() {
+  auto core = _core.lock();
+  if (!core || !core->events) return;
+
+  std::weak_ptr<Notifier> weak_self = weak_from_this();
+  core->events->subscribe(
+      core->strand(), events::topics::presence_changed_filter(),
+      [weak_self](std::string topic, std::string) {
+        auto self = weak_self.lock();
+        if (!self) return;
+        if (const auto aor = events::topics::presence_changed_aor(topic); !aor.empty()) self->changed(aor);
+      },
+      [this, self = shared_from_this()](plugins::Result<std::shared_ptr<events::Subscription>> subscribed) {
+        if (!subscribed.ok) _logger->warn("Cannot listen for presence changes - " + subscribed.error);
+      });
+}
+
+void Notifier::changed(const std::string& aor) {
+  auto core = _core.lock();
+  if (!core || !_pending.insert(aor).second) return;
+
+  auto self = shared_from_this();
+  core->post([self, aor]() {
+    self->_pending.erase(aor);
+    self->_look_again(aor);
+  });
+}
+
+void Notifier::_look_again(const std::string& aor) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  auto self = shared_from_this();
+  core->datastore->presence_list(core->strand(), aor, types::PresenceRecord::Kind::Subscription,
+                                 [this, self, aor](plugins::Result<std::vector<types::PresenceRecord>> found) {
+                                   auto core = _core.lock();
+                                   if (!core) return;
+                                   if (!found.ok) {
+                                     _logger->error("Cannot read the watchers of " + aor + " - " + found.error);
+                                     return;
+                                   }
+
+                                   // Each holder sends its own watchers' NOTIFYs, down their flows.
+                                   for (const auto& record : found.value) {
+                                     if (record.node_id != core->config->sip_node_id) continue;
+                                     if (auto subscription = _parse(record)) _notify(std::move(*subscription), "active");
+                                   }
+                                 });
+}
 
 bool Notifier::wants(const SIPMessage& request) const {
   auto core = _core.lock();
@@ -385,23 +436,83 @@ void Notifier::_end(const Subscription& subscription) {
 }
 
 void Notifier::_notify(Subscription subscription, std::string state) {
+  const auto id = subscription.id;
+  auto self = shared_from_this();
+
+  _serially(id, [this, self, subscription = std::move(subscription), state = std::move(state)](std::function<void()> done) mutable {
+    auto core = _core.lock();
+    if (!core) return done();
+
+    const bool terminated = state.rfind("terminated", 0) == 0;
+
+    core->datastore->presence_get(core->strand(), types::PresenceRecord::Kind::Subscription, subscription.id,
+                                  [this, self, subscription, state, terminated, done](plugins::Result<std::optional<types::PresenceRecord>> found) mutable {
+                                    if (!found.ok) {
+                                      _logger->error("Cannot read subscription " + subscription.id + " - " + found.error);
+                                      return done();
+                                    }
+
+                                    // The record is the truth: the last NOTIFY's CSeq and version, and the expiry as last refreshed. A fetch
+                                    // has none, and is its own last word.
+                                    if (auto current = found.value ? _parse(*found.value) : std::nullopt) {
+                                      subscription = std::move(*current);
+                                    } else if (!terminated) {
+                                      return done();
+                                    }
+
+                                    if (!terminated) {
+                                      const auto remaining = std::max<std::time_t>(subscription.expires_at - std::time(nullptr), 0);
+                                      state += ";expires=" + std::to_string(remaining);
+                                    }
+
+                                    _document(subscription, [this, self, subscription, state, terminated, done](std::optional<std::string> body) mutable {
+                                      // A state that cannot be read is not reported as empty, except in the last word on a subscription.
+                                      if (!body && !terminated) return done();
+                                      auto document = body ? std::move(*body) : _dialog_info(subscription, {});
+                                      _send_notify(std::move(subscription), std::move(state), std::move(document), done);
+                                    });
+                                  });
+  });
+}
+
+void Notifier::_serially(const std::string& id, Task task) {
+  auto& queue = _queues[id];
+  queue.push_back(std::move(task));
+  if (queue.size() == 1) _run_next(id);
+}
+
+void Notifier::_run_next(const std::string& id) {
+  auto queue = _queues.find(id);
+  if (queue == _queues.end() || queue->second.empty()) return;
+
+  auto task = queue->second.front();
+  std::weak_ptr<Notifier> weak_self = weak_from_this();
+  task([weak_self, id]() {
+    auto self = weak_self.lock();
+    if (!self) return;
+    auto queue = self->_queues.find(id);
+    if (queue == self->_queues.end()) return;
+    queue->second.pop_front();
+    if (queue->second.empty()) {
+      self->_queues.erase(queue);
+    } else {
+      self->_run_next(id);
+    }
+  });
+}
+
+void Notifier::_send_notify(Subscription subscription, std::string state, std::string body, std::function<void()> done) {
   auto core = _core.lock();
-  if (!core) return;
+  if (!core) return done();
 
   const bool terminated = state.rfind("terminated", 0) == 0;
-
   auto channel = core->channel_find(subscription.flow_id);
   if (!channel || !channel->_connection) {
     _logger->info("The flow to " + subscription.watcher_uri + " has gone; ending its subscription to " + subscription.presentity);
-    return _end(subscription);
+    _end(subscription);
+    return done();
   }
 
-  if (!terminated) {
-    const auto remaining = std::max<std::time_t>(subscription.expires_at - std::time(nullptr), 0);
-    state += ";expires=" + std::to_string(remaining);
-  }
-
-  const auto body = _document(subscription);
   subscription.local_cseq += 1;
   subscription.version += 1;
 
@@ -453,17 +564,87 @@ void Notifier::_notify(Subscription subscription, std::string state) {
   // so the next NOTIFY from any node follows on from it.
   if (terminated) {
     _end(subscription);
-    return send();
+    send();
+    return done();
   }
 
-  _store(subscription, [send](bool) mutable { send(); });
+  _store(subscription, [send, done](bool) mutable {
+    send();
+    done();
+  });
 }
 
-std::string Notifier::_document(const Subscription& subscription) const {
-  // RFC 4235 4.1: the full state of the presentity's dialogs. Its dialogs come with the package's state (the build
-  // order's next step); until then a full document with none.
-  return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<dialog-info xmlns=\"urn:ietf:params:xml:ns:dialog-info\" version=\"" +
-         std::to_string(subscription.version) + "\" state=\"full\" entity=\"" + xml_escape(subscription.presentity) + "\"/>\r\n";
+void Notifier::_document(const Subscription& subscription, std::function<void(std::optional<std::string>)> then) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  auto self = shared_from_this();
+  core->datastore->call_list_for_subscriber(core->strand(), subscription.presentity,
+                                            [this, self, subscription, then](plugins::Result<std::vector<std::shared_ptr<Call>>> calls) {
+                                              if (!calls.ok) {
+                                                _logger->error("Cannot read the calls of " + subscription.presentity + " - " + calls.error);
+                                                return then(std::nullopt);
+                                              }
+                                              then(_dialog_info(subscription, calls.value));
+                                            });
+}
+
+// RFC 4235 4.1: the full state, each of the presentity's dialogs from its side, at this subscription's version.
+std::string Notifier::_dialog_info(const Subscription& subscription, const std::vector<std::shared_ptr<Call>>& calls) {
+  std::string dialogs;
+
+  for (const auto& call : calls) {
+    if (!call) continue;
+
+    for (std::size_t i = 0; i < call->participants.size(); ++i) {
+      const auto& leg = call->participants[i];
+      if (leg.subscriber != subscription.presentity) continue;
+
+      // RFC 4235 3.7.1, from the presentity's side. A callee not yet reached has no dialog to report.
+      std::string state;
+      switch (call->state) {
+        case Call::State::Initial:
+        case Call::State::Trying:
+          state = leg.originator ? "trying" : "";
+          break;
+        case Call::State::Ringing:
+          state = "early";
+          break;
+        case Call::State::Connected:
+          state = "confirmed";
+          break;
+        case Call::State::Closing:
+          state = "terminated";
+          break;
+        case Call::State::Closed:
+          break;
+      }
+      if (state.empty()) continue;
+
+      const std::shared_ptr<types::SIPIdentity> remote = call->participants.size() == 2 ? call->participants[1 - i].identity : nullptr;
+
+      // The tags as the presentity's end sees them: its own is local.
+      std::string local_tag;
+      std::string remote_tag;
+      if (leg.dialog) {
+        local_tag = leg.originator ? leg.dialog->caller_tag : leg.dialog->callee_tag;
+        remote_tag = leg.originator ? leg.dialog->callee_tag : leg.dialog->caller_tag;
+      }
+
+      dialogs += "<dialog id=\"" + xml_escape(call->id + (leg.originator ? "-i" : "-r")) + "\" call-id=\"" + xml_escape(call->id) + "\"";
+      if (!local_tag.empty()) dialogs += " local-tag=\"" + xml_escape(local_tag) + "\"";
+      if (!remote_tag.empty()) dialogs += " remote-tag=\"" + xml_escape(remote_tag) + "\"";
+      dialogs += std::string(" direction=\"") + (leg.originator ? "initiator" : "recipient") + "\">";
+      dialogs += "<state>" + state + "</state>";
+      if (leg.identity && leg.identity->uri) dialogs += "<local><identity>" + xml_escape(leg.identity->uri->to_string()) + "</identity></local>";
+      if (remote && remote->uri) dialogs += "<remote><identity>" + xml_escape(remote->uri->to_string()) + "</identity></remote>";
+      dialogs += "</dialog>";
+    }
+  }
+
+  std::string document = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<dialog-info xmlns=\"urn:ietf:params:xml:ns:dialog-info\" version=\"" +
+                         std::to_string(subscription.version) + "\" state=\"full\" entity=\"" + xml_escape(subscription.presentity) + "\"";
+  return document + (dialogs.empty() ? "/>\r\n" : ">" + dialogs + "</dialog-info>\r\n");
 }
 
 void Notifier::_schedule(const Subscription& subscription) {
