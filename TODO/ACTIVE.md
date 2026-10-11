@@ -14,7 +14,8 @@ The decisions are under Decisions, and `docs/design/presence.md` (2026-10-11) is
 the notifier plugs in, the subscription dialog, each package's state, the cluster, the `watch` policy
 hook, the API and the build order the items below follow. The datastore contract is in
 (2026-10-11, `COMPLETED.md`), and so are the RFC 6665 notifier core, the `dialog`
-package, which is BLF on one node, and PUBLISH; next is the `presence` package.
+package, which is BLF on one node, PUBLISH, and the `presence` package; next is the
+cluster.
 
 **Two live nodes**, neither production, both on `5fbf3f3` (deployed 2026-10-09):
 - `corvus-fi-1` (10.35.1.20): `lua://` with `athenasip.trunks` from
@@ -583,10 +584,9 @@ requests are taken in `_deliver_to_tu` before the proxy. A UAC request of the no
 Today SUBSCRIBE is simply proxied, and the proxy's `Allow` already lists SUBSCRIBE and
 NOTIFY.
 
-- [ ] The `presence` package (RFC 3856, PIDF RFC 3863): the publications composed, and a
-      subscriber with no bindings closed when nothing is published.
 - [ ] The cluster: a change heard on the bus notifies the watchers each node holds; a
-      reconcile every `presence.reconcile` seconds catches what the bus dropped; a refresh
+      reconcile every `presence.reconcile` seconds catches what the bus dropped, and the
+      bindings and publications that lapsed in the datastore without a signal; a refresh
       reaching another node moves the subscription; a stale node's subscriptions are taken
       over under a lease by the node holding the watcher's flow, and its open calls are left
       out of what watchers see.

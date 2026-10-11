@@ -226,9 +226,13 @@ nothing, what its registrations say.
 
 **Composition.** Every unexpired publication for the AOR contributes its `<tuple>`s to one
 `<presence entity="...">` document. Two publications from two devices are two tuples. A
-tuple id that appears in two publications is kept from the more recent one. Anything else
-in a publication (`<note>`, extension elements) is carried through with its tuple. The node
-does not interpret a publication beyond finding its tuples.
+tuple id that appears in two publications is kept from the more recent one, which the node
+takes to be the one that lasts longer, since a publication record holds no time of
+publishing and a device refreshes before it lapses. Anything else in a publication
+(`<note>`, extension elements such as RPID's `<dm:person>`) is carried through, with the
+namespaces the root declared for it, and an element with an `id` is deduplicated as a
+tuple is. The node does not interpret a publication beyond finding its elements
+(`src/pidf.cpp`, by hand, as the other parsers are).
 
 **Nothing published.** One tuple, `<status><basic>open</basic></status>` while the AOR has
 an unexpired binding and `closed` when it has none. That is the decision's "a subscriber
@@ -236,12 +240,18 @@ with no bindings closed when nothing is published". No contact URIs are given ou
 
 **Rate.** RFC 3856 asks that a presentity's notifications not exceed one every five
 seconds. Changes within the window are coalesced and the latest state sent when it opens.
-When the window opened is in the subscription's record, so a takeover keeps to it.
+A NOTIFY answering a SUBSCRIBE goes at once, as RFC 6665 4.2.1.2 requires, and opens a new
+window. The window is the holder's, in memory, on the injected clock: a node taking a
+subscription over starts a fresh one, which costs at most one NOTIFY inside five seconds.
+Changed 2026-10-11 while building the package, from keeping it in the record; a wall-clock
+second in the record would be too coarse to keep to the window and not needed to keep the
+state.
 
-**Registration changes.** The registrar publishes `subscribers/<uri>/status` when a
-binding is written (`src/core.cpp:143`), and nothing when one is removed or expires.
-Removal gains the same event. Expiry happens inside the datastore and signals nothing; the
-reconcile below sees it on its next pass, which is soon enough for a buddy list.
+**Registration changes.** The core signals `presence/<aor>/changed` when a binding is
+written or removed (`Core::subscriber_register`, `subscriber_unregister`), beside the
+`subscribers/<uri>/status` event it already published on a write. Expiry happens inside the
+datastore and signals nothing; the reconcile below sees it on its next pass, which is soon
+enough for a buddy list. A publication lapsing is the same.
 
 ### PUBLISH (RFC 3903)
 

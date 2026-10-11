@@ -16,19 +16,51 @@
 #include "events/topics.h"
 #include "headers/sip_identity_header.h"
 #include "headers/string_header.h"
+#include "pidf.h"
 #include "util.h"
 
 namespace athenasip {
 
 namespace {
 
-// The dialog package's default duration (RFC 4235 3.3), and how long a record outlives its expiry so the final
-// NOTIFY can still read it.
+// The default duration of both packages (RFC 4235 3.3, RFC 3856 6.4), and how long a record outlives its expiry so
+// the final NOTIFY can still read it.
 constexpr std::uint32_t kDefaultExpires = 3600;
 constexpr std::uint32_t kGraceSeconds = 32;
 
+// RFC 3856 6.6.2: a presentity's notifications no more often than this.
+constexpr std::chrono::seconds kPresenceWindow(5);
+
 std::string value_of(const SIPMessage& message, const std::string& name) {
   return message.header->contains(name) ? message.header->headers_map[name][0]->to_string() : "";
+}
+
+// A header that may come as several values, as one comma-separated list.
+std::string list_of(const SIPMessage& message, const std::string& name) {
+  if (!message.header->contains(name)) return "";
+  std::string out;
+  for (const auto& value : message.header->headers_map[name]) out += (out.empty() ? "" : ",") + value->to_string();
+  return out;
+}
+
+bool serves(const std::string& package) { return package == "presence" || package == "dialog"; }
+
+// RFC 3261 20.1: no Accept means the package's default, which is the type here; otherwise a range must take it.
+bool accepts(const SIPMessage& request, const std::string& type) {
+  const auto accept = list_of(request, "Accept");
+  if (Util::trim(accept).empty()) return true;
+
+  const auto slash = type.find('/');
+  std::size_t at = 0;
+  while (at <= accept.size()) {
+    const auto next = accept.find(',', at);
+    const auto range = Util::to_lower(Util::trim(accept.substr(at, next == std::string::npos ? std::string::npos : next - at)));
+    const auto media = Util::trim(range.substr(0, range.find(';')));
+    if (media == type || media == "*/*" || media == type.substr(0, slash) + "/*") return true;
+    if (next == std::string::npos) break;
+    at = next + 1;
+  }
+  return false;
 }
 
 std::shared_ptr<types::SIPIdentity> identity_of(const SIPMessage& message, const std::string& name) {
@@ -139,7 +171,7 @@ void Notifier::_look_again(const std::string& aor) {
                                    // Each holder sends its own watchers' NOTIFYs, down their flows.
                                    for (const auto& record : found.value) {
                                      if (record.node_id != core->config->sip_node_id) continue;
-                                     if (auto subscription = _parse(record)) _notify(std::move(*subscription), "active");
+                                     if (auto subscription = _parse(record)) _notify(std::move(*subscription), "active", true);
                                    }
                                  });
 }
@@ -152,7 +184,7 @@ bool Notifier::wants(const SIPMessage& request) const {
   const auto& method = request.header->request_method;
   if (method != "PUBLISH") {
     if (method != "SUBSCRIBE" || !tag_of(request, "To").empty()) return false;
-    if (package_of(value_of(request, "Event")) != packages()) return false;
+    if (!serves(package_of(value_of(request, "Event")))) return false;
   }
 
   // Passing through, or routed back down a flow: not addressed to the AOR.
@@ -192,13 +224,20 @@ void Notifier::on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<t
       return _send_status(transaction, request, 400, "Bad Request");
     }
 
+    const auto package = package_of(value_of(*request, "Event"));
+
+    // RFC 6665 4.2.1.1: a watcher that cannot read the package's document.
+    if (!accepts(*request, _content_type(package))) {
+      _logger->info("SUBSCRIBE for " + package + " that does not accept " + _content_type(package) + " - 406");
+      return _send_status(transaction, request, 406, "Not Acceptable", {{"Accept", _content_type(package)}});
+    }
+
     const auto expiry = _expiry(*request, true);
     if (expiry.code == 423) {
       return _send_status(transaction, request, 423, "Interval Too Brief", {{"Min-Expires", std::to_string(core->config->presence_min_expires)}});
     }
 
     const auto presentity = "sip:" + request->header->request_uri->user + "@" + realm->name;
-    const auto package = package_of(value_of(*request, "Event"));
 
     auto identity = std::make_shared<types::SIPIdentity>(presentity);
     core->subscriber_get(
@@ -569,6 +608,10 @@ void Notifier::_end(const Subscription& subscription) {
     if (timer->second) timer->second->cancel();
     _timers.erase(timer);
   }
+  if (auto window = _windows.find(subscription.id); window != _windows.end()) {
+    if (window->second.waiting) window->second.waiting->cancel();
+    _windows.erase(window);
+  }
 
   auto self = shared_from_this();
   core->datastore->presence_delete(core->strand(), types::PresenceRecord::Kind::Subscription, subscription.id,
@@ -577,9 +620,34 @@ void Notifier::_end(const Subscription& subscription) {
                                    });
 }
 
-void Notifier::_notify(Subscription subscription, std::string state) {
+void Notifier::_notify(Subscription subscription, std::string state, bool change) {
   const auto id = subscription.id;
   auto self = shared_from_this();
+
+  // RFC 3856 6.6.2: a change inside the window waits for it to open, and then sends the state as it is by then.
+  if (change && subscription.package == "presence") {
+    auto core = _core.lock();
+    if (!core) return;
+
+    const auto now = core->timer_source()->now();
+    if (auto window = _windows.find(id); window != _windows.end() && now - window->second.last < kPresenceWindow) {
+      if (window->second.waiting) return;
+
+      std::weak_ptr<Notifier> weak_self = weak_from_this();
+      const auto wait = std::chrono::duration_cast<std::chrono::milliseconds>(window->second.last + kPresenceWindow - now);
+      window->second.waiting = core->timer_source()->schedule(wait, [weak_self, subscription]() {
+        auto self = weak_self.lock();
+        if (!self) return;
+        if (auto core = self->_core.lock()) {
+          core->post([self, subscription]() {
+            if (auto window = self->_windows.find(subscription.id); window != self->_windows.end()) window->second.waiting.reset();
+            self->_notify(subscription, "active", true);
+          });
+        }
+      });
+      return;
+    }
+  }
 
   _serially(id, [this, self, subscription = std::move(subscription), state = std::move(state)](std::function<void()> done) mutable {
     auto core = _core.lock();
@@ -610,7 +678,7 @@ void Notifier::_notify(Subscription subscription, std::string state) {
                                     _document(subscription, [this, self, subscription, state, terminated, done](std::optional<std::string> body) mutable {
                                       // A state that cannot be read is not reported as empty, except in the last word on a subscription.
                                       if (!body && !terminated) return done();
-                                      auto document = body ? std::move(*body) : _dialog_info(subscription, {});
+                                      auto document = body ? std::move(*body) : _empty_document(subscription);
                                       _send_notify(std::move(subscription), std::move(state), std::move(document), done);
                                     });
                                   });
@@ -674,7 +742,7 @@ void Notifier::_send_notify(Subscription subscription, std::string state, std::s
   raw += "Event: " + subscription.package + (subscription.event_id.empty() ? "" : ";id=" + subscription.event_id) + "\r\n";
   raw += "Subscription-State: " + state + "\r\n";
   raw += "Allow-Events: " + std::string(packages()) + "\r\n";
-  raw += "Content-Type: application/dialog-info+xml\r\n";
+  raw += "Content-Type: " + _content_type(subscription.package) + "\r\n";
 
   auto notify = std::make_shared<SIPMessage>();
   notify->header = std::make_shared<SIPHeader>(raw);
@@ -710,6 +778,8 @@ void Notifier::_send_notify(Subscription subscription, std::string state, std::s
     return done();
   }
 
+  if (subscription.package == "presence") _windows[subscription.id].last = core->timer_source()->now();
+
   _store(subscription, [send, done](bool) mutable {
     send();
     done();
@@ -719,6 +789,8 @@ void Notifier::_send_notify(Subscription subscription, std::string state, std::s
 void Notifier::_document(const Subscription& subscription, std::function<void(std::optional<std::string>)> then) {
   auto core = _core.lock();
   if (!core) return;
+
+  if (subscription.package == "presence") return _presence(subscription, std::move(then));
 
   auto self = shared_from_this();
   core->datastore->call_list_for_subscriber(core->strand(), subscription.presentity,
@@ -787,6 +859,61 @@ std::string Notifier::_dialog_info(const Subscription& subscription, const std::
   std::string document = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<dialog-info xmlns=\"urn:ietf:params:xml:ns:dialog-info\" version=\"" +
                          std::to_string(subscription.version) + "\" state=\"full\" entity=\"" + xml_escape(subscription.presentity) + "\"";
   return document + (dialogs.empty() ? "/>\r\n" : ">" + dialogs + "</dialog-info>\r\n");
+}
+
+void Notifier::_presence(const Subscription& subscription, std::function<void(std::optional<std::string>)> then) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  auto self = shared_from_this();
+  const auto presentity = subscription.presentity;
+
+  core->datastore->presence_list(
+      core->strand(), presentity, types::PresenceRecord::Kind::Publication,
+      [this, self, presentity, then](plugins::Result<std::vector<types::PresenceRecord>> published) {
+        auto core = _core.lock();
+        if (!core) return;
+        if (!published.ok) {
+          _logger->error("Cannot read what " + presentity + " has published - " + published.error);
+          return then(std::nullopt);
+        }
+
+        // The later publication's tuple wins a clash. The record holds no time of publishing, so the one that
+        // lasts longer stands for it: a device refreshes before it lapses.
+        if (!published.value.empty()) {
+          auto records = std::move(published.value);
+          std::stable_sort(records.begin(), records.end(), [](const auto& a, const auto& b) { return a.expires_at < b.expires_at; });
+          std::vector<std::string> documents;
+          for (const auto& record : records) documents.push_back(record.body);
+          return then(pidf::compose(presentity, documents));
+        }
+
+        // Nothing published: whether it has a binding.
+        core->subscriber_get(std::make_shared<types::SIPIdentity>(presentity),
+                             [this, self, presentity, then](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
+                               auto core = _core.lock();
+                               if (!core) return;
+                               if (!found.ok) {
+                                 _logger->error("Cannot read " + presentity + " - " + found.error);
+                                 return then(std::nullopt);
+                               }
+                               if (!found.value) return then(pidf::registration(presentity, false));
+
+                               core->location_list(found.value->id, [this, self, presentity, then](plugins::Result<std::vector<types::Location>> bindings) {
+                                 if (!bindings.ok) {
+                                   _logger->error("Cannot read the bindings of " + presentity + " - " + bindings.error);
+                                   return then(std::nullopt);
+                                 }
+                                 then(pidf::registration(presentity, !bindings.value.empty()));
+                               });
+                             });
+      });
+}
+
+std::string Notifier::_content_type(const std::string& package) { return package == "presence" ? "application/pidf+xml" : "application/dialog-info+xml"; }
+
+std::string Notifier::_empty_document(const Subscription& subscription) {
+  return subscription.package == "presence" ? pidf::registration(subscription.presentity, false) : _dialog_info(subscription, {});
 }
 
 void Notifier::_schedule(const Subscription& subscription) {

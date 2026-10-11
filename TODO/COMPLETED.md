@@ -3248,3 +3248,29 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       publish and policy tests 217 of 218 under the Lua policy, the one skipped being the
       equivalence runner itself.
 
+### Presence, step 5: the presence package (2026-10-11)
+
+- [x] **The node is the notifier for `presence`** (RFC 3856) beside `dialog`:
+      `Allow-Events: presence, dialog`, and a SUBSCRIBE whose `Accept` cannot take the
+      package's document is 406 with the type it would get.
+- [x] **The document is composed from the publications** (`src/pidf.cpp`, hand-written as
+      the other parsers are): every tuple, note and extension element of each PIDF
+      publication, carried as published with the namespaces its root declared, tuples
+      first (RFC 3863 4.1); an element with an `id` in two publications is taken from the
+      one that lasts longer, the record holding no time of publishing. What is not PIDF
+      contributes nothing.
+- [x] **Nothing published, the bindings speak**: one tuple, `open` with a binding and
+      `closed` without, and no contact. The core now signals `presence/<aor>/changed` when
+      a binding is written or removed; lapsed bindings and publications are left to the
+      cluster step's reconcile.
+- [x] **Five seconds between a presentity's notifications** (RFC 3856 6.6.2), per
+      subscription, on the injected clock: changes inside the window are held and the
+      latest state sent when it opens; a NOTIFY answering a SUBSCRIBE goes at once. Kept in
+      the holder's memory rather than the record, as the design now says and why.
+- [x] 8 PIDF tests and 11 package tests, written first. The PIDF tests and five of the
+      package tests were watched failing; the sixth crashed in its own helper against the
+      old code, which was fixed, and the six after it were not run red again. The suite
+      1494 of 1495 with Redis and MQTT, the one skipped without a resolver; the proxy,
+      registrar, notifier, publish, presence and policy tests 282 of 282 under the Lua
+      policy.
+
