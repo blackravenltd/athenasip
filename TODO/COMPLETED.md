@@ -14,6 +14,15 @@ week, under Milestone 1. Everything after that is dated as it landed.
 
 Newest first. The detail is below, oldest first.
 
+- **0.11.0** (2026-10-11): trunks you can check, and the node packaged. A trunk harness
+  with sipp as the carrier; `--explain` puts a request to the policy and says each decision
+  in words; `--check-trunks` sends each trunk an OPTIONS; counters the cluster shares for
+  scripts; the trunk on each leg of a call and per-trunk metrics; the policy in
+  `GET /api/v1/nodes`. A Debian package for amd64 and arm64, a Homebrew formula, and the
+  release procedure. The presence design, and the decision that all state lives in the
+  datastore. Every check in `docs/testing.md`'s Before a release passed on the tagged tree,
+  the sipp harnesses and sanitizers included. `0.10.0` before it was merged but never
+  tagged.
 - **0.10.0** (2026-10-08): routing that is scripted, and trunks. Every decision about
   who may do what and where a call goes is asked of a policy plugin: `builtin://`, the
   default, is the node's behaviour as it was, and `lua://` runs Lua 5.4 scripts in a
