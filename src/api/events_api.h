@@ -20,7 +20,7 @@
 namespace athenasip::api {
 
 // GET /api/v1/events: the event bus as Server-Sent Events, for a console that wants to watch rather than poll.
-// Each message on nodes/#, subscribers/# and calls/# is one event named by its topic, with the message as its
+// Each message on nodes/#, subscribers/#, calls/# and presence/# is one event named by its topic, with the message as its
 // data, for as long as the client stays.
 class EventsAPI : public std::enable_shared_from_this<EventsAPI> {
  public:

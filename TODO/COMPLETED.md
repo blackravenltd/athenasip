@@ -3336,3 +3336,27 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       with Redis and MQTT, the one skipped without a resolver; 310 of 311 of the presence,
       proxy, registrar, orphan and policy tests under the Lua policy, the one skipped being
       the equivalence runner.
+
+### Presence, step 8: the API and the events (2026-10-11)
+
+- [x] **`GET /api/v1/presence/subscriptions`** (`view-cluster-status`): every subscription,
+      read from the datastore through `Notifier::subscriptions`: watcher, presentity,
+      package, holder and expiry. The datastore lists by holder, so it is this node's and
+      each node's the directory has heard, a stale one included; one held by a node the bus
+      never heard is missed until it lapses, which keeps the datastore contract as it is.
+- [x] **`GET /api/v1/realms/{realm}/subscribers/{user}/presence`**
+      (`manage-realm-subscribers`): the state a watcher is sent, through `Notifier::state`:
+      `basic` (open when any tuple is, `pidf::basic`), its `source` (published or
+      registrations), the composed PIDF, each publication with its entity tag and expiry,
+      and its dialogs from its own side. 404 `not_found` for no such subscriber, 404
+      `presence_off` with presence off. The notifier's composition and RFC 4235 dialog
+      mapping were split out (`_compose`, `dialogs_of`) so the API and the NOTIFY cannot
+      disagree.
+- [x] **`/api/v1/events` carries `presence/#`**, so a console follows a subscriber without
+      polling. `docs/events.md` lists the topic and its payloads; the OpenAPI document,
+      `docs/authentication.md` and the design have the routes.
+- [x] 8 API tests, a PIDF test, an events test and an OpenAPI test, written first. Only the
+      events test could be watched failing (without the topic); the others need the class
+      or function they test to compile. The suite 1522 of 1523 with Redis and MQTT, the one
+      skipped without a resolver; 318 of 319 under the Lua policy, the one skipped being the
+      equivalence runner.

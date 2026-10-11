@@ -22,6 +22,7 @@
 #include "dns/sip_locator.h"
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
+#include "plugins/plugin.h"
 #include "sip_message.h"
 #include "timer_source.h"
 #include "transactions/transaction_base.h"
@@ -69,6 +70,46 @@ class Notifier : public std::enable_shared_from_this<Notifier> {
   static bool owns(const SIPMessage& request);
 
   void on_in_dialog(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction);
+
+  // A subscription as an administrator sees it.
+  struct Watch {
+    std::string id;
+    std::string watcher;
+    std::string presentity;
+    std::string package;
+    std::string node_id;
+    std::time_t expires_at = 0;
+  };
+
+  // Every subscription in the cluster, read from the datastore: this node's and those of each node the directory has
+  // heard, stale ones too, since a gone node's stay until they are taken over or lapse. Answers on the strand.
+  void subscriptions(std::function<void(plugins::Result<std::vector<Watch>>)> then);
+
+  // One of a presentity's dialogs from its own side (RFC 4235 3.7.1), as a NOTIFY reports it.
+  struct Dialog {
+    std::string id;
+    std::string call_id;
+    std::string state;
+    std::string direction;
+    std::string local_tag;
+    std::string remote_tag;
+    std::string local;
+    std::string remote;
+  };
+
+  static std::vector<Dialog> dialogs_of(const std::string& presentity, const std::vector<std::shared_ptr<Call>>& calls);
+
+  // A presentity's state as its watchers are told it.
+  struct State {
+    std::string document;  // the PIDF a presence watcher is sent
+    std::string basic;     // pidf::basic of it
+    std::string source;    // "published", or "registrations" when nothing is
+    std::vector<types::PresenceRecord> publications;
+    std::vector<Dialog> dialogs;
+  };
+
+  // Answers on the strand.
+  void state(const std::string& aor, std::function<void(plugins::Result<State>)> then);
 
  private:
   // The subscription dialog (RFC 6665 4.1, RFC 3261 12.1.2), as its record's body holds it.
@@ -166,6 +207,9 @@ class Notifier : public std::enable_shared_from_this<Notifier> {
 
   // RFC 3856: what the presentity published, composed, or else what its registrations say.
   void _presence(const Subscription& subscription, std::function<void(std::optional<std::string>)> then);
+
+  // The presence state, from the publications or else the bindings: nullopt when it cannot be read.
+  void _compose(const std::string& presentity, std::function<void(std::optional<State>)> then);
 
   // The package's body type, and its document with nothing in it.
   static std::string _content_type(const std::string& package);

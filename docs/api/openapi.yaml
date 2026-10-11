@@ -82,6 +82,8 @@ tags:
     description: Who may call and where a call goes (docs/scripting.md)
   - name: trunks
     description: The carriers and PBXs calls leave by and arrive from
+  - name: presence
+    description: Who is watching whom, and what each subscriber's watchers are told (RFC 3856, RFC 4235)
 
 paths:
   /health:
@@ -234,8 +236,8 @@ paths:
       summary: The event bus, as Server-Sent Events
       description: |
         A `text/event-stream` response that stays open. Every message on `nodes/#`,
-        `subscribers/#` and `calls/#` is one event, named by its topic, with the message as
-        its data. A comment every fifteen seconds keeps intermediaries from closing an idle
+        `subscribers/#`, `calls/#` and `presence/#` is one event, named by its topic, with the
+        message as its data. A comment every fifteen seconds keeps intermediaries from closing an idle
         stream. A node serves at most 32 at once; past that it answers 503
         `too_many_streams`.
 
@@ -539,6 +541,65 @@ paths:
           description: Deleted
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /realms/{realm}/subscribers/{user}/presence:
+    parameters:
+      - $ref: "#/components/parameters/Realm"
+      - $ref: "#/components/parameters/User"
+    get:
+      operationId: getSubscriberPresence
+      tags: [presence]
+      summary: A subscriber's presence, as its watchers are told it
+      description: |
+        Composed from what the subscriber published (RFC 3903) or, with nothing published,
+        from whether it has a registration, as the `presence` package's NOTIFY is; and its
+        dialogs from its own side, as the `dialog` package's is (RFC 4235). Read from the
+        datastore, so any node of the cluster gives the same answer.
+
+        `presence/<aor>/changed` on `/events` says when to read it again.
+      responses:
+        "200":
+          description: The subscriber's state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Presence"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: |
+            No such subscriber (`not_found`), or presence is off on this node or its
+            datastore cannot hold it (`presence_off`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /presence/subscriptions:
+    get:
+      operationId: listPresenceSubscriptions
+      tags: [presence]
+      summary: Who is watching whom, across the cluster
+      description: |
+        Every subscription to a package the node is the notifier for (`presence`,
+        `dialog`), read from the datastore: this node's, and those of every node it has
+        heard on the bus, including one gone stale whose subscriptions are yet to be taken
+        over or to lapse. Needs the same role as `/nodes`.
+      responses:
+        "200":
+          description: The subscriptions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PresenceSubscription"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /registrations:
     get:
@@ -2157,3 +2218,79 @@ components:
         path:
           type: string
           description: The RFC 3327 Path recorded at registration
+
+    PresenceSubscription:
+      type: object
+      properties:
+        id:
+          type: string
+          description: The subscription's identifier
+        watcher:
+          type: string
+          description: Who is watching, as the SUBSCRIBE's From named them
+        presentity:
+          type: string
+          description: Whom they watch, an address of record
+        package:
+          type: string
+          enum: [presence, dialog]
+        node_id:
+          type: string
+          description: The node that holds the watcher's subscription and sends its NOTIFYs
+        expires_at:
+          type: integer
+          format: int64
+
+    Presence:
+      type: object
+      properties:
+        subscriber:
+          type: string
+          description: The address of record
+        basic:
+          type: string
+          enum: [open, closed]
+          description: Open when any tuple is (RFC 3863 4.1.4)
+        source:
+          type: string
+          enum: [published, registrations]
+          description: Whether the state is what was published, or whether it has a registration
+        document:
+          type: string
+          description: The PIDF document a `presence` watcher is sent
+        publications:
+          type: array
+          items:
+            type: object
+            properties:
+              etag:
+                type: string
+                description: The entity tag the publisher refreshes it by (RFC 3903 SIP-ETag)
+              content_type:
+                type: string
+              expires_at:
+                type: integer
+                format: int64
+              document:
+                type: string
+                description: As published
+        dialogs:
+          type: array
+          description: Its calls now, from its own side
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              call_id:
+                type: string
+              state:
+                type: string
+                enum: [trying, early, confirmed, terminated]
+              direction:
+                type: string
+                enum: [initiator, recipient]
+              local:
+                type: string
+              remote:
+                type: string

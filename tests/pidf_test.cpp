@@ -108,3 +108,16 @@ TEST(PidfTest, TheEntityIsEscaped) {
   const auto composed = pidf::registration("sip:a&b@example.com", true);
   EXPECT_NE(composed.find("entity=\"sip:a&amp;b@example.com\""), std::string::npos);
 }
+
+// RFC 3863 4.1.4: each tuple's basic status is open or closed. The summary a console shows is open when any tuple is,
+// as a buddy list shows someone reachable on any device.
+TEST(PidfTest, ThePresentityIsOpenWhenAnyTupleIs) {
+  EXPECT_EQ(pidf::basic(document(tuple("phone", "closed") + tuple("desk", "open"))), "open");
+  EXPECT_EQ(pidf::basic(document(tuple("phone", "closed"))), "closed");
+  EXPECT_EQ(pidf::basic(document("<note>nothing to say</note>")), "closed");
+
+  // Under a prefix of the publisher's choosing, and with the whitespace XML allows.
+  EXPECT_EQ(pidf::basic("<p:presence xmlns:p=\"urn:ietf:params:xml:ns:pidf\" entity=\"sip:a@example.com\"><p:tuple id=\"t\"><p:status><p:basic> open "
+                        "</p:basic></p:status></p:tuple></p:presence>"),
+            "open");
+}

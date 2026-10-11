@@ -586,7 +586,8 @@ NOTIFY.
 
 - [ ] The cluster, the rest: `test/e2e/cluster.sh` with a watcher on one node and a call on
       the other. Everything else of the cluster step is in (`COMPLETED.md`).
-- [ ] API and console: who is watching whom, and each subscriber's state.
+- [ ] The console's presence screens, from the API step 8 built: the admin session's to
+      build (`docs/design/presence.md`, The API and the console).
 - [ ] sipp scenarios, and a Linphone or desk phone against a live node. AthenaPhone agreed
       on 2026-10-11 to be the real client once its PJSIP engine has presence: one
       subscription per buddy for `presence` and `dialog`, PUBLISH of PIDF, BLF pickup with
