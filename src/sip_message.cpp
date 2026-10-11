@@ -63,6 +63,7 @@ std::shared_ptr<SIPMessage> SIPMessage::clone() const {
   copy->subscriber = subscriber;
   copy->contact = contact;
   copy->authenticated = authenticated;
+  copy->authenticated_aor = authenticated_aor;
 
   return copy;
 }

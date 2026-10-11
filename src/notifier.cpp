@@ -1,0 +1,579 @@
+//
+// AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
+//
+// Copyright (C) 2026 Tom Cully <mail@tomcully.com>
+// Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
+//
+#include "notifier.h"
+
+#include <algorithm>
+#include <boost/json.hpp>
+#include <ctime>
+#include <utility>
+
+#include "channel.h"
+#include "core.h"
+#include "headers/sip_identity_header.h"
+#include "headers/string_header.h"
+#include "util.h"
+
+namespace athenasip {
+
+namespace {
+
+// The dialog package's default duration (RFC 4235 3.3), and how long a record outlives its expiry so the final
+// NOTIFY can still read it.
+constexpr std::uint32_t kDefaultExpires = 3600;
+constexpr std::uint32_t kGraceSeconds = 32;
+
+std::string value_of(const SIPMessage& message, const std::string& name) {
+  return message.header->contains(name) ? message.header->headers_map[name][0]->to_string() : "";
+}
+
+std::shared_ptr<types::SIPIdentity> identity_of(const SIPMessage& message, const std::string& name) {
+  if (!message.header->contains(name)) return nullptr;
+  auto header = message.header->headers_map[name][0]->as<headers::SIPIdentityHeader>();
+  return header != nullptr ? header->value : nullptr;
+}
+
+std::string tag_of(const SIPMessage& message, const std::string& name) {
+  auto identity = identity_of(message, name);
+  if (!identity) return "";
+  auto found = identity->tags.find("tag");
+  return found == identity->tags.end() ? "" : found->second;
+}
+
+// RFC 6665 8.2.1: Event = event-type *( SEMI event-param ), compared case-insensitively.
+std::string package_of(const std::string& event) { return Util::to_lower(Util::trim(event.substr(0, event.find(';')))); }
+
+std::string event_id_of(const std::string& event) {
+  std::size_t at = event.find(';');
+  while (at != std::string::npos) {
+    const auto next = event.find(';', at + 1);
+    const auto param = Util::trim(event.substr(at + 1, next == std::string::npos ? std::string::npos : next - at - 1));
+    if (Util::to_lower(param.substr(0, 3)) == "id=") return param.substr(3);
+    at = next;
+  }
+  return "";
+}
+
+std::uint64_t cseq_of(const SIPMessage& message) {
+  try {
+    return std::stoull(value_of(message, "CSeq"));
+  } catch (const std::exception&) {
+    return 0;
+  }
+}
+
+std::string xml_escape(const std::string& text) {
+  std::string out;
+  for (const char c : text) {
+    switch (c) {
+      case '&':
+        out += "&amp;";
+        break;
+      case '<':
+        out += "&lt;";
+        break;
+      case '>':
+        out += "&gt;";
+        break;
+      case '"':
+        out += "&quot;";
+        break;
+      default:
+        out += c;
+    }
+  }
+  return out;
+}
+
+}  // namespace
+
+Notifier::Notifier(std::shared_ptr<loggers::Logger> logger, std::weak_ptr<Core> core)
+    : _logger(std::make_shared<loggers::LoggerScoped>("notifier", std::move(logger))), _core(std::move(core)) {}
+
+bool Notifier::wants(const SIPMessage& request) const {
+  auto core = _core.lock();
+  if (!core || !core->config->presence_enable || !core->datastore || !core->datastore->supports_presence()) return false;
+
+  if (request.header->request_method != "SUBSCRIBE" || !tag_of(request, "To").empty()) return false;
+  if (package_of(value_of(request, "Event")) != packages()) return false;
+
+  // Passing through, or routed back down a flow: not addressed to the AOR.
+  if (request.header->contains("Route") || !request.flow_token.empty()) return false;
+
+  // A peer that forwarded it chose not to answer it, and is the one that knows the watcher.
+  if (auto channel = request.channel.lock(); channel && !channel->peer_node().empty()) return false;
+
+  return request.header->request_uri && !request.header->request_uri->user.empty();
+}
+
+void Notifier::on_subscribe(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::function<void()> otherwise) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  auto self = shared_from_this();
+  const auto host = Util::to_lower(request->header->request_uri->host);
+
+  core->realm_get_by_name(host, [this, self, request, transaction, otherwise](plugins::Result<std::shared_ptr<types::Realm>> found) {
+    auto core = _core.lock();
+    if (!core) return;
+
+    if (!found.ok) {
+      _logger->error("Cannot read a realm for a SUBSCRIBE - " + found.error);
+      return _send_status(transaction, request, 500, "Server Internal Error");
+    }
+    if (!found.value) return otherwise();
+
+    const auto realm = found.value;
+
+    // RFC 6665 4.1.2.1: the Contact is the dialog's remote target.
+    auto contact = identity_of(*request, "Contact");
+    if (!contact || !contact->uri || !contact->uri->valid) {
+      _logger->info("SUBSCRIBE with no usable Contact - 400");
+      return _send_status(transaction, request, 400, "Bad Request");
+    }
+
+    const auto expiry = _expiry(*request, true);
+    if (expiry.code == 423) {
+      return _send_status(transaction, request, 423, "Interval Too Brief", {{"Min-Expires", std::to_string(core->config->presence_min_expires)}});
+    }
+
+    const auto presentity = "sip:" + request->header->request_uri->user + "@" + realm->name;
+    const auto package = package_of(value_of(*request, "Event"));
+
+    auto identity = std::make_shared<types::SIPIdentity>(presentity);
+    core->subscriber_get(
+        identity, [this, self, request, transaction, realm, presentity, package, expiry](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
+          if (!found.ok) {
+            _logger->error("Cannot read " + presentity + " for a SUBSCRIBE - " + found.error);
+            return _send_status(transaction, request, 500, "Server Internal Error");
+          }
+          if (!found.value) {
+            _logger->info("SUBSCRIBE to " + presentity + ", who is nobody here - 404");
+            return _send_status(transaction, request, 404, "Not Found");
+          }
+
+          // Decided 2026-10-11: a watcher is a subscriber proven to be one, in the presentity's own realm.
+          const auto& watcher = request->authenticated_aor;
+          const auto at = watcher.rfind('@');
+          if (watcher.empty() || at == std::string::npos || watcher.substr(at + 1) != realm->name) {
+            _logger->info("SUBSCRIBE to " + presentity + " from " + (watcher.empty() ? std::string("an unproven watcher") : watcher) + " - 403");
+            return _send_status(transaction, request, 403, "Forbidden");
+          }
+
+          _accept(request, transaction, presentity, package, expiry.granted);
+        });
+  });
+}
+
+bool Notifier::owns(const SIPMessage& request) {
+  return request.header->request_uri && request.header->request_uri->has_parameter(kSubscriptionParameter) && !tag_of(request, "To").empty();
+}
+
+void Notifier::on_in_dialog(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  // Only the watcher sends in this dialog, and only to refresh or end it (RFC 6665 4.1.2.2).
+  if (request->header->request_method == "ACK") return;
+  if (request->header->request_method != "SUBSCRIBE") {
+    return _send_status(transaction, request, 405, "Method Not Allowed", {{"Allow", "SUBSCRIBE"}});
+  }
+
+  const auto id = request->header->request_uri->parameter(kSubscriptionParameter);
+  auto self = shared_from_this();
+
+  core->datastore->presence_get(core->strand(), types::PresenceRecord::Kind::Subscription, id,
+                                [this, self, request, transaction, id](plugins::Result<std::optional<types::PresenceRecord>> found) {
+                                  if (!found.ok) {
+                                    _logger->error("Cannot read subscription " + id + " - " + found.error);
+                                    return _send_status(transaction, request, 500, "Server Internal Error");
+                                  }
+
+                                  auto subscription = found.value ? _parse(*found.value) : std::nullopt;
+
+                                  // RFC 3261 12.2.2: the dialog is the Call-ID and both tags.
+                                  if (!subscription || subscription->call_id != value_of(*request, "Call-ID") ||
+                                      subscription->remote_tag != tag_of(*request, "From") || subscription->local_tag != tag_of(*request, "To")) {
+                                    _logger->info("SUBSCRIBE in no subscription this node knows - 481");
+                                    return _send_status(transaction, request, 481, "Call/Transaction Does Not Exist");
+                                  }
+
+                                  // RFC 3261 12.2.2: a CSeq not above the last is out of order.
+                                  const auto cseq = cseq_of(*request);
+                                  if (cseq <= subscription->remote_cseq) return _send_status(transaction, request, 500, "Server Internal Error");
+
+                                  // RFC 6665 4.5.2: one subscription to a dialog.
+                                  const auto event = value_of(*request, "Event");
+                                  if (package_of(event) != subscription->package || event_id_of(event) != subscription->event_id) {
+                                    return _send_status(transaction, request, 489, "Bad Event", {{"Allow-Events", packages()}});
+                                  }
+
+                                  subscription->remote_cseq = cseq;
+                                  _refresh(request, transaction, std::move(*subscription));
+                                });
+}
+
+Notifier::Expiry Notifier::_expiry(const SIPMessage& request, bool initial) const {
+  (void)initial;
+  auto core = _core.lock();
+  Expiry expiry;
+  expiry.granted = kDefaultExpires;
+
+  if (request.header->contains("Expires")) {
+    try {
+      expiry.granted = static_cast<std::uint32_t>(std::stoul(value_of(request, "Expires")));
+    } catch (const std::exception&) {
+      expiry.granted = kDefaultExpires;
+    }
+  }
+
+  // Zero is an unsubscribe, or on a new SUBSCRIBE a fetch (RFC 6665 4.1.2.3, 4.2.1.1).
+  if (expiry.granted == 0 || !core) return expiry;
+
+  if (expiry.granted < core->config->presence_min_expires) {
+    expiry.code = 423;
+    return expiry;
+  }
+
+  expiry.granted = std::min(expiry.granted, core->config->presence_max_expires);
+  return expiry;
+}
+
+void Notifier::_accept(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::string presentity,
+                       std::string package, std::uint32_t expires) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  auto channel = request->channel.lock();
+  const auto realm = presentity.substr(presentity.rfind('@') + 1);
+  const auto event = value_of(*request, "Event");
+
+  auto response = request->generate_response();
+
+  Subscription subscription;
+  subscription.id = Util::generate_random_string("", 24);
+  subscription.presentity = presentity;
+  subscription.package = std::move(package);
+  subscription.event_id = event_id_of(event);
+  subscription.call_id = value_of(*request, "Call-ID");
+  subscription.local_tag = tag_of(*response, "To");
+  subscription.remote_tag = tag_of(*request, "From");
+  subscription.watcher_uri = identity_of(*request, "From")->uri->to_string();
+  subscription.presentity_uri = identity_of(*request, "To") && identity_of(*request, "To")->uri ? identity_of(*request, "To")->uri->to_string() : presentity;
+  subscription.remote_target = identity_of(*request, "Contact")->uri->to_string();
+  if (request->header->contains("Record-Route")) {
+    for (const auto& route : request->header->headers_map["Record-Route"]) subscription.route_set.push_back(route->to_string());
+  }
+
+  // In the presentity's realm, not at this node: the watcher reached this node through the realm, and a refresh
+  // that does the same reaches whichever node serves it, which reads the subscription back by this parameter.
+  const auto transport = channel && channel->_connection ? Util::to_lower(channel->_connection->transport_name()) : std::string("udp");
+  subscription.contact = "sip:" + realm + (transport == "udp" ? "" : ";transport=" + transport) + ";" + kSubscriptionParameter + "=" + subscription.id;
+
+  subscription.remote_cseq = cseq_of(*request);
+  subscription.expires = expires;
+  subscription.expires_at = std::time(nullptr) + static_cast<std::time_t>(expires);
+  subscription.flow_id = channel ? channel->flow_id() : "";
+  subscription.node_id = core->config->sip_node_id;
+
+  response->header->response_code = 200;
+  response->header->response_message = "OK";
+  response->header->add("Expires", std::make_shared<headers::StringHeader>(std::to_string(expires)));
+  response->header->add("Contact", std::make_shared<headers::StringHeader>("<" + subscription.contact + ">"));
+  response->header->add("Allow-Events", std::make_shared<headers::StringHeader>(packages()));
+
+  // RFC 6665 4.2.1.1: Expires 0 asks for the state once. Nothing is kept.
+  if (expires == 0) {
+    transaction->send(response);
+    return _notify(std::move(subscription), "terminated;reason=timeout");
+  }
+
+  auto self = shared_from_this();
+  _store(subscription, [this, self, request, transaction, response, subscription](bool stored) {
+    if (!stored) return _send_status(transaction, request, 500, "Server Internal Error");
+
+    _logger->info(subscription.watcher_uri + " watches " + subscription.presentity + " (" + subscription.package + ") for " +
+                  std::to_string(subscription.expires) + "s");
+    transaction->send(response);
+    _schedule(subscription);
+    _notify(subscription, "active");
+  });
+}
+
+void Notifier::_refresh(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, Subscription subscription) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  const auto expiry = _expiry(*request, false);
+  if (expiry.code == 423) {
+    return _send_status(transaction, request, 423, "Interval Too Brief", {{"Min-Expires", std::to_string(core->config->presence_min_expires)}});
+  }
+
+  // RFC 6665 4.1.2.2: SUBSCRIBE refreshes the target.
+  if (auto contact = identity_of(*request, "Contact"); contact && contact->uri && contact->uri->valid) subscription.remote_target = contact->uri->to_string();
+
+  // The watcher's flow is the one its latest SUBSCRIBE came over, and the node that has it holds the subscription.
+  if (auto channel = request->channel.lock()) subscription.flow_id = channel->flow_id();
+  subscription.node_id = core->config->sip_node_id;
+
+  auto response = request->generate_response();
+  response->header->response_code = 200;
+  response->header->response_message = "OK";
+  response->header->add("Expires", std::make_shared<headers::StringHeader>(std::to_string(expiry.granted)));
+  response->header->add("Contact", std::make_shared<headers::StringHeader>("<" + subscription.contact + ">"));
+  response->header->add("Allow-Events", std::make_shared<headers::StringHeader>(packages()));
+
+  // RFC 6665 4.1.2.3: Expires 0 ends it, with a final NOTIFY.
+  if (expiry.granted == 0) {
+    _logger->info(subscription.watcher_uri + " no longer watches " + subscription.presentity);
+    transaction->send(response);
+    return _notify(std::move(subscription), "terminated;reason=timeout");
+  }
+
+  subscription.expires = expiry.granted;
+  subscription.expires_at = std::time(nullptr) + static_cast<std::time_t>(expiry.granted);
+
+  auto self = shared_from_this();
+  _store(subscription, [this, self, request, transaction, response, subscription](bool stored) {
+    if (!stored) return _send_status(transaction, request, 500, "Server Internal Error");
+
+    transaction->send(response);
+    _schedule(subscription);
+    _notify(subscription, "active");
+  });
+}
+
+void Notifier::_store(const Subscription& subscription, std::function<void(bool)> then) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  types::PresenceRecord record;
+  record.kind = types::PresenceRecord::Kind::Subscription;
+  record.id = subscription.id;
+  record.aor = subscription.presentity;
+  record.node_id = subscription.node_id;
+  record.content_type = "application/json";
+  record.body = _body(subscription);
+
+  const auto remaining = subscription.expires_at - std::time(nullptr);
+  const auto seconds = static_cast<std::uint32_t>(std::max<std::time_t>(remaining, 1)) + kGraceSeconds;
+
+  auto self = shared_from_this();
+  core->datastore->presence_put(core->strand(), std::move(record), seconds, [this, self, id = subscription.id, then](plugins::Status status) {
+    if (!status.ok) _logger->error("Cannot store subscription " + id + " - " + status.error);
+    then(status.ok);
+  });
+}
+
+void Notifier::_end(const Subscription& subscription) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  if (auto timer = _timers.find(subscription.id); timer != _timers.end()) {
+    if (timer->second) timer->second->cancel();
+    _timers.erase(timer);
+  }
+
+  auto self = shared_from_this();
+  core->datastore->presence_delete(core->strand(), types::PresenceRecord::Kind::Subscription, subscription.id,
+                                   [this, self, id = subscription.id](plugins::Status status) {
+                                     if (!status.ok) _logger->error("Cannot remove subscription " + id + " - " + status.error);
+                                   });
+}
+
+void Notifier::_notify(Subscription subscription, std::string state) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  const bool terminated = state.rfind("terminated", 0) == 0;
+
+  auto channel = core->channel_find(subscription.flow_id);
+  if (!channel || !channel->_connection) {
+    _logger->info("The flow to " + subscription.watcher_uri + " has gone; ending its subscription to " + subscription.presentity);
+    return _end(subscription);
+  }
+
+  if (!terminated) {
+    const auto remaining = std::max<std::time_t>(subscription.expires_at - std::time(nullptr), 0);
+    state += ";expires=" + std::to_string(remaining);
+  }
+
+  const auto body = _document(subscription);
+  subscription.local_cseq += 1;
+  subscription.version += 1;
+
+  const auto transport = Util::to_upper(channel->_connection->transport_name());
+  const auto advertised = core->advertised_for(*channel);
+  const auto branch = std::string("z9hG4bK") + Util::generate_random_string("", 16);
+
+  std::string raw = "NOTIFY " + subscription.remote_target + " SIP/2.0\r\n";
+  raw += "Via: SIP/2.0/" + transport + " " + advertised.host + ":" + std::to_string(advertised.port) + ";branch=" + branch + ";rport\r\n";
+  raw += "Max-Forwards: 70\r\n";
+  for (const auto& route : subscription.route_set) raw += "Route: " + route + "\r\n";
+  raw += "From: <" + subscription.presentity_uri + ">;tag=" + subscription.local_tag + "\r\n";
+  raw += "To: <" + subscription.watcher_uri + ">;tag=" + subscription.remote_tag + "\r\n";
+  raw += "Call-ID: " + subscription.call_id + "\r\n";
+  raw += "CSeq: " + std::to_string(subscription.local_cseq) + " NOTIFY\r\n";
+  raw += "Contact: <" + subscription.contact + ">\r\n";
+  raw += "Event: " + subscription.package + (subscription.event_id.empty() ? "" : ";id=" + subscription.event_id) + "\r\n";
+  raw += "Subscription-State: " + state + "\r\n";
+  raw += "Allow-Events: " + std::string(packages()) + "\r\n";
+  raw += "Content-Type: application/dialog-info+xml\r\n";
+
+  auto notify = std::make_shared<SIPMessage>();
+  notify->header = std::make_shared<SIPHeader>(raw);
+  notify->body = body;
+  notify->body_length = static_cast<unsigned int>(body.size());
+  notify->branch = branch;
+
+  auto self = shared_from_this();
+  auto send = [this, self, notify, channel, subscription]() {
+    auto core = _core.lock();
+    if (!core) return;
+
+    // RFC 6665 4.2.2: a NOTIFY that fails ends the subscription.
+    core->client_transaction_start(
+        notify, channel,
+        [this, self, subscription](std::shared_ptr<SIPMessage> response) {
+          if (!response || !response->header || response->header->response_code < 300) return;
+          _logger->info("A NOTIFY to " + subscription.watcher_uri + " was answered " + std::to_string(response->header->response_code) +
+                        "; ending its subscription to " + subscription.presentity);
+          _end(subscription);
+        },
+        [this, self, subscription]() {
+          _logger->info("A NOTIFY to " + subscription.watcher_uri + " had no answer; ending its subscription to " + subscription.presentity);
+          _end(subscription);
+        });
+  };
+
+  // A final NOTIFY ends the subscription, and a live one is stored before it goes, with its new CSeq and version,
+  // so the next NOTIFY from any node follows on from it.
+  if (terminated) {
+    _end(subscription);
+    return send();
+  }
+
+  _store(subscription, [send](bool) mutable { send(); });
+}
+
+std::string Notifier::_document(const Subscription& subscription) const {
+  // RFC 4235 4.1: the full state of the presentity's dialogs. Its dialogs come with the package's state (the build
+  // order's next step); until then a full document with none.
+  return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<dialog-info xmlns=\"urn:ietf:params:xml:ns:dialog-info\" version=\"" +
+         std::to_string(subscription.version) + "\" state=\"full\" entity=\"" + xml_escape(subscription.presentity) + "\"/>\r\n";
+}
+
+void Notifier::_schedule(const Subscription& subscription) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  if (auto existing = _timers.find(subscription.id); existing != _timers.end() && existing->second) existing->second->cancel();
+
+  std::weak_ptr<Notifier> weak_self = weak_from_this();
+  const auto id = subscription.id;
+  _timers[id] = core->timer_source()->schedule(std::chrono::seconds(subscription.expires), [weak_self, id]() {
+    auto self = weak_self.lock();
+    if (!self) return;
+    if (auto core = self->_core.lock()) core->post([self, id]() { self->_expired(id); });
+  });
+}
+
+void Notifier::_expired(const std::string& id) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  _timers.erase(id);
+
+  auto self = shared_from_this();
+  core->datastore->presence_get(core->strand(), types::PresenceRecord::Kind::Subscription, id,
+                                [this, self, id](plugins::Result<std::optional<types::PresenceRecord>> found) {
+                                  auto core = _core.lock();
+                                  if (!core || !found.ok || !found.value) return;
+
+                                  auto subscription = _parse(*found.value);
+
+                                  // Refreshed elsewhere, or here since this timer was set: not this timer's to end.
+                                  if (!subscription || subscription->node_id != core->config->sip_node_id || _timers.contains(id)) return;
+
+                                  _logger->info(subscription->watcher_uri + "'s subscription to " + subscription->presentity + " has expired");
+                                  _notify(std::move(*subscription), "terminated;reason=timeout");
+                                });
+}
+
+void Notifier::_send_status(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request, std::uint16_t code,
+                            const std::string& reason, const std::vector<std::pair<std::string, std::string>>& headers) {
+  if (!transaction) return;
+
+  auto response = request->generate_response();
+  response->header->response_code = code;
+  response->header->response_message = reason;
+  for (const auto& [name, value] : headers) response->header->add(name, std::make_shared<headers::StringHeader>(value));
+  transaction->send(response);
+}
+
+std::string Notifier::_body(const Subscription& subscription) {
+  boost::json::object obj;
+  obj["id"] = subscription.id;
+  obj["presentity"] = subscription.presentity;
+  obj["package"] = subscription.package;
+  obj["event_id"] = subscription.event_id;
+  obj["call_id"] = subscription.call_id;
+  obj["local_tag"] = subscription.local_tag;
+  obj["remote_tag"] = subscription.remote_tag;
+  obj["watcher_uri"] = subscription.watcher_uri;
+  obj["presentity_uri"] = subscription.presentity_uri;
+  obj["remote_target"] = subscription.remote_target;
+
+  boost::json::array routes;
+  for (const auto& route : subscription.route_set) routes.push_back(boost::json::value(route));
+  obj["route_set"] = std::move(routes);
+
+  obj["contact"] = subscription.contact;
+  obj["local_cseq"] = subscription.local_cseq;
+  obj["remote_cseq"] = subscription.remote_cseq;
+  obj["version"] = subscription.version;
+  obj["expires"] = subscription.expires;
+  obj["expires_at"] = static_cast<std::int64_t>(subscription.expires_at);
+  obj["flow_id"] = subscription.flow_id;
+  obj["node_id"] = subscription.node_id;
+  return boost::json::serialize(obj);
+}
+
+std::optional<Notifier::Subscription> Notifier::_parse(const types::PresenceRecord& record) {
+  try {
+    const auto parsed = boost::json::parse(record.body);
+    const auto& obj = parsed.as_object();
+    auto text = [&obj](const char* key) { return std::string(obj.at(key).as_string().c_str()); };
+    auto number = [&obj](const char* key) { return obj.at(key).to_number<std::uint64_t>(); };
+
+    Subscription subscription;
+    subscription.id = text("id");
+    subscription.presentity = text("presentity");
+    subscription.package = text("package");
+    subscription.event_id = text("event_id");
+    subscription.call_id = text("call_id");
+    subscription.local_tag = text("local_tag");
+    subscription.remote_tag = text("remote_tag");
+    subscription.watcher_uri = text("watcher_uri");
+    subscription.presentity_uri = text("presentity_uri");
+    subscription.remote_target = text("remote_target");
+    for (const auto& route : obj.at("route_set").as_array()) subscription.route_set.emplace_back(route.as_string().c_str());
+    subscription.contact = text("contact");
+    subscription.local_cseq = number("local_cseq");
+    subscription.remote_cseq = number("remote_cseq");
+    subscription.version = number("version");
+    subscription.expires = static_cast<std::uint32_t>(number("expires"));
+    subscription.expires_at = static_cast<std::time_t>(obj.at("expires_at").to_number<std::int64_t>());
+    subscription.flow_id = text("flow_id");
+    // The holder is the record's, which a move rewrites.
+    subscription.node_id = record.node_id;
+    return subscription;
+  } catch (const std::exception&) {
+    return std::nullopt;
+  }
+}
+
+}  // namespace athenasip

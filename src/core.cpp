@@ -22,6 +22,7 @@
 #include "events/topics.h"
 #include "expiry_set.h"
 #include "local_ua.h"
+#include "notifier.h"
 #include "policy/builtin_policy.h"
 #include "proxy.h"
 #include "push/push_parameters.h"
@@ -779,6 +780,11 @@ std::shared_ptr<LocalUA> Core::local_ua() {
   return _local_ua;
 }
 
+std::shared_ptr<Notifier> Core::notifier() {
+  if (!_notifier) _notifier = std::make_shared<Notifier>(_logger->base_logger(), weak_from_this());
+  return _notifier;
+}
+
 void Core::local_request(std::shared_ptr<SIPMessage> request, transactions::TransactionBase::SendFn on_final) {
   // A server transaction like any other, except that its answer stays here. It has no transport, so no
   // retransmissions to absorb, and it is not filed: nothing arrives for it.
@@ -802,6 +808,12 @@ void Core::_deliver_to_tu(const std::shared_ptr<SIPMessage>& request, const std:
   _dialogs->observe_request(request);
 
   const auto& method = request->header->request_method;
+
+  // Addressed to a Contact the notifier gave: inside one of its subscriptions, wherever the dialog began.
+  if (Notifier::owns(*request)) {
+    notifier()->on_in_dialog(request, transaction);
+    return;
+  }
 
   if (method == "REGISTER") {
     _registrar->on_request(request, transaction);

@@ -878,6 +878,30 @@
         }
       }
     },
+    "presence": {
+      "description": "The node as the notifier for the dialog package (BLF) and presence (docs/design/presence.md).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enable": {
+          "description": "False proxies SUBSCRIBE and PUBLISH to the devices, as any request.",
+          "type": "boolean",
+          "default": true
+        },
+        "min_expires": {
+          "description": "The shortest subscription or publication accepted, in seconds; 423 below it.",
+          "type": "integer",
+          "minimum": 1,
+          "default": 60
+        },
+        "max_expires": {
+          "description": "The longest subscription or publication granted, in seconds.",
+          "type": "integer",
+          "minimum": 1,
+          "default": 3600
+        }
+      }
+    },
     "calls": {
       "description": "The record of calls.",
       "type": "object",

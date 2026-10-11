@@ -23,6 +23,7 @@
 #include "headers/via_header.h"
 #include "loggers/logger_scoped.h"
 #include "media/media_engine.h"
+#include "notifier.h"
 #include "push/push_parameters.h"
 #include "qualifier.h"
 #include "types/location.h"
@@ -248,7 +249,15 @@ void Proxy::_proceed(const std::shared_ptr<SIPMessage>& request, const std::shar
   _preprocess_routes(request);
 
   auto self = shared_from_this();
-  _authorize(request, transaction, false, [this, self, request, transaction, token]() { _determine_targets(request, transaction, token); });
+  _authorize(request, transaction, false, [this, self, request, transaction, token]() {
+    // A SUBSCRIBE for a package the node is the notifier for is answered here, not routed (docs/design/presence.md).
+    auto core = _core.lock();
+    if (core && core->notifier()->wants(*request)) {
+      return core->notifier()->on_subscribe(request, transaction,
+                                            [this, self, request, transaction, token]() { _determine_targets(request, transaction, token); });
+    }
+    _determine_targets(request, transaction, token);
+  });
 }
 
 std::shared_ptr<policy::RequestView> Proxy::_view(const std::shared_ptr<SIPMessage>& request, bool relay) const {
@@ -311,6 +320,7 @@ void Proxy::_authenticate(const std::shared_ptr<SIPMessage>& request, const std:
   auto channel = request->channel.lock();
   if (channel && channel->_connection && channel->_connection->is_reliable() &&
       (from_must_match ? channel->is_authenticated_as(caller->to_string()) : channel->is_authenticated())) {
+    if (from_must_match) request->authenticated_aor = "sip:" + caller->user + "@" + realm->name;
     return then();
   }
 
@@ -381,6 +391,7 @@ void Proxy::_authenticate(const std::shared_ptr<SIPMessage>& request, const std:
                         // Remove the used credentials: they are replayable while the nonce lives.
                         request->header->remove_value("Proxy-Authorization", [&answered](std::shared_ptr<headers::Header> value) { return value == answered; });
                         request->authenticated = true;
+                        request->authenticated_aor = "sip:" + credentials->fields["username"] + "@" + realm->name;
 
                         then();
                       });
@@ -2140,6 +2151,11 @@ void Proxy::_answer_options(const std::shared_ptr<transactions::TransactionBase>
   response->header->add("Accept-Encoding", std::make_shared<headers::StringHeader>("identity"));
   response->header->add("Accept-Language", std::make_shared<headers::StringHeader>("en"));
   response->header->add("Supported", std::make_shared<headers::StringHeader>("path, outbound, timer"));
+
+  // RFC 6665 7.2.2: the packages this node is the notifier for.
+  if (auto core = _core.lock(); core && core->config->presence_enable && core->datastore && core->datastore->supports_presence()) {
+    response->header->add("Allow-Events", std::make_shared<headers::StringHeader>(Notifier::packages()));
+  }
 
   transaction->send(response);
 }

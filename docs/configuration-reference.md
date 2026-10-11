@@ -267,6 +267,16 @@ What the node logs, and how.
 | `log.level` | one of `debug`, `info`, `warn`, `error` | `debug` | The least severe message logged. |
 | `log.format` | one of `text`, `json` | `text` | One line of text per message, or one JSON object. |
 
+## `presence`
+
+The node as the notifier for the dialog package (BLF) and presence (docs/design/presence.md).
+
+| Setting | Takes | Default | |
+|---|---|---|---|
+| `presence.enable` | true or false | `true` | False proxies SUBSCRIBE and PUBLISH to the devices, as any request. |
+| `presence.min_expires` | integer, 1 or more | `60` | The shortest subscription or publication accepted, in seconds; 423 below it. |
+| `presence.max_expires` | integer, 1 or more | `3600` | The longest subscription or publication granted, in seconds. |
+
 ## `calls`
 
 The record of calls.
