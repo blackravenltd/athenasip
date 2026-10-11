@@ -8,6 +8,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <ctime>
 #include <memory>
@@ -20,6 +21,7 @@
 #include "call.h"
 #include "config.h"
 #include "types/password.h"
+#include "types/presence_record.h"
 #include "types/session.h"
 #include "types/trunk.h"
 #include "types/url.h"
@@ -771,4 +773,182 @@ TEST(MemoryDatastoreTest, ACounterCountsAndItsWindowLapses) {
   std::this_thread::sleep_for(std::chrono::milliseconds(2100));
   EXPECT_EQ(datastore->counter_get("minute-acme"), 0);
   EXPECT_EQ(datastore->counter_add("minute-acme", 1, 1), 1) << "a new window";
+}
+
+// docs/design/presence.md: both canonical stores hold presence, so a node on either has it.
+TEST(MemoryDatastoreTest, SupportsPresence) { EXPECT_TRUE(make_datastore()->supports_presence()); }
+
+namespace {
+
+types::PresenceRecord make_presence(types::PresenceRecord::Kind kind, const std::string& id, const std::string& aor, const std::string& node_id = "") {
+  types::PresenceRecord record;
+  record.kind = kind;
+  record.id = id;
+  record.aor = aor;
+  record.node_id = node_id;
+  record.content_type = kind == types::PresenceRecord::Kind::Publication ? "application/pidf+xml" : "application/json";
+  record.body = "{\"id\":\"" + id + "\"}";
+  return record;
+}
+
+using Kind = types::PresenceRecord::Kind;
+
+}  // namespace
+
+// A record is given back as it was put, with its expiry filled from the lifetime it was given.
+TEST(MemoryDatastoreTest, APresenceRecordRoundTrips) {
+  auto datastore = make_datastore();
+  const auto before = std::time(nullptr);
+  ASSERT_TRUE(datastore->presence_put(make_presence(Kind::Subscription, "sub-1", "sip:1001@example.com", "node-a"), 60));
+
+  const auto found = datastore->presence_get(Kind::Subscription, "sub-1");
+  ASSERT_TRUE(found.has_value());
+  EXPECT_EQ(found->kind, Kind::Subscription);
+  EXPECT_EQ(found->id, "sub-1");
+  EXPECT_EQ(found->aor, "sip:1001@example.com");
+  EXPECT_EQ(found->node_id, "node-a");
+  EXPECT_EQ(found->content_type, "application/json");
+  EXPECT_EQ(found->body, "{\"id\":\"sub-1\"}");
+  EXPECT_GE(found->expires_at, before + 60);
+  EXPECT_LE(found->expires_at, std::time(nullptr) + 60);
+
+  EXPECT_FALSE(datastore->presence_get(Kind::Subscription, "no-such-sub").has_value()) << "nothing there is an empty answer";
+  EXPECT_TRUE(datastore->last_error().empty()) << "and not a failure";
+  EXPECT_FALSE(datastore->presence_get(Kind::Publication, "sub-1").has_value()) << "a kind is its own namespace";
+}
+
+// The notifier reads one presentity's subscriptions, or its publications, and nobody else's.
+TEST(MemoryDatastoreTest, PresenceRecordsAreListedByPresentityAndKind) {
+  auto datastore = make_datastore();
+  ASSERT_TRUE(datastore->presence_put(make_presence(Kind::Subscription, "sub-a1", "sip:1001@example.com", "node-a"), 60));
+  ASSERT_TRUE(datastore->presence_put(make_presence(Kind::Subscription, "sub-a2", "sip:1001@example.com", "node-b"), 60));
+  ASSERT_TRUE(datastore->presence_put(make_presence(Kind::Publication, "etag-a", "sip:1001@example.com"), 60));
+  ASSERT_TRUE(datastore->presence_put(make_presence(Kind::Subscription, "sub-b1", "sip:1002@example.com", "node-a"), 60));
+
+  std::vector<std::string> ids;
+  for (const auto& record : datastore->presence_list("sip:1001@example.com", Kind::Subscription)) ids.push_back(record.id);
+  std::sort(ids.begin(), ids.end());
+  EXPECT_EQ(ids, (std::vector<std::string>{"sub-a1", "sub-a2"}));
+
+  const auto publications = datastore->presence_list("sip:1001@example.com", Kind::Publication);
+  ASSERT_EQ(publications.size(), 1u);
+  EXPECT_EQ(publications.front().id, "etag-a");
+
+  EXPECT_EQ(datastore->presence_list("sip:1002@example.com", Kind::Subscription).size(), 1u);
+  EXPECT_TRUE(datastore->presence_list("sip:1003@example.com", Kind::Subscription).empty());
+}
+
+// A subscription is listed under the node holding the watcher's flow, and moves with it: a refresh that reaches
+// another node rewrites the holder, and the old holder no longer lists it.
+TEST(MemoryDatastoreTest, ASubscriptionIsListedUnderItsHolderAndMovesWithIt) {
+  auto datastore = make_datastore();
+  ASSERT_TRUE(datastore->presence_put(make_presence(Kind::Subscription, "sub-1", "sip:1001@example.com", "node-a"), 60));
+  ASSERT_TRUE(datastore->presence_put(make_presence(Kind::Publication, "etag-1", "sip:1001@example.com"), 60));
+
+  auto held = datastore->presence_list_node("node-a");
+  ASSERT_EQ(held.size(), 1u) << "a publication has no holder";
+  EXPECT_EQ(held.front().id, "sub-1");
+
+  ASSERT_TRUE(datastore->presence_put(make_presence(Kind::Subscription, "sub-1", "sip:1001@example.com", "node-b"), 60));
+  EXPECT_TRUE(datastore->presence_list_node("node-a").empty());
+  ASSERT_EQ(datastore->presence_list_node("node-b").size(), 1u);
+  EXPECT_EQ(datastore->presence_get(Kind::Subscription, "sub-1")->node_id, "node-b");
+  EXPECT_EQ(datastore->presence_list("sip:1001@example.com", Kind::Subscription).size(), 1u) << "rewritten, not added";
+}
+
+// Deleting a record takes it out of every index, and deleting one that is not there is not an error: an
+// unsubscribe and an expiry may both try.
+TEST(MemoryDatastoreTest, DeletingAPresenceRecordTakesItOutOfEveryIndex) {
+  auto datastore = make_datastore();
+  ASSERT_TRUE(datastore->presence_put(make_presence(Kind::Subscription, "sub-1", "sip:1001@example.com", "node-a"), 60));
+
+  ASSERT_TRUE(datastore->presence_delete(Kind::Subscription, "sub-1"));
+  EXPECT_FALSE(datastore->presence_get(Kind::Subscription, "sub-1").has_value());
+  EXPECT_TRUE(datastore->presence_list("sip:1001@example.com", Kind::Subscription).empty());
+  EXPECT_TRUE(datastore->presence_list_node("node-a").empty());
+
+  EXPECT_TRUE(datastore->presence_delete(Kind::Subscription, "sub-1")) << "already gone";
+}
+
+// A record lapses at the end of its lifetime, from every index, with nobody deleting it.
+TEST(MemoryDatastoreTest, APresenceRecordLapses) {
+  auto datastore = make_datastore();
+  ASSERT_TRUE(datastore->presence_put(make_presence(Kind::Subscription, "sub-1", "sip:1001@example.com", "node-a"), 1));
+  ASSERT_TRUE(datastore->presence_put(make_presence(Kind::Publication, "etag-1", "sip:1001@example.com"), 1));
+  std::this_thread::sleep_for(std::chrono::milliseconds(2100));
+
+  EXPECT_FALSE(datastore->presence_get(Kind::Subscription, "sub-1").has_value());
+  EXPECT_TRUE(datastore->presence_list("sip:1001@example.com", Kind::Subscription).empty());
+  EXPECT_TRUE(datastore->presence_list("sip:1001@example.com", Kind::Publication).empty());
+  EXPECT_TRUE(datastore->presence_list_node("node-a").empty());
+}
+
+// Every subscription and publication has an expiry (RFC 6665 4.2.1.1, RFC 3903 4.1), an identity and a presentity.
+TEST(MemoryDatastoreTest, APresenceRecordWithoutAnIdAPresentityOrALifetimeIsRefused) {
+  auto datastore = make_datastore();
+  EXPECT_FALSE(datastore->presence_put(make_presence(Kind::Subscription, "", "sip:1001@example.com", "node-a"), 60));
+  EXPECT_FALSE(datastore->presence_put(make_presence(Kind::Subscription, "sub-1", "", "node-a"), 60));
+  EXPECT_FALSE(datastore->presence_put(make_presence(Kind::Subscription, "sub-1", "sip:1001@example.com", "node-a"), 0));
+  EXPECT_FALSE(datastore->presence_get(Kind::Subscription, "sub-1").has_value());
+}
+
+namespace {
+
+std::shared_ptr<Call> make_call(const std::string& id, Call::State state, const std::string& caller, const std::string& callee) {
+  auto call = std::make_shared<Call>();
+  call->id = id;
+  call->state = state;
+  call->add_participant(std::make_shared<types::SIPIdentity>("sip:caller@example.com"), nullptr, true);
+  call->add_participant(std::make_shared<types::SIPIdentity>("sip:callee@example.com"), nullptr, false);
+  call->participants[0].subscriber = caller;
+  call->participants[1].subscriber = callee;
+  return call;
+}
+
+std::vector<std::string> call_ids(const std::vector<std::shared_ptr<Call>>& calls) {
+  std::vector<std::string> ids;
+  for (const auto& call : calls) ids.push_back(call->id);
+  std::sort(ids.begin(), ids.end());
+  return ids;
+}
+
+}  // namespace
+
+// BLF reads a subscriber's calls from the call record (docs/design/presence.md): every call not yet closed with a
+// participant that is the subscriber, whichever end it is, and no call the subscriber is not on.
+TEST(MemoryDatastoreTest, AnOpenCallIsFoundByEachOfItsSubscribers) {
+  auto datastore = make_datastore();
+  ASSERT_TRUE(datastore->call_create(make_call("call-1", Call::State::Ringing, "sip:1001@example.com", "sip:1002@example.com")));
+  ASSERT_TRUE(datastore->call_create(make_call("call-2", Call::State::Connected, "sip:1003@example.com", "sip:1001@example.com")));
+  ASSERT_TRUE(datastore->call_create(make_call("call-3", Call::State::Trying, "", "sip:1002@example.com")));
+
+  EXPECT_EQ(call_ids(datastore->call_list_for_subscriber("sip:1001@example.com")), (std::vector<std::string>{"call-1", "call-2"}));
+  EXPECT_EQ(call_ids(datastore->call_list_for_subscriber("sip:1002@example.com")), (std::vector<std::string>{"call-1", "call-3"}));
+  EXPECT_TRUE(datastore->call_list_for_subscriber("sip:1004@example.com").empty());
+  EXPECT_TRUE(datastore->call_list_for_subscriber("").empty()) << "a trunk or a foreign party is nobody's";
+}
+
+// A closed call is a record kept for its retention, and not a line in use.
+TEST(MemoryDatastoreTest, AClosedCallIsNoLongerFoundByItsSubscribers) {
+  auto datastore = make_datastore();
+  auto call = make_call("call-1", Call::State::Connected, "sip:1001@example.com", "sip:1002@example.com");
+  ASSERT_TRUE(datastore->call_create(call));
+
+  auto closed = make_call("call-1", Call::State::Closed, "sip:1001@example.com", "sip:1002@example.com");
+  closed->ended_at = std::time(nullptr);
+  ASSERT_TRUE(datastore->call_update(closed));
+
+  EXPECT_TRUE(datastore->call_list_for_subscriber("sip:1001@example.com").empty());
+  EXPECT_TRUE(datastore->call_list_for_subscriber("sip:1002@example.com").empty());
+  EXPECT_NE(datastore->call_get("call-1"), nullptr) << "the record itself is kept";
+}
+
+// The proxy learns the callee's subscriber when it rings a binding, after the record was first written.
+TEST(MemoryDatastoreTest, ASubscriberLearnedOnUpdateFindsTheCall) {
+  auto datastore = make_datastore();
+  ASSERT_TRUE(datastore->call_create(make_call("call-1", Call::State::Trying, "sip:1001@example.com", "")));
+  EXPECT_TRUE(datastore->call_list_for_subscriber("sip:1002@example.com").empty());
+
+  ASSERT_TRUE(datastore->call_update(make_call("call-1", Call::State::Ringing, "sip:1001@example.com", "sip:1002@example.com")));
+  EXPECT_EQ(call_ids(datastore->call_list_for_subscriber("sip:1002@example.com")), (std::vector<std::string>{"call-1"}));
 }

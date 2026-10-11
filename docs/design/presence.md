@@ -190,7 +190,8 @@ read one AOR's calls without listing every call.
 | Ringing | initiator | `early` (`proceeding` is the same to every BLF key known) |
 | Ringing | recipient | `early` |
 | Connected | either | `confirmed` |
-| Closing, Closed | either | `terminated`, reported once, then dropped |
+| Closing | either | `terminated` |
+| Closed | either | not listed: a full document without the dialog says it has ended |
 
 Each `<dialog>` carries `id`, `call-id`, `local-tag` and `remote-tag` (which a phone needs
 for call pickup with `Replaces`, RFC 3891), `direction`, `<state>`, and the local and remote
@@ -281,37 +282,43 @@ from the digest the subscription's record holds. A lost `changed` costs at most 
 prompt, and the reconcile makes it certain.
 
 **The datastore contract.** Five new methods for the two new records, and one for the
-call record. Like `lease` and the counters (`src/datastores/datastore.h:152`) the five are
-optional, with `_unsupported` defaults, so a third-party datastore built against the
+call record, as built in `src/datastores/datastore.h`. Like `lease` and the counters they
+are optional, with `_unsupported` defaults, and `supports_presence()` says whether a driver
+has them, so a third-party datastore built against the
 previous contract keeps working. On such a driver the node turns presence off, says so at
 start and in `--check`, and proxies SUBSCRIBE and PUBLISH as before. `API_VERSION`
 (`src/plugins/plugin.h:27`) goes from 19 to 20, for these and for `subscriber` on the
 participant.
 
 ```
-struct PresenceRecord {
-  std::string kind;          // "subscription" or "publication"
+struct PresenceRecord {      // src/types/presence_record.h
+  enum class Kind { Subscription, Publication };
+  Kind kind;
   std::string id;            // subscription ID or entity tag
   std::string aor;           // the presentity: the index
   std::string node_id;       // the holder; empty for a publication
   std::string content_type;
   std::string body;          // PIDF for a publication; compact JSON for a subscription
-  std::time_t expires_at;
+  std::time_t expires_at;    // filled by the store
 };
 
-presence_put(on, PresenceRecord, expires_seconds, StatusHandler)
+bool supports_presence() const
+presence_put(on, PresenceRecord, seconds, StatusHandler)
 presence_get(on, kind, id, Handler<std::optional<PresenceRecord>>)
 presence_list(on, aor, kind, Handler<std::vector<PresenceRecord>>)
-presence_delete(on, kind, id, StatusHandler)
-presence_list_node(on, node_id, Handler<std::vector<PresenceRecord>>)   // a holder's subscriptions
+presence_delete(on, kind, id, StatusHandler)       // succeeds whether or not it was there
+presence_list_node(on, node_id, Handler<std::vector<PresenceRecord>>)
 
-call_list_by_subscriber(on, aor, Handler<std::vector<std::shared_ptr<Call>>>)
+call_list_for_subscriber(on, aor, Handler<std::vector<std::shared_ptr<Call>>>)   // open calls only
 ```
 
 `memory://` and `redis://` both implement them. In Redis a presence record is a key with
 a TTL, and each presentity and kind, and each holder, has an index set, pruned of lapsed
-members as it is read; the call index is a set per subscriber, kept by `call_create` and
-`call_update`.
+members as it is read. A record and its indexes are written and deleted by one script, so
+a subscription moving holder leaves the old holder's index in the same step. The call
+index is a set per subscriber of the calls not yet closed, kept by `call_create` and
+`call_update`, because a closed call's record is kept for a month and reading a
+subscriber's history to find its open calls would grow without bound.
 
 Call records are rendered into `dialog-info` per subscription, because `version` is per
 subscription. The datastore holds the facts, not XML.

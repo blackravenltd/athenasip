@@ -80,6 +80,10 @@ class Call {
     // The party that started the call.
     bool originator = false;
 
+    // The subscriber this leg is, as an address of record: the caller this node authenticated, or the callee whose
+    // binding it rang, which a routing script may have chosen over the To. What the dialog package counts the call
+    // against (RFC 4235). Empty for a trunk or a party in another domain.
+    std::string subscriber;
     // The trunk this leg runs over, by name: the one the call came in by, or left by. Empty for anything else.
     std::string trunk;
   };

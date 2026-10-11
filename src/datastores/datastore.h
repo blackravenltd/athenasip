@@ -8,6 +8,7 @@
 
 #include <ctime>
 #include <memory>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -18,6 +19,7 @@
 #include "../plugins/plugin.h"
 #include "../plugins/plugin_registry.h"
 #include "../types/location.h"
+#include "../types/presence_record.h"
 #include "../types/realm.h"
 #include "../types/session.h"
 #include "../types/sip_identity.h"
@@ -199,6 +201,57 @@ class Datastore : public plugins::Plugin {
   virtual void call_update(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) = 0;
   virtual void call_get(plugins::Executor on, std::string id, plugins::Handler<std::shared_ptr<Call>> handler) = 0;
   virtual void call_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<Call>>> handler) = 0;
+
+  // Every call not yet closed with a participant whose `subscriber` is this address of record, at either end: what
+  // the dialog package (RFC 4235) reports for it. A closed call is not returned, though its record is kept.
+  // Optional, with presence (below).
+  virtual void call_list_for_subscriber(plugins::Executor on, std::string aor, plugins::Handler<std::vector<std::shared_ptr<Call>>> handler) {
+    (void)aor;
+    _unsupported<std::vector<std::shared_ptr<Call>>>(std::move(on), std::move(handler), "call_list_for_subscriber");
+  }
+
+  // Presence (docs/design/presence.md): subscriptions and publications, each with a lifetime the store enforces.
+  // Optional as a set: a driver that implements them says so here, and a node on a driver that does not has
+  // presence off and proxies SUBSCRIBE and PUBLISH as before.
+  virtual bool supports_presence() const { return false; }
+
+  // Writes the record whole, replacing any of the same kind and ID, for `seconds` from now; the store fills
+  // `expires_at`. A record with no ID, no presentity or no lifetime is refused. A record whose holder changed is
+  // listed under the new holder only.
+  virtual void presence_put(plugins::Executor on, types::PresenceRecord record, std::uint32_t seconds, plugins::StatusHandler handler) {
+    (void)record;
+    (void)seconds;
+    _unsupported(std::move(on), std::move(handler), "presence_put");
+  }
+
+  // The record, or none if it is not there or has lapsed.
+  virtual void presence_get(plugins::Executor on, types::PresenceRecord::Kind kind, std::string id,
+                            plugins::Handler<std::optional<types::PresenceRecord>> handler) {
+    (void)kind;
+    (void)id;
+    _unsupported<std::optional<types::PresenceRecord>>(std::move(on), std::move(handler), "presence_get");
+  }
+
+  // Every unlapsed record of this kind for this presentity.
+  virtual void presence_list(plugins::Executor on, std::string aor, types::PresenceRecord::Kind kind,
+                             plugins::Handler<std::vector<types::PresenceRecord>> handler) {
+    (void)aor;
+    (void)kind;
+    _unsupported<std::vector<types::PresenceRecord>>(std::move(on), std::move(handler), "presence_list");
+  }
+
+  // Succeeds whether or not the record was there: an unsubscribe and an expiry may both remove it.
+  virtual void presence_delete(plugins::Executor on, types::PresenceRecord::Kind kind, std::string id, plugins::StatusHandler handler) {
+    (void)kind;
+    (void)id;
+    _unsupported(std::move(on), std::move(handler), "presence_delete");
+  }
+
+  // Every unlapsed record this node holds: the subscriptions to resume on restart, or to take over from a dead node.
+  virtual void presence_list_node(plugins::Executor on, std::string node_id, plugins::Handler<std::vector<types::PresenceRecord>> handler) {
+    (void)node_id;
+    _unsupported<std::vector<types::PresenceRecord>>(std::move(on), std::move(handler), "presence_list_node");
+  }
 
   // Typed access to the PluginRegistry for datastores.
   template <typename T, typename = std::enable_if_t<std::is_base_of_v<Datastore, T>>>

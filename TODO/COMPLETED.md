@@ -3157,3 +3157,21 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       relayed, a wrong password refused). gbni-1 is unreachable from outside for TURN until
       its router forwards the ports.
 
+### Presence, step 1: the datastore contract (2026-10-11)
+
+- [x] **`Call::Participant::subscriber`**, the AOR a leg is (the caller authenticated, or
+      the callee whose binding rang), stored with the call and read back, absent from older
+      records without harm.
+- [x] **`call_list_for_subscriber`**: the open calls a subscriber is on, at either end. Redis
+      keeps a set per subscriber of open calls only, written by one script per call write
+      and mended on read if it trails the record, because a closed call's record is kept for
+      a month and a subscriber's history must not be read to find its open calls.
+- [x] **Presence records** (`types::PresenceRecord`, a subscription or a publication) and five
+      operations, `presence_put`, `_get`, `_list`, `_delete` and `_list_node`, with
+      `supports_presence()`, all optional so a driver built against version 19 keeps
+      compiling. A record lapses with its lifetime, is listed by presentity within its kind
+      and by its holder, and moves holder in one step: in Redis, a record and its indexes are
+      written and deleted by one script. `API_VERSION` 20.
+- [x] 21 tests across `memory://` and `redis://`, written from the design and watched failing
+      first; the unit suite 1433 of 1434, one skipped without a resolver.
+

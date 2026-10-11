@@ -12,8 +12,8 @@ below, almost all of which wait on a device, a carrier, Tom or the admin session
 **Next: presence** (Milestone 7, taken ahead of conferencing at Tom's word on 2026-10-11).
 The decisions are under Decisions, and `docs/design/presence.md` (2026-10-11) is the design: where
 the notifier plugs in, the subscription dialog, each package's state, the cluster, the `watch` policy
-hook, the API and the build order the items below follow. Next is the datastore contract,
-then the RFC 6665 notifier core.
+hook, the API and the build order the items below follow. The datastore contract is in
+(2026-10-11, `COMPLETED.md`); next is the RFC 6665 notifier core.
 
 **Two live nodes**, neither production, both on `5fbf3f3` (deployed 2026-10-09):
 - `corvus-fi-1` (10.35.1.20): `lua://` with `athenasip.trunks` from
@@ -582,10 +582,6 @@ requests are taken in `_deliver_to_tu` before the proxy. A UAC request of the no
 Today SUBSCRIBE is simply proxied, and the proxy's `Allow` already lists SUBSCRIBE and
 NOTIFY.
 
-- [ ] The datastore contract: `subscriber` on `Call::Participant` and an index by it
-      (`call_list_by_subscriber`), and five optional presence methods for subscription and
-      publication records, in `memory://` and `redis://`; API version 20. A driver without
-      the five has presence off and says so.
 - [ ] RFC 6665 notifier core: SUBSCRIBE for a served AOR answered 200 (or 423 Interval Too
       Brief, 403 for a watcher outside the realm), an immediate NOTIFY, refresh, unsubscribe
       with a final NOTIFY, expiry; the subscription a datastore record naming the node and
