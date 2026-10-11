@@ -119,4 +119,12 @@ function std.register(request)
   return a.register.forward()
 end
 
+-- docs/design/presence.md: a watcher proven in the presentity's own realm may watch it; nobody else may.
+function std.watch(request, watcher, presentity, package)
+  local function realm_of(aor) return aor and aor:match("@([^@]*)$") end
+  if watcher and realm_of(watcher) and realm_of(watcher) == realm_of(presentity) then return a.watch.accept() end
+  a.log.info((watcher or "An unproven watcher") .. " may not watch " .. presentity .. " - 403")
+  return a.watch.reject(403, "Forbidden")
+end
+
 return std

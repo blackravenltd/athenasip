@@ -76,6 +76,15 @@ std::string describe(const plugins::Result<policy::RegisterDecision>& result) {
   return out.str();
 }
 
+std::string describe(const plugins::Result<policy::WatchDecision>& result) {
+  if (!result.ok) return "failed";
+  const auto& d = result.value;
+  std::ostringstream out;
+  out << "watch " << static_cast<int>(d.kind);
+  if (d.kind == policy::WatchDecision::Kind::Reject) out << " " << d.code << " " << d.reason;
+  return out.str();
+}
+
 struct EquivalenceFixture : CoreFixture {
   std::shared_ptr<TestHost> host;
   std::shared_ptr<policy::BuiltinPolicy> builtin;
@@ -138,6 +147,17 @@ struct EquivalenceFixture : CoreFixture {
   std::pair<std::string, std::string> register_(const std::shared_ptr<policy::RequestView>& request) {
     auto first = ask<policy::RegisterDecision>([&](plugins::Executor on, plugins::Handler<policy::RegisterDecision> h) { builtin->register_(on, request, h); });
     auto second = ask<policy::RegisterDecision>([&](plugins::Executor on, plugins::Handler<policy::RegisterDecision> h) { lua->register_(on, request, h); });
+    return {describe(first), describe(second)};
+  }
+
+  std::pair<std::string, std::string> watch(const std::string& watcher, const std::string& presentity, const std::string& package) {
+    auto request =
+        view("SUBSCRIBE " + presentity + " SIP/2.0\r\nVia: SIP/2.0/UDP 192.0.2.10:5060;branch=z9hG4bK-eq\r\nFrom: <sip:w@example.com>;tag=f\r\nTo: <" +
+             presentity + ">\r\nCall-ID: equivalence\r\nCSeq: 1 SUBSCRIBE\r\nMax-Forwards: 70\r\nEvent: " + package + "\r\n");
+    auto first = ask<policy::WatchDecision>(
+        [&](plugins::Executor on, plugins::Handler<policy::WatchDecision> h) { builtin->watch(on, request, watcher, presentity, package, h); });
+    auto second = ask<policy::WatchDecision>(
+        [&](plugins::Executor on, plugins::Handler<policy::WatchDecision> h) { lua->watch(on, request, watcher, presentity, package, h); });
     return {describe(first), describe(second)};
   }
 };
@@ -214,6 +234,22 @@ TEST(PolicyEquivalenceTest, RegisterAgreesOnEveryBranch) {
 
   f.config->sip_forward_register = "never";
   EXPECT_SAME(f.register_(EquivalenceFixture::view(request("REGISTER", "sip:else.net", "sip:x@else.net", "sip:x@else.net"))));
+}
+
+// docs/design/presence.md: a watcher proven in the presentity's realm, and nobody else.
+TEST(PolicyEquivalenceTest, WatchAgreesOnEveryBranch) {
+  EquivalenceFixture f;
+
+  const auto same_realm = f.watch("sip:alice@example.com", "sip:bob@example.com", "dialog");
+  EXPECT_SAME(same_realm);
+  EXPECT_EQ(same_realm.first, "watch 0");
+
+  const auto other_realm = f.watch("sip:x@else.net", "sip:bob@example.com", "presence");
+  EXPECT_SAME(other_realm);
+  EXPECT_EQ(other_realm.first, "watch 1 403 Forbidden");
+
+  EXPECT_SAME(f.watch("", "sip:bob@example.com", "presence"));
+  EXPECT_SAME(f.watch("sip:alice@example.com", "sip:bob@example.com.evil", "dialog"));
 }
 
 // A store that cannot answer is a failure from both, never a decision made without it.

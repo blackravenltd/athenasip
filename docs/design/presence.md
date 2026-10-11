@@ -417,9 +417,14 @@ struct WatchDecision {
 };
 
 virtual void watch(plugins::Executor on, std::shared_ptr<RequestView> request,
-                   std::shared_ptr<types::SIPIdentity> watcher, std::shared_ptr<types::SIPIdentity> presentity,
+                   std::string watcher, std::string presentity,
                    std::string package, plugins::Handler<WatchDecision> handler);
 ```
+
+`watcher` is the address of record the watcher was proven to be (`sip:carol@example.com`),
+empty when it was not; `presentity` the one watched. Plain strings rather than identities,
+as built in step 7: a script compares them, and an AOR is what both are. In Lua the hook
+is `watch(request, watcher, presentity, package)`, with `watcher` nil when unproven.
 
 The default, which `builtin://` uses and which is also what a script without a `watch`
 function gets (as `on_failure` falls back today, `src/policy/lua_policy.cpp:414`): accept

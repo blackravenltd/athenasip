@@ -103,7 +103,7 @@ copy them to every node and reload each.
 
 ## The hooks
 
-The entry script defines up to five global functions.
+The entry script defines up to six global functions.
 
 | Hook | Asked when | Returns |
 |---|---|---|
@@ -111,6 +111,7 @@ The entry script defines up to five global functions.
 | `route(request)` | An authorised request has no Route and no flow token to follow | `athenasip.route.forward()` with targets, `athenasip.route.reply()`, a bare list of targets, or `nil` (480) |
 | `on_failure(request, response, state)` | A branch ended in 3xx to 5xx and there may be more to try | `"next"`, `"stop"`, or a list of targets to try first. Optional: without it, `"next"`. |
 | `register(request)` | A REGISTER arrives, before it is challenged | `athenasip.register.accept{}`, `.forward()` or `.reject()` |
+| `watch(request, watcher, presentity, package)` | An authorised SUBSCRIBE for `presence` or `dialog` reaches the node as notifier | `athenasip.watch.accept()`, `.reject(code, reason)` (403 by default) or `.forward()`, which routes it as before presence. Optional: without it, a watcher proven in the presentity's own realm is accepted and anyone else refused. |
 | `init()` | The scripts load | Nothing. Optional. Cannot read the store. |
 
 Requests inside a dialog, ACK, CANCEL, and anything carrying a Route or a flow token are
@@ -150,6 +151,10 @@ Contact, To, and From except through `set_from`. Trying is an error naming the h
 
 `on_failure` also gets `response` (`code`, `reason`, `:header()`, `:headers()`) and
 `state` (`tried`, `remaining`, `best`).
+
+`watch` gets the address of record the watcher was proven to be (`"sip:carol@example.com"`),
+or `nil` when it was not, the one it watches, and the package. `athenasip.standard`'s
+`std.watch` is the default rule, to fall back on.
 
 A request belongs to its call. Kept in a global and used later, it raises an error.
 

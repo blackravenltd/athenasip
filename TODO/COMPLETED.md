@@ -3316,3 +3316,23 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       without a resolver; 302 of 303 of the presence, proxy, registrar, orphan and policy
       tests under the Lua policy, the one skipped being the equivalence runner.
 
+### Presence, step 7: the policy decides who may watch whom (2026-10-11)
+
+- [x] **`Policy::watch`** (`src/policy/policy.h`; contract 21): given the SUBSCRIBE, the
+      proven watcher, the presentity and the package, a policy accepts (the node is the
+      notifier), refuses with a code and reason of its own, or forwards the SUBSCRIBE to
+      the presentity's devices as before presence, for a deployment with a presence server
+      of its own. It is not pure: its default is the decided rule (a watcher proven in the
+      presentity's realm, anyone else 403), which `builtin://` and any policy written
+      before it inherit. A failed decision is 500.
+- [x] **In the scripts**: a global `watch(request, watcher, presentity, package)`,
+      answered with `athenasip.watch.accept()`, `.reject(code, reason)` or `.forward()`;
+      `std.watch` is the default rule, and `main.lua` and the trunks hooks use it. A script
+      without a `watch` keeps the default. `docs/scripting.md` and `docs/plugins.md` say so.
+- [x] 6 notifier tests (the default, a script without the hook, widening to another realm,
+      refusing with 603, forwarding, a hook that decides nothing) and the equivalence test
+      that `std.watch` decides as `builtin://` does on every branch. None could be watched
+      failing: they do not compile without the contract they test. The suite 1511 of 1512
+      with Redis and MQTT, the one skipped without a resolver; 310 of 311 of the presence,
+      proxy, registrar, orphan and policy tests under the Lua policy, the one skipped being
+      the equivalence runner.

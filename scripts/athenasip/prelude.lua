@@ -112,3 +112,18 @@ function a.register.reject(code, reason)
   check(math.type(code) == "integer" and code >= 300 and code <= 699, "register.reject: the code is a final failure, 300 to 699")
   return {decision = "register", kind = "reject", code = code, reason = reason}
 end
+
+a.watch = {}
+
+-- The node is the notifier: the watcher is told the presentity's state.
+function a.watch.accept() return {decision = "watch", kind = "accept"} end
+
+-- Refused, 403 unless another failure is given.
+function a.watch.reject(code, reason)
+  code = code or 403
+  check(math.type(code) == "integer" and code >= 300 and code <= 699, "watch.reject: the code is a final failure, 300 to 699")
+  return {decision = "watch", kind = "reject", code = code, reason = reason}
+end
+
+-- Not the node's to answer: routed as any other SUBSCRIBE, to a presence server of the deployment's own.
+function a.watch.forward() return {decision = "watch", kind = "forward"} end

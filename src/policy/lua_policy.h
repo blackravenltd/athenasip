@@ -39,6 +39,8 @@ class LuaPolicy final : public Policy {
   void route(plugins::Executor on, std::shared_ptr<RequestView> request, plugins::Handler<RouteDecision> handler) override;
   void on_failure(plugins::Executor on, std::shared_ptr<RequestView> request, std::shared_ptr<SIPMessage> response, ForkState state,
                   plugins::Handler<FailureDecision> handler) override;
+  void watch(plugins::Executor on, std::shared_ptr<RequestView> request, std::string watcher, std::string presentity, std::string package,
+             plugins::Handler<WatchDecision> handler) override;
   void register_(plugins::Executor on, std::shared_ptr<RequestView> request, plugins::Handler<RegisterDecision> handler) override;
 
   // Loads the scripts again. The running ones stay if the new ones fail. Empty on success, else the error.
