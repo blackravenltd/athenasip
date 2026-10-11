@@ -96,10 +96,10 @@ node checks the stored holder before each NOTIFY, so the old holder stops as soo
 record has moved. If the holder's channel has closed, the NOTIFY goes down the flow of the
 watcher's binding whose Contact matches the subscription's remote target (the proxy's
 `_target_for` already does this lookup for a binding). Failing that, it goes to the remote
-target by RFC 3263, and if that fails too, the subscription ends. The core (step 2) sends
-down the subscription's own flow only and ends the subscription when it has gone; the
-binding and RFC 3263 fallbacks come with the takeover in step 6, which needs the same
-binding lookup.
+target by RFC 3263 (to the first Route, if the dialog has a route set), and if that fails
+too, the subscription ends. Whichever flow a NOTIFY went down is the subscription's flow
+from then on. The binding is matched on the Contact's user, host and port, and only a
+binding held by this node counts, since only its flows are open here.
 
 The local UA (`src/local_ua.*`) is the other model in the tree, a request entering the proxy
 as though a peer had sent it. It does not fit here. A BYE goes to a dialog's far end through
@@ -381,7 +381,9 @@ directory (`src/node_directory.h`) marks it stale, two things follow.
   has, a flow to a surviving node: that node lists the dead node's subscriptions
   (`presence_list_node`), takes over each whose watcher has a binding flow on it (by
   instance, else by Contact) through a datastore `lease` on the subscription's ID so that
-  only one node does, rewrites the holder, and sends a NOTIFY with the current state. A
+  only one node does, rewrites the holder, and sends a NOTIFY with the current state. It
+  is matched by Contact alone, as the fallback above is: the subscription does not keep
+  the watcher's instance, and a client's SUBSCRIBE Contact is its registered one. A
   watcher with no flow anywhere is taken over by whichever node its next refresh reaches,
   since the Contact names the realm, not the node. One that never refreshes lapses at its
   expiry.

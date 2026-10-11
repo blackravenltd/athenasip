@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "call.h"
+#include "dns/sip_locator.h"
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
 #include "sip_message.h"
@@ -134,6 +135,22 @@ class Notifier : public std::enable_shared_from_this<Notifier> {
   // presence waits for the subscription's five-second window (RFC 3856 6.6.2); one answering a SUBSCRIBE does not.
   void _notify(Subscription subscription, std::string state, bool change = false);
   void _send_notify(Subscription subscription, std::string state, std::string body, std::function<void()> done);
+  void _send_notify_on(Subscription subscription, std::string state, std::string body, std::function<void()> done, std::shared_ptr<Channel> channel);
+
+  // The way to the watcher: the flow its latest SUBSCRIBE came over; else, that gone, the flow of its binding on this
+  // node whose Contact is the remote target; else RFC 3263 on the remote target (the first Route, if there is a
+  // route set). Null when none is open.
+  void _reach(const Subscription& subscription, std::function<void(std::shared_ptr<Channel>)> then);
+  void _connect(std::vector<dns::Hop> hops, std::size_t index, std::function<void(std::shared_ptr<Channel>)> then);
+
+  // The flow of the watcher's binding on this node whose Contact is the subscription's remote target; empty if none
+  // is open.
+  void _watcher_flow(const Subscription& subscription, std::function<void(std::string)> then);
+
+  // docs/design/presence.md, The cluster: the subscriptions of a node found gone are taken over, under a lease, by
+  // the node that has a flow to the watcher.
+  void _take_over();
+  void _adopt(Subscription subscription);
 
   // One NOTIFY at a time on a subscription, each reading the record afresh, so CSeq and version follow on.
   using Task = std::function<void(std::function<void()> done)>;
@@ -179,6 +196,9 @@ class Notifier : public std::enable_shared_from_this<Notifier> {
   // The one thing held in memory: when each subscription this node holds lapses.
   std::map<std::string, std::shared_ptr<Timer>> _timers;
   std::shared_ptr<Timer> _reconcile_timer;
+
+  // When this node began listening: it judges another gone only once it has heard the cluster for a while.
+  std::optional<std::chrono::steady_clock::time_point> _started_at;
 
   // Presentities changed in this turn of the strand, looked at once at its end.
   std::set<std::string> _pending;
