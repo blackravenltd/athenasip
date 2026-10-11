@@ -66,7 +66,10 @@ call them separately would touch every request's path for the sake of two method
 **In-dialog requests go straight to it.** A refresh or an unsubscribe is a SUBSCRIBE with
 a To tag, addressed to the Contact the node gave in its 200. That Contact is in the
 presentity's realm, not at this node's address, and carries the subscription's ID as a URI
-parameter, so a refresh can reach any node that serves the realm. `_deliver_to_tu` hands the
+parameter (`athena-sub`), so a refresh can reach any node that serves the realm. The realm
+is resolved as the watcher already resolves it to register, which is how it found this
+node in the first place; a connection-oriented or outbound client sends the refresh down
+its existing flow regardless. `_deliver_to_tu` hands the
 notifier any request whose Request-URI carries that parameter and names a served realm,
 after the dialog tracker has looked at it and before the proxy. The notifier reads the
 subscription from the datastore by its ID and checks the Call-ID and tags against it (RFC
@@ -93,7 +96,10 @@ node checks the stored holder before each NOTIFY, so the old holder stops as soo
 record has moved. If the holder's channel has closed, the NOTIFY goes down the flow of the
 watcher's binding whose Contact matches the subscription's remote target (the proxy's
 `_target_for` already does this lookup for a binding). Failing that, it goes to the remote
-target by RFC 3263, and if that fails too, the subscription ends.
+target by RFC 3263, and if that fails too, the subscription ends. The core (step 2) sends
+down the subscription's own flow only and ends the subscription when it has gone; the
+binding and RFC 3263 fallbacks come with the takeover in step 6, which needs the same
+binding lookup.
 
 The local UA (`src/local_ua.*`) is the other model in the tree, a request entering the proxy
 as though a peer had sent it. It does not fit here. A BYE goes to a dialog's far end through
@@ -129,16 +135,21 @@ yes or no before the 200 is sent.
 state (4.2.1.2 asks for one on every refresh).
 
 **Unsubscribe** is a refresh with `Expires: 0`: a 200, then a final NOTIFY with
-`Subscription-State: terminated` and the current state.
+`Subscription-State: terminated;reason=timeout` and the current state, as Kamailio sends.
+
+Any other request in the dialog is 405 with `Allow: SUBSCRIBE`: only the watcher sends in
+it, and only to refresh or end it. A SUBSCRIBE in it for another package or `id` is 489.
 
 **Expiry** without a refresh ends the subscription with a NOTIFY saying
 `terminated;reason=timeout`. Expiry runs on the injected `TimerSource`, so the tests
 advance a `ManualTimerSource` rather than waiting.
 
-**The node ends it** when the presentity is deleted (`terminated;reason=noresource`), when
-the policy reloads and would no longer allow the watcher (`reason=rejected`), and on
-shutdown (`reason=deactivated`, which asks the watcher to subscribe again at once and so
-reach another node).
+**The node ends it** when the presentity is deleted (`terminated;reason=noresource`) and
+when the policy reloads and would no longer allow the watcher (`reason=rejected`). It does
+not end it on shutdown: the subscription is a record, so another node takes it over or this
+one resumes it on restart (The cluster). `reason=deactivated` would only send every watcher
+to subscribe again, perhaps to the node that is going down. Changed 2026-10-11 while
+building the core, once subscriptions were records.
 
 **A NOTIFY that fails** ends the subscription. A 481 always does; RFC 6665 4.2.2 also
 removes a soft-state subscription on a failing response or a timeout. The exact list of
@@ -446,7 +457,7 @@ from the RFCs first and watched failing, per `CLAUDE.md`.
 2. **The notifier core** (RFC 6665): the hand-off from the proxy and from
    `_deliver_to_tu`, the subscription dialog as a stored record, 200, 423, 489 never arising, 403 from the
    default watch rule, the immediate NOTIFY, refresh, unsubscribe, expiry, NOTIFY failure,
-   and `deactivated` on shutdown. One package, `dialog`, with an empty state, so the
+   and a fetch (Expires 0). One package, `dialog`, with an empty state, so the
    mechanics are proved before any state exists. GoogleTest with `ManualTimerSource`.
 3. **The `dialog` package**: the proxy setting `subscriber` on each participant, the
    state mapping and the XML, single node, the change signalled where the record is

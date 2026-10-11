@@ -131,6 +131,13 @@ log:
   level: debug
   format: text
 
+# The node answers SUBSCRIBE for the dialog package itself, so a desk phone's BLF key works with nothing set
+# up. false sends every SUBSCRIBE to the devices instead.
+presence:
+  enable: true
+  min_expires: 60
+  max_expires: 3600
+
 calls:
   history_retention: 2592000
 

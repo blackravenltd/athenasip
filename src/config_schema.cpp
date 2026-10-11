@@ -138,6 +138,11 @@ Settings build() {
   s.push_back(choice("log.level", "debug", {"debug", "info", "warn", "error"}, "The least severe message logged."));
   s.push_back(choice("log.format", "text", {"text", "json"}, "One line of text per message, or one JSON object."));
 
+  s.push_back(section("presence", "The node as the notifier for the dialog package (BLF) and presence (docs/design/presence.md)."));
+  s.push_back(boolean("presence.enable", "true", "False proxies SUBSCRIBE and PUBLISH to the devices, as any request."));
+  s.push_back(integer("presence.min_expires", "60", "The shortest subscription or publication accepted, in seconds; 423 below it.", 1));
+  s.push_back(integer("presence.max_expires", "3600", "The longest subscription or publication granted, in seconds.", 1));
+
   s.push_back(section("calls", "The record of calls."));
   s.push_back(integer("calls.history_retention", "2592000", "Seconds an ended call's record is kept. 0 keeps records for ever."));
 

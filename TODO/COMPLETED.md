@@ -3175,3 +3175,32 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
 - [x] 21 tests across `memory://` and `redis://`, written from the design and watched failing
       first; the unit suite 1433 of 1434, one skipped without a resolver.
 
+### Presence, step 2: the RFC 6665 notifier core (2026-10-11)
+
+- [x] **`Notifier`** (`src/notifier.*`), the fifth transaction user. An out-of-dialog
+      SUBSCRIBE for `dialog` reaches it from the proxy after authorisation, in place of
+      target determination, when presence is on, the datastore holds it, no Route or flow
+      token is left and no peer forwarded it; a Request-URI in no realm here goes back to
+      routing. A request to a Contact it gave (`athena-sub`) reaches it from
+      `_deliver_to_tu` before the proxy.
+- [x] **Who may watch**: the request now records the AOR it was proven to be
+      (`SIPMessage::authenticated_aor`), by Digest or by the REGISTER its reliable connection
+      carried, and a watcher must be proven in the presentity's realm, else 403.
+- [x] **The subscription dialog as a record**, written before the 200 goes: 200 with the
+      granted Expires (capped at `presence.max_expires`, 3600 by default for `dialog`), 423
+      with Min-Expires below `presence.min_expires`, 400 without a Contact, 404 for nobody;
+      the immediate NOTIFY with the state in full; refresh (target refresh, the holder moving
+      to the node the refresh reached), unsubscribe and expiry with a final NOTIFY; a fetch
+      for Expires 0; 481 outside a subscription, 489 for another package in it, 405 for
+      another method; a NOTIFY answered with an error or not at all ends it. Each NOTIFY's
+      CSeq and the `dialog-info` version are stored before it goes. Only the expiry timer is
+      held in memory, and it reads the record back before acting.
+- [x] `Allow-Events: dialog` in the node's OPTIONS answer and its own responses; the
+      `presence` configuration section (enable, min_expires, max_expires) in the schema, the
+      generated reference and the example.
+- [x] Not done, by design: `deactivated` at shutdown, dropped now that subscriptions are
+      records (the design says why); the binding and RFC 3263 fallbacks for a NOTIFY whose
+      flow has gone, moved to the cluster step.
+- [x] 19 tests from RFC 6665 and 4235, watched failing first; the suite 1452 of 1453, one
+      skipped without a resolver; the notifier and proxy tests again under the Lua policy.
+
