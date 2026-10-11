@@ -1,10 +1,9 @@
 # AthenaSIP - Active Work
 
-Work happens on `develop`; `main` carries the last release, `0.10.0` (2026-10-08).
-`develop` is well past it: everything since is listed under 2026-10-09 in `COMPLETED.md`
-(the trunk harness, `--explain`, `--check-trunks`, counters, per-trunk metrics, the policy in
-`GET /api/v1/nodes`, the Debian package and the release procedure). Line numbers refer to the
-current tree; update them as files move.
+Work happens on `develop`; `main` carries the last release, `0.11.0` (2026-10-11), tagged
+with everything on `develop` at the time. `0.10.0` was merged to `main` (`11b69b1`) and
+published as an image but never tagged; found while cutting `0.11.0`. Line numbers refer to
+the current tree; update them as files move.
 
 Milestones 1 and 2 are complete; 3 to 6 are complete apart from the items left under each
 below, almost all of which wait on a device, a carrier, Tom or the admin session.
@@ -34,9 +33,12 @@ then the RFC 6665 notifier core.
   `/api/v1/subscriber/{realm}/config`. fi-1's is reachable only where 10.35.1.20 is; gbni-1's
   needs the router to forward 3478 and 24000-24100 (Waiting on Tom).
 
-**What passes at the head of `develop`** (2026-10-09): the unit suite, 1412 at the last full run plus the nodes-policy test since (one skipped
-without a resolver); the sipp harnesses, one node 13 of 13, with rtpengine 15 of 15, two
-nodes 17 of 17, all three again under `--lua`, and trunks 4 of 4; the live checks 15 of 15.
+**What passes at `0.11.0`** (2026-10-11, the whole of `docs/testing.md`'s Before a release):
+the unit suite 1412 of 1413 (one skipped without a resolver), ASan with UBSan and TSan clean
+(1413 run, the Redis and MQTT tests skipped as documented); the sipp harnesses, one node 13
+of 13, with rtpengine 15 of 15, two nodes 17 of 17, one node and two nodes again under
+`--lua`, and trunks 4 of 4; the suite's smoke over every transport, the console and
+AthenaPhone specs, direct and relayed.
 
 **Once things are stable, video calling is a primary feature** (Tom, 2026-10-03): nothing
 built may assume a call is audio only.
@@ -55,10 +57,11 @@ session that has lost its context needs to see them first.
    local servers only. Proving them needs a Firebase service account (AthenaPhone on
    Android), an Apple APNs key with the app's Team ID and bundle ID (iOS), or a browser
    subscription.
-2. **The next release.** `docs/releasing.md` is the procedure; Tom has not released before
-   and wants to. Proposed as `0.11.0` from `develop`. Needs the `blackravenltd/homebrew-athenasip`
-   tap repository created and the GitHub release made by Tom. The two `.deb` files built on
-   2026-10-09 are from `develop` labelled 0.10.0 and must not be published.
+2. **The rest of the `0.11.0` release.** Tagged and pushed on 2026-10-11 (step 1 of
+   `docs/releasing.md`). Left, from step 2: the packages and the image built from the tag,
+   the `blackravenltd/homebrew-athenasip` tap repository, and the GitHub release, which Tom
+   makes. The two `.deb` files built on 2026-10-09 are from `develop` labelled 0.10.0 and
+   must not be published. Whether to tag `0.10.0` at `11b69b1` after the fact is Tom's call.
 3. **A real carrier account**, to run `docs/quick-start/first-trunk.md` against.
 4. **Router forwards for TURN at gbni-1**: UDP and TCP 3478, UDP 24000-24100 to 10.44.1.50,
    so a browser outside that site can relay. Until then its turn: entry does not connect from
