@@ -265,10 +265,12 @@ class Config {
 
   // presence: the node as the notifier for the dialog and presence packages (docs/design/presence.md). Off, a
   // SUBSCRIBE or PUBLISH is proxied as any request is. min_expires is the shortest subscription or publication
-  // accepted (423 below it, RFC 3261 21.4.17); max_expires the longest granted.
+  // accepted (423 below it, RFC 3261 21.4.17); max_expires the longest granted. reconcile is how often, in
+  // seconds, each node rereads the state its subscriptions watch, for what the bus did not carry; 0 never.
   bool presence_enable = true;
   std::uint32_t presence_min_expires = 60;
   std::uint32_t presence_max_expires = 3600;
+  std::uint32_t presence_reconcile = 30;
 
   // http.tls: an HTTPS listener beside the plain one. Browsers give the microphone only to
   // a secure page, so the console's softphone needs it.

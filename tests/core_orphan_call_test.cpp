@@ -6,12 +6,16 @@
 //
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <ctime>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <vector>
 
+#include "events/topics.h"
 #include "helpers/core_fixture_helper.h"
 #include "media/media_engine.h"
 
@@ -252,4 +256,37 @@ TEST(CoreOrphanCallTest, ClosingACallIsPublished) {
 
   ASSERT_FALSE(states.empty());
   EXPECT_EQ(states.back(), "Closed");
+}
+
+// RFC 4235: the lines a dead node's call held go dark when its record is closed, on whichever node watches them.
+TEST(CoreOrphanCallTest, ClosingADeadNodesCallFreesTheLinesOnIt) {
+  OrphanFixture f;
+
+  std::mutex mutex;
+  std::vector<std::string> heard;
+  auto listening = f.bus->subscribe(events::topics::presence_changed_filter(), [&](std::string topic, std::string) {
+    std::lock_guard<std::mutex> lock(mutex);
+    heard.push_back(events::topics::presence_changed_aor(topic));
+  });
+
+  auto call = std::make_shared<Call>();
+  call->id = "orphan-lines";
+  call->node = "node-gone";
+  call->state = Call::State::Connected;
+  call->created_at = std::time(nullptr) - 600;
+  Call::Participant caller;
+  caller.originator = true;
+  caller.subscriber = "sip:1001@example.com";
+  Call::Participant callee;
+  callee.subscriber = "sip:1002@example.com";
+  call->participants = {caller, callee};
+  ASSERT_TRUE(f.store->call_create(call));
+
+  f.watch_the_cluster();
+  ASSERT_EQ(f.state_of("orphan-lines"), Call::State::Closed);
+
+  f.settle();
+  std::lock_guard<std::mutex> lock(mutex);
+  std::sort(heard.begin(), heard.end());
+  EXPECT_EQ(heard, (std::vector<std::string>{"sip:1001@example.com", "sip:1002@example.com"}));
 }

@@ -584,14 +584,11 @@ requests are taken in `_deliver_to_tu` before the proxy. A UAC request of the no
 Today SUBSCRIBE is simply proxied, and the proxy's `Allow` already lists SUBSCRIBE and
 NOTIFY.
 
-- [ ] The cluster: a change heard on the bus notifies the watchers each node holds; a
-      reconcile every `presence.reconcile` seconds catches what the bus dropped, and the
-      bindings and publications that lapsed in the datastore without a signal; a refresh
-      reaching another node moves the subscription; a stale node's subscriptions are taken
-      over under a lease by the node holding the watcher's flow, and its open calls are left
-      out of what watchers see.
-      With it, a NOTIFY whose flow has gone falls back to the watcher's binding flow, then to
-      RFC 3263 on the remote target; the core ends the subscription instead.
+- [ ] The cluster, the rest: a stale node's subscriptions taken over under a lease by the
+      node holding the watcher's flow; a NOTIFY whose flow has gone falling back to the
+      watcher's binding flow, then to RFC 3263 on the remote target, where the core ends the
+      subscription instead; and `test/e2e/cluster.sh` with a watcher on one node and a call
+      on the other. The reconcile, restart and dead nodes' calls are in (`COMPLETED.md`).
 - [ ] The policy hook for watchers, in `builtin://` and the standard scripts alike.
 - [ ] API and console: who is watching whom, and each subscriber's state.
 - [ ] sipp scenarios, and a Linphone or desk phone against a live node.
@@ -603,12 +600,6 @@ What the 2026-10-11 decision finds in the tree, checked on that day. Each item i
 its own; together they are what lets a node be replaced without anything being lost. In
 the order they matter:
 
-- [ ] **Open call records of a dead node.** Only the caller's node writes the record
-      (`src/call.h`, "Only `node`... writes it"), so a call whose node died stays open for
-      ever. The node holding the other leg closes the record when it ends that leg
-      (`Core::_end_held_call`), and a restarting node closes every open record that names
-      it. Presence needs this first (it is step 6 of the design), and so does the console's
-      calls list.
 - [ ] **Trunk registration status as a record.** Today each node keeps `_registrations`
       and a `_reports` map rebuilt from the retained `trunks/<name>/status` topic
       (`src/trunk_registrar.h:42,117`), and `/api/v1/trunks` answers from it: the bus as

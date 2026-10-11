@@ -100,6 +100,9 @@ class Notifier : public std::enable_shared_from_this<Notifier> {
 
     std::string flow_id;
     std::string node_id;
+
+    // The state the last NOTIFY carried, as _digest has it: what the reconcile compares.
+    std::string digest;
   };
 
   struct Expiry {
@@ -153,6 +156,14 @@ class Notifier : public std::enable_shared_from_this<Notifier> {
 
   void _look_again(const std::string& aor);
 
+  // Every `presence.reconcile` seconds: each subscription this node holds is read back, its expiry timer armed if
+  // this node has none (a restart), and notified if its presentity's state is not what it was last sent.
+  void _reconcile_schedule();
+  void _reconcile();
+
+  // A document's state without what changes on every NOTIFY (dialog-info's version).
+  static std::string _digest(const std::string& package, const std::string& document);
+
   void _schedule(const Subscription& subscription);
   void _expired(const std::string& id);
 
@@ -167,6 +178,7 @@ class Notifier : public std::enable_shared_from_this<Notifier> {
 
   // The one thing held in memory: when each subscription this node holds lapses.
   std::map<std::string, std::shared_ptr<Timer>> _timers;
+  std::shared_ptr<Timer> _reconcile_timer;
 
   // Presentities changed in this turn of the strand, looked at once at its end.
   std::set<std::string> _pending;

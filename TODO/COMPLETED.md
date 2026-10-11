@@ -3274,3 +3274,27 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       registrar, notifier, publish, presence and policy tests 282 of 282 under the Lua
       policy.
 
+### Presence, step 6a: the reconcile, restarts and dead nodes' calls (2026-10-11)
+
+- [x] **The reconcile** (`presence.reconcile`, 30 seconds, 0 never; in the schema, the
+      generated reference and the example): each node reads back every subscription it
+      holds (`presence_list_node`), composes its presentity's state, and notifies where it
+      is not what was last sent. What was last sent is a digest in the subscription's record
+      (MD5 of the document, `dialog-info`'s rising `version` left out), so the comparison
+      holds across nodes and restarts. It is what finds a signal the bus dropped, and a
+      binding or publication that lapsed in the datastore, which signals nothing.
+- [x] **A restarted node resumes its subscriptions** at its first reconcile: an expiry timer
+      for each it has none for, armed from the record's `expires_at`.
+- [x] **A dead node's calls free their lines.** The orphan sweep that was there already
+      closes their records (unanchored at once, anchored once the engine says the media has
+      stopped), and a restarted node's own from before it started; closing one now signals
+      `presence/<aor>/changed` for each subscriber on it. The plan's "open call records of a
+      dead node" item under State was written without seeing the sweep, and is gone from it;
+      the design no longer has a separate rule leaving stale nodes' calls out of documents.
+- [x] 5 tests, watched failing first (3 failed; the two that say nothing is sent pass
+      without a reconcile, as they should). The digest first stripped the XML
+      declaration's `version` instead of the root's, which three existing notifier tests
+      caught. The suite 1499 of 1500 with Redis and MQTT, the one skipped without a
+      resolver; the proxy, registrar, notifier, presence, reconcile, orphan and policy tests
+      297 of 298 under the Lua policy, the one skipped being the equivalence runner.
+
