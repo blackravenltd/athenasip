@@ -3126,3 +3126,25 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       configuration and state. A `/usr` install puts the unit in `/usr/lib/systemd/system`.
       Tested in a clean trixie container: install, `--check` as the account, remove, purge.
 
+### Presence designed, TURN on the nodes (2026-10-11)
+
+- [x] **`docs/design/presence.md`**: the notifier as the fifth transaction user, reached
+      from the proxy after authorisation for out-of-dialog SUBSCRIBE and PUBLISH and from
+      `_deliver_to_tu` for its own dialogs; NOTIFYs down the watcher's flow; the RFC 6665
+      subscription dialog; `dialog` from the node's own dialogs, counted against the
+      subscriber whose binding rang rather than the To; `presence` composed from
+      publications, or from registrations when nothing is published; PUBLISH by entity
+      tag; every fact in the datastore and none twice: subscriptions and publications as new
+      records (five optional contract methods), BLF state read from the call record there
+      is, which gains the subscriber on each participant and an index by it (API version
+      20); a subscription names the node holding the watcher's flow and is taken over when
+      that node dies; changes signalled on `presence/<aor>/changed`, with a periodic
+      reconcile because the bus may drop them; the `watch`
+      policy hook with `Forward` for a deployment's own presence server; the API, the
+      configuration and the build order.
+- [x] **TURN on both live nodes**, at Tom's word through the admin session: Debian coturn,
+      shared-secret credentials minted by each node and handed out with its ICE servers.
+      Proven on each with turnutils_uclient using a credential the node minted (allocated,
+      relayed, a wrong password refused). gbni-1 is unreachable from outside for TURN until
+      its router forwards the ports.
+
