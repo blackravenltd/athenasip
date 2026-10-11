@@ -103,7 +103,8 @@ was silently skipped, a TURN username no browser could use.
 ## Principles
 
 1. **Multi-master, clusterable, HA SIP server.** Any node serves any subscriber.
-   Registrations survive a node dying; in-flight dialogs on a dead node do not (v1).
+   Registrations survive a node dying. A dialog's state is in the datastore (2026-10-11),
+   but its signalling does not move to another node yet (Parked).
    State lives in the datastore (Tom, 2026-10-11): the nodes share the datastore and the
    event system, and that is what makes them a cluster. A node holds in memory only caches
    of records, timers and its transport flows; the bus signals changes and is not storage.
@@ -313,7 +314,9 @@ Dated, and not reopened without asking.
   fact another record already holds extends that record rather than keeping a copy. The
   retained `nodes/<id>/status` of the discovery decision stays: it is liveness, carried by
   a will, and nothing reads it as a record of anything else. The items under "State into
-  the datastore" in Milestone 7 bring the tree to this.
+  the datastore" in Milestone 7 bring the tree to this. Dialog state is included: Tom said yes
+  the same day to putting it in the call record, which supersedes principle 1's v1 terms
+  for dialogs and leaves only the takeover of a live dialog's signalling parked.
 - (2026-10-11) Presence (Tom, answering three questions):
   - **The node is the notifier for the `presence` and `dialog` event packages** of the
     subscribers in its realms: it answers SUBSCRIBE (RFC 6665), accepts PUBLISH (RFC 3903),
@@ -624,13 +627,13 @@ the order they matter:
 - [ ] **Re-offer reports** (`src/media/reoffers.h`, shown by `/api/v1/media/reoffers`)
       are per node and vanish with it. Either a record with a retention, or an event the
       console keeps; the decision rule says a record.
-- [ ] **Dialog state.** `Dialogs` (`src/dialogs.h:78`) holds each dialog's route set,
-      targets, CSeqs and session timer in memory, and the call record holds only the tags.
-      Writing the rest into the call record at the moments it is already written, plus the
-      CSeq on each in-dialog request, costs nothing on the call path (the write is not
-      waited on, as today) and makes mid-call failover possible later. **This reopens
-      Parked "Full dialog-state replication" and principle 1's v1 terms, so it waits for
-      Tom's word**; the rule says yes, the plan said v1 no.
+- [ ] **Dialog state in the call record** (Tom, 2026-10-11: yes). `Dialogs`
+      (`src/dialogs.h:78`) holds each dialog's route set, targets, CSeqs and session timer
+      in memory, and the call record holds only the tags. The rest goes into the call
+      record at the moments it is already written, and the CSeqs as in-dialog requests
+      pass. Nothing on the call path waits for the write, as today. `Dialogs` becomes a
+      cache of those records, rebuilt from the store on a miss, so an in-dialog request
+      reaching another node finds its dialog.
 
 Per node by design, and not items: rate-limit buckets (`src/api/rate_limiter.h`, a node
 protecting itself), metrics counters (scraped per node), the DNS cache, address
@@ -672,9 +675,10 @@ Kept in the tree or history, not on any milestone:
 - `RTPProxyClient` (`src/rtp/rtp_proxy_client.*`): rtpproxy text protocol. Out of the
   build path since 2026-09-21, the way Lua is. May become an `rtpproxy://` driver with
   `bridge` only; not a priority.
-- Full dialog-state replication for mid-call node failover. The 2026-10-11 state decision
-  asks for the dialog's facts in the call record anyway (Milestone 7, State into the
-  datastore); what stays parked is a node taking over a live dialog's signalling.
+- A node taking over a live dialog's signalling when the node in its Record-Route dies.
+  The dialog's state is in the call record (Milestone 7, State into the datastore, Tom
+  2026-10-11), so this is now routing and media, not replication: an in-dialog request
+  has to reach a surviving node, and that node has to take the media over.
 - Parallel forking. The fork is serial: one branch at a time, best response wins. 16.7's
   response context is written to hold more than one branch and the CANCEL path already
   walks it, so the change is in `_forward_next` rather than in the shape. Forking
