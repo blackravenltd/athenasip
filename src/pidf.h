@@ -23,4 +23,7 @@ std::string compose(const std::string& entity, const std::vector<std::string>& d
 // none, with no contact.
 std::string registration(const std::string& entity, bool registered);
 
+// "open" when any tuple's basic status is (RFC 3863 4.1.4), else "closed": the one word a console shows.
+std::string basic(const std::string& document);
+
 }  // namespace athenasip::pidf

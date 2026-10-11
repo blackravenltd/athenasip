@@ -254,4 +254,25 @@ std::string registration(const std::string& entity, bool registered) {
   return header(entity, {}) + "><tuple id=\"registration\"><status><basic>" + (registered ? "open" : "closed") + "</basic></status></tuple></presence>\r\n";
 }
 
+std::string basic(const std::string& document) {
+  for (auto at = document.find('<'); at != kNone; at = document.find('<', at + 1)) {
+    const auto end = document.find('>', at);
+    if (end == kNone) break;
+
+    // A start tag whose local name is basic, under whatever prefix the publisher chose.
+    auto name = document.substr(at + 1, end - at - 1);
+    if (name.empty() || name[0] == '/' || name[0] == '?' || name[0] == '!') continue;
+    name = name.substr(0, name.find_first_of(" \t\r\n/"));
+    if (name.substr(name.find(':') == kNone ? 0 : name.find(':') + 1) != "basic") continue;
+
+    const auto close = document.find('<', end);
+    if (close == kNone) break;
+    auto value = document.substr(end + 1, close - end - 1);
+    const auto first = value.find_first_not_of(" \t\r\n");
+    value = first == kNone ? "" : value.substr(first, value.find_last_not_of(" \t\r\n") - first + 1);
+    if (value == "open") return "open";
+  }
+  return "closed";
+}
+
 }  // namespace athenasip::pidf

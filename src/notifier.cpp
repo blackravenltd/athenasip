@@ -1016,16 +1016,15 @@ void Notifier::_document(const Subscription& subscription, std::function<void(st
                                             });
 }
 
-// RFC 4235 4.1: the full state, each of the presentity's dialogs from its side, at this subscription's version.
-std::string Notifier::_dialog_info(const Subscription& subscription, const std::vector<std::shared_ptr<Call>>& calls) {
-  std::string dialogs;
+std::vector<Notifier::Dialog> Notifier::dialogs_of(const std::string& presentity, const std::vector<std::shared_ptr<Call>>& calls) {
+  std::vector<Dialog> dialogs;
 
   for (const auto& call : calls) {
     if (!call) continue;
 
     for (std::size_t i = 0; i < call->participants.size(); ++i) {
       const auto& leg = call->participants[i];
-      if (leg.subscriber != subscription.presentity) continue;
+      if (leg.subscriber != presentity) continue;
 
       // RFC 4235 3.7.1, from the presentity's side. A callee not yet reached has no dialog to report.
       std::string state;
@@ -1050,23 +1049,39 @@ std::string Notifier::_dialog_info(const Subscription& subscription, const std::
 
       const std::shared_ptr<types::SIPIdentity> remote = call->participants.size() == 2 ? call->participants[1 - i].identity : nullptr;
 
-      // The tags as the presentity's end sees them: its own is local.
-      std::string local_tag;
-      std::string remote_tag;
-      if (leg.dialog) {
-        local_tag = leg.originator ? leg.dialog->caller_tag : leg.dialog->callee_tag;
-        remote_tag = leg.originator ? leg.dialog->callee_tag : leg.dialog->caller_tag;
-      }
+      Dialog dialog;
+      dialog.id = call->id + (leg.originator ? "-i" : "-r");
+      dialog.call_id = call->id;
+      dialog.state = state;
+      dialog.direction = leg.originator ? "initiator" : "recipient";
 
-      dialogs += "<dialog id=\"" + xml_escape(call->id + (leg.originator ? "-i" : "-r")) + "\" call-id=\"" + xml_escape(call->id) + "\"";
-      if (!local_tag.empty()) dialogs += " local-tag=\"" + xml_escape(local_tag) + "\"";
-      if (!remote_tag.empty()) dialogs += " remote-tag=\"" + xml_escape(remote_tag) + "\"";
-      dialogs += std::string(" direction=\"") + (leg.originator ? "initiator" : "recipient") + "\">";
-      dialogs += "<state>" + state + "</state>";
-      if (leg.identity && leg.identity->uri) dialogs += "<local><identity>" + xml_escape(leg.identity->uri->to_string()) + "</identity></local>";
-      if (remote && remote->uri) dialogs += "<remote><identity>" + xml_escape(remote->uri->to_string()) + "</identity></remote>";
-      dialogs += "</dialog>";
+      // The tags as the presentity's end sees them: its own is local.
+      if (leg.dialog) {
+        dialog.local_tag = leg.originator ? leg.dialog->caller_tag : leg.dialog->callee_tag;
+        dialog.remote_tag = leg.originator ? leg.dialog->callee_tag : leg.dialog->caller_tag;
+      }
+      if (leg.identity && leg.identity->uri) dialog.local = leg.identity->uri->to_string();
+      if (remote && remote->uri) dialog.remote = remote->uri->to_string();
+      dialogs.push_back(std::move(dialog));
     }
+  }
+
+  return dialogs;
+}
+
+// RFC 4235 4.1: the full state, each of the presentity's dialogs from its side, at this subscription's version.
+std::string Notifier::_dialog_info(const Subscription& subscription, const std::vector<std::shared_ptr<Call>>& calls) {
+  std::string dialogs;
+
+  for (const auto& dialog : dialogs_of(subscription.presentity, calls)) {
+    dialogs += "<dialog id=\"" + xml_escape(dialog.id) + "\" call-id=\"" + xml_escape(dialog.call_id) + "\"";
+    if (!dialog.local_tag.empty()) dialogs += " local-tag=\"" + xml_escape(dialog.local_tag) + "\"";
+    if (!dialog.remote_tag.empty()) dialogs += " remote-tag=\"" + xml_escape(dialog.remote_tag) + "\"";
+    dialogs += " direction=\"" + dialog.direction + "\">";
+    dialogs += "<state>" + dialog.state + "</state>";
+    if (!dialog.local.empty()) dialogs += "<local><identity>" + xml_escape(dialog.local) + "</identity></local>";
+    if (!dialog.remote.empty()) dialogs += "<remote><identity>" + xml_escape(dialog.remote) + "</identity></remote>";
+    dialogs += "</dialog>";
   }
 
   std::string document = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<dialog-info xmlns=\"urn:ietf:params:xml:ns:dialog-info\" version=\"" +
@@ -1075,12 +1090,14 @@ std::string Notifier::_dialog_info(const Subscription& subscription, const std::
 }
 
 void Notifier::_presence(const Subscription& subscription, std::function<void(std::optional<std::string>)> then) {
+  _compose(subscription.presentity, [then](std::optional<State> state) { then(state ? std::optional<std::string>(state->document) : std::nullopt); });
+}
+
+void Notifier::_compose(const std::string& presentity, std::function<void(std::optional<State>)> then) {
   auto core = _core.lock();
   if (!core) return;
 
   auto self = shared_from_this();
-  const auto presentity = subscription.presentity;
-
   core->datastore->presence_list(
       core->strand(), presentity, types::PresenceRecord::Kind::Publication,
       [this, self, presentity, then](plugins::Result<std::vector<types::PresenceRecord>> published) {
@@ -1094,33 +1111,105 @@ void Notifier::_presence(const Subscription& subscription, std::function<void(st
         // The later publication's tuple wins a clash. The record holds no time of publishing, so the one that
         // lasts longer stands for it: a device refreshes before it lapses.
         if (!published.value.empty()) {
-          auto records = std::move(published.value);
-          std::stable_sort(records.begin(), records.end(), [](const auto& a, const auto& b) { return a.expires_at < b.expires_at; });
+          State state;
+          state.source = "published";
+          state.publications = std::move(published.value);
+          std::stable_sort(state.publications.begin(), state.publications.end(), [](const auto& a, const auto& b) { return a.expires_at < b.expires_at; });
           std::vector<std::string> documents;
-          for (const auto& record : records) documents.push_back(record.body);
-          return then(pidf::compose(presentity, documents));
+          for (const auto& record : state.publications) documents.push_back(record.body);
+          state.document = pidf::compose(presentity, documents);
+          state.basic = pidf::basic(state.document);
+          return then(std::move(state));
         }
 
         // Nothing published: whether it has a binding.
-        core->subscriber_get(std::make_shared<types::SIPIdentity>(presentity),
-                             [this, self, presentity, then](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
-                               auto core = _core.lock();
-                               if (!core) return;
-                               if (!found.ok) {
-                                 _logger->error("Cannot read " + presentity + " - " + found.error);
-                                 return then(std::nullopt);
-                               }
-                               if (!found.value) return then(pidf::registration(presentity, false));
+        auto registered = [presentity, then](bool any) {
+          State state;
+          state.source = "registrations";
+          state.document = pidf::registration(presentity, any);
+          state.basic = any ? "open" : "closed";
+          then(std::move(state));
+        };
+        core->subscriber_get(std::make_shared<types::SIPIdentity>(presentity), [this, self, presentity, then,
+                                                                                registered](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
+          auto core = _core.lock();
+          if (!core) return;
+          if (!found.ok) {
+            _logger->error("Cannot read " + presentity + " - " + found.error);
+            return then(std::nullopt);
+          }
+          if (!found.value) return registered(false);
 
-                               core->location_list(found.value->id, [this, self, presentity, then](plugins::Result<std::vector<types::Location>> bindings) {
-                                 if (!bindings.ok) {
-                                   _logger->error("Cannot read the bindings of " + presentity + " - " + bindings.error);
-                                   return then(std::nullopt);
-                                 }
-                                 then(pidf::registration(presentity, !bindings.value.empty()));
-                               });
-                             });
+          core->location_list(found.value->id, [this, self, presentity, then, registered](plugins::Result<std::vector<types::Location>> bindings) {
+            if (!bindings.ok) {
+              _logger->error("Cannot read the bindings of " + presentity + " - " + bindings.error);
+              return then(std::nullopt);
+            }
+            registered(!bindings.value.empty());
+          });
+        });
       });
+}
+
+void Notifier::state(const std::string& aor, std::function<void(plugins::Result<State>)> then) {
+  auto core = _core.lock();
+  if (!core) return then(plugins::Result<State>::failure("the node is shutting down"));
+
+  auto self = shared_from_this();
+  _compose(aor, [this, self, aor, then](std::optional<State> composed) {
+    auto core = _core.lock();
+    if (!core) return then(plugins::Result<State>::failure("the node is shutting down"));
+    if (!composed) return then(plugins::Result<State>::failure("cannot read the presence of " + aor));
+
+    core->datastore->call_list_for_subscriber(core->strand(), aor,
+                                              [aor, then, state = std::move(*composed)](plugins::Result<std::vector<std::shared_ptr<Call>>> calls) mutable {
+                                                if (!calls.ok)
+                                                  return then(plugins::Result<State>::failure("cannot read the calls of " + aor + " - " + calls.error));
+                                                state.dialogs = dialogs_of(aor, calls.value);
+                                                then(plugins::Result<State>::success(std::move(state)));
+                                              });
+  });
+}
+
+void Notifier::subscriptions(std::function<void(plugins::Result<std::vector<Watch>>)> then) {
+  using Answer = plugins::Result<std::vector<Watch>>;
+  auto core = _core.lock();
+  if (!core) return then(Answer::failure("the node is shutting down"));
+  if (!core->datastore || !core->datastore->supports_presence()) return then(Answer::success({}));
+
+  std::vector<std::string> holders = {core->config->sip_node_id};
+  if (core->nodes()) {
+    for (const auto& node : core->nodes()->list(std::chrono::seconds(std::max<std::uint32_t>(core->config->events_status_interval, 1) * 3))) {
+      if (std::find(holders.begin(), holders.end(), node.id) == holders.end()) holders.push_back(node.id);
+    }
+  }
+
+  // Each holder's list answers on the strand, so the tally needs no lock.
+  struct Tally {
+    std::size_t waiting = 0;
+    std::vector<Watch> found;
+    std::string error;
+  };
+  auto tally = std::make_shared<Tally>();
+  tally->waiting = holders.size();
+
+  for (const auto& holder : holders) {
+    core->datastore->presence_list_node(core->strand(), holder, [tally, then](plugins::Result<std::vector<types::PresenceRecord>> held) {
+      if (!held.ok) {
+        tally->error = held.error;
+      } else {
+        for (const auto& record : held.value) {
+          if (record.kind != types::PresenceRecord::Kind::Subscription) continue;
+          auto subscription = _parse(record);
+          if (!subscription) continue;
+          tally->found.push_back(Watch{record.id, subscription->watcher_uri, subscription->presentity, subscription->package, record.node_id,
+                                       record.expires_at ? record.expires_at : subscription->expires_at});
+        }
+      }
+      if (--tally->waiting > 0) return;
+      then(tally->error.empty() ? Answer::success(std::move(tally->found)) : Answer::failure(tally->error));
+    });
+  }
 }
 
 std::string Notifier::_content_type(const std::string& package) { return package == "presence" ? "application/pidf+xml" : "application/dialog-info+xml"; }

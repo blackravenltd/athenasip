@@ -451,6 +451,20 @@ The `/api/v1/events` stream carries `presence/<aor>/changed` like any other even
 console can update a subscriber's state without polling. The console's screens are the
 admin session's to build; this document fixes only what the API returns.
 
+As built in step 8 (`src/api/presence_api.cpp`, through `Notifier::subscriptions` and
+`Notifier::state`, so the API composes exactly what a watcher is sent):
+
+- The datastore lists subscriptions by holder only, so "every subscription in the
+  cluster" is this node's and each node's the directory has heard of, a stale one
+  included. One held by a node the bus never heard is missed; it lapses at its expiry.
+  This keeps the datastore contract as it is rather than adding a list of everything.
+- A subscriber's state also carries the composed PIDF `document`, and each publication
+  its own. `basic` is open when any tuple is.
+- With presence off, or a datastore that cannot hold it, the state is 404 `presence_off`
+  rather than a state no watcher is sent. The subscription list is what the datastore
+  holds, so it is empty only on a datastore without presence: a node with presence off
+  still shows what the rest of the cluster serves.
+
 ## Configuration
 
 ```

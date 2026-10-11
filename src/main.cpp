@@ -24,6 +24,7 @@
 #include "api/auth_api.h"
 #include "api/calls_api.h"
 #include "api/events_api.h"
+#include "api/presence_api.h"
 #include "api/provisioning_api.h"
 #include "api/router.h"
 #include "api/sessions.h"
@@ -573,6 +574,10 @@ int main(int argc, char* argv[]) {
       // Live calls, the media engine and /metrics, read from Core on its strand.
       auto calls = std::make_shared<api::CallsAPI>(logger, core, adminAPI->executor());
       calls->register_routes(*api_router);
+
+      // Who watches whom, and each subscriber's presence, read through the notifier on the Core strand.
+      auto presence_api = std::make_shared<api::PresenceAPI>(logger, core, adminAPI->executor());
+      presence_api->register_routes(*api_router);
 
       // The event bus as Server-Sent Events, on a response the listener holds open.
       auto events_api = std::make_shared<api::EventsAPI>(logger, events, adminAPI->executor());

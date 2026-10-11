@@ -25,6 +25,7 @@ and nothing on the call path waits for it.
 | `calls/<call_id>/state` | A call changes state | no | The state |
 | `calls/<call_id>/unregister` | A call ends | no | The call id |
 | `trunks/<name>/status` | The node registering a trunk starts, succeeds or fails | yes | [Trunk status](#trunk-status) |
+| `presence/<aor>/changed` | A subscriber's presence may have changed: a binding written or removed, a call it is on written, a publication made or removed | no | [Presence changed](#presence-changed) |
 
 `<transport>` is `udp`, `tcp`, `tls`, `ws` or `wss`. `<endpoint>` is `host:port`.
 
@@ -83,15 +84,36 @@ MQTT wildcards apply: `+` matches one level; `#` matches the rest and must come 
 | `nodes/sip-0001/#` | Everything one node publishes |
 | `subscribers/+/status` | Every registration |
 | `calls/+/unregister` | Every call ending |
+| `presence/+/changed` | Every presentity whose state may have changed |
 
 Use the narrowest filter that works: `#` under a prefix delivers every payload shape below
 it.
 
 ## Watching from a browser
 
-`GET /api/v1/events` serves `nodes/#`, `subscribers/#` and `calls/#` as Server-Sent Events,
+`GET /api/v1/events` serves `nodes/#`, `subscribers/#`, `calls/#` and `presence/#` as Server-Sent Events,
 one event per message named by its topic, for a console that would rather watch than poll.
 It needs the `view-cluster-status` role, and is in the [API description](api/openapi.yaml).
+
+## Presence changed
+
+A signal to look again, never the state ([Presence](design/presence.md)). Every node listens
+on `presence/+/changed` and sends the watchers it holds the presentity's state, read back
+from the datastore; a console reads it from
+`GET /api/v1/realms/{realm}/subscribers/{user}/presence`. A lost signal costs at most
+`presence.reconcile` seconds, after which each node notices on its own.
+
+`<aor>` is the subscriber's address of record, percent-encoded where MQTT forbids a
+character in a level (`+`, `#`, `/`) and wherever else it is not a letter, a digit or one
+of `: @ . - _ ~`: `presence/sip:%2B442079460000@example.com/changed`.
+
+The payload says why, for a log, and may grow fields:
+
+| Payload | Cause |
+|---|---|
+| `{"binding":"written"}` or `{"binding":"removed"}` | The subscriber registered or unregistered |
+| `{"call":"<call_id>"}` | A call it is on was written, or closed by the orphan sweep |
+| `{"publication":"<etag>"}` | It published, or a publication was removed (RFC 3903) |
 
 ## MQTT
 
