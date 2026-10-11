@@ -347,6 +347,11 @@ int main(int argc, char* argv[]) {
     return -3;
   }
 
+  // docs/design/presence.md: a datastore built before presence keeps working, with presence off.
+  if (config->presence_enable && !datastore->supports_presence()) {
+    logger->warn(datastore->describe() + " cannot hold presence: SUBSCRIBE and PUBLISH are proxied to the devices. Set presence.enable: false to say so.");
+  }
+
   // --explain needs the datastore and the policy, and a Core to lend the policy what it decides with; it starts no
   // listener and joins no bus.
   if (!options.explain.empty()) {
