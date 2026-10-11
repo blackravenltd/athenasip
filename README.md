@@ -18,6 +18,10 @@ every external piece it can use is a plugin behind one contract.
 * **Browsers and phones alike.** SIP over WebSocket and secure WebSocket (RFC 7118), with
   WebRTC media through rtpengine, which also converts between a browser and a desk phone.
   TURN credentials are minted per client.
+* **Presence and BLF.** The node is the notifier for `presence` and `dialog` (RFC 3856,
+  4235, 6665) and accepts PUBLISH (RFC 3903): a desk phone's BLF key lights while a
+  colleague is on a call, across the cluster, with nothing set on the phone being watched
+  ([Presence and BLF](docs/presence.md)).
 * **Mobile push.** Phones that sleep are woken for a call through Apple Push, Firebase
   Cloud Messaging or Web Push (RFC 8599).
 * **Routing you can script.** Who may call and where a call goes is a policy: the
@@ -55,6 +59,7 @@ next step:
 * [A server on Linux](docs/quick-start/linux-server.md)
 * [Connecting phones](docs/quick-start/phones.md)
 * [Calling from a browser](docs/quick-start/browser.md)
+* [BLF on a desk phone](docs/quick-start/blf.md)
 * [Your first trunk](docs/quick-start/first-trunk.md)
 * [Running a cluster](docs/clustering.md)
 
@@ -90,6 +95,7 @@ next step:
 * [Troubleshooting](docs/troubleshooting.md) - from the symptom to the cause
 * [Behaviour](docs/behaviour.md) - the choices SIP servers differ on
 * [Scripting](docs/scripting.md) - routing in Lua, and trunks
+* [Presence and BLF](docs/presence.md) - busy lamp fields, buddy lists and who may watch whom
 * [Authentication](docs/authentication.md) - SIP Digest and the admin plane
 * [Certificates](docs/certificates.md) - TLS for clients and the cluster's certificate authority
 * [Architecture](docs/architecture.md)

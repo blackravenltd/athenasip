@@ -3370,3 +3370,12 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       tests; the two that should fail were watched failing, and the one for presence off
       passes either way. The suite 1525 of 1526 with Redis and MQTT, the one skipped without
       a resolver.
+- [x] **The documentation**: `docs/presence.md` (what a watcher sees, who may watch whom,
+      the cluster, configuration, the API, what it does not do, and when a key stays dark);
+      `docs/quick-start/blf.md`, a BLF key on a desk phone and buddy lists; a `presence`
+      section in `docs/configuration.md`; presence terms in the glossary; a troubleshooting
+      section; the notifier and PIDF in the architecture's source layout; and presence in
+      the README's features, the quick start index and the doc list. Every claim was checked
+      against the code: the first draft had a 489 for an unserved package, which the node
+      never sends (it forwards), and a warning at start that did not exist (now it does,
+      above).

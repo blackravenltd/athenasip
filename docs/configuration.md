@@ -378,6 +378,17 @@ when there is none.
 A record is written when a call that reached ringing ends. `GET /api/v1/call-records`
 lists them, newest first.
 
+## `presence`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enable` | `true` | The node is the notifier for `presence` and `dialog`, and takes PUBLISH. `false` proxies SUBSCRIBE and PUBLISH to the devices, as any request. |
+| `min_expires` | `60` | The shortest subscription or publication, in seconds; 423 below it. |
+| `max_expires` | `3600` | The longest granted, in seconds. |
+| `reconcile` | `30` | Seconds between each node's rereading of what its subscriptions watch, which catches a change the event bus did not carry. `0` never. |
+
+[Presence and BLF](presence.md) has what a watcher is told and who may watch whom.
+
 ## `http`
 
 The admin API and the console. Without this section neither is served.

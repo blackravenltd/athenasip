@@ -42,6 +42,18 @@ A subscriber and a user are never created from each other; see
 | **Offer and answer** | How two endpoints agree on media, in SDP (RFC 3264). |
 | **Re-offer** | A second offer the node makes to a callee, in the other media profile, after a 488. Made once. |
 
+## Presence
+
+| Term | Meaning |
+|---|---|
+| **Presentity** | The subscriber whose state is watched (RFC 3856). |
+| **Watcher** | A phone subscribed to a presentity's state. |
+| **Subscription** | A watcher's SUBSCRIBE to one presentity and one package, kept until it expires or is ended (RFC 6665). `GET /api/v1/presence/subscriptions` lists them. Held by one node, which sends its NOTIFYs. |
+| **Package** | What a subscription is to: `presence`, online or offline (RFC 3856), or `dialog`, the presentity's calls (RFC 4235). |
+| **Notifier** | The part of the node that answers subscriptions and sends NOTIFYs. |
+| **Publication** | State a client published about its own subscriber by PUBLISH (RFC 3903), named by its entity tag. |
+| **BLF** | Busy lamp field: a desk phone's key showing another subscriber's line, from the `dialog` package. |
+
 ## Media
 
 | Term | Meaning |
