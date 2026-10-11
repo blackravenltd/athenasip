@@ -43,6 +43,11 @@ std::string list_of(const SIPMessage& message, const std::string& name) {
   return out;
 }
 
+// The same Contact, as far as reaching it goes: user, host and port.
+bool same_contact(const types::SIPUri& a, const types::SIPUri& b) {
+  return a.user == b.user && Util::to_lower(a.host) == Util::to_lower(b.host) && a.port.value_or(0) == b.port.value_or(0);
+}
+
 bool serves(const std::string& package) { return package == "presence" || package == "dialog"; }
 
 // RFC 3261 20.1: no Accept means the package's default, which is the type here; otherwise a range must take it.
@@ -142,6 +147,7 @@ void Notifier::start() {
         if (!subscribed.ok) _logger->warn("Cannot listen for presence changes - " + subscribed.error);
       });
 
+  _started_at = core->timer_source()->now();
   _reconcile_schedule();
 }
 
@@ -187,6 +193,84 @@ void Notifier::_reconcile() {
       });
     }
   });
+
+  _take_over();
+}
+
+void Notifier::_take_over() {
+  auto core = _core.lock();
+  if (!core || !_started_at || !core->nodes()) return;
+
+  // As the orphan sweep judges it: a node that has just started has heard nobody.
+  const auto interval = core->config->events_status_interval;
+  if (interval == 0) return;
+  const auto watch = std::chrono::seconds(interval * 3);
+  if (core->timer_source()->now() - *_started_at < watch) return;
+
+  auto self = shared_from_this();
+  for (const auto& node : core->nodes()->list(watch)) {
+    if (node.id == core->config->sip_node_id || (!node.stale && node.status == "ok")) continue;
+
+    core->datastore->presence_list_node(core->strand(), node.id, [this, self](plugins::Result<std::vector<types::PresenceRecord>> held) {
+      if (!held.ok) return;
+      for (const auto& record : held.value) {
+        if (record.kind != types::PresenceRecord::Kind::Subscription) continue;
+        if (auto subscription = _parse(record)) _adopt(std::move(*subscription));
+      }
+    });
+  }
+}
+
+void Notifier::_adopt(Subscription subscription) {
+  auto self = shared_from_this();
+  _watcher_flow(subscription, [this, self, subscription](std::string flow_id) mutable {
+    auto core = _core.lock();
+    if (!core || flow_id.empty()) return;
+
+    // One node takes it, however many have a flow to the watcher.
+    core->datastore->lease(
+        core->strand(), "presence-takeover:" + subscription.id, core->config->sip_node_id, 60,
+        [this, self, subscription, flow_id](plugins::Result<bool> held) mutable {
+          auto core = _core.lock();
+          if (!core || !held.ok || !held.value) return;
+
+          const auto from = subscription.node_id;
+          subscription.node_id = core->config->sip_node_id;
+          subscription.flow_id = flow_id;
+          _store(subscription, [this, self, subscription, from](bool stored) {
+            if (!stored) return;
+            _logger->info("Took over " + subscription.watcher_uri + "'s subscription to " + subscription.presentity + " from " + from + ", which has gone");
+            _schedule(subscription);
+            _notify(subscription, "active");
+          });
+        });
+  });
+}
+
+void Notifier::_watcher_flow(const Subscription& subscription, std::function<void(std::string)> then) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  auto self = shared_from_this();
+  const types::SIPUri target(subscription.remote_target);
+  core->subscriber_get(std::make_shared<types::SIPIdentity>(subscription.watcher_uri),
+                       [this, self, target, then](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
+                         auto core = _core.lock();
+                         if (!core) return;
+                         if (!found.ok || !found.value || !target.valid) return then("");
+
+                         core->location_list(found.value->id, [this, self, target, then](plugins::Result<std::vector<types::Location>> bindings) {
+                           auto core = _core.lock();
+                           if (!core) return;
+                           if (!bindings.ok) return then("");
+
+                           for (const auto& binding : bindings.value) {
+                             if (binding.node_id != core->config->sip_node_id || !binding.contact || !same_contact(*binding.contact, target)) continue;
+                             if (auto channel = core->channel_find(binding.flow_id); channel && channel->_connection) return then(binding.flow_id);
+                           }
+                           then("");
+                         });
+                       });
 }
 
 std::string Notifier::_digest(const std::string& package, const std::string& document) {
@@ -769,16 +853,68 @@ void Notifier::_run_next(const std::string& id) {
 }
 
 void Notifier::_send_notify(Subscription subscription, std::string state, std::string body, std::function<void()> done) {
+  auto self = shared_from_this();
+  _reach(subscription, [this, self, subscription, state, body, done](std::shared_ptr<Channel> channel) mutable {
+    if (!channel) {
+      _logger->info("There is no way to " + subscription.watcher_uri + " any more; ending its subscription to " + subscription.presentity);
+      _end(subscription);
+      return done();
+    }
+    _send_notify_on(std::move(subscription), std::move(state), std::move(body), std::move(done), std::move(channel));
+  });
+}
+
+void Notifier::_reach(const Subscription& subscription, std::function<void(std::shared_ptr<Channel>)> then) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  if (auto channel = core->channel_find(subscription.flow_id); channel && channel->_connection) return then(channel);
+
+  auto self = shared_from_this();
+  _watcher_flow(subscription, [this, self, subscription, then](std::string flow_id) {
+    auto core = _core.lock();
+    if (!core) return;
+    if (auto channel = flow_id.empty() ? nullptr : core->channel_find(flow_id); channel && channel->_connection) return then(channel);
+
+    // RFC 3261 12.2.1.1: to the first Route when there is a route set, else to the remote target.
+    auto next = subscription.remote_target;
+    if (!subscription.route_set.empty()) {
+      const auto& route = subscription.route_set.front();
+      const auto open = route.find('<');
+      next = open == std::string::npos ? route : route.substr(open + 1, route.find('>', open) - open - 1);
+    }
+    const types::SIPUri uri(next);
+    if (!uri.valid || uri.host.empty()) return then(nullptr);
+
+    core->locator()->locate(core->strand(), uri, [this, self, then](plugins::Result<std::vector<dns::Hop>> located) {
+      if (!located.ok || located.value.empty()) return then(nullptr);
+      _connect(std::move(located.value), 0, then);
+    });
+  });
+}
+
+void Notifier::_connect(std::vector<dns::Hop> hops, std::size_t index, std::function<void(std::shared_ptr<Channel>)> then) {
+  auto core = _core.lock();
+  if (!core) return;
+  if (index >= hops.size()) return then(nullptr);
+
+  const auto hop = hops[index];
+  auto self = shared_from_this();
+  core->channel_connect(hop.transport, hop.address, hop.port,
+                        [this, self, hops = std::move(hops), index, then](plugins::Result<std::shared_ptr<Channel>> opened) mutable {
+                          if (opened.ok && opened.value && opened.value->_connection) return then(opened.value);
+                          _connect(std::move(hops), index + 1, then);
+                        });
+}
+
+void Notifier::_send_notify_on(Subscription subscription, std::string state, std::string body, std::function<void()> done, std::shared_ptr<Channel> channel) {
   auto core = _core.lock();
   if (!core) return done();
 
   const bool terminated = state.rfind("terminated", 0) == 0;
-  auto channel = core->channel_find(subscription.flow_id);
-  if (!channel || !channel->_connection) {
-    _logger->info("The flow to " + subscription.watcher_uri + " has gone; ending its subscription to " + subscription.presentity);
-    _end(subscription);
-    return done();
-  }
+
+  // The flow it now goes down is the one to use next time.
+  subscription.flow_id = channel->flow_id();
 
   subscription.local_cseq += 1;
   subscription.version += 1;

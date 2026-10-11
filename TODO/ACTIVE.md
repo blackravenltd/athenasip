@@ -584,11 +584,8 @@ requests are taken in `_deliver_to_tu` before the proxy. A UAC request of the no
 Today SUBSCRIBE is simply proxied, and the proxy's `Allow` already lists SUBSCRIBE and
 NOTIFY.
 
-- [ ] The cluster, the rest: a stale node's subscriptions taken over under a lease by the
-      node holding the watcher's flow; a NOTIFY whose flow has gone falling back to the
-      watcher's binding flow, then to RFC 3263 on the remote target, where the core ends the
-      subscription instead; and `test/e2e/cluster.sh` with a watcher on one node and a call
-      on the other. The reconcile, restart and dead nodes' calls are in (`COMPLETED.md`).
+- [ ] The cluster, the rest: `test/e2e/cluster.sh` with a watcher on one node and a call on
+      the other. Everything else of the cluster step is in (`COMPLETED.md`).
 - [ ] The policy hook for watchers, in `builtin://` and the standard scripts alike.
 - [ ] API and console: who is watching whom, and each subscriber's state.
 - [ ] sipp scenarios, and a Linphone or desk phone against a live node.

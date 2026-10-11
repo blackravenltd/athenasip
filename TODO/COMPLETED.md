@@ -3298,3 +3298,21 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       resolver; the proxy, registrar, notifier, presence, reconcile, orphan and policy tests
       297 of 298 under the Lua policy, the one skipped being the equivalence runner.
 
+### Presence, step 6b: NOTIFY fallbacks and takeover (2026-10-11)
+
+- [x] **A NOTIFY finds its way to the watcher** (`Notifier::_reach`): the flow the latest
+      SUBSCRIBE came over; that gone, the flow of the watcher's binding on this node whose
+      Contact (user, host, port) is the remote target; else RFC 3263 on the remote target,
+      or the first Route when the dialog has a route set, dialling each hop in turn. The flow
+      it went down becomes the subscription's. Only with none of them does the subscription
+      end, as the core did at once before.
+- [x] **A gone node's subscriptions are taken over** at each reconcile, once this node has
+      heard the cluster for three status intervals (as the orphan sweep judges it): a node
+      stale or not `ok` has its subscriptions listed, and each whose watcher has a binding
+      flow here is taken under the lease `presence-takeover:<id>`, rewritten to this node and
+      flow, armed and notified at once. A live node's are left alone.
+- [x] 5 tests, watched failing first (the fallback and the takeover failed; the three
+      guards held either way). The suite 1504 of 1505 with Redis and MQTT, the one skipped
+      without a resolver; 302 of 303 of the presence, proxy, registrar, orphan and policy
+      tests under the Lua policy, the one skipped being the equivalence runner.
+
