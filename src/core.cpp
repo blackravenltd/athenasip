@@ -1517,7 +1517,17 @@ void Core::_close_orphan(const std::shared_ptr<Call>& call, const std::string& r
   call->ended_at = std::time(nullptr);
 
   datastore->call_update(_strand, call, [this, self = shared_from_this(), call](plugins::Status status) {
-    if (!status.ok) _logger->error("Cannot close call " + call->id + " - " + status.error);
+    if (!status.ok) {
+      _logger->error("Cannot close call " + call->id + " - " + status.error);
+      return;
+    }
+
+    // The lines the call held are free, wherever their watchers are.
+    std::set<std::string> signalled;
+    for (const auto& participant : call->participants) {
+      if (participant.subscriber.empty() || !signalled.insert(participant.subscriber).second) continue;
+      events->publish(events::topics::presence_changed(participant.subscriber), "{\"call\":\"" + call->id + "\"}");
+    }
   });
 
   events->publish(events::topics::call_state(call->id), Call::state_to_string(call->state));

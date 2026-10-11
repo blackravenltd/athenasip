@@ -276,6 +276,7 @@ The node as the notifier for the dialog package (BLF) and presence (docs/design/
 | `presence.enable` | true or false | `true` | False proxies SUBSCRIBE and PUBLISH to the devices, as any request. |
 | `presence.min_expires` | integer, 1 or more | `60` | The shortest subscription or publication accepted, in seconds; 423 below it. |
 | `presence.max_expires` | integer, 1 or more | `3600` | The longest subscription or publication granted, in seconds. |
+| `presence.reconcile` | integer, 0 or more | `30` | Seconds between each node's rereading of the state its subscriptions watch, catching what the event bus did not carry; 0 never. |
 
 ## `calls`
 

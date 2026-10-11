@@ -899,6 +899,12 @@
           "type": "integer",
           "minimum": 1,
           "default": 3600
+        },
+        "reconcile": {
+          "description": "Seconds between each node's rereading of the state its subscriptions watch, catching what the event bus did not carry; 0 never.",
+          "type": "integer",
+          "minimum": 0,
+          "default": 30
         }
       }
     },

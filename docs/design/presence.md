@@ -368,12 +368,15 @@ from C, down the receptionist's own flow.
 **A node dying.** Its call records and its subscriptions name it. When the node
 directory (`src/node_directory.h`) marks it stale, two things follow.
 
-- Its calls are gone. Every node recomposes the presentities its subscriptions watch,
-  leaving out open call records whose `node` is stale, and notifies any whose state
-  changed. The records themselves are closed by whoever learns the call has ended: the
-  node holding the other leg when it ends it (`Core::_end_held_call`), and the dead node
-  itself when it restarts, for every open record that names it. Today neither writes,
-  and the record stays open; that is an item under State in `TODO/ACTIVE.md`.
+- Its calls are gone. The orphan sweep that was already there (`Core::_orphan_sweep`)
+  closes their records: the live node with the lowest id closes an unanchored call once
+  the node is found gone, and an anchored one once its engine says the media has stopped,
+  since rtpengine carries the media on without the node and the people on it are still
+  talking. Closing a record now signals `changed` for each subscriber on it, so the lines
+  go dark wherever they are watched; the reconcile finds any that signal missed. Changed
+  2026-10-11 while building the cluster step, from leaving stale nodes' open calls out of
+  every document: the sweep already decides when such a call has ended, and a second rule
+  for it would disagree with the first while the media still flows.
 - Its subscriptions are still in the datastore. A watcher that uses outbound has, or soon
   has, a flow to a surviving node: that node lists the dead node's subscriptions
   (`presence_list_node`), takes over each whose watcher has a binding flow on it (by
@@ -383,9 +386,12 @@ directory (`src/node_directory.h`) marks it stale, two things follow.
   since the Contact names the realm, not the node. One that never refreshes lapses at its
   expiry.
 
-A restarting node closes the open call records that name it and publishes `changed`
-for each participant, so no line stays lit for a call that died with it. Its subscriptions
-it reads back (`presence_list_node`) and resumes, unless another node has taken them.
+A restarting node's orphan sweep closes the open call records that name it from before
+it started, which signals each participant, so no line stays lit for a call that died with
+it. Its subscriptions it reads back (`presence_list_node`) at its first reconcile, arms
+their expiry from the record, and notifies any whose state is not what was last sent,
+unless another node has taken them. The digest of what was last sent is in the record;
+for `dialog` it leaves out the `version`, which rises with every NOTIFY.
 
 **Single node.** `memory://` and `local://` serve all of this unchanged: the bus is local
 and the datastore is the node's own.

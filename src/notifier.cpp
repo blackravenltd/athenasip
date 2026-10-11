@@ -141,6 +141,63 @@ void Notifier::start() {
       [this, self = shared_from_this()](plugins::Result<std::shared_ptr<events::Subscription>> subscribed) {
         if (!subscribed.ok) _logger->warn("Cannot listen for presence changes - " + subscribed.error);
       });
+
+  _reconcile_schedule();
+}
+
+void Notifier::_reconcile_schedule() {
+  auto core = _core.lock();
+  if (!core || core->config->presence_reconcile == 0) return;
+
+  std::weak_ptr<Notifier> weak_self = weak_from_this();
+  _reconcile_timer = core->timer_source()->schedule(std::chrono::seconds(core->config->presence_reconcile), [weak_self]() {
+    auto self = weak_self.lock();
+    if (!self) return;
+    if (auto core = self->_core.lock()) {
+      core->post([self]() {
+        self->_reconcile();
+        self->_reconcile_schedule();
+      });
+    }
+  });
+}
+
+void Notifier::_reconcile() {
+  auto core = _core.lock();
+  if (!core || !core->config->presence_enable || !core->datastore || !core->datastore->supports_presence()) return;
+
+  auto self = shared_from_this();
+  core->datastore->presence_list_node(core->strand(), core->config->sip_node_id, [this, self](plugins::Result<std::vector<types::PresenceRecord>> held) {
+    if (!held.ok) {
+      _logger->error("Cannot read the subscriptions this node holds - " + held.error);
+      return;
+    }
+
+    for (const auto& record : held.value) {
+      if (record.kind != types::PresenceRecord::Kind::Subscription) continue;
+      auto subscription = _parse(record);
+      if (!subscription) continue;
+
+      // Held here before this node restarted: it lapses as it would have.
+      if (!_timers.contains(subscription->id)) _schedule(*subscription);
+
+      _document(*subscription, [this, self, subscription = *subscription](std::optional<std::string> document) {
+        if (!document || _digest(subscription.package, *document) == subscription.digest) return;
+        _notify(subscription, "active", true);
+      });
+    }
+  });
+}
+
+std::string Notifier::_digest(const std::string& package, const std::string& document) {
+  auto state = document;
+  if (package == "dialog") {
+    // The root's, not the XML declaration's.
+    if (const auto at = state.find(" version=\"", state.find("<dialog-info")); at != std::string::npos) {
+      if (const auto end = state.find('"', at + 10); end != std::string::npos) state.erase(at, end + 1 - at);
+    }
+  }
+  return Util::md5(state);
 }
 
 void Notifier::changed(const std::string& aor) {
@@ -779,6 +836,7 @@ void Notifier::_send_notify(Subscription subscription, std::string state, std::s
   }
 
   if (subscription.package == "presence") _windows[subscription.id].last = core->timer_source()->now();
+  subscription.digest = _digest(subscription.package, body);
 
   _store(subscription, [send, done](bool) mutable {
     send();
@@ -924,7 +982,8 @@ void Notifier::_schedule(const Subscription& subscription) {
 
   std::weak_ptr<Notifier> weak_self = weak_from_this();
   const auto id = subscription.id;
-  _timers[id] = core->timer_source()->schedule(std::chrono::seconds(subscription.expires), [weak_self, id]() {
+  const auto remaining = std::max<std::time_t>(subscription.expires_at - std::time(nullptr), 1);
+  _timers[id] = core->timer_source()->schedule(std::chrono::seconds(remaining), [weak_self, id]() {
     auto self = weak_self.lock();
     if (!self) return;
     if (auto core = self->_core.lock()) core->post([self, id]() { self->_expired(id); });
@@ -989,6 +1048,7 @@ std::string Notifier::_body(const Subscription& subscription) {
   obj["expires_at"] = static_cast<std::int64_t>(subscription.expires_at);
   obj["flow_id"] = subscription.flow_id;
   obj["node_id"] = subscription.node_id;
+  obj["digest"] = subscription.digest;
   return boost::json::serialize(obj);
 }
 
@@ -1018,6 +1078,7 @@ std::optional<Notifier::Subscription> Notifier::_parse(const types::PresenceReco
     subscription.expires = static_cast<std::uint32_t>(number("expires"));
     subscription.expires_at = static_cast<std::time_t>(obj.at("expires_at").to_number<std::int64_t>());
     subscription.flow_id = text("flow_id");
+    if (const auto* digest = obj.if_contains("digest"); digest && digest->is_string()) subscription.digest = digest->as_string().c_str();
     // The holder is the record's, which a move rewrites.
     subscription.node_id = record.node_id;
     return subscription;
