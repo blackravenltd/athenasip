@@ -148,8 +148,12 @@ bool Notifier::wants(const SIPMessage& request) const {
   auto core = _core.lock();
   if (!core || !core->config->presence_enable || !core->datastore || !core->datastore->supports_presence()) return false;
 
-  if (request.header->request_method != "SUBSCRIBE" || !tag_of(request, "To").empty()) return false;
-  if (package_of(value_of(request, "Event")) != packages()) return false;
+  // RFC 3903: a PUBLISH is never in a dialog, and one for a package not composed here is answered 489.
+  const auto& method = request.header->request_method;
+  if (method != "PUBLISH") {
+    if (method != "SUBSCRIBE" || !tag_of(request, "To").empty()) return false;
+    if (package_of(value_of(request, "Event")) != packages()) return false;
+  }
 
   // Passing through, or routed back down a flow: not addressed to the AOR.
   if (request.header->contains("Route") || !request.flow_token.empty()) return false;
@@ -160,7 +164,7 @@ bool Notifier::wants(const SIPMessage& request) const {
   return request.header->request_uri && !request.header->request_uri->user.empty();
 }
 
-void Notifier::on_subscribe(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::function<void()> otherwise) {
+void Notifier::on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::function<void()> otherwise) {
   auto core = _core.lock();
   if (!core) return;
 
@@ -172,12 +176,14 @@ void Notifier::on_subscribe(std::shared_ptr<SIPMessage> request, std::shared_ptr
     if (!core) return;
 
     if (!found.ok) {
-      _logger->error("Cannot read a realm for a SUBSCRIBE - " + found.error);
+      _logger->error("Cannot read a realm for a " + request->header->request_method + " - " + found.error);
       return _send_status(transaction, request, 500, "Server Internal Error");
     }
     if (!found.value) return otherwise();
 
     const auto realm = found.value;
+
+    if (request->header->request_method == "PUBLISH") return _publish(request, transaction, "sip:" + request->header->request_uri->user + "@" + realm->name);
 
     // RFC 6665 4.1.2.1: the Contact is the dialog's remote target.
     auto contact = identity_of(*request, "Contact");
@@ -291,6 +297,142 @@ Notifier::Expiry Notifier::_expiry(const SIPMessage& request, bool initial) cons
 
   expiry.granted = std::min(expiry.granted, core->config->presence_max_expires);
   return expiry;
+}
+
+void Notifier::_publish(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::string presentity) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  auto self = shared_from_this();
+  auto identity = std::make_shared<types::SIPIdentity>(presentity);
+  core->subscriber_get(identity, [this, self, request, transaction, presentity](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
+    auto core = _core.lock();
+    if (!core) return;
+
+    // RFC 3903 6 step 1: the presentity is one, and the publisher is it. Fixed, not policy (docs/design/presence.md).
+    if (!found.ok) {
+      _logger->error("Cannot read " + presentity + " for a PUBLISH - " + found.error);
+      return _send_status(transaction, request, 500, "Server Internal Error");
+    }
+    if (!found.value) {
+      _logger->info("PUBLISH for " + presentity + ", who is nobody here - 404");
+      return _send_status(transaction, request, 404, "Not Found");
+    }
+    if (request->authenticated_aor != presentity) {
+      const auto& publisher = request->authenticated_aor;
+      _logger->info("PUBLISH for " + presentity + " from " + (publisher.empty() ? std::string("an unproven publisher") : publisher) + " - 403");
+      return _send_status(transaction, request, 403, "Forbidden");
+    }
+
+    // Step 2.
+    if (package_of(value_of(*request, "Event")) != published_packages()) {
+      return _send_status(transaction, request, 489, "Bad Event", {{"Allow-Events", published_packages()}});
+    }
+
+    // Step 3.
+    const auto expiry = _expiry(*request, true);
+    if (expiry.code == 423) {
+      return _send_status(transaction, request, 423, "Interval Too Brief", {{"Min-Expires", std::to_string(core->config->presence_min_expires)}});
+    }
+
+    // Step 4: an entity tag names the publication this one refreshes, modifies or removes; without one it is new,
+    // and must carry state.
+    const auto if_match = Util::trim(value_of(*request, "SIP-If-Match"));
+    if (if_match.empty()) {
+      if (request->body.empty()) return _send_status(transaction, request, 400, "Bad Request");
+      return _published(request, transaction, presentity, std::nullopt, expiry.granted);
+    }
+
+    core->datastore->presence_get(
+        core->strand(), types::PresenceRecord::Kind::Publication, if_match,
+        [this, self, request, transaction, presentity, if_match, expiry](plugins::Result<std::optional<types::PresenceRecord>> found) {
+          if (!found.ok) {
+            _logger->error("Cannot read publication " + if_match + " - " + found.error);
+            return _send_status(transaction, request, 500, "Server Internal Error");
+          }
+          if (!found.value || found.value->aor != presentity) {
+            _logger->info("PUBLISH for " + presentity + " naming a publication it does not have - 412");
+            return _send_status(transaction, request, 412, "Conditional Request Failed");
+          }
+          _published(request, transaction, presentity, std::move(found.value), expiry.granted);
+        });
+  });
+}
+
+void Notifier::_published(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::string presentity,
+                          std::optional<types::PresenceRecord> previous, std::uint32_t expires) {
+  auto core = _core.lock();
+  if (!core) return;
+
+  const bool removal = previous && expires == 0;
+  const bool has_body = !request->body.empty();
+
+  // Step 5, RFC 3856 6.1: presence state is PIDF. A removal's body is not read.
+  if (has_body && !removal) {
+    const auto content_type = value_of(*request, "Content-Type");
+    if (Util::to_lower(Util::trim(content_type.substr(0, content_type.find(';')))) != "application/pidf+xml") {
+      return _send_status(transaction, request, 415, "Unsupported Media Type", {{"Accept", "application/pidf+xml"}});
+    }
+  }
+
+  // Step 6: a new entity tag on every success, 128 random bits or more.
+  const auto etag = Util::generate_random_string("", 24);
+  const bool changed = removal || (has_body && expires > 0);
+
+  auto self = shared_from_this();
+  auto answer = [this, self, request, transaction, presentity, etag, expires, changed]() {
+    auto response = request->generate_response();
+    response->header->response_code = 200;
+    response->header->response_message = "OK";
+    response->header->add("SIP-ETag", std::make_shared<headers::StringHeader>(etag));
+    response->header->add("Expires", std::make_shared<headers::StringHeader>(std::to_string(expires)));
+    transaction->send(response);
+    if (changed) _signal(presentity, "{\"publication\":\"" + etag + "\"}");
+  };
+
+  // The tag a refresh, modification or removal named is spent once the new state is stored.
+  auto retire = [this, self, previous, answer]() {
+    auto core = _core.lock();
+    if (!core) return;
+    if (!previous) return answer();
+
+    core->datastore->presence_delete(core->strand(), types::PresenceRecord::Kind::Publication, previous->id,
+                                     [this, self, id = previous->id, answer](plugins::Status status) {
+                                       if (!status.ok) _logger->error("Cannot remove publication " + id + " - " + status.error);
+                                       answer();
+                                     });
+  };
+
+  if (removal) {
+    _logger->info(presentity + " withdraws publication " + previous->id);
+    return retire();
+  }
+
+  // RFC 3903 4.1 asks nothing of an initial publication for no time at all; there is nothing to keep.
+  if (expires == 0) return answer();
+
+  types::PresenceRecord record;
+  record.kind = types::PresenceRecord::Kind::Publication;
+  record.id = etag;
+  record.aor = presentity;
+  record.content_type = "application/pidf+xml";
+  record.body = has_body ? request->body : previous->body;
+
+  core->datastore->presence_put(core->strand(), std::move(record), expires,
+                                [this, self, request, transaction, presentity, etag, expires, retire](plugins::Status status) {
+                                  if (!status.ok) {
+                                    _logger->error("Cannot store a publication for " + presentity + " - " + status.error);
+                                    return _send_status(transaction, request, 500, "Server Internal Error");
+                                  }
+                                  _logger->info(presentity + " publishes " + etag + " for " + std::to_string(expires) + "s");
+                                  retire();
+                                });
+}
+
+void Notifier::_signal(const std::string& aor, const std::string& why) {
+  auto core = _core.lock();
+  if (!core || !core->events) return;
+  core->events->publish(events::topics::presence_changed(aor), why);
 }
 
 void Notifier::_accept(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::string presentity,

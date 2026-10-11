@@ -257,10 +257,11 @@ void Proxy::_proceed(const std::shared_ptr<SIPMessage>& request, const std::shar
       core->call_subscriber(value_of(request, "Call-ID"), true, request->authenticated_aor);
     }
 
-    // A SUBSCRIBE for a package the node is the notifier for is answered here, not routed (docs/design/presence.md).
+    // A SUBSCRIBE for a package the node is the notifier for, and a PUBLISH, are answered here, not routed
+    // (docs/design/presence.md).
     if (core && core->notifier()->wants(*request)) {
-      return core->notifier()->on_subscribe(request, transaction,
-                                            [this, self, request, transaction, token]() { _determine_targets(request, transaction, token); });
+      return core->notifier()->on_request(request, transaction,
+                                          [this, self, request, transaction, token]() { _determine_targets(request, transaction, token); });
     }
     _determine_targets(request, transaction, token);
   });
@@ -2165,18 +2166,20 @@ void Proxy::_answer_options(const std::shared_ptr<transactions::TransactionBase>
 
   // 11.2: what this node does. As a proxy it carries any method; these are the ones it takes part in. It replaces
   // the default Allow every response is generated with.
+  auto core = _core.lock();
+  const bool presence = core && core->config->presence_enable && core->datastore && core->datastore->supports_presence();
+
   response->header->remove_value("Allow", [](const std::shared_ptr<headers::Header>&) { return true; });
-  response->header->add("Allow", std::make_shared<headers::StringHeader>("INVITE, ACK, CANCEL, BYE, OPTIONS, REGISTER, UPDATE, INFO, PRACK, MESSAGE, "
-                                                                         "SUBSCRIBE, NOTIFY, REFER"));
+  response->header->add("Allow", std::make_shared<headers::StringHeader>(std::string("INVITE, ACK, CANCEL, BYE, OPTIONS, REGISTER, UPDATE, INFO, PRACK, "
+                                                                                     "MESSAGE, SUBSCRIBE, NOTIFY, REFER") +
+                                                                         (presence ? ", PUBLISH" : "")));
   response->header->add("Accept", std::make_shared<headers::StringHeader>("application/sdp"));
   response->header->add("Accept-Encoding", std::make_shared<headers::StringHeader>("identity"));
   response->header->add("Accept-Language", std::make_shared<headers::StringHeader>("en"));
   response->header->add("Supported", std::make_shared<headers::StringHeader>("path, outbound, timer"));
 
   // RFC 6665 7.2.2: the packages this node is the notifier for.
-  if (auto core = _core.lock(); core && core->config->presence_enable && core->datastore && core->datastore->supports_presence()) {
-    response->header->add("Allow-Events", std::make_shared<headers::StringHeader>(Notifier::packages()));
-  }
+  if (presence) response->header->add("Allow-Events", std::make_shared<headers::StringHeader>(Notifier::packages()));
 
   transaction->send(response);
 }

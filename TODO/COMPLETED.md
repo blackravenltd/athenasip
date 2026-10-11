@@ -3227,3 +3227,24 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       suite 1460 of 1461 with Redis and MQTT; the notifier, dialog, proxy and local UA tests
       201 of 201 under the Lua policy.
 
+### Presence, step 4: PUBLISH (2026-10-11)
+
+- [x] **The node is the event state compositor** for its subscribers (RFC 3903): an
+      out-of-dialog PUBLISH to a served realm's AOR is taken in the proxy after
+      authorisation, as SUBSCRIBE is (`Notifier::on_request`, was `on_subscribe`), and
+      answered in RFC 3903 6's order: 404 for nobody, 403 unless the publisher was proven as
+      the presentity, 489 with `Allow-Events: presence` for another package, 423 under
+      `presence.min_expires`, 412 for an entity tag not held for that presentity, 400 for
+      neither body nor tag, 415 with `Accept` for a body that is not PIDF.
+- [x] **Initial, refresh, modify and remove**, each 200 with a new 24-character random
+      `SIP-ETag` and the granted `Expires` (3600 by default, capped at
+      `presence.max_expires`). The publication is a datastore record by entity tag, its TTL
+      the expiry; the tag a refresh or modification names is deleted once the new record is
+      stored, so it is spent. A body or a removal signals `presence/<aor>/changed`; a refresh
+      changes nothing and signals nothing.
+- [x] The node's OPTIONS answer lists PUBLISH in `Allow` while presence is on.
+- [x] 15 tests from RFC 3903, watched failing first (13 failed; 404 and presence-off were the
+      proxy's already). The suite 1475 of 1476 with Redis and MQTT; the proxy, notifier,
+      publish and policy tests 217 of 218 under the Lua policy, the one skipped being the
+      equivalence runner itself.
+
