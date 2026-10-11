@@ -11,6 +11,7 @@
 #
 #   test/e2e/cluster.sh            every scenario
 #   test/e2e/cluster.sh across     only those whose name contains "across"
+#   test/e2e/cluster.sh --lua      both nodes on the standard Lua scripts
 #
 # It checks that a node reads a binding whose flow another node holds, forwards the call
 # over mutual TLS, and that the ACK and BYE cross back. The first scenario is the control:
@@ -22,6 +23,17 @@ cd "$(dirname "$0")/../.."
 
 COMPOSE="docker compose -f docker-compose.cluster.yml"
 IMAGE="athenasip-e2e-cluster-node"
+
+# --lua: both nodes on the standard Lua scripts (lua.sh).
+if [ "${1:-}" = "--lua" ]; then
+  . test/e2e/lua.sh
+  lua_begin
+  lua_node node-a test/e2e/config-cluster/node-a
+  lua_node node-b test/e2e/config-cluster/node-b
+  COMPOSE="${COMPOSE} -f ${LUA_DIR}/compose.yml"
+  shift
+  echo "Policy: lua"
+fi
 
 NODE_A="172.31.0.10"
 NODE_B="172.31.0.11"

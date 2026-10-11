@@ -4,6 +4,32 @@ A node is one binary, one configuration file and one systemd unit. The defaults 
 in-process datastore, event system and media relay, so a working node needs no Redis, no
 broker and no media server.
 
+## From the Debian package
+
+For Debian 13 (trixie) and its derivatives. Build the package in Docker from a checkout,
+then install it:
+
+```bash
+docker build --target deb --output dist .
+sudo apt install ./dist/athenasip_*.deb
+```
+
+`--platform linux/arm64` builds one for ARM. Boost is linked in statically, so the package
+depends only on what Debian ships: OpenSSL, yaml-cpp, nghttp2 and Lua.
+
+| | |
+|---|---|
+| `/usr/bin/athenasip` | the binary |
+| `/etc/athenasip/config.yaml` | the live configuration, from the annotated example, readable by the service account alone; an upgrade keeps your changes |
+| `/usr/lib/systemd/system/athenasip.service` | the unit |
+| `/usr/share/athenasip/scripts/` | the standard Lua scripts |
+| `/usr/share/doc/athenasip/` | the annotated example |
+
+It creates the `athenasip` service account and leaves the node stopped: set a datastore and
+the addresses in the configuration, make the first administrator, and start it, as below
+from [The first administrator](#the-first-administrator). An upgrade restarts a node that
+was running. `apt purge athenasip` removes the configuration and the node's state too.
+
 ## From source
 
 Dependencies are in [compiling.md](compiling.md).
@@ -62,7 +88,9 @@ sudo systemctl reload athenasip     # read the routing scripts again, with lua:/
 | `athenasip --config PATH` | read a particular configuration |
 | `athenasip --print-config` | print the effective configuration, defaults resolved, and exit |
 | `athenasip --print-schema` | print every setting as a JSON Schema for an editor, or with `=markdown` as the reference, and exit |
-| `athenasip --check` | try the datastore, event bus, media engine, routing scripts, certificates and cluster peers, report, and exit |
+| `athenasip --check` | try the datastore, event bus, media engine, routing scripts, trunks, certificates and cluster peers, report, and exit |
+| `athenasip --check-trunks` | send each trunk an OPTIONS from a socket of its own, say which answered and how fast, and exit |
+| `athenasip --explain FILE [--from ADDRESS]` | put a SIP request from a file to the routing policy, say what it decided, and exit; nothing is sent |
 | `athenasip --list-plugins` | load the plugin modules in `plugins.path`, say which loaded, list every driver, and exit |
 | `athenasip --help` | every option |
 

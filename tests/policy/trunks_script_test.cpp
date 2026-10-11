@@ -123,6 +123,26 @@ TEST(TrunksScriptTest, ANumberInTheToIsReadWhenTheRequestUriIsTheRegisteredConta
   EXPECT_EQ(route.value.targets[0].subscriber->id, 1u);
 }
 
+// Unset, the Contact registered is the trunk's username (RFC 3261 10.2.1), and the script must know it as that.
+TEST(TrunksScriptTest, TheRegisteredContactIsTheUsernameWhenNoContactUserIsSet) {
+  TrunksScriptFixture f;
+  auto trunk = std::make_shared<types::Trunk>();
+  trunk->name = "hooli";
+  trunk->uri = "sip:sip.hooli.example";
+  trunk->username = "7788";
+  trunk->register_enabled = true;
+  trunk->attributes = boost::json::parse(R"({"numbers": {"+442071234567": "sip:alice@example.com"}})").as_object();
+  ASSERT_TRUE(f.store->trunk_create(trunk));
+
+  auto request = f.invite("sip:7788@192.0.2.1", "sip:+447700900123@sip.hooli.example", f.carrier, "sip:+442071234567@sip.hooli.example");
+  request->trunk = "hooli";
+
+  const auto route = f.route(request);
+  ASSERT_TRUE(route.ok) << route.error;
+  ASSERT_EQ(route.value.targets.size(), 1u) << "the number is in the To; the Request-URI is the Contact registered as the username";
+  EXPECT_EQ(route.value.targets[0].subscriber->id, 1u);
+}
+
 TEST(TrunksScriptTest, ANumberNoListNamesIsRefused) {
   TrunksScriptFixture f;
   auto request = f.invite("sip:+442079999999@192.0.2.1", "sip:+447700900123@sip.acme.example", f.carrier);

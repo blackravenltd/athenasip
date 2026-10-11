@@ -379,6 +379,39 @@ TEST(CallsApiTest, MetricsAreInPrometheusTextFormat) {
   EXPECT_NE(body.find("# TYPE athenasip_media_packets_relayed_total counter\nathenasip_media_packets_relayed_total 123\n"), std::string::npos) << body;
 }
 
+// Per trunk: the calls on it, and how the branches sent out by it ended, by code.
+TEST(CallsApiTest, MetricsCountWhatEachTrunkCarries) {
+  CallsFixture f;
+  auto call = f.add_call("call-out@example.com");
+  f.on_strand([&]() {
+    call->participants[1].trunk = "acme";
+    f.core->trunk_response_count("acme", 200);
+    f.core->trunk_response_count("acme", 486);
+    f.core->trunk_response_count("acme", 486);
+  });
+
+  const auto response = f.get("/metrics");
+  ASSERT_EQ(response.status, 200u) << response.body;
+  const auto& body = response.body;
+  EXPECT_NE(body.find("athenasip_trunk_calls_active{trunk=\"acme\"} 1\n"), std::string::npos) << body;
+  EXPECT_NE(body.find("athenasip_trunk_responses_total{trunk=\"acme\",code=\"200\"} 1\n"), std::string::npos) << body;
+  EXPECT_NE(body.find("athenasip_trunk_responses_total{trunk=\"acme\",code=\"486\"} 2\n"), std::string::npos) << body;
+}
+
+// The call's legs say which trunk each ran over.
+TEST(CallsApiTest, ACallSaysWhichTrunkEachLegRanOver) {
+  CallsFixture f;
+  auto call = f.add_call("call-out@example.com");
+  f.on_strand([&]() { call->participants[1].trunk = "acme"; });
+
+  const auto response = f.get("/api/v1/calls");
+  ASSERT_EQ(response.status, 200u) << response.body;
+  const auto calls = response.json();
+  const auto& participants = calls.as_array().at(0).as_object().at("participants").as_array();
+  EXPECT_TRUE(participants[0].as_object().at("trunk").is_null());
+  EXPECT_EQ(participants[1].as_object().at("trunk").as_string(), "acme");
+}
+
 // An engine that cannot count is omitted, rather than reported as zero.
 TEST(CallsApiTest, AnEngineThatCannotCountIsLeftOutOfTheMetrics) {
   CallsFixture f(/*with_engine=*/false);

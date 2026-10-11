@@ -11,6 +11,7 @@
 #   test/e2e/run.sh              every scenario
 #   test/e2e/run.sh register     only the ones whose name contains "register"
 #   test/e2e/run.sh --rtpengine  the same, with rtpengine on the media path
+#   test/e2e/run.sh --lua        the same, with the node on the standard Lua scripts
 
 set -eu
 
@@ -18,13 +19,28 @@ cd "$(dirname "$0")/../.."
 
 COMPOSE="docker compose -f docker-compose.test.yml"
 ENGINE="builtin"
+POLICY="builtin"
+CONFIG="test/e2e/config"
 
-# The media engine is a compose overlay: the scenarios, provisioning and node are the
-# same, so a scenario that passes on one engine and fails on the other is an engine fault.
-if [ "${1:-}" = "--rtpengine" ]; then
-  COMPOSE="${COMPOSE} -f docker-compose.rtpengine.yml"
-  ENGINE="rtpengine"
+# The media engine and the policy are compose overlays: the scenarios, provisioning and
+# node are the same, so a scenario that passes on one and fails on the other is its fault.
+while [ "${1:-}" = "--rtpengine" ] || [ "${1:-}" = "--lua" ]; do
+  case "$1" in
+    --rtpengine)
+      COMPOSE="${COMPOSE} -f docker-compose.rtpengine.yml"
+      ENGINE="rtpengine"
+      CONFIG="test/e2e/config-rtpengine"
+      ;;
+    --lua) POLICY="lua" ;;
+  esac
   shift
+done
+
+if [ "${POLICY}" = "lua" ]; then
+  . test/e2e/lua.sh
+  lua_begin
+  lua_node athenasip "${CONFIG}"
+  COMPOSE="${COMPOSE} -f ${LUA_DIR}/compose.yml"
 fi
 
 NODE="172.31.0.10"
@@ -72,7 +88,7 @@ api() {
 }
 
 echo "Building and starting the node..."
-echo "Media engine: ${ENGINE}"
+echo "Media engine: ${ENGINE}, policy: ${POLICY}"
 ${COMPOSE} up -d --build athenasip
 
 echo "Waiting for it to serve..."

@@ -636,6 +636,32 @@ TEST(ProvisioningApiTest, TheNodeListIncludesWhatTheOtherNodesSaid) {
   EXPECT_EQ(other.at("transports").as_array()[0].at("uri").as_string(), "sips:198.51.100.7:5061;transport=tls");
 }
 
+// Each node's policy, as it reported it, so a console can see the nodes of a cluster run the same scripts. This node's
+// own comes from its own status on the bus, as the others' do; a node that reported none has none.
+TEST(ProvisioningApiTest, TheNodeListSaysEachNodesPolicy) {
+  ApiFixture f;
+  auto directory = std::make_shared<NodeDirectory>();
+  f.provisioning->nodes_register(directory, std::chrono::seconds(30));
+
+  directory->observe("nodes/test-node/status", R"({"status":"ok","node":"test-node","transports":[],"policy":{"driver":"lua 1.0.0","fingerprint":"aaaa"}})");
+  directory->observe("nodes/node-b/status", R"({"status":"ok","node":"node-b","transports":[],"policy":{"driver":"lua 1.0.0","fingerprint":"bbbb"}})");
+  directory->observe("nodes/node-c/status", R"({"status":"ok","node":"node-c","transports":[]})");
+
+  const auto body = f.get("/api/v1/nodes", "client-token").json();
+  const auto& nodes = body.as_array();
+  ASSERT_EQ(nodes.size(), 3u);
+
+  std::map<std::string, boost::json::object> by_id;
+  for (const auto& node : nodes) by_id[std::string(node.at("id").as_string())] = node.as_object();
+
+  ASSERT_TRUE(by_id["test-node"].contains("policy"));
+  EXPECT_EQ(by_id["test-node"].at("policy").at("fingerprint").as_string(), "aaaa");
+  ASSERT_TRUE(by_id["node-b"].contains("policy"));
+  EXPECT_EQ(by_id["node-b"].at("policy").at("driver").as_string(), "lua 1.0.0");
+  EXPECT_EQ(by_id["node-b"].at("policy").at("fingerprint").as_string(), "bbbb");
+  EXPECT_FALSE(by_id["node-c"].contains("policy"));
+}
+
 // The browser bootstrap lists where a client can go: this node first, then the others that are up, with their
 // secure WebSocket URIs in that order. A node that is down or stale is not listed.
 TEST(ProvisioningApiTest, SubscriberConfigListsTheNodesAClientCanUse) {

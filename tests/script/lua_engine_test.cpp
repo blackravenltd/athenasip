@@ -73,6 +73,16 @@ class FakeHost final : public policy::Host {
     });
   }
 
+  std::map<std::string, std::int64_t> counters;
+
+  void counter_add(std::string name, std::int64_t delta, std::uint32_t, plugins::Handler<std::int64_t> handler) override {
+    boost::asio::post(_io, [this, name, delta, handler]() { handler(plugins::Result<std::int64_t>::success(counters[name] += delta)); });
+  }
+
+  void counter_get(std::string name, plugins::Handler<std::int64_t> handler) override {
+    boost::asio::post(_io, [this, name, handler]() { handler(plugins::Result<std::int64_t>::success(counters[name])); });
+  }
+
   bool names_this_node(const std::string& host, std::uint16_t port) const override { return host == "192.0.2.1" && port == 5060; }
 
   const Config& config() const override { return *_config; }
@@ -382,6 +392,25 @@ TEST(LuaEngineTest, AScriptReadsATrunkButNotItsPassword) {
   const auto outcome = f.call("answer");
   ASSERT_TRUE(outcome.finished) << outcome.error;
   EXPECT_EQ(outcome.values, (std::vector<std::string>{"acme", "sip.acme.example", "nil", "+1", "10", "true", "false", "1", "true"}));
+}
+
+// A script counts through the store, for a limit the cluster shares.
+TEST(LuaEngineTest, AScriptCountsThroughTheStore) {
+  EngineFixture f;
+  f.host->counters["calls-acme"] = 4;
+  ASSERT_EQ(f.load(R"(
+    function answer()
+      local before = athenasip.store.counter("calls-acme")
+      local after = athenasip.store.counter_add("calls-acme")
+      local back = athenasip.store.counter_add("calls-acme", -2, 60)
+      return before, after, back, athenasip.store.counter("never"), (pcall(athenasip.store.counter_add, "x", 1, -1))
+    end
+  )"),
+            "");
+
+  const auto outcome = f.call("answer");
+  ASSERT_TRUE(outcome.finished) << outcome.error;
+  EXPECT_EQ(outcome.values, (std::vector<std::string>{"4", "5", "3", "0", "false"}));
 }
 
 // A script edits what the node forwards, but never the headers that carry the transaction, the dialog or the route.
