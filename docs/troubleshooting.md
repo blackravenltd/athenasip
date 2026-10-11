@@ -106,6 +106,18 @@ media engine. [Media](media.md#is-media-flowing) has the other tools.
 An iOS app using VoIP push is never pushed to refresh its registration; it must do that
 itself. [Configuration](configuration.md#push) has each service's settings.
 
+## A BLF key or a buddy stays dark
+
+| Log or answer | Cause and fix |
+|---|---|
+| The SUBSCRIBE is answered 403 | The watcher is in another realm, or a script's `watch` hook refused it ([Presence and BLF](presence.md#who-may-watch-whom)). |
+| The SUBSCRIBE reaches the watched phone instead of being answered by the node | Presence is off, the key subscribes to a package the node does not serve (set the key's type to BLF), or the datastore cannot hold presence: `<datastore> cannot hold presence` at startup, and a failed `presence` line in `athenasip --check`. |
+| `<watcher>'s subscription to <presentity> has expired` | The phone stopped refreshing it. Check that it is still registered. |
+
+`GET /api/v1/presence/subscriptions` says whether the subscription is held and by which
+node; `GET /api/v1/realms/{realm}/subscribers/{user}/presence` says what the watchers are
+being told.
+
 ## Routing scripts
 
 With `lua://`, a script that fails answers the caller 500 and logs where. `athenasip --check`

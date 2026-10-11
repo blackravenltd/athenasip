@@ -592,7 +592,6 @@ NOTIFY.
       on 2026-10-11 to be the real client once its PJSIP engine has presence: one
       subscription per buddy for `presence` and `dialog`, PUBLISH of PIDF, BLF pickup with
       Replaces from the dialog ids the node sends.
-- [ ] Documentation: a presence section in the docs and a quick start for BLF.
 
 ### State into the datastore
 
