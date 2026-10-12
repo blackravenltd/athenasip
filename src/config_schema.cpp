@@ -45,7 +45,9 @@ Settings build() {
   s.push_back(choice("sip.forward_register", "subscribers", {"subscribers", "never"},
                      "A REGISTER for a domain this node does not serve (RFC 3261 10.3): subscribers forwards one from this node's own "
                      "subscribers; never answers 403."));
-  s.push_back(boolean("sip.log_messages", "false", "Log every message in full, not only its first line. Credentials are redacted."));
+  s.push_back(boolean("sip.log_messages", "false",
+                      "Log every message in full, not only its first line, at debug: with log.level above debug it logs nothing. "
+                      "Credentials are redacted."));
   s.push_back(integer("sip.session_expires", "1800", "RFC 4028: the session interval, in seconds, put on a call that asked for none. 0 inserts none.", 90,
                       std::nullopt, true));
   s.push_back(integer("sip.session_min_se", "90", "RFC 4028: the shortest session interval a call may negotiate, in seconds.", 90));
