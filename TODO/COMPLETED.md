@@ -3379,3 +3379,14 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       against the code: the first draft had a 489 for an unserved package, which the node
       never sends (it forwards), and a warning at start that did not exist (now it does,
       above).
+
+### Presence: a NOTIFY only when the state changed (2026-10-12)
+
+- [x] **A change that leaves a watcher's state as it was sends nothing** (RFC 6665 4.2.2).
+      Every write to a presentity's calls signalled every watcher, so a BLF key was sent the
+      same `dialog-info` four times before the watched phone rang; the sipp `blf` scenario
+      showed it. `_notify` now compares the document's digest with the one last sent and
+      stops there when they agree, except for the first NOTIFY, a refresh and a termination
+      (`src/notifier.cpp`). `DialogPackageTest.AWriteThatLeavesTheLineAsItWasSendsNothing`,
+      watched failing (2, 3 and 4 NOTIFYs for 1, 1 and 2). The suite 1526 of 1527 with
+      Redis and MQTT, 319 of 320 under the Lua policy.

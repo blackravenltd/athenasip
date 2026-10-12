@@ -195,6 +195,27 @@ TEST(DialogPackageTest, EachDocumentsVersionRises) {
   EXPECT_GE(expected, 3);
 }
 
+// RFC 6665 4.2.2: a NOTIFY says the state changed. A call record written while the callee is not yet reached, or a
+// signal with nothing behind it, leaves Bob's line as Carol last saw it, so she is sent nothing.
+TEST(DialogPackageTest, AWriteThatLeavesTheLineAsItWasSendsNothing) {
+  DialogPackageFixture f;
+  f.watch("sip:bob@example.com");
+  ASSERT_EQ(f.requests_with(f.carol_connection, "NOTIFY").size(), 1u);
+
+  f.receive(f.caller, f.invite());
+  f.answer_notifies();
+  EXPECT_EQ(f.requests_with(f.carol_connection, "NOTIFY").size(), 1u) << "a callee not yet reached has no dialog to report";
+
+  f.on_strand([&f]() { f.core->notifier()->changed("sip:bob@example.com"); });
+  f.settle();
+  f.answer_notifies();
+  EXPECT_EQ(f.requests_with(f.carol_connection, "NOTIFY").size(), 1u);
+
+  f.receive(f.callee, f.response_from_callee(180, "Ringing"));
+  EXPECT_NE(f.latest().find("<state>early</state>"), std::string::npos) << "a change is still sent";
+  EXPECT_EQ(f.requests_with(f.carol_connection, "NOTIFY").size(), 2u);
+}
+
 // A watcher of somebody else hears nothing of this call.
 TEST(DialogPackageTest, AnotherSubscribersWatcherHearsNothing) {
   DialogPackageFixture f;
