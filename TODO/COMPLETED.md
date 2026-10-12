@@ -14,6 +14,17 @@ week, under Milestone 1. Everything after that is dated as it landed.
 
 Newest first. The detail is below, oldest first.
 
+- **0.12.0** (2026-10-13): presence and BLF, and the first real carrier. The node is the
+  notifier for `presence` and `dialog` (RFC 6665, 3856, 4235) and accepts PUBLISH (RFC
+  3903): a desk phone's BLF key lights while a colleague is on a call, across the cluster,
+  with subscriptions and publications held in the datastore, taken over when a node goes,
+  decided by a `watch` policy hook and shown over the API; a NOTIFY only on a change. The
+  first trunk run against 2talk: calls in, a call out to its voicemail with RFC 4733 DTMF,
+  the 487 to a cancelled INVITE now naming the INVITE (which the carrier needed to ACK it),
+  and a carrier offered plain RTP whatever the caller speaks. The Redis datastore closes
+  without a race TSan found. Releases ship without Debian packages for now. Every check in
+  `docs/testing.md`'s Before a release passed on the tagged tree, sanitizers and every sipp
+  harness included.
 - **0.11.0** (2026-10-11): trunks you can check, and the node packaged. A trunk harness
   with sipp as the carrier; `--explain` puts a request to the policy and says each decision
   in words; `--check-trunks` sends each trunk an OPTIONS; counters the cluster shares for

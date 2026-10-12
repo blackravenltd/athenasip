@@ -1,6 +1,6 @@
 # AthenaSIP - Active Work
 
-Work happens on `develop`; `main` carries the last release, `0.11.0` (2026-10-11), tagged
+Work happens on `develop`; `main` carries the last release, `0.12.0` (2026-10-13), tagged
 with everything on `develop` at the time. `0.10.0` was merged to `main` (`11b69b1`) and
 published as an image but tagged only on 2026-10-12, dated at the merge. Line numbers refer to
 the current tree; update them as files move.
@@ -9,7 +9,7 @@ Milestones 1 and 2 are complete; 3 to 6 are complete apart from the items left u
 below, almost all of which wait on a device, a carrier, Tom or the admin session.
 `COMPLETED.md` has every item with what shipped, and its Releases section the tags.
 
-**Next: presence** (Milestone 7, taken ahead of conferencing at Tom's word on 2026-10-11).
+**Presence shipped in `0.12.0`** (Milestone 7, taken ahead of conferencing at Tom's word on 2026-10-11).
 The decisions are under Decisions, and `docs/design/presence.md` (2026-10-11) is the design: where
 the notifier plugs in, the subscription dialog, each package's state, the cluster, the `watch` policy
 hook, the API and the build order the items below follow. The datastore contract is in
@@ -42,12 +42,13 @@ screens and a real client.
   from anywhere, its router forwarding 3478 and 24000-24100 (proved from fi-1 on
   2026-10-12: an allocation over UDP and over TCP, 20 of 20 relayed).
 
-**What passes at `0.11.0`** (2026-10-11, the whole of `docs/testing.md`'s Before a release):
-the unit suite 1412 of 1413 (one skipped without a resolver), ASan with UBSan and TSan clean
-(1413 run, the Redis and MQTT tests skipped as documented); the sipp harnesses, one node 13
-of 13, with rtpengine 15 of 15, two nodes 17 of 17, one node and two nodes again under
-`--lua`, and trunks 4 of 4; the suite's smoke over every transport, the console and
-AthenaPhone specs, direct and relayed.
+**What passes at `0.12.0`** (2026-10-13, the whole of `docs/testing.md`'s Before a release):
+the unit suite 1529 of 1530 with Redis and MQTT set (one skipped without a resolver); ASan
+with UBSan clean, and TSan clean after the one race it found was fixed (`0398fb2`, the Redis
+connection cancelled off its own thread on close: the first TSan run with the Redis tests
+in); the sipp harnesses, one node 16 of 16, with rtpengine 18 of 18, under `--lua` 16 of 16,
+two nodes 19 of 19 and again under `--lua` 19 of 19, trunks 4 of 4; the suite's smoke over
+every transport, the console (263 direct, 5 relayed) and AthenaPhone (93 each) specs.
 
 **Once things are stable, video calling is a primary feature** (Tom, 2026-10-03): nothing
 built may assume a call is audio only.
@@ -62,10 +63,10 @@ Nothing below can move until these are settled, and each one has somebody or som
 stopped against it. They are here rather than scattered through the milestones because a
 session that has lost its context needs to see them first.
 
-1. **The rest of the `0.11.0` release.** Tagged and pushed on 2026-10-11 (step 1 of
-   `docs/releasing.md`). Left, from step 2: the image built from the tag, the
-   `blackravenltd/homebrew-athenasip` tap repository, and the GitHub release, which Tom
-   makes. No Debian packages for now (Tom, 2026-10-12); the stale ones are deleted.
+1. **The rest of the `0.11.0` and `0.12.0` releases.** Both tagged and pushed (step 1 of
+   `docs/releasing.md`), `0.12.0` on 2026-10-13 with the `0.10.0` tag. Left, from step 2:
+   the images built from the tags, the `blackravenltd/homebrew-athenasip` tap repository,
+   and the GitHub releases, which Tom makes. No Debian packages for now (Tom, 2026-10-12); the stale ones are deleted.
 2. **The phone (A85), when Tom lends it**: the browser call to AthenaPhone with
    `ATHENA_INTEROP_PAGE_URL=https://10.44.1.50:8443` (plain http gives the page no
    microphone), and Milestone 3's hold, DTMF and transfer checks. `phone.py` taps only
