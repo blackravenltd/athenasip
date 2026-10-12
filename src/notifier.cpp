@@ -809,39 +809,43 @@ void Notifier::_notify(Subscription subscription, std::string state, bool change
     }
   }
 
-  _serially(id, [this, self, subscription = std::move(subscription), state = std::move(state)](std::function<void()> done) mutable {
+  _serially(id, [this, self, subscription = std::move(subscription), state = std::move(state), change](std::function<void()> done) mutable {
     auto core = _core.lock();
     if (!core) return done();
 
     const bool terminated = state.rfind("terminated", 0) == 0;
 
-    core->datastore->presence_get(core->strand(), types::PresenceRecord::Kind::Subscription, subscription.id,
-                                  [this, self, subscription, state, terminated, done](plugins::Result<std::optional<types::PresenceRecord>> found) mutable {
-                                    if (!found.ok) {
-                                      _logger->error("Cannot read subscription " + subscription.id + " - " + found.error);
-                                      return done();
-                                    }
+    core->datastore->presence_get(
+        core->strand(), types::PresenceRecord::Kind::Subscription, subscription.id,
+        [this, self, subscription, state, terminated, change, done](plugins::Result<std::optional<types::PresenceRecord>> found) mutable {
+          if (!found.ok) {
+            _logger->error("Cannot read subscription " + subscription.id + " - " + found.error);
+            return done();
+          }
 
-                                    // The record is the truth: the last NOTIFY's CSeq and version, and the expiry as last refreshed. A fetch
-                                    // has none, and is its own last word.
-                                    if (auto current = found.value ? _parse(*found.value) : std::nullopt) {
-                                      subscription = std::move(*current);
-                                    } else if (!terminated) {
-                                      return done();
-                                    }
+          // The record is the truth: the last NOTIFY's CSeq and version, and the expiry as last refreshed. A fetch
+          // has none, and is its own last word.
+          if (auto current = found.value ? _parse(*found.value) : std::nullopt) {
+            subscription = std::move(*current);
+          } else if (!terminated) {
+            return done();
+          }
 
-                                    if (!terminated) {
-                                      const auto remaining = std::max<std::time_t>(subscription.expires_at - std::time(nullptr), 0);
-                                      state += ";expires=" + std::to_string(remaining);
-                                    }
+          if (!terminated) {
+            const auto remaining = std::max<std::time_t>(subscription.expires_at - std::time(nullptr), 0);
+            state += ";expires=" + std::to_string(remaining);
+          }
 
-                                    _document(subscription, [this, self, subscription, state, terminated, done](std::optional<std::string> body) mutable {
-                                      // A state that cannot be read is not reported as empty, except in the last word on a subscription.
-                                      if (!body && !terminated) return done();
-                                      auto document = body ? std::move(*body) : _empty_document(subscription);
-                                      _send_notify(std::move(subscription), std::move(state), std::move(document), done);
-                                    });
-                                  });
+          _document(subscription, [this, self, subscription, state, terminated, change, done](std::optional<std::string> body) mutable {
+            // A state that cannot be read is not reported as empty, except in the last word on a subscription.
+            if (!body && !terminated) return done();
+
+            // RFC 6665 4.2.2: a change is a NOTIFY only when the watcher's state is not what it was last sent.
+            if (change && !terminated && _digest(subscription.package, *body) == subscription.digest) return done();
+            auto document = body ? std::move(*body) : _empty_document(subscription);
+            _send_notify(std::move(subscription), std::move(state), std::move(document), done);
+          });
+        });
   });
 }
 
