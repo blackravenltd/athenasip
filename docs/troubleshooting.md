@@ -9,7 +9,7 @@ as the node writes them; `<...>` stands for the part that varies.
 | Tool | What it tells you |
 |---|---|
 | The log | Each refusal is logged with its reason and the code sent. Keep `log.level` at `debug` or `info` while investigating. |
-| `sip.log_messages: true` | Every SIP message in full, including the SDP. Digest headers are redacted. |
+| `sip.log_messages: true`, with `log.level: debug` | Every SIP message in full, including the SDP. Digest headers are redacted. |
 | `athenasip --check` | Tries the datastore, event bus, media engine, routing scripts, every certificate and, in a cluster, each peer, and locates each trunk. Safe beside a running node. |
 | `athenasip --check-trunks` | Whether each trunk's carrier answers an OPTIONS, and how fast. Sends to the carriers, so it is not part of `--check`. |
 | `athenasip --explain FILE` | What the routing policy decides for a request, step by step, against the live data ([Scripting](scripting.md#trying-a-request)) |
@@ -162,6 +162,7 @@ found when they tried this node.
 | `FAIL  peer <node>  ... - certificate verify failed` or similar | The peer's certificate does not name the address in its `cluster.advertise`, or the two nodes' certificates come from different authorities. Issue it again with the right `--san` and `--replace`. |
 | `FAIL  reached by peers  <nodes> tried this node's inter-node listener and could not reach it` | Peers cannot connect to this node's `cluster.advertise` address and port. The log says `No other node can reach this node's inter-node listener; it is marked unreachable and is not forwarded to`. |
 | `FAIL  public address  sip.public_address is <a> but <stun server> sees <b>` | The configured address is not the one the outside world sees. |
+| The same, with `<b>` a private address, behind a home or office router | A router that hairpins answers STUN to its own public name from inside. Check from outside the network before changing `sip.public_address`. |
 
 Also check:
 
