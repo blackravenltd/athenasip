@@ -142,12 +142,14 @@ void RedisDatastore::close() {
     return;
   }
 
-  if (_connection) {
-    _connection->cancel();
-  }
+  // boost::redis::connection is not thread safe: it is cancelled on its executor, as every
+  // operation starts there, and the IO thread stops once it has.
+  boost::asio::post(_io_context, [this, connection = _connection]() {
+    if (connection) connection->cancel();
+    _io_context.stop();
+  });
 
   _work_guard.reset();
-  _io_context.stop();
 
   if (_io_thread.joinable()) {
     _io_thread.join();
