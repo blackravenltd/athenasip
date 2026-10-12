@@ -18,7 +18,7 @@ The node, and how it treats SIP.
 | `sip.localnet` | list | `[]` | Prefixes on this node's side of the router, such as 192.168.0.0/16. A far end inside them is given the local address and port; everyone else the public ones. |
 | `sip.allow_unencrypted` | true or false | `true` | False refuses to start with a udp, tcp or plain websocket listener. |
 | `sip.forward_register` | one of `subscribers`, `never` | `subscribers` | A REGISTER for a domain this node does not serve (RFC 3261 10.3): subscribers forwards one from this node's own subscribers; never answers 403. |
-| `sip.log_messages` | true or false | `false` | Log every message in full, not only its first line. Credentials are redacted. |
+| `sip.log_messages` | true or false | `false` | Log every message in full, not only its first line, at debug: with log.level above debug it logs nothing. Credentials are redacted. |
 | `sip.session_expires` | 0, or 90 or more | `1800` | RFC 4028: the session interval, in seconds, put on a call that asked for none. 0 inserts none. |
 | `sip.session_min_se` | integer, 90 or more | `90` | RFC 4028: the shortest session interval a call may negotiate, in seconds. |
 | `sip.require_session_timer` | true or false | `false` | Add Require: timer when the caller did not. NOT RECOMMENDED by RFC 4028: every call to an endpoint without the extension fails. |
@@ -266,6 +266,17 @@ What the node logs, and how.
 |---|---|---|---|
 | `log.level` | one of `debug`, `info`, `warn`, `error` | `debug` | The least severe message logged. |
 | `log.format` | one of `text`, `json` | `text` | One line of text per message, or one JSON object. |
+
+## `presence`
+
+The node as the notifier for the dialog package (BLF) and presence (docs/design/presence.md).
+
+| Setting | Takes | Default | |
+|---|---|---|---|
+| `presence.enable` | true or false | `true` | False proxies SUBSCRIBE and PUBLISH to the devices, as any request. |
+| `presence.min_expires` | integer, 1 or more | `60` | The shortest subscription or publication accepted, in seconds; 423 below it. |
+| `presence.max_expires` | integer, 1 or more | `3600` | The longest subscription or publication granted, in seconds. |
+| `presence.reconcile` | integer, 0 or more | `30` | Seconds between each node's rereading of the state its subscriptions watch, catching what the event bus did not carry; 0 never. |
 
 ## `calls`
 

@@ -18,6 +18,10 @@ every external piece it can use is a plugin behind one contract.
 * **Browsers and phones alike.** SIP over WebSocket and secure WebSocket (RFC 7118), with
   WebRTC media through rtpengine, which also converts between a browser and a desk phone.
   TURN credentials are minted per client.
+* **Presence and BLF.** The node is the notifier for `presence` and `dialog` (RFC 3856,
+  4235, 6665) and accepts PUBLISH (RFC 3903): a desk phone's BLF key lights while a
+  colleague is on a call, across the cluster, with nothing set on the phone being watched
+  ([Presence and BLF](docs/presence.md)).
 * **Mobile push.** Phones that sleep are woken for a call through Apple Push, Firebase
   Cloud Messaging or Web Push (RFC 8599).
 * **Routing you can script.** Who may call and where a call goes is a policy: the
@@ -55,6 +59,7 @@ next step:
 * [A server on Linux](docs/quick-start/linux-server.md)
 * [Connecting phones](docs/quick-start/phones.md)
 * [Calling from a browser](docs/quick-start/browser.md)
+* [BLF on a desk phone](docs/quick-start/blf.md)
 * [Your first trunk](docs/quick-start/first-trunk.md)
 * [Running a cluster](docs/clustering.md)
 
@@ -73,8 +78,9 @@ next step:
   again through the other. A call in progress on a node that dies ends with it.
 * Push is tested against local stand-ins for Apple, Firebase and Web Push, not yet
   against the real services.
-* Trunks are tested against local stand-ins for a carrier, not yet against a real one.
-* Conferencing and presence are not built yet.
+* Trunks are tested against sipp as a carrier, and one real carrier (2talk, New Zealand)
+  has carried calls in, a call out to its voicemail and RFC 4733 DTMF.
+* Conferencing is not built yet.
 * The example configuration enables plaintext UDP and TCP so a first call is easy;
   `sip.allow_unencrypted: false` limits a node to TLS and secure WebSocket.
 
@@ -90,6 +96,7 @@ next step:
 * [Troubleshooting](docs/troubleshooting.md) - from the symptom to the cause
 * [Behaviour](docs/behaviour.md) - the choices SIP servers differ on
 * [Scripting](docs/scripting.md) - routing in Lua, and trunks
+* [Presence and BLF](docs/presence.md) - busy lamp fields, buddy lists and who may watch whom
 * [Authentication](docs/authentication.md) - SIP Digest and the admin plane
 * [Certificates](docs/certificates.md) - TLS for clients and the cluster's certificate authority
 * [Architecture](docs/architecture.md)
@@ -97,7 +104,7 @@ next step:
 * [Events](docs/events.md) - the topic scheme
 * [Glossary](docs/glossary.md)
 * [Testing](docs/testing.md)
-* [Releasing](docs/releasing.md) - the tag, the packages, the image and the Homebrew formula
+* [Releasing](docs/releasing.md) - the tag, the image and the Homebrew formula
 * [Admin API](docs/api/openapi.yaml)
 * [Interop fixture](test/interop/README.md) - a node to point a real SIP client at
 * [Contributing](CONTRIBUTING.md)

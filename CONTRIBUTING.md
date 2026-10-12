@@ -15,7 +15,8 @@
   number. CMake configures `src/build_version.h.in`, so the binary follows the build.
 
 A release is: bump the version in `CMakeLists.txt`, merge `develop` into `main`, tag
-`x.y.z` on `main`.
+`x.y.z` on `main`. [docs/releasing.md](docs/releasing.md) has the whole of it: the image,
+the GitHub release and the Homebrew formula.
 
 ## Commits
 

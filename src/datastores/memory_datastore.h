@@ -11,6 +11,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -18,6 +19,7 @@
 #include "../call.h"
 #include "../loggers/logger.h"
 #include "../loggers/logger_scoped.h"
+#include "../types/presence_record.h"
 #include "../types/session.h"
 #include "../types/url.h"
 #include "../types/user.h"
@@ -87,6 +89,16 @@ class MemoryDatastore : public Datastore {
   void call_update(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) override;
   void call_get(plugins::Executor on, std::string id, plugins::Handler<std::shared_ptr<Call>> handler) override;
   void call_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<Call>>> handler) override;
+  void call_list_for_subscriber(plugins::Executor on, std::string aor, plugins::Handler<std::vector<std::shared_ptr<Call>>> handler) override;
+
+  bool supports_presence() const override { return true; }
+  void presence_put(plugins::Executor on, types::PresenceRecord record, std::uint32_t seconds, plugins::StatusHandler handler) override;
+  void presence_get(plugins::Executor on, types::PresenceRecord::Kind kind, std::string id,
+                    plugins::Handler<std::optional<types::PresenceRecord>> handler) override;
+  void presence_list(plugins::Executor on, std::string aor, types::PresenceRecord::Kind kind,
+                     plugins::Handler<std::vector<types::PresenceRecord>> handler) override;
+  void presence_delete(plugins::Executor on, types::PresenceRecord::Kind kind, std::string id, plugins::StatusHandler handler) override;
+  void presence_list_node(plugins::Executor on, std::string node_id, plugins::Handler<std::vector<types::PresenceRecord>> handler) override;
 
  private:
   // The synchronous work behind the public operations, which deliver these results on the
@@ -129,6 +141,11 @@ class MemoryDatastore : public Datastore {
   bool _call_update(std::shared_ptr<Call> call);
   std::shared_ptr<Call> _call_get(const std::string& id);
   std::vector<std::shared_ptr<Call>> _call_list();
+  std::vector<std::shared_ptr<Call>> _call_list_for_subscriber(const std::string& aor);
+
+  // Every unlapsed presence record that passes `keep`, pruning the lapsed ones as it goes.
+  template <typename Keep>
+  std::vector<types::PresenceRecord> _presence_select(Keep keep);
 
   static std::string _subscriber_key(const std::string& realm_name, const std::string& user);
   static std::string _location_key(std::uint64_t subscriber_id, const std::string& user, const std::string& host, std::uint16_t port);
@@ -156,6 +173,10 @@ class MemoryDatastore : public Datastore {
   std::unordered_map<std::string, types::Location> _locations;
   std::unordered_map<std::string, std::time_t> _nonces;
   std::unordered_map<std::string, std::shared_ptr<Call>> _calls;
+
+  // Presence records by kind and ID. A store this size is read whole; the indexes a networked store needs are
+  // what Redis keeps.
+  std::map<std::pair<types::PresenceRecord::Kind, std::string>, types::PresenceRecord> _presence;
 
   // How long the record of an ended call is kept, in seconds; zero for ever.
   std::uint32_t _call_retention = 30 * 24 * 60 * 60;

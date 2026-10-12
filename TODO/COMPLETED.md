@@ -14,6 +14,17 @@ week, under Milestone 1. Everything after that is dated as it landed.
 
 Newest first. The detail is below, oldest first.
 
+- **0.12.0** (2026-10-13): presence and BLF, and the first real carrier. The node is the
+  notifier for `presence` and `dialog` (RFC 6665, 3856, 4235) and accepts PUBLISH (RFC
+  3903): a desk phone's BLF key lights while a colleague is on a call, across the cluster,
+  with subscriptions and publications held in the datastore, taken over when a node goes,
+  decided by a `watch` policy hook and shown over the API; a NOTIFY only on a change. The
+  first trunk run against 2talk: calls in, a call out to its voicemail with RFC 4733 DTMF,
+  the 487 to a cancelled INVITE now naming the INVITE (which the carrier needed to ACK it),
+  and a carrier offered plain RTP whatever the caller speaks. The Redis datastore closes
+  without a race TSan found. Releases ship without Debian packages for now. Every check in
+  `docs/testing.md`'s Before a release passed on the tagged tree, sanitizers and every sipp
+  harness included.
 - **0.11.0** (2026-10-11): trunks you can check, and the node packaged. A trunk harness
   with sipp as the carrier; `--explain` puts a request to the policy and says each decision
   in words; `--check-trunks` sends each trunk an OPTIONS; counters the cluster shares for
@@ -3157,3 +3168,287 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       relayed, a wrong password refused). gbni-1 is unreachable from outside for TURN until
       its router forwards the ports.
 
+### Presence, step 1: the datastore contract (2026-10-11)
+
+- [x] **`Call::Participant::subscriber`**, the AOR a leg is (the caller authenticated, or
+      the callee whose binding rang), stored with the call and read back, absent from older
+      records without harm.
+- [x] **`call_list_for_subscriber`**: the open calls a subscriber is on, at either end. Redis
+      keeps a set per subscriber of open calls only, written by one script per call write
+      and mended on read if it trails the record, because a closed call's record is kept for
+      a month and a subscriber's history must not be read to find its open calls.
+- [x] **Presence records** (`types::PresenceRecord`, a subscription or a publication) and five
+      operations, `presence_put`, `_get`, `_list`, `_delete` and `_list_node`, with
+      `supports_presence()`, all optional so a driver built against version 19 keeps
+      compiling. A record lapses with its lifetime, is listed by presentity within its kind
+      and by its holder, and moves holder in one step: in Redis, a record and its indexes are
+      written and deleted by one script. `API_VERSION` 20.
+- [x] 21 tests across `memory://` and `redis://`, written from the design and watched failing
+      first; the unit suite 1433 of 1434, one skipped without a resolver.
+
+### Presence, step 2: the RFC 6665 notifier core (2026-10-11)
+
+- [x] **`Notifier`** (`src/notifier.*`), the fifth transaction user. An out-of-dialog
+      SUBSCRIBE for `dialog` reaches it from the proxy after authorisation, in place of
+      target determination, when presence is on, the datastore holds it, no Route or flow
+      token is left and no peer forwarded it; a Request-URI in no realm here goes back to
+      routing. A request to a Contact it gave (`athena-sub`) reaches it from
+      `_deliver_to_tu` before the proxy.
+- [x] **Who may watch**: the request now records the AOR it was proven to be
+      (`SIPMessage::authenticated_aor`), by Digest or by the REGISTER its reliable connection
+      carried, and a watcher must be proven in the presentity's realm, else 403.
+- [x] **The subscription dialog as a record**, written before the 200 goes: 200 with the
+      granted Expires (capped at `presence.max_expires`, 3600 by default for `dialog`), 423
+      with Min-Expires below `presence.min_expires`, 400 without a Contact, 404 for nobody;
+      the immediate NOTIFY with the state in full; refresh (target refresh, the holder moving
+      to the node the refresh reached), unsubscribe and expiry with a final NOTIFY; a fetch
+      for Expires 0; 481 outside a subscription, 489 for another package in it, 405 for
+      another method; a NOTIFY answered with an error or not at all ends it. Each NOTIFY's
+      CSeq and the `dialog-info` version are stored before it goes. Only the expiry timer is
+      held in memory, and it reads the record back before acting.
+- [x] `Allow-Events: dialog` in the node's OPTIONS answer and its own responses; the
+      `presence` configuration section (enable, min_expires, max_expires) in the schema, the
+      generated reference and the example.
+- [x] Not done, by design: `deactivated` at shutdown, dropped now that subscriptions are
+      records (the design says why); the binding and RFC 3263 fallbacks for a NOTIFY whose
+      flow has gone, moved to the cluster step.
+- [x] 19 tests from RFC 6665 and 4235, watched failing first; the suite 1452 of 1453, one
+      skipped without a resolver; the notifier and proxy tests again under the Lua policy.
+
+### Presence, step 3: the dialog package, BLF (2026-10-11)
+
+- [x] **Each leg of a call names its subscriber**: the proxy sets the caller's once it is
+      proven (`authenticated_aor`) and the callee's as each branch goes out, from the binding
+      it rings, so a routed or serially forked call lights the line that is ringing and
+      frees the one before. Each binding target carries its subscriber
+      (`Proxy::Target::subscriber`); `Core::call_subscriber` writes the record when a leg is
+      named.
+- [x] **The record is signalled, not copied**: every write of a call record by the node the
+      caller reached publishes `presence/<aor>/changed` for each subscriber on it, after the
+      write. The AOR is percent-encoded in the topic, since a subscriber named `+4420...`
+      would be no MQTT topic name. The notifier listens, gathers a turn's changes into one,
+      and NOTIFYs the watchers this node holds.
+- [x] **`dialog-info` from the call records** (RFC 4235): each open call the presentity is on,
+      from its side, with `direction`, `trying`/`early`/`confirmed`/`terminated` (a callee
+      not yet rung is not reported, a closed call drops out of the full document), the
+      Call-ID and tags a pickup needs, and both identities.
+- [x] NOTIFYs on one subscription run one after another, each reading the record afresh, so
+      CSeq and version follow on whatever prompted them.
+- [x] 8 tests, written first; not run against the code without it, to save a rebuild. The
+      suite 1460 of 1461 with Redis and MQTT; the notifier, dialog, proxy and local UA tests
+      201 of 201 under the Lua policy.
+
+### Presence, step 4: PUBLISH (2026-10-11)
+
+- [x] **The node is the event state compositor** for its subscribers (RFC 3903): an
+      out-of-dialog PUBLISH to a served realm's AOR is taken in the proxy after
+      authorisation, as SUBSCRIBE is (`Notifier::on_request`, was `on_subscribe`), and
+      answered in RFC 3903 6's order: 404 for nobody, 403 unless the publisher was proven as
+      the presentity, 489 with `Allow-Events: presence` for another package, 423 under
+      `presence.min_expires`, 412 for an entity tag not held for that presentity, 400 for
+      neither body nor tag, 415 with `Accept` for a body that is not PIDF.
+- [x] **Initial, refresh, modify and remove**, each 200 with a new 24-character random
+      `SIP-ETag` and the granted `Expires` (3600 by default, capped at
+      `presence.max_expires`). The publication is a datastore record by entity tag, its TTL
+      the expiry; the tag a refresh or modification names is deleted once the new record is
+      stored, so it is spent. A body or a removal signals `presence/<aor>/changed`; a refresh
+      changes nothing and signals nothing.
+- [x] The node's OPTIONS answer lists PUBLISH in `Allow` while presence is on.
+- [x] 15 tests from RFC 3903, watched failing first (13 failed; 404 and presence-off were the
+      proxy's already). The suite 1475 of 1476 with Redis and MQTT; the proxy, notifier,
+      publish and policy tests 217 of 218 under the Lua policy, the one skipped being the
+      equivalence runner itself.
+
+### Presence, step 5: the presence package (2026-10-11)
+
+- [x] **The node is the notifier for `presence`** (RFC 3856) beside `dialog`:
+      `Allow-Events: presence, dialog`, and a SUBSCRIBE whose `Accept` cannot take the
+      package's document is 406 with the type it would get.
+- [x] **The document is composed from the publications** (`src/pidf.cpp`, hand-written as
+      the other parsers are): every tuple, note and extension element of each PIDF
+      publication, carried as published with the namespaces its root declared, tuples
+      first (RFC 3863 4.1); an element with an `id` in two publications is taken from the
+      one that lasts longer, the record holding no time of publishing. What is not PIDF
+      contributes nothing.
+- [x] **Nothing published, the bindings speak**: one tuple, `open` with a binding and
+      `closed` without, and no contact. The core now signals `presence/<aor>/changed` when
+      a binding is written or removed; lapsed bindings and publications are left to the
+      cluster step's reconcile.
+- [x] **Five seconds between a presentity's notifications** (RFC 3856 6.6.2), per
+      subscription, on the injected clock: changes inside the window are held and the
+      latest state sent when it opens; a NOTIFY answering a SUBSCRIBE goes at once. Kept in
+      the holder's memory rather than the record, as the design now says and why.
+- [x] 8 PIDF tests and 11 package tests, written first. The PIDF tests and five of the
+      package tests were watched failing; the sixth crashed in its own helper against the
+      old code, which was fixed, and the six after it were not run red again. The suite
+      1494 of 1495 with Redis and MQTT, the one skipped without a resolver; the proxy,
+      registrar, notifier, publish, presence and policy tests 282 of 282 under the Lua
+      policy.
+
+### Presence, step 6a: the reconcile, restarts and dead nodes' calls (2026-10-11)
+
+- [x] **The reconcile** (`presence.reconcile`, 30 seconds, 0 never; in the schema, the
+      generated reference and the example): each node reads back every subscription it
+      holds (`presence_list_node`), composes its presentity's state, and notifies where it
+      is not what was last sent. What was last sent is a digest in the subscription's record
+      (MD5 of the document, `dialog-info`'s rising `version` left out), so the comparison
+      holds across nodes and restarts. It is what finds a signal the bus dropped, and a
+      binding or publication that lapsed in the datastore, which signals nothing.
+- [x] **A restarted node resumes its subscriptions** at its first reconcile: an expiry timer
+      for each it has none for, armed from the record's `expires_at`.
+- [x] **A dead node's calls free their lines.** The orphan sweep that was there already
+      closes their records (unanchored at once, anchored once the engine says the media has
+      stopped), and a restarted node's own from before it started; closing one now signals
+      `presence/<aor>/changed` for each subscriber on it. The plan's "open call records of a
+      dead node" item under State was written without seeing the sweep, and is gone from it;
+      the design no longer has a separate rule leaving stale nodes' calls out of documents.
+- [x] 5 tests, watched failing first (3 failed; the two that say nothing is sent pass
+      without a reconcile, as they should). The digest first stripped the XML
+      declaration's `version` instead of the root's, which three existing notifier tests
+      caught. The suite 1499 of 1500 with Redis and MQTT, the one skipped without a
+      resolver; the proxy, registrar, notifier, presence, reconcile, orphan and policy tests
+      297 of 298 under the Lua policy, the one skipped being the equivalence runner.
+
+### Presence, step 6b: NOTIFY fallbacks and takeover (2026-10-11)
+
+- [x] **A NOTIFY finds its way to the watcher** (`Notifier::_reach`): the flow the latest
+      SUBSCRIBE came over; that gone, the flow of the watcher's binding on this node whose
+      Contact (user, host, port) is the remote target; else RFC 3263 on the remote target,
+      or the first Route when the dialog has a route set, dialling each hop in turn. The flow
+      it went down becomes the subscription's. Only with none of them does the subscription
+      end, as the core did at once before.
+- [x] **A gone node's subscriptions are taken over** at each reconcile, once this node has
+      heard the cluster for three status intervals (as the orphan sweep judges it): a node
+      stale or not `ok` has its subscriptions listed, and each whose watcher has a binding
+      flow here is taken under the lease `presence-takeover:<id>`, rewritten to this node and
+      flow, armed and notified at once. A live node's are left alone.
+- [x] 5 tests, watched failing first (the fallback and the takeover failed; the three
+      guards held either way). The suite 1504 of 1505 with Redis and MQTT, the one skipped
+      without a resolver; 302 of 303 of the presence, proxy, registrar, orphan and policy
+      tests under the Lua policy, the one skipped being the equivalence runner.
+
+### Presence, step 7: the policy decides who may watch whom (2026-10-11)
+
+- [x] **`Policy::watch`** (`src/policy/policy.h`; contract 21): given the SUBSCRIBE, the
+      proven watcher, the presentity and the package, a policy accepts (the node is the
+      notifier), refuses with a code and reason of its own, or forwards the SUBSCRIBE to
+      the presentity's devices as before presence, for a deployment with a presence server
+      of its own. It is not pure: its default is the decided rule (a watcher proven in the
+      presentity's realm, anyone else 403), which `builtin://` and any policy written
+      before it inherit. A failed decision is 500.
+- [x] **In the scripts**: a global `watch(request, watcher, presentity, package)`,
+      answered with `athenasip.watch.accept()`, `.reject(code, reason)` or `.forward()`;
+      `std.watch` is the default rule, and `main.lua` and the trunks hooks use it. A script
+      without a `watch` keeps the default. `docs/scripting.md` and `docs/plugins.md` say so.
+- [x] 6 notifier tests (the default, a script without the hook, widening to another realm,
+      refusing with 603, forwarding, a hook that decides nothing) and the equivalence test
+      that `std.watch` decides as `builtin://` does on every branch. None could be watched
+      failing: they do not compile without the contract they test. The suite 1511 of 1512
+      with Redis and MQTT, the one skipped without a resolver; 310 of 311 of the presence,
+      proxy, registrar, orphan and policy tests under the Lua policy, the one skipped being
+      the equivalence runner.
+
+### Presence, step 8: the API and the events (2026-10-11)
+
+- [x] **`GET /api/v1/presence/subscriptions`** (`view-cluster-status`): every subscription,
+      read from the datastore through `Notifier::subscriptions`: watcher, presentity,
+      package, holder and expiry. The datastore lists by holder, so it is this node's and
+      each node's the directory has heard, a stale one included; one held by a node the bus
+      never heard is missed until it lapses, which keeps the datastore contract as it is.
+- [x] **`GET /api/v1/realms/{realm}/subscribers/{user}/presence`**
+      (`manage-realm-subscribers`): the state a watcher is sent, through `Notifier::state`:
+      `basic` (open when any tuple is, `pidf::basic`), its `source` (published or
+      registrations), the composed PIDF, each publication with its entity tag and expiry,
+      and its dialogs from its own side. 404 `not_found` for no such subscriber, 404
+      `presence_off` with presence off. The notifier's composition and RFC 4235 dialog
+      mapping were split out (`_compose`, `dialogs_of`) so the API and the NOTIFY cannot
+      disagree.
+- [x] **`/api/v1/events` carries `presence/#`**, so a console follows a subscriber without
+      polling. `docs/events.md` lists the topic and its payloads; the OpenAPI document,
+      `docs/authentication.md` and the design have the routes.
+- [x] 8 API tests, a PIDF test, an events test and an OpenAPI test, written first. Only the
+      events test could be watched failing (without the topic); the others need the class
+      or function they test to compile. The suite 1522 of 1523 with Redis and MQTT, the one
+      skipped without a resolver; 318 of 319 under the Lua policy, the one skipped being the
+      equivalence runner.
+
+### Presence, step 10: the documentation, and saying when presence cannot be had (2026-10-11)
+
+- [x] **A datastore that cannot hold presence is said**, as the design promised and nothing
+      did: a warning at start naming the driver, and a failing `presence` line in
+      `athenasip --check` that says to set `presence.enable: false` (`src/cli_check.cpp`,
+      `src/main.cpp`). Found while writing the user documentation against the code. 3 check
+      tests; the two that should fail were watched failing, and the one for presence off
+      passes either way. The suite 1525 of 1526 with Redis and MQTT, the one skipped without
+      a resolver.
+- [x] **The documentation**: `docs/presence.md` (what a watcher sees, who may watch whom,
+      the cluster, configuration, the API, what it does not do, and when a key stays dark);
+      `docs/quick-start/blf.md`, a BLF key on a desk phone and buddy lists; a `presence`
+      section in `docs/configuration.md`; presence terms in the glossary; a troubleshooting
+      section; the notifier and PIDF in the architecture's source layout; and presence in
+      the README's features, the quick start index and the doc list. Every claim was checked
+      against the code: the first draft had a 489 for an unserved package, which the node
+      never sends (it forwards), and a warning at start that did not exist (now it does,
+      above).
+
+### Presence: a NOTIFY only when the state changed (2026-10-12)
+
+- [x] **A change that leaves a watcher's state as it was sends nothing** (RFC 6665 4.2.2).
+      Every write to a presentity's calls signalled every watcher, so a BLF key was sent the
+      same `dialog-info` four times before the watched phone rang; the sipp `blf` scenario
+      showed it. `_notify` now compares the document's digest with the one last sent and
+      stops there when they agree, except for the first NOTIFY, a refresh and a termination
+      (`src/notifier.cpp`). `DialogPackageTest.AWriteThatLeavesTheLineAsItWasSendsNothing`,
+      watched failing (2, 3 and 4 NOTIFYs for 1, 1 and 2). The suite 1526 of 1527 with
+      Redis and MQTT, 319 of 320 under the Lua policy.
+
+### Presence, step 9: the sipp scenarios, on one node and two (2026-10-12)
+
+- [x] **`presence_publish.xml`** (RFC 3903, RFC 3856): a PUBLISH answering the 407, a
+      refresh by its entity tag with no body, a SUBSCRIBE to its own presence that is sent
+      what was published, an in-dialog unsubscribe with the terminated NOTIFY, and the
+      publication removed with `Expires: 0`. `run.sh` case `presence`.
+- [x] **`blf_watch.xml`** (RFC 4235): Carol's key for Bob, on its own sipp container
+      (`sipp-watcher` in both compose files, `carol-watches-bob.csv`), watching while
+      `blf-call` rings and answers Bob and hangs up: dark, then early, confirmed and dark
+      again. `run.sh` case `blf` on one node; `cluster.sh` case `across-blf`, Carol's key on
+      node B and the call through node A. The first run of `blf` found redundant NOTIFYs
+      for an unchanged line (fixed above) and a sipp race of its own, a `nop` after a
+      `send`; the scenario branches on its `recv`s instead.
+- [x] One node 16 of 16, two nodes 19 of 19.
+
+### The 487 answers the INVITE (2026-10-12)
+
+- [x] **A cancelled INVITE's 487 carried `CSeq: n CANCEL`** (`Proxy::on_cancel`, `src/proxy.cpp`): it
+      was generated from the CANCEL. RFC 3261 9.2 makes it the INVITE's response, so it names the
+      INVITE, and its To tag is now the one the CANCEL's 200 carried, as 9.2 says it should be.
+      Found against a real carrier (2talk, on gbni-1): a caller hanging up while the phone rang
+      was never ACKed, and the node retransmitted the 487 until timer H. The sipp CANCEL
+      scenarios pass either way; why they did not catch it is not yet looked into. `ProxyTest.The487IsTheInvitesResponseWithTheTagOfTheCancels200`, watched failing on
+      both counts. Proved on gbni-1 against 2talk on 2026-10-12: a cancelled call's 487 was ACKed at once. The suite 1527 of 1528 with Redis and MQTT, the one skipped without a
+      resolver.
+
+### A real carrier, and the quick start run against it (2026-10-12)
+
+- [x] **`docs/quick-start/first-trunk.md` on gbni-1 against 2talk**, Tom's NZ account: the
+      trunk script turned on, a user for trunks made with `--add-user`, the trunk created over
+      the API, registered (200, 300 s). In: a call from a mobile to +64 28 2559 1432 rang
+      AthenaPhone on the A85 as `tom` and was heard both ways, with some delay (New Zealand to
+      the UK to Finland). Out: 2talk allows no calls out but its voicemail, `*55`, which the
+      probe subscriber reached through a few lines of `main.lua`, answering 2talk's 401. The
+      live probe 15 of 15 after the switch to `lua://`, and `phone.py` in and out on the A85.
+      What it found is under Milestone 5 in `ACTIVE.md`; the worst, the 487, is fixed above.
+- [x] **gbni-1's TURN from anywhere**: Tom's router forwards; an allocation from fi-1 over UDP
+      and TCP relayed 20 of 20.
+
+### A carrier is offered plain RTP (2026-10-12)
+
+- [x] **`athenasip.trunks` calling out gave the carrier the caller's realm behaviour**, which mirrors
+      the caller: AthenaPhone (WebRTC) dialling 2talk's `*55` offered 2talk DTLS and ICE, rtpengine
+      answered the phone without rtcp-mux, and the phone ended the call with a 488. The carrier leg
+      is now `rtp` unless the trunk's `media_profile` attribute says otherwise; the realm still
+      decides whether media is anchored. `TrunksScriptTest.ACallOutOffersTheCarrierPlainRtp`,
+      watched failing (`mirror`), and `ATrunksMediaProfileIsTheOneOffered`; `docs/scripting.md`
+      lists the attribute. Proved on gbni-1 first with the same setting in its `main.lua`: the call
+      then carried G722 both ways (rtpengine: 917 packets in from 2talk, 1184 out). The suite 1529
+      of 1530 with Redis and MQTT, the one skipped without a resolver.

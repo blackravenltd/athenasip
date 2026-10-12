@@ -1,8 +1,11 @@
 # AthenaSIP - Releasing
 
-A release is a tag on `main` and what is built from it: the Docker image, a Debian package
-for amd64 and arm64, and the Homebrew formula's source. Everything is built from the tag, so
-what users install is exactly what the tag says.
+A release is a tag on `main` and what is built from it: the Docker image and the Homebrew
+formula's source. Everything is built from the tag, so what users install is exactly what the
+tag says.
+
+No Debian packages ship with a release for now (Tom, 2026-10-12). The Dockerfile's `deb`
+target stays, so anyone can build one ([Installation](installation.md)).
 
 ## Once, before the first release
 
@@ -24,7 +27,7 @@ On `develop`, with everything for the release merged and [Testing](testing.md#be
 passing:
 
 ```bash
-VERSION=0.11.0                       # the next version, x.y.z, no v
+VERSION=x.y.z                        # the next version, no v
 
 # Bump project(... VERSION ...) in CMakeLists.txt to $VERSION, then:
 git commit -am "Bump to $VERSION"
@@ -39,45 +42,27 @@ git checkout develop
 From the tag, never the working tree:
 
 ```bash
-mkdir -p dist
-
-# The Debian package for amd64, in Docker.
-git archive "$VERSION" | docker build --target deb --output dist -
-
-# The Debian package for arm64, natively on corvus-fi-1 (an arm64 Debian 13 host with Boost
-# built statically in /opt/athenasip/deps). Docker on an Intel Mac would emulate it for hours.
-git archive --prefix="athenasip-$VERSION/" "$VERSION" | ssh root@10.35.1.20 "rm -rf /tmp/athenasip-release && mkdir -p /tmp/athenasip-release && tar -x -C /tmp/athenasip-release"
-ssh root@10.35.1.20 "cd /tmp/athenasip-release/athenasip-$VERSION && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DBOOST_ROOT=/opt/athenasip/deps -DBoost_USE_STATIC_LIBS=ON && nice -n 15 cmake --build build -j3 && cd build && cpack -G DEB"
-scp "root@10.35.1.20:/tmp/athenasip-release/athenasip-$VERSION/build/athenasip_${VERSION}_arm64.deb" dist/
-
 # The Docker image, tagged with the version and latest.
 git archive "$VERSION" | docker buildx build --platform linux/amd64 \
   -t "tomcully/athenasip:$VERSION" -t tomcully/athenasip:latest --push -
 ```
 
-Check each package installs before it is published:
+Check it reports the version before anything points at it:
 
 ```bash
-docker run --rm -v "$PWD/dist:/dist:ro" debian:trixie-slim sh -c \
-  "apt-get update -qq && apt-get install -y -qq /dist/athenasip_${VERSION}_amd64.deb && athenasip --version"
+docker run --rm --entrypoint athenasip "tomcully/athenasip:$VERSION" --version
 ```
 
 ## 3. Publish the release on GitHub
 
 ```bash
-gh release create "$VERSION" dist/athenasip_${VERSION}_amd64.deb dist/athenasip_${VERSION}_arm64.deb \
-  --verify-tag --title "AthenaSIP $VERSION" --notes "<what it is for; the entry in TODO/COMPLETED.md>"
+gh release create "$VERSION" --verify-tag --title "AthenaSIP $VERSION" --notes "<what it is for; the entry in TODO/COMPLETED.md>"
 ```
 
 Or on the website: **Releases**, **Draft a new release**, choose the tag, give it a title
-and notes, drag the two `.deb` files into the assets box, **Publish release**.
+and notes, **Publish release**.
 
-GitHub adds the source archives itself. Users then install a package with:
-
-```bash
-wget https://github.com/blackravenltd/athenasip/releases/download/$VERSION/athenasip_${VERSION}_amd64.deb
-sudo apt install ./athenasip_${VERSION}_amd64.deb
-```
+GitHub adds the source archives itself, which the Homebrew formula builds from.
 
 ## 4. Update the Homebrew formula
 

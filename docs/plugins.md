@@ -138,6 +138,13 @@ is never on the call path, so callers do not wait on it. Use
 - `realm_delete` also deletes the realm's subscribers and their bindings.
 - A session's absolute expiry and a binding's `expires_seconds` are the store's to
   enforce.
+- Presence is optional as a set: `supports_presence()` says whether the driver implements
+  `call_list_for_subscriber` and the five `presence_*` operations, and a node on one that
+  does not has presence off. A presence record's lifetime is the store's to enforce, and
+  it is listed by presentity within its kind and by its holder; a record rewritten with
+  another holder is listed under the new one only. `presence_delete` succeeds whether or
+  not the record was there. `call_list_for_subscriber` returns only calls not yet closed.
+  The design is [Presence](design/presence.md).
 
 ### EventSystem
 
@@ -174,8 +181,10 @@ is never on the call path, so callers do not wait on it. Use
 - A policy decides and the node acts. `authorize` says how a caller is to be proved
   (accept, Digest in a realm, or reject); `route` names the targets or a reply; `on_failure`
   says what follows a branch's 3xx to 5xx; `register_` accepts a REGISTER into a realm with
-  its lifetimes, forwards it, or refuses it. The node challenges, verifies, forwards and
-  forks; nothing in the policy touches a transaction.
+  its lifetimes, forwards it, or refuses it; `watch` says whether a watcher is told a
+  presentity's state by the node as notifier, refused, or the SUBSCRIBE routed on, and has
+  a default (contract 21) that a policy written before it inherits. The node challenges,
+  verifies, forwards and forks; nothing in the policy touches a transaction.
 - `attach(host)` hands the policy what it decides with: the datastore through the Core
   strand, the node's own addresses and the configuration.
 - A failed `Result` means the policy could not decide. The node answers 500, except after

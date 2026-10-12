@@ -176,6 +176,32 @@ TEST(TrunksScriptTest, ACallOutTriesTheBestTrunkFirst) {
   EXPECT_EQ(edits[1].name, "P-Asserted-Identity");
 }
 
+// A carrier speaks plain RTP whatever the caller does: a WebRTC phone mirrored to one would offer it DTLS and ICE
+// it cannot take (found against 2talk). The engine converts; the caller's realm still decides whether to anchor.
+TEST(TrunksScriptTest, ACallOutOffersTheCarrierPlainRtp) {
+  TrunksScriptFixture f;
+  auto request = f.invite("sip:+442071230000@example.com", "sip:alice@example.com", f.phone);
+
+  const auto route = f.route(request);
+  ASSERT_TRUE(route.ok) << route.error;
+  ASSERT_EQ(route.value.kind, policy::RouteDecision::Kind::Forward);
+  ASSERT_TRUE(route.value.media.has_value());
+  EXPECT_EQ(route.value.media->profiles, types::MediaPolicy::Profiles::PlainRtp);
+  EXPECT_TRUE(route.value.media->anchor);
+}
+
+// A trunk that is not a carrier of plain RTP says so with media_profile, as a realm would.
+TEST(TrunksScriptTest, ATrunksMediaProfileIsTheOneOffered) {
+  TrunksScriptFixture f;
+  f.add_trunk("webby", "sip:sip.webby.example", R"({"prefixes": ["+33"], "media_profile": "mirror"})", {});
+  auto request = f.invite("sip:+33123456789@example.com", "sip:alice@example.com", f.phone);
+
+  const auto route = f.route(request);
+  ASSERT_TRUE(route.ok) << route.error;
+  ASSERT_TRUE(route.value.media.has_value());
+  EXPECT_EQ(route.value.media->profiles, types::MediaPolicy::Profiles::Mirror);
+}
+
 TEST(TrunksScriptTest, AnInternationalNumberGoesByTheLongestPrefixThenPriority) {
   TrunksScriptFixture f;
   auto request = f.invite("sip:+442071230000@example.com", "sip:alice@example.com", f.phone);

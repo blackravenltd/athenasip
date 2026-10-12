@@ -47,6 +47,10 @@ class SIPMessage {
   std::shared_ptr<SIPUri> contact;
   bool authenticated = false;
 
+  // The address of record the caller was proven to be, by Digest or by the REGISTER its reliable connection carried
+  // (RFC 3261 22.3), as "sip:user@realm". Empty when nothing proved who it is.
+  std::string authenticated_aor;
+
   // The trunk the policy trusted this request as coming from, by name; empty for anything else.
   std::string trunk;
 

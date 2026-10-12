@@ -325,6 +325,24 @@ plugins::Result<RegisterDecision> register_from(lua_State* L, int results) {
       RegisterDecision::accept(std::move(realm), count("max_expires", 3600), count("min_expires", 0), count("qualify", 0)));
 }
 
+plugins::Result<WatchDecision> watch_from(lua_State* L, int results) {
+  if (results < 1 || !lua_istable(L, -results)) {
+    return refused<WatchDecision>("watch", "no decision: return athenasip.watch.accept(), .reject() or .forward()");
+  }
+
+  const int idx = lua_absindex(L, -results);
+  if (text_field(L, idx, "decision") != "watch") return refused<WatchDecision>("watch", "something other than an athenasip.watch decision");
+
+  const auto kind = text_field(L, idx, "kind");
+  if (kind == "accept") return plugins::Result<WatchDecision>::success(WatchDecision::accept());
+  if (kind == "forward") return plugins::Result<WatchDecision>::success(WatchDecision::forward());
+  if (kind == "reject") {
+    const auto code = code_of(L, idx);
+    return plugins::Result<WatchDecision>::success(WatchDecision::reject(code, reason_of(L, idx, code)));
+  }
+  return refused<WatchDecision>("watch", "an athenasip.watch decision of no kind it knows");
+}
+
 }  // namespace
 
 LuaPolicy::LuaPolicy(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<types::URL> url)
@@ -441,6 +459,31 @@ void LuaPolicy::register_(plugins::Executor on, std::shared_ptr<RequestView> req
       on, "register", [request](lua_State* L, const std::shared_ptr<bool>& live) { return script::push_request(L, request, live), 1; },
       [on, handler](lua_State* L, int results, const std::string& error) {
         _complete(on, handler, error.empty() ? register_from(L, results) : plugins::Result<RegisterDecision>::failure(error));
+      });
+}
+
+void LuaPolicy::watch(plugins::Executor on, std::shared_ptr<RequestView> request, std::string watcher, std::string presentity, std::string package,
+                      plugins::Handler<WatchDecision> handler) {
+  // A script written before presence has no watch hook, and is given the standard rule.
+  if (!_engine->defines("watch")) {
+    return Policy::watch(on, std::move(request), std::move(watcher), std::move(presentity), std::move(package), std::move(handler));
+  }
+
+  _engine->call(
+      on, "watch",
+      [request, watcher, presentity, package](lua_State* L, const std::shared_ptr<bool>& live) {
+        script::push_request(L, request, live);
+        if (watcher.empty()) {
+          lua_pushnil(L);
+        } else {
+          lua_pushlstring(L, watcher.data(), watcher.size());
+        }
+        lua_pushlstring(L, presentity.data(), presentity.size());
+        lua_pushlstring(L, package.data(), package.size());
+        return 4;
+      },
+      [on, handler](lua_State* L, int results, const std::string& error) {
+        _complete(on, handler, error.empty() ? watch_from(L, results) : plugins::Result<WatchDecision>::failure(error));
       });
 }
 

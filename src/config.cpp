@@ -478,6 +478,24 @@ bool Config::load_from_yaml(const std::string& filename) {
     }
   }
 
+  // presence
+  if (YAML::Node presence = config["presence"]) {
+    try {
+      if (presence["enable"]) presence_enable = presence["enable"].as<bool>();
+      if (presence["min_expires"]) presence_min_expires = presence["min_expires"].as<std::uint32_t>();
+      if (presence["max_expires"]) presence_max_expires = presence["max_expires"].as<std::uint32_t>();
+      if (presence["reconcile"]) presence_reconcile = presence["reconcile"].as<std::uint32_t>();
+    } catch (const std::exception& e) {
+      _logger->error("Invalid 'presence' section: " + std::string(e.what()));
+      return false;
+    }
+
+    if (presence_min_expires == 0 || presence_max_expires < presence_min_expires) {
+      _logger->error("'presence.min_expires' must be at least 1 and no more than 'presence.max_expires'");
+      return false;
+    }
+  }
+
   // calls
   if (YAML::Node calls = config["calls"]) {
     try {
@@ -787,6 +805,13 @@ std::string Config::effective_yaml() const {
   const char* levels[] = {"debug", "info", "warn", "error"};
   out << YAML::Key << "level" << YAML::Value << levels[static_cast<int>(log_level)];
   out << YAML::Key << "format" << YAML::Value << (log_format == loggers::LogFormat::Json ? "json" : "text");
+  out << YAML::EndMap;
+
+  out << YAML::Key << "presence" << YAML::Value << YAML::BeginMap;
+  out << YAML::Key << "enable" << YAML::Value << presence_enable;
+  out << YAML::Key << "min_expires" << YAML::Value << presence_min_expires;
+  out << YAML::Key << "max_expires" << YAML::Value << presence_max_expires;
+  out << YAML::Key << "reconcile" << YAML::Value << presence_reconcile;
   out << YAML::EndMap;
 
   out << YAML::Key << "calls" << YAML::Value << YAML::BeginMap;

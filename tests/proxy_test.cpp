@@ -9,6 +9,7 @@
 #include <memory>
 #include <string>
 
+#include "headers/cseq_header.h"
 #include "headers/sip_identity_header.h"
 #include "headers/uint_header.h"
 #include "headers/via_header.h"
@@ -211,6 +212,44 @@ TEST(ProxyTest, ACancelAnswers200AndEndsTheInviteWith487) {
 
   EXPECT_NE(f.response_with(f.caller_connection, 200), nullptr);
   EXPECT_NE(f.response_with(f.caller_connection, 487), nullptr);
+}
+
+// RFC 3261 9.2: the 487 is the INVITE's response, so it carries the INVITE's CSeq; and the To tag of the response to
+// the CANCEL and of the response to the INVITE SHOULD be the same. A caller matches the 487 to its INVITE by the
+// CSeq method (17.1.3), and one that cannot never sends the ACK: found against a carrier, which let the node
+// retransmit the 487 until timer H.
+TEST(ProxyTest, The487IsTheInvitesResponseWithTheTagOfTheCancels200) {
+  Fixture f;
+  f.bind_bob();
+
+  f.receive(f.caller, f.invite("z9hG4bK-invite"));
+  ASSERT_NE(f.request_with(f.callee_connection, "INVITE"), nullptr);
+  const auto invite_cseq = f.request_with(f.callee_connection, "INVITE")->header->headers_map["CSeq"][0]->as<headers::CSeqHeader>()->sequence;
+
+  std::string cancel = "CANCEL sip:bob@example.com SIP/2.0\r\n";
+  cancel += "Via: SIP/2.0/UDP 192.0.2.10:5060;branch=z9hG4bK-invite\r\n";
+  cancel += "From: <sip:alice@example.com>;tag=alice\r\n";
+  cancel += "To: <sip:bob@example.com>\r\n";
+  cancel += "Call-ID: call-proxy\r\n";
+  cancel += "CSeq: " + std::to_string(invite_cseq) + " CANCEL\r\n";
+  cancel += "\r\n";
+
+  f.receive(f.caller, cancel);
+
+  const auto ok = f.response_with(f.caller_connection, 200);
+  const auto terminated = f.response_with(f.caller_connection, 487);
+  ASSERT_NE(ok, nullptr);
+  ASSERT_NE(terminated, nullptr);
+
+  const auto cseq_of = [](const std::shared_ptr<SIPMessage>& message) { return message->header->headers_map["CSeq"][0]->as<headers::CSeqHeader>(); };
+  EXPECT_EQ(cseq_of(terminated)->method, "INVITE");
+  EXPECT_EQ(cseq_of(terminated)->sequence, invite_cseq);
+  EXPECT_EQ(cseq_of(ok)->method, "CANCEL") << "the CANCEL's own response keeps its method";
+
+  const auto to_tag = [](const std::shared_ptr<SIPMessage>& message) {
+    return message->header->headers_map["To"][0]->as<headers::SIPIdentityHeader>()->value->tags.at("tag");
+  };
+  EXPECT_EQ(to_tag(terminated), to_tag(ok));
 }
 
 namespace {

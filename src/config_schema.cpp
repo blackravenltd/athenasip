@@ -45,7 +45,9 @@ Settings build() {
   s.push_back(choice("sip.forward_register", "subscribers", {"subscribers", "never"},
                      "A REGISTER for a domain this node does not serve (RFC 3261 10.3): subscribers forwards one from this node's own "
                      "subscribers; never answers 403."));
-  s.push_back(boolean("sip.log_messages", "false", "Log every message in full, not only its first line. Credentials are redacted."));
+  s.push_back(boolean("sip.log_messages", "false",
+                      "Log every message in full, not only its first line, at debug: with log.level above debug it logs nothing. "
+                      "Credentials are redacted."));
   s.push_back(integer("sip.session_expires", "1800", "RFC 4028: the session interval, in seconds, put on a call that asked for none. 0 inserts none.", 90,
                       std::nullopt, true));
   s.push_back(integer("sip.session_min_se", "90", "RFC 4028: the shortest session interval a call may negotiate, in seconds.", 90));
@@ -137,6 +139,13 @@ Settings build() {
   s.push_back(section("log", "What the node logs, and how."));
   s.push_back(choice("log.level", "debug", {"debug", "info", "warn", "error"}, "The least severe message logged."));
   s.push_back(choice("log.format", "text", {"text", "json"}, "One line of text per message, or one JSON object."));
+
+  s.push_back(section("presence", "The node as the notifier for the dialog package (BLF) and presence (docs/design/presence.md)."));
+  s.push_back(boolean("presence.enable", "true", "False proxies SUBSCRIBE and PUBLISH to the devices, as any request."));
+  s.push_back(integer("presence.min_expires", "60", "The shortest subscription or publication accepted, in seconds; 423 below it.", 1));
+  s.push_back(integer("presence.max_expires", "3600", "The longest subscription or publication granted, in seconds.", 1));
+  s.push_back(integer("presence.reconcile", "30",
+                      "Seconds between each node's rereading of the state its subscriptions watch, catching what the event bus did not carry; 0 never.", 0));
 
   s.push_back(section("calls", "The record of calls."));
   s.push_back(integer("calls.history_retention", "2592000", "Seconds an ended call's record is kept. 0 keeps records for ever."));

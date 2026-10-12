@@ -54,3 +54,13 @@ TEST(OpenApiDocumentTest, DescribesTheLiveStateRoutes) {
   ASSERT_TRUE(states.IsSequence());
   EXPECT_EQ(states.size(), 6u);
 }
+
+// The presence routes the console reads (docs/design/presence.md, The API and the console).
+TEST(OpenApiDocumentTest, DescribesThePresenceRoutes) {
+  const auto doc = document();
+
+  EXPECT_EQ(doc["paths"]["/presence/subscriptions"]["get"]["operationId"].as<std::string>(), "listPresenceSubscriptions");
+  EXPECT_EQ(doc["paths"]["/realms/{realm}/subscribers/{user}/presence"]["get"]["operationId"].as<std::string>(), "getSubscriberPresence");
+  EXPECT_TRUE(doc["components"]["schemas"]["Presence"]["properties"]["dialogs"].IsMap());
+  EXPECT_TRUE(doc["components"]["schemas"]["PresenceSubscription"]["properties"]["watcher"].IsMap());
+}

@@ -72,6 +72,22 @@ services:
       athenasip:
         condition: service_healthy
 
+  # A BLF key watching while the other two make a call.
+  sipp-watcher:
+    build:
+      context: ./test/e2e
+      dockerfile: Dockerfile.sipp
+    profiles: [e2e]
+    volumes:
+      - ./test/e2e:/e2e:ro
+      - ./test/e2e/results:/results
+    networks:
+      e2e:
+        ipv4_address: 172.31.0.22
+    depends_on:
+      athenasip:
+        condition: service_healthy
+
 networks:
   e2e:
     driver: bridge

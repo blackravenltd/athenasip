@@ -153,6 +153,14 @@ Two [behaviour](behaviour.md) settings, set for the server and overridable per r
 
 [Behaviour](behaviour.md#media_profile) has the full rules.
 
+## DTMF
+
+Key presses sent as RFC 4733 telephone-events travel with the media, through either engine,
+when both ends offer `telephone-event`: proved through rtpengine from a WebRTC phone to a
+carrier's voicemail. SIP INFO (`application/dtmf-relay`, `application/dtmf`) is forwarded
+as any request in a dialog is. Converting between the two, and in-band tones, are not built
+yet, so set a phone and its carrier to the same method, RFC 4733 where both offer it.
+
 ## Is media flowing?
 
 A call that rings and answers says nothing about whether audio moves. These do. Each API
@@ -187,7 +195,7 @@ test/interop/media-stats.py --host 127.0.0.1 --port 2223 --watch  # once a secon
 
 Its default port, 22222, is the one the interop fixture uses.
 
-**`sip.log_messages: true`** logs every SIP message in full, so you can read the address
+**`sip.log_messages: true`**, with `log.level: debug`, logs every SIP message in full, so you can read the address
 and port each SDP names before and after the engine rewrote it.
 
 [Troubleshooting](troubleshooting.md#one-way-or-no-audio) goes through the usual causes.
