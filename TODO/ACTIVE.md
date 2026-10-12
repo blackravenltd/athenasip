@@ -2,7 +2,7 @@
 
 Work happens on `develop`; `main` carries the last release, `0.11.0` (2026-10-11), tagged
 with everything on `develop` at the time. `0.10.0` was merged to `main` (`11b69b1`) and
-published as an image but never tagged; found while cutting `0.11.0`. Line numbers refer to
+published as an image but tagged only on 2026-10-12, dated at the merge. Line numbers refer to
 the current tree; update them as files move.
 
 Milestones 1 and 2 are complete; 3 to 6 are complete apart from the items left under each
@@ -34,7 +34,8 @@ screens and a real client.
 - TURN on both (2026-10-11): native coturn on 3478 UDP/TCP, relay 24000-24100, credentials
   minted by each node under `http.api.turn_shared_secret` and handed out by
   `/api/v1/subscriber/{realm}/config`. fi-1's is reachable only where 10.35.1.20 is; gbni-1's
-  needs the router to forward 3478 and 24000-24100 (Waiting on Tom).
+  from anywhere, its router forwarding 3478 and 24000-24100 (proved from fi-1 on
+  2026-10-12: an allocation over UDP and over TCP, 20 of 20 relayed).
 
 **What passes at `0.11.0`** (2026-10-11, the whole of `docs/testing.md`'s Before a release):
 the unit suite 1412 of 1413 (one skipped without a resolver), ASan with UBSan and TSan clean
@@ -56,20 +57,11 @@ Nothing below can move until these are settled, and each one has somebody or som
 stopped against it. They are here rather than scattered through the milestones because a
 session that has lost its context needs to see them first.
 
-1. **Push credentials.** `fcm://`, `webpush://` and `apns://` are built and tested against
-   local servers only. Proving them needs a Firebase service account (AthenaPhone on
-   Android), an Apple APNs key with the app's Team ID and bundle ID (iOS), or a browser
-   subscription.
-2. **The rest of the `0.11.0` release.** Tagged and pushed on 2026-10-11 (step 1 of
-   `docs/releasing.md`). Left, from step 2: the packages and the image built from the tag,
-   the `blackravenltd/homebrew-athenasip` tap repository, and the GitHub release, which Tom
-   makes. The two `.deb` files built on 2026-10-09 are from `develop` labelled 0.10.0 and
-   must not be published. Whether to tag `0.10.0` at `11b69b1` after the fact is Tom's call.
-3. **A real carrier account**, to run `docs/quick-start/first-trunk.md` against.
-4. **Router forwards for TURN at gbni-1**: UDP and TCP 3478, UDP 24000-24100 to 10.44.1.50,
-   so a browser outside that site can relay. Until then its turn: entry does not connect from
-   outside.
-5. **The phone (A85), when Tom lends it**: the browser call to AthenaPhone with
+1. **The rest of the `0.11.0` release.** Tagged and pushed on 2026-10-11 (step 1 of
+   `docs/releasing.md`). Left, from step 2: the image built from the tag, the
+   `blackravenltd/homebrew-athenasip` tap repository, and the GitHub release, which Tom
+   makes. No Debian packages for now (Tom, 2026-10-12); the stale ones are deleted.
+2. **The phone (A85), when Tom lends it**: the browser call to AthenaPhone with
    `ATHENA_INTEROP_PAGE_URL=https://10.44.1.50:8443` (plain http gives the page no
    microphone), and Milestone 3's hold, DTMF and transfer checks. Check AthenaPhone is in
    front before every tap.
@@ -430,7 +422,7 @@ including the behaviour profiles it led to. What is left of it is below.
 
 ### After that
 
-These need the phone or other devices (Waiting on Tom, 4).
+These need the phone or other devices (Waiting on Tom, 2).
 
 - [ ] The phone's media across the internet: AthenaPhone on mobile data to
       macnessa.athenasip.org. The 2026-10-04 run's phone leg went over the link between
@@ -642,7 +634,7 @@ from bindings in the store), channels and flow tokens (transport), the live `Cal
       little).
 - [ ] SIP MESSAGE relay.
 - [ ] Push, RFC 8599, what is left (`COMPLETED.md` has what shipped): proving each service
-      for real (Waiting on Tom, 1); a sipp scenario with a fake provider; and section 6,
+      for real (not now, Tom 2026-10-12: do not ask); a sipp scenario with a fake provider; and section 6,
       `pn-purr` for long-lived dialogs, which nothing needs yet. The client side is
       AthenaPhone's.
 - [ ] Web client repository: video calling and conferencing, JsSIP over WSS, served by
