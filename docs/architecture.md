@@ -33,7 +33,8 @@ Core = composition root + the strand
 | `src/servers/` | One `Server` and `Connection` type per transport |
 | `src/channel.*` | `Channel`: SIP framing and parsing over one connection |
 | `src/transactions/` | The four RFC 3261 17 state machines and the matcher |
-| `src/registrar.*`, `src/proxy.*`, `src/dialogs.*`, `src/qualifier.*`, `src/local_ua.*` | Transaction users. `LocalUA` ends a call with a BYE to each end, sent through the proxy as the far end would send it. |
+| `src/registrar.*`, `src/proxy.*`, `src/dialogs.*`, `src/qualifier.*`, `src/local_ua.*`, `src/notifier.*` | Transaction users. `LocalUA` ends a call with a BYE to each end, sent through the proxy as the far end would send it. `Notifier` answers SUBSCRIBE and PUBLISH for `presence` and `dialog` and sends the NOTIFYs ([Presence and BLF](presence.md)). |
+| `src/pidf.*` | PIDF documents (RFC 3863): composing a presentity's publications into one |
 | `src/policy/` | The policy interface, the decisions it returns, and the `builtin://` and `lua://` drivers |
 | `src/script/`, `scripts/` | The Lua engine and the library a script is given; the standard scripts, built into the binary |
 | `src/trunk_registrar.*`, `src/digest.*` | Registering to carriers, and answering their challenges ([Scripting](scripting.md#trunks)) |

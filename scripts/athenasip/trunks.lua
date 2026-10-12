@@ -7,7 +7,7 @@
 -- Trunks without writing Lua: everything here is driven by the trunks kept over the API and their attributes.
 -- Use it as the policy with a main.lua of one line:
 --
---   authorize, route, on_failure, register = require("athenasip.trunks").hooks()
+--   authorize, route, on_failure, register, watch = require("athenasip.trunks").hooks()
 --
 -- A trunk's attributes it reads, all optional:
 --
@@ -17,6 +17,7 @@
 --   dial_format   "e164" (default, +442071234567) or "digits" (442071234567), as the carrier wants the number
 --   caller_id     the number presented when calling out, in E.164
 --   from_domain   the host of the From when calling out, for a carrier that authenticates the From as its own
+--   media_profile the media it is offered, as a realm's: "rtp" (default, what carriers speak), "mirror", "webrtc", "srtp"
 --   numbers       the numbers it brings in, each to an address of record: {"+442071234567": "sip:alice@example.com"}
 --   default       where a number in no list goes; without it, such a call is refused
 --
@@ -145,8 +146,11 @@ function trunks.outbound(request, realm)
     request:set_header("P-Asserted-Identity", "<sip:" .. as_dialled(first, caller_id) .. "@" .. first.uri.host .. ">")
   end
 
+  -- A carrier speaks plain RTP whatever the caller does, so the engine converts; the realm still decides whether
+  -- media is anchored at all.
   local behaviour = realm.behaviour_effective
-  return a.route.forward(targets, {media = behaviour, rewrite_contact = behaviour.rewrite_contact})
+  local media = {media_anchor = behaviour.media_anchor, media_profile = first.attributes.media_profile or "rtp"}
+  return a.route.forward(targets, {media = media, rewrite_contact = behaviour.rewrite_contact})
 end
 
 function trunks.route(request)
@@ -170,10 +174,12 @@ function trunks.on_failure(request, response, state)
 end
 
 trunks.register = std.register
+trunks.watch = std.watch
 
--- The four hooks, for a main.lua that wants exactly this.
+-- The hooks, for a main.lua that wants exactly this. One written for the first four still works: a script with no
+-- watch hook is given the standard rule.
 function trunks.hooks()
-  return trunks.authorize, trunks.route, trunks.on_failure, trunks.register
+  return trunks.authorize, trunks.route, trunks.on_failure, trunks.register, trunks.watch
 end
 
 return trunks

@@ -1,5 +1,9 @@
 # AthenaSIP - Presence
 
+Built in `0.12.0`: [Presence and BLF](../presence.md) is the reference for what shipped,
+and `TODO/COMPLETED.md` records where it differs from this design. Step 9's real client is
+still open (`TODO/ACTIVE.md`, Milestone 7).
+
 What the node must gain to be the notifier for the `presence` and `dialog` event packages
 for the subscribers in its realms, and the order it is built in. Written 2026-10-11 against
 `develop` at `ae46edc`; line numbers are from that commit. The decisions it builds on are
@@ -66,7 +70,10 @@ call them separately would touch every request's path for the sake of two method
 **In-dialog requests go straight to it.** A refresh or an unsubscribe is a SUBSCRIBE with
 a To tag, addressed to the Contact the node gave in its 200. That Contact is in the
 presentity's realm, not at this node's address, and carries the subscription's ID as a URI
-parameter, so a refresh can reach any node that serves the realm. `_deliver_to_tu` hands the
+parameter (`athena-sub`), so a refresh can reach any node that serves the realm. The realm
+is resolved as the watcher already resolves it to register, which is how it found this
+node in the first place; a connection-oriented or outbound client sends the refresh down
+its existing flow regardless. `_deliver_to_tu` hands the
 notifier any request whose Request-URI carries that parameter and names a served realm,
 after the dialog tracker has looked at it and before the proxy. The notifier reads the
 subscription from the datastore by its ID and checks the Call-ID and tags against it (RFC
@@ -93,7 +100,10 @@ node checks the stored holder before each NOTIFY, so the old holder stops as soo
 record has moved. If the holder's channel has closed, the NOTIFY goes down the flow of the
 watcher's binding whose Contact matches the subscription's remote target (the proxy's
 `_target_for` already does this lookup for a binding). Failing that, it goes to the remote
-target by RFC 3263, and if that fails too, the subscription ends.
+target by RFC 3263 (to the first Route, if the dialog has a route set), and if that fails
+too, the subscription ends. Whichever flow a NOTIFY went down is the subscription's flow
+from then on. The binding is matched on the Contact's user, host and port, and only a
+binding held by this node counts, since only its flows are open here.
 
 The local UA (`src/local_ua.*`) is the other model in the tree, a request entering the proxy
 as though a peer had sent it. It does not fit here. A BYE goes to a dialog's far end through
@@ -129,16 +139,21 @@ yes or no before the 200 is sent.
 state (4.2.1.2 asks for one on every refresh).
 
 **Unsubscribe** is a refresh with `Expires: 0`: a 200, then a final NOTIFY with
-`Subscription-State: terminated` and the current state.
+`Subscription-State: terminated;reason=timeout` and the current state, as Kamailio sends.
+
+Any other request in the dialog is 405 with `Allow: SUBSCRIBE`: only the watcher sends in
+it, and only to refresh or end it. A SUBSCRIBE in it for another package or `id` is 489.
 
 **Expiry** without a refresh ends the subscription with a NOTIFY saying
 `terminated;reason=timeout`. Expiry runs on the injected `TimerSource`, so the tests
 advance a `ManualTimerSource` rather than waiting.
 
-**The node ends it** when the presentity is deleted (`terminated;reason=noresource`), when
-the policy reloads and would no longer allow the watcher (`reason=rejected`), and on
-shutdown (`reason=deactivated`, which asks the watcher to subscribe again at once and so
-reach another node).
+**The node ends it** when the presentity is deleted (`terminated;reason=noresource`) and
+when the policy reloads and would no longer allow the watcher (`reason=rejected`). It does
+not end it on shutdown: the subscription is a record, so another node takes it over or this
+one resumes it on restart (The cluster). `reason=deactivated` would only send every watcher
+to subscribe again, perhaps to the node that is going down. Changed 2026-10-11 while
+building the core, once subscriptions were records.
 
 **A NOTIFY that fails** ends the subscription. A 481 always does; RFC 6665 4.2.2 also
 removes a soft-state subscription on a failing response or a timeout. The exact list of
@@ -190,7 +205,8 @@ read one AOR's calls without listing every call.
 | Ringing | initiator | `early` (`proceeding` is the same to every BLF key known) |
 | Ringing | recipient | `early` |
 | Connected | either | `confirmed` |
-| Closing, Closed | either | `terminated`, reported once, then dropped |
+| Closing | either | `terminated` |
+| Closed | either | not listed: a full document without the dialog says it has ended |
 
 Each `<dialog>` carries `id`, `call-id`, `local-tag` and `remote-tag` (which a phone needs
 for call pickup with `Replaces`, RFC 3891), `direction`, `<state>`, and the local and remote
@@ -214,9 +230,13 @@ nothing, what its registrations say.
 
 **Composition.** Every unexpired publication for the AOR contributes its `<tuple>`s to one
 `<presence entity="...">` document. Two publications from two devices are two tuples. A
-tuple id that appears in two publications is kept from the more recent one. Anything else
-in a publication (`<note>`, extension elements) is carried through with its tuple. The node
-does not interpret a publication beyond finding its tuples.
+tuple id that appears in two publications is kept from the more recent one, which the node
+takes to be the one that lasts longer, since a publication record holds no time of
+publishing and a device refreshes before it lapses. Anything else in a publication
+(`<note>`, extension elements such as RPID's `<dm:person>`) is carried through, with the
+namespaces the root declared for it, and an element with an `id` is deduplicated as a
+tuple is. The node does not interpret a publication beyond finding its elements
+(`src/pidf.cpp`, by hand, as the other parsers are).
 
 **Nothing published.** One tuple, `<status><basic>open</basic></status>` while the AOR has
 an unexpired binding and `closed` when it has none. That is the decision's "a subscriber
@@ -224,12 +244,18 @@ with no bindings closed when nothing is published". No contact URIs are given ou
 
 **Rate.** RFC 3856 asks that a presentity's notifications not exceed one every five
 seconds. Changes within the window are coalesced and the latest state sent when it opens.
-When the window opened is in the subscription's record, so a takeover keeps to it.
+A NOTIFY answering a SUBSCRIBE goes at once, as RFC 6665 4.2.1.2 requires, and opens a new
+window. The window is the holder's, in memory, on the injected clock: a node taking a
+subscription over starts a fresh one, which costs at most one NOTIFY inside five seconds.
+Changed 2026-10-11 while building the package, from keeping it in the record; a wall-clock
+second in the record would be too coarse to keep to the window and not needed to keep the
+state.
 
-**Registration changes.** The registrar publishes `subscribers/<uri>/status` when a
-binding is written (`src/core.cpp:143`), and nothing when one is removed or expires.
-Removal gains the same event. Expiry happens inside the datastore and signals nothing; the
-reconcile below sees it on its next pass, which is soon enough for a buddy list.
+**Registration changes.** The core signals `presence/<aor>/changed` when a binding is
+written or removed (`Core::subscriber_register`, `subscriber_unregister`), beside the
+`subscribers/<uri>/status` event it already published on a write. Expiry happens inside the
+datastore and signals nothing; the reconcile below sees it on its next pass, which is soon
+enough for a buddy list. A publication lapsing is the same.
 
 ### PUBLISH (RFC 3903)
 
@@ -281,37 +307,43 @@ from the digest the subscription's record holds. A lost `changed` costs at most 
 prompt, and the reconcile makes it certain.
 
 **The datastore contract.** Five new methods for the two new records, and one for the
-call record. Like `lease` and the counters (`src/datastores/datastore.h:152`) the five are
-optional, with `_unsupported` defaults, so a third-party datastore built against the
+call record, as built in `src/datastores/datastore.h`. Like `lease` and the counters they
+are optional, with `_unsupported` defaults, and `supports_presence()` says whether a driver
+has them, so a third-party datastore built against the
 previous contract keeps working. On such a driver the node turns presence off, says so at
 start and in `--check`, and proxies SUBSCRIBE and PUBLISH as before. `API_VERSION`
 (`src/plugins/plugin.h:27`) goes from 19 to 20, for these and for `subscriber` on the
 participant.
 
 ```
-struct PresenceRecord {
-  std::string kind;          // "subscription" or "publication"
+struct PresenceRecord {      // src/types/presence_record.h
+  enum class Kind { Subscription, Publication };
+  Kind kind;
   std::string id;            // subscription ID or entity tag
   std::string aor;           // the presentity: the index
   std::string node_id;       // the holder; empty for a publication
   std::string content_type;
   std::string body;          // PIDF for a publication; compact JSON for a subscription
-  std::time_t expires_at;
+  std::time_t expires_at;    // filled by the store
 };
 
-presence_put(on, PresenceRecord, expires_seconds, StatusHandler)
+bool supports_presence() const
+presence_put(on, PresenceRecord, seconds, StatusHandler)
 presence_get(on, kind, id, Handler<std::optional<PresenceRecord>>)
 presence_list(on, aor, kind, Handler<std::vector<PresenceRecord>>)
-presence_delete(on, kind, id, StatusHandler)
-presence_list_node(on, node_id, Handler<std::vector<PresenceRecord>>)   // a holder's subscriptions
+presence_delete(on, kind, id, StatusHandler)       // succeeds whether or not it was there
+presence_list_node(on, node_id, Handler<std::vector<PresenceRecord>>)
 
-call_list_by_subscriber(on, aor, Handler<std::vector<std::shared_ptr<Call>>>)
+call_list_for_subscriber(on, aor, Handler<std::vector<std::shared_ptr<Call>>>)   // open calls only
 ```
 
 `memory://` and `redis://` both implement them. In Redis a presence record is a key with
 a TTL, and each presentity and kind, and each holder, has an index set, pruned of lapsed
-members as it is read; the call index is a set per subscriber, kept by `call_create` and
-`call_update`.
+members as it is read. A record and its indexes are written and deleted by one script, so
+a subscription moving holder leaves the old holder's index in the same step. The call
+index is a set per subscriber of the calls not yet closed, kept by `call_create` and
+`call_update`, because a closed call's record is kept for a month and reading a
+subscriber's history to find its open calls would grow without bound.
 
 Call records are rendered into `dialog-info` per subscription, because `version` is per
 subscription. The datastore holds the facts, not XML.
@@ -340,24 +372,32 @@ from C, down the receptionist's own flow.
 **A node dying.** Its call records and its subscriptions name it. When the node
 directory (`src/node_directory.h`) marks it stale, two things follow.
 
-- Its calls are gone. Every node recomposes the presentities its subscriptions watch,
-  leaving out open call records whose `node` is stale, and notifies any whose state
-  changed. The records themselves are closed by whoever learns the call has ended: the
-  node holding the other leg when it ends it (`Core::_end_held_call`), and the dead node
-  itself when it restarts, for every open record that names it. Today neither writes,
-  and the record stays open; that is an item under State in `TODO/ACTIVE.md`.
+- Its calls are gone. The orphan sweep that was already there (`Core::_orphan_sweep`)
+  closes their records: the live node with the lowest id closes an unanchored call once
+  the node is found gone, and an anchored one once its engine says the media has stopped,
+  since rtpengine carries the media on without the node and the people on it are still
+  talking. Closing a record now signals `changed` for each subscriber on it, so the lines
+  go dark wherever they are watched; the reconcile finds any that signal missed. Changed
+  2026-10-11 while building the cluster step, from leaving stale nodes' open calls out of
+  every document: the sweep already decides when such a call has ended, and a second rule
+  for it would disagree with the first while the media still flows.
 - Its subscriptions are still in the datastore. A watcher that uses outbound has, or soon
   has, a flow to a surviving node: that node lists the dead node's subscriptions
   (`presence_list_node`), takes over each whose watcher has a binding flow on it (by
   instance, else by Contact) through a datastore `lease` on the subscription's ID so that
-  only one node does, rewrites the holder, and sends a NOTIFY with the current state. A
+  only one node does, rewrites the holder, and sends a NOTIFY with the current state. It
+  is matched by Contact alone, as the fallback above is: the subscription does not keep
+  the watcher's instance, and a client's SUBSCRIBE Contact is its registered one. A
   watcher with no flow anywhere is taken over by whichever node its next refresh reaches,
   since the Contact names the realm, not the node. One that never refreshes lapses at its
   expiry.
 
-A restarting node closes the open call records that name it and publishes `changed`
-for each participant, so no line stays lit for a call that died with it. Its subscriptions
-it reads back (`presence_list_node`) and resumes, unless another node has taken them.
+A restarting node's orphan sweep closes the open call records that name it from before
+it started, which signals each participant, so no line stays lit for a call that died with
+it. Its subscriptions it reads back (`presence_list_node`) at its first reconcile, arms
+their expiry from the record, and notifies any whose state is not what was last sent,
+unless another node has taken them. The digest of what was last sent is in the record;
+for `dialog` it leaves out the `version`, which rises with every NOTIFY.
 
 **Single node.** `memory://` and `local://` serve all of this unchanged: the bus is local
 and the datastore is the node's own.
@@ -381,9 +421,14 @@ struct WatchDecision {
 };
 
 virtual void watch(plugins::Executor on, std::shared_ptr<RequestView> request,
-                   std::shared_ptr<types::SIPIdentity> watcher, std::shared_ptr<types::SIPIdentity> presentity,
+                   std::string watcher, std::string presentity,
                    std::string package, plugins::Handler<WatchDecision> handler);
 ```
+
+`watcher` is the address of record the watcher was proven to be (`sip:carol@example.com`),
+empty when it was not; `presentity` the one watched. Plain strings rather than identities,
+as built in step 7: a script compares them, and an AOR is what both are. In Lua the hook
+is `watch(request, watcher, presentity, package)`, with `watcher` nil when unproven.
 
 The default, which `builtin://` uses and which is also what a script without a `watch`
 function gets (as `on_failure` falls back today, `src/policy/lua_policy.cpp:414`): accept
@@ -409,6 +454,20 @@ PUBLISH has no hook in v1. Its rule (only the presentity) is fixed.
 The `/api/v1/events` stream carries `presence/<aor>/changed` like any other event, so the
 console can update a subscriber's state without polling. The console's screens are the
 admin session's to build; this document fixes only what the API returns.
+
+As built in step 8 (`src/api/presence_api.cpp`, through `Notifier::subscriptions` and
+`Notifier::state`, so the API composes exactly what a watcher is sent):
+
+- The datastore lists subscriptions by holder only, so "every subscription in the
+  cluster" is this node's and each node's the directory has heard of, a stale one
+  included. One held by a node the bus never heard is missed; it lapses at its expiry.
+  This keeps the datastore contract as it is rather than adding a list of everything.
+- A subscriber's state also carries the composed PIDF `document`, and each publication
+  its own. `basic` is open when any tuple is.
+- With presence off, or a datastore that cannot hold it, the state is 404 `presence_off`
+  rather than a state no watcher is sent. The subscription list is what the datastore
+  holds, so it is empty only on a datastore without presence: a node with presence off
+  still shows what the rest of the cluster serves.
 
 ## Configuration
 
@@ -439,7 +498,7 @@ from the RFCs first and watched failing, per `CLAUDE.md`.
 2. **The notifier core** (RFC 6665): the hand-off from the proxy and from
    `_deliver_to_tu`, the subscription dialog as a stored record, 200, 423, 489 never arising, 403 from the
    default watch rule, the immediate NOTIFY, refresh, unsubscribe, expiry, NOTIFY failure,
-   and `deactivated` on shutdown. One package, `dialog`, with an empty state, so the
+   and a fetch (Expires 0). One package, `dialog`, with an empty state, so the
    mechanics are proved before any state exists. GoogleTest with `ManualTimerSource`.
 3. **The `dialog` package**: the proxy setting `subscriber` on each participant, the
    state mapping and the XML, single node, the change signalled where the record is

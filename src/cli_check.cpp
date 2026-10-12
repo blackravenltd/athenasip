@@ -238,6 +238,16 @@ std::vector<CheckLine> check(std::shared_ptr<loggers::Logger> logger, std::share
   lines.push_back(check_plugin("media", config->media_url, media::MediaEngine::create_driver(logger, config->media_url), config, connect_and_wait));
   lines.push_back(check_policy(logger, config));
 
+  // The node turns presence off on a datastore that cannot hold it (docs/design/presence.md); said here, before a
+  // desk phone's key that never lights says it.
+  if (datastore_open && config->presence_enable) {
+    lines.push_back(datastore->supports_presence()
+                        ? line(true, "presence", "the datastore holds subscriptions and publications")
+                        : line(false, "presence",
+                               datastore->describe() + " cannot hold presence, so the node will proxy SUBSCRIBE and PUBLISH instead; set "
+                                                       "presence.enable: false to say so"));
+  }
+
   if (datastore_open) {
     auto servers = dns::UdpResolver::servers_from("/etc/resolv.conf");
     auto locator = std::make_shared<dns::SipLocator>(std::make_shared<dns::UdpResolver>(logger, std::move(servers)));

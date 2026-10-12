@@ -368,6 +368,40 @@ case "across-call-records" in
     ;;
 esac
 
+# BLF across the cluster (RFC 4235, docs/design/presence.md): Carol's key for Bob is held by
+# node B, and Alice calls Bob through node A. Node A writes the call record and says so on the
+# bus; node B must light Carol's key and put it out again.
+case "across-blf" in
+  *${FILTER}*)
+    allocate_port
+    watch_port="${next_port}"
+
+    docker rm -f cluster-blf-watch >/dev/null 2>&1 || true
+    ${COMPOSE} run -d --name cluster-blf-watch sipp-watcher \
+      -sf /e2e/scenarios/blf_watch.xml -inf /e2e/carol-watches-bob.csv -au carol -ap carol-secret \
+      -p "${watch_port}" -cid_str "across-blf-watch-%u-%p@%s" \
+      -m 1 -r 1 -timeout 60s -timeout_error \
+      -trace_err -error_file "/results/cluster-across-blf-watch.err" \
+      -nostdin "${NODE_B}:5060" >/dev/null 2>&1
+    sleep 2
+
+    run_pair across-blf-call "${NODE_B}" uas.xml "${NODE_A}" invite_bye.xml 30s
+
+    watch_status=$(docker wait cluster-blf-watch 2>/dev/null || echo 1)
+    docker logs cluster-blf-watch >"${RESULTS}/cluster-across-blf-watch.log" 2>&1 || true
+    docker rm -f cluster-blf-watch >/dev/null 2>&1 || true
+
+    echo "  across-blf (Carol's key on node B, the call through node A)"
+    if [ "${watch_status}" = "0" ]; then
+      passed=$((passed + 1))
+    else
+      failed=$((failed + 1))
+      failures="${failures} across-blf"
+      echo "    failed - see ${RESULTS}/cluster-across-blf-watch.log and cluster-node-b.log"
+    fi
+    ;;
+esac
+
 # Timer B is 64*T1 and this one waits it out.
 run_pair across-invite-timeout "${NODE_B}" uas_silent.xml "${NODE_A}" invite_timeout.xml 60s carol.csv carol alice-to-carol.csv
 

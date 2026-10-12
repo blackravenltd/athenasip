@@ -368,6 +368,42 @@ if [ "${ENGINE}" = "rtpengine" ]; then
   esac
 fi
 
+# Presence (RFC 3903, RFC 3856): publish, refresh, watch what was published, and remove it.
+run_one presence presence_publish.xml carol.csv carol carol-secret 30s
+
+# A BLF key (RFC 4235): Carol watches Bob's line while Alice calls him. The key must light
+# and go dark again.
+case "blf" in
+  *${FILTER}*)
+    allocate_port
+    watch_port="${next_port}"
+
+    docker rm -f e2e-blf-watch >/dev/null 2>&1 || true
+    ${COMPOSE} run -d --name e2e-blf-watch sipp-watcher \
+      -sf /e2e/scenarios/blf_watch.xml -inf /e2e/carol-watches-bob.csv -au carol -ap carol-secret \
+      -p "${watch_port}" -cid_str "blf-watch-%u-%p@%s" \
+      -m 1 -r 1 -timeout 60s -timeout_error \
+      -trace_err -error_file "/results/blf-watch.err" \
+      -nostdin "${NODE}:5060" >/dev/null 2>&1
+    sleep 2
+
+    run_pair blf-call uas.xml bob.csv bob invite_bye.xml alice.csv alice 30s
+
+    watch_status=$(docker wait e2e-blf-watch 2>/dev/null || echo 1)
+    docker logs e2e-blf-watch >"${RESULTS}/blf-watch.log" 2>&1 || true
+    docker rm -f e2e-blf-watch >/dev/null 2>&1 || true
+
+    echo "  blf (Carol's key for Bob, lit by the call and put out by its end)"
+    if [ "${watch_status}" = "0" ]; then
+      passed=$((passed + 1))
+    else
+      failed=$((failed + 1))
+      failures="${failures} blf"
+      echo "    failed - see ${RESULTS}/blf-watch.log"
+    fi
+    ;;
+esac
+
 # Last, because timer B is 64*T1 and this one waits it out.
 run_pair invite-timeout uas_silent.xml  carol.csv carol invite_timeout.xml   alice-to-carol.csv alice 60s
 

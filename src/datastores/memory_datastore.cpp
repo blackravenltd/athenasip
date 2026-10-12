@@ -643,6 +643,85 @@ void MemoryDatastore::call_list(plugins::Executor on, plugins::Handler<std::vect
   _complete(std::move(on), std::move(handler), plugins::Result<std::vector<std::shared_ptr<Call>>>::success(_call_list()));
 }
 
+void MemoryDatastore::call_list_for_subscriber(plugins::Executor on, std::string aor, plugins::Handler<std::vector<std::shared_ptr<Call>>> handler) {
+  _complete(std::move(on), std::move(handler), plugins::Result<std::vector<std::shared_ptr<Call>>>::success(_call_list_for_subscriber(aor)));
+}
+
+std::vector<std::shared_ptr<Call>> MemoryDatastore::_call_list_for_subscriber(const std::string& aor) {
+  std::vector<std::shared_ptr<Call>> calls;
+  if (aor.empty()) return calls;
+
+  std::lock_guard<std::mutex> lock(_mutex);
+  for (const auto& [id, call] : _calls) {
+    if (call->state == Call::State::Closed) continue;
+    for (const auto& participant : call->participants) {
+      if (participant.subscriber == aor) {
+        calls.push_back(call);
+        break;
+      }
+    }
+  }
+  return calls;
+}
+
+void MemoryDatastore::presence_put(plugins::Executor on, types::PresenceRecord record, std::uint32_t seconds, plugins::StatusHandler handler) {
+  if (record.id.empty() || record.aor.empty() || seconds == 0) {
+    return _complete(std::move(on), std::move(handler), plugins::Status::failure("presence_put: a record needs an id, a presentity and a lifetime"));
+  }
+
+  record.expires_at = std::time(nullptr) + static_cast<std::time_t>(seconds);
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    const auto key = std::make_pair(record.kind, record.id);
+    _presence[key] = std::move(record);
+  }
+  _complete(std::move(on), std::move(handler), plugins::Status::success());
+}
+
+void MemoryDatastore::presence_get(plugins::Executor on, types::PresenceRecord::Kind kind, std::string id,
+                                   plugins::Handler<std::optional<types::PresenceRecord>> handler) {
+  std::optional<types::PresenceRecord> found;
+  for (auto& record : _presence_select([&](const types::PresenceRecord& each) { return each.kind == kind && each.id == id; })) found = std::move(record);
+  _complete(std::move(on), std::move(handler), plugins::Result<std::optional<types::PresenceRecord>>::success(std::move(found)));
+}
+
+void MemoryDatastore::presence_list(plugins::Executor on, std::string aor, types::PresenceRecord::Kind kind,
+                                    plugins::Handler<std::vector<types::PresenceRecord>> handler) {
+  auto records = _presence_select([&](const types::PresenceRecord& each) { return each.kind == kind && each.aor == aor; });
+  _complete(std::move(on), std::move(handler), plugins::Result<std::vector<types::PresenceRecord>>::success(std::move(records)));
+}
+
+void MemoryDatastore::presence_delete(plugins::Executor on, types::PresenceRecord::Kind kind, std::string id, plugins::StatusHandler handler) {
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    _presence.erase(std::make_pair(kind, id));
+  }
+  _complete(std::move(on), std::move(handler), plugins::Status::success());
+}
+
+void MemoryDatastore::presence_list_node(plugins::Executor on, std::string node_id, plugins::Handler<std::vector<types::PresenceRecord>> handler) {
+  std::vector<types::PresenceRecord> records;
+  if (!node_id.empty()) records = _presence_select([&](const types::PresenceRecord& each) { return each.node_id == node_id; });
+  _complete(std::move(on), std::move(handler), plugins::Result<std::vector<types::PresenceRecord>>::success(std::move(records)));
+}
+
+template <typename Keep>
+std::vector<types::PresenceRecord> MemoryDatastore::_presence_select(Keep keep) {
+  const auto now = std::time(nullptr);
+  std::vector<types::PresenceRecord> records;
+
+  std::lock_guard<std::mutex> lock(_mutex);
+  for (auto it = _presence.begin(); it != _presence.end();) {
+    if (it->second.expires_at <= now) {
+      it = _presence.erase(it);
+      continue;
+    }
+    if (keep(it->second)) records.push_back(it->second);
+    ++it;
+  }
+  return records;
+}
+
 std::string MemoryDatastore::_subscriber_key(const std::string& realm_name, const std::string& user) { return realm_name + ":" + user; }
 
 std::string MemoryDatastore::_location_key(std::uint64_t subscriber_id, const std::string& user, const std::string& host, std::uint16_t port) {

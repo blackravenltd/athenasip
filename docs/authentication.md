@@ -94,10 +94,10 @@ reference.
 |---|---|
 | `GET /health`, `POST /auth/login`, `POST /auth/logout` | Open |
 | `GET /session`, `POST /users/{user}/password` | Any signed-in user |
-| `GET /nodes`, `/registrations`, `/calls`, `/calls/{call}`, `/call-records`, `/media`, `/media/reoffers`, `/qualify`, `/events`, `GET /metrics` | `view-cluster-status` |
+| `GET /nodes`, `/registrations`, `/calls`, `/calls/{call}`, `/call-records`, `/media`, `/media/reoffers`, `/qualify`, `/events`, `/presence/subscriptions`, `GET /metrics` | `view-cluster-status` |
 | `GET /realms`, `GET /realms/{realm}` | `manage-realms` or `manage-realm-subscribers` |
 | `POST /realms`, `PUT`/`DELETE /realms/{realm}` | `manage-realms` |
-| `/realms/{realm}/subscribers[/{user}]` | `manage-realm-subscribers` |
+| `/realms/{realm}/subscribers[/{user}]`, `GET /realms/{realm}/subscribers/{user}/presence` | `manage-realm-subscribers` |
 | `/users[/{user}]`, `DELETE /users/{user}/sessions` | `manage-admin-users` |
 | `DELETE /calls/{call}`, `POST /policy/reload` | `manage-cluster` |
 | `/trunks[/{trunk}]` | `manage-trunks` |

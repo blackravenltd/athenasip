@@ -24,6 +24,7 @@
 #include "api/auth_api.h"
 #include "api/calls_api.h"
 #include "api/events_api.h"
+#include "api/presence_api.h"
 #include "api/provisioning_api.h"
 #include "api/router.h"
 #include "api/sessions.h"
@@ -346,6 +347,11 @@ int main(int argc, char* argv[]) {
     return -3;
   }
 
+  // docs/design/presence.md: a datastore built before presence keeps working, with presence off.
+  if (config->presence_enable && !datastore->supports_presence()) {
+    logger->warn(datastore->describe() + " cannot hold presence: SUBSCRIBE and PUBLISH are proxied to the devices. Set presence.enable: false to say so.");
+  }
+
   // --explain needs the datastore and the policy, and a Core to lend the policy what it decides with; it starts no
   // listener and joins no bus.
   if (!options.explain.empty()) {
@@ -573,6 +579,10 @@ int main(int argc, char* argv[]) {
       // Live calls, the media engine and /metrics, read from Core on its strand.
       auto calls = std::make_shared<api::CallsAPI>(logger, core, adminAPI->executor());
       calls->register_routes(*api_router);
+
+      // Who watches whom, and each subscriber's presence, read through the notifier on the Core strand.
+      auto presence_api = std::make_shared<api::PresenceAPI>(logger, core, adminAPI->executor());
+      presence_api->register_routes(*api_router);
 
       // The event bus as Server-Sent Events, on a response the listener holds open.
       auto events_api = std::make_shared<api::EventsAPI>(logger, events, adminAPI->executor());

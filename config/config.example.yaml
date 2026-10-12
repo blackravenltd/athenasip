@@ -131,6 +131,15 @@ log:
   level: debug
   format: text
 
+# The node answers SUBSCRIBE for the dialog package (BLF) and presence itself, and takes PUBLISH, so a desk
+# phone's BLF key works with nothing set up. false sends every SUBSCRIBE and PUBLISH to the devices instead.
+# reconcile: seconds between each node's rereading of what its subscriptions watch.
+presence:
+  enable: true
+  min_expires: 60
+  max_expires: 3600
+  reconcile: 30
+
 calls:
   history_retention: 2592000
 

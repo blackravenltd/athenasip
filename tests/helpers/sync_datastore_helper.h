@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <future>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -16,6 +17,7 @@
 #include "datastores/datastore.h"
 #include "global_io_context.h"
 #include "plugins/plugin.h"
+#include "types/presence_record.h"
 
 // A blocking view of a datastore, for tests only. Production callers run on the Core strand and must never wait;
 // a test is not on the strand. Tests of the async behaviour itself call the datastore directly.
@@ -201,6 +203,36 @@ class SyncDatastore {
 
   std::vector<std::shared_ptr<athenasip::Call>> call_list() {
     return _value<std::vector<std::shared_ptr<athenasip::Call>>>([this](auto on, auto handler) { _store->call_list(std::move(on), std::move(handler)); });
+  }
+
+  std::vector<std::shared_ptr<athenasip::Call>> call_list_for_subscriber(const std::string& aor) {
+    return _value<std::vector<std::shared_ptr<athenasip::Call>>>(
+        [this, aor](auto on, auto handler) { _store->call_list_for_subscriber(std::move(on), aor, std::move(handler)); });
+  }
+
+  bool supports_presence() const { return _store->supports_presence(); }
+
+  bool presence_put(athenasip::types::PresenceRecord record, std::uint32_t seconds) {
+    return _status([this, record, seconds](auto on, auto handler) { _store->presence_put(std::move(on), record, seconds, std::move(handler)); });
+  }
+
+  std::optional<athenasip::types::PresenceRecord> presence_get(athenasip::types::PresenceRecord::Kind kind, const std::string& id) {
+    return _value<std::optional<athenasip::types::PresenceRecord>>(
+        [this, kind, id](auto on, auto handler) { _store->presence_get(std::move(on), kind, id, std::move(handler)); });
+  }
+
+  std::vector<athenasip::types::PresenceRecord> presence_list(const std::string& aor, athenasip::types::PresenceRecord::Kind kind) {
+    return _value<std::vector<athenasip::types::PresenceRecord>>(
+        [this, aor, kind](auto on, auto handler) { _store->presence_list(std::move(on), aor, kind, std::move(handler)); });
+  }
+
+  bool presence_delete(athenasip::types::PresenceRecord::Kind kind, const std::string& id) {
+    return _status([this, kind, id](auto on, auto handler) { _store->presence_delete(std::move(on), kind, id, std::move(handler)); });
+  }
+
+  std::vector<athenasip::types::PresenceRecord> presence_list_node(const std::string& node_id) {
+    return _value<std::vector<athenasip::types::PresenceRecord>>(
+        [this, node_id](auto on, auto handler) { _store->presence_list_node(std::move(on), node_id, std::move(handler)); });
   }
 
   // The failure the last call reported.

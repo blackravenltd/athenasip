@@ -22,6 +22,7 @@
 #include "events/topics.h"
 #include "expiry_set.h"
 #include "local_ua.h"
+#include "notifier.h"
 #include "policy/builtin_policy.h"
 #include "proxy.h"
 #include "push/push_parameters.h"
@@ -144,6 +145,9 @@ void Core::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shar
                                                    "{\"contact\":\"" + push::without_push_parameters(*contact).to_string() + "\",\"node\":\"" +
                                                        config->sip_node_id + "\",\"registered\":\"" + Util::get_zulu_time() + "\"}");
 
+                                   // A presentity that publishes nothing is as present as its bindings say.
+                                   events->publish(events::topics::presence_changed(subscriber->identity->uri->to_string()), "{\"binding\":\"written\"}");
+
                                    if (handler) handler(status);
                                  });
 }
@@ -161,6 +165,8 @@ void Core::subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::sh
       _logger->debug("No binding to remove for " + subscriber->identity->to_string());
     } else if (!status.ok) {
       _logger->error("Cannot unregister subscriber " + subscriber->identity->to_string() + " - " + status.error);
+    } else {
+      events->publish(events::topics::presence_changed(subscriber->identity->uri->to_string()), "{\"binding\":\"removed\"}");
     }
     if (handler) handler(status);
   });
@@ -779,6 +785,55 @@ std::shared_ptr<LocalUA> Core::local_ua() {
   return _local_ua;
 }
 
+void Core::call_subscriber(const std::string& call_id, bool caller, const std::string& aor) {
+  auto call = call_get(call_id);
+  if (!call) return;
+
+  std::vector<std::string> was;
+  bool changed = false;
+  for (auto& participant : call->participants) {
+    if (participant.originator != caller || participant.subscriber == aor) continue;
+    if (!participant.subscriber.empty()) was.push_back(participant.subscriber);
+    participant.subscriber = aor;
+    changed = true;
+  }
+
+  // A serial fork moving on to another subscriber frees the line of the one before.
+  if (changed) _call_record_write(call, std::move(was));
+}
+
+void Core::_call_record_write(const std::shared_ptr<Call>& call, std::vector<std::string> also) {
+  // Only the node the caller reached keeps the record, and so signals the lines on it.
+  if (!call->from_node.empty()) return;
+
+  for (const auto& participant : call->participants) {
+    if (!participant.subscriber.empty()) also.push_back(participant.subscriber);
+  }
+
+  datastore->call_update(_strand, call, [this, self = shared_from_this(), call, also = std::move(also)](plugins::Status status) {
+    if (!status.ok) {
+      _logger->error("Cannot update call " + call->id + " - " + status.error);
+      return;
+    }
+
+    // After the write, so whoever looks again reads it.
+    std::vector<std::string> signalled;
+    for (const auto& aor : also) {
+      if (std::find(signalled.begin(), signalled.end(), aor) != signalled.end()) continue;
+      signalled.push_back(aor);
+      events->publish(events::topics::presence_changed(aor), "{\"call\":\"" + call->id + "\"}");
+    }
+  });
+}
+
+std::shared_ptr<Notifier> Core::notifier() {
+  if (!_notifier) {
+    _notifier = std::make_shared<Notifier>(_logger->base_logger(), weak_from_this());
+    _notifier->start();
+  }
+  return _notifier;
+}
+
 void Core::local_request(std::shared_ptr<SIPMessage> request, transactions::TransactionBase::SendFn on_final) {
   // A server transaction like any other, except that its answer stays here. It has no transport, so no
   // retransmissions to absorb, and it is not filed: nothing arrives for it.
@@ -802,6 +857,12 @@ void Core::_deliver_to_tu(const std::shared_ptr<SIPMessage>& request, const std:
   _dialogs->observe_request(request);
 
   const auto& method = request->header->request_method;
+
+  // Addressed to a Contact the notifier gave: inside one of its subscriptions, wherever the dialog began.
+  if (Notifier::owns(*request)) {
+    notifier()->on_in_dialog(request, transaction);
+    return;
+  }
 
   if (method == "REGISTER") {
     _registrar->on_request(request, transaction);
@@ -1021,11 +1082,7 @@ void Core::_on_dialog_change(const std::shared_ptr<types::Dialog>& dialog) {
 
   events->publish(events::topics::call_state(call->id), Call::state_to_string(call->state));
 
-  if (call->from_node.empty()) {
-    datastore->call_update(_strand, call, [this, self = shared_from_this(), call](plugins::Status status) {
-      if (!status.ok) _logger->error("Cannot update call " + call->id + " - " + status.error);
-    });
-  }
+  _call_record_write(call);
 
   if (call->state != Call::State::Closed) return;
 
@@ -1460,7 +1517,17 @@ void Core::_close_orphan(const std::shared_ptr<Call>& call, const std::string& r
   call->ended_at = std::time(nullptr);
 
   datastore->call_update(_strand, call, [this, self = shared_from_this(), call](plugins::Status status) {
-    if (!status.ok) _logger->error("Cannot close call " + call->id + " - " + status.error);
+    if (!status.ok) {
+      _logger->error("Cannot close call " + call->id + " - " + status.error);
+      return;
+    }
+
+    // The lines the call held are free, wherever their watchers are.
+    std::set<std::string> signalled;
+    for (const auto& participant : call->participants) {
+      if (participant.subscriber.empty() || !signalled.insert(participant.subscriber).second) continue;
+      events->publish(events::topics::presence_changed(participant.subscriber), "{\"call\":\"" + call->id + "\"}");
+    }
   });
 
   events->publish(events::topics::call_state(call->id), Call::state_to_string(call->state));

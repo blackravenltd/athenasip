@@ -104,6 +104,10 @@ class Proxy : public TransactionUser {
 
     // The policy's limit on how long this branch rings.
     std::optional<std::chrono::seconds> ring_timeout;
+
+    // The subscriber whose binding this is, as an address of record: the line the dialog package shows ringing
+    // while this branch is tried. Empty for a URI, a trunk or anything else that is nobody's binding.
+    std::string subscriber;
   };
 
   // The response context (16.7). Kept alive by the client transaction callbacks.

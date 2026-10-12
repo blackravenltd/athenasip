@@ -113,6 +113,56 @@ TEST(CliCheckTest, AnUnknownDriverFailsAndTheRestIsStillTried) {
   EXPECT_FALSE(cli::passed(lines));
 }
 
+namespace {
+
+// A third-party datastore built before presence: everything but the presence operations.
+class NoPresenceDatastore : public datastores::MemoryDatastore {
+ public:
+  using MemoryDatastore::MemoryDatastore;
+  bool supports_presence() const override { return false; }
+};
+
+}  // namespace
+
+// docs/design/presence.md: presence is on by default and both canonical stores hold it.
+TEST(CliCheckTest, PresenceOnACanonicalStorePasses) {
+  CheckFixture f;
+
+  const auto lines = f.run();
+
+  const auto* presence = CheckFixture::find(lines, "presence");
+  ASSERT_NE(presence, nullptr);
+  EXPECT_TRUE(presence->ok) << presence->detail;
+}
+
+// On a datastore that cannot hold it, the node turns presence off; --check says so before it is found by a desk phone
+// whose key never lights, and says how to make the configuration say what will happen.
+TEST(CliCheckTest, PresenceOnADatastoreThatCannotHoldItFails) {
+  CheckFixture f;
+  datastores::Datastore::register_driver<NoPresenceDatastore>(f.logger, "nopresence");
+  f.config->db_url = "nopresence://";
+
+  const auto lines = f.run();
+
+  const auto* presence = CheckFixture::find(lines, "presence");
+  ASSERT_NE(presence, nullptr);
+  EXPECT_FALSE(presence->ok);
+  EXPECT_NE(presence->detail.find("presence.enable: false"), std::string::npos) << presence->detail;
+}
+
+// With presence off there is nothing to hold.
+TEST(CliCheckTest, PresenceOffIsNotChecked) {
+  CheckFixture f;
+  datastores::Datastore::register_driver<NoPresenceDatastore>(f.logger, "nopresence");
+  f.config->db_url = "nopresence://";
+  f.config->presence_enable = false;
+
+  const auto lines = f.run();
+
+  EXPECT_EQ(CheckFixture::find(lines, "presence"), nullptr);
+  EXPECT_TRUE(cli::passed(lines)) << cli::report(lines);
+}
+
 // A certificate file a TLS listener needs and cannot read fails the check.
 TEST(CliCheckTest, AMissingCertificateIsFound) {
   CheckFixture f;

@@ -23,6 +23,7 @@
 #include "headers/via_header.h"
 #include "loggers/logger_scoped.h"
 #include "media/media_engine.h"
+#include "notifier.h"
 #include "push/push_parameters.h"
 #include "qualifier.h"
 #include "types/location.h"
@@ -248,7 +249,22 @@ void Proxy::_proceed(const std::shared_ptr<SIPMessage>& request, const std::shar
   _preprocess_routes(request);
 
   auto self = shared_from_this();
-  _authorize(request, transaction, false, [this, self, request, transaction, token]() { _determine_targets(request, transaction, token); });
+  _authorize(request, transaction, false, [this, self, request, transaction, token]() {
+    auto core = _core.lock();
+
+    // RFC 4235: the caller's line is the subscriber it was proven to be.
+    if (core && request->header->request_method == "INVITE" && !request->authenticated_aor.empty() && tag_of(request, "To").empty()) {
+      core->call_subscriber(value_of(request, "Call-ID"), true, request->authenticated_aor);
+    }
+
+    // A SUBSCRIBE for a package the node is the notifier for, and a PUBLISH, are answered here, not routed
+    // (docs/design/presence.md).
+    if (core && core->notifier()->wants(*request)) {
+      return core->notifier()->on_request(request, transaction,
+                                          [this, self, request, transaction, token]() { _determine_targets(request, transaction, token); });
+    }
+    _determine_targets(request, transaction, token);
+  });
 }
 
 std::shared_ptr<policy::RequestView> Proxy::_view(const std::shared_ptr<SIPMessage>& request, bool relay) const {
@@ -311,6 +327,7 @@ void Proxy::_authenticate(const std::shared_ptr<SIPMessage>& request, const std:
   auto channel = request->channel.lock();
   if (channel && channel->_connection && channel->_connection->is_reliable() &&
       (from_must_match ? channel->is_authenticated_as(caller->to_string()) : channel->is_authenticated())) {
+    if (from_must_match) request->authenticated_aor = "sip:" + caller->user + "@" + realm->name;
     return then();
   }
 
@@ -381,6 +398,7 @@ void Proxy::_authenticate(const std::shared_ptr<SIPMessage>& request, const std:
                         // Remove the used credentials: they are replayable while the nonce lives.
                         request->header->remove_value("Proxy-Authorization", [&answered](std::shared_ptr<headers::Header> value) { return value == answered; });
                         request->authenticated = true;
+                        request->authenticated_aor = "sip:" + credentials->fields["username"] + "@" + realm->name;
 
                         then();
                       });
@@ -633,27 +651,37 @@ void Proxy::_expand(const std::shared_ptr<Context>& context, std::vector<policy:
   // The first subscriber's profile is the callee's, for what the engine offers it.
   if (!context->callee_profile) context->callee_profile = spec.subscriber->media_profile;
 
+  // The subscriber whose bindings these are: the line that rings, whatever the To said.
+  const auto& identity = spec.subscriber->identity;
+  const auto subscriber = identity && identity->uri ? "sip:" + identity->uri->user + "@" + Util::to_lower(identity->uri->host) : std::string();
+
   // RFC 5626: each binding is reached down the flow it registered over, and rings for as long as the policy said.
   if (spec.bindings) {
     const auto from = into->size();
     _add_targets(context, std::move(*spec.bindings), *into);
-    for (auto i = from; i < into->size(); ++i) (*into)[i].ring_timeout = spec.ring_timeout;
+    for (auto i = from; i < into->size(); ++i) {
+      (*into)[i].ring_timeout = spec.ring_timeout;
+      (*into)[i].subscriber = subscriber;
+    }
     return _expand(context, std::move(specs), index + 1, std::move(into), std::move(then));
   }
 
   auto self = shared_from_this();
   const auto id = spec.subscriber->id;
-  core->location_list(
-      id, [this, self, context, specs = std::move(specs), index, into, then = std::move(then)](plugins::Result<std::vector<types::Location>> bindings) mutable {
-        if (!bindings.ok) {
-          _logger->error("Could not read the bindings for " + context->request->header->request_uri->to_string() + " - " + bindings.error);
-        } else {
-          const auto from = into->size();
-          _add_targets(context, std::move(bindings.value), *into);
-          for (auto i = from; i < into->size(); ++i) (*into)[i].ring_timeout = specs[index].ring_timeout;
-        }
-        _expand(context, std::move(specs), index + 1, std::move(into), std::move(then));
-      });
+  core->location_list(id, [this, self, context, specs = std::move(specs), index, into, then = std::move(then),
+                           subscriber](plugins::Result<std::vector<types::Location>> bindings) mutable {
+    if (!bindings.ok) {
+      _logger->error("Could not read the bindings for " + context->request->header->request_uri->to_string() + " - " + bindings.error);
+    } else {
+      const auto from = into->size();
+      _add_targets(context, std::move(bindings.value), *into);
+      for (auto i = from; i < into->size(); ++i) {
+        (*into)[i].ring_timeout = specs[index].ring_timeout;
+        (*into)[i].subscriber = subscriber;
+      }
+    }
+    _expand(context, std::move(specs), index + 1, std::move(into), std::move(then));
+  });
 }
 
 void Proxy::_answer_challenge(const std::shared_ptr<Context>& context, const std::shared_ptr<SIPMessage>& response, const std::shared_ptr<SIPMessage>& sent) {
@@ -828,6 +856,11 @@ void Proxy::_forward_target(const std::shared_ptr<Context>& context, const Targe
   context->hops_left.clear();
   context->hop_target.reset();
   context->current = target;
+
+  // RFC 4235: the callee's line is the subscriber this branch rings. Only a new call has a callee to name.
+  if (!target.subscriber.empty() && context->request->header->request_method == "INVITE" && tag_of(context->request, "To").empty()) {
+    core->call_subscriber(value_of(context->request, "Call-ID"), false, target.subscriber);
+  }
   context->offered.reset();
   context->challenge_answered = false;
 
@@ -1710,16 +1743,14 @@ bool Proxy::_prepare_forward(const std::shared_ptr<SIPMessage>& copy, const std:
 
 void Proxy::on_cancel(std::shared_ptr<SIPMessage> cancel, std::shared_ptr<transactions::TransactionBase> cancel_transaction,
                       std::shared_ptr<transactions::TransactionBase> invite_transaction) {
+  if (!invite_transaction) return _forward_cancel_statelessly(cancel, cancel_transaction);
+
   // RFC 3261 9.2: the CANCEL is answered here only when this node holds the INVITE's transaction. Otherwise
   // it is forwarded, and answering as well would give the caller two responses.
-  if (cancel_transaction && invite_transaction) {
-    auto ok = cancel->generate_response();
-    ok->header->response_code = 200;
-    ok->header->response_message = "OK";
-    cancel_transaction->send(ok);
-  }
-
-  if (!invite_transaction) return _forward_cancel_statelessly(cancel, cancel_transaction);
+  auto ok = cancel->generate_response();
+  ok->header->response_code = 200;
+  ok->header->response_message = "OK";
+  if (cancel_transaction) cancel_transaction->send(ok);
 
   // RFC 3261 16.10: cancel the branch in flight.
   auto search = _contexts.find(invite_transaction->id());
@@ -1734,10 +1765,18 @@ void Proxy::on_cancel(std::shared_ptr<SIPMessage> cancel, std::shared_ptr<transa
     _contexts.erase(search);
   }
 
-  // The cancelled INVITE is answered 487.
+  // The cancelled INVITE is answered 487: the INVITE's response, so its CSeq names the INVITE (the CANCEL shares
+  // the number, 9.1), with the To tag the CANCEL was answered with (9.2).
   auto terminated = cancel->generate_response();
   terminated->header->response_code = 487;
   terminated->header->response_message = "Request Terminated";
+  terminated->header->clear("To");
+  terminated->header->add("To", ok->header->headers_map["To"][0]);
+
+  if (auto cseq = cancel->header->contains("CSeq") ? cancel->header->headers_map["CSeq"][0]->as<CSeqHeader>() : nullptr) {
+    terminated->header->clear("CSeq");
+    terminated->header->add("CSeq", std::make_shared<CSeqHeader>(cseq->sequence, "INVITE"));
+  }
 
   invite_transaction->send(terminated);
 }
@@ -2133,13 +2172,20 @@ void Proxy::_answer_options(const std::shared_ptr<transactions::TransactionBase>
 
   // 11.2: what this node does. As a proxy it carries any method; these are the ones it takes part in. It replaces
   // the default Allow every response is generated with.
+  auto core = _core.lock();
+  const bool presence = core && core->config->presence_enable && core->datastore && core->datastore->supports_presence();
+
   response->header->remove_value("Allow", [](const std::shared_ptr<headers::Header>&) { return true; });
-  response->header->add("Allow", std::make_shared<headers::StringHeader>("INVITE, ACK, CANCEL, BYE, OPTIONS, REGISTER, UPDATE, INFO, PRACK, MESSAGE, "
-                                                                         "SUBSCRIBE, NOTIFY, REFER"));
+  response->header->add("Allow", std::make_shared<headers::StringHeader>(std::string("INVITE, ACK, CANCEL, BYE, OPTIONS, REGISTER, UPDATE, INFO, PRACK, "
+                                                                                     "MESSAGE, SUBSCRIBE, NOTIFY, REFER") +
+                                                                         (presence ? ", PUBLISH" : "")));
   response->header->add("Accept", std::make_shared<headers::StringHeader>("application/sdp"));
   response->header->add("Accept-Encoding", std::make_shared<headers::StringHeader>("identity"));
   response->header->add("Accept-Language", std::make_shared<headers::StringHeader>("en"));
   response->header->add("Supported", std::make_shared<headers::StringHeader>("path, outbound, timer"));
+
+  // RFC 6665 7.2.2: the packages this node is the notifier for.
+  if (presence) response->header->add("Allow-Events", std::make_shared<headers::StringHeader>(Notifier::packages()));
 
   transaction->send(response);
 }

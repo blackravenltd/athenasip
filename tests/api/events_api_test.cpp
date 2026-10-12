@@ -22,6 +22,7 @@
 #include "api/router.h"
 #include "datastores/memory_datastore.h"
 #include "events/local_event_system.h"
+#include "events/topics.h"
 #include "types/url.h"
 
 using namespace athenasip;
@@ -158,6 +159,18 @@ TEST(EventsApiTest, OtherTopicsAreNotSent) {
 
   ASSERT_TRUE(EventsFixture::read_until(stream, "event: nodes/b/status"));
   EXPECT_EQ(stream.received.find("something/else"), std::string::npos);
+}
+
+// docs/design/presence.md: a console updates a subscriber's state from presence/<aor>/changed without polling.
+TEST(EventsApiTest, PresenceChangesArriveOnTheStream) {
+  EventsFixture f;
+  auto stream = f.open();
+  ASSERT_TRUE(f.wait_for_open(1));
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+  f.bus->publish(events::topics::presence_changed("sip:bob@example.com"), "{}");
+
+  EXPECT_TRUE(EventsFixture::read_until(stream, "event: " + events::topics::presence_changed("sip:bob@example.com"))) << stream.received;
 }
 
 // It needs the role the other status routes need.
