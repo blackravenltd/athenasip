@@ -310,6 +310,7 @@ and a trunk for a UK carrier, created with `POST /api/v1/trunks`, looks like thi
 | `dial_format` | `e164` (default) or `digits`, without the `+`, as the carrier wants the number |
 | `caller_id` | The number presented calling out, set as the From and asserted in `P-Asserted-Identity` |
 | `from_domain` | The host of that From, for a carrier that checks the From is its own |
+| `media_profile` | The media the carrier is offered, as a realm's `media_profile`: `rtp` (default, what carriers speak), `mirror`, `webrtc` or `srtp`. A browser or WebRTC phone calling out is converted by the media engine. |
 | `numbers` | The numbers it brings in, each to an address of record |
 | `default` | Where a number in no list goes; without it such a call is refused |
 
