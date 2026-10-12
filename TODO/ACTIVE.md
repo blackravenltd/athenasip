@@ -18,7 +18,7 @@ package, PUBLISH, the `presence` package, the cluster, the policy hook, the API,
 documentation and the sipp scenarios on one node and two; what is left is the console's
 screens and a real client.
 
-**Two live nodes**, neither production, both on `5fbf3f3` (deployed 2026-10-09):
+**Two live nodes**, neither production: node-a on `5fbf3f3` (deployed 2026-10-09), node-b on `a81e9f7` (0.11.0 and after, deployed 2026-10-12 with the systemd unit refreshed, so `systemctl reload` works there):
 - `node-a` (10.101.1.20): `lua://` with `athenasip.trunks` from
   `/etc/athenasip/scripts/main.lua` (previous configuration `config.yaml.before-lua`), and a
   trunk `node-b` to node-b, registering as node-b's subscriber 1003 through 10.102.1.50.
