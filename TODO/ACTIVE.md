@@ -25,8 +25,13 @@ screens and a real client.
   Deploying there is standing-authorised; touch the files changed since the last deploy
   before building (a stale object crash-looped it on 2026-10-09).
 - `corvus-gbni-1` (10.44.1.50) as `macnessa.athenasip.org` behind the other site's NAT:
-  `builtin://`, native rtpengine, the binary built on fi-1, the previous one kept as
-  `/usr/local/bin/athenasip.previous`. Each deploy there needs Tom's yes.
+  native rtpengine, the binary built on fi-1, the previous one kept as
+  `/usr/local/bin/athenasip.previous`. Each deploy there needs Tom's yes. Since 2026-10-12
+  `lua://` (previous configuration `config.yaml.before-trunks`): `main.lua` is
+  `athenasip.trunks` plus service codes (`*55`, `*NN`) out by the trunk `2talk`, a real
+  carrier: Tom's NZ number +64 28 2559 1432 rings `tom` (the A85), and 2talk allows no other
+  calls out. API user `trunks` (manage-trunks, manage-cluster, view-cluster-status), its
+  password in `/root/.athenasip-trunks-password`.
 - A probe on fi-1 (`athenasip-probe.timer`) runs `test/interop/verify.py
   test/interop/live.json` every 15 minutes and publishes `athenasip/probes/corvus-fi-1/calls`.
   A manual run at the same time as the probe fails some checks: both use subscribers 1901
@@ -63,8 +68,8 @@ session that has lost its context needs to see them first.
    makes. No Debian packages for now (Tom, 2026-10-12); the stale ones are deleted.
 2. **The phone (A85), when Tom lends it**: the browser call to AthenaPhone with
    `ATHENA_INTEROP_PAGE_URL=https://10.44.1.50:8443` (plain http gives the page no
-   microphone), and Milestone 3's hold, DTMF and transfer checks. Check AthenaPhone is in
-   front before every tap.
+   microphone), and Milestone 3's hold, DTMF and transfer checks. `phone.py` taps only
+   while AthenaPhone is in front; its wireless adb port is found by mDNS.
 
 ## How to prove it
 
@@ -518,8 +523,24 @@ the sipp carrier harness.
 
 - [ ] `on_call_ended(call)` as a notification hook, for concurrency counters; first
       candidate for a sixth hook, after the five have been used.
-- [ ] Run `docs/quick-start/first-trunk.md` step by step against a real carrier. Its
-      steps are the ones the fi-1 to gbni-1 trunk and `test/e2e/trunk.sh` took.
+- [ ] What running `docs/quick-start/first-trunk.md` against 2talk found (2026-10-12, the
+      run itself and the 487 it found are in `COMPLETED.md`), most important first:
+      - A trunk created over the API registers on the registrar's next scan, up to 30 s
+        later (`TrunkRegistrar::kScan`, `src/trunk_registrar.h:52`); the guide says a few
+        seconds. Creating, changing or deleting a trunk should prompt the scan.
+      - A carrier's OPTIONS keepalives and MWI NOTIFYs to the trunk's registered Contact
+        are routed as calls in, by the number in the Request-URI, so the subscriber's phone
+        answers them every minute (480 while it is not registered). The node registered that
+        Contact; it should answer an OPTIONS to it itself.
+      - Service codes (`*55`) are not numbers to `athenasip.trunks`, so they need a script
+        of one's own (gbni-1's `main.lua`). A trunk attribute for them, perhaps.
+      - Why the sipp CANCEL scenarios never caught the 487's CSeq.
+      - `sip.log_messages` logs at debug, so at the default `info` it does nothing. The
+        reference should say so, or the full message should log at info when asked for.
+      - `--check` fails the public address behind a router that hairpins: STUN to the node's
+        own public name came back from the router's inside address (10.44.1.1).
+      - The re-offer warning names the Request-URI the carrier dialled, not the subscriber
+        that refused the offer.
 
 ---
 

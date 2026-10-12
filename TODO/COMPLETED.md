@@ -3416,3 +3416,16 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       scenarios pass either way; why they did not catch it is not yet looked into. `ProxyTest.The487IsTheInvitesResponseWithTheTagOfTheCancels200`, watched failing on
       both counts. The suite 1527 of 1528 with Redis and MQTT, the one skipped without a
       resolver.
+
+### A real carrier, and the quick start run against it (2026-10-12)
+
+- [x] **`docs/quick-start/first-trunk.md` on gbni-1 against 2talk**, Tom's NZ account: the
+      trunk script turned on, a user for trunks made with `--add-user`, the trunk created over
+      the API, registered (200, 300 s). In: a call from a mobile to +64 28 2559 1432 rang
+      AthenaPhone on the A85 as `tom` and was heard both ways, with some delay (New Zealand to
+      the UK to Finland). Out: 2talk allows no calls out but its voicemail, `*55`, which the
+      probe subscriber reached through a few lines of `main.lua`, answering 2talk's 401. The
+      live probe 15 of 15 after the switch to `lua://`, and `phone.py` in and out on the A85.
+      What it found is under Milestone 5 in `ACTIVE.md`; the worst, the 487, is fixed above.
+- [x] **gbni-1's TURN from anywhere**: Tom's router forwards; an allocation from fi-1 over UDP
+      and TCP relayed 20 of 20.
