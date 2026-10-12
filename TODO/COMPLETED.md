@@ -3405,3 +3405,14 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       for an unchanged line (fixed above) and a sipp race of its own, a `nop` after a
       `send`; the scenario branches on its `recv`s instead.
 - [x] One node 16 of 16, two nodes 19 of 19.
+
+### The 487 answers the INVITE (2026-10-12)
+
+- [x] **A cancelled INVITE's 487 carried `CSeq: n CANCEL`** (`Proxy::on_cancel`, `src/proxy.cpp`): it
+      was generated from the CANCEL. RFC 3261 9.2 makes it the INVITE's response, so it names the
+      INVITE, and its To tag is now the one the CANCEL's 200 carried, as 9.2 says it should be.
+      Found against a real carrier (2talk, on gbni-1): a caller hanging up while the phone rang
+      was never ACKed, and the node retransmitted the 487 until timer H. The sipp CANCEL
+      scenarios pass either way; why they did not catch it is not yet looked into. `ProxyTest.The487IsTheInvitesResponseWithTheTagOfTheCancels200`, watched failing on
+      both counts. The suite 1527 of 1528 with Redis and MQTT, the one skipped without a
+      resolver.
