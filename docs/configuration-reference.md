@@ -18,7 +18,7 @@ The node, and how it treats SIP.
 | `sip.localnet` | list | `[]` | Prefixes on this node's side of the router, such as 192.168.0.0/16. A far end inside them is given the local address and port; everyone else the public ones. |
 | `sip.allow_unencrypted` | true or false | `true` | False refuses to start with a udp, tcp or plain websocket listener. |
 | `sip.forward_register` | one of `subscribers`, `never` | `subscribers` | A REGISTER for a domain this node does not serve (RFC 3261 10.3): subscribers forwards one from this node's own subscribers; never answers 403. |
-| `sip.log_messages` | true or false | `false` | Log every message in full, not only its first line. Credentials are redacted. |
+| `sip.log_messages` | true or false | `false` | Log every message in full, not only its first line, at debug: with log.level above debug it logs nothing. Credentials are redacted. |
 | `sip.session_expires` | 0, or 90 or more | `1800` | RFC 4028: the session interval, in seconds, put on a call that asked for none. 0 inserts none. |
 | `sip.session_min_se` | integer, 90 or more | `90` | RFC 4028: the shortest session interval a call may negotiate, in seconds. |
 | `sip.require_session_timer` | true or false | `false` | Add Require: timer when the caller did not. NOT RECOMMENDED by RFC 4028: every call to an endpoint without the extension fails. |

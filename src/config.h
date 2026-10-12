@@ -38,7 +38,7 @@ class Config {
   // Permits SIP over plain UDP, TCP and WS.
   bool sip_allow_unencrypted = true;
 
-  // Log every message in full, not only its first line. Credentials are redacted.
+  // Log every message in full, not only its first line, at debug. Credentials are redacted.
   bool sip_log_messages = false;
 
   // sip.forward_register: RFC 3261 10.3 step 1. "subscribers" forwards a REGISTER for a domain this node does

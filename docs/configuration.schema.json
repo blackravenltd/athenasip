@@ -40,7 +40,7 @@
           "default": "subscribers"
         },
         "log_messages": {
-          "description": "Log every message in full, not only its first line. Credentials are redacted.",
+          "description": "Log every message in full, not only its first line, at debug: with log.level above debug it logs nothing. Credentials are redacted.",
           "type": "boolean",
           "default": false
         },
