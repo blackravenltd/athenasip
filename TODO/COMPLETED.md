@@ -3429,3 +3429,15 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       What it found is under Milestone 5 in `ACTIVE.md`; the worst, the 487, is fixed above.
 - [x] **gbni-1's TURN from anywhere**: Tom's router forwards; an allocation from fi-1 over UDP
       and TCP relayed 20 of 20.
+
+### A carrier is offered plain RTP (2026-10-12)
+
+- [x] **`athenasip.trunks` calling out gave the carrier the caller's realm behaviour**, which mirrors
+      the caller: AthenaPhone (WebRTC) dialling 2talk's `*55` offered 2talk DTLS and ICE, rtpengine
+      answered the phone without rtcp-mux, and the phone ended the call with a 488. The carrier leg
+      is now `rtp` unless the trunk's `media_profile` attribute says otherwise; the realm still
+      decides whether media is anchored. `TrunksScriptTest.ACallOutOffersTheCarrierPlainRtp`,
+      watched failing (`mirror`), and `ATrunksMediaProfileIsTheOneOffered`; `docs/scripting.md`
+      lists the attribute. Proved on gbni-1 first with the same setting in its `main.lua`: the call
+      then carried G722 both ways (rtpengine: 917 packets in from 2talk, 1184 out). The suite 1529
+      of 1530 with Redis and MQTT, the one skipped without a resolver.

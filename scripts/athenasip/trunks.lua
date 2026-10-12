@@ -17,6 +17,7 @@
 --   dial_format   "e164" (default, +442071234567) or "digits" (442071234567), as the carrier wants the number
 --   caller_id     the number presented when calling out, in E.164
 --   from_domain   the host of the From when calling out, for a carrier that authenticates the From as its own
+--   media_profile the media it is offered, as a realm's: "rtp" (default, what carriers speak), "mirror", "webrtc", "srtp"
 --   numbers       the numbers it brings in, each to an address of record: {"+442071234567": "sip:alice@example.com"}
 --   default       where a number in no list goes; without it, such a call is refused
 --
@@ -145,8 +146,11 @@ function trunks.outbound(request, realm)
     request:set_header("P-Asserted-Identity", "<sip:" .. as_dialled(first, caller_id) .. "@" .. first.uri.host .. ">")
   end
 
+  -- A carrier speaks plain RTP whatever the caller does, so the engine converts; the realm still decides whether
+  -- media is anchored at all.
   local behaviour = realm.behaviour_effective
-  return a.route.forward(targets, {media = behaviour, rewrite_contact = behaviour.rewrite_contact})
+  local media = {media_anchor = behaviour.media_anchor, media_profile = first.attributes.media_profile or "rtp"}
+  return a.route.forward(targets, {media = media, rewrite_contact = behaviour.rewrite_contact})
 end
 
 function trunks.route(request)
