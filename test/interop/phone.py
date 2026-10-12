@@ -75,7 +75,15 @@ def wait_for(pattern, timeout=15.0):
     raise TimeoutError(f"no '{pattern}' on the phone in {timeout}s; it shows: {', '.join(labels[:15])}")
 
 
+class NotInFront(Exception):
+    pass
+
+
 def tap(where):
+    # The phone is somebody's own: a tap goes nowhere unless AthenaPhone is the window in front.
+    focus = re.search(r"mCurrentFocus=.*", adb("shell", "dumpsys", "window"))
+    if not focus or PACKAGE + "/" not in focus.group(0):
+        raise NotInFront("AthenaPhone is not in front, so nothing was tapped: " + (focus.group(0) if focus else "no focused window"))
     adb("shell", "input", "tap", str(where[0]), str(where[1]))
 
 
@@ -270,6 +278,9 @@ def main():
             continue
         try:
             run(args)
+        except NotInFront as error:
+            print(f"  STOPPED {direction}: {error}")
+            return 2
         except (AssertionError, TimeoutError, RuntimeError, OSError) as error:
             print(f"  FAILED {direction}: {error}")
             failed += 1
