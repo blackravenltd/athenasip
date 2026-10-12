@@ -131,6 +131,11 @@ was silently skipped, a TURN username no browser could use.
 
 Dated, and not reopened without asking.
 
+- (2026-10-12) **Every flavour of DTMF is handled** (Tom): RFC 4733 telephone-events,
+  SIP INFO (`application/dtmf-relay` and `application/dtmf`) and in-band tones, passed
+  through when both ends agree and converted when they differ. AthenaPhone does the same
+  on its side; its session has been told.
+
 - (2026-09-17) Nodes proxy SIP to each other (Path / Record-Route / Via). MQTT is for
   events, presence, discovery and observability, never on the call setup path.
 - (2026-09-17) Inter-node authentication is mutual TLS from a cluster CA on a dedicated
@@ -432,8 +437,21 @@ These need the phone or other devices (Waiting on Tom, 2).
 - [ ] The phone's media across the internet: AthenaPhone on mobile data to
       macnessa.athenasip.org. The 2026-10-04 run's phone leg went over the link between
       the two sites.
-- [ ] Verify the rest against AthenaPhone: hold and resume, DTMF (RFC 4733
-      passthrough), blind transfer (REFER proxying).
+- [ ] Verify the rest against AthenaPhone: hold and resume, blind transfer (REFER
+      proxying). DTMF is its own item below.
+- [ ] **DTMF, every flavour** (decided 2026-10-12). First found failing: Tom's keys in
+      2talk's voicemail (`*55`) did nothing, though both ends agreed `telephone-event/8000`
+      on PT 126 and media flowed; AthenaPhone's log shows no digit sent, which its session
+      is looking at. For the node, in order:
+      - Pass-through proved: RFC 4733 events across rtpengine (a sipp scenario sending
+        events, and the A85 to 2talk), and SIP INFO proxied in dialog.
+      - A per-leg DTMF setting on realms, subscribers and trunks (`auto`, `rfc4733`,
+        `info`, `inband`), as `media_profile` is.
+      - Conversion when the legs differ: INFO to RFC 4733 by rtpengine's `play DTMF`,
+        RFC 4733 to INFO from rtpengine's DTMF events, in-band by transcoding (rtpengine
+        with transcoding, or say plainly when the engine cannot).
+      - Docs: what a phone and a carrier should be set to, and how to see which flavour a
+        call used.
 - [ ] Interop matrix documented: AthenaPhone, JsSIP in Chrome, Firefox and Safari,
       Linphone, a hardware desk phone, Asterisk as a trunk.
 
