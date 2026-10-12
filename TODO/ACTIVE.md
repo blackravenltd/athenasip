@@ -443,8 +443,10 @@ These need the phone or other devices (Waiting on Tom, 2).
       2talk's voicemail (`*55`) did nothing, though both ends agreed `telephone-event/8000`
       on PT 126 and media flowed; AthenaPhone's log shows no digit sent, which its session
       is looking at. For the node, in order:
-      - Pass-through proved: RFC 4733 events across rtpengine (a sipp scenario sending
-        events, and the A85 to 2talk), and SIP INFO proxied in dialog.
+      - Pass-through proved: RFC 4733 events across rtpengine from the A85 to 2talk
+        (2026-10-12, after AthenaPhone's fix: "3", "*", "0" reached the voicemail menu,
+        WebRTC to plain RTP); still to do, a sipp scenario sending events, and SIP INFO
+        proxied in dialog.
       - A per-leg DTMF setting on realms, subscribers and trunks (`auto`, `rfc4733`,
         `info`, `inband`), as `media_profile` is.
       - Conversion when the legs differ: INFO to RFC 4733 by rtpengine's `play DTMF`,
