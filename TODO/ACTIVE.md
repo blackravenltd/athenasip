@@ -18,7 +18,7 @@ package, PUBLISH, the `presence` package, the cluster, the policy hook, the API,
 documentation and the sipp scenarios on one node and two; what is left is the console's
 screens and a real client.
 
-**Two live nodes**, neither production, both on `5fbf3f3` (deployed 2026-10-09):
+**Two live nodes**, neither production: fi-1 on `5fbf3f3` (deployed 2026-10-09), gbni-1 on `a81e9f7` (0.11.0 and after, deployed 2026-10-12 with the systemd unit refreshed, so `systemctl reload` works there):
 - `corvus-fi-1` (10.35.1.20): `lua://` with `athenasip.trunks` from
   `/etc/athenasip/scripts/main.lua` (previous configuration `config.yaml.before-lua`), and a
   trunk `macnessa` to gbni-1, registering as gbni's subscriber 1003 through 10.44.1.50.
