@@ -3390,3 +3390,18 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       (`src/notifier.cpp`). `DialogPackageTest.AWriteThatLeavesTheLineAsItWasSendsNothing`,
       watched failing (2, 3 and 4 NOTIFYs for 1, 1 and 2). The suite 1526 of 1527 with
       Redis and MQTT, 319 of 320 under the Lua policy.
+
+### Presence, step 9: the sipp scenarios, on one node and two (2026-10-12)
+
+- [x] **`presence_publish.xml`** (RFC 3903, RFC 3856): a PUBLISH answering the 407, a
+      refresh by its entity tag with no body, a SUBSCRIBE to its own presence that is sent
+      what was published, an in-dialog unsubscribe with the terminated NOTIFY, and the
+      publication removed with `Expires: 0`. `run.sh` case `presence`.
+- [x] **`blf_watch.xml`** (RFC 4235): Carol's key for Bob, on its own sipp container
+      (`sipp-watcher` in both compose files, `carol-watches-bob.csv`), watching while
+      `blf-call` rings and answers Bob and hangs up: dark, then early, confirmed and dark
+      again. `run.sh` case `blf` on one node; `cluster.sh` case `across-blf`, Carol's key on
+      node B and the call through node A. The first run of `blf` found redundant NOTIFYs
+      for an unchanged line (fixed above) and a sipp race of its own, a `nop` after a
+      `send`; the scenario branches on its `recv`s instead.
+- [x] One node 16 of 16, two nodes 19 of 19.

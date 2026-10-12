@@ -101,6 +101,13 @@ services:
       cluster:
         ipv4_address: 172.31.0.21
 
+  # A BLF key watching while the other two make a call.
+  sipp-watcher:
+    <<: *sipp
+    networks:
+      cluster:
+        ipv4_address: 172.31.0.23
+
   # A callee reachable only over the connection it registered on, which sipp cannot be
   # (test/e2e/flow_callee.py). Python standard library only.
   flow-callee:
