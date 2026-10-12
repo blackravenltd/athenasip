@@ -3414,7 +3414,7 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       Found against a real carrier (2talk, on gbni-1): a caller hanging up while the phone rang
       was never ACKed, and the node retransmitted the 487 until timer H. The sipp CANCEL
       scenarios pass either way; why they did not catch it is not yet looked into. `ProxyTest.The487IsTheInvitesResponseWithTheTagOfTheCancels200`, watched failing on
-      both counts. The suite 1527 of 1528 with Redis and MQTT, the one skipped without a
+      both counts. Proved on gbni-1 against 2talk on 2026-10-12: a cancelled call's 487 was ACKed at once. The suite 1527 of 1528 with Redis and MQTT, the one skipped without a
       resolver.
 
 ### A real carrier, and the quick start run against it (2026-10-12)
