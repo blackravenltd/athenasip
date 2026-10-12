@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+
+<!--
+  A BLF key (RFC 4235): the watcher subscribes to the dialog package of [field3], answers the
+  proxy's 407 (RFC 3261 22.3), and is answered by the node as notifier with 200 (RFC 6665
+  4.2.1.1) and an immediate NOTIFY. It then answers every NOTIFY until one shows the line
+  confirmed, and then until one shows it free again: a full document with no dialog in it.
+-->
+<scenario name="Watcher: a BLF key lights and goes dark">
+
+  <send retrans="500">
+    <![CDATA[
+
+      SUBSCRIBE sip:[field3]@[field0] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:[field1]@[field0]>;tag=blf-[call_number]
+      To: <sip:[field3]@[field0]>
+      Call-ID: [call_id]
+      CSeq: 1 SUBSCRIBE
+      Contact: <sip:[field1]@[local_ip]:[local_port];transport=[transport]>
+      Event: dialog
+      Accept: application/dialog-info+xml
+      Expires: 120
+      Max-Forwards: 70
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <recv response="407" auth="true"/>
+
+  <send retrans="500">
+    <![CDATA[
+
+      SUBSCRIBE sip:[field3]@[field0] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:[field1]@[field0]>;tag=blf-[call_number]
+      To: <sip:[field3]@[field0]>
+      Call-ID: [call_id]
+      CSeq: 2 SUBSCRIBE
+      Contact: <sip:[field1]@[local_ip]:[local_port];transport=[transport]>
+      [authentication]
+      Event: dialog
+      Accept: application/dialog-info+xml
+      Expires: 120
+      Max-Forwards: 70
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <recv response="200">
+    <action>
+      <ereg regexp="[0-9]+" search_in="hdr" header="Expires:" check_it="true" assign_to="granted"/>
+    </action>
+  </recv>
+
+  <!--
+    Until the line is in use. The first NOTIFY is the line as it is now: free. Each branch is
+    taken on the NOTIFY itself and every 200 jumps straight to the next recv, so a NOTIFY that
+    arrives at once is never met by a step that is not waiting for it.
+  -->
+  <label id="ringing"/>
+
+  <recv request="NOTIFY" next="lit" test="confirmed">
+    <action>
+      <ereg regexp="&lt;state&gt;confirmed&lt;/state&gt;" search_in="body" assign_to="confirmed"/>
+    </action>
+  </recv>
+
+  <send next="ringing">
+    <![CDATA[
+
+      SIP/2.0 200 OK
+      [last_Via:]
+      [last_From:]
+      [last_To:]
+      [last_Call-ID:]
+      [last_CSeq:]
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <label id="lit"/>
+
+  <send>
+    <![CDATA[
+
+      SIP/2.0 200 OK
+      [last_Via:]
+      [last_From:]
+      [last_To:]
+      [last_Call-ID:]
+      [last_CSeq:]
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <!-- Until it is free again: the document closes itself, with no dialog inside. -->
+  <label id="talking"/>
+
+  <recv request="NOTIFY" next="out" test="free">
+    <action>
+      <ereg regexp="entity=&quot;[^&quot;]*&quot;/&gt;" search_in="body" assign_to="free"/>
+    </action>
+  </recv>
+
+  <send next="talking">
+    <![CDATA[
+
+      SIP/2.0 200 OK
+      [last_Via:]
+      [last_From:]
+      [last_To:]
+      [last_Call-ID:]
+      [last_CSeq:]
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <label id="out"/>
+
+  <send>
+    <![CDATA[
+
+      SIP/2.0 200 OK
+      [last_Via:]
+      [last_From:]
+      [last_To:]
+      [last_Call-ID:]
+      [last_CSeq:]
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <Reference variables="granted,confirmed,free"/>
+
+</scenario>

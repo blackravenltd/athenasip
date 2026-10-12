@@ -1,0 +1,268 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+
+<!--
+  Presence (RFC 3903, RFC 3856): [field1] publishes a PIDF document and is given an entity
+  tag; refreshes it by that tag with no body; subscribes to its own presence and is sent
+  what it published; ends the subscription (RFC 6665 4.1.2.3) and is sent the last NOTIFY;
+  and removes the publication with Expires: 0. Every request out of a dialog answers the
+  proxy's 407 (RFC 3261 22.3) first; the one inside the subscription goes to the node as
+  notifier, which challenges nothing. All of it is one Call-ID, because sipp matches what
+  comes back to its call by Call-ID; the From tags keep the PUBLISHes apart from the
+  subscription's dialog, as RFC 3903 4.1 leaves them.
+-->
+<scenario name="Presence: publish, refresh, watch and remove">
+
+  <!-- RFC 3903 4.2: the initial publication. -->
+  <send retrans="500">
+    <![CDATA[
+
+      PUBLISH sip:[field1]@[field0] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:[field1]@[field0]>;tag=pub-[call_number]
+      To: <sip:[field1]@[field0]>
+      Call-ID: [call_id]
+      CSeq: 1 PUBLISH
+      Event: presence
+      Expires: 120
+      Max-Forwards: 70
+      Content-Type: application/pidf+xml
+      Content-Length: [len]
+
+      <?xml version="1.0" encoding="UTF-8"?><presence xmlns="urn:ietf:params:xml:ns:pidf" entity="sip:[field1]@[field0]"><tuple id="desk"><status><basic>open</basic></status><note>At lunch</note></tuple></presence>
+    ]]>
+  </send>
+
+  <recv response="407" auth="true"/>
+
+  <send retrans="500">
+    <![CDATA[
+
+      PUBLISH sip:[field1]@[field0] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:[field1]@[field0]>;tag=pub-[call_number]
+      To: <sip:[field1]@[field0]>
+      Call-ID: [call_id]
+      CSeq: 2 PUBLISH
+      [authentication]
+      Event: presence
+      Expires: 120
+      Max-Forwards: 70
+      Content-Type: application/pidf+xml
+      Content-Length: [len]
+
+      <?xml version="1.0" encoding="UTF-8"?><presence xmlns="urn:ietf:params:xml:ns:pidf" entity="sip:[field1]@[field0]"><tuple id="desk"><status><basic>open</basic></status><note>At lunch</note></tuple></presence>
+    ]]>
+  </send>
+
+  <recv response="200">
+    <action>
+      <ereg regexp="[^ \t\r\n]+" search_in="hdr" header="SIP-ETag:" check_it="true" assign_to="etag"/>
+    </action>
+  </recv>
+
+  <!-- RFC 3903 4.3: a refresh is the tag and no body. -->
+  <send retrans="500">
+    <![CDATA[
+
+      PUBLISH sip:[field1]@[field0] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:[field1]@[field0]>;tag=pub-[call_number]
+      To: <sip:[field1]@[field0]>
+      Call-ID: [call_id]
+      CSeq: 3 PUBLISH
+      Event: presence
+      SIP-If-Match: [$etag]
+      Expires: 120
+      Max-Forwards: 70
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <recv response="407" auth="true"/>
+
+  <send retrans="500">
+    <![CDATA[
+
+      PUBLISH sip:[field1]@[field0] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:[field1]@[field0]>;tag=pub-[call_number]
+      To: <sip:[field1]@[field0]>
+      Call-ID: [call_id]
+      CSeq: 4 PUBLISH
+      [authentication]
+      Event: presence
+      SIP-If-Match: [$etag]
+      Expires: 120
+      Max-Forwards: 70
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <!-- The refreshed publication has a new tag (RFC 3903 6, step 7). -->
+  <recv response="200">
+    <action>
+      <ereg regexp="[^ \t\r\n]+" search_in="hdr" header="SIP-ETag:" check_it="true" assign_to="etag"/>
+    </action>
+  </recv>
+
+  <!-- RFC 3856: watching its own presence, which its realm may. -->
+  <send retrans="500">
+    <![CDATA[
+
+      SUBSCRIBE sip:[field1]@[field0] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:[field1]@[field0]>;tag=sub-[call_number]
+      To: <sip:[field1]@[field0]>
+      Call-ID: [call_id]
+      CSeq: 5 SUBSCRIBE
+      Contact: <sip:[field1]@[local_ip]:[local_port];transport=[transport]>
+      Event: presence
+      Accept: application/pidf+xml
+      Expires: 120
+      Max-Forwards: 70
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <recv response="407" auth="true"/>
+
+  <send retrans="500">
+    <![CDATA[
+
+      SUBSCRIBE sip:[field1]@[field0] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:[field1]@[field0]>;tag=sub-[call_number]
+      To: <sip:[field1]@[field0]>
+      Call-ID: [call_id]
+      CSeq: 6 SUBSCRIBE
+      Contact: <sip:[field1]@[local_ip]:[local_port];transport=[transport]>
+      [authentication]
+      Event: presence
+      Accept: application/pidf+xml
+      Expires: 120
+      Max-Forwards: 70
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <!-- The node's Contact is where the subscription's own requests go (RFC 3261 12.2.1.1). -->
+  <recv response="200" rrs="true">
+    <action>
+      <ereg regexp="sips?:[^&gt;]*" search_in="hdr" header="Contact:" check_it="true" assign_to="notifier"/>
+    </action>
+  </recv>
+
+  <!-- RFC 6665 4.2.1.2: the state at once, which is what was published. -->
+  <recv request="NOTIFY">
+    <action>
+      <ereg regexp="At lunch" search_in="body" check_it="true" assign_to="published"/>
+      <ereg regexp="active" search_in="hdr" header="Subscription-State:" check_it="true" assign_to="active"/>
+    </action>
+  </recv>
+
+  <send>
+    <![CDATA[
+
+      SIP/2.0 200 OK
+      [last_Via:]
+      [last_From:]
+      [last_To:]
+      [last_Call-ID:]
+      [last_CSeq:]
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <!-- RFC 6665 4.1.2.3: Expires: 0 ends it, inside the dialog. -->
+  <send retrans="500">
+    <![CDATA[
+
+      SUBSCRIBE [$notifier] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:[field1]@[field0]>;tag=sub-[call_number]
+      To: <sip:[field1]@[field0]>[peer_tag_param]
+      Call-ID: [call_id]
+      CSeq: 7 SUBSCRIBE
+      Contact: <sip:[field1]@[local_ip]:[local_port];transport=[transport]>
+      [routes]
+      Event: presence
+      Expires: 0
+      Max-Forwards: 70
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <recv response="200"/>
+
+  <recv request="NOTIFY">
+    <action>
+      <ereg regexp="terminated" search_in="hdr" header="Subscription-State:" check_it="true" assign_to="terminated"/>
+    </action>
+  </recv>
+
+  <send>
+    <![CDATA[
+
+      SIP/2.0 200 OK
+      [last_Via:]
+      [last_From:]
+      [last_To:]
+      [last_Call-ID:]
+      [last_CSeq:]
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <!-- RFC 3903 4.5: Expires: 0 removes the publication. -->
+  <send retrans="500">
+    <![CDATA[
+
+      PUBLISH sip:[field1]@[field0] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:[field1]@[field0]>;tag=pub-[call_number]
+      To: <sip:[field1]@[field0]>
+      Call-ID: [call_id]
+      CSeq: 8 PUBLISH
+      Event: presence
+      SIP-If-Match: [$etag]
+      Expires: 0
+      Max-Forwards: 70
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <recv response="407" auth="true"/>
+
+  <send retrans="500">
+    <![CDATA[
+
+      PUBLISH sip:[field1]@[field0] SIP/2.0
+      Via: SIP/2.0/[transport] [local_ip]:[local_port];branch=[branch]
+      From: <sip:[field1]@[field0]>;tag=pub-[call_number]
+      To: <sip:[field1]@[field0]>
+      Call-ID: [call_id]
+      CSeq: 9 PUBLISH
+      [authentication]
+      Event: presence
+      SIP-If-Match: [$etag]
+      Expires: 0
+      Max-Forwards: 70
+      Content-Length: 0
+
+    ]]>
+  </send>
+
+  <recv response="200"/>
+
+  <Reference variables="etag,notifier,published,active,terminated"/>
+
+</scenario>

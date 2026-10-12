@@ -54,6 +54,8 @@ signs in as it and provisions the realm `example.com` and subscribers `alice`, `
 | `media-relayed` | The engine's counters show the `media` call was relayed, not declined | |
 | `delayed-offer` | An INVITE with no body: the offer comes in the 200 and the answer in the ACK, and the node anchors both | RFC 3261 13.2.1; RFC 3264 5 |
 | `hold-resume` | Two re-INVITEs in the dialog: hold offers `sendonly` and is answered `recvonly`, resume offers `sendrecv`, and the direction survives the relay | RFC 3264 8.4; RFC 6337 5.3; RFC 3261 12.2.1.1 |
+| `presence` | A PUBLISH is given an entity tag and refreshed by it with no body; a SUBSCRIBE to the publisher's own presence is sent what it published; Expires: 0 ends the subscription with a final NOTIFY and then removes the publication | RFC 3903 4, 6; RFC 3856; RFC 6665 4.1.2.3, 4.2.1.2 |
+| `blf`, `blf-call` | Carol's BLF key for Bob (`sipp-watcher`, 172.31.0.22) is sent Bob's line as free, then confirmed while Alice calls him, then free again when the call ends | RFC 4235 3.7.1, 4.1 |
 | `invite-timeout` | An unanswered INVITE is retransmitted, gives up at timer B, and the caller is told 408 | RFC 3261 17.1.1.2 |
 
 `media-relayed` exists because a call completes whether or not the engine anchored it: a
@@ -84,6 +86,7 @@ Mosquitto, joined with certificates from `--ca-init` and `--ca-node`
 | `across-cancel-ringing`, `across-busy`, `across-delayed-offer`, `across-hold-resume`, `across-invite-timeout` | The single-node scenarios, across the two nodes |
 | `one-node-tcp-flow`, `across-tcp-flow`, `one-node-ws-flow`, `across-ws-flow` | A callee reachable only down the TCP or WebSocket connection it registered on (`flow_callee.py`) |
 | `across-call-records` | Both nodes list the same call records, and a call across them names both |
+| `across-blf`, `across-blf-call` | Carol's BLF key for Bob held by node B (`sipp-watcher`, 172.31.0.23) lights and goes dark for a call Alice makes through node A: node A's call record and its signal on the bus are what node B notifies from |
 | `failover` | Last, because it kills node A: the callee registered through node A registers again through node B, and a new call reaches it within a minute |
 
 ## Trunks

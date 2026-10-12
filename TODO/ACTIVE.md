@@ -14,8 +14,9 @@ The decisions are under Decisions, and `docs/design/presence.md` (2026-10-11) is
 the notifier plugs in, the subscription dialog, each package's state, the cluster, the `watch` policy
 hook, the API and the build order the items below follow. The datastore contract is in
 (2026-10-11, `COMPLETED.md`), and so are the RFC 6665 notifier core, the `dialog`
-package, which is BLF on one node, PUBLISH, and the `presence` package; next is the
-cluster.
+package, PUBLISH, the `presence` package, the cluster, the policy hook, the API, the
+documentation and the sipp scenarios on one node and two; what is left is the console's
+screens and a real client.
 
 **Two live nodes**, neither production, both on `5fbf3f3` (deployed 2026-10-09):
 - `corvus-fi-1` (10.35.1.20): `lua://` with `athenasip.trunks` from
@@ -584,12 +585,11 @@ requests are taken in `_deliver_to_tu` before the proxy. A UAC request of the no
 Today SUBSCRIBE is simply proxied, and the proxy's `Allow` already lists SUBSCRIBE and
 NOTIFY.
 
-- [ ] The cluster, the rest: `test/e2e/cluster.sh` with a watcher on one node and a call on
-      the other. Everything else of the cluster step is in (`COMPLETED.md`).
 - [ ] The console's presence screens, from the API step 8 built: the admin session's to
       build (`docs/design/presence.md`, The API and the console).
-- [ ] sipp scenarios, and a Linphone or desk phone against a live node. AthenaPhone agreed
-      on 2026-10-11 to be the real client once its PJSIP engine has presence: one
+- [ ] A real client against a live node (the sipp scenarios are in, `COMPLETED.md`).
+      AthenaPhone agreed on 2026-10-11 to be the real client once its PJSIP engine has
+      presence: one
       subscription per buddy for `presence` and `dialog`, PUBLISH of PIDF, BLF pickup with
       Replaces from the dialog ids the node sends.
 
