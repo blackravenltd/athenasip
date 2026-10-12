@@ -27,7 +27,7 @@ On `develop`, with everything for the release merged and [Testing](testing.md#be
 passing:
 
 ```bash
-VERSION=0.11.0                       # the next version, x.y.z, no v
+VERSION=x.y.z                        # the next version, no v
 
 # Bump project(... VERSION ...) in CMakeLists.txt to $VERSION, then:
 git commit -am "Bump to $VERSION"

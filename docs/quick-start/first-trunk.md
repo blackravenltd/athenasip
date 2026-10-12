@@ -110,7 +110,8 @@ an address or a firewall, and nothing after this will work until it answers.
 curl "$ATHENA_API/trunks/acme" -H "Authorization: Bearer $ATHENA_ADMIN_TOKEN"
 ```
 
-`registration.state` is `registered` within a few seconds, and the log says
+`registration.state` is `registered` within half a minute (the node looks for new trunks
+every 30 seconds), and the log says
 `Registered to trunk acme for 300 seconds`. `failed` has the reason in
 `registration.detail`, and the log says `Cannot register to trunk acme - <reason>`.
 
@@ -129,14 +130,19 @@ curl "$ATHENA_API/trunks/acme" -H "Authorization: Bearer $ATHENA_ADMIN_TOKEN"
 | A call out is refused 404 | `No trunk carries <number> - 404`: no trunk's `prefixes` match the number as dialled, with `country` applied |
 | A call out is refused 403 | `Trunk acme refused this node's credentials - 403` |
 | A call in is refused 404 | `Trunk acme brought in <number>, which goes nowhere - 404`: add the number to `numbers`, in the form the carrier sends it |
-| A call in is challenged instead | The call came from an address not in `inbound_addresses`. `sip.log_messages: true` shows where it came from. |
+| A call in is challenged instead | The call came from an address not in `inbound_addresses`. `sip.log_messages: true`, with `log.level: debug`, shows where it came from. |
 | The call connects with no audio | [Troubleshooting](../troubleshooting.md#one-way-or-no-audio), as for any call |
+| A call out from a browser or WebRTC phone is refused 488 | The carrier was offered what the caller speaks; carriers want plain RTP. `athenasip.trunks` offers the trunk's `media_profile` (default `rtp`); a script of your own passes `media = {media_anchor = true, media_profile = "rtp"}` to `route.forward`. |
+| The phone answers the carrier's OPTIONS or a voicemail NOTIFY every minute | The carrier sends them to the Contact the node registered, and they are routed as calls in. Known, and harmless while the phone answers them. |
+| Key presses do nothing at the far end | Both ends need `telephone-event` in their SDP ([Media](../media.md#dtmf)). |
 
 ## Next
 
 - A second carrier for failover: another trunk with the same `prefixes` and
   `"priority": 200`; lower goes first, and the default is 100. A busy or wrong number from
   the first is the answer; anything else tries the second.
+- Service codes such as `*55` for voicemail are not numbers to `athenasip.trunks`; a few
+  lines in `main.lua` send them to the trunk ([Scripting](../scripting.md)).
 - Hunt groups, out-of-hours routing and blocklists are a few lines of Lua on top of this:
   [`docs/scripting/examples/`](../scripting/examples/).
 - After changing a script, `systemctl reload athenasip` reads it again without a restart

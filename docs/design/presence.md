@@ -1,5 +1,9 @@
 # AthenaSIP - Presence
 
+Built in `0.12.0`: [Presence and BLF](../presence.md) is the reference for what shipped,
+and `TODO/COMPLETED.md` records where it differs from this design. Step 9's real client is
+still open (`TODO/ACTIVE.md`, Milestone 7).
+
 What the node must gain to be the notifier for the `presence` and `dialog` event packages
 for the subscribers in its realms, and the order it is built in. Written 2026-10-11 against
 `develop` at `ae46edc`; line numbers are from that commit. The decisions it builds on are

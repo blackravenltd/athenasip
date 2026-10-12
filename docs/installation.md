@@ -4,10 +4,10 @@ A node is one binary, one configuration file and one systemd unit. The defaults 
 in-process datastore, event system and media relay, so a working node needs no Redis, no
 broker and no media server.
 
-## From the Debian package
+## Building a Debian package
 
-For Debian 13 (trixie) and its derivatives. Build the package in Docker from a checkout,
-then install it:
+Releases do not ship one for now, but a checkout builds one, for Debian 13 (trixie) and its
+derivatives, in Docker:
 
 ```bash
 docker build --target deb --output dist .

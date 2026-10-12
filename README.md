@@ -78,8 +78,9 @@ next step:
   again through the other. A call in progress on a node that dies ends with it.
 * Push is tested against local stand-ins for Apple, Firebase and Web Push, not yet
   against the real services.
-* Trunks are tested against local stand-ins for a carrier, not yet against a real one.
-* Conferencing and presence are not built yet.
+* Trunks are tested against sipp as a carrier, and one real carrier (2talk, New Zealand)
+  has carried calls in, a call out to its voicemail and RFC 4733 DTMF.
+* Conferencing is not built yet.
 * The example configuration enables plaintext UDP and TCP so a first call is easy;
   `sip.allow_unencrypted: false` limits a node to TLS and secure WebSocket.
 
@@ -103,7 +104,7 @@ next step:
 * [Events](docs/events.md) - the topic scheme
 * [Glossary](docs/glossary.md)
 * [Testing](docs/testing.md)
-* [Releasing](docs/releasing.md) - the tag, the packages, the image and the Homebrew formula
+* [Releasing](docs/releasing.md) - the tag, the image and the Homebrew formula
 * [Admin API](docs/api/openapi.yaml)
 * [Interop fixture](test/interop/README.md) - a node to point a real SIP client at
 * [Contributing](CONTRIBUTING.md)
