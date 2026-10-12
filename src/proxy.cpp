@@ -1743,16 +1743,14 @@ bool Proxy::_prepare_forward(const std::shared_ptr<SIPMessage>& copy, const std:
 
 void Proxy::on_cancel(std::shared_ptr<SIPMessage> cancel, std::shared_ptr<transactions::TransactionBase> cancel_transaction,
                       std::shared_ptr<transactions::TransactionBase> invite_transaction) {
+  if (!invite_transaction) return _forward_cancel_statelessly(cancel, cancel_transaction);
+
   // RFC 3261 9.2: the CANCEL is answered here only when this node holds the INVITE's transaction. Otherwise
   // it is forwarded, and answering as well would give the caller two responses.
-  if (cancel_transaction && invite_transaction) {
-    auto ok = cancel->generate_response();
-    ok->header->response_code = 200;
-    ok->header->response_message = "OK";
-    cancel_transaction->send(ok);
-  }
-
-  if (!invite_transaction) return _forward_cancel_statelessly(cancel, cancel_transaction);
+  auto ok = cancel->generate_response();
+  ok->header->response_code = 200;
+  ok->header->response_message = "OK";
+  if (cancel_transaction) cancel_transaction->send(ok);
 
   // RFC 3261 16.10: cancel the branch in flight.
   auto search = _contexts.find(invite_transaction->id());
@@ -1767,10 +1765,18 @@ void Proxy::on_cancel(std::shared_ptr<SIPMessage> cancel, std::shared_ptr<transa
     _contexts.erase(search);
   }
 
-  // The cancelled INVITE is answered 487.
+  // The cancelled INVITE is answered 487: the INVITE's response, so its CSeq names the INVITE (the CANCEL shares
+  // the number, 9.1), with the To tag the CANCEL was answered with (9.2).
   auto terminated = cancel->generate_response();
   terminated->header->response_code = 487;
   terminated->header->response_message = "Request Terminated";
+  terminated->header->clear("To");
+  terminated->header->add("To", ok->header->headers_map["To"][0]);
+
+  if (auto cseq = cancel->header->contains("CSeq") ? cancel->header->headers_map["CSeq"][0]->as<CSeqHeader>() : nullptr) {
+    terminated->header->clear("CSeq");
+    terminated->header->add("CSeq", std::make_shared<CSeqHeader>(cseq->sequence, "INVITE"));
+  }
 
   invite_transaction->send(terminated);
 }
