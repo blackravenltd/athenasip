@@ -330,6 +330,7 @@ boost::json::object CallsAPI::_call_json(const Call& call) {
     entry["identity"] = participant.identity && participant.identity->uri ? participant.identity->uri->to_string() : std::string();
     entry["originator"] = participant.originator;
     entry["profile"] = profile_json(participant.profile);
+    entry["dtmf"] = participant.dtmf ? boost::json::value(types::MediaPolicy::to_string(*participant.dtmf)) : boost::json::value(nullptr);
     if (participant.trunk.empty()) {
       entry["trunk"] = nullptr;
     } else {
@@ -403,6 +404,7 @@ void CallsAPI::_media(RouteContext context) {
       if (can.conference) capabilities.push_back("conference");
       if (can.record) capabilities.push_back("record");
       if (can.transcode) capabilities.push_back("transcode");
+      if (can.dtmf) capabilities.push_back("dtmf");
     }
     out["capabilities"] = std::move(capabilities);
 

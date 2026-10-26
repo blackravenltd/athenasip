@@ -68,6 +68,14 @@ class SyncMediaEngine {
     return future.get();
   }
 
+  athenasip::plugins::Status play_dtmf(std::shared_ptr<athenasip::Call> call, std::size_t participant, std::string digits, std::chrono::milliseconds duration) {
+    std::promise<athenasip::plugins::Status> promise;
+    auto future = promise.get_future();
+    _engine->play_dtmf(_executor(), std::move(call), participant, std::move(digits), duration,
+                       [&promise](athenasip::plugins::Status status) { promise.set_value(std::move(status)); });
+    return future.get();
+  }
+
   athenasip::plugins::Status start_recording(std::shared_ptr<athenasip::Call> call) {
     std::promise<athenasip::plugins::Status> promise;
     auto future = promise.get_future();

@@ -925,3 +925,101 @@ TEST(RtpengineMediaEngineTest, AQueryForACallTheEngineDoesNotHoldSaysSo) {
 
   engine->close();
 }
+
+// Key presses are converted when the two legs send them differently: RFC 4733 to tones by stripping
+// telephone-event and transcoding, tones to RFC 4733 by offering telephone-event, and INFO by asking for
+// DTMF injection in the offer and the answer. Legs that agree, or one unknown, ask for nothing.
+TEST(RtpengineMediaEngineTest, KeyPressesAreConvertedWhenTheLegsDiffer) {
+  using Dtmf = types::MediaPolicy::Dtmf;
+  FakeRtpengine fake;
+  fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
+  fake.answer("offer", ok_with_sdp(kOffer));
+  fake.answer("answer", ok_with_sdp(kOffer));
+
+  auto engine = make_engine(fake);
+  ASSERT_TRUE(engine->connect());
+
+  auto offer = [&](std::optional<Dtmf> from, std::optional<Dtmf> to) {
+    Flags flags;
+    flags.participant = 0;
+    flags.dtmf_from = from;
+    flags.dtmf_to = to;
+    EXPECT_TRUE(engine->offer(make_call(), kOffer, flags).ok);
+    auto request = fake.last("offer");
+    EXPECT_TRUE(request.has_value());
+    return *request;
+  };
+  auto has_flag = [](const Bencode& request, const std::string& name) {
+    const auto* flags = request.find("flags");
+    if (flags == nullptr) return false;
+    for (const auto& value : flags->values()) {
+      if (value.string() == name) return true;
+    }
+    return false;
+  };
+  auto codec = [](const Bencode& request, const std::string& key) {
+    const auto* codec = request.find("codec");
+    const auto* list = codec == nullptr ? nullptr : codec->find(key);
+    return list != nullptr && list->values().size() == 1 && list->values()[0].string() == "telephone-event";
+  };
+
+  auto request = offer(Dtmf::Rfc4733, Dtmf::Inband);
+  EXPECT_TRUE(has_flag(request, "always transcode"));
+  EXPECT_TRUE(codec(request, "strip"));
+  EXPECT_FALSE(has_flag(request, "inject DTMF"));
+
+  request = offer(Dtmf::Inband, Dtmf::Rfc4733);
+  EXPECT_TRUE(codec(request, "transcode"));
+  EXPECT_FALSE(has_flag(request, "always transcode"));
+
+  request = offer(Dtmf::Info, Dtmf::Rfc4733);
+  EXPECT_TRUE(has_flag(request, "inject DTMF"));
+  EXPECT_EQ(request.find("codec"), nullptr);
+
+  request = offer(Dtmf::Rfc4733, Dtmf::Rfc4733);
+  EXPECT_EQ(request.find("flags"), nullptr) << "the legs agree";
+  EXPECT_EQ(request.find("codec"), nullptr);
+
+  request = offer(Dtmf::Rfc4733, std::nullopt);
+  EXPECT_EQ(request.find("flags"), nullptr) << "the far leg is not known yet";
+
+  // The answer carries the injection flag too, as rtpengine requires.
+  Flags flags;
+  flags.participant = 1;
+  flags.dtmf_from = Dtmf::Rfc4733;
+  flags.dtmf_to = Dtmf::Info;
+  ASSERT_TRUE(engine->answer(make_call(), kOffer, flags).ok);
+  auto answer = fake.last("answer");
+  ASSERT_TRUE(answer.has_value());
+  EXPECT_TRUE(has_flag(*answer, "inject DTMF"));
+
+  engine->close();
+}
+
+// Key presses by INFO are played into the media: one "play DTMF" per digit, named by the participant's own tag
+// as the end the event comes from, with the length the INFO gave, clamped to what rtpengine takes.
+TEST(RtpengineMediaEngineTest, KeyPressesArePlayedInOneDigitAtATime) {
+  FakeRtpengine fake;
+  fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
+
+  auto engine = make_engine(fake);
+  ASSERT_TRUE(engine->connect());
+  EXPECT_TRUE(engine->capabilities().dtmf);
+
+  ASSERT_TRUE(engine->play_dtmf(make_call(), 0, "5*", std::chrono::milliseconds(50)).ok);
+
+  std::vector<Bencode> plays;
+  for (const auto& request : fake.requests()) {
+    if (request.string_at("command") == "play DTMF") plays.push_back(request);
+  }
+  ASSERT_EQ(plays.size(), 2u);
+  EXPECT_EQ(plays[0].string_at("call-id"), "call-1@example.com");
+  EXPECT_EQ(plays[0].string_at("from-tag"), "alice-tag");
+  EXPECT_EQ(plays[0].string_at("code"), "5");
+  EXPECT_EQ(plays[1].string_at("code"), "*");
+  const auto* duration = plays[0].find("duration");
+  ASSERT_NE(duration, nullptr);
+  EXPECT_EQ(duration->integer(), 100) << "rtpengine takes no less";
+
+  engine->close();
+}

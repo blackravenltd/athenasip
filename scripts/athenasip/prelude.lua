@@ -56,11 +56,12 @@ function a.route.subscriber(subscriber, options)
 end
 
 -- One URI, located by RFC 3263. options.next_hop: where to send it, when not where the URI says. options.trunk:
--- the trunk it leaves by, whose challenges the node answers.
+-- the trunk it leaves by, whose challenges the node answers. options.dtmf: how that leg sends key presses, when
+-- the script knows ("rfc4733", "info", "inband").
 function a.route.uri(uri, options)
   check(uri ~= nil, "route.uri: a URI, or its text")
   options = options or {}
-  return {target = "uri", uri = uri, next_hop = options.next_hop, trunk = options.trunk, ring_timeout = options.ring_timeout}
+  return {target = "uri", uri = uri, next_hop = options.next_hop, trunk = options.trunk, ring_timeout = options.ring_timeout, dtmf = options.dtmf}
 end
 
 -- Out by a trunk: the trunk's URI with options.user (the number dialled) as its user part, sent to its outbound
@@ -70,7 +71,7 @@ function a.route.trunk(trunk, options)
   options = options or {}
   local uri = trunk.uri
   if options.user then uri = uri:with{user = options.user} end
-  return {target = "uri", uri = uri, next_hop = trunk.proxy, trunk = trunk.name, ring_timeout = options.ring_timeout}
+  return {target = "uri", uri = uri, next_hop = trunk.proxy, trunk = trunk.name, ring_timeout = options.ring_timeout, dtmf = options.dtmf}
 end
 
 -- The targets, tried in turn. options.media: {media_anchor =, media_profile =}, as athenasip.config.behaviour and
@@ -78,7 +79,8 @@ end
 function a.route.forward(targets, options)
   check(type(targets) == "table", "route.forward: a list of targets")
   options = options or {}
-  return {decision = "route", kind = "forward", targets = targets, media = options.media, rewrite_contact = options.rewrite_contact}
+  return {decision = "route", kind = "forward", targets = targets, media = options.media, rewrite_contact = options.rewrite_contact,
+          caller_dtmf = options.caller_dtmf}
 end
 
 -- A final response in the node's place.

@@ -45,12 +45,35 @@ struct MediaPolicy {
 
   Profiles profiles = Profiles::Mirror;
 
+  // How a leg sends key presses. The node passes them through when both legs agree and has the engine convert
+  // when they differ; a leg that says nothing is read from what it offers.
+  enum class Dtmf {
+    // RFC 4733 telephone-events when the leg offers them, else in-band tones. Never INFO: a leg that sends INFO
+    // says so.
+    Auto,
+
+    // RFC 4733 telephone-event packets in the RTP.
+    Rfc4733,
+
+    // SIP INFO (application/dtmf-relay or application/dtmf) in the dialog.
+    Info,
+
+    // Tones in the audio.
+    Inband,
+  };
+
+  Dtmf dtmf = Dtmf::Auto;
+
   // "transport", "mirror", "rtp", "webrtc" or "srtp". Nothing for anything else, which is an error to report.
   static std::optional<Profiles> parse_profiles(const std::string& value);
 
   // The same for a stored value, where anything unreadable is the fallback.
   static Profiles profiles_from_string(const std::string& value, Profiles fallback = Profiles::Mirror);
   static std::string to_string(Profiles value);
+
+  // "auto", "rfc4733", "info" or "inband". Nothing for anything else.
+  static std::optional<Dtmf> parse_dtmf(const std::string& value);
+  static std::string to_string(Dtmf value);
 };
 
 // How a realm differs from the server's default behaviour (Config::behaviour). A setting is unset unless the realm
@@ -58,6 +81,7 @@ struct MediaPolicy {
 struct Behaviour {
   std::optional<bool> media_anchor;
   std::optional<MediaPolicy::Profiles> media_profile;
+  std::optional<MediaPolicy::Dtmf> dtmf;
 
   // How often, in seconds, a client registered in this realm is sent OPTIONS (Asterisk's qualify, Kamailio's
   // nathelper ping). Zero, the default, is never. An SDP in the reply (RFC 3261 11.2) says what media the client takes.
@@ -81,6 +105,7 @@ struct Behaviour {
     auto effective = server;
     if (media_anchor) effective.anchor = *media_anchor;
     if (media_profile) effective.profiles = *media_profile;
+    if (dtmf) effective.dtmf = *dtmf;
     return effective;
   }
 };

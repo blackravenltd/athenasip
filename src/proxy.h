@@ -99,6 +99,9 @@ class Proxy : public TransactionUser {
     // The trunk this target leaves by: its challenges are answered with the trunk's credentials.
     std::string trunk;
 
+    // How this leg sends key presses, when the policy said (a trunk's attribute).
+    std::optional<types::MediaPolicy::Dtmf> dtmf;
+
     // TLS to a trunk is verified against this CA file, empty for the system's store. Set once the trunk is read.
     std::optional<std::string> tls_ca;
 
@@ -164,14 +167,17 @@ class Proxy : public TransactionUser {
     // The realm's media policy, when target determination found a realm. In-dialog requests use the call's.
     std::optional<types::MediaPolicy> media_policy;
 
-    // The callee subscriber's media profile.
+    // The callee subscriber's media profile, and how its endpoint sends key presses.
     std::optional<types::MediaPolicy::Profiles> callee_profile;
+    std::optional<types::MediaPolicy::Dtmf> callee_dtmf;
 
     // Whether Contacts are rewritten to where messages came from (types::Behaviour).
     bool rewrite_contact = false;
 
-    // The caller subscriber's media profile, read only for an INVITE without SDP (RFC 3264 section 5).
+    // The caller subscriber's media profile, read only for an INVITE without SDP (RFC 3264 section 5), and how
+    // the caller's leg sends key presses: the policy's word (a trunk's attribute), else the subscriber's setting.
     std::optional<types::MediaPolicy::Profiles> caller_profile;
+    std::optional<types::MediaPolicy::Dtmf> caller_dtmf;
 
     // The target of the branch in flight, and the profile offered to it when the callee had not stated one. A
     // 488 to that offer earns one re-offer.
@@ -222,6 +228,10 @@ class Proxy : public TransactionUser {
   void _preprocess_routes(const std::shared_ptr<SIPMessage>& request) const;
 
   // RFC 3261 16.5: fills a context and calls _forward_next, or answers the caller when there is no target.
+  // A SIP INFO carrying key presses, in a dialog whose far leg does not speak INFO: played into the media by the
+  // engine and answered here. True when the request was taken; false leaves it to be forwarded as any other.
+  bool _play_dtmf(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction);
+
   void _determine_targets(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
                           const std::string& loop_token);
 

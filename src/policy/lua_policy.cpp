@@ -153,6 +153,13 @@ std::optional<Target> target_at(lua_State* L, int idx, std::string& error) {
     lua_pop(L, 1);
     auto target = Target::to(std::move(uri), std::move(next_hop), text_field(L, idx, "trunk"));
     if (const auto ring = integer_field(L, idx, "ring_timeout"); ring && *ring > 0) target.ring_timeout = std::chrono::seconds(*ring);
+    if (const auto dtmf = text_field(L, idx, "dtmf"); !dtmf.empty()) {
+      target.dtmf = types::MediaPolicy::parse_dtmf(dtmf);
+      if (!target.dtmf) {
+        error = "dtmf \"" + dtmf + "\" is none of auto, rfc4733, info, inband";
+        return std::nullopt;
+      }
+    }
     return target;
   }
 
@@ -178,8 +185,8 @@ std::optional<std::vector<Target>> targets_at(lua_State* L, int idx, std::string
   return targets;
 }
 
-// {media_anchor =, media_profile =}, as athenasip.config.behaviour and a realm's behaviour_effective give it, over
-// the server's defaults.
+// {media_anchor =, media_profile =, dtmf =}, as athenasip.config.behaviour and a realm's behaviour_effective give
+// it, over the server's defaults.
 std::optional<types::MediaPolicy> media_at(lua_State* L, int idx, const types::MediaPolicy& server, std::string& error) {
   if (!lua_istable(L, idx)) return std::nullopt;
 
@@ -193,6 +200,15 @@ std::optional<types::MediaPolicy> media_at(lua_State* L, int idx, const types::M
       return std::nullopt;
     }
     media.profiles = *parsed;
+  }
+
+  if (const auto dtmf = text_field(L, idx, "dtmf"); !dtmf.empty()) {
+    const auto parsed = types::MediaPolicy::parse_dtmf(dtmf);
+    if (!parsed) {
+      error = "dtmf \"" + dtmf + "\" is none of auto, rfc4733, info, inband";
+      return std::nullopt;
+    }
+    media.dtmf = *parsed;
   }
   return media;
 }
@@ -272,6 +288,11 @@ plugins::Result<RouteDecision> route_from(lua_State* L, int results, const Confi
   if (!error.empty()) return refused<RouteDecision>("route", error);
 
   out.rewrite_contact = boolean_field(L, idx, "rewrite_contact");
+
+  if (const auto dtmf = text_field(L, idx, "caller_dtmf"); !dtmf.empty()) {
+    out.caller_dtmf = types::MediaPolicy::parse_dtmf(dtmf);
+    if (!out.caller_dtmf) return refused<RouteDecision>("route", "caller_dtmf \"" + dtmf + "\" is none of auto, rfc4733, info, inband");
+  }
   return plugins::Result<RouteDecision>::success(std::move(out));
 }
 

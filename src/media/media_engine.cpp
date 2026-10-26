@@ -44,6 +44,9 @@ Flags Flags::from_sdp(const std::string& sdp_text) {
 
       // RFC 5761.
       if (attribute == "rtcp-mux") flags.rtcp_mux = true;
+
+      // RFC 4733: key presses as events in the RTP.
+      if (starts_with(attribute, "rtpmap:") && attribute.find("telephone-event") != std::string::npos) flags.telephone_event = true;
     }
   };
 
