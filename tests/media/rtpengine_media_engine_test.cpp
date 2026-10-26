@@ -1130,3 +1130,20 @@ TEST(RtpengineMediaEngineTest, AReplyFromAnywhereButTheEngineIsDropped) {
 
   engine->close();
 }
+
+// Review finding 35: an engine named by a host name is looked up with async_resolve, never a blocking resolve on the
+// strand, and the pool is set up once it has an address.
+TEST(RtpengineMediaEngineTest, AnEngineNamedByAHostNameIsLookedUpAndUsed) {
+  FakeRtpengine fake;
+  fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
+
+  auto logger = std::make_shared<MockLogger>();
+  auto url = std::make_shared<types::URL>("rtpengine://localhost:" + std::to_string(fake.port()));
+  auto engine = std::make_shared<SyncMediaEngine>(std::make_shared<RtpengineMediaEngine>(logger, url));
+  ASSERT_TRUE(engine->configure(YAML::Load("timeout_ms: 200\nattempts: 2"), Config(logger)));
+
+  ASSERT_TRUE(engine->connect());
+  EXPECT_TRUE(fake.last("ping").has_value());
+
+  engine->close();
+}

@@ -42,6 +42,9 @@ std::string PublicAddress::current() const {
   return _state->address;
 }
 
+// The first lookup blocks the caller, deliberately: it is RtpengineMediaEngine::connect, before the node serves anything,
+// so that the first call is anchored on an address rather than refused for having none. Never a strand (review finding
+// 35): the refreshes after it are async_resolve on the global io_context.
 void PublicAddress::start() {
   if (!is_name()) return;
 

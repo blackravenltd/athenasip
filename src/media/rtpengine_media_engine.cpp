@@ -252,6 +252,30 @@ Capabilities RtpengineMediaEngine::capabilities() const {
 
 bool RtpengineMediaEngine::is_connected() const { return _up.load(std::memory_order_relaxed) > 0; }
 
+void RtpengineMediaEngine::_look_up(std::size_t index, std::function<void()> then) {
+  // Past the last engine: carry on, on the strand.
+  if (index >= _engines.size()) return boost::asio::dispatch(_strand, std::move(then));
+
+  boost::system::error_code literal;
+  boost::asio::ip::make_address(_engines[index].host, literal);
+  if (!literal) return _look_up(index + 1, std::move(then));
+
+  auto self = shared_from_this();
+  auto resolver = std::make_shared<boost::asio::ip::udp::resolver>(_strand);
+  const auto host = _engines[index].host;
+  resolver->async_resolve(boost::asio::ip::udp::v4(), host, std::to_string(_engines[index].port),
+                          [this, self, resolver, index, host, then = std::move(then)](const boost::system::error_code& ec,
+                                                                                     boost::asio::ip::udp::resolver::results_type results) mutable {
+                            if (ec || results.empty()) {
+                              _logger->error("Could not resolve " + host + (ec ? " - " + ec.message() : std::string()));
+                            } else {
+                              _engines[index].found = results.begin()->endpoint();
+                              _engines[index].looked_up = true;
+                            }
+                            _look_up(index + 1, std::move(then));
+                          });
+}
+
 void RtpengineMediaEngine::connect(plugins::Executor on, plugins::StatusHandler handler) {
   if (is_connected()) return _complete(std::move(on), std::move(handler), plugins::Status::success());
 
@@ -265,7 +289,7 @@ void RtpengineMediaEngine::connect(plugins::Executor on, plugins::StatusHandler 
 
   auto self = shared_from_this();
 
-  boost::asio::dispatch(_strand, [this, self, on, handler = std::move(handler)]() mutable {
+  _look_up(0, [this, self, on, handler = std::move(handler)]() mutable {
     std::optional<boost::asio::ip::udp> protocol;
 
     for (auto& engine : _engines) {
@@ -273,19 +297,9 @@ void RtpengineMediaEngine::connect(plugins::Executor on, plugins::StatusHandler 
       auto address = boost::asio::ip::make_address(engine.host, ec);
 
       if (ec) {
-        // A name: resolved with a blocking call, acceptable only here at startup, before there is a call to hold up.
-        try {
-          boost::asio::ip::udp::resolver resolver(detail::get_global_io_context());
-          auto endpoints = resolver.resolve(boost::asio::ip::udp::v4(), engine.host, std::to_string(engine.port));
-          if (endpoints.empty()) {
-            _logger->error("Could not resolve " + engine.host);
-            continue;
-          }
-          engine.endpoint = *endpoints.begin();
-        } catch (const std::exception& e) {
-          _logger->error("Could not resolve " + engine.host + " - " + e.what());
-          continue;
-        }
+        // A name, looked up already (_look_up).
+        if (!engine.looked_up) continue;
+        engine.endpoint = engine.found;
       } else {
         engine.endpoint = boost::asio::ip::udp::endpoint(address, engine.port);
       }

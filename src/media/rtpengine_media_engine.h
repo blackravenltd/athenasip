@@ -61,6 +61,12 @@ class RtpengineMediaEngine : public MediaEngine, public std::enable_shared_from_
   bool configure(const YAML::Node& own_root, const Config& system) override;
 
   void connect(plugins::Executor on, plugins::StatusHandler handler) override;
+
+ private:
+  // Each engine named by a host name, looked up in turn with async_resolve on the strand (review finding 35), then `then`.
+  void _look_up(std::size_t index, std::function<void()> then);
+
+ public:
   void close() override;
   bool is_connected() const override;
 
@@ -90,6 +96,9 @@ class RtpengineMediaEngine : public MediaEngine, public std::enable_shared_from_
     std::uint16_t port = kDefaultPort;
     boost::asio::ip::udp::endpoint endpoint;
     bool resolved = false;
+    // A host given as a name, and what it resolved to, before connect sets the pool up.
+    bool looked_up = false;
+    boost::asio::ip::udp::endpoint found;
     bool up = false;
 
     // What Call::media_engine holds for a call on this engine.

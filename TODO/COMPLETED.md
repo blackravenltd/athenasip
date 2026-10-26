@@ -3883,3 +3883,7 @@ Findings 43 and 44.
       unless it comes from the engine the request went to, and the request waits for the
       engine's own; the cookie is `RAND_bytes` since item 4.
       `RtpengineMediaEngineTest.AReplyFromAnywhereButTheEngineIsDropped`, watched failing first.
+- [x] **No blocking resolve on a strand** (35): the rtpengine driver looks up engines named by a
+      host name with `async_resolve` on its strand, one after another, before it sets up the pool.
+      `PublicAddress::start`'s first lookup stays synchronous on purpose, on the caller's thread at
+      start, and says so. `RtpengineMediaEngineTest.AnEngineNamedByAHostNameIsLookedUpAndUsed`.
