@@ -446,10 +446,9 @@ Unit-proven only; left:
 
 What the decision finds in the tree, re-checked 2026-10-26. Each item is small on its own;
 together they are what lets a node be replaced without anything being lost. The trunk
-registration status is a record since 2026-10-26 (`COMPLETED.md`). In the order they matter:
+registration status and the re-offer reports are records since 2026-10-26
+(`COMPLETED.md`). Left:
 
-- [ ] **Re-offer reports** (`src/media/reoffers.h`, shown by `/api/v1/media/reoffers`)
-      are per node and vanish with it. A record with a retention, by the decision rule.
 - [ ] **Dialog state in the call record** (Tom, 2026-10-11: yes). `Dialogs`
       (`src/dialogs.h`) holds each dialog's route set, targets, CSeqs and session timer in
       memory, and the call record holds only the tags. The rest goes into the call record
@@ -474,6 +473,11 @@ from bindings in the store), channels and flow tokens (transport), the live `Cal
       candidate for a seventh hook, after the six (`authorize`, `route`, `on_failure`,
       `register`, `init`, `watch`) have been used.
 - [ ] An arm64 Docker image beside the amd64 one, and the SDK headers in the packages.
+- [ ] **`DnsResolverTest` is flaky on this machine** (2026-10-26): three runs of the suite
+      alone failed three different tests (`ASilentServerIsPassedOverForTheNext`,
+      `AReplyWithTheWrongIdIsIgnored`, `ALostQueryIsAskedAgain`), each timing a fake UDP
+      server on a loaded four-core Pi; the code is as at `0.12.0`. Make the tests advance a
+      manual clock, or widen their bounds, rather than race the machine.
 - [ ] **A Request-URI whose host differs in case from the realm's name does not find the
       subscriber**, it appears: an INVITE to `sip:bob@EXAMPLE.COM` in a unit test reached
       nobody (2026-10-26, while writing `MediaProfileTest.TheReportNamesTheSubscriberNotWhatWasDialled`;
