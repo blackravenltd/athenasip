@@ -92,8 +92,10 @@ void InviteClientTransaction::receive(std::shared_ptr<SIPMessage> message) {
 }
 
 void InviteClientTransaction::send(std::shared_ptr<SIPMessage> message) {
-  // A client transaction sends exactly one request, through start().
-  (void)message;
+  // A client transaction sends exactly one request, through start(); a call here is a mistake in the caller, said
+  // rather than swallowed (review finding 41).
+  _logger->error("send() on an INVITE client transaction, which sends only its request through start() - " +
+                 (message && message->header ? message->header->summary() : std::string("nothing")) + " dropped");
 }
 
 std::shared_ptr<SIPMessage> InviteClientTransaction::_build_ack(const std::shared_ptr<SIPMessage>& response) const {

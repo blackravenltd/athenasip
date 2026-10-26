@@ -125,7 +125,6 @@ class SIPHeader {
   friend std::string operator+(std::shared_ptr<SIPHeader> header, const std::string& str);
   friend std::string operator+(const std::string& str, std::shared_ptr<SIPHeader> header);
 
-  void print() const;
 
  private:
   void _store_parsed_field(const std::string& field_name, const std::string& value);

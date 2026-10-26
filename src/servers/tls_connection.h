@@ -33,19 +33,10 @@ class TLSConnection : public Connection {
     if (_handshaken) _read_peer();
   }
 
-  virtual bool start() override {
-    if (_handshaken) return true;
-
-    try {
-      _ssl_socket->handshake(ssl::stream_base::server);
-    } catch (const std::exception& e) {
-      return false;
-    }
-
-    _handshaken = true;
-    _read_peer();
-    return true;
-  }
+  // The handshake is the caller's, done asynchronously with a deadline before the connection is made (TLSServer, Core):
+  // a connection is handed over only once it is through. There is no blocking handshake to fall back on (review
+  // finding 36).
+  virtual bool start() override { return _handshaken; }
 
   std::string peer_identity() const override { return _peer; }
 

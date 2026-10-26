@@ -341,25 +341,4 @@ std::string operator+(const std::string& str, const SIPHeader& header) { return 
 std::string operator+(std::shared_ptr<SIPHeader> header, const std::string& str) { return header->to_string() + str; }
 std::string operator+(const std::string& str, std::shared_ptr<SIPHeader> header) { return str + header->to_string(); }
 
-void SIPHeader::print() const {
-  switch (type) {
-    case Type::Request:
-      std::cout << "Request Method: " << request_method << "\n";
-      std::cout << "Request URI: " << request_uri << "\n";
-      break;
-    case Type::Response:
-      std::cout << "Response Code: " << response_code << "\n";
-      std::cout << "Response Message: " << response_message << "\n";
-      break;
-    default:
-      throw std::runtime_error("SIPHeader::print Unknown Type " + std::to_string(type));
-  }
-  std::cout << "SIP Version: " << sip_version << std::endl;
-  std::cout << "Headers:" << std::endl;
-
-  for (const auto& header : headers) {
-    std::cout << header.key << ": " << header.value->to_string() << std::endl;
-  }
-}
-
 }  // namespace athenasip

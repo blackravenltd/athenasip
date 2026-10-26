@@ -27,26 +27,6 @@ std::string SIPMessage::to_string() const {
   return out;
 }
 
-void SIPMessage::print() const { std::cout << Util::trim(to_string()) << std::endl; }
-
-std::string SIPMessage::get_transaction_id() {
-  // RFC 3261 17.1.3, 17.2.3: a transaction is identified by the top Via's branch and
-  // sent-by plus the method. Branch alone can collide across upstream hops.
-  if (!header->contains("Via") || !header->contains("CSeq")) {
-    throw std::runtime_error("SIPMessage::get_transaction_id requires Via and CSeq");
-  }
-
-  auto via = header->headers_map["Via"][0]->as<ViaHeader>();
-  auto cseq = header->headers_map["CSeq"][0]->as<CSeqHeader>();
-
-  if (via == nullptr || cseq == nullptr) {
-    throw std::runtime_error("SIPMessage::get_transaction_id could not read Via or CSeq");
-  }
-
-  // Separators keep distinct triples from concatenating to the same string.
-  return via->parameters["branch"] + "|" + via->host + "|" + cseq->method;
-}
-
 // Copies by serialising and re-parsing, so every header type is covered without a
 // per-type clone.
 std::shared_ptr<SIPMessage> SIPMessage::clone() const {
@@ -66,6 +46,10 @@ std::shared_ptr<SIPMessage> SIPMessage::clone() const {
   copy->authenticated_aor = authenticated_aor;
 
   return copy;
+}
+
+std::string SIPMessage::allowed_methods(bool publish) {
+  return std::string("INVITE, ACK, CANCEL, BYE, OPTIONS, REGISTER, UPDATE, INFO, PRACK, MESSAGE, SUBSCRIBE, NOTIFY, REFER") + (publish ? ", PUBLISH" : "");
 }
 
 std::shared_ptr<SIPMessage> SIPMessage::generate_response() {
@@ -118,7 +102,7 @@ std::shared_ptr<SIPMessage> SIPMessage::generate_response() {
     response->header->add("CSeq", "1 " + header->request_method);
   }
 
-  response->header->add("Allow", std::make_shared<StringHeader>("INVITE, ACK, CANCEL, OPTIONS, BYE, REFER, NOTIFY, MESSAGE, INFO"));
+  response->header->add("Allow", std::make_shared<StringHeader>(allowed_methods()));
 
   return response;
 }

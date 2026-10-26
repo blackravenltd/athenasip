@@ -3897,3 +3897,13 @@ Findings 43 and 44.
       let a late delivery write into a dead local, which crashed one suite run. `BusHeard`
       (`tests/helpers/bus_heard_helper.h`) holds what was heard by shared pointer and waits for
       it. Fifty repeats and three full runs clean: 1645, 1573 passed.
+- [x] **Small ones** (17, 18, 19, 36, 40, 41): the dead `SIPMessage::get_transaction_id` and its two
+      tests go (the matcher has its own); one Allow list, `SIPMessage::allowed_methods`, for every
+      response and the OPTIONS answer; `sip.max_transactions` (50000) answers a new request past it
+      503 with Retry-After; the unreachable blocking TLS handshake goes; the `print` functions that
+      printed a pointer go; `send()` on an INVITE client transaction logs an error.
+- [x] **An INFO the engine cannot play is forwarded** (from the AthenaPhone suite): rtpengine
+      refuses to inject DTMF before a leg has sent media ("No SSRC context"), and the node answered
+      that INFO with a bare 500 and lost the digit. It now forwards the INFO end to end instead.
+      `MediaProfileTest.AnInfoTheEngineCannotPlayIsForwardedInstead`, watched failing first. The
+      suite 1644, 1572 passed.

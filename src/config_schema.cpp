@@ -67,6 +67,7 @@ Settings build() {
                       "Seconds a TCP, TLS or WebSocket connection may stay open without a whole message arriving. 0 never closes one for that."));
   s.push_back(integer("sip.max_connections", "10000", "The flows the node holds at once, UDP sources included; one more is closed. 0 is no cap."));
   s.push_back(integer("sip.max_connections_per_source", "64", "The flows one address may hold at once; one more is closed. 0 is no cap."));
+  s.push_back(integer("sip.max_transactions", "50000", "The transactions held at once; a new request past it is answered 503 with Retry-After. 0 is no cap."));
 
   s.push_back(section("sip.auth_limits",
                       "Digest guessing over SIP, per node: a burst allowance, then a rate per minute, 0 in either turning that limit off "

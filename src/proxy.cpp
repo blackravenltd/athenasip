@@ -352,13 +352,17 @@ void Proxy::_proceed(const std::shared_ptr<SIPMessage>& request, const std::shar
     }
 
     // Key presses by INFO, for a far leg that takes them in its media instead.
-    if (request->header->request_method == "INFO" && _play_dtmf(request, transaction)) return;
+    if (request->header->request_method == "INFO" &&
+        _play_dtmf(request, transaction, [this, self, request, transaction, token]() { _determine_targets(request, transaction, token); })) {
+      return;
+    }
 
     _determine_targets(request, transaction, token);
   });
 }
 
-bool Proxy::_play_dtmf(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction) {
+bool Proxy::_play_dtmf(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
+                       std::function<void()> otherwise) {
   auto core = _core.lock();
   if (!core || !core->media || !core->media->capabilities().dtmf) return false;
 
@@ -380,10 +384,12 @@ bool Proxy::_play_dtmf(const std::shared_ptr<SIPMessage>& request, const std::sh
 
   auto self = shared_from_this();
   core->media->play_dtmf(core->strand(), call, *sender, pressed->first, pressed->second,
-                         [this, self, request, transaction, pressed, call](plugins::Status played) {
+                         [this, self, request, transaction, pressed, call, otherwise](plugins::Status played) {
+                           // The engine could not play it, as before the leg has sent any media (rtpengine: "No SSRC context"):
+                           // the INFO goes on to the far end as it came, so the key press still arrives rather than a 500.
                            if (!played.ok) {
-                             _logger->warn("Could not play key presses into call " + call->id + " - " + played.error);
-                             return _send_status(transaction, request, 500, "Server Internal Error");
+                             _logger->warn("Could not play key presses into call " + call->id + " - " + played.error + " - forwarding the INFO");
+                             return otherwise();
                            }
                            _logger->debug("Played " + pressed->first + " into call " + call->id + " for an INFO");
                            _send_status(transaction, request, 200, "OK");
@@ -2376,9 +2382,7 @@ void Proxy::_answer_options(const std::shared_ptr<transactions::TransactionBase>
   const bool presence = core && core->config->presence_enable && core->datastore && core->datastore->supports_presence();
 
   response->header->remove_value("Allow", [](const std::shared_ptr<headers::Header>&) { return true; });
-  response->header->add("Allow", std::make_shared<headers::StringHeader>(std::string("INVITE, ACK, CANCEL, BYE, OPTIONS, REGISTER, UPDATE, INFO, PRACK, "
-                                                                                     "MESSAGE, SUBSCRIBE, NOTIFY, REFER") +
-                                                                         (presence ? ", PUBLISH" : "")));
+  response->header->add("Allow", std::make_shared<headers::StringHeader>(SIPMessage::allowed_methods(presence)));
   response->header->add("Accept", std::make_shared<headers::StringHeader>("application/sdp"));
   response->header->add("Accept-Encoding", std::make_shared<headers::StringHeader>("identity"));
   response->header->add("Accept-Language", std::make_shared<headers::StringHeader>("en"));

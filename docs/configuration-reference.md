@@ -29,6 +29,7 @@ The node, and how it treats SIP.
 | `sip.flow_first_message_timeout` | integer | `30` | Seconds a TCP, TLS or WebSocket connection may stay open without a whole message arriving. 0 never closes one for that. |
 | `sip.max_connections` | integer | `10000` | The flows the node holds at once, UDP sources included; one more is closed. 0 is no cap. |
 | `sip.max_connections_per_source` | integer | `64` | The flows one address may hold at once; one more is closed. 0 is no cap. |
+| `sip.max_transactions` | integer | `50000` | The transactions held at once; a new request past it is answered 503 with Retry-After. 0 is no cap. |
 
 ### `sip.auth_limits`
 

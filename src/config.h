@@ -137,6 +137,8 @@ class Config {
   // UDP flows included. Zero is no cap.
   std::uint32_t sip_max_connections = 10000;
   std::uint32_t sip_max_connections_per_source = 64;
+  // sip.max_transactions: the transactions held at once; a new request past it is 503 with Retry-After. 0 is no cap.
+  std::uint32_t sip_max_transactions = 50000;
 
   // tls, tcp, udp and websocket: the listeners. public_port is the port a router forwards
   // to the listener; zero means the bound port.
