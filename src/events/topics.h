@@ -29,6 +29,10 @@ inline std::string subscriber_status(const std::string& uri) { return "subscribe
 // Retained: whether the node holding a trunk's registration has it registered.
 inline std::string trunk_status(const std::string& name) { return "trunks/" + name + "/status"; }
 
+// A trunk created, changed or deleted over the API, so every node reads the trunks now rather than at its next
+// scan. A signal, not state: a node that misses it reads them at the scan anyway.
+inline std::string trunks_changed() { return "trunks/changed"; }
+
 inline std::string call_register(const std::string& call_id) { return "calls/" + call_id + "/register"; }
 
 inline std::string call_unregister(const std::string& call_id) { return "calls/" + call_id + "/unregister"; }

@@ -15,6 +15,7 @@
 #include <memory>
 #include <string>
 
+#include "../helpers/recording_event_system_helper.h"
 #include "../helpers/signed_in_users_helper.h"
 #include "../helpers/sync_datastore_helper.h"
 #include "../mocks/logger_mock.h"
@@ -45,6 +46,7 @@ struct TrunksFixture {
   std::shared_ptr<api::AdminAPI> admin;
   std::shared_ptr<api::Router> router;
   std::shared_ptr<api::TrunksAPI> trunks;
+  std::shared_ptr<RecordingEventSystem> events = std::make_shared<RecordingEventSystem>();
   SignedInUsers signed_in;
 
   TrunksFixture() {
@@ -59,6 +61,7 @@ struct TrunksFixture {
     bearer->sessions_register(sessions);
 
     trunks = std::make_shared<api::TrunksAPI>(logger, datastore, admin->executor());
+    trunks->events_register(events);
     trunks->register_routes(*router);
 
     admin->middlewares.push_back(router->middleware("/api/"));
@@ -158,6 +161,24 @@ TEST(TrunksApiTest, ADeletedTrunkIsGone) {
   EXPECT_EQ(f.request(http::verb::delete_, "/api/v1/trunks/acme").status, 204u);
   EXPECT_EQ(f.request(http::verb::get, "/api/v1/trunks/acme").status, 404u);
   EXPECT_EQ(f.request(http::verb::delete_, "/api/v1/trunks/acme").status, 404u);
+}
+
+// Each create, change and delete is announced as trunks/changed, so every node's registrar reads the trunks at
+// once rather than at its next scan. A refused request announces nothing.
+TEST(TrunksApiTest, AChangeIsAnnouncedOnTheBus) {
+  TrunksFixture f;
+  ASSERT_EQ(f.request(http::verb::post, "/api/v1/trunks", TrunksFixture::acme()).status, 201u);
+  ASSERT_EQ(f.request(http::verb::put, "/api/v1/trunks/acme", R"({"name": "other"})").status, 400u);
+  ASSERT_EQ(f.request(http::verb::put, "/api/v1/trunks/acme", R"({"inbound_addresses": ["198.51.100.0/24"]})").status, 200u);
+  ASSERT_EQ(f.request(http::verb::delete_, "/api/v1/trunks/acme").status, 204u);
+  ASSERT_EQ(f.request(http::verb::delete_, "/api/v1/trunks/acme").status, 404u);
+
+  const auto announced = f.events->published();
+  ASSERT_EQ(announced.size(), 3u);
+  for (const auto& [topic, name] : announced) {
+    EXPECT_EQ(topic, "trunks/changed");
+    EXPECT_EQ(name, "acme");
+  }
 }
 
 // A trunk's credentials are the carrier's: only manage-trunks reads or writes them.

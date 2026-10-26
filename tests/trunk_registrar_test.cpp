@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "digest.h"
+#include "events/topics.h"
 #include "headers/cseq_header.h"
 #include "helpers/core_fixture_helper.h"
 #include "types/authorization.h"
@@ -217,6 +218,28 @@ TEST(TrunkRegistrarTest, ATrunkThatStopsAskingIsUnregistered) {
 
   f.advance(TrunkRegistrar::kScan);
   EXPECT_EQ(f.registers().size(), 2u) << "nothing more is sent";
+}
+
+// A trunk created, changed or deleted over the API is announced on the bus, and read then, not at the next scan.
+TEST(TrunkRegistrarTest, ATrunkChangedOnTheBusIsReadAtOnce) {
+  RegistrarFixture f;
+  f.start();
+  f.answer(f.registers()[0], 200, "OK", "Expires: 3600\r\n");
+
+  auto acme = f.store->trunk_get("acme");
+  acme->register_enabled = false;
+  ASSERT_TRUE(f.store->trunk_update(acme));
+  ASSERT_TRUE(f.bus->publish(events::topics::trunks_changed(), "acme"));
+  f.settle();
+
+  const auto sent = f.registers();
+  ASSERT_EQ(sent.size(), 2u) << "unregistered without waiting for the scan";
+  EXPECT_EQ(first(sent[1], "Expires"), "0");
+
+  // The scan the bus prompted stands in for the one that was due.
+  f.answer(sent[1], 200, "OK");
+  f.advance(TrunkRegistrar::kScan);
+  EXPECT_EQ(f.registers().size(), 2u);
 }
 
 // A node that loses the lease stops without unregistering: the binding is now the other node's to keep.

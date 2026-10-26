@@ -574,6 +574,7 @@ int main(int argc, char* argv[]) {
 
       auto trunks = std::make_shared<api::TrunksAPI>(logger, datastore, adminAPI->executor());
       trunks->statuses_register(core->trunk_statuses());
+      trunks->events_register(events);
       trunks->register_routes(*api_router);
 
       // Live calls, the media engine and /metrics, read from Core on its strand.
