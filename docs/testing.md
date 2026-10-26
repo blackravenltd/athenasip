@@ -76,6 +76,18 @@ ATHENA_TEST_REDIS_URL=redis://127.0.0.1:6399 \
 ATHENA_TEST_MQTT_URL=mqtt://127.0.0.1:1883 ./build-tests/athenasip_tests
 ```
 
+Or, with neither installed, throwaway containers (Mosquitto 2 listens only on loopback
+unless told otherwise, hence the two-line configuration):
+
+```bash
+printf 'listener 1883 0.0.0.0\nallow_anonymous true\n' > /tmp/mosquitto.conf
+docker run -d --rm --name athena-test-redis -p 127.0.0.1:6399:6379 redis:7-alpine redis-server --save ''
+docker run -d --rm --name athena-test-mqtt -p 127.0.0.1:1883:1883 \
+  -v /tmp/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro eclipse-mosquitto:2
+# ... the run above, then
+docker stop athena-test-redis athena-test-mqtt
+```
+
 Every test runs against the `builtin://` policy. `ATHENA_TEST_POLICY=lua` runs them
 against the standard Lua scripts instead, which must pass the same tests:
 `PolicyEquivalenceTest` does that for the proxy, registrar, dialog and core suites in a

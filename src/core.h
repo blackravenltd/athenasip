@@ -113,7 +113,7 @@ class Core : public std::enable_shared_from_this<Core> {
   // this node agreed to push to (RFC 8599).
   void subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel,
                            std::uint32_t expires_seconds, std::string path, plugins::StatusHandler handler, std::string instance = "", std::uint32_t reg_id = 0,
-                           bool push = false);
+                           bool push = false, std::string call_id = "", std::uint64_t cseq = 0);
   void subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel,
                              plugins::StatusHandler handler);
   void location_list(std::uint64_t subscriber_id, plugins::Handler<std::vector<types::Location>> handler);

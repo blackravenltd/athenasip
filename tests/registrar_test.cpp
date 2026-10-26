@@ -54,6 +54,9 @@ struct Fixture : CoreFixture {
     channel = make_channel("192.0.2.10", &connection);
   }
 
+  // Each REGISTER the next CSeq under the one Call-ID, as a client sends them (RFC 3261 10.2.4).
+  std::uint64_t cseq = 0;
+
   std::string register_request(const std::string& authorization = "", const std::string& expires = "", const std::string& contact = "",
                                const std::string& branch = "z9hG4bK-reg", const std::string& to = "<sip:alice@example.com>") {
     std::string raw = "REGISTER sip:example.com SIP/2.0\r\n";
@@ -61,7 +64,7 @@ struct Fixture : CoreFixture {
     raw += "From: " + to + ";tag=alice\r\n";
     raw += "To: " + to + "\r\n";
     raw += "Call-ID: call-registrar\r\n";
-    raw += "CSeq: 1 REGISTER\r\n";
+    raw += "CSeq: " + std::to_string(++cseq) + " REGISTER\r\n";
     raw += "Contact: " + (contact.empty() ? std::string("<sip:alice@192.0.2.10:5060>") : contact) + "\r\n";
     if (!expires.empty()) raw += "Expires: " + expires + "\r\n";
     if (!authorization.empty()) raw += "Authorization: " + authorization + "\r\n";
@@ -845,4 +848,71 @@ TEST(RegistrarTest, ChallengesToOneAddressAreLimited) {
   auto refused = Fixture::response_with(f.connection, 403);
   ASSERT_NE(refused, nullptr);
   EXPECT_TRUE(refused->header->contains("Retry-After"));
+}
+
+// --- Ordering and expiry (review findings 13 and 14) ---
+
+// RFC 3261 10.3 step 7: a REGISTER from the Call-ID that last wrote a binding must carry a higher CSeq. One that
+// arrives late, as a UDP retransmission of an older request or a failover's replay can, fails and undoes nothing.
+TEST(RegistrarTest, AnOutOfOrderRegisterFailsAndUndoesNothing) {
+  Fixture f;
+
+  f.cseq = 9;
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "600"));
+  ASSERT_NE(f.response_with(f.connection, 200), nullptr);
+  ASSERT_EQ(f.store->location_list(7).size(), 1u);
+
+  f.cseq = 4;
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "0", "", "z9hG4bK-late"));
+  EXPECT_NE(f.response_with(f.connection, 500), nullptr);
+  EXPECT_EQ(f.store->location_list(7).size(), 1u) << "the late removal did not remove";
+
+  // The same CSeq again is not higher either.
+  f.cseq = 9;
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "0", "", "z9hG4bK-same"));
+  EXPECT_EQ(f.responses_with(f.connection, 500).size(), 2u);
+  EXPECT_EQ(f.store->location_list(7).size(), 1u);
+
+  // A higher one goes through.
+  f.cseq = 10;
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "0", "", "z9hG4bK-next"));
+  EXPECT_TRUE(f.store->location_list(7).empty());
+}
+
+// Step 7: a binding written from another Call-ID is updated whatever the CSeq, as a client that restarted sends.
+TEST(RegistrarTest, AnotherCallIdUpdatesWhateverItsCSeq) {
+  Fixture f;
+
+  f.cseq = 50;
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "600"));
+  ASSERT_EQ(f.store->location_list(7).size(), 1u);
+
+  f.cseq = 0;
+  auto restarted = f.register_request(f.credentials(f.fresh_nonce()), "0", "", "z9hG4bK-restart");
+  restarted.replace(restarted.find("Call-ID: call-registrar"), std::string("Call-ID: call-registrar").size(), "Call-ID: after-restart");
+  f.receive(f.channel, restarted);
+  EXPECT_EQ(f.response_with(f.connection, 500), nullptr);
+  EXPECT_TRUE(f.store->location_list(7).empty());
+}
+
+// Review finding 14: an expiry larger than 32 bits is the largest there is, cut to the realm's maximum, never a wrap
+// to 0, which would have removed the binding it was refreshing.
+TEST(RegistrarTest, AnExpiryBeyondThirtyTwoBitsIsTheRealmsMaximumNotARemoval) {
+  Fixture f;
+
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "600"));
+  ASSERT_EQ(f.store->location_list(7).size(), 1u);
+
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "4294967296", "", "z9hG4bK-huge"));
+  ASSERT_EQ(f.responses_with(f.connection, 200).size(), 2u);
+  const auto locations = f.store->location_list(7);
+  ASSERT_EQ(locations.size(), 1u) << "refreshed, not removed";
+  EXPECT_GT(locations[0].expires_at - std::time(nullptr), 3000) << "granted the realm's 3600";
+
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "", "<sip:alice@192.0.2.10:5060>;expires=4294967296", "z9hG4bK-tag"));
+  EXPECT_EQ(f.store->location_list(7).size(), 1u);
+
+  // A per-contact expires that is no number at all is refused.
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "", "<sip:alice@192.0.2.10:5060>;expires=60x", "z9hG4bK-bad"));
+  EXPECT_NE(f.response_with(f.connection, 400), nullptr);
 }

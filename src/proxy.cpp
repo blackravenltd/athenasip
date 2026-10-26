@@ -263,12 +263,40 @@ void Proxy::on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<tran
     return _send_status(transaction, request, 400, "Bad Request");
   }
 
+  // RFC 3261 16.3 step 3 needs the number: a Max-Forwards that is not one would be forwarded undecremented, and only
+  // the loop token would stop it going round (review finding 16).
+  if (request->header->contains("Max-Forwards") && request->header->headers_map["Max-Forwards"][0]->as<UIntHeader>() == nullptr) {
+    _logger->info("Request with a Max-Forwards that is no number - 400");
+    return _send_status(transaction, request, 400, "Bad Request");
+  }
+
   // RFC 3261 16.3.4: computed before route preprocessing changes the fields it hashes.
   const auto token = _loop_token(request);
 
   if (_is_loop(request, token)) {
     _logger->info("Request has been here before with nothing changed - 482");
     return _send_status(transaction, request, 482, "Loop Detected");
+  }
+
+  // 16.3 step 5: an extension the request requires of proxies that this one does not support is 420, naming it in
+  // Unsupported (20.40). This proxy implements no extension a request can require of it, so every tag is one; an ACK
+  // or a CANCEL is never answered so (8.2.2.3), and goes on.
+  const auto& method = request->header->request_method;
+  if (method != "ACK" && method != "CANCEL" && request->header->contains("Proxy-Require")) {
+    std::vector<std::string> unsupported;
+    for (const auto& value : request->header->headers_map["Proxy-Require"]) {
+      const auto tag = Util::trim(value->to_string());
+      if (!tag.empty()) unsupported.push_back(tag);
+    }
+    if (!unsupported.empty()) {
+      _logger->info("Request requires of proxies what this one does not support - 420");
+      auto response = request->generate_response();
+      response->header->response_code = 420;
+      response->header->response_message = "Bad Extension";
+      for (const auto& tag : unsupported) response->header->add("Unsupported", tag);
+      if (auto core = _core.lock()) core->dialogs()->observe_response(request, response);
+      return transaction ? transaction->send(response) : void();
+    }
   }
 
   // RFC 3261 11.2: an OPTIONS for this node is answered by it. 16.3 step 3: so is one that has run out of hops.

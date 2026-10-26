@@ -175,7 +175,7 @@ void Core::location_list(std::uint64_t subscriber_id, plugins::Handler<std::vect
 
 void Core::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel,
                                std::uint32_t expires_seconds, std::string path, plugins::StatusHandler handler, std::string instance, std::uint32_t reg_id,
-                               bool push) {
+                               bool push, std::string call_id, std::uint64_t cseq) {
   // RFC 3261 10.3 step 7: every successful REGISTER writes the binding. It records the
   // flow and the node holding it, the only way back to a client whose Contact is
   // unreachable (RFC 5626).
@@ -186,6 +186,8 @@ void Core::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shar
   binding.instance = std::move(instance);
   binding.reg_id = reg_id;
   binding.push = push;
+  binding.call_id = std::move(call_id);
+  binding.cseq = cseq;
   if (channel) binding.flow_id = channel->flow_id();
 
   // The event waits for the write.

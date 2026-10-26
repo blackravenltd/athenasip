@@ -38,6 +38,9 @@ struct Fixture : CoreFixture {
     on_strand([this]() { core->push_register(acme); });
   }
 
+  // CSeq counting up under the one Call-ID, as a client sends (RFC 3261 10.3 step 7 refuses one that does not).
+  std::uint64_t register_cseq = 0;
+
   // An authenticated REGISTER, answered.
   std::shared_ptr<SIPMessage> register_with(const std::string& contact, const std::string& expires = "7200", const std::string& extra = "") {
     connection->written.clear();
@@ -51,7 +54,7 @@ struct Fixture : CoreFixture {
     raw += "From: <sip:alice@example.com>;tag=alice\r\n";
     raw += "To: <sip:alice@example.com>\r\n";
     raw += "Call-ID: call-registrar-push\r\n";
-    raw += "CSeq: 1 REGISTER\r\n";
+    raw += "CSeq: " + std::to_string(++register_cseq) + " REGISTER\r\n";
     raw += "Contact: " + contact + "\r\n";
     raw += "Expires: " + expires + "\r\n";
     raw += extra;

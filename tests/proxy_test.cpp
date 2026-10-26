@@ -131,6 +131,36 @@ TEST(ProxyTest, MaxForwardsZeroIs483AndIsNotForwarded) {
   EXPECT_EQ(f.request_with(f.callee_connection, "INVITE"), nullptr);
 }
 
+// Review finding 16: a Max-Forwards that is no number cannot be decremented, so the request is refused rather than
+// forwarded with its hop count intact.
+TEST(ProxyTest, AMaxForwardsThatIsNoNumberIs400AndIsNotForwarded) {
+  Fixture f;
+  f.bind_bob();
+
+  f.receive(f.caller, f.invite("z9hG4bK-invite", "sip:bob@example.com", "seventy"));
+
+  EXPECT_NE(f.response_with(f.caller_connection, 400), nullptr);
+  EXPECT_EQ(f.request_with(f.callee_connection, "INVITE"), nullptr);
+}
+
+// RFC 3261 16.3 step 5, review finding 12: a request that requires of proxies an extension this one lacks is 420
+// Bad Extension, with each tag in Unsupported, and is not forwarded.
+TEST(ProxyTest, AProxyRequireThisProxyLacksIs420WithUnsupported) {
+  Fixture f;
+  f.bind_bob();
+
+  auto invite = f.invite("z9hG4bK-invite", "sip:bob@example.com");
+  invite.insert(invite.find("Max-Forwards:"), "Proxy-Require: foo, bar\r\n");
+  f.receive(f.caller, invite);
+
+  auto refused = f.response_with(f.caller_connection, 420);
+  ASSERT_NE(refused, nullptr);
+  ASSERT_EQ(refused->header->headers_map["Unsupported"].size(), 2u);
+  EXPECT_EQ(refused->header->headers_map["Unsupported"][0]->to_string(), "foo");
+  EXPECT_EQ(refused->header->headers_map["Unsupported"][1]->to_string(), "bar");
+  EXPECT_EQ(f.request_with(f.callee_connection, "INVITE"), nullptr);
+}
+
 // RFC 3261 16.6 step 3: a missing Max-Forwards is added with the default.
 TEST(ProxyTest, AMissingMaxForwardsIsSuppliedOnForward) {
   Fixture f;
