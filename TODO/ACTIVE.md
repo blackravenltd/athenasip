@@ -76,7 +76,13 @@ session that has lost its context needs to see them first.
    of the bans and closed AORs in force (`GET /api/v1/security/bans`, per node or gathered)
    instead or as well. Nothing is built until Tom says. (Conferencing's four questions,
    item 4 before, were answered the same day: Decisions.)
-5. **Docker on this machine**: installed 2026-10-26, and the `docker` group given; a shell started
+5. **The GitHub About line and athenasip.org** (review findings 46, 48). The About line says
+   "TLS-only", which the node is not by default (`sip.allow_unencrypted` is true and UDP and
+   TCP listen); suggested: "Multi-master SIP proxy and registrar: RFC 3261 transactions and
+   proxying, WebRTC through rtpengine, clusters over Redis and MQTT, scriptable in Lua." The
+   site's "Where it stands" says presence is not built and AthenaPhone is iOS and Android;
+   the README has presence built and AthenaPhone on Android. Both are outside the repo.
+6. **Docker on this machine**: installed 2026-10-26, and the `docker` group given; a shell started
    before that reaches the daemon with `sg docker -c "docker ..."`. It
    unlocks the sipp harnesses, Redis and MQTT for the full suite, the ASan and TSan release
    checks, FreeSWITCH for conferencing step 5, the DTMF and push scenarios and the arm64
@@ -468,9 +474,9 @@ to 5 and 9 here; 6 needs clang (libFuzzer), 7 needs GitHub, 8 is partly Tom's.
       ASan with UBSan, TSan, the e2e harnesses in compose and a fuzz smoke; `-Wall -Wextra
       -Wconversion -Wshadow` and what they find. The workflow file is written here; running
       it is GitHub's (Tom).
-- [ ] **8. Public claims** (46, 47, 48): "RFC 3261 in full" in the README becomes the
-      transaction layer and section 16 proxying with the gaps listed in Limits (done with
-      item 9); the GitHub About text and athenasip.org are Tom's.
+- [x] **8. Public claims** (47): the README says what of RFC 3261 is built and lists the
+      departures, the review and what is not yet in Limits (2026-10-26). The GitHub About
+      text (46, "TLS-only") and athenasip.org (48) are Tom's: Waiting on Tom.
 - [x] **9. Protocol gaps** (11, 12, 13, 14, 16): done 2026-10-26 (`COMPLETED.md`).
 - [ ] **The rest** (8, 9, 15, 17, 18, 19, 27 to 42, 45), each small, after the nine above:
       method and URI validation, a contacts-per-AOR cap, the dead transaction id, one Allow

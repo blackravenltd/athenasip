@@ -6,9 +6,10 @@ AthenaSIP is a multi-master, clusterable SIP server built for standards complian
 for running without a telecoms background. A single node needs nothing but itself, and
 every external piece it can use is a plugin behind one contract.
 
-* **Standards first.** RFC 3261 in full - the four transaction machines, timers A to K,
-  section 16 proxy behaviour - plus 3263, 3327, 3581, 4028, 5626, 6026, 7118, 8760 and
-  8866, proven by a sipp harness.
+* **Standards first.** RFC 3261's transaction layer (the four machines, timers A to K),
+  registrar (section 10) and section 16 proxying, plus 3263, 3327, 3581, 4028, 5626, 6026,
+  7118, 8760 and 8866, proven by unit tests on a fake clock and a sipp harness. Where it
+  departs from them is listed in [Limits](#limits).
 * **Runs on its own.** The defaults are `memory://`, `local://` and `builtin://`: one
   process, no database, no broker, no media server. Redis, MQTT and rtpengine are there
   when you want them.
@@ -80,9 +81,18 @@ next step:
   against the real services.
 * Trunks are tested against sipp as a carrier, and one real carrier (2talk, New Zealand)
   has carried calls in, a call out to its voicemail and RFC 4733 DTMF.
-* Conferencing is not built yet.
+* Conferencing routes a room to a focus behind a trunk (RFC 4579) under `lua://`; the
+  roster from the focus and a focus of the node's own are not built yet, and it is proven by
+  unit tests only, not yet against a running focus.
 * The example configuration enables plaintext UDP and TCP so a first call is easy;
   `sip.allow_unencrypted: false` limits a node to TLS and secure WebSocket.
+* Deliberate departures from the RFCs: serial forking only; no `Flow-Timer` (RFC 5626);
+  a media-anchoring node rewrites the SDP it forwards, which section 16.6 forbids a pure
+  proxy; Record-Route is always written twice (RFC 5658 permits it).
+* An external security review (2026-10-25) found 48 issues; the transport limits,
+  Content-Length, flow caps, Digest nonces, SIP-side guessing limits and the protocol
+  gaps it named are fixed, and the rest are being worked through. There is no fuzzing
+  harness and no hosted CI yet.
 
 ## Documentation
 
