@@ -711,6 +711,14 @@ void Core::process_message(std::shared_ptr<SIPMessage> message) {
     return;
   }
 
+  // Review finding 19: each transaction lives up to 64 T1, so a flood of new requests could hold an unbounded table.
+  // Past sip.max_transactions a new one is answered 503 statelessly, and the client tries again later (21.5.4).
+  if (config->sip_max_transactions != 0 && _matcher.size() >= config->sip_max_transactions && message->header->request_method != "ACK") {
+    _logger->warn("Holding " + std::to_string(_matcher.size()) + " transactions, the most allowed - 503");
+    _send_status(message, 503, "Service Unavailable", 5);
+    return;
+  }
+
   _server_transaction_start(message);
 }
 
@@ -1143,7 +1151,7 @@ std::shared_ptr<transactions::TransactionBase> Core::client_transaction_start(st
   return transaction;
 }
 
-void Core::_send_status(const std::shared_ptr<SIPMessage>& request, uint16_t code, const std::string& reason) {
+void Core::_send_status(const std::shared_ptr<SIPMessage>& request, uint16_t code, const std::string& reason, std::uint32_t retry_after) {
   auto channel = request->channel.lock();
 
   if (!channel) {
@@ -1154,6 +1162,7 @@ void Core::_send_status(const std::shared_ptr<SIPMessage>& request, uint16_t cod
   auto response = request->generate_response();
   response->header->response_code = code;
   response->header->response_message = reason;
+  if (retry_after != 0) response->header->add("Retry-After", std::to_string(retry_after));
 
   channel->send(response);
 }

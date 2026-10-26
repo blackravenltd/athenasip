@@ -63,8 +63,12 @@ class RecordingMediaEngine : public media::MediaEngine {
       std::lock_guard<std::mutex> lock(_mutex);
       _played.push_back(Played{participant, digits, duration});
     }
-    _complete(std::move(on), std::move(handler), plugins::Status::success());
+    // As rtpengine answers before a leg has sent any media.
+    _complete(std::move(on), std::move(handler), refuse_dtmf ? plugins::Status::failure("No SSRC context present for DTMF injection") : plugins::Status::success());
   }
+
+  // When set, play_dtmf fails as rtpengine does before it has heard the leg.
+  std::atomic<bool> refuse_dtmf{false};
 
   std::vector<Played> played() const {
     std::lock_guard<std::mutex> lock(_mutex);
@@ -922,4 +926,34 @@ TEST(MediaProfileTest, AnInfoBetweenTwoLegsThatSpeakInfoIsForwarded) {
 
   EXPECT_TRUE(f.engine->played().empty());
   EXPECT_EQ(ProfileFixture::requests_with(f.callee_connection, "INFO").size(), 1u);
+}
+
+// An INFO the engine cannot play, as rtpengine cannot before the leg has sent any media ("No SSRC context"), goes on
+// to the far end as it came, so the key press still arrives; never a 500 (the AthenaPhone suite, 2026-10-26).
+TEST(MediaProfileTest, AnInfoTheEngineCannotPlayIsForwardedInstead) {
+  using Dtmf = types::MediaPolicy::Dtmf;
+  ProfileFixture f("tcp", "udp");
+  f.alice->dtmf = Dtmf::Info;
+  ASSERT_TRUE(f.store->subscriber_update(f.alice));
+  f.engine->refuse_dtmf = true;
+
+  f.receive(f.caller, f.invite_with_body());
+  f.receive(f.callee, f.response_to_latest(200, "OK", kOfferWithEvents));
+
+  std::string info = "INFO sip:bob@192.0.2.20:5060 SIP/2.0\r\n";
+  info += "Via: SIP/2.0/UDP 192.0.2.10:5060;branch=z9hG4bK-info\r\n";
+  info += f.routes(true);
+  info += "From: <sip:alice@example.com>;tag=alice\r\n";
+  info += "To: <sip:bob@example.com>;tag=bob\r\n";
+  info += "Call-ID: call-proxy\r\n";
+  info += "CSeq: 2 INFO\r\n";
+  info += "Max-Forwards: 70\r\n";
+  info += "Content-Type: application/dtmf-relay\r\n";
+  info += "Content-Length: 24\r\n\r\n";
+  info += "Signal=1\r\nDuration=160\r\n";
+  f.receive(f.caller, info);
+
+  EXPECT_EQ(f.engine->played().size(), 1u) << "it was tried";
+  EXPECT_EQ(ProfileFixture::requests_with(f.callee_connection, "INFO").size(), 1u) << "and then forwarded";
+  EXPECT_EQ(ProfileFixture::response_with(f.caller_connection, 500), nullptr);
 }

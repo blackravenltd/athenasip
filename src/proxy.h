@@ -232,8 +232,10 @@ class Proxy : public TransactionUser {
 
   // RFC 3261 16.5: fills a context and calls _forward_next, or answers the caller when there is no target.
   // A SIP INFO carrying key presses, in a dialog whose far leg does not speak INFO: played into the media by the
-  // engine and answered here. True when the request was taken; false leaves it to be forwarded as any other.
-  bool _play_dtmf(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction);
+  // engine and answered here. True when the request was taken; false leaves it to be forwarded as any other. When the
+  // engine cannot play it, `otherwise` forwards it after all.
+  bool _play_dtmf(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
+                  std::function<void()> otherwise);
 
   void _determine_targets(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
                           const std::string& loop_token);

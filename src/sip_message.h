@@ -63,9 +63,11 @@ class SIPMessage {
   std::shared_ptr<types::Dialog> dialog;
 
   std::string to_string() const;
-  void print() const;
-  std::string get_transaction_id();
   std::shared_ptr<SIPMessage> generate_response();
+
+  // The methods this node handles, as an Allow header field lists them (RFC 3261 20.5): one list, for every response
+  // that carries Allow and for the OPTIONS answer (review finding 18). PUBLISH only when presence is on.
+  static std::string allowed_methods(bool publish = false);
 
   // RFC 3261 16.6 step 1: a proxy forwards a copy of the request. A deep copy, because
   // header values are shared and a Via added for one branch would appear on the next.

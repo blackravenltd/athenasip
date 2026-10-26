@@ -60,7 +60,8 @@ bool Config::load_from_yaml(const std::string& filename) {
   for (const auto& [key, field] : std::initializer_list<std::pair<const char*, std::uint32_t*>>{
            {"flow_first_message_timeout", &sip_flow_first_message_timeout},
            {"max_connections", &sip_max_connections},
-           {"max_connections_per_source", &sip_max_connections_per_source}}) {
+           {"max_connections_per_source", &sip_max_connections_per_source},
+           {"max_transactions", &sip_max_transactions}}) {
     if (!sip[key]) continue;
     try {
       *field = sip[key].as<std::uint32_t>();
@@ -778,6 +779,7 @@ std::string Config::effective_yaml() const {
   out << YAML::Key << "flow_first_message_timeout" << YAML::Value << sip_flow_first_message_timeout;
   out << YAML::Key << "max_connections" << YAML::Value << sip_max_connections;
   out << YAML::Key << "max_connections_per_source" << YAML::Value << sip_max_connections_per_source;
+  out << YAML::Key << "max_transactions" << YAML::Value << sip_max_transactions;
 
   out << YAML::Key << "auth_limits" << YAML::Value << YAML::BeginMap;
   for (const auto& [name, limit] : std::initializer_list<std::pair<const char*, const RateLimit*>>{

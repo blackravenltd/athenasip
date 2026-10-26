@@ -103,6 +103,11 @@
           "type": "integer",
           "default": 64
         },
+        "max_transactions": {
+          "description": "The transactions held at once; a new request past it is answered 503 with Retry-After. 0 is no cap.",
+          "type": "integer",
+          "default": 50000
+        },
         "auth_limits": {
           "description": "Digest guessing over SIP, per node: a burst allowance, then a rate per minute, 0 in either turning that limit off (docs/authentication.md, Guessing).",
           "type": "object",

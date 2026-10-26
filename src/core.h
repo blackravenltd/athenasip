@@ -362,7 +362,7 @@ class Core : public std::enable_shared_from_this<Core> {
   void _dispatch_to_tu(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction);
   void _adopt_call(const std::shared_ptr<Call>& call, const std::shared_ptr<SIPMessage>& request);
 
-  void _send_status(const std::shared_ptr<SIPMessage>& request, uint16_t code, const std::string& reason);
+  void _send_status(const std::shared_ptr<SIPMessage>& request, uint16_t code, const std::string& reason, std::uint32_t retry_after = 0);
 
   std::shared_ptr<loggers::Logger> _logger;
 
