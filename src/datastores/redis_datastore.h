@@ -87,6 +87,8 @@ class RedisDatastore : public Datastore {
   void trunk_update(plugins::Executor on, std::shared_ptr<types::Trunk> trunk, plugins::StatusHandler handler) override;
   void trunk_delete(plugins::Executor on, std::string name, plugins::StatusHandler handler) override;
   void trunk_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::Trunk>>> handler) override;
+  void trunk_status_set(plugins::Executor on, std::string name, boost::json::object status, plugins::StatusHandler handler) override;
+  void trunk_status_get(plugins::Executor on, std::string name, plugins::Handler<std::optional<boost::json::object>> handler) override;
 
   void lease(plugins::Executor on, std::string name, std::string holder, std::uint32_t seconds, plugins::Handler<bool> handler) override;
   void counter_add(plugins::Executor on, std::string name, std::int64_t delta, std::uint32_t seconds, plugins::Handler<std::int64_t> handler) override;
@@ -172,6 +174,7 @@ class RedisDatastore : public Datastore {
   static std::string _nonce_key(const std::string& nonce);
   static std::string _user_key(const std::string& username);
   static std::string _trunk_key(const std::string& name);
+  static std::string _trunk_status_key(const std::string& name);
   static std::string _session_key(const std::string& token_hash);
   static std::string _call_key(const std::string& call_id);
   static std::shared_ptr<types::Subscriber> _parse_subscriber(const std::string& value, std::shared_ptr<types::SIPIdentity> identity);

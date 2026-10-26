@@ -952,3 +952,30 @@ TEST(MemoryDatastoreTest, ASubscriberLearnedOnUpdateFindsTheCall) {
   ASSERT_TRUE(datastore->call_update(make_call("call-1", Call::State::Ringing, "sip:1001@example.com", "sip:1002@example.com")));
   EXPECT_EQ(call_ids(datastore->call_list_for_subscriber("sip:1002@example.com")), (std::vector<std::string>{"call-1"}));
 }
+
+// A trunk's registration status is a record beside the trunk, replaced whole, read back as written, and gone
+// with the trunk.
+TEST(MemoryDatastoreTest, ATrunksStatusIsARecordThatGoesWithTheTrunk) {
+  auto datastore = make_datastore();
+  auto trunk = std::make_shared<types::Trunk>();
+  trunk->name = "Acme";
+  trunk->uri = "sip:sip.acme.example";
+  ASSERT_TRUE(datastore->trunk_create(trunk));
+
+  EXPECT_FALSE(datastore->trunk_status_get("acme").has_value());
+
+  boost::json::object status;
+  status["node"] = "sip-0001";
+  status["state"] = "registered";
+  ASSERT_TRUE(datastore->trunk_status_set("ACME", status));
+  auto found = datastore->trunk_status_get("acme");
+  ASSERT_TRUE(found.has_value());
+  EXPECT_EQ(found->at("node").as_string(), "sip-0001");
+
+  status["state"] = "failed";
+  ASSERT_TRUE(datastore->trunk_status_set("acme", status));
+  EXPECT_EQ(datastore->trunk_status_get("acme")->at("state").as_string(), "failed");
+
+  ASSERT_TRUE(datastore->trunk_delete("acme"));
+  EXPECT_FALSE(datastore->trunk_status_get("acme").has_value());
+}

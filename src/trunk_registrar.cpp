@@ -75,31 +75,6 @@ bool stale(const types::Authorization& challenge) {
 
 }  // namespace
 
-void TrunkStatuses::observe(const std::string& topic, const std::string& message) {
-  // trunks/<name>/status
-  const auto first = topic.find('/');
-  const auto last = topic.rfind('/');
-  if (first == std::string::npos || last == first) return;
-  const auto name = topic.substr(first + 1, last - first - 1);
-
-  boost::system::error_code error;
-  auto parsed = boost::json::parse(message, error);
-
-  std::lock_guard<std::mutex> lock(_mutex);
-  if (error || !parsed.is_object()) {
-    _reports.erase(name);
-    return;
-  }
-  _reports[name] = parsed.as_object();
-}
-
-std::optional<boost::json::object> TrunkStatuses::find(const std::string& name) const {
-  std::lock_guard<std::mutex> lock(_mutex);
-  const auto found = _reports.find(types::Trunk::normalise(name));
-  if (found == _reports.end()) return std::nullopt;
-  return found->second;
-}
-
 TrunkRegistrar::TrunkRegistrar(std::shared_ptr<loggers::Logger> logger, std::weak_ptr<Core> core)
     : _logger(std::make_shared<loggers::LoggerScoped>("trunks", std::move(logger))), _core(std::move(core)) {}
 
@@ -254,6 +229,9 @@ void TrunkRegistrar::_keep(const types::Trunk& trunk) {
   _registrations.emplace(key, std::move(registration));
 
   _logger->info("Registering to trunk " + trunk.name + " at " + trunk.uri);
+
+  // Recorded before the first REGISTER goes, so the API says which node is trying.
+  _publish(key);
   _register(key);
 }
 
@@ -513,7 +491,15 @@ void TrunkRegistrar::_publish(const std::string& name) {
   report["detail"] = status.detail;
   report["expires_at"] = static_cast<std::int64_t>(status.expires_at);
   report["at"] = Util::get_zulu_time();
-  core->events->publish_state(events::topics::trunk_status(found->second.trunk.key()), boost::json::serialize(report));
+
+  // The record is what the API on any node reads; the retained topic is the signal that it changed.
+  const auto key = found->second.trunk.key();
+  const auto topic = events::topics::trunk_status(key);
+  auto self = shared_from_this();
+  core->datastore->trunk_status_set(core->strand(), key, report, [this, self, topic, report](plugins::Status written) {
+    if (!written.ok && written.error.find("does not support") == std::string::npos) _logger->warn("Cannot keep the trunk's status - " + written.error);
+    if (auto core = _core.lock(); core && core->events) core->events->publish_state(topic, boost::json::serialize(report));
+  });
 }
 
 }  // namespace athenasip

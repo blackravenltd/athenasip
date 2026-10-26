@@ -43,15 +43,22 @@ void TrunksAPI::register_routes(Router& router) {
   router.add(http::verb::delete_, "/api/v1/trunks/{trunk}", {manage_trunks}, [self](RouteContext c) { self->_delete(std::move(c)); });
 }
 
-boost::json::object TrunksAPI::to_json(const types::Trunk& trunk) const {
+boost::json::object TrunksAPI::to_json(const types::Trunk& trunk, const std::optional<boost::json::object>& status) {
   auto out = trunk.to_json();
   out.erase("password");
   out["password_set"] = !trunk.password.empty();
 
   // {node, state, detail, expires_at, at}; null when no node registers to it, or none has said yet.
-  const auto report = trunk.register_enabled && _statuses ? _statuses->find(trunk.name) : std::nullopt;
-  out["registration"] = report ? boost::json::value(*report) : boost::json::value(nullptr);
+  out["registration"] = trunk.register_enabled && status ? boost::json::value(*status) : boost::json::value(nullptr);
   return out;
+}
+
+void TrunksAPI::_shown(std::shared_ptr<types::Trunk> trunk, std::function<void(boost::json::object)> then) {
+  if (!trunk->register_enabled) return then(to_json(*trunk, std::nullopt));
+
+  _datastore->trunk_status_get(_executor, trunk->name, [trunk, then = std::move(then)](plugins::Result<std::optional<boost::json::object>> found) {
+    then(to_json(*trunk, found.ok ? found.value : std::nullopt));
+  });
 }
 
 std::string TrunksAPI::apply(const boost::json::object& body, types::Trunk& trunk, bool creating) {
@@ -134,10 +141,21 @@ void TrunksAPI::_list(RouteContext context) {
       return context.done();
     }
 
-    boost::json::array out;
-    for (const auto& trunk : found.value) out.push_back(self->to_json(*trunk));
-    write_json(context.response, http::status::ok, out);
-    context.done();
+    // One status read per trunk, in order, then the list.
+    auto trunks = std::make_shared<std::vector<std::shared_ptr<types::Trunk>>>(std::move(found.value));
+    auto out = std::make_shared<boost::json::array>();
+    auto next = std::make_shared<std::function<void(std::size_t)>>();
+    *next = [self, context, trunks, out, next](std::size_t index) mutable {
+      if (index >= trunks->size()) {
+        write_json(context.response, http::status::ok, *out);
+        return context.done();
+      }
+      self->_shown((*trunks)[index], [out, next, index](boost::json::object shown) {
+        out->push_back(std::move(shown));
+        (*next)(index + 1);
+      });
+    };
+    (*next)(0);
   });
 }
 
@@ -162,7 +180,7 @@ void TrunksAPI::_create(RouteContext context) {
       return context.done();
     }
     self->_announce(trunk->name);
-    write_json(context.response, http::status::created, self->to_json(*trunk));
+    write_json(context.response, http::status::created, to_json(*trunk, std::nullopt));
     context.done();
   });
 }
@@ -179,8 +197,10 @@ void TrunksAPI::_get(RouteContext context) {
       write_error(context.response, http::status::not_found, "not_found", "no trunk " + name);
       return context.done();
     }
-    write_json(context.response, http::status::ok, self->to_json(*found.value));
-    context.done();
+    self->_shown(found.value, [context](boost::json::object shown) mutable {
+      write_json(context.response, http::status::ok, shown);
+      context.done();
+    });
   });
 }
 
@@ -215,8 +235,10 @@ void TrunksAPI::_update(RouteContext context) {
         return context.done();
       }
       self->_announce(trunk->name);
-      write_json(context.response, http::status::ok, self->to_json(*trunk));
-      context.done();
+      self->_shown(trunk, [context](boost::json::object shown) mutable {
+        write_json(context.response, http::status::ok, shown);
+        context.done();
+      });
     });
   });
 }

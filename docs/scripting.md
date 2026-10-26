@@ -213,7 +213,8 @@ A trunk is a carrier or a PBX, kept over the API (`/api/v1/trunks`, role
 One node of a cluster registers each trunk that asks to be, holding a lease on it in the
 datastore; when that node stops, another takes over within two minutes. What it last
 reported is the trunk's `registration` in the API (`registering`, `registered` or
-`failed`, with the reason), and is published, retained, as `trunks/<name>/status`. A
+`failed`, with the reason), a record in the datastore that any node's API reads, and is
+published, retained, as `trunks/<name>/status` to say it changed. A
 changed trunk is registered again; a removed one, or one no longer registering, is
 unregistered. The API announces each create, change and delete as `trunks/changed`, so
 every node acts within a few seconds; one that misses the message reads the trunks on

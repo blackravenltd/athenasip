@@ -29,24 +29,11 @@ namespace athenasip {
 class Core;
 class Channel;
 
-// What every node has said of the trunks it registers to, from the retained trunks/<name>/status on the bus, for
-// the API to show whichever node holds a trunk. Read from any thread.
-class TrunkStatuses {
- public:
-  void observe(const std::string& topic, const std::string& message);
-
-  // The last report for a trunk, by its name as stored; nothing when no node has reported it.
-  std::optional<boost::json::object> find(const std::string& name) const;
-
- private:
-  mutable std::mutex _mutex;
-  std::map<std::string, boost::json::object> _reports;
-};
-
 // RFC 3261 10 as a client: this node registers to each trunk that asks for it, so the carrier knows where to send
 // calls. One node of a cluster does, by a lease in the datastore; another takes over when the lease lapses. The
 // carrier's challenges are answered with the trunk's credentials, the registration is refreshed before it runs
-// out, and a failure is retried with backoff. Each trunk's state goes on the bus as trunks/<name>/status.
+// out, and a failure is retried with backoff. Each trunk's state is a record in the datastore (trunk_status_set), which
+// the API on any node reads, and goes on the bus as trunks/<name>/status to say it changed.
 class TrunkRegistrar : public std::enable_shared_from_this<TrunkRegistrar> {
  public:
   // How often the trunks are read again, and how long the lease on each is held between readings.

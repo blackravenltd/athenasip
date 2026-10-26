@@ -1154,3 +1154,25 @@ TEST(RedisDatastoreTest, TheDtmfMethodRoundTrips) {
   ASSERT_NE(read, nullptr);
   EXPECT_FALSE(read->dtmf.has_value());
 }
+
+// A trunk's registration status is a record beside the trunk, replaced whole, and gone with the trunk.
+TEST(RedisDatastoreTest, ATrunksStatusIsARecordThatGoesWithTheTrunk) {
+  REQUIRE_REDIS(datastore);
+  auto trunk = std::make_shared<types::Trunk>();
+  trunk->name = "Status" + unique_suffix();
+  trunk->uri = "sip:sip.acme.example";
+  ASSERT_TRUE(datastore->trunk_create(trunk));
+
+  EXPECT_FALSE(datastore->trunk_status_get(trunk->name).has_value());
+
+  boost::json::object status;
+  status["node"] = "sip-0001";
+  status["state"] = "registered";
+  ASSERT_TRUE(datastore->trunk_status_set(trunk->name, status));
+  auto found = datastore->trunk_status_get(Util::to_upper(trunk->name));
+  ASSERT_TRUE(found.has_value());
+  EXPECT_EQ(found->at("node").as_string(), "sip-0001");
+
+  ASSERT_TRUE(datastore->trunk_delete(trunk->name));
+  EXPECT_FALSE(datastore->trunk_status_get(trunk->name).has_value());
+}

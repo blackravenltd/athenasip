@@ -491,9 +491,28 @@ void MemoryDatastore::trunk_delete(plugins::Executor on, std::string name, plugi
   bool deleted = false;
   {
     std::lock_guard<std::mutex> lock(_mutex);
-    deleted = _trunks.erase(types::Trunk::normalise(name)) != 0;
+    const auto key = types::Trunk::normalise(name);
+    deleted = _trunks.erase(key) != 0;
+    _trunk_statuses.erase(key);
   }
   _complete(std::move(on), std::move(handler), _status(deleted, "trunk_delete"));
+}
+
+void MemoryDatastore::trunk_status_set(plugins::Executor on, std::string name, boost::json::object status, plugins::StatusHandler handler) {
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    _trunk_statuses[types::Trunk::normalise(name)] = std::move(status);
+  }
+  _complete(std::move(on), std::move(handler), plugins::Status::success());
+}
+
+void MemoryDatastore::trunk_status_get(plugins::Executor on, std::string name, plugins::Handler<std::optional<boost::json::object>> handler) {
+  std::optional<boost::json::object> found;
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (const auto it = _trunk_statuses.find(types::Trunk::normalise(name)); it != _trunk_statuses.end()) found = it->second;
+  }
+  _complete(std::move(on), std::move(handler), plugins::Result<std::optional<boost::json::object>>::success(std::move(found)));
 }
 
 void MemoryDatastore::trunk_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::Trunk>>> handler) {

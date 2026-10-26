@@ -103,6 +103,15 @@ class SyncDatastore {
         [this](auto on, auto handler) { _store->trunk_list(std::move(on), std::move(handler)); });
   }
 
+  bool trunk_status_set(const std::string& name, boost::json::object status) {
+    return _status([this, name, status](auto on, auto handler) { _store->trunk_status_set(std::move(on), name, status, std::move(handler)); });
+  }
+
+  std::optional<boost::json::object> trunk_status_get(const std::string& name) {
+    return _value<std::optional<boost::json::object>>(
+        [this, name](auto on, auto handler) { _store->trunk_status_get(std::move(on), name, std::move(handler)); });
+  }
+
   bool lease(const std::string& name, const std::string& holder, std::uint32_t seconds) {
     return _value<bool>([this, name, holder, seconds](auto on, auto handler) { _store->lease(std::move(on), name, holder, seconds, std::move(handler)); });
   }

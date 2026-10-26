@@ -548,13 +548,39 @@ void RedisDatastore::trunk_update(plugins::Executor on, std::shared_ptr<types::T
 void RedisDatastore::trunk_delete(plugins::Executor on, std::string name, plugins::StatusHandler handler) {
   const auto normalised = types::Trunk::normalise(name);
 
-  _async_del(_trunk_key(name), [this, on, handler, normalised](RedisError error, std::int64_t removed) mutable {
+  _async_del(_trunk_key(name), [this, on, handler, name, normalised](RedisError error, std::int64_t removed) mutable {
     if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
 
-    _async_srem(_trunk_index_key(), normalised, [this, on, handler, removed](RedisError error, bool) mutable {
+    _async_srem(_trunk_index_key(), normalised, [this, on, handler, name, removed](RedisError error, bool) mutable {
       if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
-      _complete(on, handler, _status(removed > 0, "trunk_delete"));
+
+      // The status goes with the trunk.
+      _async_del(_trunk_status_key(name), [this, on, handler, removed](RedisError error, std::int64_t) mutable {
+        if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
+        _complete(on, handler, _status(removed > 0, "trunk_delete"));
+      });
     });
+  });
+}
+
+void RedisDatastore::trunk_status_set(plugins::Executor on, std::string name, boost::json::object status, plugins::StatusHandler handler) {
+  _async_set(_trunk_status_key(name), boost::json::serialize(status), [this, on, handler](RedisError error, bool) mutable {
+    if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
+    _complete(on, handler, plugins::Status::success());
+  });
+}
+
+void RedisDatastore::trunk_status_get(plugins::Executor on, std::string name, plugins::Handler<std::optional<boost::json::object>> handler) {
+  using Answer = plugins::Result<std::optional<boost::json::object>>;
+
+  _async_get(_trunk_status_key(name), [this, on, handler](RedisError error, std::optional<std::string> value) mutable {
+    if (error) return _complete(on, handler, Answer::failure(error.message()));
+    if (!value) return _complete(on, handler, Answer::success(std::nullopt));
+
+    boost::system::error_code parse_error;
+    const auto parsed = boost::json::parse(*value, parse_error);
+    if (parse_error || !parsed.is_object()) return _complete(on, handler, Answer::success(std::nullopt));
+    _complete(on, handler, Answer::success(parsed.as_object()));
   });
 }
 
@@ -1620,6 +1646,8 @@ std::string RedisDatastore::_session_key(const std::string& token_hash) { return
 std::string RedisDatastore::_user_index_key() { return "athena:index:users"; }
 
 std::string RedisDatastore::_trunk_key(const std::string& name) { return "athena:trunk:" + types::Trunk::normalise(name); }
+
+std::string RedisDatastore::_trunk_status_key(const std::string& name) { return "athena:trunk-status:" + types::Trunk::normalise(name); }
 
 std::string RedisDatastore::_trunk_index_key() { return "athena:index:trunks"; }
 
