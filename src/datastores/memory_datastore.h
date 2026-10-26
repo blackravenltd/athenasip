@@ -59,6 +59,9 @@ class MemoryDatastore : public Datastore {
   void trunk_update(plugins::Executor on, std::shared_ptr<types::Trunk> trunk, plugins::StatusHandler handler) override;
   void trunk_delete(plugins::Executor on, std::string name, plugins::StatusHandler handler) override;
   void trunk_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::Trunk>>> handler) override;
+  void reoffer_record(plugins::Executor on, std::string subscriber, media::Profile rejected, std::optional<media::Profile> took,
+                      plugins::StatusHandler handler) override;
+  void reoffer_list(plugins::Executor on, plugins::Handler<std::vector<media::Reoffer>> handler) override;
   void trunk_status_set(plugins::Executor on, std::string name, boost::json::object status, plugins::StatusHandler handler) override;
   void trunk_status_get(plugins::Executor on, std::string name, plugins::Handler<std::optional<boost::json::object>> handler) override;
 
@@ -165,6 +168,7 @@ class MemoryDatastore : public Datastore {
   std::unordered_map<std::string, std::shared_ptr<types::User>> _users;
   std::map<std::string, types::Trunk> _trunks;
   std::map<std::string, boost::json::object> _trunk_statuses;
+  media::Reoffers _reoffers;
 
   // name -> holder and when the lease lapses.
   std::map<std::string, std::pair<std::string, std::time_t>> _leases;

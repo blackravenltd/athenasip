@@ -27,6 +27,9 @@ struct Reoffer {
   std::optional<Profile> took;
   std::uint64_t count = 0;
   std::time_t last_at = 0;
+
+  // The order records were made in, for listing two from the same second most recent first.
+  std::uint64_t sequence = 0;
 };
 
 // Re-offers this node has made, kept for the operator and never used for routing. Per node, in memory, and bounded
@@ -42,6 +45,7 @@ class Reoffers {
     entry.took = took;
     entry.count++;
     entry.last_at = now;
+    entry.sequence = ++_sequence;
 
     if (_entries.size() <= kLimit) return;
 
@@ -54,12 +58,16 @@ class Reoffers {
     std::vector<Reoffer> out;
     out.reserve(_entries.size());
     for (const auto& [key, entry] : _entries) out.push_back(entry);
-    std::stable_sort(out.begin(), out.end(), [](const Reoffer& a, const Reoffer& b) { return a.last_at > b.last_at; });
+    std::stable_sort(out.begin(), out.end(), [](const Reoffer& a, const Reoffer& b) {
+      if (a.last_at != b.last_at) return a.last_at > b.last_at;
+      return a.sequence > b.sequence;
+    });
     return out;
   }
 
  private:
   std::map<std::pair<std::string, Profile>, Reoffer> _entries;
+  std::uint64_t _sequence = 0;
 };
 
 }  // namespace athenasip::media

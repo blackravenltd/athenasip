@@ -16,6 +16,7 @@
 
 #include "../call.h"
 #include "../loggers/logger.h"
+#include "../media/reoffers.h"
 #include "../plugins/plugin.h"
 #include "../plugins/plugin_registry.h"
 #include "../types/location.h"
@@ -146,6 +147,23 @@ class Datastore : public plugins::Plugin {
 
   virtual void trunk_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::Trunk>>> handler) {
     _unsupported<std::vector<std::shared_ptr<types::Trunk>>>(std::move(on), std::move(handler), "trunk_list");
+  }
+
+  // The callees that refused the media profile they were first offered and took the other (media::Reoffer): one
+  // record per subscriber and refused profile, its count raised and its time moved on each report, kept for a
+  // while (thirty days is the measure) so an operator on any node sees which subscribers want a media_profile set.
+  // Optional; a node without it keeps none.
+  virtual void reoffer_record(plugins::Executor on, std::string subscriber, media::Profile rejected, std::optional<media::Profile> took,
+                              plugins::StatusHandler handler) {
+    (void)subscriber;
+    (void)rejected;
+    (void)took;
+    _unsupported(std::move(on), std::move(handler), "reoffer_record");
+  }
+
+  // Most recent first.
+  virtual void reoffer_list(plugins::Executor on, plugins::Handler<std::vector<media::Reoffer>> handler) {
+    _unsupported<std::vector<media::Reoffer>>(std::move(on), std::move(handler), "reoffer_list");
   }
 
   // What the node registering a trunk last reported of it: {node, state, detail, expires_at, at}, written by the

@@ -1176,3 +1176,29 @@ TEST(RedisDatastoreTest, ATrunksStatusIsARecordThatGoesWithTheTrunk) {
   ASSERT_TRUE(datastore->trunk_delete(trunk->name));
   EXPECT_FALSE(datastore->trunk_status_get(trunk->name).has_value());
 }
+
+// A re-offer is one record per subscriber and refused profile, counted up on each report, listed most recent first.
+TEST(RedisDatastoreTest, ReoffersAreCountedPerSubscriberAndListedMostRecentFirst) {
+  REQUIRE_REDIS(datastore);
+  const auto phone = "sip:phone-" + unique_suffix() + "@example.com";
+  const auto fax = "sip:fax-" + unique_suffix() + "@example.com";
+
+  ASSERT_TRUE(datastore->reoffer_record(fax, media::Profile::WebRtc, std::nullopt));
+  ASSERT_TRUE(datastore->reoffer_record(phone, media::Profile::PlainRtp, media::Profile::WebRtc));
+  ASSERT_TRUE(datastore->reoffer_record(phone, media::Profile::PlainRtp, media::Profile::WebRtc));
+
+  const auto listed = datastore->reoffer_list();
+  const media::Reoffer* found_phone = nullptr;
+  const media::Reoffer* found_fax = nullptr;
+  for (const auto& entry : listed) {
+    if (entry.subscriber == phone) found_phone = &entry;
+    if (entry.subscriber == fax) found_fax = &entry;
+  }
+  ASSERT_NE(found_phone, nullptr);
+  ASSERT_NE(found_fax, nullptr);
+  EXPECT_EQ(found_phone->count, 2u);
+  EXPECT_EQ(found_phone->rejected, media::Profile::PlainRtp);
+  EXPECT_EQ(found_phone->took, media::Profile::WebRtc);
+  EXPECT_EQ(found_fax->count, 1u);
+  EXPECT_FALSE(found_fax->took.has_value());
+}

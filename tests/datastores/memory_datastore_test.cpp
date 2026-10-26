@@ -979,3 +979,21 @@ TEST(MemoryDatastoreTest, ATrunksStatusIsARecordThatGoesWithTheTrunk) {
   ASSERT_TRUE(datastore->trunk_delete("acme"));
   EXPECT_FALSE(datastore->trunk_status_get("acme").has_value());
 }
+
+// A re-offer is one record per subscriber and refused profile, counted up on each report, listed most recent first.
+TEST(MemoryDatastoreTest, ReoffersAreCountedPerSubscriberAndListedMostRecentFirst) {
+  auto datastore = make_datastore();
+  EXPECT_TRUE(datastore->reoffer_list().empty());
+
+  ASSERT_TRUE(datastore->reoffer_record("sip:fax@example.com", media::Profile::WebRtc, std::nullopt));
+  ASSERT_TRUE(datastore->reoffer_record("sip:phone@example.com", media::Profile::PlainRtp, media::Profile::WebRtc));
+  ASSERT_TRUE(datastore->reoffer_record("sip:phone@example.com", media::Profile::PlainRtp, media::Profile::WebRtc));
+
+  const auto listed = datastore->reoffer_list();
+  ASSERT_EQ(listed.size(), 2u);
+  EXPECT_EQ(listed[0].subscriber, "sip:phone@example.com");
+  EXPECT_EQ(listed[0].count, 2u);
+  EXPECT_EQ(listed[0].took, media::Profile::WebRtc);
+  EXPECT_EQ(listed[1].subscriber, "sip:fax@example.com");
+  EXPECT_FALSE(listed[1].took.has_value());
+}

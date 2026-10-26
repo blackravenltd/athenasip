@@ -86,8 +86,10 @@ The first of these that says anything decides:
 
 When a callee refuses the engine's offer with 488, the node offers the other profile once:
 WebRTC for plain RTP, or the reverse. Under `mirror`, "the other" is the other of what the
-caller offered. Nothing is remembered: `GET /api/v1/media/reoffers` lists the subscribers
-that needed the second offer and the `media_profile` that would avoid it.
+caller offered. The node does not change the subscriber's setting itself: it records the
+re-offer in the datastore, and `GET /api/v1/media/reoffers` on any node lists the subscribers
+that needed the second offer in the last thirty days and the `media_profile` that would
+avoid it.
 
 The builtin relay produces plain RTP only, so behind it there is no second offer and the
 488 goes back to the caller. `webrtc`, `srtp` and browser-to-phone conversion need

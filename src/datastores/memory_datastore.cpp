@@ -498,6 +498,24 @@ void MemoryDatastore::trunk_delete(plugins::Executor on, std::string name, plugi
   _complete(std::move(on), std::move(handler), _status(deleted, "trunk_delete"));
 }
 
+void MemoryDatastore::reoffer_record(plugins::Executor on, std::string subscriber, media::Profile rejected, std::optional<media::Profile> took,
+                                     plugins::StatusHandler handler) {
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    _reoffers.record(subscriber, rejected, took);
+  }
+  _complete(std::move(on), std::move(handler), plugins::Status::success());
+}
+
+void MemoryDatastore::reoffer_list(plugins::Executor on, plugins::Handler<std::vector<media::Reoffer>> handler) {
+  std::vector<media::Reoffer> out;
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    out = _reoffers.list();
+  }
+  _complete(std::move(on), std::move(handler), plugins::Result<std::vector<media::Reoffer>>::success(std::move(out)));
+}
+
 void MemoryDatastore::trunk_status_set(plugins::Executor on, std::string name, boost::json::object status, plugins::StatusHandler handler) {
   {
     std::lock_guard<std::mutex> lock(_mutex);

@@ -425,10 +425,15 @@ void CallsAPI::_reoffers(RouteContext context) {
   }
 
   auto self = shared_from_this();
-  core->post([self, core, context]() mutable {
-    boost::json::array out;
+  core->datastore->reoffer_list(_executor, [self, context](plugins::Result<std::vector<media::Reoffer>> found) mutable {
+    // A store that keeps none has none to list.
+    if (!found.ok && found.error.find("does not support") == std::string::npos) {
+      write_error(context.response, http::status::internal_server_error, "datastore_error", found.error);
+      return context.done();
+    }
 
-    for (const auto& reoffer : core->reoffers().list()) {
+    boost::json::array out;
+    for (const auto& reoffer : found.value) {
       boost::json::object entry;
       entry["subscriber"] = reoffer.subscriber;
       entry["rejected"] = setting_json(reoffer.rejected);
@@ -439,10 +444,8 @@ void CallsAPI::_reoffers(RouteContext context) {
       out.push_back(std::move(entry));
     }
 
-    boost::asio::post(self->_executor, [context, out = std::move(out)]() mutable {
-      write_json(context.response, http::status::ok, out);
-      context.done();
-    });
+    write_json(context.response, http::status::ok, out);
+    context.done();
   });
 }
 

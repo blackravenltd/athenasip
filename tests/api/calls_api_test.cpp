@@ -308,11 +308,10 @@ TEST(CallsApiTest, NoMediaEngineIsSaidPlainly) {
 // value the subscriber API takes.
 TEST(CallsApiTest, ReoffersSayWhichSubscribersNeededTheOtherProfile) {
   CallsFixture f;
-  f.on_strand([&]() {
-    f.core->reoffers().record("sip:phone@example.com", media::Profile::PlainRtp, media::Profile::WebRtc, 1000);
-    f.core->reoffers().record("sip:phone@example.com", media::Profile::PlainRtp, media::Profile::WebRtc, 2000);
-    f.core->reoffers().record("sip:fax@example.com", media::Profile::WebRtc, std::nullopt, 1500);
-  });
+  // Recorded in the datastore, from whichever node saw the re-offer; the fax first, so the phone is more recent.
+  ASSERT_TRUE(f.store->reoffer_record("sip:fax@example.com", media::Profile::WebRtc, std::nullopt));
+  ASSERT_TRUE(f.store->reoffer_record("sip:phone@example.com", media::Profile::PlainRtp, media::Profile::WebRtc));
+  ASSERT_TRUE(f.store->reoffer_record("sip:phone@example.com", media::Profile::PlainRtp, media::Profile::WebRtc));
 
   const auto response = f.get("/api/v1/media/reoffers");
   ASSERT_EQ(response.status, 200u) << response.body;

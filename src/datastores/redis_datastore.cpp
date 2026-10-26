@@ -563,6 +563,84 @@ void RedisDatastore::trunk_delete(plugins::Executor on, std::string name, plugin
   });
 }
 
+namespace {
+
+// Thirty days: long enough to notice a phone that keeps needing the other profile, short enough that a phone
+// replaced is forgotten.
+constexpr std::chrono::seconds kReofferRetention{30 * 24 * 3600};
+
+}  // namespace
+
+// Read, raised, written back with the retention renewed. Two nodes reporting the same subscriber at once may lose
+// one count to the other, which the report can bear.
+void RedisDatastore::reoffer_record(plugins::Executor on, std::string subscriber, media::Profile rejected, std::optional<media::Profile> took,
+                                    plugins::StatusHandler handler) {
+  const std::string member = subscriber + "|" + media::setting_name(rejected);
+  const auto key = _reoffer_key(member);
+
+  _async_get(key, [this, on, handler, key, member, subscriber, rejected, took](RedisError error, std::optional<std::string> value) mutable {
+    if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
+
+    media::Reoffer entry;
+    entry.subscriber = subscriber;
+    entry.rejected = rejected;
+    if (value) {
+      boost::system::error_code parse_error;
+      const auto parsed = boost::json::parse(*value, parse_error);
+      if (!parse_error && parsed.is_object()) entry.count = json_uint64(parsed.as_object(), "count");
+    }
+    entry.took = took;
+    entry.count++;
+    entry.last_at = std::time(nullptr);
+
+    boost::json::object obj;
+    obj["subscriber"] = entry.subscriber;
+    obj["rejected"] = media::setting_name(entry.rejected);
+    obj["took"] = entry.took ? boost::json::value(media::setting_name(*entry.took)) : boost::json::value(nullptr);
+    obj["count"] = entry.count;
+    obj["last_at"] = static_cast<std::int64_t>(entry.last_at);
+
+    _async_set_ex(key, boost::json::serialize(obj), kReofferRetention, [this, on, handler, member](RedisError error, bool) mutable {
+      if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
+      _async_sadd(_reoffer_index_key(), member, [this, on, handler](RedisError error, bool) mutable {
+        if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
+        _complete(on, handler, plugins::Status::success());
+      });
+    });
+  });
+}
+
+void RedisDatastore::reoffer_list(plugins::Executor on, plugins::Handler<std::vector<media::Reoffer>> handler) {
+  using Answer = plugins::Result<std::vector<media::Reoffer>>;
+
+  _read_index(
+      _reoffer_index_key(), [](const std::string& member) { return _reoffer_key(member); },
+      [this, on, handler](RedisError error, std::vector<std::pair<std::string, std::string>> records) mutable {
+        if (error) return _complete(on, handler, Answer::failure(error.message()));
+
+        std::vector<media::Reoffer> out;
+        for (const auto& [member, value] : records) {
+          boost::system::error_code parse_error;
+          const auto parsed = boost::json::parse(value, parse_error);
+          if (parse_error || !parsed.is_object()) continue;
+          const auto& obj = parsed.as_object();
+
+          media::Reoffer entry;
+          entry.subscriber = json_string(obj, "subscriber");
+          const auto rejected = media::parse_setting(json_string(obj, "rejected"));
+          if (!rejected) continue;
+          entry.rejected = *rejected;
+          if (const auto* took = obj.if_contains("took"); took != nullptr && took->is_string()) entry.took = media::parse_setting(std::string(took->as_string()));
+          entry.count = json_uint64(obj, "count");
+          entry.last_at = static_cast<std::time_t>(json_uint64(obj, "last_at"));
+          out.push_back(std::move(entry));
+        }
+
+        std::stable_sort(out.begin(), out.end(), [](const media::Reoffer& a, const media::Reoffer& b) { return a.last_at > b.last_at; });
+        _complete(on, handler, Answer::success(std::move(out)));
+      });
+}
+
 void RedisDatastore::trunk_status_set(plugins::Executor on, std::string name, boost::json::object status, plugins::StatusHandler handler) {
   _async_set(_trunk_status_key(name), boost::json::serialize(status), [this, on, handler](RedisError error, bool) mutable {
     if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
@@ -1648,6 +1726,10 @@ std::string RedisDatastore::_user_index_key() { return "athena:index:users"; }
 std::string RedisDatastore::_trunk_key(const std::string& name) { return "athena:trunk:" + types::Trunk::normalise(name); }
 
 std::string RedisDatastore::_trunk_status_key(const std::string& name) { return "athena:trunk-status:" + types::Trunk::normalise(name); }
+
+std::string RedisDatastore::_reoffer_key(const std::string& member) { return "athena:reoffer:" + member; }
+
+std::string RedisDatastore::_reoffer_index_key() { return "athena:index:reoffers"; }
 
 std::string RedisDatastore::_trunk_index_key() { return "athena:index:trunks"; }
 

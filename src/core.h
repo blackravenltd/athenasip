@@ -36,7 +36,6 @@
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
 #include "media/media_engine.h"
-#include "media/reoffers.h"
 #include "node_directory.h"
 #include "plugins/plugin.h"
 #include "policy/policy.h"
@@ -145,7 +144,6 @@ class Core : public std::enable_shared_from_this<Core> {
   const FlowTokens& flow_tokens() const { return _flow_tokens; }
 
   // The subscribers this node has had to re-offer in the other media profile.
-  media::Reoffers& reoffers() { return _reoffers; }
 
   // The RFC 3263 server locator. Built on first use from /etc/resolv.conf unless one is set.
   std::shared_ptr<dns::SipLocator> locator();
@@ -351,7 +349,6 @@ class Core : public std::enable_shared_from_this<Core> {
   std::set<std::string> _local_addresses;
 
   FlowTokens _flow_tokens;
-  media::Reoffers _reoffers;
 
   std::vector<std::shared_ptr<Server>> _servers;
 

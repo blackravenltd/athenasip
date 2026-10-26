@@ -103,6 +103,14 @@ class SyncDatastore {
         [this](auto on, auto handler) { _store->trunk_list(std::move(on), std::move(handler)); });
   }
 
+  bool reoffer_record(const std::string& subscriber, athenasip::media::Profile rejected, std::optional<athenasip::media::Profile> took) {
+    return _status([this, subscriber, rejected, took](auto on, auto handler) { _store->reoffer_record(std::move(on), subscriber, rejected, took, std::move(handler)); });
+  }
+
+  std::vector<athenasip::media::Reoffer> reoffer_list() {
+    return _value<std::vector<athenasip::media::Reoffer>>([this](auto on, auto handler) { _store->reoffer_list(std::move(on), std::move(handler)); });
+  }
+
   bool trunk_status_set(const std::string& name, boost::json::object status) {
     return _status([this, name, status](auto on, auto handler) { _store->trunk_status_set(std::move(on), name, status, std::move(handler)); });
   }

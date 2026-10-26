@@ -135,6 +135,9 @@ is never on the call path, so callers do not wait on it. Use
   the matching `*_update` fails if it does not. The API tells "already exists" from
   "not found" by which failed.
 - `session_delete` succeeds whether or not the hash was held.
+- `reoffer_record` and `reoffer_list` keep which subscribers refused the media profile they
+  were first offered, one record per subscriber and profile with a count, for about thirty
+  days; `GET /api/v1/media/reoffers` reads them on any node. Optional.
 - `trunk_status_set` and `trunk_status_get` keep what the node registering a trunk last
   reported of it, one record per trunk, replaced whole and deleted with the trunk; the
   API on any node reads it. Optional, as the `trunk_*` operations are.

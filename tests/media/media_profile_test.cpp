@@ -219,7 +219,8 @@ struct ProfileFixture : ProxyFixture {
   }
 
   std::vector<media::Reoffer> reoffers() {
-    return on_strand([this]() { return core->reoffers().list(); });
+    settle();
+    return store->reoffer_list();
   }
 
   // A mid-call re-offer (hold, resume) sent by the end that answered.
