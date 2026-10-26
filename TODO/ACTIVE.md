@@ -412,48 +412,16 @@ none of them is mistaken for compliance. **Re-checked against the tree on 2026-1
 
 ## Next
 
-Nothing here waits on a device, a carrier, Tom or another repository. In order. The first
-group is taken ahead of DTMF (Milestone 3) and of the rest of Milestone 7 because each item
-is a defect in a feature that has shipped, found by a real carrier, and small: a phone that
-answers the carrier's keepalive every minute is wrong today, where DTMF conversion and
-conferencing are not yet promised.
+Nothing here waits on a device, a carrier, Tom or another repository. In order. The six
+trunk findings from the 2talk run went first (2026-10-26, `COMPLETED.md`), ahead of DTMF and
+the rest of Milestone 7, because each was a defect in a shipped feature found by a real
+carrier, and small.
 
-### Trunks, what running against 2talk found (Milestone 5)
-
-The run itself and the 487 it found are in `COMPLETED.md` (2026-10-12). Most important
-first, each checked still open on 2026-10-26:
-
-- [ ] **A trunk changed over the API registers on the registrar's next scan**, up to 30 s
-      later (`TrunkRegistrar::kScan`, `src/trunk_registrar.h:52`); the guide says a few
-      seconds. `TrunksAPI` (`src/api/trunks_api.cpp`) writes the datastore and never reaches
-      the registrar, which runs on the strand with a public `scan()`
-      (`src/trunk_registrar.h:73`). Creating, changing or deleting a trunk should prompt a
-      scan on every node, not only this one: the API runs on its own executor, and the
-      other nodes only see the record. A bus message is the signal (never the state), and
-      a node that misses it still scans at `kScan`.
-- [ ] **The node answers what the carrier sends to the Contact it registered.** A carrier's
-      OPTIONS keepalives and MWI NOTIFYs to the trunk's registered Contact are routed as
-      calls in, by the number in the Request-URI, so the subscriber's phone answers them
-      every minute (480 while it is not registered). `Proxy::_proceed`'s caller answers an
-      OPTIONS only for a URI with no user (`src/proxy.cpp:226`); a Request-URI that is the
-      Contact the trunk registrar wrote is this node too. An OPTIONS is answered; a NOTIFY
-      for `message-summary` to that Contact is forwarded to the subscriber the trunk's
-      script says it is for, or 200'd and dropped when there is none (no MWI, Decisions
-      2026-10-11).
-- [ ] **Service codes** (`*55`, `*NN`) are not numbers to `athenasip.trunks`, so they need
-      a script of one's own (gbni-1's `main.lua`). A trunk attribute naming the patterns a
-      trunk takes besides E.164 prefixes, so a deployment with a carrier's voicemail code
-      writes no Lua.
-- [ ] **The sipp CANCEL scenarios assert the 487's CSeq.** Why they never caught the 487
-      that named the CANCEL: `cancel_after_180.xml:148` is `<recv response="487"/>` with no
-      check, and sipp matches a response to the call, not to the CSeq method. Add the
-      check there and in the cluster scenario, watch it pass, and the regression is held.
-- [ ] **`--check` behind a router that hairpins**: STUN to the node's own public name came
-      back from the router's inside address (10.44.1.1), so the check fails the public
-      address. `docs/troubleshooting.md` names the cause; the check should recognise a
-      private `discovered` address and say that rather than fail it.
-- [ ] **The re-offer warning names the subscriber that refused the offer**, not the
-      Request-URI the carrier dialled (`Proxy::_report_reoffer`, `src/proxy.cpp:1477`).
+**This machine** (2026-10-26) builds the node with Lua and nghttp2 from `external/`
+(gitignored, built from source: `cmake --preset tests -DCMAKE_PREFIX_PATH=$PWD/external/prefix`
+with `PKG_CONFIG_PATH=$PWD/external/prefix/lib/pkgconfig`) and runs the unit suite, with the
+Redis, MQTT and resolver tests skipped. It has no Docker, so no sipp harness, no cluster
+and no interop fixture run here; what they alone would prove is under Waiting on something.
 
 ### DTMF, every flavour (Milestone 3, decided 2026-10-12)
 
@@ -515,6 +483,11 @@ from bindings in the store), channels and flow tokens (transport), the live `Cal
       candidate for a seventh hook, after the six (`authorize`, `route`, `on_failure`,
       `register`, `init`, `watch`) have been used.
 - [ ] An arm64 Docker image beside the amd64 one, and the SDK headers in the packages.
+- [ ] **A Request-URI whose host differs in case from the realm's name does not find the
+      subscriber**, it appears: an INVITE to `sip:bob@EXAMPLE.COM` in a unit test reached
+      nobody (2026-10-26, while writing `MediaProfileTest.TheReportNamesTheSubscriberNotWhatWasDialled`;
+      not looked into further). RFC 3261 19.1.4 compares hosts case-insensitively. Confirm
+      with a test from the RFC, then fix.
 
 ### Milestone 7, the rest - conferencing and the web client
 
@@ -569,6 +542,13 @@ Each with what it waits on. None is forgotten; none can be worked here today.
       console).
 - [ ] A client generated from the OpenAPI document in place of the hand-written one; every
       operation in `docs/api/openapi.yaml` carries an `operationId` for it.
+
+**Docker on this machine** (the sipp harnesses, Redis and MQTT):
+
+- [ ] Everything changed since `0.12.0` run through `docs/testing.md`'s Before a release:
+      the CANCEL scenarios now assert the 487's CSeq (`cancel_after_180.xml`, one node and
+      `across-cancel-ringing`), which only sipp proves; the trunk harness against the
+      `trunks/changed` scan and the OPTIONS answer; the Redis and MQTT unit tests.
 
 **A reproduction:**
 

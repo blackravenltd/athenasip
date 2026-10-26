@@ -3473,3 +3473,42 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       The `CLAUDE.md` the plan and `docs/design/presence.md` cited for the sanitizer and
       test-first rules has never been in the tree: they now cite `docs/testing.md` and
       `CONTRIBUTING.md`, which say the same.
+
+### Trunks, what running against 2talk found (2026-10-26)
+
+The six findings of the 2026-10-12 run, each with a unit test watched failing first. The
+suite 1536 ran, 1471 passed, 65 skipped (Redis, MQTT and the resolver are not on this
+machine); the sipp harnesses wait on Docker (`ACTIVE.md`, Waiting on something).
+
+- [x] **A trunk changed over the API is read at once.** `TrunksAPI` announces each create,
+      change and delete as `trunks/changed` (the trunk's name; `docs/events.md`), and every
+      node's `TrunkRegistrar` listens from `start()` and scans on the strand when it hears it,
+      the scan it prompts standing in for the one that was due. A node that misses the message
+      still scans at `kScan`. `TrunkRegistrarTest.ATrunkChangedOnTheBusIsReadAtOnce`,
+      `TrunksApiTest.AChangeIsAnnouncedOnTheBus`; the quick start says a few seconds again.
+- [x] **An OPTIONS to the Contact the node registered is answered by the node** (RFC 3261
+      11.2): `TrunkRegistrar::registered_contact(user)` says whether a user part is a Contact
+      this node registers, and the proxy answers an OPTIONS for it at this node's address
+      rather than routing it in by the number, so the subscriber's phone no longer answers the
+      carrier's keepalive every minute. A NOTIFY there, a voicemail's `message-summary`, is
+      still routed in by the number: that is the phone's message-waiting light, and nothing
+      stores voicemail here (Decisions, 2026-10-11).
+      `ProxyTrunkTest.AnOptionsToTheContactRegisteredToTheCarrierIsAnsweredByThisNode`.
+- [x] **Service codes are a trunk attribute**: `codes`, a list such as `["*55", "*XX"]`, with
+      `X` any digit, `N` 2 to 9 and `Z` 1 to 9 as a dialplan writes them. `athenasip.trunks`
+      sends a code out, as dialled, by every trunk whose `codes` match, lower priority first;
+      gbni-1's `main.lua` lines for `*55` are no longer needed.
+      `TrunksScriptTest.AServiceCodeGoesOutByTheTrunkThatListsIt`.
+- [x] **Why the sipp CANCEL scenarios never caught the 487's CSeq**: `cancel_after_180.xml`
+      received the 487 with no check, and sipp matches a response to the call, not to the
+      CSeq method. It now asserts `CSeq: 2 INVITE` on the 487, on one node and across two
+      (`across-cancel-ringing` runs the same file). Not yet run here: no Docker.
+- [x] **`--check` behind a router that hairpins**: a STUN answer naming a private address is
+      reported as the server having been answered from inside the network, with the public
+      address unverified, instead of failing it.
+      `CliCheckTest.APrivateAddressFromTheStunServerIsAHairpinNotAFailure`.
+- [x] **The re-offer report names the subscriber** whose binding refused the offer
+      (`Target.subscriber`), not the Request-URI the carrier dialled; the Request-URI only when
+      the target is nobody's binding. `MediaProfileTest.TheReportNamesTheSubscriberNotWhatWasDialled`.
+- [x] **`src/headers/uint_header.h` includes `<cstdint>`**: GCC 16 with Boost 1.92 no longer
+      brings it in transitively, and the tree did not build on this machine without it.
