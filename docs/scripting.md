@@ -321,6 +321,7 @@ and a trunk for a UK carrier, created with `POST /api/v1/trunks`, looks like thi
 | `numbers` | The numbers it brings in, each to an address of record |
 | `default` | Where a number in no list goes; without it such a call is refused |
 | `codes` | Service codes it takes, sent as dialled: `["*55", "*XX"]`. `X` is any digit, `N` 2 to 9, `Z` 1 to 9, as a dialplan writes them. A carrier's voicemail (`*55` at 2talk) is one. |
+| `focus` | The trunk is a conference focus (RFC 4579): `{"prefix": "conf-", "realms": ["example.com"]}`. A request to a URI whose user part starts with the prefix, in one of the realms (any when none is named), goes to the trunk with the room as the user part, whatever the method; a REGISTER for a room is refused 403. `athenasip.standard` and `builtin://` do this alike, so it needs no script ([Conferencing](design/conferencing.md)). |
 
 What it does:
 

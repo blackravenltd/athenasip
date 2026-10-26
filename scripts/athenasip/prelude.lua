@@ -61,17 +61,19 @@ end
 function a.route.uri(uri, options)
   check(uri ~= nil, "route.uri: a URI, or its text")
   options = options or {}
-  return {target = "uri", uri = uri, next_hop = options.next_hop, trunk = options.trunk, ring_timeout = options.ring_timeout, dtmf = options.dtmf}
+  return {target = "uri", uri = uri, next_hop = options.next_hop, trunk = options.trunk, ring_timeout = options.ring_timeout, dtmf = options.dtmf,
+          focus = options.focus}
 end
 
 -- Out by a trunk: the trunk's URI with options.user (the number dialled) as its user part, sent to its outbound
--- proxy when it has one.
+-- proxy when it has one. options.focus: the conference URI as dialled, when the trunk is its focus (RFC 4579).
 function a.route.trunk(trunk, options)
   check(type(trunk) == "userdata" and a.is_trunk(trunk), "route.trunk: a trunk from athenasip.store")
   options = options or {}
   local uri = trunk.uri
   if options.user then uri = uri:with{user = options.user} end
-  return {target = "uri", uri = uri, next_hop = trunk.proxy, trunk = trunk.name, ring_timeout = options.ring_timeout, dtmf = options.dtmf}
+  return {target = "uri", uri = uri, next_hop = trunk.proxy, trunk = trunk.name, ring_timeout = options.ring_timeout, dtmf = options.dtmf,
+          focus = options.focus}
 end
 
 -- The targets, tried in turn. options.media: {media_anchor =, media_profile =}, as athenasip.config.behaviour and

@@ -73,8 +73,13 @@ struct TrunksScriptFixture : CoreFixture {
 
   std::shared_ptr<policy::RequestView> invite(const std::string& uri, const std::string& from, const std::shared_ptr<Channel>& over,
                                               const std::string& to = "") {
-    std::string raw = "INVITE " + uri + " SIP/2.0\r\nVia: SIP/2.0/UDP 192.0.2.99;branch=z9hG4bK-t\r\n";
-    raw += "From: <" + from + ">;tag=f\r\nTo: <" + (to.empty() ? uri : to) + ">\r\nCall-ID: trunks\r\nCSeq: 1 INVITE\r\n";
+    return request_of("INVITE", uri, from, over, to);
+  }
+
+  std::shared_ptr<policy::RequestView> request_of(const std::string& method, const std::string& uri, const std::string& from,
+                                                  const std::shared_ptr<Channel>& over, const std::string& to = "") {
+    std::string raw = method + " " + uri + " SIP/2.0\r\nVia: SIP/2.0/UDP 192.0.2.99;branch=z9hG4bK-t\r\n";
+    raw += "From: <" + from + ">;tag=f\r\nTo: <" + (to.empty() ? uri : to) + ">\r\nCall-ID: trunks\r\nCSeq: 1 " + method + "\r\n";
     auto view = std::make_shared<policy::RequestView>();
     view->message = std::make_shared<SIPMessage>();
     view->message->header = std::make_shared<SIPHeader>(raw);
@@ -88,6 +93,11 @@ struct TrunksScriptFixture : CoreFixture {
 
   plugins::Result<policy::RouteDecision> route(const std::shared_ptr<policy::RequestView>& request) {
     return ask_policy<policy::RouteDecision>(core, [&](plugins::Executor on, plugins::Handler<policy::RouteDecision> h) { lua->route(on, request, h); });
+  }
+
+  plugins::Result<policy::RegisterDecision> register_(const std::shared_ptr<policy::RequestView>& request) {
+    return ask_policy<policy::RegisterDecision>(core,
+                                                [&](plugins::Executor on, plugins::Handler<policy::RegisterDecision> h) { lua->register_(on, request, h); });
   }
 };
 
@@ -327,4 +337,44 @@ TEST(TrunksScriptTest, ATrunksDtmfIsTheCarrierLegsMethod) {
   EXPECT_EQ(route.value.caller_dtmf, types::MediaPolicy::Dtmf::Inband);
   ASSERT_TRUE(route.value.media.has_value());
   EXPECT_EQ(route.value.media->dtmf, types::MediaPolicy::Dtmf::Auto) << "the realm's, for the subscriber's leg";
+}
+
+// RFC 4579 (docs/design/conferencing.md): a trunk whose focus attribute names a prefix is the focus of every
+// conference URI starting with it, in the realms it names. Any request to a room goes to the focus as a call
+// out by that trunk, with the room as the user part and on the target; a REGISTER for a room is refused.
+TEST(TrunksScriptTest, AConferenceUriGoesToItsFocusAndCannotRegister) {
+  TrunksScriptFixture f;
+  f.add_trunk("rooms", "sip:192.0.2.40:5060", R"({"focus": {"prefix": "conf-", "realms": ["example.com"]}, "media_profile": "mirror"})", {});
+
+  for (const char* method : {"INVITE", "SUBSCRIBE", "REFER"}) {
+    auto request = f.request_of(method, "sip:conf-sales@example.com", "sip:alice@example.com", f.phone);
+    const auto route = f.route(request);
+    ASSERT_TRUE(route.ok) << method << ": " << route.error;
+    ASSERT_EQ(route.value.kind, policy::RouteDecision::Kind::Forward) << method;
+    ASSERT_EQ(route.value.targets.size(), 1u) << method;
+    EXPECT_EQ(route.value.targets[0].trunk, "rooms");
+    EXPECT_EQ(route.value.targets[0].uri->to_string(), "sip:conf-sales@192.0.2.40:5060");
+    ASSERT_NE(route.value.targets[0].focus, nullptr);
+    EXPECT_EQ(route.value.targets[0].focus->to_string(), "sip:conf-sales@example.com");
+    ASSERT_TRUE(route.value.media.has_value());
+    EXPECT_EQ(route.value.media->profiles, types::MediaPolicy::Profiles::Mirror) << "the trunk's media_profile";
+  }
+
+  // The prefix in another realm is nobody's room: an ordinary address of record, here with no subscriber.
+  auto elsewhere = f.request_of("INVITE", "sip:conf-sales@other.example", "sip:alice@example.com", f.phone);
+  auto route = f.route(elsewhere);
+  ASSERT_TRUE(route.ok) << route.error;
+  EXPECT_TRUE(route.value.targets.empty() || route.value.targets[0].focus == nullptr);
+
+  // A room is not a subscriber.
+  auto registering = f.request_of("REGISTER", "sip:example.com", "sip:conf-sales@example.com", f.phone, "sip:conf-sales@example.com");
+  const auto decision = f.register_(registering);
+  ASSERT_TRUE(decision.ok) << decision.error;
+  EXPECT_EQ(decision.value.kind, policy::RegisterDecision::Kind::Reject);
+  EXPECT_EQ(decision.value.code, 403);
+
+  auto alice = f.request_of("REGISTER", "sip:example.com", "sip:alice@example.com", f.phone, "sip:alice@example.com");
+  const auto accepted = f.register_(alice);
+  ASSERT_TRUE(accepted.ok) << accepted.error;
+  EXPECT_NE(accepted.value.kind, policy::RegisterDecision::Kind::Reject);
 }

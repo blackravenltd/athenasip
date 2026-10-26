@@ -161,6 +161,17 @@ std::optional<Target> target_at(lua_State* L, int idx, std::string& error) {
         return std::nullopt;
       }
     }
+
+    lua_getfield(L, idx, "focus");
+    if (!lua_isnil(L, -1)) {
+      target.focus = script::to_uri(L, -1);
+      if (!target.focus) {
+        lua_pop(L, 1);
+        error = "a target's focus does not parse as a URI";
+        return std::nullopt;
+      }
+    }
+    lua_pop(L, 1);
     return target;
   }
 

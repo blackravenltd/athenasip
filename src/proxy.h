@@ -102,6 +102,9 @@ class Proxy : public TransactionUser {
     // How this leg sends key presses, when the policy said (a trunk's attribute).
     std::optional<types::MediaPolicy::Dtmf> dtmf;
 
+    // The conference this target is the focus of, as dialled (RFC 4579).
+    std::shared_ptr<SIPUri> focus;
+
     // TLS to a trunk is verified against this CA file, empty for the system's store. Set once the trunk is read.
     std::optional<std::string> tls_ca;
 

@@ -161,6 +161,10 @@ struct Target {
   // its subscriber's or its realm's, read by the node.
   std::optional<types::MediaPolicy::Dtmf> dtmf;
 
+  // Uri: the conference this request is for, when the target is its focus (RFC 4579, docs/design/conferencing.md):
+  // the conference URI as dialled, kept on the call so the API can group a room's calls.
+  std::shared_ptr<types::SIPUri> focus;
+
   // How long an INVITE branch may ring before the node gives up on it and moves on: a CANCEL if it rang, a 408 to
   // the policy either way. Unset is timer C (RFC 3261 16.8), minutes.
   std::optional<std::chrono::seconds> ring_timeout;
