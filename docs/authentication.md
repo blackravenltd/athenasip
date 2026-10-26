@@ -63,8 +63,15 @@ Closing an AOR rather than locking it means a guess spread over many addresses s
 while the subscriber's own phone goes on registering. A nonce is bound to the address its
 challenge went to (it signs the address without carrying it), so an answer spoofed from
 another address is challenged and counts against nobody: a ban cannot be aimed at a phone
-by forging its source. Cluster peers are never limited. The limits are per node: a guesser
-spread over the nodes of a cluster gets each node's.
+by forging its source. Cluster peers are never limited. Failures are counted per node, but
+a ban or a closure is told to the other nodes over the bus and every node holds it, so a
+guesser spread over a cluster is banned by all of it once any node bans it.
+
+`GET /api/v1/security/bans` and `GET /api/v1/security/closed-aors` list what is in force
+(`view-cluster-status`); `DELETE /api/v1/security/bans/{source}` and
+`DELETE /api/v1/security/closed-aors/{aor}` lift one on every node and forget the failures
+counted against it (`manage-cluster`). A node that starts after a ban was made does not
+hold it; bans are short.
 
 Every failure is logged at warning level in one shape, and published on the bus as
 `security/auth_failed`; the failure that bans an address is published as `security/banned`

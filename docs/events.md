@@ -27,7 +27,9 @@ and nothing on the call path waits for it.
 | `trunks/<name>/status` | The node registering a trunk starts, succeeds or fails | yes | [Trunk status](#trunk-status) |
 | `trunks/changed` | A trunk is created, changed or deleted over the API; every node reads the trunks at once instead of at its next scan | no | The trunk's name |
 | `security/auth_failed` | A Digest answer over SIP did not verify ([Guessing](authentication.md#guessing)) | no | `{source, aor, reason, node, at}` |
-| `security/banned` | An address is banned for repeated failures | no | `{source, seconds, node, at}` |
+| `security/banned` | An address is banned for repeated failures; every node holds it | no | `{source, seconds, node, at}` |
+| `security/aor_closed` | An address of record is closed to strangers for repeated failures; every node holds it | no | `{aor, seconds, node, at}` |
+| `security/ban_lifted`, `security/aor_reopened` | An administrator lifted a ban or reopened an AOR (`DELETE /api/v1/security/...`); every node does the same | no | `{source}` or `{aor}`, and `node` |
 | `presence/<aor>/changed` | A subscriber's presence may have changed: a binding written or removed, a call it is on written, a publication made or removed | no | [Presence changed](#presence-changed) |
 
 `<transport>` is `udp`, `tcp`, `tls`, `ws` or `wss`. `<endpoint>` is `host:port`.

@@ -27,6 +27,7 @@
 #include "api/presence_api.h"
 #include "api/provisioning_api.h"
 #include "api/router.h"
+#include "api/security_api.h"
 #include "api/sessions.h"
 #include "api/static_middleware.h"
 #include "api/subscriber_auth.h"
@@ -594,6 +595,10 @@ int main(int argc, char* argv[]) {
       // Who watches whom, and each subscriber's presence, read through the notifier on the Core strand.
       auto presence_api = std::make_shared<api::PresenceAPI>(logger, core, adminAPI->executor());
       presence_api->register_routes(*api_router);
+
+      // The bans and closed AORs that guessing over SIP put in force, and a lift (docs/authentication.md, Guessing).
+      auto security_api = std::make_shared<api::SecurityAPI>(logger, core, adminAPI->executor());
+      security_api->register_routes(*api_router);
 
       // The event bus as Server-Sent Events, on a response the listener holds open.
       auto events_api = std::make_shared<api::EventsAPI>(logger, events, adminAPI->executor());

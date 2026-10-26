@@ -9,6 +9,7 @@
 #include <openssl/rand.h>
 
 #include <limits>
+#include <string_view>
 
 namespace athenasip {
 
@@ -111,6 +112,40 @@ std::filesystem::path Util::expand_path(const std::string& path) {
   }
 
   return std::filesystem::absolute(p);
+}
+
+bool Util::is_realm_name(const std::string& name) {
+  if (name.empty() || name.size() > 253) return false;
+
+  std::size_t start = 0;
+  while (true) {
+    const auto dot = name.find('.', start);
+    const auto label = name.substr(start, dot == std::string::npos ? std::string::npos : dot - start);
+    if (label.empty() || label.size() > 63 || label.front() == '-' || label.back() == '-') return false;
+    for (const char c : label) {
+      if (!std::isalnum(static_cast<unsigned char>(c)) && c != '-') return false;
+    }
+    if (dot == std::string::npos) return true;
+    start = dot + 1;
+  }
+}
+
+bool Util::is_sip_user(const std::string& user) {
+  if (user.empty()) return false;
+
+  for (std::size_t i = 0; i < user.size(); ++i) {
+    const auto c = static_cast<unsigned char>(user[i]);
+    if (std::isalnum(c)) continue;
+    // mark, then user-unreserved.
+    if (std::string_view("-_.!~*'()&=+$,;?/").find(static_cast<char>(c)) != std::string_view::npos) continue;
+    // escaped: % HEXDIG HEXDIG.
+    if (c == '%' && i + 2 < user.size() && std::isxdigit(static_cast<unsigned char>(user[i + 1])) && std::isxdigit(static_cast<unsigned char>(user[i + 2]))) {
+      i += 2;
+      continue;
+    }
+    return false;
+  }
+  return true;
 }
 
 bool Util::is_ipv4_private(const std::string& ipv4) {

@@ -233,6 +233,12 @@ void ProvisioningAPI::_realm_create(RouteContext context) {
     return context.done();
   }
 
+  // A SIP host, so the identities built on it parse and the keys built on it are read one way (review finding 29).
+  if (!Util::is_realm_name(*name)) {
+    write_error(context.response, http::status::bad_request, "invalid_request", "name is a host name: letters, digits, hyphens and dots");
+    return context.done();
+  }
+
   auto realm = std::make_shared<types::Realm>(*name);
   realm->id = Util::stable_id("realm:" + *name);
 
@@ -360,6 +366,12 @@ void ProvisioningAPI::_subscriber_create(RouteContext context) {
     const auto user = string_field(*body, "user");
     if (!user || user->empty()) {
       write_error(context.response, http::status::bad_request, "invalid_request", "user is required");
+      return context.done();
+    }
+
+    // RFC 3261 25.1: what a SIP URI's user part may hold, so sip:user@realm parses (review finding 29).
+    if (!Util::is_sip_user(*user)) {
+      write_error(context.response, http::status::bad_request, "invalid_request", "user is a SIP user part: no @, colon, space or control character");
       return context.done();
     }
 

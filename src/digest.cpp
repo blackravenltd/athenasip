@@ -68,7 +68,10 @@ std::string verify(const types::Subscriber& subscriber, types::Authorization& cr
 
 void add_challenges(SIPHeader& header, const std::string& field, const std::string& realm, const std::string& nonce, bool stale) {
   // SHA-256 first as the preferred algorithm, then MD5, which is all most SIP clients
-  // support (RFC 3261 22.4). Both are sent because the subscriber is not yet known.
+  // support (RFC 3261 22.4). Both are sent because the subscriber is not yet known. MD5
+  // must stay last and in a field of its own: JsSIP keeps only the last field of a header
+  // and refuses any algorithm but MD5, so AthenaPhone and the console would stop
+  // registering if it were first or joined into one value with SHA-256.
   for (const auto& algorithm : {std::string("SHA-256"), std::string("MD5")}) {
     types::Authorization challenge;
     challenge.type = "Digest";

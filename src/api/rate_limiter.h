@@ -66,6 +66,12 @@ class RateLimiter {
     return std::chrono::seconds(std::max<std::int64_t>(1, static_cast<std::int64_t>(wait)));
   }
 
+  // Drops the key's bucket, so it starts full again.
+  void forget(const std::string& key) {
+    std::lock_guard<std::mutex> lock(_mutex);
+    _buckets.erase(key);
+  }
+
   std::size_t size() const {
     std::lock_guard<std::mutex> lock(_mutex);
     return _buckets.size();

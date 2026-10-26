@@ -87,3 +87,21 @@ TEST(UtilTest, IsIPv4) {
   EXPECT_FALSE(Util::is_ipv4("abc.def.ghi.jkl"));
   EXPECT_FALSE(Util::is_ipv4("123.456.78.90"));
 }
+
+// Review finding 29: a realm is a host name (RFC 1123), or an IPv4 address, so it carries no colon and a key built
+// as realm:user is read one way only, and a SIP URI built on it parses.
+TEST(UtilTest, ARealmNameIsAHostName) {
+  for (const auto* name : {"example.com", "sip.example.co.nz", "a", "x-1.example", "192.0.2.10", "EXAMPLE.COM"}) EXPECT_TRUE(Util::is_realm_name(name)) << name;
+  for (const auto* name : {"", "a:b", "-leading.example", "trailing-.example", "two..dots", ".dot", "dot.", "with space", "at@example.com",
+                           "crlf\r\n.example", "under_score.example"}) {
+    EXPECT_FALSE(Util::is_realm_name(name)) << name;
+  }
+  EXPECT_FALSE(Util::is_realm_name(std::string(64, 'a') + ".example")) << "a label is at most 63";
+  EXPECT_FALSE(Util::is_realm_name(std::string(254, 'a'))) << "a name is at most 253";
+}
+
+// RFC 3261 25.1: user = 1*( unreserved / escaped / user-unreserved ). No @, no colon, no space or control.
+TEST(UtilTest, ASubscriberUserIsAnRfc3261User) {
+  for (const auto* user : {"alice", "+15551234567", "1001", "a.b-c_d!~*'()", "&=+$,;?/", "caf%C3%A9"}) EXPECT_TRUE(Util::is_sip_user(user)) << user;
+  for (const auto* user : {"", "a@b", "a:b", "with space", "tab\t", "crlf\r\n", "100%", "%zz", "<x>", "a\"b"}) EXPECT_FALSE(Util::is_sip_user(user)) << user;
+}

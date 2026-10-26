@@ -203,6 +203,13 @@ class Core : public std::enable_shared_from_this<Core> {
   // the one that bans the address is published as security/banned too.
   void auth_failed(const SIPMessage& message, const std::string& aor, const std::string& why);
   void auth_succeeded(const SIPMessage& message, const std::string& aor);
+  // What is in force, on this node and those it has heard from.
+  AuthGuard& auth_guard() { return *_auth_guard; }
+  // Lifted by an administrator, here and, over the bus, on every other node. Whether this node held it.
+  bool auth_lift(const std::string& source);
+  bool auth_reopen(const std::string& aor);
+  // Hears the other nodes' bans, closures and lifts. Started with the node's status.
+  void auth_listen();
 
   // Messages
   void process_message(std::shared_ptr<SIPMessage> message);

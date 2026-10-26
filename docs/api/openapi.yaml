@@ -1046,6 +1046,119 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /security/bans:
+    get:
+      operationId: listBans
+      tags: [status]
+      summary: The addresses banned for guessing passwords over SIP
+      description: |
+        An address that answers too many Digest challenges wrongly is banned, and nothing it
+        sends is answered until the ban ends (sip.auth_limits, docs/authentication.md,
+        Guessing). Every node holds the bans the others make, heard over the bus, so this is
+        the cluster's list as this node knows it; a node that started after a ban was made
+        does not have it.
+      responses:
+        "200":
+          description: The bans in force, soonest to end first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Ban"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /security/bans/{source}:
+    delete:
+      operationId: liftBan
+      tags: [status]
+      summary: Lift a ban
+      description: |
+        Ends the ban on every node, here at once and on the others over the bus, and forgets
+        the failures counted against the address, so its next wrong password is not a ban
+        straight back.
+      parameters:
+        - name: source
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The banned address, percent-encoded as one path segment
+      responses:
+        "200":
+          description: Lifted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [source]
+                properties:
+                  source:
+                    type: string
+        "404":
+          description: "`not_found`: this node held no such ban; the lift was still sent to the others"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /security/closed-aors:
+    get:
+      operationId: listClosedAors
+      tags: [status]
+      summary: The addresses of record closed to strangers for guessing
+      description: |
+        An address of record whose password is guessed at, wrongly, too often from anywhere is
+        closed for a while to every address that has not lately authenticated as it, which is
+        answered 403 with Retry-After; its own phones go on registering. Held cluster-wide as
+        bans are.
+      responses:
+        "200":
+          description: The closures in force, soonest to end first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ClosedAor"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /security/closed-aors/{aor}:
+    delete:
+      operationId: reopenAor
+      tags: [status]
+      summary: Reopen an address of record
+      description: Ends the closure on every node and forgets the failures counted against the address of record.
+      parameters:
+        - name: aor
+          in: path
+          required: true
+          schema:
+            type: string
+          description: |
+            The address of record, such as sip:alice@example.com, percent-encoded as one path
+            segment; matched as sip:user@host with the host lowercased.
+      responses:
+        "200":
+          description: Reopened
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [aor]
+                properties:
+                  aor:
+                    type: string
+        "404":
+          description: "`not_found`: this node held no such closure; the reopening was still sent to the others"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /qualify:
     get:
       operationId: listQualifiedClients
@@ -2235,6 +2348,42 @@ components:
         behaviour:
           $ref: '#/components/schemas/SubscriberBehaviour'
 
+    Ban:
+      type: object
+      required: [source, node, since, until, seconds_left]
+      properties:
+        source:
+          type: string
+          description: The banned address
+        node:
+          type: string
+          description: The node that banned it
+        since:
+          type: string
+          format: date-time
+          description: When this node began to hold it
+        until:
+          type: string
+          format: date-time
+        seconds_left:
+          type: integer
+    ClosedAor:
+      type: object
+      required: [aor, node, since, until, seconds_left]
+      properties:
+        aor:
+          type: string
+          description: The address of record, as sip:user@host
+        node:
+          type: string
+        since:
+          type: string
+          format: date-time
+        until:
+          type: string
+          format: date-time
+        seconds_left:
+          type: integer
     Conference:
       type: object
       required: [uri, focus, participants]

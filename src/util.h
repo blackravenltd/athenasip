@@ -40,6 +40,14 @@ class Util {
   static std::filesystem::path expand_path(const std::string& input);
   static bool is_ipv4(const std::string& ipv4);
   static bool is_ipv4_private(const std::string& ipv4);
+
+  // A realm's name: a host name (RFC 1123: labels of letters, digits and hyphens, 1 to 63 long, neither starting nor
+  // ending with a hyphen, at most 253 in all), which an IPv4 address also is. No colon, so a key built on it is
+  // unambiguous (review finding 29).
+  static bool is_realm_name(const std::string& name);
+
+  // RFC 3261 25.1: user = 1*( unreserved / escaped / user-unreserved ), as a subscriber's user part is written.
+  static bool is_sip_user(const std::string& user);
   static std::string to_iso8601(const std::chrono::system_clock::time_point& tp);
   static std::string to_iso8601(const std::time_t& t);
   static std::size_t hash_combine(std::size_t seed, std::size_t hash_value);
