@@ -1479,7 +1479,9 @@ void Proxy::_report_reoffer(const std::shared_ptr<Context>& context, bool took) 
   auto core = _core.lock();
   if (!core) return;
 
-  const auto subscriber = context->request->header->request_uri->to_string();
+  // The subscriber whose binding refused the offer; the Request-URI only when the target is nobody's binding, since
+  // a call in by a trunk names the number dialled, not who answered.
+  const auto subscriber = current.subscriber.empty() ? context->request->header->request_uri->to_string() : current.subscriber;
   core->reoffers().record(subscriber, *current.rejected, took ? current.profile : std::nullopt);
 
   if (took) _logger->warn(subscriber + " took the other media profile after refusing the first - see /api/v1/media/reoffers");

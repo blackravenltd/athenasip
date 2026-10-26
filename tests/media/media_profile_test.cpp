@@ -15,6 +15,7 @@
 
 #include "../helpers/proxy_fixture_helper.h"
 #include "media/media_engine.h"
+#include "policy/policy.h"
 #include "qualifier.h"
 
 using namespace athenasip;
@@ -545,6 +546,40 @@ TEST(MediaProfileTest, AReofferThatWorksIsReportedForTheSubscriber) {
   ASSERT_TRUE(reported[0].took.has_value());
   EXPECT_EQ(*reported[0].took, Flags::Profile::WebRtc);
   EXPECT_EQ(reported[0].count, 1u);
+}
+
+// The report names the subscriber whose binding refused the offer, not what the caller dialled: a call in by a
+// trunk names a number, and an operator reading the report wants the phone (found against 2talk).
+TEST(MediaProfileTest, TheReportNamesTheSubscriberNotWhatWasDialled) {
+  // A number dialled goes to Bob's bindings, as athenasip.trunks sends a carrier's call in.
+  class DialledPolicy final : public policy::Policy {
+   public:
+    std::shared_ptr<types::Subscriber> bob;
+    std::string name() const override { return "dialled-test"; }
+    std::string version() const override { return "0.0.0"; }
+    void authorize(plugins::Executor on, std::shared_ptr<policy::RequestView>, plugins::Handler<policy::AuthDecision> handler) override {
+      _complete(on, handler, plugins::Result<policy::AuthDecision>::success(policy::AuthDecision::accept()));
+    }
+    void route(plugins::Executor on, std::shared_ptr<policy::RequestView>, plugins::Handler<policy::RouteDecision> handler) override {
+      _complete(on, handler, plugins::Result<policy::RouteDecision>::success(policy::RouteDecision::forward({policy::Target::of(bob)})));
+    }
+    void register_(plugins::Executor on, std::shared_ptr<policy::RequestView>, plugins::Handler<policy::RegisterDecision> handler) override {
+      _complete(on, handler, plugins::Result<policy::RegisterDecision>::success(policy::RegisterDecision::reject(403, "Forbidden")));
+    }
+  };
+
+  ProfileFixture f("tcp", "udp");
+  auto policy = std::make_shared<DialledPolicy>();
+  policy->bob = f.bob;
+  f.on_strand([&f, policy]() { f.core->policy_register(policy); });
+
+  f.receive(f.caller, f.with_body(f.invite("z9hG4bK-dialled", "sip:+442071234567@example.com"), kOffer));
+  f.receive(f.callee, f.response_to_latest(488, "Not Acceptable Here"));
+  f.receive(f.callee, f.response_to_latest(200, "OK", kWebRtcOffer));
+
+  const auto reported = f.reoffers();
+  ASSERT_EQ(reported.size(), 1u);
+  EXPECT_EQ(reported[0].subscriber, "sip:bob@example.com");
 }
 
 // Under the shipped default the callee is offered what the caller offered, and the other profile is the
