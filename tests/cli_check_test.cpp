@@ -209,14 +209,14 @@ TEST(CliCheckTest, TheFlagIsRead) {
 
 namespace {
 
-// A STUN server on loopback, on its own thread, that says whoever asks is at 203.0.113.7.
+// A STUN server on loopback, on its own thread, that says whoever asks is at 203.0.113.7, or at the address given.
 struct StunResponder {
   boost::asio::io_context io;
   boost::asio::ip::udp::socket socket{io, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0)};
   std::thread thread;
 
-  StunResponder() {
-    thread = std::thread([this]() {
+  explicit StunResponder(const std::string& sees = "203.0.113.7") {
+    thread = std::thread([this, sees]() {
       std::string request(2048, '\0');
       boost::asio::ip::udp::endpoint from;
       boost::system::error_code ec;
@@ -226,7 +226,7 @@ struct StunResponder {
         const auto size = socket.receive_from(boost::asio::buffer(request), from, 0, ec);
         if (!ec) {
           request.resize(size);
-          if (auto response = stun::binding_response(request, boost::asio::ip::make_address("203.0.113.7"), 40000)) {
+          if (auto response = stun::binding_response(request, boost::asio::ip::make_address(sees), 40000)) {
             socket.send_to(boost::asio::buffer(*response), from, 0, ec);
           }
           return;
@@ -269,6 +269,24 @@ TEST(CliCheckTest, APublicAddressTheStunServerDisagreesWithFails) {
   const auto* address = CheckFixture::find(lines, "public address");
   ASSERT_NE(address, nullptr);
   EXPECT_FALSE(address->ok) << address->detail;
+}
+
+// A router that hairpins answers a STUN request to the node's own public name from its inside address, so the
+// server "sees" a private address. That is not the public address being wrong, and the check says so instead of
+// failing it (found on a node behind a home router).
+TEST(CliCheckTest, APrivateAddressFromTheStunServerIsAHairpinNotAFailure) {
+  CheckFixture f;
+  StunResponder stun("10.44.1.1");
+  f.config->ice_servers.push_back({stun.url()});
+  f.config->sip_public_address = "198.51.100.1";
+
+  const auto lines = f.run();
+
+  const auto* address = CheckFixture::find(lines, "public address");
+  ASSERT_NE(address, nullptr);
+  EXPECT_TRUE(address->ok) << address->detail;
+  EXPECT_NE(address->detail.find("10.44.1.1"), std::string::npos) << address->detail;
+  EXPECT_NE(address->detail.find("inside"), std::string::npos) << address->detail;
 }
 
 // What peers found when they tried this node is reported: a listener none can reach fails, since peers will not
