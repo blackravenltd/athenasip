@@ -196,6 +196,14 @@ CheckLine check_address(const Config& config) {
     const auto seen = mapped->address.to_string();
     const auto source = "stun:" + host + ":" + std::to_string(port);
 
+    // A router that hairpins answers a request to its own public name from its inside address: the server saw
+    // this node from inside the network, which says nothing about the public address.
+    if (mapped->address.is_v4() && Util::is_ipv4_private(seen)) {
+      return line(true, "public address",
+                  (configured.empty() ? std::string("not configured, and ") : configured + " (sip.public_address), unverified: ") + source +
+                      " answered from inside the network (" + seen + "), as a router that hairpins does; check from outside");
+    }
+
     if (configured.empty()) return line(true, "public address", seen + " according to " + source + "; set sip.public_address to advertise it");
 
     // sip.public_address may be a name: it matches if it resolves to what the server saw.
