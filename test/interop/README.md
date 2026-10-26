@@ -86,6 +86,11 @@ test/interop/up.sh --rtpengine
 
 With `--rtpengine`:
 
+- The `drachtio/rtpengine` image is amd64 only. On an arm64 host (a Raspberry Pi), build
+  rtpengine from Debian's package and point the fixture at it:
+  `docker build -t athenasip-rtpengine test/interop/rtpengine` once, then
+  `ATHENA_INTEROP_RTPENGINE_IMAGE=athenasip-rtpengine test/interop/up.sh --rtpengine`.
+
 - The fixture moves off loopback. `up.sh` detects this host's LAN address, advertises
   it, names the realm after it, publishes every port on `0.0.0.0`, and signs a TLS
   certificate naming it with the snakeoil CA. Do not leave it up unattended.
