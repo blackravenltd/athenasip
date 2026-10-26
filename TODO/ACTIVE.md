@@ -444,18 +444,10 @@ Unit-proven only; left:
 
 ### State into the datastore (Milestone 7, decided 2026-10-11)
 
-What the decision finds in the tree, re-checked 2026-10-26: all three still as described.
-Each item is small on its own; together they are what lets a node be replaced without
-anything being lost. In the order they matter:
+What the decision finds in the tree, re-checked 2026-10-26. Each item is small on its own;
+together they are what lets a node be replaced without anything being lost. The trunk
+registration status is a record since 2026-10-26 (`COMPLETED.md`). In the order they matter:
 
-- [ ] **Trunk registration status as a record.** Each node keeps `_registrations` and a
-      `_reports` map rebuilt from the retained `trunks/<name>/status` topic
-      (`src/trunk_registrar.h:42,117`), and `/api/v1/trunks` answers from it: the bus as
-      storage. The status (registered by which node, until when, last failure) becomes a
-      field set on the trunk record or a record beside it, written by the holder of the
-      lease; the topic stays as the signal; the API reads the store. The Call-ID and CSeq
-      stay with the node, since a node that takes the lease over starts a registration of
-      its own (RFC 3261 10.2: a new UA, a new Contact).
 - [ ] **Re-offer reports** (`src/media/reoffers.h`, shown by `/api/v1/media/reoffers`)
       are per node and vanish with it. A record with a retention, by the decision rule.
 - [ ] **Dialog state in the call record** (Tom, 2026-10-11: yes). `Dialogs`
