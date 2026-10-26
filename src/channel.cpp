@@ -20,6 +20,7 @@
 #include <iostream>
 #include <memory>
 #include <sstream>
+#include <limits>
 #include <string>
 #include <thread>
 #include <vector>
@@ -90,6 +91,18 @@ std::string for_logging(const std::shared_ptr<SIPMessage>& message) {
   }
 
   return out;
+}
+
+// RFC 3261 18.1.1: 513 Message Too Large, built from the request's own headers, since the request will not be
+// processed. Written straight to the stream, which is closed after it.
+std::string too_large(SIPMessage& message) {
+  std::string raw = "SIP/2.0 513 Message Too Large\r\n";
+  for (const char* field : {"Via", "From", "To", "Call-ID", "CSeq"}) {
+    if (!message.header->contains(field)) continue;
+    for (const auto& value : message.header->headers_map[field]) raw += std::string(field) + ": " + value->to_string() + "\r\n";
+  }
+  raw += "Content-Length: 0\r\n\r\n";
+  return raw;
 }
 
 }  // namespace
@@ -345,6 +358,7 @@ void Channel::_on_read(boost::system::error_code ec, std::size_t length) {
         _logger->error(std::string("Dropping a message that could not be handled - ") + e.what());
         _buffer.clear();
         _incoming_message = nullptr;
+        _scan_from = 0;
       }
 
       if (_connection) _schedule_async_read();
@@ -370,25 +384,39 @@ void Channel::_frame_stream() {
 
   _take_keep_alives();
 
-  // A read may hold several messages, or part of one.
+  // A read may hold several messages, or part of one. The search for the end of the header block picks up where
+  // the last one stopped, three bytes back for a separator split across reads.
   std::size_t split;
 
-  while ((split = _buffer.find("\r\n\r\n")) != std::string::npos) {
+  while ((split = _buffer.find("\r\n\r\n", _scan_from)) != std::string::npos) {
+    _scan_from = 0;
+
     auto message = std::make_shared<SIPMessage>();
     message->channel = shared_from_this();
     message->source_port = _connection->remote_endpoint().port();
     message->header = std::make_shared<SIPHeader>(_buffer.substr(0, split));
 
     _buffer.erase(0, split + 4);
+    _crlf_run = 0;
 
-    // RFC 3261 18.3: Content-Length frames the body. Absent, it is zero.
-    if (message->header->contains("Content-Length")) {
-      auto length = message->header->headers_map["Content-Length"][0]->as<UIntHeader>();
-      if (length != nullptr) message->body_length = length->value;
+    // RFC 3261 18.3: Content-Length frames the body. Absent, it is zero. One that is not a number, or doubled,
+    // leaves the stream unframeable: the message is answered 400 and the connection closed.
+    std::size_t declared = 0;
+    if (!_content_length_of(message, declared)) {
+      message->header->invalidate();
+      receive(message);
+      return _overflow("Content-Length that is not one number");
     }
 
+    // A body past what the node holds for one message: 513 (RFC 3261 18.1.1), and the stream is closed, since
+    // the body it would have carried cannot be skipped.
+    if (declared > kMaxMessageBytes || split + 4 + declared > kMaxMessageBytes) {
+      _schedule_async_write(too_large(*message));
+      return _overflow("a message of " + std::to_string(split + 4 + declared) + " bytes, over " + std::to_string(kMaxMessageBytes));
+    }
+
+    message->body_length = declared;
     _incoming_message = message;
-    _crlf_run = 0;
 
     if (!_append_body()) return;
 
@@ -397,6 +425,33 @@ void Channel::_frame_stream() {
 
     _take_keep_alives();
   }
+
+  // No end of a header block yet. A peer that has sent this much without one is not speaking SIP.
+  if (_buffer.size() > kMaxHeaderBytes) return _overflow("a header block of " + std::to_string(_buffer.size()) + " bytes with no end");
+  _scan_from = _buffer.size() >= 3 ? _buffer.size() - 3 : 0;
+}
+
+void Channel::_overflow(const std::string& why) {
+  _logger->warn("Closing the connection - " + why);
+  _buffer.clear();
+  _incoming_message = nullptr;
+  _scan_from = 0;
+  close();
+}
+
+bool Channel::_content_length_of(const std::shared_ptr<SIPMessage>& message, std::size_t& length) {
+  length = 0;
+  if (!message->header->contains("Content-Length")) return true;
+
+  const auto& values = message->header->headers_map["Content-Length"];
+  if (values.size() != 1) return false;
+
+  auto number = values[0]->as<UIntHeader>();
+  if (number == nullptr) return false;
+  if (number->value > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) return false;
+
+  length = static_cast<std::size_t>(number->value);
+  return true;
 }
 
 // RFC 5626 4.4.1: a double CRLF between messages is a keep-alive ping, answered with a
@@ -455,9 +510,10 @@ void Channel::_frame_datagram() {
 
   std::size_t declared = 0;
 
-  if (message->header->contains("Content-Length")) {
-    auto length = message->header->headers_map["Content-Length"][0]->as<UIntHeader>();
-    if (length != nullptr) declared = length->value;
+  // A Content-Length that is not one number is a datagram to discard, as one claiming more than it carries is.
+  if (!_content_length_of(message, declared)) {
+    _logger->warn("Datagram with a Content-Length that is not one number, discarded");
+    return;
   }
 
   const auto carried = datagram.size() - (split + 4);
@@ -470,7 +526,7 @@ void Channel::_frame_datagram() {
 
   // RFC 3261 18.3: a shorter Content-Length truncates the body to it.
   message->body = datagram.substr(split + 4, declared);
-  message->body_length = static_cast<unsigned int>(declared);
+  message->body_length = declared;
 
   receive(message);
 }

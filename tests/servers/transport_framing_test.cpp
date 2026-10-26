@@ -6,6 +6,8 @@
 //
 #include <gtest/gtest.h>
 
+#include <thread>
+
 #include <boost/asio.hpp>
 #include <boost/asio/ssl.hpp>
 #include <chrono>
@@ -551,4 +553,131 @@ TEST(TransportFramingTest, TwoDatagramsFromOnePeerShareOneFlow) {
 
   const auto source = "udp://127.0.0.1:" + std::to_string(socket.local_endpoint().port());
   EXPECT_NE(f.on_strand([&]() { return f.core->channel_find(source); }), nullptr);
+}
+
+namespace {
+
+// Whether the far end closed the connection within the time: the only thing left to read is the end of the stream.
+bool closed_within(tcp::socket& socket, std::chrono::milliseconds wait) {
+  const auto deadline = std::chrono::steady_clock::now() + wait;
+  boost::system::error_code ec;
+  socket.non_blocking(true, ec);
+  char byte = 0;
+  while (std::chrono::steady_clock::now() < deadline) {
+    socket.receive(net::buffer(&byte, 1), 0, ec);
+    if (ec == net::error::eof || ec == net::error::connection_reset) return true;
+    if (!ec) continue;
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
+  return false;
+}
+
+}  // namespace
+
+// A peer that sends a header block with no end is not speaking SIP: past 16 KB the connection is closed, before
+// its bytes hold anything of the node's but that buffer.
+TEST(TransportFramingTest, TcpClosesAHeaderBlockThatNeverEnds) {
+  TcpFixture f;
+
+  net::io_context io;
+  tcp::socket socket(io);
+  socket.connect(tcp::endpoint(net::ip::make_address("127.0.0.1"), f.port()));
+
+  // Fed a little at a time, as a slow drip would be.
+  const std::string line = "X-Padding: " + std::string(1000, 'a') + "\r\n";
+  std::string sent = "REGISTER sip:example.com SIP/2.0\r\n";
+  boost::system::error_code ec;
+  while (sent.size() < 20 * 1024 && !ec) {
+    net::write(socket, net::buffer(line), ec);
+    sent += line;
+  }
+
+  EXPECT_TRUE(closed_within(socket, std::chrono::seconds(3)));
+}
+
+// RFC 3261 18.1.1: a body declared past what the node holds for one message is answered 513 Message Too Large,
+// and the stream is closed, since the body cannot be skipped.
+TEST(TransportFramingTest, TcpRefusesABodyDeclaredPastTheMessageCap) {
+  TcpFixture f;
+
+  net::io_context io;
+  tcp::socket socket(io);
+  socket.connect(tcp::endpoint(net::ip::make_address("127.0.0.1"), f.port()));
+  Reader<tcp::socket> reader(io, socket);
+
+  net::write(socket, net::buffer(register_claiming("z9hG4bK-tcp-huge", 4000000000u, "")));
+
+  const auto answer = reader.take(std::chrono::seconds(3));
+  EXPECT_NE(answer.find("SIP/2.0 513"), std::string::npos) << answer;
+  EXPECT_TRUE(closed_within(socket, std::chrono::seconds(3)));
+}
+
+// A Content-Length that overflows 32 bits is not zero: it is refused, so no body is read as the next request.
+TEST(TransportFramingTest, TcpDoesNotReadAnOverflowingContentLengthAsZero) {
+  TcpFixture f;
+
+  net::io_context io;
+  tcp::socket socket(io);
+  socket.connect(tcp::endpoint(net::ip::make_address("127.0.0.1"), f.port()));
+  Reader<tcp::socket> reader(io, socket);
+
+  // 2^32: as a 32-bit length it was 0, and the bytes after the blank line became a request of the attacker's.
+  net::write(socket, net::buffer(register_claiming("z9hG4bK-tcp-wrap", 4294967296ull, register_request("TCP", "z9hG4bK-tcp-smuggled"))));
+
+  const auto answer = reader.take(std::chrono::seconds(3));
+  EXPECT_NE(answer.find("SIP/2.0 513"), std::string::npos) << answer;
+  EXPECT_EQ(answer.find("z9hG4bK-tcp-smuggled"), std::string::npos) << "the smuggled request was never answered";
+}
+
+// A Content-Length that is not a number, or two of them, leaves the stream unframeable: the request is answered
+// 400 and the connection closed.
+TEST(TransportFramingTest, TcpAnswers400AndClosesOnAContentLengthThatIsNotOneNumber) {
+  for (const std::string header : {"Content-Length: 12abc\r\n", "Content-Length: -1\r\n", "Content-Length: 0\r\nContent-Length: 0\r\n"}) {
+    TcpFixture f;
+
+    net::io_context io;
+    tcp::socket socket(io);
+    socket.connect(tcp::endpoint(net::ip::make_address("127.0.0.1"), f.port()));
+    Reader<tcp::socket> reader(io, socket);
+
+    std::string raw = "REGISTER sip:example.com SIP/2.0\r\n";
+    raw += "Via: SIP/2.0/TCP 127.0.0.1:9;branch=z9hG4bK-tcp-garbage\r\n";
+    raw += "From: <sip:alice@example.com>;tag=alice\r\n";
+    raw += "To: <sip:alice@example.com>\r\n";
+    raw += "Call-ID: garbage\r\n";
+    raw += "CSeq: 1 REGISTER\r\n";
+    raw += "Max-Forwards: 70\r\n";
+    raw += header;
+    raw += "\r\n";
+    net::write(socket, net::buffer(raw));
+
+    const auto answer = reader.take(std::chrono::seconds(3));
+    EXPECT_NE(answer.find("SIP/2.0 400"), std::string::npos) << header << answer;
+    EXPECT_TRUE(closed_within(socket, std::chrono::seconds(3))) << header;
+  }
+}
+
+// A datagram whose Content-Length is not one number is discarded, and the next one is read as before.
+TEST(TransportFramingTest, UdpDiscardsADatagramWithAContentLengthThatIsNotOneNumber) {
+  UdpFixture f;
+
+  net::io_context io;
+  udp::socket socket(io, udp::endpoint(net::ip::make_address("127.0.0.1"), 0));
+  const udp::endpoint node(net::ip::make_address("127.0.0.1"), f.port());
+  Reader<udp::socket> reader(io, socket);
+
+  std::string raw = "REGISTER sip:example.com SIP/2.0\r\n";
+  raw += "Via: SIP/2.0/UDP 127.0.0.1:9;branch=z9hG4bK-udp-garbage\r\n";
+  raw += "From: <sip:alice@example.com>;tag=alice\r\n";
+  raw += "To: <sip:alice@example.com>\r\n";
+  raw += "Call-ID: udp-garbage\r\n";
+  raw += "CSeq: 1 REGISTER\r\n";
+  raw += "Max-Forwards: 70\r\n";
+  raw += "Content-Length: 1e3\r\n\r\n";
+  socket.send_to(net::buffer(raw), node);
+  EXPECT_EQ(reader.take(std::chrono::milliseconds(300), 0), "");
+
+  socket.send_to(net::buffer(register_request("UDP", "z9hG4bK-udp-after-garbage")), node);
+  const auto answer = reader.take(std::chrono::seconds(3));
+  EXPECT_NE(answer.find("SIP/2.0 401"), std::string::npos) << answer;
 }
