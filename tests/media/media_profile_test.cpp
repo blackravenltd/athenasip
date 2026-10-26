@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -46,7 +47,28 @@ class RecordingMediaEngine : public media::MediaEngine {
   media::Capabilities capabilities() const override {
     media::Capabilities capabilities;
     capabilities.bridge = true;
+    capabilities.dtmf = true;
     return capabilities;
+  }
+
+  struct Played {
+    std::size_t participant;
+    std::string digits;
+    std::chrono::milliseconds duration;
+  };
+
+  void play_dtmf(plugins::Executor on, std::shared_ptr<athenasip::Call>, std::size_t participant, std::string digits, std::chrono::milliseconds duration,
+                 plugins::StatusHandler handler) override {
+    {
+      std::lock_guard<std::mutex> lock(_mutex);
+      _played.push_back(Played{participant, digits, duration});
+    }
+    _complete(std::move(on), std::move(handler), plugins::Status::success());
+  }
+
+  std::vector<Played> played() const {
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _played;
   }
 
   // An engine that relays plain RTP and converts nothing, as builtin does.
@@ -91,6 +113,7 @@ class RecordingMediaEngine : public media::MediaEngine {
 
   mutable std::mutex _mutex;
   std::vector<Call> _calls;
+  std::vector<Played> _played;
   std::atomic<int> _releases{0};
   bool _connected = false;
   bool _plain_rtp_only = false;
@@ -752,4 +775,150 @@ TEST(MediaProfileTest, ALegOnTheLanIsGivenTheLocalAddressForMedia) {
   ASSERT_GE(calls.size(), 2u);
   EXPECT_EQ(calls[0].flags.address, "192.0.2.1") << "the offer towards the callee on the LAN";
   EXPECT_EQ(calls.back().flags.address, "") << "the answer towards the caller outside";
+}
+
+const std::string kOfferWithEvents =
+    "v=0\r\n"
+    "o=alice 1 1 IN IP4 192.0.2.10\r\n"
+    "s=-\r\n"
+    "c=IN IP4 192.0.2.10\r\n"
+    "t=0 0\r\n"
+    "m=audio 49170 RTP/AVP 0 101\r\n"
+    "a=rtpmap:101 telephone-event/8000\r\n";
+
+// A description that offers telephone-event says its end sends key presses as RFC 4733 events.
+TEST(MediaProfileTest, ADescriptionSaysWhetherItsEndSendsKeyPressesAsEvents) {
+  EXPECT_TRUE(Flags::from_sdp(kOfferWithEvents).telephone_event);
+  EXPECT_FALSE(Flags::from_sdp(kOffer).telephone_event);
+}
+
+// Each leg's method is told to the engine with every description, so it can convert: the caller's from what it
+// offered, the callee's from its subscriber's setting; and the call shows both.
+TEST(MediaProfileTest, EachLegsKeyPressMethodIsToldToTheEngineAndShownOnTheCall) {
+  using Dtmf = types::MediaPolicy::Dtmf;
+  ProfileFixture f("tcp", "udp");
+  f.bob->dtmf = Dtmf::Info;
+  ASSERT_TRUE(f.store->subscriber_update(f.bob));
+
+  f.receive(f.caller, f.with_body(f.invite(), kOfferWithEvents));
+  auto calls = f.engine->calls();
+  ASSERT_EQ(calls.size(), 1u);
+  EXPECT_EQ(calls[0].flags.dtmf_from, Dtmf::Rfc4733) << "auto, and the caller offered telephone-event";
+  EXPECT_EQ(calls[0].flags.dtmf_to, Dtmf::Info) << "Bob's setting";
+
+  f.receive(f.callee, f.response_to_latest(200, "OK", kOffer));
+  calls = f.engine->calls();
+  ASSERT_EQ(calls.size(), 2u);
+  EXPECT_FALSE(calls[1].was_offer);
+  EXPECT_EQ(calls[1].flags.dtmf_from, Dtmf::Info);
+  EXPECT_EQ(calls[1].flags.dtmf_to, Dtmf::Rfc4733);
+
+  f.on_strand([&f]() {
+    auto call = f.core->call_get("call-proxy");
+    ASSERT_NE(call, nullptr);
+    ASSERT_EQ(call->participants.size(), 2u);
+    EXPECT_EQ(call->participants[0].dtmf, Dtmf::Rfc4733);
+    EXPECT_EQ(call->participants[1].dtmf, Dtmf::Info);
+  });
+}
+
+// A callee set to auto is unknown until it has described itself; one that offers no telephone-event sends tones.
+TEST(MediaProfileTest, AnUndescribedLegSetToAutoIsUnknownUntilItAnswers) {
+  using Dtmf = types::MediaPolicy::Dtmf;
+  ProfileFixture f("tcp", "udp");
+
+  f.receive(f.caller, f.with_body(f.invite(), kOfferWithEvents));
+  auto calls = f.engine->calls();
+  ASSERT_EQ(calls.size(), 1u);
+  EXPECT_EQ(calls[0].flags.dtmf_from, Dtmf::Rfc4733);
+  EXPECT_FALSE(calls[0].flags.dtmf_to.has_value());
+
+  f.receive(f.callee, f.response_to_latest(200, "OK", kOffer));
+  calls = f.engine->calls();
+  ASSERT_EQ(calls.size(), 2u);
+  EXPECT_EQ(calls[1].flags.dtmf_from, Dtmf::Inband);
+  EXPECT_EQ(calls[1].flags.dtmf_to, Dtmf::Rfc4733);
+}
+
+// An engine that cannot transcode cannot convert: the operator is warned once for the call, naming both methods.
+TEST(MediaProfileTest, TheOperatorIsWarnedOnceWhenTheEngineCannotConvertKeyPresses) {
+  ProfileFixture f("tcp", "udp");
+  f.bob->dtmf = types::MediaPolicy::Dtmf::Inband;
+  ASSERT_TRUE(f.store->subscriber_update(f.bob));
+
+  f.receive(f.caller, f.with_body(f.invite(), kOfferWithEvents));
+  f.receive(f.callee, f.response_to_latest(200, "OK", kOffer));
+
+  int warned = 0;
+  for (const auto& line : f.logger->lines(loggers::LogLevel::WARN)) {
+    if (line.find("cannot convert") == std::string::npos) continue;
+    ++warned;
+    EXPECT_NE(line.find("rfc4733"), std::string::npos) << line;
+    EXPECT_NE(line.find("inband"), std::string::npos) << line;
+  }
+  EXPECT_EQ(warned, 1);
+}
+
+// A caller sending key presses by INFO to a callee that takes them in its media: the node answers the INFO and
+// has the engine play the digit into the caller's leg, so the callee hears events or tones; nothing is forwarded.
+TEST(MediaProfileTest, AnInfoToALegThatTakesKeyPressesInItsMediaIsPlayedInAndAnswered) {
+  using Dtmf = types::MediaPolicy::Dtmf;
+  ProfileFixture f("tcp", "udp");
+  f.alice->dtmf = Dtmf::Info;
+  ASSERT_TRUE(f.store->subscriber_update(f.alice));
+
+  f.receive(f.caller, f.invite_with_body());
+  f.receive(f.callee, f.response_to_latest(200, "OK", kOfferWithEvents));
+
+  std::string info = "INFO sip:bob@192.0.2.20:5060 SIP/2.0\r\n";
+  info += "Via: SIP/2.0/UDP 192.0.2.10:5060;branch=z9hG4bK-info\r\n";
+  info += f.routes(true);
+  info += "From: <sip:alice@example.com>;tag=alice\r\n";
+  info += "To: <sip:bob@example.com>;tag=bob\r\n";
+  info += "Call-ID: call-proxy\r\n";
+  info += "CSeq: 2 INFO\r\n";
+  info += "Max-Forwards: 70\r\n";
+  info += "Content-Type: application/dtmf-relay\r\n";
+  info += "Content-Length: 24\r\n\r\n";
+  info += "Signal=5\r\nDuration=200\r\n";
+  f.receive(f.caller, info);
+
+  const auto played = f.engine->played();
+  ASSERT_EQ(played.size(), 1u) << "caller saw:\n" << f.caller_connection->written << "\ncallee saw:\n" << f.callee_connection->written;
+  EXPECT_EQ(played[0].participant, 0u) << "the caller's leg, where the press comes from";
+  EXPECT_EQ(played[0].digits, "5");
+  EXPECT_EQ(played[0].duration, std::chrono::milliseconds(200));
+
+  EXPECT_TRUE(ProfileFixture::requests_with(f.callee_connection, "INFO").empty()) << "not forwarded";
+  auto answer = ProfileFixture::response_with(f.caller_connection, 200);
+  ASSERT_NE(answer, nullptr);
+}
+
+// Between two legs that both speak INFO the request is forwarded, as any in-dialog request is.
+TEST(MediaProfileTest, AnInfoBetweenTwoLegsThatSpeakInfoIsForwarded) {
+  using Dtmf = types::MediaPolicy::Dtmf;
+  ProfileFixture f("tcp", "udp");
+  f.alice->dtmf = Dtmf::Info;
+  f.bob->dtmf = Dtmf::Info;
+  ASSERT_TRUE(f.store->subscriber_update(f.alice));
+  ASSERT_TRUE(f.store->subscriber_update(f.bob));
+
+  f.receive(f.caller, f.invite_with_body());
+  f.receive(f.callee, f.response_to_latest(200, "OK", kOffer));
+
+  std::string info = "INFO sip:bob@192.0.2.20:5060 SIP/2.0\r\n";
+  info += "Via: SIP/2.0/UDP 192.0.2.10:5060;branch=z9hG4bK-info\r\n";
+  info += f.routes(true);
+  info += "From: <sip:alice@example.com>;tag=alice\r\n";
+  info += "To: <sip:bob@example.com>;tag=bob\r\n";
+  info += "Call-ID: call-proxy\r\n";
+  info += "CSeq: 2 INFO\r\n";
+  info += "Max-Forwards: 70\r\n";
+  info += "Content-Type: application/dtmf\r\n";
+  info += "Content-Length: 1\r\n\r\n";
+  info += "7";
+  f.receive(f.caller, info);
+
+  EXPECT_TRUE(f.engine->played().empty());
+  EXPECT_EQ(ProfileFixture::requests_with(f.callee_connection, "INFO").size(), 1u);
 }

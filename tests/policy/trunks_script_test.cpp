@@ -292,3 +292,39 @@ TEST(TrunksScriptTest, AServiceCodeGoesOutByTheTrunkThatListsIt) {
   EXPECT_EQ(route.value.kind, policy::RouteDecision::Kind::Reply);
   EXPECT_EQ(route.value.code, 404);
 }
+
+// A trunk's dtmf attribute is the carrier leg's method: on the target out, for the trunk dialled, and as the
+// caller's in, for the trunk the call came by. A trunk that says nothing leaves it to the node.
+TEST(TrunksScriptTest, ATrunksDtmfIsTheCarrierLegsMethod) {
+  TrunksScriptFixture f;
+  f.add_trunk("ivr", "sip:sip.ivr.example", R"({"prefixes": ["+49"], "dtmf": "info"})", {});
+
+  auto request = f.invite("sip:+4930123456@example.com", "sip:alice@example.com", f.phone);
+  auto route = f.route(request);
+  ASSERT_TRUE(route.ok) << route.error;
+  ASSERT_EQ(route.value.kind, policy::RouteDecision::Kind::Forward);
+  ASSERT_EQ(route.value.targets.size(), 1u);
+  EXPECT_EQ(route.value.targets[0].trunk, "ivr");
+  EXPECT_EQ(route.value.targets[0].dtmf, types::MediaPolicy::Dtmf::Info);
+  EXPECT_FALSE(route.value.caller_dtmf.has_value()) << "the caller is a subscriber, read by the node";
+
+  request = f.invite("sip:+442071234567@example.com", "sip:alice@example.com", f.phone);
+  route = f.route(request);
+  ASSERT_TRUE(route.ok) << route.error;
+  ASSERT_FALSE(route.value.targets.empty());
+  EXPECT_FALSE(route.value.targets[0].dtmf.has_value()) << "acme says nothing";
+
+  f.add_trunk("buzz", "sip:sip.buzz.example", R"({"dtmf": "inband", "numbers": {"+442071234567": "sip:alice@example.com"}})", {"198.51.100.0/24"});
+  auto buzz = f.make_channel("198.51.100.7");
+  request = f.invite("sip:+442071234567@192.0.2.1", "sip:+447700900123@sip.buzz.example", buzz);
+  const auto auth = f.authorize(request);
+  ASSERT_TRUE(auth.ok) << auth.error;
+  ASSERT_EQ(auth.value.trunk, "buzz");
+  request->trunk = auth.value.trunk;
+  route = f.route(request);
+  ASSERT_TRUE(route.ok) << route.error;
+  ASSERT_EQ(route.value.kind, policy::RouteDecision::Kind::Forward);
+  EXPECT_EQ(route.value.caller_dtmf, types::MediaPolicy::Dtmf::Inband);
+  ASSERT_TRUE(route.value.media.has_value());
+  EXPECT_EQ(route.value.media->dtmf, types::MediaPolicy::Dtmf::Auto) << "the realm's, for the subscriber's leg";
+}

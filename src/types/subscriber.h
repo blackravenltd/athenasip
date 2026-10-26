@@ -36,6 +36,9 @@ class Subscriber {
   // Empty takes the realm's behaviour.
   std::optional<MediaPolicy::Profiles> media_profile;
 
+  // How this subscriber's endpoint sends key presses, when the operator knows. Empty takes the realm's behaviour.
+  std::optional<MediaPolicy::Dtmf> dtmf;
+
   // Anything a routing script wants to know about the subscriber: a forwarding number, a caller ID. The node
   // reads none of it.
   boost::json::object attributes;

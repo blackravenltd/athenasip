@@ -18,6 +18,7 @@
 --   caller_id     the number presented when calling out, in E.164
 --   from_domain   the host of the From when calling out, for a carrier that authenticates the From as its own
 --   media_profile the media it is offered, as a realm's: "rtp" (default, what carriers speak), "mirror", "webrtc", "srtp"
+--   dtmf          how it sends key presses, as a realm's: "auto" (default), "rfc4733", "info" or "inband"
 --   numbers       the numbers it brings in, each to an address of record: {"+442071234567": "sip:alice@example.com"}
 --   default       where a number in no list goes; without it, such a call is refused
 --   codes         service codes it takes, sent as dialled: {"*55", "*XX"}; X is any digit, N is 2 to 9, Z is 1 to 9
@@ -166,7 +167,9 @@ function trunks.inbound(request)
 
   local realm = a.store.realm(subscriber.realm)
   local behaviour = realm and realm.behaviour_effective or a.config.behaviour
-  return a.route.forward({a.route.subscriber(subscriber, {bindings = bindings})}, {media = behaviour, rewrite_contact = behaviour.rewrite_contact})
+  -- The carrier's leg sends key presses as the trunk says; the subscriber's leg follows its own setting.
+  return a.route.forward({a.route.subscriber(subscriber, {bindings = bindings})},
+                         {media = behaviour, rewrite_contact = behaviour.rewrite_contact, caller_dtmf = trunk.attributes.dtmf})
 end
 
 -- A subscriber dialling a number no subscriber has: out by the best trunk, the others after it.
@@ -180,7 +183,7 @@ function trunks.outbound(request, realm)
 
   local targets = {}
   for _, candidate in ipairs(candidates) do
-    targets[#targets + 1] = a.route.trunk(candidate.trunk, {user = as_dialled(candidate.trunk, candidate.number)})
+    targets[#targets + 1] = a.route.trunk(candidate.trunk, {user = as_dialled(candidate.trunk, candidate.number), dtmf = candidate.trunk.attributes.dtmf})
   end
 
   -- The first trunk's caller ID, asserted to the carrier (RFC 3325 9.1).

@@ -1877,6 +1877,14 @@ components:
             caller offered. transport makes ws and wss WebRTC and everything else plain
             RTP. rtp, webrtc and srtp (RFC 4568 keys in the description) make every leg
             that.
+        dtmf:
+          type: string
+          nullable: true
+          enum: [auto, rfc4733, info, inband, null]
+          description: >-
+            How a leg in this realm sends key presses: RFC 4733 telephone-events, SIP INFO
+            or tones in the audio. auto reads it from what the leg offers, and never means
+            INFO. The media engine converts between legs that differ.
         qualify_interval:
           type: integer
           nullable: true
@@ -1903,6 +1911,9 @@ components:
         media_profile:
           type: string
           enum: [mirror, transport, rtp, webrtc, srtp]
+        dtmf:
+          type: string
+          enum: [auto, rfc4733, info, inband]
         qualify_interval:
           type: integer
         rewrite_contact:
@@ -2042,7 +2053,7 @@ components:
     SubscriberBehaviour:
       type: object
       description: >-
-        The one behaviour setting that is about an endpoint rather than a realm. Null, or
+        The behaviour settings that are about an endpoint rather than a realm. Null, or
         absent, takes the realm's; null in an update goes back to it. Any other setting, or
         an unknown value, is a 400 and changes nothing.
       additionalProperties: false
@@ -2055,6 +2066,14 @@ components:
             What this subscriber's endpoint is, as Asterisk's webrtc=yes says. It decides the
             first description produced towards the endpoint, above the realm's behaviour
             and below what the endpoint has itself said in an offer or answer.
+        dtmf:
+          type: string
+          nullable: true
+          enum: [auto, rfc4733, info, inband, null]
+          description: >-
+            How this subscriber's endpoint sends key presses, above the realm's behaviour:
+            RFC 4733 telephone-events, SIP INFO or tones in the audio. auto reads it from
+            what the endpoint offers.
 
     SubscriberCreate:
       type: object
@@ -2187,7 +2206,7 @@ components:
           type: array
           items:
             type: string
-            enum: [bridge, conference, record, transcode]
+            enum: [bridge, conference, record, transcode, dtmf]
 
     Registration:
       type: object

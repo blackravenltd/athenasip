@@ -79,3 +79,31 @@ TEST(BehaviourTest, AProfileNameIsReadStrictly) {
   EXPECT_FALSE(MediaPolicy::parse_profiles("web-rtc").has_value());
   EXPECT_FALSE(MediaPolicy::parse_profiles("").has_value());
 }
+
+// A realm's dtmf overrides the server's, and is inherited when unset, as the other settings are.
+TEST(BehaviourTest, ARealmsDtmfOverridesTheServers) {
+  MediaPolicy server;
+  server.dtmf = MediaPolicy::Dtmf::Rfc4733;
+
+  Behaviour silent;
+  EXPECT_EQ(silent.over(server).dtmf, MediaPolicy::Dtmf::Rfc4733) << "inherited";
+
+  Behaviour realm;
+  realm.dtmf = MediaPolicy::Dtmf::Info;
+  EXPECT_EQ(realm.over(server).dtmf, MediaPolicy::Dtmf::Info) << "overridden";
+}
+
+// A DTMF method name is read strictly, and the shipped default is auto.
+TEST(BehaviourTest, ADtmfNameIsReadStrictly) {
+  EXPECT_EQ(MediaPolicy().dtmf, MediaPolicy::Dtmf::Auto);
+  EXPECT_EQ(MediaPolicy::parse_dtmf("auto"), MediaPolicy::Dtmf::Auto);
+  EXPECT_EQ(MediaPolicy::parse_dtmf(" RFC4733 "), MediaPolicy::Dtmf::Rfc4733);
+  EXPECT_EQ(MediaPolicy::parse_dtmf("info"), MediaPolicy::Dtmf::Info);
+  EXPECT_EQ(MediaPolicy::parse_dtmf("inband"), MediaPolicy::Dtmf::Inband);
+  EXPECT_FALSE(MediaPolicy::parse_dtmf("rfc2833").has_value());
+  EXPECT_FALSE(MediaPolicy::parse_dtmf("").has_value());
+
+  for (const auto value : {MediaPolicy::Dtmf::Auto, MediaPolicy::Dtmf::Rfc4733, MediaPolicy::Dtmf::Info, MediaPolicy::Dtmf::Inband}) {
+    EXPECT_EQ(MediaPolicy::parse_dtmf(MediaPolicy::to_string(value)), value);
+  }
+}

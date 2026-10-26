@@ -115,6 +115,7 @@ struct CallsFixture : CoreFixture {
 
     auto& alice = call->add_participant(std::make_shared<types::SIPIdentity>("sip:alice@example.com"), nullptr, true);
     alice.profile = media::Profile::WebRtc;
+    alice.dtmf = types::MediaPolicy::Dtmf::Rfc4733;
     call->add_participant(std::make_shared<types::SIPIdentity>("sip:bob@example.com"));
 
     on_strand([&]() { core->call_register(call); });
@@ -165,6 +166,8 @@ TEST(CallsApiTest, ListsTheLiveCallsWithWhatTheEngineCarried) {
   EXPECT_EQ(participants[0].as_object().at("identity").as_string(), "sip:alice@example.com");
   EXPECT_TRUE(participants[0].as_object().at("originator").as_bool());
   EXPECT_EQ(participants[0].as_object().at("profile").as_string(), "webrtc");
+  EXPECT_EQ(participants[0].as_object().at("dtmf").as_string(), "rfc4733");
+  EXPECT_TRUE(participants[1].as_object().at("dtmf").is_null()) << "a leg that has not described itself has no method yet";
   EXPECT_TRUE(participants[1].as_object().at("profile").is_null()) << "a leg that has not described itself has no profile yet";
 
   const auto& media = call.at("media").as_object();

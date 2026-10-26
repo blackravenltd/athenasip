@@ -155,11 +155,21 @@ Two [behaviour](behaviour.md) settings, set for the server and overridable per r
 
 ## DTMF
 
-Key presses sent as RFC 4733 telephone-events travel with the media, through either engine,
-when both ends offer `telephone-event`: proved through rtpengine from a WebRTC phone to a
-carrier's voicemail. SIP INFO (`application/dtmf-relay`, `application/dtmf`) is forwarded
-as any request in a dialog is. Converting between the two, and in-band tones, are not built
-yet, so set a phone and its carrier to the same method, RFC 4733 where both offer it.
+Each leg of a call sends key presses one of three ways: RFC 4733 telephone-events in the
+RTP, SIP INFO requests in the dialog (`application/dtmf-relay`, `application/dtmf`), or
+tones in the audio. The [`dtmf`](behaviour.md#dtmf) setting says which, per realm,
+subscriber or trunk; `auto`, the default, reads it from what the leg offers. Each leg's
+method is on the call in `GET /api/v1/calls` (`participants[].dtmf`).
+
+When both legs agree, key presses pass through: RFC 4733 events with the media, through
+either engine (proved through rtpengine from a WebRTC phone to a carrier's voicemail), INFO
+forwarded as any request in a dialog is. When they differ, the node asks rtpengine to
+convert: events to tones and tones to events are rtpengine's DTMF transcoding, which puts
+the call's audio through its transcoder; an INFO from a leg set to `info` is answered by
+the node and played into the media by rtpengine, as events or tones, whichever the far
+leg takes. Events or tones towards a leg set to `info` are not turned into INFO yet. The
+builtin relay converts nothing; a call whose legs differ behind it is logged once, as a
+warning naming both methods.
 
 ## Is media flowing?
 
@@ -170,7 +180,7 @@ endpoint needs a session with the `view-cluster-status` role.
 can do:
 
 ```json
-{"engine":"rtpengine","connected":true,"capabilities":["bridge","record","transcode"]}
+{"engine":"rtpengine","connected":true,"capabilities":["bridge","record","transcode","dtmf"]}
 ```
 
 With a pool, `connected` is true while any engine answers; it does not say every engine is

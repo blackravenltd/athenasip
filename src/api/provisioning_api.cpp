@@ -82,6 +82,14 @@ std::string read_behaviour(const boost::json::object& body, types::Behaviour& be
       } else {
         return "behaviour.media_profile is mirror, transport, webrtc, rtp, srtp or null";
       }
+    } else if (key == "dtmf") {
+      if (value.is_null()) {
+        behaviour.dtmf.reset();
+      } else if (const auto dtmf = value.is_string() ? types::MediaPolicy::parse_dtmf(std::string(value.as_string())) : std::nullopt) {
+        behaviour.dtmf = *dtmf;
+      } else {
+        return "behaviour.dtmf is auto, rfc4733, info, inband or null";
+      }
     } else if (key == "rewrite_contact") {
       if (value.is_null()) {
         behaviour.rewrite_contact.reset();
@@ -107,22 +115,32 @@ std::string read_behaviour(const boost::json::object& body, types::Behaviour& be
   return "";
 }
 
-// A subscriber's behaviour section has one setting: what its endpoint is. Anchoring is a
-// realm's choice.
+// A subscriber's behaviour section has the settings that are about its endpoint: what it is, and how it sends
+// key presses. Anchoring is a realm's choice.
 std::string read_behaviour(const boost::json::object& body, types::Subscriber& subscriber) {
   const auto* section = body.if_contains("behaviour");
   if (section == nullptr) return "";
   if (!section->is_object()) return "behaviour is an object";
 
   for (const auto& [key, value] : section->as_object()) {
-    if (key != "media_profile") return "a subscriber's behaviour has no setting called " + std::string(key);
-
-    if (value.is_null()) {
-      subscriber.media_profile.reset();
-    } else if (const auto profiles = value.is_string() ? types::MediaPolicy::parse_profiles(std::string(value.as_string())) : std::nullopt) {
-      subscriber.media_profile = *profiles;
+    if (key == "media_profile") {
+      if (value.is_null()) {
+        subscriber.media_profile.reset();
+      } else if (const auto profiles = value.is_string() ? types::MediaPolicy::parse_profiles(std::string(value.as_string())) : std::nullopt) {
+        subscriber.media_profile = *profiles;
+      } else {
+        return "behaviour.media_profile is mirror, transport, webrtc, rtp, srtp or null";
+      }
+    } else if (key == "dtmf") {
+      if (value.is_null()) {
+        subscriber.dtmf.reset();
+      } else if (const auto dtmf = value.is_string() ? types::MediaPolicy::parse_dtmf(std::string(value.as_string())) : std::nullopt) {
+        subscriber.dtmf = *dtmf;
+      } else {
+        return "behaviour.dtmf is auto, rfc4733, info, inband or null";
+      }
     } else {
-      return "behaviour.media_profile is mirror, transport, webrtc, rtp, srtp or null";
+      return "a subscriber's behaviour has no setting called " + std::string(key);
     }
   }
 
@@ -849,6 +867,7 @@ boost::json::object ProvisioningAPI::_realm_json(const types::Realm& realm) cons
   chosen["media_anchor"] = realm.behaviour.media_anchor ? boost::json::value(*realm.behaviour.media_anchor) : boost::json::value(nullptr);
   chosen["media_profile"] =
       realm.behaviour.media_profile ? boost::json::value(types::MediaPolicy::to_string(*realm.behaviour.media_profile)) : boost::json::value(nullptr);
+  chosen["dtmf"] = realm.behaviour.dtmf ? boost::json::value(types::MediaPolicy::to_string(*realm.behaviour.dtmf)) : boost::json::value(nullptr);
   chosen["rewrite_contact"] = realm.behaviour.rewrite_contact ? boost::json::value(*realm.behaviour.rewrite_contact) : boost::json::value(nullptr);
   chosen["qualify_interval"] = realm.behaviour.qualify_interval ? boost::json::value(*realm.behaviour.qualify_interval) : boost::json::value(nullptr);
   object["behaviour"] = std::move(chosen);
@@ -857,6 +876,7 @@ boost::json::object ProvisioningAPI::_realm_json(const types::Realm& realm) cons
     boost::json::object json;
     json["media_anchor"] = policy.anchor;
     json["media_profile"] = types::MediaPolicy::to_string(policy.profiles);
+    json["dtmf"] = types::MediaPolicy::to_string(policy.dtmf);
     json["qualify_interval"] = qualify_interval;
     json["rewrite_contact"] = rewrite_contact;
     return json;
@@ -886,6 +906,7 @@ boost::json::object ProvisioningAPI::_subscriber_json(const types::Subscriber& s
   boost::json::object behaviour;
   behaviour["media_profile"] =
       subscriber.media_profile ? boost::json::value(types::MediaPolicy::to_string(*subscriber.media_profile)) : boost::json::value(nullptr);
+  behaviour["dtmf"] = subscriber.dtmf ? boost::json::value(types::MediaPolicy::to_string(*subscriber.dtmf)) : boost::json::value(nullptr);
   object["behaviour"] = std::move(behaviour);
   object["attributes"] = subscriber.attributes;
 

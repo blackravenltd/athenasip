@@ -813,3 +813,28 @@ TEST(ConfigTest, TheExampleConfigurationLoadsBackAsTheSame) {
 
   EXPECT_EQ(reloaded->effective_yaml(), effective);
 }
+
+// behaviour.dtmf names how a leg sends key presses, and an unknown name is refused rather than read as auto.
+TEST(ConfigTest, TheDtmfMethodIsReadAndAnUnknownOneIsRefused) {
+  ConfigFile file(
+      "sip:\n  node_id: test-node\n"
+      "behaviour:\n  dtmf: info\n");
+  bool ok = false;
+  auto config = file.load(ok);
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(config->behaviour.dtmf, types::MediaPolicy::Dtmf::Info);
+  EXPECT_NE(config->effective_yaml().find("dtmf: info"), std::string::npos) << config->effective_yaml();
+
+  ConfigFile unset("sip:\n  node_id: test-node\n");
+  config = unset.load(ok);
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(config->behaviour.dtmf, types::MediaPolicy::Dtmf::Auto);
+  EXPECT_NE(config->effective_yaml().find("dtmf: auto"), std::string::npos) << config->effective_yaml();
+
+  ConfigFile wrong(
+      "sip:\n  node_id: test-node\n"
+      "behaviour:\n  dtmf: rfc2833\n");
+  ok = true;
+  wrong.load(ok);
+  EXPECT_FALSE(ok);
+}

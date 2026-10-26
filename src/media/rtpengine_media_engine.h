@@ -72,6 +72,8 @@ class RtpengineMediaEngine : public MediaEngine, public std::enable_shared_from_
   void release(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) override;
   void query(plugins::Executor on, std::shared_ptr<Call> call, plugins::Handler<std::string> handler) override;
 
+  void play_dtmf(plugins::Executor on, std::shared_ptr<Call> call, std::size_t participant, std::string digits, std::chrono::milliseconds duration,
+                 plugins::StatusHandler handler) override;
   void start_recording(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) override;
   void stop_recording(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) override;
 

@@ -156,6 +156,10 @@ struct Target {
   // Uri: the trunk this leaves by, by name. The node answers its challenges with the trunk's credentials.
   std::string trunk;
 
+  // Uri: how this leg sends key presses, when the policy knows (a trunk's attribute). A subscriber target's is
+  // its subscriber's or its realm's, read by the node.
+  std::optional<types::MediaPolicy::Dtmf> dtmf;
+
   // How long an INVITE branch may ring before the node gives up on it and moves on: a CANCEL if it rang, a 408 to
   // the policy either way. Unset is timer C (RFC 3261 16.8), minutes.
   std::optional<std::chrono::seconds> ring_timeout;
@@ -190,6 +194,10 @@ struct RouteDecision {
   // Forward: the call's media policy and whether Contacts are rewritten; the node's defaults when absent.
   std::optional<types::MediaPolicy> media;
   std::optional<bool> rewrite_contact;
+
+  // Forward: how the caller's leg sends key presses, when the policy knows better than the caller's subscriber or
+  // realm: a call in by a trunk, with the trunk's attribute.
+  std::optional<types::MediaPolicy::Dtmf> caller_dtmf;
 
   // Reply.
   std::uint16_t code = 480;

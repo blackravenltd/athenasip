@@ -6,6 +6,7 @@
 //
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <functional>
 #include <memory>
@@ -30,9 +31,11 @@ struct Capabilities {
   bool conference = false;  // Mix or forward for three or more participants
   bool record = false;      // Record a call
   bool transcode = false;   // Convert between codecs
+  bool dtmf = false;        // Play key presses into a leg's media (play_dtmf)
 
   bool supports_all_of(const Capabilities& required) const {
-    return (!required.bridge || bridge) && (!required.conference || conference) && (!required.record || record) && (!required.transcode || transcode);
+    return (!required.bridge || bridge) && (!required.conference || conference) && (!required.record || record) && (!required.transcode || transcode) &&
+           (!required.dtmf || dtmf);
   }
 };
 
@@ -58,6 +61,14 @@ struct Flags {
   // configuration (a leg on the local network reaches the node at its local address). Empty leaves it to the engine. An
   // engine that picks addresses from its own interfaces, as rtpengine does, may ignore it.
   std::string address;
+
+  // RFC 4733: the description offers telephone-event, so the end that wrote it sends key presses as events.
+  bool telephone_event = false;
+
+  // How the end that wrote this description sends key presses, and how the end it is produced for does, when either
+  // is known (docs/behaviour.md, dtmf). An engine that can converts when they differ; nothing when one is unknown.
+  std::optional<types::MediaPolicy::Dtmf> dtmf_from;
+  std::optional<types::MediaPolicy::Dtmf> dtmf_to;
 
   // The profile of the end that wrote this description. Nothing when it was unreadable.
   std::optional<Profile> stated() const;
@@ -134,6 +145,19 @@ class MediaEngine : public plugins::Plugin {
 
   // Packets relayed over the engine's lifetime. Optional: the default reports nothing.
   virtual std::optional<std::uint64_t> packets_relayed() const { return std::nullopt; }
+
+  // Plays key presses as if the participant had pressed them, into the media it sends: RFC 4733 events where the
+  // far end takes them, else tones. How the node carries a SIP INFO across to a leg that does not speak INFO. Each of
+  // digits is 0-9, *, # or A-D, and duration is each one's length. When capabilities().dtmf is set; the default
+  // declines.
+  virtual void play_dtmf(plugins::Executor on, std::shared_ptr<Call> call, std::size_t participant, std::string digits, std::chrono::milliseconds duration,
+                         plugins::StatusHandler handler) {
+    (void)call;
+    (void)participant;
+    (void)digits;
+    (void)duration;
+    _complete(std::move(on), std::move(handler), plugins::Status::failure(name() + " cannot play key presses"));
+  }
 
   // Recording, when capabilities().record is set; the defaults decline. Where a recording goes is the engine's own configuration.
   virtual void start_recording(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) {

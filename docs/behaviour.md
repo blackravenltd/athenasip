@@ -93,6 +93,31 @@ The builtin relay produces plain RTP only, so behind it there is no second offer
 488 goes back to the caller. `webrtc`, `srtp` and browser-to-phone conversion need
 rtpengine ([media configuration](configuration.md#media)).
 
+### dtmf
+
+How a leg sends key presses. The node passes them through when both legs of a call agree
+and has the media engine convert when they differ.
+
+| Value | The leg sends |
+|---|---|
+| `auto` (default) | RFC 4733 telephone-events when it offered `telephone-event`, else tones in the audio |
+| `rfc4733` | RFC 4733 telephone-event packets in the RTP |
+| `info` | SIP INFO requests in the dialog (`application/dtmf-relay` or `application/dtmf`) |
+| `inband` | Tones in the audio |
+
+The first of these that says anything decides a leg's method:
+
+1. Its subscriber's `dtmf`.
+2. For a trunk, the trunk's `dtmf` attribute, which `athenasip.trunks` passes as the
+   `media.dtmf` of its route ([Scripting](scripting.md#trunks)).
+3. Its realm's `dtmf`.
+4. The server's `dtmf`.
+
+`auto` never means INFO: a phone that sends INFO is set to `info`, so the node knows what
+to send it. Converting between methods needs rtpengine with transcoding; the builtin relay
+passes RFC 4733 and tones through unchanged and forwards INFO as any in-dialog request
+([Media](media.md#dtmf)).
+
 ### qualify_interval
 
 Seconds between OPTIONS to each registered client, down the flow it registered on. `0`

@@ -683,6 +683,7 @@ std::shared_ptr<types::Subscriber> RedisDatastore::_parse_subscriber(const std::
   // Optional: a subscriber imported as a bare MD5 hash has no SHA-256 credential.
   if (obj.if_contains("ha1_sha256")) subscriber->ha1_sha256 = json_string(obj, "ha1_sha256");
   if (obj.contains("media_profile")) subscriber->media_profile = types::MediaPolicy::parse_profiles(json_string(obj, "media_profile"));
+  if (obj.contains("dtmf")) subscriber->dtmf = types::MediaPolicy::parse_dtmf(json_string(obj, "dtmf"));
   if (const auto* attributes = obj.if_contains("attributes"); attributes != nullptr && attributes->is_object()) {
     subscriber->attributes = attributes->as_object();
   }
@@ -1032,6 +1033,7 @@ std::string RedisDatastore::_serialise_realm(const std::shared_ptr<types::Realm>
   // The profile is stored under the key "media_profiles".
   if (realm->behaviour.media_anchor) obj["media_anchor"] = *realm->behaviour.media_anchor;
   if (realm->behaviour.media_profile) obj["media_profiles"] = types::MediaPolicy::to_string(*realm->behaviour.media_profile);
+  if (realm->behaviour.dtmf) obj["dtmf"] = types::MediaPolicy::to_string(*realm->behaviour.dtmf);
   if (realm->behaviour.qualify_interval) obj["qualify_interval"] = *realm->behaviour.qualify_interval;
   if (realm->behaviour.rewrite_contact) obj["rewrite_contact"] = *realm->behaviour.rewrite_contact;
   if (!realm->attributes.empty()) obj["attributes"] = realm->attributes;
@@ -1052,6 +1054,7 @@ std::shared_ptr<types::Realm> RedisDatastore::_parse_realm(const std::string& va
   // Absent is unset. A stored value that does not parse leaves the setting unset.
   if (const auto* anchor = obj.if_contains("media_anchor"); anchor != nullptr && anchor->is_bool()) realm->behaviour.media_anchor = anchor->as_bool();
   if (obj.contains("media_profiles")) realm->behaviour.media_profile = types::MediaPolicy::parse_profiles(json_string(obj, "media_profiles"));
+  if (obj.contains("dtmf")) realm->behaviour.dtmf = types::MediaPolicy::parse_dtmf(json_string(obj, "dtmf"));
   if (const auto* rewrite = obj.if_contains("rewrite_contact"); rewrite != nullptr && rewrite->is_bool()) realm->behaviour.rewrite_contact = rewrite->as_bool();
   if (const auto* qualify = obj.if_contains("qualify_interval"); qualify != nullptr && qualify->is_number()) {
     const auto seconds = qualify->to_number<std::int64_t>();
@@ -1139,6 +1142,7 @@ std::string RedisDatastore::_serialise_subscriber(const std::shared_ptr<types::S
 
   // Written only when the subscriber chose one; absent takes the realm's.
   if (subscriber->media_profile) obj["media_profile"] = types::MediaPolicy::to_string(*subscriber->media_profile);
+  if (subscriber->dtmf) obj["dtmf"] = types::MediaPolicy::to_string(*subscriber->dtmf);
   if (!subscriber->attributes.empty()) obj["attributes"] = subscriber->attributes;
   obj["uri"] = subscriber->identity->uri->to_string();
   return boost::json::serialize(obj);

@@ -156,12 +156,15 @@ is never on the call path, so callers do not wait on it. Use
 
 ### MediaEngine
 
-- `capabilities()` reports `bridge`, `conference`, `record` and `transcode`;
-  `produces(profile)` reports which media profiles the engine can generate.
+- `capabilities()` reports `bridge`, `conference`, `record`, `transcode` and `dtmf` (the
+  engine can play key presses into a leg's media, `play_dtmf`); `produces(profile)` reports
+  which media profiles the engine can generate.
 - `offer`, `answer`, `release` and `query` are required. An engine that cannot carry an
-  offer returns a failed `media::Result`; the SDP then passes through untouched.
-- `start_recording`, `stop_recording`, `join`, `leave` and `roster` default to a failure
-  or an empty answer.
+  offer returns a failed `media::Result`; the SDP then passes through untouched. The
+  `Flags` say how each end sends key presses (`dtmf_from`, `dtmf_to`); an engine that can
+  converts when they differ.
+- `play_dtmf`, `start_recording`, `stop_recording`, `join`, `leave` and `roster` default
+  to a failure or an empty answer.
 - `packets_relayed()` feeds metrics and may return nothing.
 
 ### PushService

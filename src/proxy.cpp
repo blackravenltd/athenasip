@@ -7,6 +7,7 @@
 #include "proxy.h"
 
 #include <chrono>
+#include <sstream>
 #include <set>
 #include <utility>
 
@@ -80,6 +81,59 @@ std::string tag_of(const std::shared_ptr<SIPMessage>& message, const std::string
 
   const auto tag = identity->value->tags.find("tag");
   return tag == identity->value->tags.end() ? "" : tag->second;
+}
+
+// The key presses a SIP INFO carries, with each one's length: application/dtmf-relay ("Signal=5", "Duration=160",
+// the Cisco and Asterisk form) or application/dtmf (the digits alone). Nothing for any other INFO.
+std::optional<std::pair<std::string, std::chrono::milliseconds>> dtmf_in(const SIPMessage& message) {
+  if (!message.header->contains("Content-Type")) return std::nullopt;
+  const auto type = Util::to_lower(message.header->headers_map.at("Content-Type")[0]->to_string());
+  const bool relay = type.find("application/dtmf-relay") != std::string::npos;
+  const bool bare = !relay && type.find("application/dtmf") != std::string::npos;
+
+  auto digits_of = [](const std::string& text) {
+    std::string digits;
+    for (const char c : text) {
+      const char upper = static_cast<char>(c >= 'a' && c <= 'd' ? c - 'a' + 'A' : c);
+      if ((upper >= '0' && upper <= '9') || upper == '*' || upper == '#' || (upper >= 'A' && upper <= 'D')) digits.push_back(upper);
+    }
+    return digits;
+  };
+
+  std::chrono::milliseconds duration{160};
+  std::string digits;
+
+  if (relay) {
+    std::istringstream lines(message.body);
+    std::string line;
+    while (std::getline(lines, line)) {
+      const auto equals = line.find('=');
+      if (equals == std::string::npos) continue;
+      const auto key = Util::to_lower(Util::trim(line.substr(0, equals)));
+      const auto value = Util::trim(line.substr(equals + 1));
+      if (key == "signal") digits = digits_of(value);
+      if (key == "duration") {
+        try {
+          duration = std::chrono::milliseconds(std::stol(value));
+        } catch (const std::exception&) {
+        }
+      }
+    }
+  } else if (bare) {
+    digits = digits_of(message.body);
+  } else {
+    return std::nullopt;
+  }
+
+  if (digits.empty()) return std::nullopt;
+  return std::make_pair(digits, duration);
+}
+
+// What a leg's dtmf setting comes to once it has described itself: auto is RFC 4733 when it offered
+// telephone-event, else tones in the audio (docs/behaviour.md, dtmf).
+types::MediaPolicy::Dtmf dtmf_of(types::MediaPolicy::Dtmf setting, bool telephone_event) {
+  if (setting != types::MediaPolicy::Dtmf::Auto) return setting;
+  return telephone_event ? types::MediaPolicy::Dtmf::Rfc4733 : types::MediaPolicy::Dtmf::Inband;
 }
 
 std::string value_of(const std::shared_ptr<SIPMessage>& message, const std::string& field) {
@@ -268,8 +322,45 @@ void Proxy::_proceed(const std::shared_ptr<SIPMessage>& request, const std::shar
       return core->notifier()->on_request(request, transaction,
                                           [this, self, request, transaction, token]() { _determine_targets(request, transaction, token); });
     }
+
+    // Key presses by INFO, for a far leg that takes them in its media instead.
+    if (request->header->request_method == "INFO" && _play_dtmf(request, transaction)) return;
+
     _determine_targets(request, transaction, token);
   });
+}
+
+bool Proxy::_play_dtmf(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction) {
+  auto core = _core.lock();
+  if (!core || !core->media || !core->media->capabilities().dtmf) return false;
+
+  const auto pressed = dtmf_in(*request);
+  if (!pressed) return false;
+
+  auto call = core->call_get(value_of(request, "Call-ID"));
+  auto dialog = core->dialogs()->find(request);
+  if (!call || !dialog || call->media_elsewhere) return false;
+
+  const bool from_caller = dialog->is_from_caller(tag_of(request, "From"));
+  const auto sender = call->participant_index(from_caller);
+  const auto far = call->participant_index(!from_caller);
+  if (!sender || !far) return false;
+
+  // A far leg that speaks INFO gets the INFO; one not yet heard from is given the benefit of the forward.
+  const auto& method = call->participants[*far].dtmf;
+  if (!method || *method == types::MediaPolicy::Dtmf::Info) return false;
+
+  auto self = shared_from_this();
+  core->media->play_dtmf(core->strand(), call, *sender, pressed->first, pressed->second,
+                         [this, self, request, transaction, pressed, call](plugins::Status played) {
+                           if (!played.ok) {
+                             _logger->warn("Could not play key presses into call " + call->id + " - " + played.error);
+                             return _send_status(transaction, request, 500, "Server Internal Error");
+                           }
+                           _logger->debug("Played " + pressed->first + " into call " + call->id + " for an INFO");
+                           _send_status(transaction, request, 200, "OK");
+                         });
+  return true;
 }
 
 std::shared_ptr<policy::RequestView> Proxy::_view(const std::shared_ptr<SIPMessage>& request, bool relay) const {
@@ -611,6 +702,7 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
     // Read once here rather than per message with a body, and kept on the call for in-dialog requests, which ask
     // the policy nothing.
     if (decision.media) context->media_policy = *decision.media;
+    if (decision.caller_dtmf) context->caller_dtmf = decision.caller_dtmf;
     if (decision.rewrite_contact) {
       context->rewrite_contact = *decision.rewrite_contact;
       if (auto call = core->call_get(value_of(request, "Call-ID"))) call->rewrite_contact = context->rewrite_contact;
@@ -646,6 +738,7 @@ void Proxy::_expand(const std::shared_ptr<Context>& context, std::vector<policy:
       target.flow = _flow_to(*target.next_hop);
       target.trunk = spec.trunk;
       target.ring_timeout = spec.ring_timeout;
+      target.dtmf = spec.dtmf;
       into->push_back(std::move(target));
     }
     return _expand(context, std::move(specs), index + 1, std::move(into), std::move(then));
@@ -653,8 +746,9 @@ void Proxy::_expand(const std::shared_ptr<Context>& context, std::vector<policy:
 
   if (!spec.subscriber) return _expand(context, std::move(specs), index + 1, std::move(into), std::move(then));
 
-  // The first subscriber's profile is the callee's, for what the engine offers it.
+  // The first subscriber's profile is the callee's, for what the engine offers it; likewise how it sends key presses.
   if (!context->callee_profile) context->callee_profile = spec.subscriber->media_profile;
+  if (!context->callee_dtmf) context->callee_dtmf = spec.subscriber->dtmf;
 
   // The subscriber whose bindings these are: the line that rings, whatever the To said.
   const auto& identity = spec.subscriber->identity;
@@ -825,14 +919,23 @@ void Proxy::_rewrite_contact(const std::shared_ptr<SIPMessage>& message, const s
 void Proxy::_read_caller_profile(const std::shared_ptr<Context>& context, std::function<void()> then) {
   auto core = _core.lock();
   const auto& request = context->request;
-  if (!core || request->header->request_method != "INVITE" || has_sdp(request) || !request->header->contains("From")) return then();
+  if (!core || request->header->request_method != "INVITE" || !request->header->contains("From")) return then();
+
+  // The profile matters only for a delayed offer (RFC 3264 section 5); how the caller sends key presses, for every
+  // call, unless the policy already said (a trunk's attribute).
+  const bool want_profile = !has_sdp(request);
+  const bool want_dtmf = !context->caller_dtmf;
+  if (!want_profile && !want_dtmf) return then();
 
   auto from = request->header->headers_map["From"][0]->as<SIPIdentityHeader>();
   if (from == nullptr || from->value == nullptr || from->value->uri == nullptr) return then();
 
   auto identity = std::make_shared<SIPIdentity>(from->value->uri->to_string());
-  core->subscriber_get(identity, [context, then = std::move(then)](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
-    if (found.ok && found.value) context->caller_profile = found.value->media_profile;
+  core->subscriber_get(identity, [context, want_profile, want_dtmf, then = std::move(then)](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
+    if (found.ok && found.value) {
+      if (want_profile) context->caller_profile = found.value->media_profile;
+      if (want_dtmf) context->caller_dtmf = found.value->dtmf;
+    }
     then();
   });
 }
@@ -1556,6 +1659,22 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
     if (const auto caller = call->participant_index(true)) call->participants[*caller].subscriber_profile = context->caller_profile;
   }
 
+  // And how each leg sends key presses: the target's own word (a trunk's attribute) over the subscriber's setting;
+  // a leg with neither follows the realm's, read below.
+  if (context) {
+    if (const auto callee = call->participant_index(false)) {
+      auto& leg = call->participants[*callee];
+      if (context->current.dtmf) {
+        leg.dtmf_setting = context->current.dtmf;
+      } else if (!leg.dtmf_setting) {
+        leg.dtmf_setting = context->callee_dtmf;
+      }
+    }
+    if (const auto caller = call->participant_index(true); caller && !call->participants[*caller].dtmf_setting) {
+      call->participants[*caller].dtmf_setting = context->caller_dtmf;
+    }
+  }
+
   const auto& policy = call->media_policy;
 
   // A realm that does not anchor media gets plain proxy behaviour (RFC 3261 16.6): the SDP is untouched.
@@ -1583,6 +1702,30 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
   // Record what this leg stated (ICE, DTLS, SRTP) before the engine rewrites the body; later descriptions for
   // this leg are produced from it.
   if (const auto stated = flags.stated()) call->participants[*participant].profile = *stated;
+
+  // How this leg sends key presses, now that it has described itself, and how the far one does, so the engine can
+  // convert between them. A far leg set to auto that has not described itself is unknown yet.
+  {
+    auto& sender = call->participants[*participant];
+    if (flags.readable) sender.dtmf = dtmf_of(sender.dtmf_setting.value_or(policy.dtmf), flags.telephone_event);
+    flags.dtmf_from = sender.dtmf;
+    if (recipient) {
+      const auto& far = call->participants[*recipient];
+      if (far.dtmf) {
+        flags.dtmf_to = far.dtmf;
+      } else if (const auto setting = far.dtmf_setting.value_or(policy.dtmf); setting != types::MediaPolicy::Dtmf::Auto) {
+        flags.dtmf_to = setting;
+      }
+    }
+
+    if (flags.dtmf_from && flags.dtmf_to && *flags.dtmf_from != *flags.dtmf_to && !core->media->capabilities().transcode &&
+        !call->dtmf_conversion_warned) {
+      call->dtmf_conversion_warned = true;
+      _logger->warn("Call " + call->id + " sends key presses as " + types::MediaPolicy::to_string(*flags.dtmf_from) + " on one leg and " +
+                    types::MediaPolicy::to_string(*flags.dtmf_to) + " on the other, and " + core->media->name() +
+                    " cannot convert - set both ends to one method (behaviour.dtmf)");
+    }
+  }
 
   // The profile to produce for the far leg, in order of precedence: a re-offer after a 488, what the leg has
   // stated, what it said when qualified, its subscriber's setting, then the realm's setting or the outgoing

@@ -180,14 +180,14 @@ Everything is under the global `athenasip`.
 | `athenasip.node.id`, `.public_address` | |
 | `athenasip.node.names(host, port)` | Whether an address is this node's own |
 | `athenasip.config.get("sip.forward_register")` | Any setting, by its dotted name; its default when the file does not set it |
-| `athenasip.config.behaviour` | The server's `{media_anchor, media_profile, qualify_interval, rewrite_contact}` |
+| `athenasip.config.behaviour` | The server's `{media_anchor, media_profile, dtmf, qualify_interval, rewrite_contact}` |
 | `athenasip.log.debug/info/warn/error(text)` | To the node's log, with the script's file and line. `print` logs at info. |
 | `athenasip.sip.uri(text)` | Parses a URI |
 | `athenasip.sip.in_range(range, address)` | Whether an address is in a CIDR range, or in any of a list of them |
 
 A realm has `name`, `id`, `registration_timeout`, `registration_minimum`, `behaviour`
 (what it set itself), `behaviour_effective` (over the server's) and `attributes`. A
-subscriber has `id`, `aor`, `uri`, `realm`, `media_profile` and `attributes`.
+subscriber has `id`, `aor`, `uri`, `realm`, `media_profile`, `dtmf` and `attributes`.
 
 `attributes` is a free-form object set over the API on a realm, a subscriber or a trunk
 (`"attributes": {"forward_to": "sip:bob@example.com"}`), which a script reads as plain Lua
@@ -248,9 +248,9 @@ error, which `pcall` catches like any other.
 | `athenasip.auth.reject(code, reason)` | |
 | `athenasip.route.subscriber(subscriber, {bindings = b})` | Every device of a subscriber, in the node's order, by push or through another node as needed |
 | `{ring_timeout = seconds}` | On any target: how long an INVITE may ring there before the node moves on, with a CANCEL if it rang. Unset is timer C, three minutes. |
-| `athenasip.route.uri(uri, {next_hop = uri, trunk = name})` | One URI, located by RFC 3263; with `trunk`, the node answers that trunk's challenges |
-| `athenasip.route.trunk(trunk, {user = number})` | Out by a trunk: its URI with the number as the user part |
-| `athenasip.route.forward(targets, {media = m, rewrite_contact = r})` | `media` as `config.behaviour` and `behaviour_effective` give it |
+| `athenasip.route.uri(uri, {next_hop = uri, trunk = name, dtmf = d})` | One URI, located by RFC 3263; with `trunk`, the node answers that trunk's challenges. `dtmf` says how that leg sends key presses when the script knows ([Behaviour](behaviour.md#dtmf)). |
+| `athenasip.route.trunk(trunk, {user = number, dtmf = d})` | Out by a trunk: its URI with the number as the user part. `athenasip.trunks` passes the trunk's `dtmf` attribute. |
+| `athenasip.route.forward(targets, {media = m, rewrite_contact = r, caller_dtmf = d})` | `media` as `config.behaviour` and `behaviour_effective` give it. `caller_dtmf` is how the caller's leg sends key presses when the policy knows better than its subscriber or realm: the trunk's attribute, for a call in by a trunk ([Behaviour](behaviour.md#dtmf)). |
 | `athenasip.route.reply(code, reason)` | Also `athenasip.route.reject` |
 | `athenasip.register.accept{realm =, max_expires =, min_expires =, qualify =}` | |
 | `athenasip.register.forward()` | RFC 3261 10.3 step 1 |
@@ -315,6 +315,7 @@ and a trunk for a UK carrier, created with `POST /api/v1/trunks`, looks like thi
 | `caller_id` | The number presented calling out, set as the From and asserted in `P-Asserted-Identity` |
 | `from_domain` | The host of that From, for a carrier that checks the From is its own |
 | `media_profile` | The media the carrier is offered, as a realm's `media_profile`: `rtp` (default, what carriers speak), `mirror`, `webrtc` or `srtp`. A browser or WebRTC phone calling out is converted by the media engine. |
+| `dtmf` | How the carrier sends key presses, as a realm's `dtmf`: `auto` (default), `rfc4733`, `info` or `inband` ([Behaviour](behaviour.md#dtmf)) |
 | `numbers` | The numbers it brings in, each to an address of record |
 | `default` | Where a number in no list goes; without it such a call is refused |
 | `codes` | Service codes it takes, sent as dialled: `["*55", "*XX"]`. `X` is any digit, `N` 2 to 9, `Z` 1 to 9, as a dialplan writes them. A carrier's voicemail (`*55` at 2talk) is one. |

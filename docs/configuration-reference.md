@@ -255,6 +255,7 @@ The defaults for what differs between SIP servers. A realm overrides any of them
 |---|---|---|---|
 | `behaviour.media_anchor` | true or false | `true` | Relay media through the media engine. False leaves it end to end, which fails behind NAT. |
 | `behaviour.media_profile` | one of `mirror`, `transport`, `webrtc`, `rtp`, `srtp` | `mirror` | What each leg's media is offered as: mirror gives each leg what it offered; the others are explained in docs/behaviour.md. |
+| `behaviour.dtmf` | one of `auto`, `rfc4733`, `info`, `inband` | `auto` | How a leg sends key presses: RFC 4733 telephone-events, SIP INFO or tones in the audio. auto reads it from what the leg offers. The engine converts between legs that differ; docs/behaviour.md. |
 | `behaviour.qualify_interval` | 0, or 5 to 86400 | `0` | Seconds between OPTIONS to a registered client. 0 is never. |
 | `behaviour.rewrite_contact` | true or false | `false` | Rewrite a registering client's Contact to the address it was seen at. |
 

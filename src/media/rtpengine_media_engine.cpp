@@ -77,6 +77,27 @@ void apply_profile(Bencode& command, Flags::Profile profile, bool source_wants_m
   }
 }
 
+// Converts key presses between two legs that send them differently (docs/behaviour.md, dtmf). RFC 4733 events to
+// and from tones in the audio is rtpengine's DTMF transcoding: telephone-event stripped from the description and
+// the call always transcoded, or telephone-event offered where the far leg had none. INFO is played in by the
+// node, which needs inject DTMF in the offer and the answer alike. Either leg unknown, nothing is asked for.
+void apply_dtmf(Bencode& command, const Flags& flags) {
+  using Dtmf = types::MediaPolicy::Dtmf;
+  if (!flags.dtmf_from || !flags.dtmf_to || *flags.dtmf_from == *flags.dtmf_to) return;
+
+  Bencode::List names;
+  if (*flags.dtmf_from == Dtmf::Info || *flags.dtmf_to == Dtmf::Info) names.push_back(Bencode(std::string("inject DTMF")));
+
+  if (*flags.dtmf_from == Dtmf::Rfc4733 && *flags.dtmf_to == Dtmf::Inband) {
+    names.push_back(Bencode(std::string("always transcode")));
+    command.set("codec", Bencode::dictionary({{"strip", Bencode::list({Bencode(std::string("telephone-event"))})}}));
+  } else if (*flags.dtmf_from == Dtmf::Inband && *flags.dtmf_to == Dtmf::Rfc4733) {
+    command.set("codec", Bencode::dictionary({{"transcode", Bencode::list({Bencode(std::string("telephone-event"))})}}));
+  }
+
+  if (!names.empty()) command.set("flags", Bencode::list(std::move(names)));
+}
+
 // host, host:port or [v6]:port.
 bool parse_engine(const std::string& text, std::string& host, std::uint16_t& port) {
   host = text;
@@ -190,6 +211,7 @@ Capabilities RtpengineMediaEngine::capabilities() const {
   capabilities.bridge = true;
   capabilities.record = true;
   capabilities.transcode = true;
+  capabilities.dtmf = true;
   return capabilities;
 }
 
@@ -647,6 +669,7 @@ void RtpengineMediaEngine::offer(plugins::Executor on, std::shared_ptr<Call> cal
   command.set("replace", Bencode::list({Bencode(std::string("origin")), Bencode(std::string("session-connection")), Bencode(std::string("sdp-version"))}));
 
   apply_profile(command, flags.target, flags.rtcp_mux, false);
+  apply_dtmf(command, flags);
 
   if (const auto advertise = _advertise_for(flags); !advertise.empty()) command.set("media-address", Bencode(advertise));
 
@@ -674,6 +697,7 @@ void RtpengineMediaEngine::answer(plugins::Executor on, std::shared_ptr<Call> ca
   command.set("replace", Bencode::list({Bencode(std::string("origin")), Bencode(std::string("session-connection")), Bencode(std::string("sdp-version"))}));
 
   apply_profile(command, flags.target, flags.rtcp_mux, true);
+  apply_dtmf(command, flags);
   if (const auto advertise = _advertise_for(flags); !advertise.empty()) command.set("media-address", Bencode(advertise));
 
   _call_request(std::move(command), recorded_engine(call), call->id, [call, on, handler = std::move(handler)](Answered answered) mutable {
@@ -774,6 +798,33 @@ std::string RtpengineMediaEngine::_idle_document(const std::shared_ptr<Call>& ca
 
   return "{\"call_id\":\"" + call->id + "\",\"engine\":\"rtpengine\",\"streams\":" + std::to_string(streams) + ",\"idle_seconds\":" + idle +
          ",\"legs\":" + legs + "}";
+}
+
+// One "play DTMF" per digit, in order; rtpengine queues them. The participant named is the one the event comes
+// from, so the call must have been offered and answered with inject DTMF (apply_dtmf), which is what a leg set to
+// info earns.
+void RtpengineMediaEngine::play_dtmf(plugins::Executor on, std::shared_ptr<Call> call, std::size_t participant, std::string digits,
+                                     std::chrono::milliseconds duration, plugins::StatusHandler handler) {
+  if (!is_connected()) return _complete(std::move(on), std::move(handler), plugins::Status::failure("rtpengine is not connected"));
+  if (digits.empty()) return _complete(std::move(on), std::move(handler), plugins::Status::success());
+
+  Flags flags;
+  flags.participant = participant;
+  const auto tags = _tags_for(call, flags, false);
+  if (!tags.ok) return _complete(std::move(on), std::move(handler), plugins::Status::failure("no dialog tag for the participant"));
+
+  auto command = _command("play DTMF", call);
+  command.set("from-tag", Bencode(tags.from));
+  command.set("code", Bencode(std::string(1, digits.front())));
+  command.set("duration", Bencode(static_cast<std::int64_t>(std::clamp<std::int64_t>(duration.count(), 100, 5000))));
+
+  auto self = shared_from_this();
+  _call_request(std::move(command), recorded_engine(call), call->id,
+                [this, self, on, call, participant, rest = digits.substr(1), duration, handler = std::move(handler)](Answered answered) mutable {
+                  const auto error = answered.error.empty() ? _error_of(answered.reply) : answered.error;
+                  if (!error.empty()) return _complete(std::move(on), std::move(handler), plugins::Status::failure(error));
+                  play_dtmf(std::move(on), call, participant, rest, duration, std::move(handler));
+                });
 }
 
 void RtpengineMediaEngine::start_recording(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) {

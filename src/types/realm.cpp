@@ -44,6 +44,32 @@ std::string MediaPolicy::to_string(Profiles value) {
   return "mirror";
 }
 
+std::optional<MediaPolicy::Dtmf> MediaPolicy::parse_dtmf(const std::string& value) {
+  const auto name = Util::to_lower(Util::trim(value));
+
+  if (name == "auto") return Dtmf::Auto;
+  if (name == "rfc4733") return Dtmf::Rfc4733;
+  if (name == "info") return Dtmf::Info;
+  if (name == "inband") return Dtmf::Inband;
+
+  return std::nullopt;
+}
+
+std::string MediaPolicy::to_string(Dtmf value) {
+  switch (value) {
+    case Dtmf::Auto:
+      return "auto";
+    case Dtmf::Rfc4733:
+      return "rfc4733";
+    case Dtmf::Info:
+      return "info";
+    case Dtmf::Inband:
+      return "inband";
+  }
+
+  return "auto";
+}
+
 Realm::Realm() {}
 
 Realm::Realm(const std::string& _name) { name = _name; }

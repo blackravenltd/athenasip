@@ -950,3 +950,40 @@ TEST(ProvisioningApiTest, RealmsAndSubscribersCarryAttributesForScripts) {
 
   EXPECT_EQ(f.put("/api/v1/realms/example.com", R"({"attributes":"country=44"})").status, 400u);
 }
+
+// A realm's dtmf is chosen, shown over the server's default, and taken back with null; an unknown method is a 400.
+TEST(ProvisioningApiTest, ARealmChoosesHowItsLegsSendKeyPresses) {
+  ApiFixture f;
+  f.config->behaviour.dtmf = types::MediaPolicy::Dtmf::Rfc4733;
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+
+  auto json = f.get("/api/v1/realms/example.com").json();
+  EXPECT_TRUE(json.at("behaviour").at("dtmf").is_null());
+  EXPECT_EQ(json.at("behaviour_effective").at("dtmf").as_string(), "rfc4733") << "the server's, inherited";
+  EXPECT_EQ(json.at("behaviour_default").at("dtmf").as_string(), "rfc4733");
+
+  auto updated = f.put("/api/v1/realms/example.com", R"({"behaviour":{"dtmf":"info"}})");
+  ASSERT_EQ(updated.status, 200u) << updated.body;
+  json = f.get("/api/v1/realms/example.com").json();
+  EXPECT_EQ(json.at("behaviour").at("dtmf").as_string(), "info");
+  EXPECT_EQ(json.at("behaviour_effective").at("dtmf").as_string(), "info");
+
+  EXPECT_EQ(f.put("/api/v1/realms/example.com", R"({"behaviour":{"dtmf":"rfc2833"}})").status, 400u);
+  EXPECT_EQ(f.get("/api/v1/realms/example.com").json().at("behaviour").at("dtmf").as_string(), "info") << "unchanged";
+
+  ASSERT_EQ(f.put("/api/v1/realms/example.com", R"({"behaviour":{"dtmf":null}})").status, 200u);
+  EXPECT_TRUE(f.get("/api/v1/realms/example.com").json().at("behaviour").at("dtmf").is_null());
+}
+
+// A subscriber's dtmf is its endpoint's, above the realm's.
+TEST(ProvisioningApiTest, ASubscriberChoosesHowItsEndpointSendsKeyPresses) {
+  ApiFixture f;
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+  ASSERT_EQ(f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice","password":"secret","behaviour":{"dtmf":"inband"}})").status, 201u);
+  EXPECT_EQ(f.get("/api/v1/realms/example.com/subscribers/alice").json().at("behaviour").at("dtmf").as_string(), "inband");
+
+  EXPECT_EQ(f.put("/api/v1/realms/example.com/subscribers/alice", R"({"behaviour":{"dtmf":"tones"}})").status, 400u);
+
+  ASSERT_EQ(f.put("/api/v1/realms/example.com/subscribers/alice", R"({"behaviour":{"dtmf":null}})").status, 200u);
+  EXPECT_TRUE(f.get("/api/v1/realms/example.com/subscribers/alice").json().at("behaviour").at("dtmf").is_null());
+}

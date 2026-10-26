@@ -419,6 +419,16 @@ bool Config::load_from_yaml(const std::string& filename) {
       behaviour.profiles = *profiles;
     }
 
+    if (behaviour_section["dtmf"]) {
+      const auto named = behaviour_section["dtmf"].as<std::string>();
+      const auto dtmf = types::MediaPolicy::parse_dtmf(named);
+      if (!dtmf) {
+        _logger->error("Unknown 'behaviour.dtmf' '" + named + "': it is one of auto, rfc4733, info or inband");
+        return false;
+      }
+      behaviour.dtmf = *dtmf;
+    }
+
     if (behaviour_section["qualify_interval"]) {
       std::int64_t seconds = -1;
       try {
@@ -797,6 +807,7 @@ std::string Config::effective_yaml() const {
   out << YAML::Key << "behaviour" << YAML::Value << YAML::BeginMap;
   out << YAML::Key << "media_anchor" << YAML::Value << behaviour.anchor;
   out << YAML::Key << "media_profile" << YAML::Value << types::MediaPolicy::to_string(behaviour.profiles);
+  out << YAML::Key << "dtmf" << YAML::Value << types::MediaPolicy::to_string(behaviour.dtmf);
   out << YAML::Key << "qualify_interval" << YAML::Value << behaviour_qualify_interval;
   out << YAML::Key << "rewrite_contact" << YAML::Value << behaviour_rewrite_contact;
   out << YAML::EndMap;

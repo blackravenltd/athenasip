@@ -1269,6 +1269,7 @@ std::string Core::node_status_json(const std::string& status) const {
     if (capabilities.conference) can.push_back("conference");
     if (capabilities.record) can.push_back("record");
     if (capabilities.transcode) can.push_back("transcode");
+    if (capabilities.dtmf) can.push_back("dtmf");
     engine["capabilities"] = std::move(can);
 
     boost::json::array produces;

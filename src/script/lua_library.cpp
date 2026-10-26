@@ -335,9 +335,10 @@ int response_index(lua_State* L) {
 void push_json(lua_State* L, const boost::json::value& value);
 
 void push_behaviour(lua_State* L, const types::MediaPolicy& media, std::uint32_t qualify, bool rewrite_contact) {
-  lua_createtable(L, 0, 4);
+  lua_createtable(L, 0, 5);
   set_boolean(L, "media_anchor", media.anchor);
   set_text(L, "media_profile", types::MediaPolicy::to_string(media.profiles));
+  set_text(L, "dtmf", types::MediaPolicy::to_string(media.dtmf));
   set_integer(L, "qualify_interval", qualify);
   set_boolean(L, "rewrite_contact", rewrite_contact);
 }
@@ -354,9 +355,10 @@ int realm_index(lua_State* L) {
   // What the realm set itself, nil for what it inherits.
   if (key == "behaviour") {
     const auto& set = realm.behaviour;
-    lua_createtable(L, 0, 4);
+    lua_createtable(L, 0, 5);
     if (set.media_anchor) set_boolean(L, "media_anchor", *set.media_anchor);
     if (set.media_profile) set_text(L, "media_profile", types::MediaPolicy::to_string(*set.media_profile));
+    if (set.dtmf) set_text(L, "dtmf", types::MediaPolicy::to_string(*set.dtmf));
     if (set.qualify_interval) set_integer(L, "qualify_interval", *set.qualify_interval);
     if (set.rewrite_contact) set_boolean(L, "rewrite_contact", *set.rewrite_contact);
     return 1;
@@ -390,6 +392,10 @@ int subscriber_index(lua_State* L) {
   if (key == "media_profile") {
     if (!subscriber.media_profile) return lua_pushnil(L), 1;
     return push_text(L, types::MediaPolicy::to_string(*subscriber.media_profile)), 1;
+  }
+  if (key == "dtmf") {
+    if (!subscriber.dtmf) return lua_pushnil(L), 1;
+    return push_text(L, types::MediaPolicy::to_string(*subscriber.dtmf)), 1;
   }
   return lua_pushnil(L), 1;
 }

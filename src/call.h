@@ -77,6 +77,12 @@ class Call {
     // the transport.
     std::optional<MediaPolicy::Profiles> subscriber_profile;
 
+    // How the leg sends key presses: what its trunk, subscriber or realm says, and once
+    // the leg has described itself, what that comes to (auto is rfc4733 when it offered
+    // telephone-event, else inband).
+    std::optional<MediaPolicy::Dtmf> dtmf_setting;
+    std::optional<MediaPolicy::Dtmf> dtmf;
+
     // The party that started the call.
     bool originator = false;
 
@@ -104,6 +110,10 @@ class Call {
   // A peer node forwarded this call here and anchors its media, so this node leaves every
   // session description alone.
   bool media_elsewhere = false;
+
+  // The operator has been told once that the legs send key presses differently and the
+  // engine cannot convert.
+  bool dtmf_conversion_warned = false;
 
   // The call record (CDR). Only `node`, the node the caller reached, writes it. A node the
   // call was forwarded to has that peer in `from_node` and writes nothing. `media_engine`

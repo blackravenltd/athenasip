@@ -1128,3 +1128,29 @@ TEST(RedisDatastoreTest, ASubscriberLearnedOnUpdateFindsTheCall) {
   ASSERT_TRUE(datastore->call_update(make_call("call-" + x, Call::State::Ringing, s1, s2)));
   EXPECT_EQ(call_ids(datastore->call_list_for_subscriber(s2)), (std::vector<std::string>{"call-" + x}));
 }
+
+// A realm's and a subscriber's dtmf survive the store, and absent stays unset.
+TEST(RedisDatastoreTest, TheDtmfMethodRoundTrips) {
+  REQUIRE_REDIS(datastore);
+  const auto name = "dtmf-" + unique_suffix() + ".example";
+
+  auto realm = make_realm(name);
+  realm->behaviour.dtmf = types::MediaPolicy::Dtmf::Info;
+  ASSERT_TRUE(datastore->realm_create(realm));
+  auto found = datastore->realm_get_by_name(name);
+  ASSERT_NE(found, nullptr);
+  EXPECT_EQ(found->behaviour.dtmf, types::MediaPolicy::Dtmf::Info);
+
+  auto chose = make_subscriber(4345, "sip:keys@" + name);
+  chose->dtmf = types::MediaPolicy::Dtmf::Inband;
+  ASSERT_TRUE(datastore->subscriber_create(chose));
+  auto silent = make_subscriber(4346, "sip:quiet@" + name);
+  ASSERT_TRUE(datastore->subscriber_create(silent));
+
+  auto read = datastore->subscriber_get(chose->identity);
+  ASSERT_NE(read, nullptr);
+  EXPECT_EQ(read->dtmf, types::MediaPolicy::Dtmf::Inband);
+  read = datastore->subscriber_get(silent->identity);
+  ASSERT_NE(read, nullptr);
+  EXPECT_FALSE(read->dtmf.has_value());
+}
