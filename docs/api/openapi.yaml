@@ -1471,10 +1471,26 @@ components:
         realm:
           type: object
           description: Present when `realm` was asked for.
-          required: [name, registration, outbound, push]
+          required: [name, registration, outbound, push, conferences]
           properties:
             name:
               type: string
+            conferences:
+              type: array
+              description: >-
+                RFC 4579. The rooms a client may dial, as the prefix of each conference focus
+                serving the realm: a URI whose user part starts with it is a room. Empty when
+                the realm has no focus.
+              items:
+                type: object
+                required: [prefix, trunk]
+                properties:
+                  prefix:
+                    type: string
+                    example: conf-
+                  trunk:
+                    type: string
+                    description: The focus trunk's name
             registration:
               type: object
               description: |

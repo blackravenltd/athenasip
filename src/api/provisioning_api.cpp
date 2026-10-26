@@ -706,9 +706,34 @@ void ProvisioningAPI::_subscriber_config(RouteContext context) {
     }
     expects["push"] = std::move(push);
 
-    out["realm"] = std::move(expects);
-    write_json(context.response, http::status::ok, out);
-    context.done();
+    // RFC 4579: the rooms a client may dial, as the prefixes of the focus trunks serving this realm
+    // (docs/design/conferencing.md); a store with no trunks has none.
+    _datastore->trunk_list(_executor, [out, expects, realm, context](plugins::Result<std::vector<std::shared_ptr<types::Trunk>>> trunks) mutable {
+      boost::json::array conferences;
+      if (trunks.ok) {
+        for (const auto& trunk : trunks.value) {
+          const auto* focus = trunk ? trunk->attributes.if_contains("focus") : nullptr;
+          if (focus == nullptr || !focus->is_object()) continue;
+          const auto* prefix = focus->as_object().if_contains("prefix");
+          if (prefix == nullptr || !prefix->is_string() || prefix->as_string().empty()) continue;
+
+          bool served = true;
+          if (const auto* realms = focus->as_object().if_contains("realms"); realms != nullptr && realms->is_array() && !realms->as_array().empty()) {
+            served = false;
+            for (const auto& name : realms->as_array()) {
+              served = served || (name.is_string() && Util::to_lower(std::string(name.as_string())) == Util::to_lower(realm->name));
+            }
+          }
+          if (!served) continue;
+
+          conferences.push_back(boost::json::object{{"prefix", std::string(prefix->as_string())}, {"trunk", trunk->name}});
+        }
+      }
+      expects["conferences"] = std::move(conferences);
+      out["realm"] = std::move(expects);
+      write_json(context.response, http::status::ok, out);
+      context.done();
+    });
   });
 }
 
