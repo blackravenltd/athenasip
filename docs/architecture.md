@@ -91,6 +91,12 @@ Too Large first (RFC 3261 18.1.1). A Content-Length that is not one number is an
 and closes the stream too, since nothing after it can be framed. A datagram is bounded by
 its own size, and one whose Content-Length is not one number is discarded.
 
+A message is parsed strictly, and one that fails is answered 400 before anything reads it:
+the request line is exactly a Method that is an RFC 3261 token, a Request-URI that parses
+and `SIP/2.0`; every field name is a token; a line with no colon ends the parse there. Line
+endings are CRLF when this node sends, and a bare LF is accepted when it receives (RFC 3261
+7.5's robustness), so a header block mixing the two reads the same.
+
 Flows are held within limits too ([configuration](configuration.md#sip)): a connection that
 sends no whole message within `sip.flow_first_message_timeout` is closed, one that registered
 nobody is closed when idle for `sip.flow_idle_timeout`, a UDP source earns a flow only with a

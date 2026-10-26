@@ -6,6 +6,8 @@
 //
 #include "sip_header.h"
 
+#include <string_view>
+
 namespace athenasip {
 
 namespace {
@@ -207,6 +209,18 @@ void SIPHeader::_store_parsed_field(const std::string& field_name, const std::st
   }
 }
 
+namespace {
+// RFC 3261 25.1: token = 1*(alphanum / "-" / "." / "!" / "%" / "*" / "_" / "+" / "`" / "'" / "~"). A Method and a
+// field name are both one.
+bool is_token(const std::string& text) {
+  if (text.empty()) return false;
+  for (const char c : text) {
+    if (!std::isalnum(static_cast<unsigned char>(c)) && std::string_view("-.!%*_+`'~").find(c) == std::string_view::npos) return false;
+  }
+  return true;
+}
+}  // namespace
+
 void SIPHeader::parse(const std::string& sip_message) {
   headers.clear();
   headers_map.clear();
@@ -235,10 +249,16 @@ void SIPHeader::parse(const std::string& sip_message) {
       request_method = token;
       first_line_stream >> request_uri_str >> sip_version;
 
-      if (request_uri_str.empty() || sip_version != "SIP/2.0") {
+      // Exactly Method SP Request-URI SP SIP-Version (review finding 8): a method that is no token, a URI that does
+      // not parse or anything after the version is a malformed request, refused at the 400 gate.
+      std::string rest;
+      first_line_stream >> rest;
+
+      if (!is_token(request_method) || request_uri_str.empty() || sip_version != "SIP/2.0" || !rest.empty()) {
         _valid = false;
       } else {
         request_uri = std::make_shared<SIPUri>(request_uri_str);
+        if (!request_uri->valid) _valid = false;
       }
     }
   } else {
@@ -266,14 +286,16 @@ void SIPHeader::parse(const std::string& sip_message) {
       current_value.clear();
     }
 
-    // A header line with no colon is malformed.
+    // A header line with no colon, or whose name is no token, is malformed, and nothing after it is read (review
+    // finding 9): what follows a fault is not to be trusted. HCOLON allows whitespace before the colon (25.1).
     size_t colon_pos = line.find(':');
-    if (colon_pos != std::string::npos) {
-      current_key = line.substr(0, colon_pos);
-      current_value = Util::trim(line.substr(colon_pos + 1));
-    } else {
+    const auto name = colon_pos == std::string::npos ? std::string() : Util::trim(line.substr(0, colon_pos));
+    if (!is_token(name)) {
       _valid = false;
+      return;
     }
+    current_key = name;
+    current_value = Util::trim(line.substr(colon_pos + 1));
   }
 
   if (!current_key.empty()) _store_parsed_field(current_key, current_value);

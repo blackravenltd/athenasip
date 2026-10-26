@@ -85,3 +85,43 @@ TEST(SIPHeaderRFCTest, WellFormedMessagesAreValid) {
                         "\r\n")
                   .is_valid());
 }
+
+// RFC 3261 25.1, review finding 8: Method is a token, the Request-URI must parse, and the request line is exactly
+// three parts. Each of these is malformed and reported so, rather than handed on half parsed.
+TEST(SIPHeaderRFCTest, ARequestLineMustBeAToken_AUriThatParses_AndNothingMore) {
+  EXPECT_FALSE(SIPHeader("REG(ISTER sip:example.com SIP/2.0\r\n\r\n").is_valid()) << "a separator in the method";
+  EXPECT_FALSE(SIPHeader("REGISTER sip:exam ple.com SIP/2.0\r\n\r\n").is_valid()) << "four parts";
+  EXPECT_FALSE(SIPHeader("REGISTER sip:example.com SIP/2.0 extra\r\n\r\n").is_valid()) << "anything after the version";
+  EXPECT_FALSE(SIPHeader("REGISTER sip:example.com:99999 SIP/2.0\r\n\r\n").is_valid()) << "a Request-URI that does not parse";
+
+  // Extension methods are tokens too.
+  EXPECT_TRUE(SIPHeader("X-CUSTOM.method sip:example.com SIP/2.0\r\n\r\n").is_valid());
+}
+
+// RFC 3261 7.3.1: a field name is a token; whitespace before the colon is allowed.
+TEST(SIPHeaderRFCTest, AFieldNameMustBeAToken) {
+  EXPECT_FALSE(SIPHeader("REGISTER sip:example.com SIP/2.0\r\nCall ID: x\r\n\r\n").is_valid());
+  EXPECT_FALSE(SIPHeader("REGISTER sip:example.com SIP/2.0\r\n: x\r\n\r\n").is_valid());
+  EXPECT_TRUE(SIPHeader("REGISTER sip:example.com SIP/2.0\r\nCall-ID : x\r\n\r\n").is_valid());
+}
+
+// Review finding 9: past a line with no colon nothing is parsed, so no caller sees fields read after the fault.
+TEST(SIPHeaderRFCTest, NothingIsParsedPastALineWithNoColon) {
+  SIPHeader header(
+      "REGISTER sip:example.com SIP/2.0\r\n"
+      "Call-ID: before\r\n"
+      "this line has no colon\r\n"
+      "CSeq: 1 REGISTER\r\n"
+      "\r\n");
+
+  EXPECT_FALSE(header.is_valid());
+  EXPECT_FALSE(header.contains("CSeq"));
+}
+
+// The line-ending policy: CRLF, as RFC 3261 7 requires of a sender, and a bare LF accepted, as robust parsing
+// tolerates (7.5); a header block mixing both is read the same.
+TEST(SIPHeaderRFCTest, BareLineFeedsAreAccepted) {
+  SIPHeader header("REGISTER sip:example.com SIP/2.0\nCall-ID: lf\r\nCSeq: 1 REGISTER\n\n");
+  EXPECT_TRUE(header.is_valid());
+  EXPECT_TRUE(header.contains("CSeq"));
+}
