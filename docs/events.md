@@ -25,6 +25,7 @@ and nothing on the call path waits for it.
 | `calls/<call_id>/state` | A call changes state | no | The state |
 | `calls/<call_id>/unregister` | A call ends | no | The call id |
 | `trunks/<name>/status` | The node registering a trunk starts, succeeds or fails | yes | [Trunk status](#trunk-status) |
+| `trunks/changed` | A trunk is created, changed or deleted over the API; every node reads the trunks at once instead of at its next scan | no | The trunk's name |
 | `presence/<aor>/changed` | A subscriber's presence may have changed: a binding written or removed, a call it is on written, a publication made or removed | no | [Presence changed](#presence-changed) |
 
 `<transport>` is `udp`, `tcp`, `tls`, `ws` or `wss`. `<endpoint>` is `host:port`.

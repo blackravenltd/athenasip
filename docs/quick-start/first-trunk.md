@@ -110,7 +110,8 @@ an address or a firewall, and nothing after this will work until it answers.
 curl "$ATHENA_API/trunks/acme" -H "Authorization: Bearer $ATHENA_ADMIN_TOKEN"
 ```
 
-`registration.state` is `registered` within half a minute (the node looks for new trunks
+`registration.state` is `registered` within a few seconds (creating a trunk tells every
+node to read the trunks at once; a node that missed the message reads them on its own
 every 30 seconds), and the log says
 `Registered to trunk acme for 300 seconds`. `failed` has the reason in
 `registration.detail`, and the log says `Cannot register to trunk acme - <reason>`.
@@ -133,7 +134,7 @@ every 30 seconds), and the log says
 | A call in is challenged instead | The call came from an address not in `inbound_addresses`. `sip.log_messages: true`, with `log.level: debug`, shows where it came from. |
 | The call connects with no audio | [Troubleshooting](../troubleshooting.md#one-way-or-no-audio), as for any call |
 | A call out from a browser or WebRTC phone is refused 488 | The carrier was offered what the caller speaks; carriers want plain RTP. `athenasip.trunks` offers the trunk's `media_profile` (default `rtp`); a script of your own passes `media = {media_anchor = true, media_profile = "rtp"}` to `route.forward`. |
-| The phone answers the carrier's OPTIONS or a voicemail NOTIFY every minute | The carrier sends them to the Contact the node registered, and they are routed as calls in. Known, and harmless while the phone answers them. |
+| The phone gets a voicemail NOTIFY | The carrier sends it to the Contact the node registered, and it is routed in by the number like a call: the phone's message-waiting light. An OPTIONS keepalive to that Contact is answered by the node itself. |
 | Key presses do nothing at the far end | Both ends need `telephone-event` in their SDP ([Media](../media.md#dtmf)). |
 
 ## Next

@@ -16,6 +16,7 @@
 #include <optional>
 #include <string>
 
+#include "events/event_system.h"
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
 #include "sip_message.h"
@@ -65,15 +66,19 @@ class TrunkRegistrar : public std::enable_shared_from_this<TrunkRegistrar> {
 
   TrunkRegistrar(std::shared_ptr<loggers::Logger> logger, std::weak_ptr<Core> core);
 
-  // Reads the trunks now and every kScan after. On the strand.
+  // Reads the trunks now, every kScan after, and whenever the bus says one changed (trunks/changed). On the strand.
   void start();
   void stop();
 
-  // Reads the trunks now, as start does and each scan does.
+  // Reads the trunks now, as start does and each scan does. The next scheduled scan is kScan from now.
   void scan();
 
   // The trunks this node registers, by name.
   std::map<std::string, Status> statuses() const;
+
+  // Whether user is the user part of a Contact this node registers to a trunk, so what the carrier sends there,
+  // such as an OPTIONS keepalive, is addressed to this node and not to a subscriber. On the strand.
+  bool registered_contact(const std::string& user) const;
 
  private:
   struct Registration {
@@ -98,6 +103,7 @@ class TrunkRegistrar : public std::enable_shared_from_this<TrunkRegistrar> {
   };
 
   void _schedule_scan();
+  void _unlisten();
   void _keep(const types::Trunk& trunk);
   // Stops registering. With unregister, the carrier's binding is removed first (Expires 0, RFC 3261 10.2.2): the
   // trunk no longer asks to be registered. Without, another node has the lease and the binding is now its.
@@ -116,6 +122,7 @@ class TrunkRegistrar : public std::enable_shared_from_this<TrunkRegistrar> {
   std::weak_ptr<Core> _core;
   std::map<std::string, Registration> _registrations;
   std::shared_ptr<Timer> _scan_timer;
+  std::shared_ptr<events::Subscription> _changed;
   bool _running = false;
 };
 

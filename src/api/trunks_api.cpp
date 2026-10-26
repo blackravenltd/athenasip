@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "api/api_json.h"
+#include "events/topics.h"
 #include "loggers/logger_scoped.h"
 #include "types/sip_uri.h"
 #include "types/user.h"
@@ -160,6 +161,7 @@ void TrunksAPI::_create(RouteContext context) {
       write_error(context.response, http::status::conflict, "conflict", "trunk " + trunk->name + " already exists");
       return context.done();
     }
+    self->_announce(trunk->name);
     write_json(context.response, http::status::created, self->to_json(*trunk));
     context.done();
   });
@@ -212,6 +214,7 @@ void TrunksAPI::_update(RouteContext context) {
         write_error(context.response, http::status::not_found, "not_found", "no trunk " + trunk->name);
         return context.done();
       }
+      self->_announce(trunk->name);
       write_json(context.response, http::status::ok, self->to_json(*trunk));
       context.done();
     });
@@ -220,14 +223,20 @@ void TrunksAPI::_update(RouteContext context) {
 
 void TrunksAPI::_delete(RouteContext context) {
   const auto name = context.parameter("trunk");
-  _datastore->trunk_delete(_executor, name, [context, name](plugins::Status status) mutable {
+  auto self = shared_from_this();
+  _datastore->trunk_delete(_executor, name, [self, context, name](plugins::Status status) mutable {
     if (!status.ok) {
       write_error(context.response, http::status::not_found, "not_found", "no trunk " + name);
       return context.done();
     }
+    self->_announce(name);
     write_no_content(context.response);
     context.done();
   });
+}
+
+void TrunksAPI::_announce(const std::string& name) {
+  if (_events) _events->publish(events::topics::trunks_changed(), name);
 }
 
 }  // namespace athenasip::api

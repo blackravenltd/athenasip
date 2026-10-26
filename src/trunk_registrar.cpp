@@ -105,15 +105,45 @@ TrunkRegistrar::TrunkRegistrar(std::shared_ptr<loggers::Logger> logger, std::wea
 
 void TrunkRegistrar::start() {
   _running = true;
+
+  // A trunk created, changed or deleted over the API, on this node or another, is read now rather than at the next
+  // scan. The bus delivers on its own thread; the scan runs on the strand.
+  if (auto core = _core.lock(); core && core->events) {
+    std::weak_ptr<TrunkRegistrar> weak_self = weak_from_this();
+    core->events->subscribe(
+        core->strand(), events::topics::trunks_changed(),
+        [weak_self](std::string, std::string) {
+          auto self = weak_self.lock();
+          if (!self) return;
+          if (auto core = self->_core.lock()) {
+            core->post([self]() {
+              if (self->_running) self->scan();
+            });
+          }
+        },
+        [this, self = shared_from_this()](plugins::Result<std::shared_ptr<events::Subscription>> subscribed) {
+          if (!subscribed.ok) return _logger->warn("Cannot listen for trunk changes - " + subscribed.error);
+          _changed = subscribed.value;
+          if (!_running) _unlisten();
+        });
+  }
+
   scan();
 }
 
 void TrunkRegistrar::stop() {
   _running = false;
+  _unlisten();
   if (_scan_timer) _scan_timer->cancel();
   for (auto& [name, registration] : _registrations) {
     if (registration.timer) registration.timer->cancel();
   }
+}
+
+void TrunkRegistrar::_unlisten() {
+  auto core = _core.lock();
+  if (!core || !core->events || !_changed) return;
+  core->events->unsubscribe(core->strand(), std::exchange(_changed, nullptr), [](plugins::Status) {});
 }
 
 std::map<std::string, TrunkRegistrar::Status> TrunkRegistrar::statuses() const {
@@ -122,9 +152,19 @@ std::map<std::string, TrunkRegistrar::Status> TrunkRegistrar::statuses() const {
   return out;
 }
 
+bool TrunkRegistrar::registered_contact(const std::string& user) const {
+  for (const auto& [name, registration] : _registrations) {
+    if (!registration.leaving && registration.trunk.registered_user() == user) return true;
+  }
+  return false;
+}
+
 void TrunkRegistrar::_schedule_scan() {
   auto core = _core.lock();
   if (!core || !_running) return;
+
+  // A scan the bus prompted replaces the one that was due, so two never run close together.
+  if (_scan_timer) _scan_timer->cancel();
 
   std::weak_ptr<TrunkRegistrar> weak_self = weak_from_this();
   _scan_timer = core->timer_source()->schedule(kScan, [weak_self]() {

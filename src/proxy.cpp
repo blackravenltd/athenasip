@@ -223,9 +223,14 @@ void Proxy::on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<tran
     auto max_forwards = request->header->contains("Max-Forwards") ? request->header->headers_map["Max-Forwards"][0]->as<UIntHeader>() : nullptr;
     if (max_forwards != nullptr && max_forwards->value == 0) return _answer_options(transaction, request);
 
+    const auto discovered = core->address_discovery()->finding();
+    const auto this_node = _names_this_node(*uri) || (discovered && discovered->address == uri->host);
+
+    // The Contact this node registered to a trunk is this node too: the carrier's keepalives come there.
+    if (!uri->user.empty() && this_node && core->trunk_registrar()->registered_contact(uri->user)) return _answer_options(transaction, request);
+
     if (uri->user.empty()) {
-      const auto discovered = core->address_discovery()->finding();
-      if (_names_this_node(*uri) || (discovered && discovered->address == uri->host)) return _answer_options(transaction, request);
+      if (this_node) return _answer_options(transaction, request);
 
       // A realm served here, with no user, is this node as well.
       auto self = shared_from_this();

@@ -275,3 +275,39 @@ TEST(ProxyTrunkTest, TheCallRecordNamesTheTrunkACallCameInBy) {
   });
   EXPECT_EQ(caller_trunk, "acme");
 }
+
+// RFC 3261 11.2: the Contact this node registered to the carrier is this node, so the carrier's OPTIONS
+// keepalive to it is answered here and never routed in to a subscriber as a call would be.
+TEST(ProxyTrunkTest, AnOptionsToTheContactRegisteredToTheCarrierIsAnsweredByThisNode) {
+  TrunkFixture f;
+  auto acme = f.store->trunk_get("acme");
+  acme->register_enabled = true;
+  acme->register_expires = 300;
+  ASSERT_TRUE(f.store->trunk_update(acme));
+  f.on_strand([&f]() { f.core->trunk_registrar()->start(); });
+  f.settle();
+  ASSERT_EQ(f.to_carrier("REGISTER").size(), 1u);
+  f.receive(f.carrier, TrunkFixture::reply(f.to_carrier("REGISTER")[0], 200, "OK", "Expires: 300\r\n"));
+
+  auto options = [](const std::string& uri) {
+    std::string raw = "OPTIONS " + uri + " SIP/2.0\r\n";
+    raw += "Via: SIP/2.0/UDP 192.0.2.30:5060;branch=z9hG4bK-keepalive-" + uri.substr(4, 4) + "\r\n";
+    raw += "From: <sip:keepalive@192.0.2.30>;tag=carrier\r\n";
+    raw += "To: <" + uri + ">\r\n";
+    raw += "Call-ID: keepalive-" + uri + "\r\n";
+    raw += "CSeq: 1 OPTIONS\r\n";
+    raw += "Max-Forwards: 70\r\n\r\n";
+    return raw;
+  };
+
+  f.receive(f.carrier, options("sip:4420@192.0.2.1:5060"));
+  auto answer = ProxyFixture::response_with(f.carrier_connection, 200);
+  ASSERT_NE(answer, nullptr) << "answered by this node";
+  EXPECT_TRUE(answer->header->contains("Allow"));
+
+  // Another user at this node's address is not a Contact it registered, so it is for the policy to route.
+  f.receive(f.carrier, options("sip:4421@192.0.2.1:5060"));
+  EXPECT_EQ(ProxyFixture::responses_with(f.carrier_connection, 200).size(), 1u);
+
+  f.on_strand([&f]() { f.core->trunk_registrar()->stop(); });
+}

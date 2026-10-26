@@ -215,7 +215,11 @@ datastore; when that node stops, another takes over within two minutes. What it 
 reported is the trunk's `registration` in the API (`registering`, `registered` or
 `failed`, with the reason), and is published, retained, as `trunks/<name>/status`. A
 changed trunk is registered again; a removed one, or one no longer registering, is
-unregistered.
+unregistered. The API announces each create, change and delete as `trunks/changed`, so
+every node acts within a few seconds; one that misses the message reads the trunks on
+its own every 30 seconds. An OPTIONS the carrier sends to the Contact the node registered
+is answered by the node (RFC 3261 11.2), not routed to a subscriber; a NOTIFY there, such
+as a voicemail's `message-summary`, is routed in by the number like a call.
 
 A script sees `name`, `uri`, `username`, `registers`, `contact_user` (the user part of the
 Contact registered, which is the username when the trunk does not set one),
