@@ -70,6 +70,10 @@ session that has lost its context needs to see them first.
 3. **`../athenasip-admin` is not checked out on this machine** (2026-10-26). The console
    items under Waiting on something are that repository's, and `test/suite/run.sh` reports
    its spec as missing rather than failing until it is.
+4. **Conferencing's four questions** (`docs/design/conferencing.md`, Decisions to make):
+   whether a focus is a trunk, whether `builtin://` routes conferences from the trunk's
+   attribute, whether the roster is worth the node watching the focus, and the prefix.
+   The design proposes an answer to each and the first steps are built on them.
 
 ## How to prove it
 
@@ -473,8 +477,12 @@ After the above. The order is the milestone's own:
 - [ ] RFC 4579 conference focus routing: conference URIs per realm, authorisation, route
       to a focus. FreeSWITCH `conference` as the first focus, configured by the admin API.
       `Call` already carries a focus URI and per-participant legs (`src/call.h:94`).
+      **Designed 2026-10-26: `docs/design/conferencing.md`**, a focus as a trunk with an
+      `attributes.focus`, eight steps, the first four provable without a focus. Its four
+      questions are under Waiting on Tom; steps 1 to 4 assume the answers it proposes and
+      are reversible if the answers differ.
 - [ ] RFC 4575 conference event package proxied to participants; roster in the admin
-      and client APIs.
+      and client APIs (the design's step 6, and its decision 3).
 - [ ] `MediaEngine::conference` capability implemented for rtpengine publish/subscribe
       (basic SFU), then an SFU driver (Janus / mediasoup / LiveKit) behind the same URI
       scheme. The builtin relay stays `bridge` only: three legs on one latching port
