@@ -28,6 +28,13 @@ namespace athenasip::api {
 
 namespace {
 
+// The room as the call records name it, from however the request spelt it (docs/design/conferencing.md, The
+// room's name); a text that is no URI is matched as it is.
+std::string room_of(const std::string& text) {
+  const types::SIPUri uri(text);
+  return uri.valid ? uri.canonical_address() : text;
+}
+
 boost::json::value profile_json(const std::optional<media::Profile>& profile) {
   if (!profile) return nullptr;
 
@@ -240,7 +247,7 @@ void CallsAPI::_leave(RouteContext context) {
     return context.done();
   }
 
-  const auto room = context.parameter("uri");
+  const auto room = room_of(context.parameter("uri"));
   const auto id = context.parameter("call");
   auto self = shared_from_this();
 
@@ -269,8 +276,9 @@ void CallsAPI::_conferences(RouteContext context) {
   });
 }
 
+
 void CallsAPI::_conference(RouteContext context) {
-  const auto wanted = context.parameter("uri");
+  const auto wanted = room_of(context.parameter("uri"));
   _rooms(context, [context, wanted](boost::json::array rooms) mutable {
     for (auto& room : rooms) {
       if (room.as_object().at("uri").as_string() == wanted) {

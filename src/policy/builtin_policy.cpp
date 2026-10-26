@@ -44,54 +44,6 @@ plugins::Result<T> undecided(std::string reason) {
   return plugins::Result<T>::failure(std::move(reason));
 }
 
-// The trunk that is the focus of a conference URI (RFC 4579, docs/design/conferencing.md): one whose focus
-// attribute's prefix starts the user part, in one of the realms it names, or in any when it names none.
-std::shared_ptr<types::Trunk> focus_for(const std::vector<std::shared_ptr<types::Trunk>>& trunks, const types::SIPUri& uri) {
-  if (uri.user.empty()) return nullptr;
-
-  for (const auto& trunk : trunks) {
-    const auto* focus = trunk ? trunk->attributes.if_contains("focus") : nullptr;
-    if (focus == nullptr || !focus->is_object()) continue;
-
-    const auto* prefix = focus->as_object().if_contains("prefix");
-    if (prefix == nullptr || !prefix->is_string() || prefix->as_string().empty()) continue;
-    if (uri.user.rfind(std::string(prefix->as_string()), 0) != 0) continue;
-
-    const auto* realms = focus->as_object().if_contains("realms");
-    if (realms == nullptr || !realms->is_array() || realms->as_array().empty()) return trunk;
-    for (const auto& name : realms->as_array()) {
-      if (name.is_string() && Util::to_lower(std::string(name.as_string())) == Util::to_lower(uri.host)) return trunk;
-    }
-  }
-  return nullptr;
-}
-
-// A conference URI's request, to its focus as a call out by a trunk: the trunk's URI with the room as the user
-// part, its outbound proxy, the room on the target, and the carrier's media and key presses as the trunk's
-// attributes say, as athenasip.standard decides it.
-RouteDecision to_focus(const std::shared_ptr<types::Trunk>& trunk, const std::shared_ptr<types::SIPUri>& called, const types::Realm& realm,
-                       const Config& config) {
-  auto uri = std::make_shared<types::SIPUri>(trunk->uri);
-  uri->user = called->user;
-  const auto next_hop = trunk->proxy.empty() ? nullptr : std::make_shared<types::SIPUri>(trunk->proxy);
-
-  auto target = Target::to(uri, next_hop, trunk->name);
-  target.focus = called;
-  if (const auto* dtmf = trunk->attributes.if_contains("dtmf"); dtmf != nullptr && dtmf->is_string()) {
-    target.dtmf = types::MediaPolicy::parse_dtmf(std::string(dtmf->as_string()));
-  }
-
-  auto decision = RouteDecision::forward({std::move(target)});
-  auto media = realm.behaviour.over(config.behaviour);
-  media.profiles = types::MediaPolicy::Profiles::PlainRtp;
-  if (const auto* profile = trunk->attributes.if_contains("media_profile"); profile != nullptr && profile->is_string()) {
-    media.profiles = types::MediaPolicy::parse_profiles(std::string(profile->as_string())).value_or(types::MediaPolicy::Profiles::PlainRtp);
-  }
-  decision.media = media;
-  decision.rewrite_contact = realm.behaviour.rewrite_contact.value_or(config.behaviour_rewrite_contact);
-  return decision;
-}
-
 }  // namespace
 
 BuiltinPolicy::BuiltinPolicy(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<types::URL> url)
@@ -173,13 +125,6 @@ void BuiltinPolicy::route(plugins::Executor on, std::shared_ptr<RequestView> req
     auto realm = found.value;
     auto identity = std::make_shared<types::SIPIdentity>(called->to_string());
 
-    // A conference URI goes to its focus, whatever the method, never to a subscriber (docs/design/conferencing.md).
-    // A store that holds no trunks has no focus.
-    host->trunks([this, on, handler, called, host, realm, identity](plugins::Result<std::vector<std::shared_ptr<types::Trunk>>> trunks) {
-    if (auto focus = focus_for(trunks.ok ? trunks.value : std::vector<std::shared_ptr<types::Trunk>>{}, *called)) {
-      return _complete(on, handler, decided(to_focus(focus, called, *realm, host->config())));
-    }
-
     host->subscriber(identity, [this, on, handler, called, host, realm](plugins::Result<std::shared_ptr<types::Subscriber>> subscriber) {
       if (!subscriber.ok) {
         return _complete(on, handler, undecided<RouteDecision>("could not read the subscriber for " + called->to_string() + " - " + subscriber.error));
@@ -208,7 +153,6 @@ void BuiltinPolicy::route(plugins::Executor on, std::shared_ptr<RequestView> req
         _complete(on, handler, decided(std::move(decision)));
       });
     });
-    });
   });
 }
 
@@ -226,18 +170,10 @@ void BuiltinPolicy::register_(plugins::Executor on, std::shared_ptr<RequestView>
     const auto& config = host->config();
 
     if (found.value) {
-      // A room is not a subscriber: a REGISTER for a conference URI is refused.
-      const auto realm = found.value;
-      return host->trunks([this, on, handler, aor, realm, host](plugins::Result<std::vector<std::shared_ptr<types::Trunk>>> trunks) {
-        if (focus_for(trunks.ok ? trunks.value : std::vector<std::shared_ptr<types::Trunk>>{}, *aor)) {
-          _logger->info("REGISTER for " + aor->to_string() + ", a conference, not a subscriber - 403");
-          return _complete(on, handler, decided(RegisterDecision::reject(403, "Forbidden")));
-        }
-        const auto& config = host->config();
-        _complete(on, handler,
-                  decided(RegisterDecision::accept(realm, realm->registration_timeout, realm->registration_minimum,
-                                                   realm->behaviour.qualify_over(config.behaviour_qualify_interval))));
-      });
+      const auto& realm = found.value;
+      return _complete(on, handler,
+                       decided(RegisterDecision::accept(realm, realm->registration_timeout, realm->registration_minimum,
+                                                        realm->behaviour.qualify_over(config.behaviour_qualify_interval))));
     }
 
     const auto unserved = [this, aor]() {

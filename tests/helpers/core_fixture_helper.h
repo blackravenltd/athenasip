@@ -59,9 +59,14 @@ struct CoreFixture {
 
     // ATHENA_TEST_POLICY=lua runs every test against the standard scripts instead of builtin://, which must give
     // the same answers (tests/policy/policy_equivalence_test.cpp runs the suite that way).
-    if (const char* policy = std::getenv("ATHENA_TEST_POLICY"); policy != nullptr && std::string(policy) == "lua") {
-      core->policy_register(std::make_shared<athenasip::policy::LuaPolicy>(logger, nullptr));
-    }
+    if (lua_policy()) core->policy_register(std::make_shared<athenasip::policy::LuaPolicy>(logger, nullptr));
+  }
+
+  // Whether this run is against the standard scripts. What is the scripts' alone, such as conferencing
+  // (docs/design/conferencing.md, decision 2), is proved under them and skipped under builtin://.
+  static bool lua_policy() {
+    const char* policy = std::getenv("ATHENA_TEST_POLICY");
+    return policy != nullptr && std::string(policy) == "lua";
   }
 
   // Core's registries are strand-confined, so a test reaches them the way a server does.

@@ -57,6 +57,11 @@ class SIPUri {
   // RFC 3261 19.1.4 equivalence, which is neither string equality nor a total order, hence not operator==.
   bool equivalent_to(const SIPUri& other) const;
 
+  // The address this URI names, as a key: sip:user@host with the host lowercased and no port, parameters or
+  // headers, so what a client dialled with a transport parameter and its own spelling of the host names the
+  // same room or address of record.
+  std::string canonical_address() const;
+
   std::string to_string() const;
 
   friend std::string operator+(const SIPUri& uri, const std::string& str);

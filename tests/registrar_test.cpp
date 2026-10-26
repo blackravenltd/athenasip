@@ -729,8 +729,9 @@ TEST(RegistrarTest, AnOutboundRegistrationThroughAnEdgeWithoutObIsRefused) {
 }
 
 // A conference URI is a room, not a subscriber: a REGISTER for one is refused before any challenge
-// (docs/design/conferencing.md).
+// (docs/design/conferencing.md). Conferencing is the standard scripts' (decision 2), so this is proved under them.
 TEST(RegistrarTest, ARegisterForAConferenceUriIsRefused) {
+  if (!CoreFixture::lua_policy()) GTEST_SKIP() << "conferencing is athenasip.standard's; run with ATHENA_TEST_POLICY=lua";
   Fixture f;
   auto rooms = std::make_shared<types::Trunk>();
   rooms->name = "rooms";

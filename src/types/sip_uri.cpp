@@ -7,6 +7,7 @@
 #include "sip_uri.h"
 
 #include <algorithm>
+#include <cctype>
 #include <sstream>
 
 namespace athenasip::types {
@@ -301,6 +302,12 @@ void SIPUri::parse(const std::string& uri) {
   _parameters = split_fields(parameter_text, ';');
   _headers = split_fields(header_text, '&');
   valid = true;
+}
+
+std::string SIPUri::canonical_address() const {
+  std::string lowered = host;
+  for (auto& c : lowered) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  return "sip:" + (user.empty() ? std::string() : escape(user, is_user_char) + "@") + lowered;
 }
 
 std::string SIPUri::to_string() const {
