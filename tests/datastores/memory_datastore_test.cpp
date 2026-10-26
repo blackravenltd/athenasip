@@ -997,3 +997,18 @@ TEST(MemoryDatastoreTest, ReoffersAreCountedPerSubscriberAndListedMostRecentFirs
   EXPECT_EQ(listed[1].subscriber, "sip:fax@example.com");
   EXPECT_FALSE(listed[1].took.has_value());
 }
+
+// RFC 3261 19.1.4: a URI's host compares without regard to case, so a subscriber is found whatever case the
+// request spelt the realm in; the user part is case-sensitive and is not folded.
+TEST(MemoryDatastoreTest, ASubscriberIsFoundWhateverCaseTheHostIsSpeltIn) {
+  auto datastore = make_datastore();
+  auto subscriber = std::make_shared<types::Subscriber>();
+  subscriber->id = 71;
+  subscriber->identity = std::make_shared<types::SIPIdentity>("sip:bob@example.com");
+  subscriber->ha1 = "ha1";
+  ASSERT_TRUE(datastore->subscriber_create(subscriber));
+
+  EXPECT_NE(datastore->subscriber_get(std::make_shared<types::SIPIdentity>("sip:bob@EXAMPLE.COM")), nullptr);
+  EXPECT_NE(datastore->subscriber_get(std::make_shared<types::SIPIdentity>("sip:bob@Example.Com")), nullptr);
+  EXPECT_EQ(datastore->subscriber_get(std::make_shared<types::SIPIdentity>("sip:BOB@example.com")), nullptr);
+}
