@@ -6,6 +6,9 @@
 //
 #pragma once
 
+#include <optional>
+#include <string>
+
 namespace athenasip::media {
 
 // The profile a session description must have. Defined outside Flags because a Call keeps one per leg and call.h
@@ -14,6 +17,7 @@ namespace athenasip::media {
 // Mirror leaves the choice to the engine. SrtpSdes is RTP/SAVP with the keys in the description (RFC 4568), as
 // opposed to WebRTC's UDP/TLS/RTP/SAVPF.
 enum class Profile { Mirror, PlainRtp, WebRtc, SrtpSdes };
+
 
 // The profile as the behaviour settings spell it.
 inline const char* setting_name(Profile profile) {
@@ -28,6 +32,14 @@ inline const char* setting_name(Profile profile) {
       return "mirror";
   }
   return "";
+}
+
+// The reverse, for a stored name. Nothing for anything else.
+inline std::optional<Profile> parse_setting(const std::string& name) {
+  for (const auto profile : {Profile::WebRtc, Profile::PlainRtp, Profile::SrtpSdes, Profile::Mirror}) {
+    if (name == setting_name(profile)) return profile;
+  }
+  return std::nullopt;
 }
 
 }  // namespace athenasip::media
