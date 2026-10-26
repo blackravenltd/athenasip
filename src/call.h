@@ -115,6 +115,9 @@ class Call {
   // engine cannot convert.
   bool dtmf_conversion_warned = false;
 
+  // The dialog revision the record was last written with (types::Dialog::revision).
+  std::uint64_t dialog_revision = 0;
+
   // The call record (CDR). Only `node`, the node the caller reached, writes it. A node the
   // call was forwarded to has that peer in `from_node` and writes nothing. `media_engine`
   // is the engine that anchored the media, or empty.

@@ -54,6 +54,10 @@ class Dialogs : public std::enable_shared_from_this<Dialogs> {
   // Terminates a dialog that was torn down by other means.
   void terminate(const std::shared_ptr<types::Dialog>& dialog);
 
+  // Takes in a dialog read from the call record: one another node began, or this node began before it restarted.
+  // Nothing when it is terminated or already held. Its session deadline is rebuilt from the wall-clock expiry.
+  void adopt(std::shared_ptr<types::Dialog> dialog);
+
  private:
   // The dialogs for one Call-ID. More than one means several fork branches answered (12.1).
   using Branches = std::vector<std::shared_ptr<types::Dialog>>;

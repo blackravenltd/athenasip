@@ -1,7 +1,9 @@
 # AthenaSIP - Architecture
 
 AthenaSIP is a multi-master, clusterable SIP proxy and registrar. Any node serves any
-subscriber. Registrations survive a node dying; dialogs in flight on that node do not.
+subscriber. Registrations survive a node dying. A dialog's state is in the call record
+too, so a request inside it reaching another node finds the dialog; the media that node
+anchored, and the signalling path through it, do not move yet.
 
 The layering is RFC 3261's:
 

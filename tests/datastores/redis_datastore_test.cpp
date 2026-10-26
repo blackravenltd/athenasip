@@ -1202,3 +1202,36 @@ TEST(RedisDatastoreTest, ReoffersAreCountedPerSubscriberAndListedMostRecentFirst
   EXPECT_EQ(found_fax->count, 1u);
   EXPECT_FALSE(found_fax->took.has_value());
 }
+
+// The record keeps the dialog whole, and every leg that shares its tags gets the one dialog back.
+TEST(RedisDatastoreTest, TheCallRecordKeepsTheDialogWhole) {
+  REQUIRE_REDIS(datastore);
+  const auto id = "dialog-" + unique_suffix();
+
+  auto dialog = std::make_shared<types::Dialog>();
+  dialog->call_id = id;
+  dialog->caller_tag = "alice-tag";
+  dialog->callee_tag = "bob-tag";
+  dialog->state = types::Dialog::State::Confirmed;
+  dialog->caller_cseq = 4;
+  dialog->route_set = {std::make_shared<types::SIPUri>("sip:abc@192.0.2.1:5060;lr")};
+  dialog->callee_target = std::make_shared<types::SIPUri>("sip:bob@192.0.2.20:5060");
+
+  auto call = std::make_shared<Call>();
+  call->id = id;
+  call->state = Call::State::Connected;
+  call->add_participant(std::make_shared<types::SIPIdentity>("sip:alice@example.com"), nullptr, true);
+  call->add_participant(std::make_shared<types::SIPIdentity>("sip:bob@example.com"));
+  for (auto& participant : call->participants) participant.dialog = dialog;
+  ASSERT_TRUE(datastore->call_create(call));
+
+  auto found = datastore->call_get(id);
+  ASSERT_NE(found, nullptr);
+  ASSERT_EQ(found->participants.size(), 2u);
+  ASSERT_NE(found->participants[0].dialog, nullptr);
+  EXPECT_EQ(found->participants[0].dialog, found->participants[1].dialog) << "one dialog, shared";
+  EXPECT_EQ(found->participants[0].dialog->caller_cseq, 4u);
+  ASSERT_EQ(found->participants[0].dialog->route_set.size(), 1u);
+  EXPECT_EQ(found->participants[0].dialog->callee_target->to_string(), "sip:bob@192.0.2.20:5060");
+  EXPECT_EQ(found->participants[0].dialog->state, types::Dialog::State::Confirmed);
+}

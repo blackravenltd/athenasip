@@ -7,6 +7,8 @@
 
 #include "core.h"
 
+#include "headers/sip_identity_header.h"
+
 #include <algorithm>
 #include <atomic>
 #include <boost/asio/connect.hpp>
@@ -850,6 +852,56 @@ bool Core::names_this_node(const SIPUri& uri) const { return _proxy && _proxy->n
 void Core::_deliver_to_tu(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction) {
   _ensure_transaction_users();
 
+  // A request in a dialog this node does not hold may be in one another node began, or one this node began before
+  // it restarted: the call record says (all state lives in the datastore). Read once, before anything sees the
+  // request; an INVITE with no To tag is a new call and has no record to read.
+  std::string to_tag;
+  if (request->header->contains("To")) {
+    if (auto to = request->header->headers_map["To"][0]->as<SIPIdentityHeader>(); to != nullptr && to->value != nullptr) {
+      if (const auto tag = to->value->tags.find("tag"); tag != to->value->tags.end()) to_tag = tag->second;
+    }
+  }
+
+  if (!to_tag.empty() && !_dialogs->find(request)) {
+    const auto call_id = request->header->contains("Call-ID") ? request->header->headers_map["Call-ID"][0]->to_string() : std::string();
+    if (!call_id.empty() && !call_get(call_id)) {
+      auto self = shared_from_this();
+      datastore->call_get(_strand, call_id, [this, self, request, transaction](plugins::Result<std::shared_ptr<Call>> found) {
+        if (found.ok && found.value) _adopt_call(found.value, request);
+        _dispatch_to_tu(request, transaction);
+      });
+      return;
+    }
+  }
+
+  _dispatch_to_tu(request, transaction);
+}
+
+// A call read from the record because a request in its dialog arrived here: the dialog is carried on, the call
+// held as any other, its media left where it was anchored.
+void Core::_adopt_call(const std::shared_ptr<Call>& call, const std::shared_ptr<SIPMessage>& request) {
+  if (!call || call->state == Call::State::Closed || call_get(call->id)) return;
+
+  std::shared_ptr<types::Dialog> dialog;
+  for (const auto& participant : call->participants) {
+    if (participant.dialog && _dialogs->find(request) == nullptr && participant.dialog->state != types::Dialog::State::Terminated) {
+      dialog = participant.dialog;
+      break;
+    }
+  }
+  if (!dialog) return;
+
+  _dialogs->adopt(dialog);
+  if (!_dialogs->find(request)) return;
+
+  // The media was anchored by the node the caller reached, and stays there (docs/architecture.md).
+  if (call->node != config->sip_node_id) call->media_elsewhere = true;
+  call->dialog_revision = dialog->revision;
+  _calls[call->id] = call;
+  _logger->info("Call " + call->id + " taken from its record for a request in its dialog");
+}
+
+void Core::_dispatch_to_tu(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction) {
   // Retransmissions never get this far (RFC 3261 17.2.1), so the dialog tracker sees each
   // request once.
   request->dialog = request->header->contains("To") ? _dialogs->find(request) : nullptr;
@@ -1078,9 +1130,13 @@ void Core::_on_dialog_change(const std::shared_ptr<types::Dialog>& dialog) {
       break;
   }
 
-  if (call->state == previous) return;
+  // The record is written when the call's state changed, and when the dialog moved under it (a target, a sequence
+  // number, the session): what another node needs to carry the dialog on.
+  const bool dialog_moved = call->dialog_revision != dialog->revision;
+  call->dialog_revision = dialog->revision;
+  if (call->state == previous && !dialog_moved) return;
 
-  events->publish(events::topics::call_state(call->id), Call::state_to_string(call->state));
+  if (call->state != previous) events->publish(events::topics::call_state(call->id), Call::state_to_string(call->state));
 
   _call_record_write(call);
 
