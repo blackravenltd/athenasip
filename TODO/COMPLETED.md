@@ -3567,3 +3567,13 @@ passed, 67 skipped (Redis, MQTT, the resolver). Each piece with its test watched
       gone with its subscription. `TrunkRegistrarTest.TheStatusIsARecordInTheDatastore`,
       `TrunksApiTest.ATrunkShowsItsRegistrationAsTheNodeHoldingItRecorded`, and the datastore
       tests in memory and Redis. The suite 1558, 1491 passed, 67 skipped.
+
+### State into the datastore: the re-offer reports as records (2026-10-26)
+
+- [x] **`Datastore::reoffer_record` and `reoffer_list`**: one record per subscriber and refused
+      profile, counted up and timed on each report, most recent first; `memory://` through the
+      `media::Reoffers` map as before (now with a sequence to order two from one second),
+      `redis://` as `athena:reoffer:<subscriber>|<profile>` with an index set and a thirty-day
+      expiry. The proxy records through the store and waits for nothing; `/api/v1/media/reoffers`
+      reads the store on any node; `Core::reoffers()` is gone. The suite 1560, 1491 passed, 68
+      skipped, one failure in `DnsResolverTest` that is the machine's (`ACTIVE.md`).
