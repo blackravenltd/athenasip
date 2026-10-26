@@ -3620,3 +3620,16 @@ passed, 67 skipped (Redis, MQTT, the resolver). Each piece with its test watched
       originator}}}`. `builtin://` ignores it; a script without it is left alone.
       `CallEndedHookTest`, with a script counting in the datastore. The suite 1572, 1502
       passed, 70 skipped.
+
+### SIP MESSAGE relay, proved and described (2026-10-26)
+
+- [x] **A MESSAGE out of a dialog is relayed** (RFC 3428): authenticated as a call is, routed by
+      the policy to the subscriber's devices with its body untouched and no Record-Route, its
+      final response relayed back, 480 with nobody to send to, and a sleeping device pushed as
+      for a call (the push branch takes any request for a new dialog or none). The proxy did
+      this already; `ProxyTest.AnInstantMessageIsRelayedWithItsBodyAndItsAnswer` holds it, and
+      `docs/how-a-call-works.md` has An instant message. Nothing is stored for later.
+- [x] **`ProxyDatagramTest` raced its own TCP connect**: the flow was asserted right after
+      `settle()`, which drains the strand but not the io_context thread the connect completes
+      on; the helper waits up to two seconds. Five runs clean. The suite 1573, 1503 passed, 70
+      skipped.

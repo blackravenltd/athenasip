@@ -482,8 +482,12 @@ After the above. The order is the milestone's own:
 - [ ] RFC 6080 client configuration (SUBSCRIBE to `ua-profile`, NOTIFY pointing at
       `/api/v1/subscriber/{realm}/config`): one more package on the notifier, which now
       exists. The profile format is each vendor's, so only our own clients would read it
-      (Tom, 2026-10-05: if it costs little).
-- [ ] SIP MESSAGE relay.
+      (Tom, 2026-10-05: if it costs little). Looked at on 2026-10-26: it does not cost
+      little. The notifier keeps a subscription's package alone, and `ua-profile` needs the
+      `Event` parameters (`profile-type`) echoed on every NOTIFY (RFC 6080 5.3.2) and a
+      `message/external-body` content type carrying the URL, which the package model and
+      `_content_type(package)` have no room for. A day's work, for clients that do not exist
+      yet; left until the web client wants it.
 - [ ] RFC 8599 section 6, `pn-purr` for long-lived dialogs, which nothing needs yet.
 - [ ] Web client repository: video calling and conferencing, JsSIP over WSS, served by
       AthenaSIP, configured from `/api/v1/subscriber/{realm}/config` with the subscriber's
