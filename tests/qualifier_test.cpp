@@ -49,6 +49,9 @@ struct Fixture : CoreFixture {
     channel = make_channel("192.0.2.10", &connection);
   }
 
+  // CSeq counting up under the one Call-ID, as a client sends (RFC 3261 10.3 step 7 refuses one that does not).
+  std::uint64_t register_cseq = 0;
+
   std::string register_request(const std::string& expires = "3600", const std::string& branch = "z9hG4bK-reg") {
     const auto nonce = mint_nonce(store->realm_get_by_name("example.com"));
     const auto response = Util::md5(kHa1 + ":" + nonce + ":" + Util::md5("REGISTER:sip:example.com"));
@@ -58,7 +61,7 @@ struct Fixture : CoreFixture {
     raw += "From: <sip:alice@example.com>;tag=alice\r\n";
     raw += "To: <sip:alice@example.com>\r\n";
     raw += "Call-ID: call-registrar\r\n";
-    raw += "CSeq: 1 REGISTER\r\n";
+    raw += "CSeq: " + std::to_string(++register_cseq) + " REGISTER\r\n";
     raw += "Contact: <sip:alice@192.0.2.10:5060>\r\n";
     raw += "Expires: " + expires + "\r\n";
     raw +=

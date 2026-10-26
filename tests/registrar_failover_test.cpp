@@ -41,6 +41,9 @@ struct Fixture : CoreFixture {
     on_strand([this, node, report]() { core->nodes()->observe(events::topics::node_status(node), report); });
   }
 
+  // CSeq counting up under the one Call-ID, as a client sends (RFC 3261 10.3 step 7 refuses one that does not).
+  std::uint64_t register_cseq = 0;
+
   std::shared_ptr<SIPMessage> register_with(const std::string& supported = "athenasip-failover", const std::string& expires = "600") {
     connection->written.clear();
 
@@ -53,7 +56,7 @@ struct Fixture : CoreFixture {
     raw += "From: <sip:alice@example.com>;tag=alice\r\n";
     raw += "To: <sip:alice@example.com>\r\n";
     raw += "Call-ID: call-registrar-failover\r\n";
-    raw += "CSeq: 1 REGISTER\r\n";
+    raw += "CSeq: " + std::to_string(++register_cseq) + " REGISTER\r\n";
     raw += "Contact: <sip:alice@192.0.2.10:50000;transport=tls>\r\n";
     raw += "Expires: " + expires + "\r\n";
     if (!supported.empty()) raw += "Supported: " + supported + "\r\n";

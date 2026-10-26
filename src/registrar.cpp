@@ -7,8 +7,10 @@
 #include "registrar.h"
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <ctime>
+#include <limits>
 #include <map>
 #include <optional>
 #include <sstream>
@@ -19,6 +21,7 @@
 #include "core.h"
 #include "digest.h"
 #include "headers/authorization_header.h"
+#include "headers/cseq_header.h"
 #include "headers/sip_identity_header.h"
 #include "headers/string_header.h"
 #include "headers/uint_header.h"
@@ -34,6 +37,18 @@ using athenasip::headers::SIPIdentityHeader;
 using athenasip::headers::UIntHeader;
 
 namespace {
+
+// A decimal number, all of the text, or nothing: "12abc" is not 12.
+std::optional<std::uint64_t> number_of(const std::string& text) {
+  std::uint64_t value = 0;
+  const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
+  if (text.empty() || parsed.ec != std::errc() || parsed.ptr != text.data() + text.size()) return std::nullopt;
+  return value;
+}
+
+// An expiry as the registrar holds one, 32 bits: a larger one asked for is the largest there is, which the realm's
+// maximum then cuts down, never a wrap to a small number or to 0, which would remove the binding (review finding 14).
+std::uint32_t expiry_of(std::uint64_t asked) { return static_cast<std::uint32_t>(std::min<std::uint64_t>(asked, std::numeric_limits<std::uint32_t>::max())); }
 
 // RFC 3261 10.2.2: a single Contact of "*" (STAR, 20.10) with Expires 0 removes every
 // binding.
@@ -77,14 +92,36 @@ std::optional<std::pair<std::string, std::uint32_t>> outbound_of(const std::shar
   std::string value = instance->second;
   if (value.size() >= 2 && value.front() == '"' && value.back() == '"') value = value.substr(1, value.size() - 2);
 
-  try {
-    const auto id = std::stoul(reg_id->second);
-    if (id == 0 || id > 0x7FFFFFFFul) throw std::out_of_range("reg-id");
-    return std::make_pair(value, static_cast<std::uint32_t>(id));
-  } catch (const std::exception&) {
+  const auto id = number_of(reg_id->second);
+  if (!id || *id == 0 || *id > 0x7FFFFFFFul) {
     malformed = true;
     return std::nullopt;
   }
+  return std::make_pair(value, static_cast<std::uint32_t>(*id));
+}
+
+// RFC 3261 10.3 step 7: the REGISTER's Call-ID and CSeq number, which order the updates to a binding.
+std::pair<std::string, std::uint64_t> order_of(const SIPMessage& request) {
+  std::string call_id;
+  if (request.header->contains("Call-ID")) call_id = request.header->headers_map["Call-ID"][0]->to_string();
+  std::uint64_t cseq = 0;
+  if (request.header->contains("CSeq")) {
+    if (const auto header = request.header->headers_map["CSeq"][0]->as<headers::CSeqHeader>()) cseq = header->sequence;
+  }
+  return {call_id, cseq};
+}
+
+// Whether a stored binding is the one a contact in a REGISTER names: the same flow for outbound (RFC 5626 6),
+// otherwise the same contact as the store keys it, by user, host and port.
+bool same_binding(const types::Location& location, const std::shared_ptr<types::SIPUri>& contact, const std::string& instance, std::uint32_t reg_id) {
+  if (reg_id != 0) return location.reg_id == reg_id && location.instance == instance;
+  return location.contact && contact && location.reg_id == 0 && location.contact->user == contact->user &&
+         Util::to_lower(location.contact->host) == Util::to_lower(contact->host) && location.contact->port.value_or(0) == contact->port.value_or(0);
+}
+
+// Step 7: a binding last written from this Call-ID with a CSeq as high or higher is a REGISTER out of order.
+bool out_of_order(const types::Location& location, const std::pair<std::string, std::uint64_t>& order) {
+  return !order.first.empty() && location.call_id == order.first && order.second <= location.cseq;
 }
 
 // RFC 5626 section 6: through an edge proxy, outbound needs the first hop to keep the
@@ -279,9 +316,11 @@ void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared
         return _send_status(transaction, request, 500, "Server Internal Error");
       }
 
+      // Step 6 with step 7's ordering: a binding this Call-ID last wrote with a CSeq as high or higher stays.
+      const auto order = order_of(*request);
       auto bindings = std::make_shared<std::vector<Binding>>();
       for (const auto& location : found.value) {
-        if (location.contact) bindings->push_back(Binding{location.contact, 0});
+        if (location.contact && !out_of_order(location, order)) bindings->push_back(Binding{location.contact, 0});
       }
 
       _write_bindings(request, transaction, subscriber, bindings, 0, 0);
@@ -300,11 +339,9 @@ void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared
     auto contact_requested = requested;
     const auto tag = contact->value->tags.find("expires");
     if (tag != contact->value->tags.end()) {
-      try {
-        contact_requested = static_cast<std::uint32_t>(std::stoul(tag->second));
-      } catch (const std::exception&) {
-        return _send_status(transaction, request, 400, "Bad Request");
-      }
+      const auto asked = number_of(tag->second);
+      if (!asked) return _send_status(transaction, request, 400, "Bad Request");
+      contact_requested = expiry_of(*asked);
     }
 
     // Step 7: the first contact that is too brief refuses the whole request.
@@ -359,7 +396,24 @@ void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared
     bindings->push_back(std::move(binding));
   }
 
-  _write_bindings(request, transaction, subscriber, bindings, 0, expires);
+  // RFC 3261 10.3 step 7: an update from the Call-ID that last wrote a binding needs a higher CSeq; one that is not
+  // higher is a REGISTER out of order, late over UDP or replayed by a failover, and would undo a newer one. The
+  // whole request fails, as a request out of order in a dialog does (12.2.2).
+  core->location_list(subscriber->id, [this, self, request, transaction, subscriber, bindings, expires](plugins::Result<std::vector<types::Location>> found) {
+    if (found.ok) {
+      const auto order = order_of(*request);
+      for (const auto& location : found.value) {
+        for (const auto& binding : *bindings) {
+          if (!same_binding(location, binding.contact, binding.instance, binding.reg_id) || !out_of_order(location, order)) continue;
+          _logger->info("REGISTER for " + subscriber->identity->to_string() + " with CSeq " + std::to_string(order.second) + ", not above the " +
+                        std::to_string(location.cseq) + " that last wrote " + binding.contact->to_string() + " - 500");
+          return _send_status(transaction, request, 500, "Server Internal Error");
+        }
+      }
+    }
+
+    _write_bindings(request, transaction, subscriber, bindings, 0, expires);
+  });
 }
 
 void Registrar::_write_bindings(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
@@ -461,7 +515,7 @@ void Registrar::_store_binding(std::shared_ptr<SIPMessage> request, std::shared_
 
         next();
       },
-      binding.instance, binding.reg_id, binding.push);
+      binding.instance, binding.reg_id, binding.push, order_of(*request).first, order_of(*request).second);
 }
 
 std::uint32_t Registrar::_requested_expiry(const std::shared_ptr<SIPMessage>& request, const Terms& terms) const {
@@ -469,19 +523,16 @@ std::uint32_t Registrar::_requested_expiry(const std::shared_ptr<SIPMessage>& re
     auto contact = request->header->headers_map["Contact"][0]->as<SIPIdentityHeader>();
     if (contact != nullptr && contact->value != nullptr) {
       const auto tag = contact->value->tags.find("expires");
+      // One that is no number falls through to the Expires header.
       if (tag != contact->value->tags.end()) {
-        try {
-          return static_cast<std::uint32_t>(std::stoul(tag->second));
-        } catch (const std::exception&) {
-          // Fall through to the Expires header.
-        }
+        if (const auto asked = number_of(tag->second)) return expiry_of(*asked);
       }
     }
   }
 
   if (request->header->contains("Expires")) {
     auto expires = request->header->headers_map["Expires"][0]->as<UIntHeader>();
-    if (expires != nullptr) return static_cast<std::uint32_t>(expires->value);
+    if (expires != nullptr) return expiry_of(expires->value);
   }
 
   // RFC 3261 10.3 step 7: with neither, the local default applies, which is the realm's

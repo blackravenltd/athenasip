@@ -3793,3 +3793,30 @@ Finding 24, with regression tests.
       silence, AOR closed to strangers only, a spoofed nonce counts against nobody, challenge
       limit), `ProxyAuthenticationTest.AnAddressThatKeepsGuessingIsBanned`. The suite 1615,
       1543 passed, 72 skipped; the Lua subset 370 passed.
+
+### The perimeter, review item 9: protocol gaps (2026-10-26)
+
+Findings 11, 12, 13, 14 and 16, each with a regression test.
+
+- [x] **The ACK for a failure carries the INVITE's Route set** (RFC 3261 17.1.1.3), every value
+      in order, so it follows the INVITE through loose routers.
+      `InviteClientTransactionTest.TheAckCarriesTheInvitesRouteSet`.
+- [x] **Proxy-Require is enforced** (16.3 step 5): this proxy supports no extension a request
+      can require of it, so any tag is 420 Bad Extension with each in `Unsupported`; ACK and
+      CANCEL pass. `ProxyTest.AProxyRequireThisProxyLacksIs420WithUnsupported`.
+- [x] **The registrar orders updates** (10.3 step 7): a binding records the Call-ID and CSeq
+      of the REGISTER that wrote it (`types::Location`, both drivers, plugin API 24); a
+      REGISTER from that Call-ID whose CSeq is not higher fails 500 and changes nothing, and
+      `Contact: *` leaves such a binding alone. `RegistrarTest` gains two; the test fixtures
+      that sent every REGISTER with CSeq 1 now count up, as a client does;
+      `RedisDatastoreTest.ABindingKeepsTheCallIdAndCSeqThatWroteIt`.
+- [x] **An expiry is clamped, not wrapped**: `Expires` and a contact's `expires` beyond 32 bits
+      are the largest there is, then the realm's maximum, never 0; a contact `expires` or
+      `reg-id` that is not wholly a number is refused, where `stoul` read `60x` as 60.
+      `RegistrarTest.AnExpiryBeyondThirtyTwoBitsIsTheRealmsMaximumNotARemoval`.
+- [x] **A Max-Forwards that is no number is 400**, not forwarded undecremented.
+      `ProxyTest.AMaxForwardsThatIsNoNumberIs400AndIsNotForwarded`.
+- [x] **Redis and MQTT run here for the first time**, in throwaway containers now that Docker
+      is installed (`docs/testing.md` shows how): 1622, 1619 passed, 3 skipped, every round
+      trip written since `0.12.0` included. Without them the suite is 1621, 1550 passed; the
+      Lua subset 375 passed.

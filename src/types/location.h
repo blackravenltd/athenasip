@@ -39,6 +39,12 @@ struct Location {
   std::string instance;
   std::uint32_t reg_id = 0;
 
+  // RFC 3261 10.3 step 7: the Call-ID and CSeq of the REGISTER that last wrote the binding. A later REGISTER from the
+  // same Call-ID must carry a higher CSeq, or it is out of order and refused. Empty and zero for one written before
+  // they were kept.
+  std::string call_id;
+  std::uint64_t cseq = 0;
+
   // RFC 8599: this node agreed to push to the client when a request is waiting for it. The pn-* parameters
   // are on the contact.
   bool push = false;

@@ -471,9 +471,7 @@ to 5 and 9 here; 6 needs clang (libFuzzer), 7 needs GitHub, 8 is partly Tom's.
 - [ ] **8. Public claims** (46, 47, 48): "RFC 3261 in full" in the README becomes the
       transaction layer and section 16 proxying with the gaps listed in Limits (done with
       item 9); the GitHub About text and athenasip.org are Tom's.
-- [ ] **9. Protocol gaps** (11, 12, 13, 14, 16): the Route set on a non-2xx ACK, 420 for an
-      unsupported Proxy-Require, the registrar's Call-ID and CSeq ordering, Expires clamped
-      before narrowing, an unparseable Max-Forwards refused 400.
+- [x] **9. Protocol gaps** (11, 12, 13, 14, 16): done 2026-10-26 (`COMPLETED.md`).
 - [ ] **The rest** (8, 9, 15, 17, 18, 19, 27 to 42, 45), each small, after the nine above:
       method and URI validation, a contacts-per-AOR cap, the dead transaction id, one Allow
       list, a transaction table cap, the admin API bound to loopback by default, realm and
@@ -615,8 +613,9 @@ Each with what it waits on. None is forgotten; none can be worked here today.
 - [ ] Everything changed since `0.12.0` run through `docs/testing.md`'s Before a release:
       the CANCEL scenarios now assert the 487's CSeq (`cancel_after_180.xml`, one node and
       `across-cancel-ringing`), which only sipp proves; the trunk harness against the
-      `trunks/changed` scan and the OPTIONS answer; the Redis and MQTT unit tests (the trunk
-      status, re-offer, dialog and host-case round trips are written and never run).
+      `trunks/changed` scan and the OPTIONS answer; the Redis and MQTT unit tests ran on
+      2026-10-26 in containers (`docs/testing.md`): 1622, 1619 passed, the round trips written
+      since `0.12.0` among them.
 - [ ] Conferencing step 5 (`docs/design/conferencing.md`): FreeSWITCH in the compose files,
       a dialplan for `conf-*`, and a sipp scenario with three participants; then steps 6 to 8.
 

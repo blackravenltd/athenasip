@@ -256,6 +256,37 @@ TEST(InviteClientTransactionTest, TheAckFollowsTheRulesForItsHeaders) {
 }
 
 // In Completed the ACK is repeated for each retransmitted final response, and the TU hears of the failure once.
+// RFC 3261 17.1.1.3, review finding 11: the INVITE's Route header fields appear in the ACK, every one, in order, so the
+// ACK follows the INVITE through loose routers.
+TEST(InviteClientTransactionTest, TheAckCarriesTheInvitesRouteSet) {
+  Harness h;
+  auto invite = std::make_shared<SIPMessage>();
+  invite->header = std::make_shared<SIPHeader>(
+      "INVITE sip:bob@example.com SIP/2.0\r\n"
+      "Via: SIP/2.0/UDP alice.example.com:5060;branch=z9hG4bK-routed\r\n"
+      "Route: <sip:edge.example.net;lr>\r\n"
+      "Route: <sip:core.example.net;lr>, <sip:carrier.example.org;lr>\r\n"
+      "From: <sip:alice@example.com>;tag=alice\r\n"
+      "To: <sip:bob@example.com>\r\n"
+      "Call-ID: call-routed\r\n"
+      "CSeq: 1 INVITE\r\n"
+      "Max-Forwards: 70\r\n"
+      "\r\n");
+  auto transaction = make_ict(h, false);
+  transaction->start(invite);
+
+  transaction->receive(response_to(invite, 503, "Service Unavailable"));
+
+  auto ack = transaction->last_ack();
+  ASSERT_NE(ack, nullptr);
+  const auto& routes = ack->header->headers_map["Route"];
+  const auto& sent = invite->header->headers_map["Route"];
+  ASSERT_EQ(routes.size(), sent.size());
+  ASSERT_EQ(routes.size(), 3u);
+  for (std::size_t i = 0; i < routes.size(); ++i) EXPECT_EQ(routes[i]->to_string(), sent[i]->to_string());
+  EXPECT_NE(routes[0]->to_string().find("edge.example.net"), std::string::npos);
+}
+
 TEST(InviteClientTransactionTest, RepeatsTheAckWithoutTellingTheTuAgain) {
   Harness h;
   auto invite = request("INVITE");

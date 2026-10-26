@@ -333,6 +333,28 @@ TEST(RedisDatastoreTest, AnOutboundBindingKeepsItsInstanceAndRegId) {
   datastore->subscriber_delete(subscriber->identity);
 }
 
+// RFC 3261 10.3 step 7: the Call-ID and CSeq of the REGISTER that wrote a binding survive the store, so any node can
+// refuse one out of order.
+TEST(RedisDatastoreTest, ABindingKeepsTheCallIdAndCSeqThatWroteIt) {
+  REQUIRE_REDIS(datastore);
+  const auto realm = "order-" + unique_suffix() + ".example";
+  auto subscriber = make_subscriber(5255, "sip:dave@" + realm);
+  ASSERT_TRUE(datastore->subscriber_create(subscriber));
+
+  types::Location binding;
+  binding.contact = std::make_shared<types::SIPUri>("sip:dave@192.0.2.10:5060");
+  binding.call_id = "a84b4c76e66710@pc33.example.com";
+  binding.cseq = 314159;
+  ASSERT_TRUE(datastore->subscriber_register(subscriber, binding, 3600));
+
+  const auto found = datastore->location_list(5255);
+  ASSERT_EQ(found.size(), 1u);
+  EXPECT_EQ(found[0].call_id, "a84b4c76e66710@pc33.example.com");
+  EXPECT_EQ(found[0].cseq, 314159u);
+
+  datastore->subscriber_delete(subscriber->identity);
+}
+
 // RFC 8599: whether this cluster pushes to a binding, and its pn-* parameters, survive the store, so any node can
 // push.
 TEST(RedisDatastoreTest, APushBindingKeepsItsPushParameters) {
