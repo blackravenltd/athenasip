@@ -7,6 +7,7 @@
 #pragma once
 
 #include <boost/json.hpp>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -34,6 +35,12 @@ class CallsAPI : public std::enable_shared_from_this<CallsAPI> {
   void _list(RouteContext context);
   void _records(RouteContext context);
   void _get(RouteContext context);
+
+  // The rooms with anyone in them, from the call records: every live call whose focus is the same conference URI
+  // (RFC 4579, docs/design/conferencing.md).
+  void _conferences(RouteContext context);
+  void _conference(RouteContext context);
+  void _rooms(RouteContext context, std::function<void(boost::json::array rooms)> then);
   void _hang_up(RouteContext context);
   void _policy_reload(RouteContext context);
   void _media(RouteContext context);

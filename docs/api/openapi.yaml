@@ -633,6 +633,56 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /conferences:
+    get:
+      operationId: listConferences
+      tags: [calls]
+      summary: The rooms with somebody in them
+      description: |
+        Every conference URI with a live call to its focus (RFC 4579), from the call records,
+        so every node gives the same list, with who is in each as the node routed them.
+        What the focus itself knows of the room is not here yet
+        (docs/design/conferencing.md, step 6).
+      responses:
+        "200":
+          description: The rooms
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Conference"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /conferences/{uri}:
+    get:
+      operationId: getConference
+      tags: [calls]
+      summary: One room
+      parameters:
+        - name: uri
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The conference URI as dialled, such as sip:conf-sales@example.com
+      responses:
+        "200":
+          description: The room
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conference"
+        "404":
+          description: Nobody is in it
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /calls:
     get:
       operationId: listCalls
@@ -2111,6 +2161,43 @@ components:
         behaviour:
           $ref: '#/components/schemas/SubscriberBehaviour'
 
+    Conference:
+      type: object
+      required: [uri, focus, participants]
+      description: >-
+        A room with somebody in it, as the call records say: every live call whose callee is
+        the room's focus (RFC 4579, docs/design/conferencing.md), wherever in the cluster it
+        is carried.
+      properties:
+        uri:
+          type: string
+          description: The conference URI as dialled
+        focus:
+          type: string
+          nullable: true
+          description: The trunk that is the room's focus, once it has answered a call
+        participants:
+          type: array
+          items:
+            type: object
+            required: [call, identity, subscriber, state, joined_at, node]
+            properties:
+              call:
+                type: string
+              identity:
+                type: string
+              subscriber:
+                type: string
+                nullable: true
+              state:
+                type: string
+                enum: [Initial, Trying, Ringing, Connected, Closing]
+              joined_at:
+                type: string
+                format: date-time
+              node:
+                type: string
+
     Call:
       type: object
       required: [id, state, created_at, answered_at, participants, media]
@@ -2118,6 +2205,12 @@ components:
         id:
           type: string
           description: The Call-ID
+        focus:
+          type: string
+          nullable: true
+          description: >-
+            The conference URI this call is a leg of, when its callee is a room's focus (RFC
+            4579); null for a call between two.
         state:
           type: string
           enum: [Initial, Trying, Ringing, Connected, Closing, Closed]

@@ -1028,7 +1028,11 @@ std::vector<Notifier::Dialog> Notifier::dialogs_of(const std::string& presentity
 
     for (std::size_t i = 0; i < call->participants.size(); ++i) {
       const auto& leg = call->participants[i];
-      if (leg.subscriber != presentity) continue;
+
+      // A conference room is a presentity of its own: a BLF key for it lights while anyone is in it. Its line is
+      // the focus's leg of each participant's call, from the room's side (docs/design/conferencing.md).
+      const bool is_room = !leg.originator && call->focus && call->focus->to_string() == presentity;
+      if (leg.subscriber != presentity && !is_room) continue;
 
       // RFC 4235 3.7.1, from the presentity's side. A callee not yet reached has no dialog to report.
       std::string state;
@@ -1065,6 +1069,7 @@ std::vector<Notifier::Dialog> Notifier::dialogs_of(const std::string& presentity
         dialog.remote_tag = leg.originator ? leg.dialog->callee_tag : leg.dialog->caller_tag;
       }
       if (leg.identity && leg.identity->uri) dialog.local = leg.identity->uri->to_string();
+      if (is_room) dialog.local = presentity;
       if (remote && remote->uri) dialog.remote = remote->uri->to_string();
       dialogs.push_back(std::move(dialog));
     }

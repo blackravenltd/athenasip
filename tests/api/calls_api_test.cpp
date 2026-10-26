@@ -428,3 +428,40 @@ TEST(CallsApiTest, MetricsTakeACredential) {
 
   EXPECT_EQ(f.get("/metrics", "").status, 401u);
 }
+
+// RFC 4579 (docs/design/conferencing.md): a call to a room's focus carries the room, and the rooms with anyone in
+// them are listed from the call records, grouped by conference URI, with who is in each.
+TEST(CallsApiTest, TheRoomsWithAnyoneInThemAreListedFromTheCallRecords) {
+  CallsFixture f;
+  f.add_call("call-two@example.com");
+
+  auto first = f.add_call("call-sales-1@example.com");
+  auto second = f.add_call("call-sales-2@example.com");
+  f.on_strand([&]() {
+    for (auto& call : {first, second}) {
+      call->focus = std::make_shared<types::SIPUri>("sip:conf-sales@example.com");
+      call->participants[1].trunk = "rooms";
+      call->participants[0].subscriber = "sip:alice@example.com";
+    }
+  });
+
+  const auto call = f.get("/api/v1/calls/call-sales-1@example.com");
+  ASSERT_EQ(call.status, 200u) << call.body;
+  EXPECT_EQ(call.json().as_object().at("focus").as_string(), "sip:conf-sales@example.com");
+  EXPECT_TRUE(f.get("/api/v1/calls/call-two@example.com").json().as_object().at("focus").is_null());
+
+  const auto rooms = f.get("/api/v1/conferences");
+  ASSERT_EQ(rooms.status, 200u) << rooms.body;
+  const auto list = boost::json::parse(rooms.body).as_array();
+  ASSERT_EQ(list.size(), 1u) << rooms.body;
+  const auto& room = list[0].as_object();
+  EXPECT_EQ(room.at("uri").as_string(), "sip:conf-sales@example.com");
+  EXPECT_EQ(room.at("focus").as_string(), "rooms");
+  ASSERT_EQ(room.at("participants").as_array().size(), 2u);
+  EXPECT_EQ(room.at("participants").as_array()[0].as_object().at("subscriber").as_string(), "sip:alice@example.com");
+
+  const auto one = f.get("/api/v1/conferences/sip:conf-sales@example.com");
+  ASSERT_EQ(one.status, 200u) << one.body;
+  EXPECT_EQ(one.json().as_object().at("uri").as_string(), "sip:conf-sales@example.com");
+  EXPECT_EQ(f.get("/api/v1/conferences/sip:conf-empty@example.com").status, 404u);
+}

@@ -24,6 +24,11 @@ A client that publishes its own presence (away, busy, a note) is shown as it pub
 across all of its devices: each device's publication keeps its own tuple, and a tuple two
 of them publish under the same `id` is taken from the one that lasts longer.
 
+A conference room is a presentity too: a key for `sip:conf-sales@example.com` lights while
+anyone's call to the room's focus is up, and goes dark when the last one ends. The room's
+line is the focus's side of each call, so a key shows one dialog per person in the room
+([Conferencing](design/conferencing.md)).
+
 ## Who may watch whom
 
 A subscriber may watch anyone in its own realm. Anyone else, including a subscriber of
