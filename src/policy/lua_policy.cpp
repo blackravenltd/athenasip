@@ -12,6 +12,7 @@
 
 #include "../config.h"
 #include "../loggers/logger_scoped.h"
+#include "../call.h"
 #include "../script/lua_library.h"
 
 namespace athenasip::policy {
@@ -481,6 +482,47 @@ void LuaPolicy::register_(plugins::Executor on, std::shared_ptr<RequestView> req
       [on, handler](lua_State* L, int results, const std::string& error) {
         _complete(on, handler, error.empty() ? register_from(L, results) : plugins::Result<RegisterDecision>::failure(error));
       });
+}
+
+// on_call_ended(call): {id, state, created_at, answered_at, ended_at, participants = {{identity, subscriber,
+// trunk, originator}, ...}}. Nothing is answered; an error is logged by the engine and changes nothing.
+void LuaPolicy::on_call_ended(plugins::Executor on, std::shared_ptr<Call> call) {
+  if (!call || !_engine->defines("on_call_ended")) return;
+
+  _engine->call(
+      on, "on_call_ended",
+      [call](lua_State* L, const std::shared_ptr<bool>&) {
+        auto set_text = [L](const char* key, const std::string& value) {
+          lua_pushlstring(L, value.data(), value.size());
+          lua_setfield(L, -2, key);
+        };
+        auto set_integer = [L](const char* key, std::int64_t value) {
+          lua_pushinteger(L, static_cast<lua_Integer>(value));
+          lua_setfield(L, -2, key);
+        };
+
+        lua_createtable(L, 0, 6);
+        set_text("id", call->id);
+        set_text("state", Call::state_to_string(call->state));
+        set_integer("created_at", static_cast<std::int64_t>(call->created_at));
+        set_integer("answered_at", static_cast<std::int64_t>(call->answered_at));
+        set_integer("ended_at", static_cast<std::int64_t>(call->ended_at));
+
+        lua_createtable(L, static_cast<int>(call->participants.size()), 0);
+        lua_Integer index = 1;
+        for (const auto& participant : call->participants) {
+          lua_createtable(L, 0, 4);
+          set_text("identity", participant.identity && participant.identity->uri ? participant.identity->uri->to_string() : "");
+          set_text("subscriber", participant.subscriber);
+          set_text("trunk", participant.trunk);
+          lua_pushboolean(L, participant.originator);
+          lua_setfield(L, -2, "originator");
+          lua_seti(L, -2, index++);
+        }
+        lua_setfield(L, -2, "participants");
+        return 1;
+      },
+      [](lua_State*, int, const std::string&) {});
 }
 
 void LuaPolicy::watch(plugins::Executor on, std::shared_ptr<RequestView> request, std::string watcher, std::string presentity, std::string package,

@@ -110,6 +110,7 @@ The entry script defines up to six global functions.
 | `authorize(request)` | A request that starts something reaches the node, or a REGISTER for another domain is to be forwarded | How the caller is proved: `athenasip.auth.accept()`, `.digest{}`, `.trusted{}` or `.reject()` |
 | `route(request)` | An authorised request has no Route and no flow token to follow | `athenasip.route.forward()` with targets, `athenasip.route.reply()`, a bare list of targets, or `nil` (480) |
 | `on_failure(request, response, state)` | A branch ended in 3xx to 5xx and there may be more to try | `"next"`, `"stop"`, or a list of targets to try first. Optional: without it, `"next"`. |
+| `on_call_ended(call)` | A call this node held has ended, by a BYE from either end or by the node's own hand | Nothing: a notification, for counters and records the script keeps. `call` is `{id, state, created_at, answered_at, ended_at, participants = {{identity, subscriber, trunk, originator}, ...}}`. Optional. |
 | `register(request)` | A REGISTER arrives, before it is challenged | `athenasip.register.accept{}`, `.forward()` or `.reject()` |
 | `watch(request, watcher, presentity, package)` | An authorised SUBSCRIBE for `presence` or `dialog` reaches the node as notifier | `athenasip.watch.accept()`, `.reject(code, reason)` (403 by default) or `.forward()`, which routes it as before presence. Optional: without it, a watcher proven in the presentity's own realm is accepted and anyone else refused. |
 | `init()` | The scripts load | Nothing. Optional. Cannot read the store. |

@@ -1140,7 +1140,10 @@ void Core::_on_dialog_change(const std::shared_ptr<types::Dialog>& dialog) {
 
   _call_record_write(call);
 
-  if (call->state != Call::State::Closed) return;
+  if (call->state == previous || call->state != Call::State::Closed) return;
+
+  // The policy is told once, for its own counters and records.
+  if (auto hook = policy()) hook->on_call_ended(_strand, call);
 
   // The dialog ending is the only signal that the call is over, so the media is released
   // here. The handler holds the call until the engine answers.
@@ -1569,6 +1572,8 @@ void Core::_close_orphan(const std::shared_ptr<Call>& call, const std::string& r
 
   call->state = Call::State::Closed;
   call->ended_at = std::time(nullptr);
+
+  if (auto hook = policy()) hook->on_call_ended(_strand, call);
 
   datastore->call_update(_strand, call, [this, self = shared_from_this(), call](plugins::Status status) {
     if (!status.ok) {

@@ -42,6 +42,7 @@ class LuaPolicy final : public Policy {
   void watch(plugins::Executor on, std::shared_ptr<RequestView> request, std::string watcher, std::string presentity, std::string package,
              plugins::Handler<WatchDecision> handler) override;
   void register_(plugins::Executor on, std::shared_ptr<RequestView> request, plugins::Handler<RegisterDecision> handler) override;
+  void on_call_ended(plugins::Executor on, std::shared_ptr<Call> call) override;
 
   // Loads the scripts again. The running ones stay if the new ones fail. Empty on success, else the error.
   std::string reload() override { return _engine ? _engine->load() : "no scripts are loaded"; }
