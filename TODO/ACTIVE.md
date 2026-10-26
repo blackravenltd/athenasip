@@ -458,8 +458,7 @@ to 5 and 9 here; 6 needs clang (libFuzzer), 7 needs GitHub, 8 is partly Tom's.
       Content-Length** (4, 5): done 2026-10-26 (`COMPLETED.md`).
 - [x] **3. Idle timeouts and connection caps** (3, 10): done 2026-10-26 (`COMPLETED.md`).
 - [x] **4. Nonces and Digest** (20, 21, 22, 23, 25, 26): done 2026-10-26 (`COMPLETED.md`).
-- [ ] **5. SIP-side rate limiting** (24): challenges and failures limited per source and per
-      AOR, a temporary ban, a failure event for fail2ban. `RateLimiter` exists for HTTP only.
+- [x] **5. SIP-side rate limiting** (24): done 2026-10-26 (`COMPLETED.md`).
 - [ ] **6. Fuzzing** (7): libFuzzer targets for `SIPHeader::parse`, `SIPUri`, the
       Authorization header, stream and datagram framing, STUN and bencode, seeded from the
       sipp scenarios, under ASan and UBSan. Needs clang on this machine (Waiting on Tom).

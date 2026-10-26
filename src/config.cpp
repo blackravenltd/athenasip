@@ -77,6 +77,27 @@ bool Config::load_from_yaml(const std::string& filename) {
       return false;
     }
   }
+  if (YAML::Node limits = sip["auth_limits"]) {
+    const auto read = [&limits](const char* name, RateLimit& into) {
+      YAML::Node limit = limits[name];
+      if (!limit) return;
+      if (limit["burst"]) into.burst = limit["burst"].as<std::uint32_t>();
+      if (limit["per_minute"]) into.per_minute = limit["per_minute"].as<std::uint32_t>();
+    };
+
+    try {
+      read("failures_source", sip_auth_failures_source);
+      read("failures_aor", sip_auth_failures_aor);
+      read("challenges_source", sip_auth_challenges_source);
+      if (limits["ban_seconds"]) sip_auth_ban_seconds = limits["ban_seconds"].as<std::uint32_t>();
+    } catch (const std::exception& e) {
+      _logger->error("Invalid 'sip.auth_limits': failures_source, failures_aor and challenges_source each take burst and per_minute, and "
+                     "ban_seconds is a number - " +
+                     std::string(e.what()));
+      return false;
+    }
+  }
+
   if (sip["log_messages"]) sip_log_messages = sip["log_messages"].as<bool>();
   if (sip["public_address"]) sip_public_address = sip["public_address"].as<std::string>();
 
@@ -733,6 +754,17 @@ std::string Config::effective_yaml() const {
   out << YAML::Key << "flow_first_message_timeout" << YAML::Value << sip_flow_first_message_timeout;
   out << YAML::Key << "max_connections" << YAML::Value << sip_max_connections;
   out << YAML::Key << "max_connections_per_source" << YAML::Value << sip_max_connections_per_source;
+
+  out << YAML::Key << "auth_limits" << YAML::Value << YAML::BeginMap;
+  for (const auto& [name, limit] : std::initializer_list<std::pair<const char*, const RateLimit*>>{
+           {"failures_source", &sip_auth_failures_source}, {"failures_aor", &sip_auth_failures_aor}, {"challenges_source", &sip_auth_challenges_source}}) {
+    out << YAML::Key << name << YAML::Value << YAML::BeginMap;
+    out << YAML::Key << "burst" << YAML::Value << limit->burst;
+    out << YAML::Key << "per_minute" << YAML::Value << limit->per_minute;
+    out << YAML::EndMap;
+  }
+  out << YAML::Key << "ban_seconds" << YAML::Value << sip_auth_ban_seconds;
+  out << YAML::EndMap;
 
   out << YAML::Key << "timers" << YAML::Value << YAML::BeginMap;
   out << YAML::Key << "t1_rtt_ms" << YAML::Value << sip_timer_t1_rtt_ms;

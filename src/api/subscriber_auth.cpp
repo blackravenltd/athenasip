@@ -40,7 +40,7 @@ void SubscriberAuth::check(const std::string& realm_name, const std::string& met
         if (!usable) return _challenge(*realm, false, then);
 
         // The nonce carries its own proof and its minting time (digest::nonce_mint): nothing is looked up.
-        switch (digest::nonce_state(*realm, credentials->fields["nonce"])) {
+        switch (digest::nonce_state(*realm, credentials->fields["nonce"], "")) {
           case digest::NonceState::bad:
             return _challenge(*realm, false, then);
           case digest::NonceState::stale:
@@ -76,7 +76,7 @@ void SubscriberAuth::check(const std::string& realm_name, const std::string& met
 }
 
 void SubscriberAuth::_challenge(const types::Realm& realm, bool stale, std::function<void(Outcome)> then) {
-  const auto nonce = digest::nonce_mint(realm);
+  const auto nonce = digest::nonce_mint(realm, "");
 
   // RFC 7616 3.3: SHA-256 first, then MD5 for clients that have only that, each with qop=auth.
   Outcome outcome{Outcome::Kind::challenge, nullptr, {}};

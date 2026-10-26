@@ -448,7 +448,14 @@ void Proxy::_authenticate(const std::shared_ptr<SIPMessage>& request, const std:
     return _send_proxy_challenge(transaction, request, realm);
   }
 
-  switch (digest::nonce_state(*realm, credentials->fields["nonce"])) {
+  // The address of record the answer claims, by its name: closed to strangers after repeated failures (AuthGuard).
+  const auto aor = types::SIPUri("sip:" + credentials->fields["username"] + "@" + realm->name).canonical_address();
+  if (const auto closed = core->auth_closed(*request, aor)) {
+    _logger->info("Request from " + caller->to_string() + " for " + aor + ", closed to this address after repeated failures - 403");
+    return _send_refusal(transaction, request, *closed);
+  }
+
+  switch (digest::nonce_state(*realm, credentials->fields["nonce"], Core::source_of(*request))) {
     case digest::NonceState::bad:
       _logger->info("Request from " + caller->to_string() + " with a nonce this realm did not mint - challenging");
       return _send_proxy_challenge(transaction, request, realm);
@@ -465,7 +472,7 @@ void Proxy::_authenticate(const std::shared_ptr<SIPMessage>& request, const std:
   auto claimed = std::make_shared<SIPIdentity>("sip:" + credentials->fields["username"] + "@" + realm->name);
 
   core->subscriber_get(claimed, [this, self, request, transaction, realm, caller, credentials, answered, from_must_match,
-                                 then](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
+                                 aor, then](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
     auto core = _core.lock();
     if (!core) return;
 
@@ -477,12 +484,14 @@ void Proxy::_authenticate(const std::shared_ptr<SIPMessage>& request, const std:
     // Challenged like a wrong password, so subscribers cannot be enumerated.
     if (!found.value) {
       _logger->info("Request from " + caller->to_string() + " with credentials for no subscriber - challenging");
+      core->auth_failed(*request, aor, "no such subscriber");
       return _send_proxy_challenge(transaction, request, realm);
     }
 
     if (const auto why = digest::verify(*found.value, *credentials, request->header->request_method, request->header->request_uri->to_string());
         !why.empty()) {
       _logger->info("Request from " + caller->to_string() + " with " + why + " - challenging");
+      core->auth_failed(*request, aor, why);
       return _send_proxy_challenge(transaction, request, realm);
     }
 
@@ -497,6 +506,8 @@ void Proxy::_authenticate(const std::shared_ptr<SIPMessage>& request, const std:
       return _send_status(transaction, request, 403, "Forbidden");
     }
 
+    core->auth_succeeded(*request, aor);
+
     // Remove the used credentials: they are not the next hop's business.
     request->header->remove_value("Proxy-Authorization", [&answered](std::shared_ptr<headers::Header> value) { return value == answered; });
     request->authenticated = true;
@@ -508,12 +519,18 @@ void Proxy::_authenticate(const std::shared_ptr<SIPMessage>& request, const std:
 
 void Proxy::_send_proxy_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
                                   const std::shared_ptr<types::Realm>& realm, bool stale) {
+  // Challenges to one address are limited (AuthGuard): past that it is refused, not challenged.
+  if (auto core = _core.lock(); core && !core->auth_may_challenge(*request)) {
+    _logger->info("Request from an address past its challenges - 403");
+    return _send_refusal(transaction, request, std::chrono::seconds(60));
+  }
+
   auto response = request->generate_response();
   response->header->response_code = 407;
   response->header->response_message = "Proxy Authentication Required";
 
-  // Nothing is kept for the nonce: it carries its own proof (digest::nonce_mint).
-  digest::add_challenges(*response->header, "Proxy-Authenticate", realm->name, digest::nonce_mint(*realm), stale);
+  // Nothing is kept for the nonce: it carries its own proof, bound to the address it goes to (digest::nonce_mint).
+  digest::add_challenges(*response->header, "Proxy-Authenticate", realm->name, digest::nonce_mint(*realm, Core::source_of(*request)), stale);
 
   if (auto core = _core.lock()) core->dialogs()->observe_response(request, response);
   transaction->send(response);
@@ -2401,7 +2418,7 @@ void Proxy::_authenticate_any(const std::shared_ptr<SIPMessage>& request, const 
     }
     if (!realm.value) return _send_relay_challenge(transaction, request);
 
-    switch (digest::nonce_state(*realm.value, credentials->fields["nonce"])) {
+    switch (digest::nonce_state(*realm.value, credentials->fields["nonce"], Core::source_of(*request))) {
       case digest::NonceState::bad:
         return _send_relay_challenge(transaction, request);
       case digest::NonceState::stale:
@@ -2410,9 +2427,15 @@ void Proxy::_authenticate_any(const std::shared_ptr<SIPMessage>& request, const 
         break;
     }
 
+    const auto aor = types::SIPUri("sip:" + credentials->fields["username"] + "@" + realm.value->name).canonical_address();
+    if (const auto closed = core->auth_closed(*request, aor)) {
+      _logger->info("REGISTER to forward for " + aor + ", closed to this address after repeated failures - 403");
+      return _send_refusal(transaction, request, *closed);
+    }
+
     auto claimed = std::make_shared<SIPIdentity>("sip:" + credentials->fields["username"] + "@" + realm.value->name);
     core->subscriber_get(claimed, [this, self, request, transaction, credentials, answered, then,
-                                   realm = realm.value](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
+                                   aor, realm = realm.value](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
       auto core = _core.lock();
       if (!core) return;
 
@@ -2422,8 +2445,11 @@ void Proxy::_authenticate_any(const std::shared_ptr<SIPMessage>& request, const 
       }
 
       // An unknown subscriber is challenged like a wrong password, so subscribers cannot be enumerated.
-      if (!found.value || !digest::verify(*found.value, *credentials, request->header->request_method, request->header->request_uri->to_string()).empty()) {
+      const auto why = found.value ? digest::verify(*found.value, *credentials, request->header->request_method, request->header->request_uri->to_string())
+                                   : std::string("no such subscriber");
+      if (!why.empty()) {
         _logger->info("REGISTER to forward with credentials that do not verify - challenging");
+        core->auth_failed(*request, aor, why);
         return _send_relay_challenge(transaction, request);
       }
 
@@ -2432,6 +2458,8 @@ void Proxy::_authenticate_any(const std::shared_ptr<SIPMessage>& request, const 
         _logger->info("REGISTER to forward replays an answer - challenging as stale");
         return _send_relay_challenge(transaction, request, true);
       }
+
+      core->auth_succeeded(*request, aor);
 
       // Spent here; the far registrar's Authorization is left alone (22.3).
       request->header->remove_value("Proxy-Authorization", [&answered](std::shared_ptr<headers::Header> value) { return value == answered; });
@@ -2445,6 +2473,10 @@ void Proxy::_authenticate_any(const std::shared_ptr<SIPMessage>& request, const 
 void Proxy::_send_relay_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request, bool stale) {
   auto core = _core.lock();
   if (!core) return;
+  if (!core->auth_may_challenge(*request)) {
+    _logger->info("REGISTER to forward from an address past its challenges - 403");
+    return _send_refusal(transaction, request, std::chrono::seconds(60));
+  }
 
   auto self = shared_from_this();
   core->datastore->realm_list(core->strand(), [this, self, transaction, request, stale](plugins::Result<std::vector<std::shared_ptr<types::Realm>>> realms) {
@@ -2457,7 +2489,7 @@ void Proxy::_send_relay_challenge(const std::shared_ptr<transactions::Transactio
     response->header->response_code = 407;
     response->header->response_message = "Proxy Authentication Required";
 
-    for (const auto& realm : realms.value) digest::add_challenges(*response->header, "Proxy-Authenticate", realm->name, digest::nonce_mint(*realm), stale);
+    for (const auto& realm : realms.value) digest::add_challenges(*response->header, "Proxy-Authenticate", realm->name, digest::nonce_mint(*realm, Core::source_of(*request)), stale);
     transaction->send(response);
   });
 }
@@ -2609,6 +2641,20 @@ Proxy::NextHop Proxy::_next_hop_of(const SIPUri& uri) {
   hop.port = uri.port.value_or(hop.transport == "tls" ? 5061 : 5060);
 
   return hop;
+}
+
+// RFC 3261 21.4.4 with 20.33: refused for now, and when to try again.
+void Proxy::_send_refusal(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
+                          std::chrono::seconds retry_after) {
+  if (!transaction) return;
+
+  auto response = request->generate_response();
+  response->header->response_code = 403;
+  response->header->response_message = "Forbidden";
+  response->header->add("Retry-After", std::to_string(retry_after.count()));
+
+  if (auto core = _core.lock()) core->dialogs()->observe_response(request, response);
+  transaction->send(response);
 }
 
 void Proxy::_send_status(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request, std::uint16_t code,

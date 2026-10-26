@@ -64,6 +64,10 @@ class Channel : public std::enable_shared_from_this<Channel> {
 
   // The node id from the peer's cluster certificate on a mutual TLS flow. Empty for a client.
   std::string peer_node() const { return _connection ? _connection->peer_identity() : std::string(); }
+
+  // The far end's address, without the port: what a source is limited and challenged as (AuthGuard).
+  std::string source_address() const { return _connection ? _connection->remote_endpoint().address().to_string() : std::string(); }
+
   bool is_authenticated_as(const std::string& aor) const;
 
   // Whether a REGISTER has authenticated anyone over this connection.

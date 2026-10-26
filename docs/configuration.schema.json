@@ -103,6 +103,69 @@
           "type": "integer",
           "default": 64
         },
+        "auth_limits": {
+          "description": "Digest guessing over SIP, per node: a burst allowance, then a rate per minute, 0 in either turning that limit off (docs/authentication.md, Guessing).",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "failures_source": {
+              "description": "Wrong answers from one address; past it the address is banned for ban_seconds.",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "burst": {
+                  "description": "Allowed at once.",
+                  "type": "integer",
+                  "default": 10
+                },
+                "per_minute": {
+                  "description": "Allowed per minute after that.",
+                  "type": "integer",
+                  "default": 5
+                }
+              }
+            },
+            "failures_aor": {
+              "description": "Wrong answers for one address of record; past it the AOR is closed for ban_seconds to addresses that have not lately authenticated as it.",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "burst": {
+                  "description": "Allowed at once.",
+                  "type": "integer",
+                  "default": 10
+                },
+                "per_minute": {
+                  "description": "Allowed per minute after that.",
+                  "type": "integer",
+                  "default": 5
+                }
+              }
+            },
+            "challenges_source": {
+              "description": "Challenges sent to one address; past it a request needing one is answered 403.",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "burst": {
+                  "description": "Allowed at once.",
+                  "type": "integer",
+                  "default": 200
+                },
+                "per_minute": {
+                  "description": "Allowed per minute after that.",
+                  "type": "integer",
+                  "default": 600
+                }
+              }
+            },
+            "ban_seconds": {
+              "description": "How long a ban or a closed AOR lasts, in seconds. 0 bans nothing.",
+              "type": "integer",
+              "default": 900
+            }
+          }
+        },
         "timers": {
           "description": "The RFC 3261 section 17 timers. a to k are multiples of T1 or T4, not milliseconds. Leave them alone.",
           "type": "object",

@@ -16,6 +16,8 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace athenasip::api {
 
@@ -89,6 +91,16 @@ class RateLimiter {
       _refill(it->second, now);
       it = it->second.tokens >= it->second.policy.burst ? _buckets.erase(it) : std::next(it);
     }
+
+    // Still over: a flood of keys each used once inside a refill. The fullest go, which forgives least.
+    if (_buckets.size() <= _prune_above) return;
+    std::vector<std::pair<double, std::string>> by_tokens;
+    by_tokens.reserve(_buckets.size());
+    for (const auto& [key, bucket] : _buckets) by_tokens.emplace_back(bucket.tokens, key);
+    const auto excess = _buckets.size() - _prune_above / 2;
+    std::nth_element(by_tokens.begin(), by_tokens.begin() + static_cast<std::ptrdiff_t>(excess), by_tokens.end(),
+                     [](const auto& a, const auto& b) { return a.first > b.first; });
+    for (std::size_t i = 0; i < excess; ++i) _buckets.erase(by_tokens[i].second);
   }
 
   mutable std::mutex _mutex;

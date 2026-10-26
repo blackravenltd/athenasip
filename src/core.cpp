@@ -94,7 +94,62 @@ Core::Core(std::shared_ptr<Logger> logger, std::shared_ptr<Config> _config, std:
       config(_config),
       datastore(_datastore),
       events(_events),
-      _strand(boost::asio::make_strand(detail::get_global_io_context())) {}
+      _strand(boost::asio::make_strand(detail::get_global_io_context())) {
+  auth_limits_reload();
+}
+
+void Core::auth_limits_reload() {
+  const auto policy = [](const Config::RateLimit& limit) { return AuthGuard::Policy{limit.burst, limit.per_minute}; };
+  AuthGuard::Limits limits;
+  if (config) {
+    limits.failures_source = policy(config->sip_auth_failures_source);
+    limits.failures_aor = policy(config->sip_auth_failures_aor);
+    limits.challenges_source = policy(config->sip_auth_challenges_source);
+    limits.ban = std::chrono::seconds(config->sip_auth_ban_seconds);
+  }
+  _auth_guard = std::make_unique<AuthGuard>(limits);
+}
+
+std::string Core::source_of(const SIPMessage& message) {
+  const auto channel = message.channel.lock();
+  if (!channel || !channel->peer_node().empty()) return "";
+  return channel->source_address();
+}
+
+bool Core::auth_may_challenge(const SIPMessage& message) {
+  const auto source = source_of(message);
+  return source.empty() || _auth_guard->may_challenge(source);
+}
+
+std::optional<std::chrono::seconds> Core::auth_closed(const SIPMessage& message, const std::string& aor) {
+  const auto source = source_of(message);
+  if (source.empty()) return std::nullopt;
+  return _auth_guard->aor_closed(source, aor);
+}
+
+void Core::auth_failed(const SIPMessage& message, const std::string& aor, const std::string& why) {
+  const auto source = source_of(message);
+  if (source.empty()) return;
+
+  // One line per failure, in a fixed shape a fail2ban filter can match (docs/authentication.md, Guessing).
+  _logger->warn("Authentication failure from " + source + " for " + aor + ": " + why);
+  const auto banned = _auth_guard->failed(source, aor);
+
+  if (!events) return;
+  const auto node = config ? config->sip_node_id : std::string();
+  events->publish(events::topics::auth_failed(),
+                  boost::json::serialize(boost::json::object{{"source", source}, {"aor", aor}, {"reason", why}, {"node", node}, {"at", Util::get_zulu_time()}}));
+  if (banned) {
+    _logger->warn("Banned " + source + " for " + std::to_string(config ? config->sip_auth_ban_seconds : 0) + " seconds after repeated authentication failures");
+    events->publish(events::topics::source_banned(),
+                    boost::json::serialize(boost::json::object{
+                        {"source", source}, {"seconds", config ? config->sip_auth_ban_seconds : 0}, {"node", node}, {"at", Util::get_zulu_time()}}));
+  }
+}
+
+void Core::auth_succeeded(const SIPMessage& message, const std::string& aor) {
+  if (const auto source = source_of(message); !source.empty()) _auth_guard->succeeded(source, aor);
+}
 
 void Core::server_register(std::shared_ptr<servers::Server> server) { _servers.push_back(server); }
 
@@ -562,6 +617,15 @@ void Core::process_message(std::shared_ptr<SIPMessage> message) {
 
     transaction->receive(message);
     return;
+  }
+
+  // An address banned for guessing (AuthGuard) is not answered at all: an answer would tell a scanner it is
+  // heard, and over UDP would be traffic sent wherever a spoofed source pointed.
+  if (const auto source = source_of(*message); !source.empty()) {
+    if (const auto left = _auth_guard->banned(source)) {
+      _logger->debug("Request from " + source + ", banned for " + std::to_string(left->count()) + " more seconds - dropped");
+      return;
+    }
   }
 
   const auto& method = message->header->request_method;

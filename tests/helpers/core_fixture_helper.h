@@ -109,8 +109,10 @@ struct CoreFixture {
         .ok;
   }
 
-  // A nonce as this node's challenge would carry it: nothing is stored for one (digest::nonce_mint).
-  std::string mint_nonce(const std::shared_ptr<athenasip::types::Realm>& realm) { return athenasip::digest::nonce_mint(*realm); }
+  // A nonce as this node's challenge to `source` would carry it: nothing is stored for one (digest::nonce_mint).
+  std::string mint_nonce(const std::shared_ptr<athenasip::types::Realm>& realm, const std::string& source = "192.0.2.10") {
+    return athenasip::digest::nonce_mint(*realm, source);
+  }
 
   std::shared_ptr<athenasip::Channel> make_channel(const std::string& remote_address, std::shared_ptr<MockConnection>* out = nullptr,
                                                    const std::string& transport = "udp", std::uint16_t remote_port = 5060) {

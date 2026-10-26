@@ -900,7 +900,7 @@ TEST(ProvisioningApiTest, AReplayedOrExpiredSubscriberAnswerIsChallengedAsStale)
   EXPECT_EQ(wrong.challenges[0].find("stale"), std::string::npos) << wrong.challenges[0];
 
   const auto realm = f.store->realm_get_by_name("example.com");
-  const auto expired = digest::nonce_mint(*realm, std::time(nullptr) - static_cast<std::time_t>(realm->nonce_expiry) - 1);
+  const auto expired = digest::nonce_mint(*realm, "", std::time(nullptr) - static_cast<std::time_t>(realm->nonce_expiry) - 1);
   const auto target = std::string("/api/v1/subscriber/example.com/config");
   const auto ha1 = Util::md5("alice:example.com:secret");
   const auto response = Util::md5(ha1 + ":" + expired + ":00000001:0a4f113b:auth:" + Util::md5("GET:" + target));

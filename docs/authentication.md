@@ -47,6 +47,40 @@ from one request does not sign another, and responses are compared in constant t
 
 Subscribers are provisioned at `/api/v1/realms/{realm}/subscribers`.
 
+### Guessing
+
+Each node counts wrong Digest answers over SIP, a wrong response or one for a subscriber
+that does not exist, by the address they came from and by the address of record they
+claimed (`sip.auth_limits`, all per node):
+
+| Limit | Default | Past it |
+|---|---|---|
+| `failures_source` | 10 at once, then 5 a minute | The address is banned for `ban_seconds` (900): nothing it sends is answered |
+| `failures_aor` | 10 at once, then 5 a minute | The AOR is closed for `ban_seconds` to every address that has not authenticated as it in the last two hours: 403 with `Retry-After` |
+| `challenges_source` | 200 at once, then 600 a minute | A request that needs a challenge is 403 with `Retry-After` |
+
+Closing an AOR rather than locking it means a guess spread over many addresses stops
+while the subscriber's own phone goes on registering. A nonce is bound to the address its
+challenge went to (it signs the address without carrying it), so an answer spoofed from
+another address is challenged and counts against nobody: a ban cannot be aimed at a phone
+by forging its source. Cluster peers are never limited. The limits are per node: a guesser
+spread over the nodes of a cluster gets each node's.
+
+Every failure is logged at warning level in one shape, and published on the bus as
+`security/auth_failed`; the failure that bans an address is published as `security/banned`
+too ([Events](events.md)):
+
+```
+Authentication failure from 198.51.100.7 for sip:alice@example.com: a Digest response that does not match
+```
+
+A fail2ban filter for a ban at the firewall, longer than the node's own:
+
+```ini
+[Definition]
+failregex = Authentication failure from <HOST> for \S+:
+```
+
 ### Over HTTP
 
 A subscriber's softphone reaches its own routes, all under `/api/v1/subscriber/{realm}/`,

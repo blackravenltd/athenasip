@@ -30,6 +30,41 @@ The node, and how it treats SIP.
 | `sip.max_connections` | integer | `10000` | The flows the node holds at once, UDP sources included; one more is closed. 0 is no cap. |
 | `sip.max_connections_per_source` | integer | `64` | The flows one address may hold at once; one more is closed. 0 is no cap. |
 
+### `sip.auth_limits`
+
+Digest guessing over SIP, per node: a burst allowance, then a rate per minute, 0 in either turning that limit off (docs/authentication.md, Guessing).
+
+| Setting | Takes | Default | |
+|---|---|---|---|
+| `sip.auth_limits.ban_seconds` | integer | `900` | How long a ban or a closed AOR lasts, in seconds. 0 bans nothing. |
+
+#### `sip.auth_limits.failures_source`
+
+Wrong answers from one address; past it the address is banned for ban_seconds.
+
+| Setting | Takes | Default | |
+|---|---|---|---|
+| `sip.auth_limits.failures_source.burst` | integer | `10` | Allowed at once. |
+| `sip.auth_limits.failures_source.per_minute` | integer | `5` | Allowed per minute after that. |
+
+#### `sip.auth_limits.failures_aor`
+
+Wrong answers for one address of record; past it the AOR is closed for ban_seconds to addresses that have not lately authenticated as it.
+
+| Setting | Takes | Default | |
+|---|---|---|---|
+| `sip.auth_limits.failures_aor.burst` | integer | `10` | Allowed at once. |
+| `sip.auth_limits.failures_aor.per_minute` | integer | `5` | Allowed per minute after that. |
+
+#### `sip.auth_limits.challenges_source`
+
+Challenges sent to one address; past it a request needing one is answered 403.
+
+| Setting | Takes | Default | |
+|---|---|---|---|
+| `sip.auth_limits.challenges_source.burst` | integer | `200` | Allowed at once. |
+| `sip.auth_limits.challenges_source.per_minute` | integer | `600` | Allowed per minute after that. |
+
 ### `sip.timers`
 
 The RFC 3261 section 17 timers. a to k are multiples of T1 or T4, not milliseconds. Leave them alone.

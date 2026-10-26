@@ -91,6 +91,20 @@ TEST(RateLimiterTest, RefilledKeysAreForgottenWhenThereAreTooMany) {
   for (int i = 0; i < 5; ++i) limiter.take("busy", kFivePerMinute, now);
   limiter.take("one-more", kFivePerMinute, now);
 
-  EXPECT_LE(limiter.size(), 3u);
+  // Never past the bound plus the key being taken, refilled or not.
+  EXPECT_LE(limiter.size(), 11u);
+  EXPECT_TRUE(limiter.take("busy", kFivePerMinute, now).has_value()) << "a bucket still limiting has to survive the prune";
+}
+
+// Review finding 24: keys made up faster than buckets refill, each used once, would otherwise grow the map without
+// limit. Past the bound the fullest go, and a bucket that is limiting stays.
+TEST(RateLimiterTest, ItIsBoundedEvenWhenNoBucketHasRefilled) {
+  api::RateLimiter limiter(10);
+  const auto now = api::RateLimiter::Clock::now();
+
+  for (int i = 0; i < 6; ++i) limiter.take("busy", kFivePerMinute, now);
+  for (int i = 0; i < 1000; ++i) limiter.take("made-up-" + std::to_string(i), kFivePerMinute, now);
+
+  EXPECT_LE(limiter.size(), 11u);
   EXPECT_TRUE(limiter.take("busy", kFivePerMinute, now).has_value()) << "a bucket still limiting has to survive the prune";
 }

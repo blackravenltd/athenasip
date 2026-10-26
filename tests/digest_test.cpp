@@ -144,21 +144,21 @@ types::Realm realm_with_secret(std::uint64_t id, const std::string& secret) {
 TEST(DigestTest, ANonceMintedForARealmIsGoodForThatRealmOnly) {
   const auto realm = realm_with_secret(1, "secret");
   const auto now = std::time(nullptr);
-  const auto nonce = digest::nonce_mint(realm, now);
+  const auto nonce = digest::nonce_mint(realm, "", now);
 
-  EXPECT_EQ(digest::nonce_state(realm, nonce, now), digest::NonceState::good);
-  EXPECT_NE(digest::nonce_mint(realm, now), nonce);
+  EXPECT_EQ(digest::nonce_state(realm, nonce, "", now), digest::NonceState::good);
+  EXPECT_NE(digest::nonce_mint(realm, "", now), nonce);
 
   // Another realm, or the same one under another secret, did not mint it.
-  EXPECT_EQ(digest::nonce_state(realm_with_secret(2, "secret"), nonce, now), digest::NonceState::bad);
-  EXPECT_EQ(digest::nonce_state(realm_with_secret(1, "other"), nonce, now), digest::NonceState::bad);
+  EXPECT_EQ(digest::nonce_state(realm_with_secret(2, "secret"), nonce, "", now), digest::NonceState::bad);
+  EXPECT_EQ(digest::nonce_state(realm_with_secret(1, "other"), nonce, "", now), digest::NonceState::bad);
 
   // Nor is a nonce with its minting time rewritten, or one made up, or nothing.
   auto rewritten = nonce;
   rewritten.replace(rewritten.find(':' + std::to_string(now) + ':'), std::to_string(now).size() + 2, ":" + std::to_string(now + 9000) + ":");
-  EXPECT_EQ(digest::nonce_state(realm, rewritten, now), digest::NonceState::bad);
-  EXPECT_EQ(digest::nonce_state(realm, "made-up", now), digest::NonceState::bad);
-  EXPECT_EQ(digest::nonce_state(realm, "", now), digest::NonceState::bad);
+  EXPECT_EQ(digest::nonce_state(realm, rewritten, "", now), digest::NonceState::bad);
+  EXPECT_EQ(digest::nonce_state(realm, "made-up", "", now), digest::NonceState::bad);
+  EXPECT_EQ(digest::nonce_state(realm, "", "", now), digest::NonceState::bad);
 }
 
 // RFC 7616 3.3: past the realm's nonce_expiry the nonce is stale, which is a challenge the client answers without
@@ -166,11 +166,11 @@ TEST(DigestTest, ANonceMintedForARealmIsGoodForThatRealmOnly) {
 TEST(DigestTest, ANonceGoesStaleAfterTheRealmsExpiry) {
   const auto realm = realm_with_secret(1, "secret");
   const auto now = std::time(nullptr);
-  const auto nonce = digest::nonce_mint(realm, now);
+  const auto nonce = digest::nonce_mint(realm, "", now);
 
-  EXPECT_EQ(digest::nonce_state(realm, nonce, now + 300), digest::NonceState::good);
-  EXPECT_EQ(digest::nonce_state(realm, nonce, now + 301), digest::NonceState::stale);
-  EXPECT_EQ(digest::nonce_state(realm, nonce, now - 61), digest::NonceState::bad);
+  EXPECT_EQ(digest::nonce_state(realm, nonce, "", now + 300), digest::NonceState::good);
+  EXPECT_EQ(digest::nonce_state(realm, nonce, "", now + 301), digest::NonceState::stale);
+  EXPECT_EQ(digest::nonce_state(realm, nonce, "", now - 61), digest::NonceState::bad);
 }
 
 namespace {
@@ -211,4 +211,16 @@ TEST(DigestTest, TheCountsAreBounded) {
 
   for (int i = 0; i < 100; ++i) EXPECT_TRUE(counts.accept(answer("n" + std::to_string(i)), now + 300, now));
   EXPECT_LE(counts.size(), 10u);
+}
+
+// AuthGuard: a nonce is bound to the address its challenge went to, which is not written in it. An answer from
+// another address is not good, so a nonce fetched from one address cannot be spent from a spoofed one.
+TEST(DigestTest, ANonceIsGoodOnlyFromTheAddressItWasSentTo) {
+  const auto realm = realm_with_secret(1, "secret");
+  const auto now = std::time(nullptr);
+  const auto nonce = digest::nonce_mint(realm, "198.51.100.7", now);
+
+  EXPECT_EQ(digest::nonce_state(realm, nonce, "198.51.100.7", now), digest::NonceState::good);
+  EXPECT_EQ(digest::nonce_state(realm, nonce, "203.0.113.9", now), digest::NonceState::bad);
+  EXPECT_EQ(nonce.find("198.51.100.7"), std::string::npos) << "the address is signed, not written";
 }

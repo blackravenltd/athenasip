@@ -26,6 +26,8 @@ and nothing on the call path waits for it.
 | `calls/<call_id>/unregister` | A call ends | no | The call id |
 | `trunks/<name>/status` | The node registering a trunk starts, succeeds or fails | yes | [Trunk status](#trunk-status) |
 | `trunks/changed` | A trunk is created, changed or deleted over the API; every node reads the trunks at once instead of at its next scan | no | The trunk's name |
+| `security/auth_failed` | A Digest answer over SIP did not verify ([Guessing](authentication.md#guessing)) | no | `{source, aor, reason, node, at}` |
+| `security/banned` | An address is banned for repeated failures | no | `{source, seconds, node, at}` |
 | `presence/<aor>/changed` | A subscriber's presence may have changed: a binding written or removed, a call it is on written, a publication made or removed | no | [Presence changed](#presence-changed) |
 
 `<transport>` is `udp`, `tcp`, `tls`, `ws` or `wss`. `<endpoint>` is `host:port`.

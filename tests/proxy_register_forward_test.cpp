@@ -71,7 +71,7 @@ TEST(ProxyRegisterForwardTest, AnUnknownSenderIsChallenged) {
 TEST(ProxyRegisterForwardTest, ASubscribersRegisterForAnotherDomainIsForwarded) {
   ForwardFixture f;
 
-  f.receive(f.desk, f.with_credentials(ForwardFixture::foreign_register(), "alice", "alice-ha1"));
+  f.receive(f.desk, f.with_credentials(ForwardFixture::foreign_register(), "alice", "alice-ha1", "192.0.2.30"));
 
   auto forwarded = f.forwarded();
   ASSERT_NE(forwarded, nullptr);
@@ -87,7 +87,7 @@ TEST(ProxyRegisterForwardTest, ASubscribersRegisterForAnotherDomainIsForwarded) 
 TEST(ProxyRegisterForwardTest, TheFirstHopAddsAPathWithAFlowToken) {
   ForwardFixture f;
 
-  f.receive(f.desk, f.with_credentials(ForwardFixture::foreign_register(), "alice", "alice-ha1"));
+  f.receive(f.desk, f.with_credentials(ForwardFixture::foreign_register(), "alice", "alice-ha1", "192.0.2.30"));
 
   auto forwarded = f.forwarded();
   ASSERT_NE(forwarded, nullptr);
@@ -104,7 +104,7 @@ TEST(ProxyRegisterForwardTest, TheFirstHopAddsAPathWithAFlowToken) {
 TEST(ProxyRegisterForwardTest, NoPathForAClientThatDoesNotSupportIt) {
   ForwardFixture f;
 
-  f.receive(f.desk, f.with_credentials(ForwardFixture::foreign_register(""), "alice", "alice-ha1"));
+  f.receive(f.desk, f.with_credentials(ForwardFixture::foreign_register(""), "alice", "alice-ha1", "192.0.2.30"));
 
   auto forwarded = f.forwarded();
   ASSERT_NE(forwarded, nullptr);
@@ -130,7 +130,7 @@ TEST(ProxyRegisterForwardTest, ARegisteredReliableConnectionIsNotChallenged) {
 TEST(ProxyRegisterForwardTest, CredentialsForNoSubscriberAreChallengedAgain) {
   ForwardFixture f;
 
-  f.receive(f.desk, f.with_credentials(ForwardFixture::foreign_register(), "mallory", "mallory-ha1"));
+  f.receive(f.desk, f.with_credentials(ForwardFixture::foreign_register(), "mallory", "mallory-ha1", "192.0.2.30"));
 
   EXPECT_NE(ProxyFixture::response_with(f.desk_connection, 407), nullptr);
   EXPECT_EQ(f.forwarded(), nullptr);
@@ -141,7 +141,7 @@ TEST(ProxyRegisterForwardTest, NeverRefusesWith403) {
   ForwardFixture f;
   f.config->sip_forward_register = "never";
 
-  f.receive(f.desk, f.with_credentials(ForwardFixture::foreign_register(), "alice", "alice-ha1"));
+  f.receive(f.desk, f.with_credentials(ForwardFixture::foreign_register(), "alice", "alice-ha1", "192.0.2.30"));
 
   EXPECT_NE(ProxyFixture::response_with(f.desk_connection, 403), nullptr);
   EXPECT_EQ(f.forwarded(), nullptr);
@@ -162,7 +162,7 @@ TEST(ProxyRegisterForwardTest, AnAddressOfRecordHereIsRegisteredHere) {
 // the flow the client registered on.
 TEST(ProxyRegisterForwardTest, ARequestBackThroughThePathReachesTheClient) {
   ForwardFixture f;
-  f.receive(f.desk, f.with_credentials(ForwardFixture::foreign_register(), "alice", "alice-ha1"));
+  f.receive(f.desk, f.with_credentials(ForwardFixture::foreign_register(), "alice", "alice-ha1", "192.0.2.30"));
   auto forwarded = f.forwarded();
   ASSERT_NE(forwarded, nullptr);
   ASSERT_TRUE(forwarded->header->contains("Path"));

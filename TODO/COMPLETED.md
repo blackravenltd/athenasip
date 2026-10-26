@@ -3764,3 +3764,32 @@ Findings 20, 21, 22, 23, 25 and 26, each with a regression test.
       dial the room with a transport parameter and the host in capitals. The suite 1603, 1532
       passed, 71 skipped (the two conference tests among them, which pass in the Lua subset of
       365).
+
+### The perimeter, review item 5: guessing over SIP (2026-10-26)
+
+Finding 24, with regression tests.
+
+- [x] **`AuthGuard`** (`src/auth_guard.*`), one per node in `Core`: wrong Digest answers (a
+      response that does not match, or one for no subscriber) counted by source address and by
+      address of record. An address past `sip.auth_limits.failures_source` (10, then 5 a minute)
+      is banned for `ban_seconds` (900) and nothing it sends is answered (`Core::process_message`);
+      an AOR past `failures_aor` is closed for as long to every address that has not
+      authenticated as it in two hours, answered 403 with `Retry-After`, so a spread guess stops
+      without shutting out the subscriber's phone; past `challenges_source` (200, then 600 a
+      minute) a request needing a challenge is 403. Registrar, proxy and the REGISTER relay
+      alike; cluster peers are never limited.
+- [x] **A nonce is bound to the address its challenge went to**: its HMAC covers the address,
+      which it does not carry, so a nonce fetched from one address and answered from a spoofed
+      one is challenged and counts against nobody. A ban cannot be aimed at a phone by forging
+      its source. HTTP nonces bind to nothing (the HTTP limits cover that side).
+- [x] **For fail2ban and a console**: each failure is one warning line, `Authentication failure
+      from <address> for <aor>: <why>`, and `security/auth_failed` on the bus; the ban is
+      `security/banned`. `docs/authentication.md` has a Guessing section with a filter;
+      `docs/events.md` the topics; the configuration reference the settings.
+- [x] `api::RateLimiter` is bounded even when no bucket has refilled: keys made up faster than
+      the refill no longer grow it without limit; the fullest go first.
+- [x] Tests: `AuthGuardTest` (five), `RateLimiterTest.ItIsBoundedEvenWhenNoBucketHasRefilled`,
+      `DigestTest.ANonceIsGoodOnlyFromTheAddressItWasSentTo`, `RegistrarTest` four (ban and
+      silence, AOR closed to strangers only, a spoofed nonce counts against nobody, challenge
+      limit), `ProxyAuthenticationTest.AnAddressThatKeepsGuessingIsBanned`. The suite 1615,
+      1543 passed, 72 skipped; the Lua subset 370 passed.

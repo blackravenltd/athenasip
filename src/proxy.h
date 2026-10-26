@@ -324,6 +324,8 @@ class Proxy : public TransactionUser {
 
   void _send_status(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request, std::uint16_t code,
                     const std::string& reason);
+  void _send_refusal(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
+                     std::chrono::seconds retry_after);
 
   // Asks the policy whether the request may be forwarded, and carries out its answer (RFC 3261 22.3). `then`
   // runs only if it may; otherwise the request has been answered.

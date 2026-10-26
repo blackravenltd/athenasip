@@ -264,6 +264,14 @@ class Config {
   // A signed-in caller, by session.
   RateLimit http_api_limit_session{60, 300};
 
+  // sip.auth_limits: Digest guessing over SIP (AuthGuard, docs/authentication.md, Guessing). Failures by source
+  // address ban it for ban_seconds; failures for one address of record close it to strangers as long; challenges
+  // by source address past theirs are 403. Zero in a limit turns it off.
+  RateLimit sip_auth_failures_source{10, 5};
+  RateLimit sip_auth_failures_aor{10, 5};
+  RateLimit sip_auth_challenges_source{200, 600};
+  std::uint32_t sip_auth_ban_seconds = 900;
+
   // log.level (debug, info, warn, error) and log.format (text, json).
   loggers::LogLevel log_level = loggers::LogLevel::DEBUG;
   loggers::LogFormat log_format = loggers::LogFormat::Text;

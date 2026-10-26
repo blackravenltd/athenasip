@@ -16,6 +16,7 @@
 #include <ctime>
 
 #include "digest.h"
+#include "events/topics.h"
 #include "headers/authorization_header.h"
 #include "headers/sip_identity_header.h"
 #include "headers/uint_header.h"
@@ -156,7 +157,7 @@ TEST(RegistrarTest, AnExpiredNonceIsChallengedAsStale) {
   Fixture f;
 
   const auto realm = f.store->realm_get_by_name("example.com");
-  const auto expired = digest::nonce_mint(*realm, std::time(nullptr) - static_cast<std::time_t>(realm->nonce_expiry) - 1);
+  const auto expired = digest::nonce_mint(*realm, "192.0.2.10", std::time(nullptr) - static_cast<std::time_t>(realm->nonce_expiry) - 1);
   f.receive(f.channel, f.register_request(f.credentials(expired)));
 
   auto response = f.response_with(f.connection, 401);
@@ -743,4 +744,105 @@ TEST(RegistrarTest, ARegisterForAConferenceUriIsRefused) {
 
   EXPECT_NE(Fixture::response_with(f.connection, 403), nullptr);
   EXPECT_EQ(Fixture::response_with(f.connection, 401), nullptr) << "refused before any challenge";
+}
+
+// --- Guessing (review finding 24, AuthGuard) ---
+
+namespace {
+
+std::string wrong_credentials(const std::string& nonce, const std::string& user = "alice") {
+  return "Digest username=\"" + user + "\", realm=\"example.com\", nonce=\"" + nonce + "\", uri=\"sip:example.com\", response=\"" +
+         digest_response(Util::md5(user + ":example.com:wrong"), nonce, "REGISTER", "sip:example.com") + "\"";
+}
+
+}  // namespace
+
+// An address that keeps answering wrongly is banned: past sip.auth_limits.failures_source it is not answered at all,
+// and each failure is published for a watcher, the one that banned it as well.
+TEST(RegistrarTest, AnAddressThatKeepsGuessingIsBannedAndThenNotAnswered) {
+  Fixture f;
+  f.config->sip_auth_failures_source = {3, 1};
+  f.core->auth_limits_reload();
+
+  std::vector<std::string> failures;
+  std::vector<std::string> bans;
+  f.bus->subscribe(events::topics::auth_failed(), [&failures](const std::string&, const std::string& message) { failures.push_back(message); });
+  f.bus->subscribe(events::topics::source_banned(), [&bans](const std::string&, const std::string& message) { bans.push_back(message); });
+
+  for (int i = 0; i < 4; ++i) {
+    f.receive(f.channel, f.register_request(wrong_credentials(f.fresh_nonce()), "", "", "z9hG4bK-guess-" + std::to_string(i)));
+  }
+  EXPECT_EQ(f.responses_with(f.connection, 401).size(), 4u);
+  ASSERT_EQ(failures.size(), 4u);
+  EXPECT_NE(failures[0].find("\"source\":\"192.0.2.10\""), std::string::npos) << failures[0];
+  EXPECT_NE(failures[0].find("\"aor\":\"sip:alice@example.com\""), std::string::npos) << failures[0];
+  ASSERT_EQ(bans.size(), 1u);
+  EXPECT_NE(bans[0].find("\"source\":\"192.0.2.10\""), std::string::npos) << bans[0];
+
+  // Banned: even the right password gets nothing.
+  const auto before = Fixture::written(f.connection).size();
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "", "", "z9hG4bK-after-ban"));
+  EXPECT_EQ(Fixture::written(f.connection).size(), before);
+  EXPECT_TRUE(f.store->location_list(7).empty());
+}
+
+// A guess spread over many addresses closes the address of record to strangers, answered 403 with Retry-After,
+// while an address that registered alice lately goes on registering her.
+TEST(RegistrarTest, AnAorGuessedAtFromManyAddressesIsClosedToStrangersButNotItsOwnPhone) {
+  Fixture f;
+  f.config->sip_auth_failures_aor = {3, 1};
+  f.core->auth_limits_reload();
+
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "600"));
+  ASSERT_NE(f.response_with(f.connection, 200), nullptr);
+
+  for (int i = 0; i < 4; ++i) {
+    const auto address = "203.0.113." + std::to_string(i + 1);
+    std::shared_ptr<MockConnection> connection;
+    auto guesser = f.make_channel(address, &connection);
+    f.receive(guesser, f.register_request(wrong_credentials(f.mint_nonce(f.store->realm_get_by_name("example.com"), address)), "", "",
+                                          "z9hG4bK-g-" + std::to_string(i)));
+  }
+
+  std::shared_ptr<MockConnection> stranger_connection;
+  auto stranger = f.make_channel("203.0.113.50", &stranger_connection);
+  f.receive(stranger, f.register_request(wrong_credentials(f.mint_nonce(f.store->realm_get_by_name("example.com"), "203.0.113.50")), "", "",
+                                         "z9hG4bK-stranger"));
+  auto refused = Fixture::response_with(stranger_connection, 403);
+  ASSERT_NE(refused, nullptr);
+  EXPECT_TRUE(refused->header->contains("Retry-After"));
+
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "600", "", "z9hG4bK-reg-again"));
+  EXPECT_EQ(f.responses_with(f.connection, 200).size(), 2u) << "alice's own phone is not shut out";
+}
+
+// A nonce is bound to the address it was sent to, so one fetched from elsewhere and answered from a spoofed
+// source is a nonce this realm did not mint for it: challenged, never counted as a guess against that source.
+TEST(RegistrarTest, ANonceFromAnotherAddressIsChallengedAndCountsAgainstNobody) {
+  Fixture f;
+  f.config->sip_auth_failures_source = {1, 1};
+  f.core->auth_limits_reload();
+
+  for (int i = 0; i < 5; ++i) {
+    const auto elsewhere = f.mint_nonce(f.store->realm_get_by_name("example.com"), "203.0.113.66");
+    f.receive(f.channel, f.register_request(wrong_credentials(elsewhere), "", "", "z9hG4bK-spoof-" + std::to_string(i)));
+  }
+  EXPECT_EQ(f.responses_with(f.connection, 401).size(), 5u);
+
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "600", "", "z9hG4bK-real"));
+  EXPECT_NE(f.response_with(f.connection, 200), nullptr) << "not banned by guesses it never made";
+}
+
+// Challenges to one address are limited: past sip.auth_limits.challenges_source a request needing one is 403.
+TEST(RegistrarTest, ChallengesToOneAddressAreLimited) {
+  Fixture f;
+  f.config->sip_auth_challenges_source = {2, 1};
+  f.core->auth_limits_reload();
+
+  for (int i = 0; i < 3; ++i) f.receive(f.channel, f.register_request("", "", "", "z9hG4bK-ask-" + std::to_string(i)));
+
+  EXPECT_EQ(f.responses_with(f.connection, 401).size(), 2u);
+  auto refused = Fixture::response_with(f.connection, 403);
+  ASSERT_NE(refused, nullptr);
+  EXPECT_TRUE(refused->header->contains("Retry-After"));
 }
