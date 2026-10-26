@@ -739,6 +739,7 @@ void Proxy::_expand(const std::shared_ptr<Context>& context, std::vector<policy:
       target.trunk = spec.trunk;
       target.ring_timeout = spec.ring_timeout;
       target.dtmf = spec.dtmf;
+      target.focus = spec.focus;
       into->push_back(std::move(target));
     }
     return _expand(context, std::move(specs), index + 1, std::move(into), std::move(then));
@@ -1255,10 +1256,12 @@ void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::sha
 
       if (core && !context->current.trunk.empty()) core->trunk_response_count(context->current.trunk, static_cast<std::uint16_t>(code));
 
-      // For the record: the trunk the call came in by, and the one the answering branch left by.
+      // For the record: the trunk the call came in by, the one the answering branch left by, and the conference the
+      // answering branch is the focus of.
       if (call) {
         if (const auto caller = call->participant_index(true)) call->participants[*caller].trunk = context->request->trunk;
         if (const auto callee = call->participant_index(false)) call->participants[*callee].trunk = context->current.trunk;
+        if (context->current.focus) call->focus = context->current.focus;
       }
 
       // A call that left by a trunk keeps the trunk and the CSeq raise for its in-dialog requests.

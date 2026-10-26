@@ -6,6 +6,10 @@
 //
 #include <gtest/gtest.h>
 
+#include <boost/json.hpp>
+
+#include "types/trunk.h"
+
 #include <memory>
 #include <string>
 
@@ -503,4 +507,41 @@ TEST(ProxyTest, AnInstantMessageIsRelayedWithItsBodyAndItsAnswer) {
   raw.replace(raw.find("Call-ID: im-1"), 13, "Call-ID: im-2");
   f.receive(f.caller, raw);
   EXPECT_NE(ProxyFixture::response_with(f.caller_connection, 480), nullptr);
+}
+
+// RFC 4579 (docs/design/conferencing.md): an INVITE to a conference URI goes to its focus, a trunk, with the room
+// as the user part, and the call records the room as its focus once the focus answers.
+TEST(ProxyTest, ACallToAConferenceUriGoesToItsFocusAndTheCallRecordsTheRoom) {
+  ProxyFixture f;
+  std::shared_ptr<MockConnection> focus_connection;
+  auto focus = f.make_channel("192.0.2.40", &focus_connection);
+
+  auto rooms = std::make_shared<types::Trunk>();
+  rooms->name = "rooms";
+  rooms->uri = "sip:192.0.2.40:5060";
+  rooms->attributes = boost::json::parse(R"({"focus": {"prefix": "conf-"}})").as_object();
+  ASSERT_TRUE(f.store->trunk_create(rooms));
+
+  f.receive(f.caller, f.invite("z9hG4bK-room", "sip:conf-sales@example.com"));
+
+  const auto forwarded = ProxyFixture::requests_with(focus_connection, "INVITE");
+  ASSERT_EQ(forwarded.size(), 1u);
+  EXPECT_EQ(forwarded[0]->header->request_uri->to_string(), "sip:conf-sales@192.0.2.40:5060");
+  EXPECT_EQ(ProxyFixture::response_with(f.caller_connection, 404), nullptr);
+
+  std::string answer = "SIP/2.0 200 OK\r\n";
+  for (const auto& via : forwarded[0]->header->headers_map["Via"]) answer += "Via: " + via->to_string() + "\r\n";
+  for (const auto& route : forwarded[0]->header->headers_map["Record-Route"]) answer += "Record-Route: " + route->to_string() + "\r\n";
+  answer += "From: <sip:alice@example.com>;tag=alice\r\n";
+  answer += "To: <sip:conf-sales@example.com>;tag=focus\r\n";
+  answer += "Call-ID: call-proxy\r\n";
+  answer += "CSeq: 1 INVITE\r\n";
+  answer += "Contact: <sip:conf-sales@192.0.2.40:5060;isfocus>\r\n\r\n";
+  f.receive(focus, answer);
+
+  ASSERT_NE(ProxyFixture::response_with(f.caller_connection, 200), nullptr);
+  const auto call = f.store->call_get("call-proxy");
+  ASSERT_NE(call, nullptr);
+  ASSERT_NE(call->focus, nullptr);
+  EXPECT_EQ(call->focus->to_string(), "sip:conf-sales@example.com");
 }

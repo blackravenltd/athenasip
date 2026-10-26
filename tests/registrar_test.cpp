@@ -6,6 +6,10 @@
 //
 #include <gtest/gtest.h>
 
+#include <boost/json.hpp>
+
+#include "types/trunk.h"
+
 #include <memory>
 #include <string>
 
@@ -634,4 +638,20 @@ TEST(RegistrarTest, AnOutboundRegistrationThroughAnEdgeWithoutObIsRefused) {
   through_ob = with_header(through_ob, "Path: <sip:edge.example.com;lr;ob>");
   f.receive(f.channel, through_ob);
   EXPECT_EQ(f.store->location_list(7).size(), 1u);
+}
+
+// A conference URI is a room, not a subscriber: a REGISTER for one is refused before any challenge
+// (docs/design/conferencing.md).
+TEST(RegistrarTest, ARegisterForAConferenceUriIsRefused) {
+  Fixture f;
+  auto rooms = std::make_shared<types::Trunk>();
+  rooms->name = "rooms";
+  rooms->uri = "sip:192.0.2.40:5060";
+  rooms->attributes = boost::json::parse(R"({"focus": {"prefix": "conf-"}})").as_object();
+  ASSERT_TRUE(f.store->trunk_create(rooms));
+
+  f.receive(f.channel, f.register_request("", "", "", "z9hG4bK-room", "<sip:conf-sales@example.com>"));
+
+  EXPECT_NE(Fixture::response_with(f.connection, 403), nullptr);
+  EXPECT_EQ(Fixture::response_with(f.connection, 401), nullptr) << "refused before any challenge";
 }
