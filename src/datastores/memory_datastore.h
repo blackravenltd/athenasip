@@ -59,6 +59,8 @@ class MemoryDatastore : public Datastore {
   void trunk_update(plugins::Executor on, std::shared_ptr<types::Trunk> trunk, plugins::StatusHandler handler) override;
   void trunk_delete(plugins::Executor on, std::string name, plugins::StatusHandler handler) override;
   void trunk_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::Trunk>>> handler) override;
+  void trunk_status_set(plugins::Executor on, std::string name, boost::json::object status, plugins::StatusHandler handler) override;
+  void trunk_status_get(plugins::Executor on, std::string name, plugins::Handler<std::optional<boost::json::object>> handler) override;
 
   void lease(plugins::Executor on, std::string name, std::string holder, std::uint32_t seconds, plugins::Handler<bool> handler) override;
   void counter_add(plugins::Executor on, std::string name, std::int64_t delta, std::uint32_t seconds, plugins::Handler<std::int64_t> handler) override;
@@ -162,6 +164,7 @@ class MemoryDatastore : public Datastore {
   std::unordered_map<std::string, std::shared_ptr<types::Realm>> _realms;
   std::unordered_map<std::string, std::shared_ptr<types::User>> _users;
   std::map<std::string, types::Trunk> _trunks;
+  std::map<std::string, boost::json::object> _trunk_statuses;
 
   // name -> holder and when the lease lapses.
   std::map<std::string, std::pair<std::string, std::time_t>> _leases;

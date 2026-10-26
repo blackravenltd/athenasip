@@ -28,16 +28,14 @@ class TrunksAPI : public std::enable_shared_from_this<TrunksAPI> {
 
   void register_routes(Router& router);
 
-  // Where the registrations the nodes report are read from. Without it a trunk shows none.
-  void statuses_register(std::shared_ptr<TrunkStatuses> statuses) { _statuses = std::move(statuses); }
-
   // Where a trunk created, changed or deleted is announced (trunks/changed), so every node's registrar reads
   // the trunks at once. Without it they wait for their next scan.
   void events_register(std::shared_ptr<events::EventSystem> events) { _events = std::move(events); }
 
   // A trunk as the API shows it: everything but the password, and whether one is set, and its registration as
-  // the node holding it last reported it.
-  boost::json::object to_json(const types::Trunk& trunk) const;
+  // the node holding it last recorded it (the datastore's trunk_status_get), null when it registers nowhere or no
+  // node has said yet.
+  static boost::json::object to_json(const types::Trunk& trunk, const std::optional<boost::json::object>& status);
 
   // Applies a request body to a trunk: on a create every field, on an update only those given. Empty when it
   // applied, else what is wrong, for a 400.
@@ -51,10 +49,12 @@ class TrunksAPI : public std::enable_shared_from_this<TrunksAPI> {
   void _delete(RouteContext context);
   void _announce(const std::string& name);
 
+  // Reads the trunk's status and answers with the trunk as the API shows it.
+  void _shown(std::shared_ptr<types::Trunk> trunk, std::function<void(boost::json::object)> then);
+
   std::shared_ptr<loggers::Logger> _logger;
   std::shared_ptr<datastores::Datastore> _datastore;
   plugins::Executor _executor;
-  std::shared_ptr<TrunkStatuses> _statuses;
   std::shared_ptr<events::EventSystem> _events;
 };
 

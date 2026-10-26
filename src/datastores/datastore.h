@@ -148,6 +148,20 @@ class Datastore : public plugins::Plugin {
     _unsupported<std::vector<std::shared_ptr<types::Trunk>>>(std::move(on), std::move(handler), "trunk_list");
   }
 
+  // What the node registering a trunk last reported of it: {node, state, detail, expires_at, at}, written by the
+  // holder of the trunk's lease and read by the API on any node. One record per trunk, replaced whole; gone with
+  // the trunk. Optional, as trunks are.
+  virtual void trunk_status_set(plugins::Executor on, std::string name, boost::json::object status, plugins::StatusHandler handler) {
+    (void)name;
+    (void)status;
+    _unsupported(std::move(on), std::move(handler), "trunk_status_set");
+  }
+
+  virtual void trunk_status_get(plugins::Executor on, std::string name, plugins::Handler<std::optional<boost::json::object>> handler) {
+    (void)name;
+    _unsupported<std::optional<boost::json::object>>(std::move(on), std::move(handler), "trunk_status_get");
+  }
+
   // A named lease, held by one holder at a time until it lapses: how one node of a cluster takes a job, such as
   // registering to a trunk. Answers whether `holder` holds it now; a holder that already did has it renewed for
   // `seconds`. Optional; a node without it does the job itself.

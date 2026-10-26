@@ -189,17 +189,24 @@ TEST(TrunksApiTest, TrunksTakeManageTrunks) {
   EXPECT_EQ(f.request(http::verb::get, "/api/v1/trunks", "", "").status, 401u);
 }
 
-// The registration the node holding a trunk last reported, for an operator to see without reading a log.
-TEST(TrunksApiTest, ATrunkShowsItsRegistrationAsTheNodeHoldingItReported) {
+// The registration the node holding a trunk last recorded, read from the datastore on any node, for an operator
+// to see without reading a log. A trunk that registers nowhere shows none, whatever was recorded.
+TEST(TrunksApiTest, ATrunkShowsItsRegistrationAsTheNodeHoldingItRecorded) {
   TrunksFixture f;
-  auto statuses = std::make_shared<TrunkStatuses>();
-  f.trunks->statuses_register(statuses);
   ASSERT_EQ(f.request(http::verb::post, "/api/v1/trunks", TrunksFixture::acme()).status, 201u);
 
   EXPECT_TRUE(f.request(http::verb::get, "/api/v1/trunks/acme").json().at("registration").is_null()) << "nobody has said yet";
 
-  statuses->observe("trunks/acme/status", R"({"trunk": "acme", "node": "sip-0001", "state": "registered", "detail": "200 OK", "expires_at": 1})");
-  const auto registration = f.request(http::verb::get, "/api/v1/trunks/acme").json().at("registration").as_object();
+  ASSERT_TRUE(f.store->trunk_status_set(
+      "acme", boost::json::parse(R"({"trunk": "acme", "node": "sip-0001", "state": "registered", "detail": "200 OK", "expires_at": 1})").as_object()));
+  auto registration = f.request(http::verb::get, "/api/v1/trunks/acme").json().at("registration").as_object();
   EXPECT_EQ(registration.at("node").as_string(), "sip-0001");
   EXPECT_EQ(registration.at("state").as_string(), "registered");
+
+  const auto listed = boost::json::parse(f.request(http::verb::get, "/api/v1/trunks").body).as_array();
+  ASSERT_EQ(listed.size(), 1u);
+  EXPECT_EQ(listed[0].as_object().at("registration").as_object().at("node").as_string(), "sip-0001");
+
+  ASSERT_EQ(f.request(http::verb::put, "/api/v1/trunks/acme", R"({"register": {"enabled": false}})").status, 200u);
+  EXPECT_TRUE(f.request(http::verb::get, "/api/v1/trunks/acme").json().at("registration").is_null());
 }

@@ -275,3 +275,21 @@ TEST(TrunkRegistrarTest, ARegisterGoesThroughTheTrunksOutboundProxy) {
   EXPECT_EQ(sent[0]->header->request_uri->to_string(), "sip:acme.example");
   EXPECT_NE(first(sent[0], "To").find("sip:4420@acme.example"), std::string::npos);
 }
+
+// What the node reports of a trunk is a record in the datastore, written by the node holding the lease before the
+// bus is told, so the API on any node reads it from the store (all state lives in the datastore, 2026-10-11).
+TEST(TrunkRegistrarTest, TheStatusIsARecordInTheDatastore) {
+  RegistrarFixture f;
+  f.start();
+
+  auto recorded = f.store->trunk_status_get("acme");
+  ASSERT_TRUE(recorded.has_value()) << "registering is a state too";
+  EXPECT_EQ(recorded->at("state").as_string(), "registering");
+  EXPECT_EQ(recorded->at("node").as_string(), "test-node");
+
+  f.answer(f.registers()[0], 200, "OK", "Expires: 300\r\n");
+  recorded = f.store->trunk_status_get("acme");
+  ASSERT_TRUE(recorded.has_value());
+  EXPECT_EQ(recorded->at("state").as_string(), "registered");
+  EXPECT_GT(recorded->at("expires_at").as_int64(), 0);
+}
