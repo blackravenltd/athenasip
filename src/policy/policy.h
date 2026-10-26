@@ -27,6 +27,7 @@
 #include "../types/trunk.h"
 
 namespace athenasip {
+class Call;
 class Config;
 }
 
@@ -362,6 +363,13 @@ class Policy : public plugins::Plugin {
 
   // A REGISTER, before it is challenged.
   virtual void register_(plugins::Executor on, std::shared_ptr<RequestView> request, plugins::Handler<RegisterDecision> handler) = 0;
+
+  // A call this node held has ended, by a BYE from either end or by the node's own hand: told, not asked. For
+  // counters and records a script keeps; the default does nothing.
+  virtual void on_call_ended(plugins::Executor on, std::shared_ptr<Call> call) {
+    (void)on;
+    (void)call;
+  }
 
   // An authorised SUBSCRIBE for a package this node is the notifier for. `watcher` is the address of record the
   // watcher was proven to be, empty if it was not; `presentity` the address of record watched. By default, a
