@@ -1729,7 +1729,10 @@ std::string RedisDatastore::_presence_aor_index_prefix(types::PresenceRecord::Ki
 
 std::string RedisDatastore::_presence_node_index_prefix() { return "athena:index:presence-node:"; }
 
-std::string RedisDatastore::_subscriber_key(const std::string& realm_name, const std::string& user) { return "athena:subscriber:" + realm_name + ":" + user; }
+// RFC 3261 19.1.4: the host of a URI compares without regard to case; the user part with.
+std::string RedisDatastore::_subscriber_key(const std::string& realm_name, const std::string& user) {
+  return "athena:subscriber:" + Util::to_lower(realm_name) + ":" + user;
+}
 
 std::string RedisDatastore::_location_key(std::uint64_t subscriber_id, const std::string& user, const std::string& host, std::uint16_t port) {
   return "athena:location:" + std::to_string(subscriber_id) + ":" + user + ":" + host + ":" + std::to_string(port);

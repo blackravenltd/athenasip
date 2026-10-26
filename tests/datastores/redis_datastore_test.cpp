@@ -1235,3 +1235,14 @@ TEST(RedisDatastoreTest, TheCallRecordKeepsTheDialogWhole) {
   EXPECT_EQ(found->participants[0].dialog->callee_target->to_string(), "sip:bob@192.0.2.20:5060");
   EXPECT_EQ(found->participants[0].dialog->state, types::Dialog::State::Confirmed);
 }
+
+// RFC 3261 19.1.4: a URI's host compares without regard to case; the user part does not fold.
+TEST(RedisDatastoreTest, ASubscriberIsFoundWhateverCaseTheHostIsSpeltIn) {
+  REQUIRE_REDIS(datastore);
+  const auto realm = "case-" + unique_suffix() + ".example";
+  auto subscriber = make_subscriber(4347, "sip:bob@" + realm);
+  ASSERT_TRUE(datastore->subscriber_create(subscriber));
+
+  EXPECT_NE(datastore->subscriber_get(std::make_shared<types::SIPIdentity>("sip:bob@" + Util::to_upper(realm))), nullptr);
+  EXPECT_EQ(datastore->subscriber_get(std::make_shared<types::SIPIdentity>("sip:BOB@" + realm)), nullptr);
+}

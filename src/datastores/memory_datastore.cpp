@@ -759,7 +759,8 @@ std::vector<types::PresenceRecord> MemoryDatastore::_presence_select(Keep keep) 
   return records;
 }
 
-std::string MemoryDatastore::_subscriber_key(const std::string& realm_name, const std::string& user) { return realm_name + ":" + user; }
+// RFC 3261 19.1.4: the host of a URI compares without regard to case; the user part with.
+std::string MemoryDatastore::_subscriber_key(const std::string& realm_name, const std::string& user) { return Util::to_lower(realm_name) + ":" + user; }
 
 std::string MemoryDatastore::_location_key(std::uint64_t subscriber_id, const std::string& user, const std::string& host, std::uint16_t port) {
   return std::to_string(subscriber_id) + ":" + user + ":" + host + ":" + std::to_string(port);

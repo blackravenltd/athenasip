@@ -446,3 +446,15 @@ TEST(ProxyTest, TheCalleesTryingIsNotForwarded) {
   EXPECT_EQ(ProxyFixture::responses_with(f.caller_connection, 100).size(), trying_before);
   EXPECT_NE(ProxyFixture::response_with(f.caller_connection, 180), nullptr);
 }
+
+// RFC 3261 19.1.4: the host of a Request-URI compares without regard to case, so a call dialled with the realm in
+// capitals reaches the subscriber as one in lower case does.
+TEST(ProxyTest, ARequestUriHostInAnyCaseReachesTheSubscriber) {
+  ProxyFixture f;
+  f.bind_bob();
+
+  f.receive(f.caller, f.invite("z9hG4bK-case", "sip:bob@EXAMPLE.COM"));
+
+  EXPECT_EQ(ProxyFixture::requests_with(f.callee_connection, "INVITE").size(), 1u);
+  EXPECT_EQ(ProxyFixture::response_with(f.caller_connection, 404), nullptr);
+}
