@@ -453,14 +453,8 @@ reviewed adversarially; its order is below, and is the order to work. Each fix l
 a regression test from the finding (its item 10), and the unit suite proves all of items 1
 to 5 and 9 here; 6 needs clang (libFuzzer), 7 needs GitHub, 8 is partly Tom's.
 
-- [ ] **1. Size caps and the scan offset** (findings 1, 2, 6): a header block cap (16 KB),
-      a whole-message cap (64 KB), the stream scanned from where the last scan stopped, the
-      connection closed (or 513) when exceeded, a declared body refused at the cap when the
-      header is parsed. `src/channel.cpp:338,376,473`, `src/channel.h:88`.
-- [ ] **2. Strict Content-Length** (4, 5): digits only through `std::from_chars` into
-      `size_t`, duplicates and conflicts refused 400, the stream closed on a framing error,
-      `SIPMessage::body_length` widened. `src/headers/uint_header.cpp:15`,
-      `src/sip_message.h:36`.
+- [x] **1. Size caps and the scan offset** (findings 1, 2, 6) and **2. Strict
+      Content-Length** (4, 5): done 2026-10-26 (`COMPLETED.md`).
 - [ ] **3. Idle timeouts and connection caps** (3, 10): an idle and a first-message timeout
       for TCP, TLS and WS (RFC 5626 flows with keepalives exempt), global and per-source
       caps, and UDP handled statelessly until a valid request so a spoofed flood holds no

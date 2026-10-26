@@ -3671,3 +3671,23 @@ answers it proposes to its four questions.
       each focus serving the realm, for a softphone's "join a room" screen; empty without one.
       `ProvisioningApiTest.TheSubscriberConfigurationNamesTheRoomsItMayDial`. The suite 1580,
       1510 passed, 70 skipped. Steps 5 to 8 need FreeSWITCH (`ACTIVE.md`).
+
+### The perimeter, review items 1 and 2: framing caps and a strict Content-Length (2026-10-26)
+
+`reviews/2026-10-25/athenasip-review.md`, findings 1, 2, 4, 5 and 6, each with a regression
+test from the finding.
+
+- [x] **A stream is read within limits** (`Channel::kMaxHeaderBytes` 16 KB, `kMaxMessageBytes`
+      64 KB): a header block with no end past 16 KB closes the connection; a body declared past
+      the message cap is answered 513 Message Too Large (RFC 3261 18.1.1) and the stream closed,
+      since the body cannot be skipped; the search for the end of the header block resumes
+      three bytes before where it last stopped, so a drip of one byte at a time is read once,
+      not rescanned from the start.
+- [x] **Content-Length is one number or nothing** (`UIntHeader::parse` through
+      `std::from_chars`, 1*DIGIT and 64 bits wide, which Max-Forwards and Expires read too):
+      garbage, a sign, an overflow or two Content-Length headers leave a stream unframeable,
+      so the request is answered 400 (`SIPHeader::invalidate`, answered by Core as a malformed
+      start line is) and the connection closed; a datagram so framed is discarded.
+      `SIPMessage::body_length` is `size_t`, so 2^32 is no longer 0: the bytes after it were
+      a request of the attacker's. `TransportFramingTest` gains five, `UIntHeaderTest` is new;
+      `docs/architecture.md` has the limits. The suite 1587, 1517 passed, 70 skipped.
