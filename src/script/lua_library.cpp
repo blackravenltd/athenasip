@@ -351,6 +351,7 @@ int realm_index(lua_State* L) {
   if (key == "id") return lua_pushinteger(L, static_cast<lua_Integer>(realm.id)), 1;
   if (key == "registration_timeout") return lua_pushinteger(L, realm.registration_timeout), 1;
   if (key == "registration_minimum") return lua_pushinteger(L, realm.registration_minimum), 1;
+  if (key == "registration_max_bindings") return lua_pushinteger(L, realm.registration_max_bindings), 1;
 
   // What the realm set itself, nil for what it inherits.
   if (key == "behaviour") {

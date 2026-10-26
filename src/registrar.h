@@ -41,6 +41,8 @@ class Registrar : public TransactionUser {
     std::uint32_t max_expires = 0;
     std::uint32_t min_expires = 0;
     std::uint32_t qualify_interval = 0;
+    // The most bindings the AOR may hold; zero is no cap (the realm's registration_max_bindings).
+    std::uint32_t max_bindings = 0;
   };
 
   // The steps of RFC 3261 10.3, once the policy has accepted the REGISTER into a realm. Each stage resumes after

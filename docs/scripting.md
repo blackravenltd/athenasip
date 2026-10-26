@@ -186,7 +186,7 @@ Everything is under the global `athenasip`.
 | `athenasip.sip.uri(text)` | Parses a URI |
 | `athenasip.sip.in_range(range, address)` | Whether an address is in a CIDR range, or in any of a list of them |
 
-A realm has `name`, `id`, `registration_timeout`, `registration_minimum`, `behaviour`
+A realm has `name`, `id`, `registration_timeout`, `registration_minimum`, `registration_max_bindings`, `behaviour`
 (what it set itself), `behaviour_effective` (over the server's) and `attributes`. A
 subscriber has `id`, `aor`, `uri`, `realm`, `media_profile`, `dtmf` and `attributes`.
 
