@@ -987,3 +987,33 @@ TEST(ProvisioningApiTest, ASubscriberChoosesHowItsEndpointSendsKeyPresses) {
   ASSERT_EQ(f.put("/api/v1/realms/example.com/subscribers/alice", R"({"behaviour":{"dtmf":null}})").status, 200u);
   EXPECT_TRUE(f.get("/api/v1/realms/example.com/subscribers/alice").json().at("behaviour").at("dtmf").is_null());
 }
+
+// RFC 4579 (docs/design/conferencing.md): the subscriber's configuration says which prefixes are rooms, from the
+// focus trunks serving the realm, so a softphone can offer a "join a room" screen; none without a focus.
+TEST(ProvisioningApiTest, TheSubscriberConfigurationNamesTheRoomsItMayDial) {
+  ApiFixture f;
+  seed_alice(f);
+
+  auto before = alice_config(f);
+  ASSERT_EQ(before.status, 200u) << before.body;
+  EXPECT_TRUE(before.json().at("realm").at("conferences").as_array().empty());
+
+  auto rooms = std::make_shared<types::Trunk>();
+  rooms->name = "rooms";
+  rooms->uri = "sip:192.0.2.40:5060";
+  rooms->attributes = boost::json::parse(R"({"focus": {"prefix": "conf-", "realms": ["example.com"]}})").as_object();
+  ASSERT_TRUE(f.store->trunk_create(rooms));
+
+  auto elsewhere = std::make_shared<types::Trunk>();
+  elsewhere->name = "elsewhere";
+  elsewhere->uri = "sip:192.0.2.41:5060";
+  elsewhere->attributes = boost::json::parse(R"({"focus": {"prefix": "room-", "realms": ["other.example"]}})").as_object();
+  ASSERT_TRUE(f.store->trunk_create(elsewhere));
+
+  auto after = alice_config(f);
+  ASSERT_EQ(after.status, 200u) << after.body;
+  const auto conferences = after.json().at("realm").at("conferences").as_array();
+  ASSERT_EQ(conferences.size(), 1u) << after.body;
+  EXPECT_EQ(conferences[0].as_object().at("prefix").as_string(), "conf-");
+  EXPECT_EQ(conferences[0].as_object().at("trunk").as_string(), "rooms");
+}
