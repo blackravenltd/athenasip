@@ -3840,3 +3840,5 @@ Findings 43 and 44.
       (136, read by kind with a sample of each, none a mistake) are left out, with the reasons
       in `CMakeLists.txt` and `docs/testing.md`, Warnings and CI. The tests are not built
       with the flags yet. The suite 1622, 1550 passed.
+- [x] **The workflow is removed** the same day, at Tom's request: no GitHub workflow for CI or
+      CD (Decisions). The warning options stay; `docs/testing.md` says how to run them by hand.

@@ -92,7 +92,7 @@ next step:
 * An external security review (2026-10-25) found 48 issues; the transport limits,
   Content-Length, flow caps, Digest nonces, SIP-side guessing limits and the protocol
   gaps it named are fixed, and the rest are being worked through. There is no fuzzing
-  harness and no hosted CI yet.
+  harness, and testing runs on developer machines, not hosted CI.
 
 ## Documentation
 
