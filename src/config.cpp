@@ -553,10 +553,10 @@ bool Config::load_from_yaml(const std::string& filename) {
   // http
   YAML::Node http = config["http"];
   if (http) {
-    if (http["address"])
-      http_address = http["address"].as<std::string>();
-    else
-      http_address = "0.0.0.0";
+    // Plain HTTP carries passwords and session tokens in clear, so unless told otherwise it is only for this host
+    // (review finding 28); HTTPS is for anyone, so its default is every interface.
+    const bool address_given = static_cast<bool>(http["address"]);
+    http_address = address_given ? http["address"].as<std::string>() : "127.0.0.1";
 
     if (http["port"]) {
       try {
@@ -583,7 +583,7 @@ bool Config::load_from_yaml(const std::string& filename) {
       }
     }
 
-    if (http_tls_address.empty()) http_tls_address = http_address;
+    if (http_tls_address.empty()) http_tls_address = address_given ? http_address : "0.0.0.0";
 
     if (http_tls_enable && (http_tls_cert().empty() || http_tls_key().empty())) {
       _logger->error("'http.tls' needs a certificate and a key: cert_pem_filename and key_pem_filename here, or in the 'tls' section");

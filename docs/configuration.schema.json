@@ -1023,9 +1023,9 @@
       "additionalProperties": false,
       "properties": {
         "address": {
-          "description": "The address to bind.",
+          "description": "The address plain HTTP binds. Loopback unless set, since it carries passwords and session tokens in clear; a node warns when it binds any other without TLS.",
           "type": "string",
-          "default": "0.0.0.0"
+          "default": "127.0.0.1"
         },
         "port": {
           "description": "The port to bind.",
@@ -1044,7 +1044,7 @@
               "default": false
             },
             "address": {
-              "description": "The address to bind. Empty is http.address.",
+              "description": "The address HTTPS binds. Empty is http.address when that is set, otherwise every interface.",
               "type": "string"
             },
             "port": {
