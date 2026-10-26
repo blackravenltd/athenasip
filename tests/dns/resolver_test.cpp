@@ -13,6 +13,7 @@
 #include <chrono>
 #include <fstream>
 #include <future>
+#include <stdexcept>
 #include <thread>
 
 #include "../mocks/logger_mock.h"
@@ -41,7 +42,7 @@ struct FakeNameserver {
   enum class Mode { Answer, Silent, WrongIdFirst, Truncate, ServFail, DropFirst };
 
   net::io_context io;
-  udp::socket socket{io, udp::endpoint(net::ip::make_address("127.0.0.1"), 0)};
+  udp::socket socket{io};
   tcp::acceptor acceptor{io};
   std::thread thread;
 
@@ -51,11 +52,24 @@ struct FakeNameserver {
   std::atomic<int> asked_over_tcp{0};
 
   FakeNameserver() {
-    // TCP on the same port number, where a resolver goes when UDP was truncated.
-    acceptor.open(tcp::v4());
-    acceptor.set_option(tcp::acceptor::reuse_address(true));
-    acceptor.bind(tcp::endpoint(net::ip::make_address("127.0.0.1"), socket.local_endpoint().port()));
-    acceptor.listen();
+    // One port number for both, since a resolver goes to TCP on the UDP port when an answer was truncated. The
+    // kernel picks the TCP port, and the UDP side takes the same number; a number some other test's socket still
+    // holds on UDP is tried again with another.
+    for (int attempt = 0;; ++attempt) {
+      acceptor.open(tcp::v4());
+      acceptor.set_option(tcp::acceptor::reuse_address(true));
+      acceptor.bind(tcp::endpoint(net::ip::make_address("127.0.0.1"), 0));
+      acceptor.listen();
+
+      boost::system::error_code ec;
+      socket.open(udp::v4(), ec);
+      if (!ec) socket.bind(udp::endpoint(net::ip::make_address("127.0.0.1"), acceptor.local_endpoint().port()), ec);
+      if (!ec) break;
+
+      socket.close(ec);
+      acceptor.close(ec);
+      if (attempt >= 20) throw std::runtime_error("no port free on both UDP and TCP for the fake nameserver");
+    }
 
     _receive();
     _accept();
@@ -183,12 +197,14 @@ TEST(DnsResolverTest, AnAnswerIsTheRecordsOfTheTypeAsked) {
   EXPECT_EQ(answer.value[0].srv.port, 5060);
 }
 
-// RFC 5452: a reply with the wrong id is ignored, and the resolver keeps listening for the real one.
+// RFC 5452: a reply with the wrong id is ignored, and the resolver keeps listening for the real one. The tests
+// that count attempts give the fake a whole second to answer: it runs on its own thread, and a loaded machine
+// can retry before it has.
 TEST(DnsResolverTest, AReplyWithTheWrongIdIsIgnored) {
   FakeNameserver server;
   server.mode = FakeNameserver::Mode::WrongIdFirst;
 
-  const auto answer = ask(resolver_for({server.endpoint()}), "_sip._udp.iptel.org", Type::SRV);
+  const auto answer = ask(resolver_for({server.endpoint()}, std::chrono::milliseconds(1000)), "_sip._udp.iptel.org", Type::SRV);
 
   ASSERT_TRUE(answer.ok) << answer.error;
   ASSERT_EQ(answer.value.size(), 1u);
@@ -201,7 +217,7 @@ TEST(DnsResolverTest, ALostQueryIsAskedAgain) {
   FakeNameserver server;
   server.mode = FakeNameserver::Mode::DropFirst;
 
-  const auto answer = ask(resolver_for({server.endpoint()}, std::chrono::milliseconds(200)), "_sip._udp.iptel.org", Type::SRV);
+  const auto answer = ask(resolver_for({server.endpoint()}, std::chrono::milliseconds(1000)), "_sip._udp.iptel.org", Type::SRV);
 
   ASSERT_TRUE(answer.ok) << answer.error;
   EXPECT_EQ(server.asked.load(), 2);
@@ -253,7 +269,7 @@ TEST(DnsResolverTest, ASilentServerIsPassedOverForTheNext) {
   silent.mode = FakeNameserver::Mode::Silent;
   FakeNameserver working;
 
-  const auto answer = ask(resolver_for({silent.endpoint(), working.endpoint()}), "_sip._udp.iptel.org", Type::SRV);
+  const auto answer = ask(resolver_for({silent.endpoint(), working.endpoint()}, std::chrono::milliseconds(1000)), "_sip._udp.iptel.org", Type::SRV);
 
   ASSERT_TRUE(answer.ok) << answer.error;
   EXPECT_EQ(silent.asked.load(), 1);
