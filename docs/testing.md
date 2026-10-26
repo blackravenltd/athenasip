@@ -154,10 +154,8 @@ the answer's `sdp` where the offer's is not captured, an error code). They were 
 kind with a sample of each on 2026-10-26, and none read was a mistake. Pass `-Wshadow` in
 `CMAKE_CXX_FLAGS` for that audit again.
 
-`.github/workflows/ci.yml` runs on every push and pull request: the suite with Redis and
-MQTT under strict warnings as errors, under ASan with UBSan and under TSan, and each sipp
-harness (`run.sh` with and without `--lua` and `--rtpengine`, `cluster.sh`, `trunk.sh`).
-There is no fuzzing yet.
+There is no hosted CI, by decision (2026-10-26): every run here is on a developer machine,
+and the release checklist above is the gate. There is no fuzzing yet.
 
 ## The sipp harness
 
