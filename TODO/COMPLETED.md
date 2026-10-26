@@ -3660,3 +3660,14 @@ answers it proposes to its four questions.
       70 skipped.
 - [x] Found on the way: an object compiled while its source was being edited is newer than
       the source and trusted by the next build; `ACTIVE.md` says to touch what changed.
+
+### Conferencing, steps 3 and 4: a participant removed, and the rooms in the configuration (2026-10-26)
+
+- [x] **`DELETE /api/v1/conferences/{uri}/calls/{call}`** (`manage-cluster`): the call must be in
+      that room, and is ended by the node's own BYE to both ends (`LocalUA::hang_up`, as
+      `DELETE /api/v1/calls/{call}` does); 404 for a call not in the room, 409 for one the focus
+      has not answered. `CallsHangUpTest.AParticipantIsRemovedFromTheRoomItsCallIsIn`.
+- [x] **`realm.conferences` in `GET /api/v1/subscriber/{realm}/config`**: the prefix and trunk of
+      each focus serving the realm, for a softphone's "join a room" screen; empty without one.
+      `ProvisioningApiTest.TheSubscriberConfigurationNamesTheRoomsItMayDial`. The suite 1580,
+      1510 passed, 70 skipped. Steps 5 to 8 need FreeSWITCH (`ACTIVE.md`).

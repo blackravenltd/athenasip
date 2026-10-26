@@ -73,7 +73,11 @@ session that has lost its context needs to see them first.
 4. **Conferencing's four questions** (`docs/design/conferencing.md`, Decisions to make):
    whether a focus is a trunk, whether `builtin://` routes conferences from the trunk's
    attribute, whether the roster is worth the node watching the focus, and the prefix.
-   The design proposes an answer to each and the first steps are built on them.
+   The design proposes an answer to each and steps 1 to 4 are built on them.
+5. **Docker on this machine** (`sudo apt install docker.io` and the `docker` group): it
+   unlocks the sipp harnesses, Redis and MQTT for the full suite, the ASan and TSan release
+   checks, FreeSWITCH for conferencing step 5, the DTMF and push scenarios and the arm64
+   image. Until then everything built since `0.12.0` is unit-proven only.
 
 ## How to prove it
 
@@ -422,6 +426,11 @@ trunk findings from the 2talk run went first (2026-10-26, `COMPLETED.md`), ahead
 the rest of Milestone 7, because each was a defect in a shipped feature found by a real
 carrier, and small.
 
+**As of 2026-10-26 evening this list is exhausted for this machine**: every item left under
+Next needs Docker (a sipp harness, FreeSWITCH, rtpengine, an image), a device, another
+repository or Tom's answer. The first thing that unblocks the most is Docker on this
+machine (Waiting on Tom, 5).
+
 **This machine** (2026-10-26) builds the node with Lua and nghttp2 from `external/`
 (gitignored, built from source: `cmake --preset tests -DCMAKE_PREFIX_PATH=$PWD/external/prefix`
 with `PKG_CONFIG_PATH=$PWD/external/prefix/lib/pkgconfig`) and runs the unit suite, with the
@@ -484,11 +493,11 @@ After the above. The order is the milestone's own:
       **Designed 2026-10-26: `docs/design/conferencing.md`**, a focus as a trunk with an
       `attributes.focus`, eight steps, the first four provable without a focus. Its four
       questions are under Waiting on Tom; steps 1 to 4 assume the answers it proposes and
-      are reversible if the answers differ. Steps 1 and 2 are in (`COMPLETED.md`): the
+      are reversible if the answers differ. Steps 1 to 4 are in (`COMPLETED.md`): the
       routing and the REGISTER refusal in `builtin://` and `athenasip.standard` alike, the
-      room on the call and in `/api/v1/conferences`, and a BLF key for a room. Next: step 3,
-      a participant removed over the API, and step 4, `conferences` in the subscriber's
-      configuration; then FreeSWITCH (Docker).
+      room on the call and in `/api/v1/conferences`, a BLF key for a room, a participant
+      removed over the API, and the rooms in the subscriber's configuration. Step 5 onward
+      needs a FreeSWITCH in the compose files and sipp (Docker: Waiting on something).
 - [ ] RFC 4575 conference event package proxied to participants; roster in the admin
       and client APIs (the design's step 6, and its decision 3).
 - [ ] `MediaEngine::conference` capability implemented for rtpengine publish/subscribe
@@ -545,7 +554,10 @@ Each with what it waits on. None is forgotten; none can be worked here today.
 - [ ] Everything changed since `0.12.0` run through `docs/testing.md`'s Before a release:
       the CANCEL scenarios now assert the 487's CSeq (`cancel_after_180.xml`, one node and
       `across-cancel-ringing`), which only sipp proves; the trunk harness against the
-      `trunks/changed` scan and the OPTIONS answer; the Redis and MQTT unit tests.
+      `trunks/changed` scan and the OPTIONS answer; the Redis and MQTT unit tests (the trunk
+      status, re-offer, dialog and host-case round trips are written and never run).
+- [ ] Conferencing step 5 (`docs/design/conferencing.md`): FreeSWITCH in the compose files,
+      a dialplan for `conf-*`, and a sipp scenario with three participants; then steps 6 to 8.
 
 **A reproduction:**
 
