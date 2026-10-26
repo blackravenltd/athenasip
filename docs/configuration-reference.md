@@ -25,7 +25,10 @@ The node, and how it treats SIP.
 | `sip.max_call_duration` | integer | `0` | The longest any call is held, in seconds; each end is then sent a BYE. 0 is no limit. It cuts live calls too. |
 | `sip.media_timeout` | integer | `300` | Seconds an anchored call may carry no media before each end is sent a BYE. 0 turns it off. RTCP counts, so a call on hold is not silent. |
 | `sip.connect_timeout_ms` | integer | `4000` | How long opening a connection to a next hop may take, in milliseconds. |
-| `sip.flow_idle_timeout` | integer | `300` | Seconds a UDP flow may sit idle before it is forgotten. 0 never forgets. Keep it above 32 (64 * T1). |
+| `sip.flow_idle_timeout` | integer | `300` | Seconds a UDP flow, or a connection that registered nobody, may sit idle before it is closed. 0 never closes one for that. Keep it above 32 (64 * T1). |
+| `sip.flow_first_message_timeout` | integer | `30` | Seconds a TCP, TLS or WebSocket connection may stay open without a whole message arriving. 0 never closes one for that. |
+| `sip.max_connections` | integer | `10000` | The flows the node holds at once, UDP sources included; one more is closed. 0 is no cap. |
+| `sip.max_connections_per_source` | integer | `64` | The flows one address may hold at once; one more is closed. 0 is no cap. |
 
 ### `sip.timers`
 

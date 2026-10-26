@@ -91,6 +91,13 @@ Too Large first (RFC 3261 18.1.1). A Content-Length that is not one number is an
 and closes the stream too, since nothing after it can be framed. A datagram is bounded by
 its own size, and one whose Content-Length is not one number is discarded.
 
+Flows are held within limits too ([configuration](configuration.md#sip)): a connection that
+sends no whole message within `sip.flow_first_message_timeout` is closed, one that registered
+nobody is closed when idle for `sip.flow_idle_timeout`, a UDP source earns a flow only with a
+datagram that is SIP or STUN, and `sip.max_connections` and `sip.max_connections_per_source`
+cap what the node holds in all and from one address. A connection a subscriber registered
+over is kept however quiet.
+
 Browsers served over HTTPS can only open `wss`, so secure WebSocket is the only way in for
 a web client.
 

@@ -68,7 +68,10 @@ FAIL  peer node-b          10.0.0.2:5062 - Connection refused
 | `forward_register` | `subscribers` | A REGISTER for a domain this node does not serve (RFC 3261 10.3 step 1). `subscribers` forwards it, by DNS (RFC 3263), for a sender who is one of this node's subscribers: one already registered here over a reliable connection, or one answering a 407 for this node's realm. The node puts itself on the Path, so the far registrar's calls come back down the same connection. `never` answers 403. Either way nobody else's REGISTER is relayed. |
 | `log_messages` | `false` | Log every SIP message in full (headers and body) rather than its first line. Digest headers are logged as `<redacted>`. Logged at `debug`, so `log.level` must be `debug` too. |
 | `connect_timeout_ms` | `4000` | How long to spend opening a connection to a next hop the node has no flow to (RFC 3261 16.6 step 7). |
-| `flow_idle_timeout` | `300` | Seconds a UDP flow may sit idle before the node forgets it. `0` never forgets. The peer's next datagram makes a new flow. |
+| `flow_idle_timeout` | `300` | Seconds a UDP flow, or a connection that registered nobody, may sit idle before the node closes it. `0` never closes one for that. A connection a subscriber registered over is kept however quiet (RFC 5626 keeps it alive). The peer's next datagram makes a new flow. |
+| `flow_first_message_timeout` | `30` | Seconds a TCP, TLS or WebSocket connection may stay open without a whole message arriving. `0` never closes one for that. |
+| `max_connections` | `10000` | The flows the node holds at once, UDP sources included; one more is closed. `0` is no cap. |
+| `max_connections_per_source` | `64` | The flows one address may hold at once; one more is closed. `0` is no cap. |
 | `media_timeout` | `300` | Seconds an anchored call may carry no RTP or RTCP before the node releases it. `0` is off. |
 | `session_expires` | `1800` | Session interval (RFC 4028 8.1) added to an INVITE that carried none. `0` adds none. Below 90 is refused and the default kept; below 1800 is accepted with a warning. |
 | `session_min_se` | `90` | Shortest session interval the node accepts. Below 90 is refused and the default kept. |

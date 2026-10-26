@@ -121,7 +121,11 @@ void Channel::start() {
     _logger->info("Connected");
     state = State::Normal;
 
-    _core->channel_register(_flow_id, self);
+    // On the clock the flow sweep reads.
+    _opened_at = _core->now();
+    touch();
+
+    if (!_core->channel_register(_flow_id, self)) return;
 
     _schedule_async_read();
   });
@@ -198,6 +202,7 @@ void Channel::_send_on_strand(std::shared_ptr<SIPMessage> message) {
 
 // On the strand.
 void Channel::receive(std::shared_ptr<SIPMessage> message) {
+  _spoke = true;
   _logger->info("> " + message->header->summary());
   if (_core->config->sip_log_messages) _logger->debug("> " + for_logging(message));
 
@@ -297,6 +302,9 @@ void Channel::_schedule_async_read() {
   auto self(shared_from_this());
 
   if (!_connection) return;
+
+  // The buffer is allocated by the first read, so a flow the server reads for (UDP) never has one.
+  if (_read_buffer.empty()) _read_buffer.resize(65535);
 
   // One read is outstanding at a time, so _read_buffer is not shared.
   boost::asio::dispatch(_connection->executor(), [this, self, connection = _connection]() {

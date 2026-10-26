@@ -60,7 +60,13 @@ Settings build() {
                       "Seconds an anchored call may carry no media before each end is sent a BYE. 0 turns it off. RTCP counts, so a call "
                       "on hold is not silent."));
   s.push_back(integer("sip.connect_timeout_ms", "4000", "How long opening a connection to a next hop may take, in milliseconds."));
-  s.push_back(integer("sip.flow_idle_timeout", "300", "Seconds a UDP flow may sit idle before it is forgotten. 0 never forgets. Keep it above 32 (64 * T1)."));
+  s.push_back(integer("sip.flow_idle_timeout", "300",
+                      "Seconds a UDP flow, or a connection that registered nobody, may sit idle before it is closed. 0 never closes one for "
+                      "that. Keep it above 32 (64 * T1)."));
+  s.push_back(integer("sip.flow_first_message_timeout", "30",
+                      "Seconds a TCP, TLS or WebSocket connection may stay open without a whole message arriving. 0 never closes one for that."));
+  s.push_back(integer("sip.max_connections", "10000", "The flows the node holds at once, UDP sources included; one more is closed. 0 is no cap."));
+  s.push_back(integer("sip.max_connections_per_source", "64", "The flows one address may hold at once; one more is closed. 0 is no cap."));
 
   s.push_back(section("sip.timers", "The RFC 3261 section 17 timers. a to k are multiples of T1 or T4, not milliseconds. Leave them alone."));
   s.push_back(integer("sip.timers.t1_rtt_ms", "500", "T1, the round-trip estimate, in milliseconds.", 1, 65535));

@@ -11,7 +11,26 @@
 #include <boost/bind/bind.hpp>
 
 #include "../channel.h"
+#include "../sip_header.h"
+#include "../stun.h"
 #include "udp_connection.h"
+
+namespace {
+
+// RFC 3261 7: a request line or a status line, a Via and a CSeq, parsed from the header block; or a STUN Binding
+// request (RFC 5626 4.4.2). What a datagram must be before it costs the node a flow.
+bool worth_a_flow(const std::vector<char>& datagram) {
+  const std::string bytes(datagram.data(), datagram.size());
+  if (athenasip::stun::is_stun(bytes)) return true;
+
+  const auto split = bytes.find("\r\n\r\n");
+  if (split == std::string::npos) return false;
+
+  athenasip::SIPHeader header(bytes.substr(0, split));
+  return header.is_valid() && header.contains("Via") && header.contains("CSeq");
+}
+
+}  // namespace
 
 using namespace boost::asio;
 using namespace boost::asio::ip;
@@ -82,6 +101,14 @@ void UDPServer::handle_receive_from(const boost::system::error_code& error, std:
     if (it != _connections.end() && it->second->is_open()) {
       connection = it->second;
     } else {
+      // A source the node has no flow for earns one with a datagram that is SIP, or an RFC 5626 STUN keep-alive;
+      // anything else is dropped here, so a flood of spoofed sources holds nothing of the node's.
+      if (!worth_a_flow(*buffer)) {
+        _logger->debug("Datagram from " + sender_endpoint_str + " that is neither SIP nor STUN, dropped");
+        boost::asio::post(_strand, [this]() { start_receive(); });
+        return;
+      }
+
       connection = std::make_shared<UDPConnection>(self, _socket.local_endpoint(), *sender_endpoint);
 
       // Without start() the flow would report is_open() false, Channel::close() would skip its teardown, and the entry
