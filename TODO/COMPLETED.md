@@ -3633,3 +3633,30 @@ passed, 67 skipped (Redis, MQTT, the resolver). Each piece with its test watched
       `settle()`, which drains the strand but not the io_context thread the connect completes
       on; the helper waits up to two seconds. Five runs clean. The suite 1573, 1503 passed, 70
       skipped.
+
+### Conferencing, steps 1 and 2: a focus is a trunk, and the room on the call (2026-10-26)
+
+`docs/design/conferencing.md` is the design; these are its first two steps, built on the
+answers it proposes to its four questions.
+
+- [x] **A focus is a trunk** with `attributes.focus` (`{prefix, realms}`). A request to a URI
+      whose user part starts with the prefix, in one of the realms (any when none is named),
+      goes to the trunk with the room as the user part and the room on the target
+      (`Target::focus`, `route.trunk`/`route.uri` option `focus`), whatever the method, with
+      the trunk's `media_profile` (default `rtp`) and `dtmf`; a REGISTER for a room is refused
+      403 before any challenge. `athenasip.standard` (`std.focus_for`) and `builtin://`
+      (`focus_for`, `to_focus`, the builtin reading a trunk attribute for the first time:
+      decision 2 of the design) do it alike, so `athenasip.trunks` needs nothing and the
+      equivalence test holds. `TrunksScriptTest.AConferenceUriGoesToItsFocusAndCannotRegister`,
+      `ProxyTest.ACallToAConferenceUriGoesToItsFocusAndTheCallRecordsTheRoom`,
+      `RegistrarTest.ARegisterForAConferenceUriIsRefused`.
+- [x] **The room on the call**: `Call::focus` set from the answering target, shown as `focus`
+      in `/api/v1/calls`, and `GET /api/v1/conferences` (and `/{uri}`) listing every room with
+      anyone in it from the call records, grouped by conference URI, with the focus trunk and
+      each participant. The `dialog` package treats a room as a presentity of its own: a BLF
+      key for `conf-sales` lights while anyone's call to its focus is up
+      (`Notifier::dialogs_of`, `docs/presence.md`). `CallsApiTest.TheRoomsWithAnyoneInThemAreListedFromTheCallRecords`,
+      `DialogPackageTest.AKeyForARoomLightsWhileAnyoneIsInIt`. The suite 1578, 1508 passed,
+      70 skipped.
+- [x] Found on the way: an object compiled while its source was being edited is newer than
+      the source and trusted by the next build; `ACTIVE.md` says to touch what changed.

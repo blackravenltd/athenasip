@@ -427,6 +427,10 @@ carrier, and small.
 with `PKG_CONFIG_PATH=$PWD/external/prefix/lib/pkgconfig`) and runs the unit suite, with the
 Redis, MQTT and resolver tests skipped. It has no Docker, so no sipp harness, no cluster
 and no interop fixture run here; what they alone would prove is under Waiting on something.
+A build takes long enough here that editing a source while it compiles leaves an object
+newer than the source, which the next build trusts (seen 2026-10-26: a test failing on code
+that was plainly there); after editing during a build, `touch` what changed before building
+again.
 
 ### DTMF, every flavour (Milestone 3, decided 2026-10-12)
 
@@ -480,7 +484,11 @@ After the above. The order is the milestone's own:
       **Designed 2026-10-26: `docs/design/conferencing.md`**, a focus as a trunk with an
       `attributes.focus`, eight steps, the first four provable without a focus. Its four
       questions are under Waiting on Tom; steps 1 to 4 assume the answers it proposes and
-      are reversible if the answers differ.
+      are reversible if the answers differ. Steps 1 and 2 are in (`COMPLETED.md`): the
+      routing and the REGISTER refusal in `builtin://` and `athenasip.standard` alike, the
+      room on the call and in `/api/v1/conferences`, and a BLF key for a room. Next: step 3,
+      a participant removed over the API, and step 4, `conferences` in the subscriber's
+      configuration; then FreeSWITCH (Docker).
 - [ ] RFC 4575 conference event package proxied to participants; roster in the admin
       and client APIs (the design's step 6, and its decision 3).
 - [ ] `MediaEngine::conference` capability implemented for rtpengine publish/subscribe
