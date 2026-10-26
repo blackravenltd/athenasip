@@ -80,12 +80,14 @@ TEST(CoreFlowSweepTest, AUdpFlowStillInUseIsLeftAlone) {
 }
 
 // A reliable flow ends with its socket and is never swept: it may be a NATed client's only path back.
-TEST(CoreFlowSweepTest, AReliableFlowIsNeverSweptHoweverQuiet) {
+// A connection a subscriber registered over ends with its socket, however quiet: RFC 5626 keeps it alive.
+TEST(CoreFlowSweepTest, AReliableFlowThatRegisteredSomebodyIsNeverSweptHoweverQuiet) {
   CoreFixture f;
   f.config->sip_flow_idle_timeout = 300;
 
   auto channel = flow(f, "tcp", "198.51.100.8", 5060, /*reliable=*/true);
   const auto flow_id = channel->flow_id();
+  f.on_strand([&]() { channel->authenticated_as("sip:alice@example.com"); });
 
   f.core->flow_sweep_start();
 
@@ -93,6 +95,72 @@ TEST(CoreFlowSweepTest, AReliableFlowIsNeverSweptHoweverQuiet) {
   f.settle();
 
   EXPECT_NE(f.on_strand([&]() { return f.core->channel_find(flow_id); }), nullptr);
+}
+
+// A connection that has sent no whole message is closed once sip.flow_first_message_timeout has passed: a
+// slowloris holds a socket for thirty seconds, not for ever.
+TEST(CoreFlowSweepTest, AReliableFlowThatNeverSpeaksIsClosedAfterTheFirstMessageTimeout) {
+  CoreFixture f;
+  f.config->sip_flow_idle_timeout = 300;
+  f.config->sip_flow_first_message_timeout = 30;
+
+  auto channel = flow(f, "tcp", "198.51.100.9", 5060, /*reliable=*/true);
+  const auto flow_id = channel->flow_id();
+
+  f.core->flow_sweep_start();
+
+  f.timers->advance(std::chrono::seconds(20));
+  f.settle();
+  EXPECT_NE(f.on_strand([&]() { return f.core->channel_find(flow_id); }), nullptr) << "not yet";
+
+  f.timers->advance(std::chrono::seconds(100));
+  f.settle();
+  EXPECT_EQ(f.on_strand([&]() { return f.core->channel_find(flow_id); }), nullptr);
+}
+
+// A connection that spoke but registered nobody is held only while it speaks: idle past the timeout, it goes.
+TEST(CoreFlowSweepTest, AReliableFlowThatRegisteredNobodyIsSweptWhenIdle) {
+  CoreFixture f;
+  f.config->sip_flow_idle_timeout = 300;
+
+  auto channel = flow(f, "tcp", "198.51.100.10", 5060, /*reliable=*/true);
+  const auto flow_id = channel->flow_id();
+  f.receive(channel, "OPTIONS sip:example.com SIP/2.0\r\nVia: SIP/2.0/TCP 198.51.100.10:5060;branch=z9hG4bK-opt\r\nFrom: <sip:x@example.com>;tag=x\r\n"
+                     "To: <sip:example.com>\r\nCall-ID: opt\r\nCSeq: 1 OPTIONS\r\nMax-Forwards: 70\r\n\r\n");
+
+  f.core->flow_sweep_start();
+
+  f.timers->advance(std::chrono::seconds(100));
+  f.settle();
+  EXPECT_NE(f.on_strand([&]() { return f.core->channel_find(flow_id); }), nullptr) << "spoke lately";
+
+  f.timers->advance(std::chrono::seconds(400));
+  f.settle();
+  EXPECT_EQ(f.on_strand([&]() { return f.core->channel_find(flow_id); }), nullptr);
+}
+
+// The caps: one flow more than sip.max_connections_per_source from an address, or than sip.max_connections in
+// all, is closed before it is filed; a closed one makes room for the next.
+TEST(CoreFlowSweepTest, AFlowPastTheCapsIsRefused) {
+  CoreFixture f;
+  f.config->sip_max_connections_per_source = 2;
+  f.config->sip_max_connections = 3;
+
+  auto first = flow(f, "tcp", "198.51.100.20", 5060, true);
+  auto second = flow(f, "tcp", "198.51.100.20", 5061, true);
+  auto third = flow(f, "tcp", "198.51.100.20", 5062, true);
+  EXPECT_NE(f.on_strand([&]() { return f.core->channel_find(second->flow_id()); }), nullptr);
+  EXPECT_EQ(f.on_strand([&]() { return f.core->channel_find(third->flow_id()); }), nullptr) << "a third from one address";
+
+  auto other = flow(f, "tcp", "198.51.100.21", 5060, true);
+  auto another = flow(f, "udp", "198.51.100.22", 5060, false);
+  EXPECT_NE(f.on_strand([&]() { return f.core->channel_find(other->flow_id()); }), nullptr);
+  EXPECT_EQ(f.on_strand([&]() { return f.core->channel_find(another->flow_id()); }), nullptr) << "a fourth in all";
+
+  first->close();
+  f.settle();
+  auto again = flow(f, "udp", "198.51.100.22", 5060, false);
+  EXPECT_NE(f.on_strand([&]() { return f.core->channel_find(again->flow_id()); }), nullptr) << "room again";
 }
 
 TEST(CoreFlowSweepTest, ATimeoutOfZeroForgetsNothing) {

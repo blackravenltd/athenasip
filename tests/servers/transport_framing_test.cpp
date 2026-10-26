@@ -681,3 +681,25 @@ TEST(TransportFramingTest, UdpDiscardsADatagramWithAContentLengthThatIsNotOneNum
   const auto answer = reader.take(std::chrono::seconds(3));
   EXPECT_NE(answer.find("SIP/2.0 401"), std::string::npos) << answer;
 }
+
+// A datagram from a source the node has no flow for earns one only by being SIP or STUN: a flood of spoofed
+// sources sending rubbish holds nothing of the node's.
+TEST(TransportFramingTest, UdpRubbishFromANewSourceMakesNoFlow) {
+  UdpFixture f;
+
+  net::io_context io;
+  udp::socket socket(io, udp::endpoint(net::ip::make_address("127.0.0.1"), 0));
+  const udp::endpoint node(net::ip::make_address("127.0.0.1"), f.port());
+  Reader<udp::socket> reader(io, socket);
+  const auto port = socket.local_endpoint().port();
+
+  socket.send_to(net::buffer(std::string("GET / HTTP/1.1\r\nHost: x\r\n\r\n")), node);
+  EXPECT_EQ(reader.take(std::chrono::milliseconds(300), 0), "");
+  f.settle();
+  EXPECT_EQ(f.on_strand([&]() { return f.core->channel_find("udp", "127.0.0.1", port); }), nullptr) << "no flow for rubbish";
+
+  socket.send_to(net::buffer(register_request("UDP", "z9hG4bK-udp-earns-a-flow")), node);
+  const auto answer = reader.take(std::chrono::seconds(3));
+  EXPECT_NE(answer.find("SIP/2.0 401"), std::string::npos) << answer;
+  EXPECT_NE(f.on_strand([&]() { return f.core->channel_find("udp", "127.0.0.1", port); }), nullptr) << "a flow for SIP";
+}

@@ -129,6 +129,15 @@ class Config {
   // forgets. Keep it above 32 seconds (64*T1), so no live transaction loses its flow.
   std::uint32_t sip_flow_idle_timeout = 300;
 
+  // sip.flow_first_message_timeout: seconds a TCP, TLS or WebSocket connection may stay open without a whole
+  // message arriving before it is closed. Zero never closes one for that.
+  std::uint32_t sip_flow_first_message_timeout = 30;
+
+  // sip.max_connections and sip.max_connections_per_source: the flows the node holds in all, and from one address,
+  // UDP flows included. Zero is no cap.
+  std::uint32_t sip_max_connections = 10000;
+  std::uint32_t sip_max_connections_per_source = 64;
+
   // tls, tcp, udp and websocket: the listeners. public_port is the port a router forwards
   // to the listener; zero means the bound port.
   bool tls_enable = false;

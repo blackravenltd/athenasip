@@ -7,6 +7,7 @@
 #pragma once
 
 #include <array>
+#include <vector>
 #include <boost/asio/dispatch.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/system/error_code.hpp>
@@ -68,6 +69,11 @@ class Channel : public std::enable_shared_from_this<Channel> {
   // Whether a REGISTER has authenticated anyone over this connection.
   bool is_authenticated() const { return !_authenticated.empty(); }
 
+  // Whether a whole message has ever arrived on this flow, and when the flow opened: a connection that has said
+  // nothing for sip.flow_first_message_timeout is closed by the sweep.
+  bool has_spoken() const { return _spoke; }
+  std::chrono::steady_clock::time_point opened_at() const { return _opened_at; }
+
   State state = State::Normal;
 
   std::shared_ptr<SIPMessage> _incoming_message;
@@ -85,8 +91,12 @@ class Channel : public std::enable_shared_from_this<Channel> {
 
   std::set<std::string> _authenticated;
 
-  std::array<char, 65535> _read_buffer;
+  // Allocated by the first stream read: a UDP flow, which the server reads for, never pays for it.
+  std::vector<char> _read_buffer;
   std::string _buffer;
+
+  bool _spoke = false;
+  std::chrono::steady_clock::time_point _opened_at = std::chrono::steady_clock::now();
 
   // What a stream may carry before the node stops reading it: a header block with no end past this is a peer
   // that is not speaking SIP, and a body declared past this is one the node will not hold. A datagram is bounded

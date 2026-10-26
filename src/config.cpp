@@ -56,6 +56,19 @@ bool Config::load_from_yaml(const std::string& filename) {
     return false;
   }
 
+  for (const auto& [key, field] : std::initializer_list<std::pair<const char*, std::uint32_t*>>{
+           {"flow_first_message_timeout", &sip_flow_first_message_timeout},
+           {"max_connections", &sip_max_connections},
+           {"max_connections_per_source", &sip_max_connections_per_source}}) {
+    if (!sip[key]) continue;
+    try {
+      *field = sip[key].as<std::uint32_t>();
+    } catch (const std::exception& e) {
+      _logger->error("Invalid value for 'sip." + std::string(key) + "': " + std::string(e.what()));
+      return false;
+    }
+  }
+
   if (sip["flow_idle_timeout"]) {
     try {
       sip_flow_idle_timeout = sip["flow_idle_timeout"].as<std::uint32_t>();
@@ -717,6 +730,9 @@ std::string Config::effective_yaml() const {
   out << YAML::Key << "media_timeout" << YAML::Value << sip_media_timeout;
   out << YAML::Key << "connect_timeout_ms" << YAML::Value << sip_connect_timeout_ms;
   out << YAML::Key << "flow_idle_timeout" << YAML::Value << sip_flow_idle_timeout;
+  out << YAML::Key << "flow_first_message_timeout" << YAML::Value << sip_flow_first_message_timeout;
+  out << YAML::Key << "max_connections" << YAML::Value << sip_max_connections;
+  out << YAML::Key << "max_connections_per_source" << YAML::Value << sip_max_connections_per_source;
 
   out << YAML::Key << "timers" << YAML::Value << YAML::BeginMap;
   out << YAML::Key << "t1_rtt_ms" << YAML::Value << sip_timer_t1_rtt_ms;

@@ -181,6 +181,27 @@ std::string Core::channel_key(const std::string& transport, const std::string& h
 std::string Core::channel_key(const std::string& transport, const std::string& endpoint) { return Util::to_lower(transport) + "://" + endpoint; }
 
 bool Core::channel_register(std::string endpoint, std::shared_ptr<Channel> channel) {
+  // The caps: how many flows the node holds in all, and how many from one address, so neither a flood of
+  // connections nor one of spoofed datagrams exhausts it. A flow past either is closed before it is filed.
+  if (channel->_connection) {
+    const auto source = channel->_connection->remote_endpoint().address().to_string();
+    const auto from_source = _channels_by_source.count(source) != 0 ? _channels_by_source.at(source) : 0;
+
+    if (config->sip_max_connections > 0 && _channel_count >= config->sip_max_connections) {
+      _logger->warn("Refusing a flow from " + source + " - the node holds " + std::to_string(_channel_count) + " already (sip.max_connections)");
+      channel->close();
+      return false;
+    }
+    if (config->sip_max_connections_per_source > 0 && from_source >= config->sip_max_connections_per_source) {
+      _logger->warn("Refusing a flow from " + source + " - it holds " + std::to_string(from_source) + " already (sip.max_connections_per_source)");
+      channel->close();
+      return false;
+    }
+
+    _channels_by_source[source] = from_source + 1;
+    _channel_count++;
+  }
+
   _channels[endpoint] = channel;
   _channels_by_token[channel->flow_token()] = channel;
 
@@ -219,6 +240,15 @@ bool Core::channel_unregister(std::string endpoint, std::shared_ptr<Channel> cha
   // Remove every name the channel is filed under, aliases included.
   const auto removed = std::erase_if(_channels, [&channel](const auto& entry) { return entry.second == channel; });
   _channels_by_token.erase(channel->flow_token());
+
+  // A channel that was filed was counted; one refused at the cap never was.
+  if (removed > 0 && channel->_connection) {
+    const auto source = channel->_connection->remote_endpoint().address().to_string();
+    if (auto counted = _channels_by_source.find(source); counted != _channels_by_source.end()) {
+      if (--counted->second == 0) _channels_by_source.erase(counted);
+    }
+    if (_channel_count > 0) _channel_count--;
+  }
 
   _logger->debug("Unregistered Channel " + endpoint + (removed > 1 ? " and " + std::to_string(removed - 1) + " alias(es)" : ""));
   return true;
@@ -1407,10 +1437,23 @@ void Core::_flow_sweep() {
     for (const auto& [endpoint, channel] : _channels) {
       if (!channel || !channel->_connection) continue;
 
-      if (channel->_connection->is_reliable()) continue;
-
       const auto quiet_for = std::chrono::duration_cast<std::chrono::seconds>(now - channel->last_activity()).count();
-      if (quiet_for < static_cast<std::int64_t>(timeout)) continue;
+
+      if (channel->_connection->is_reliable()) {
+        // A connection a subscriber registered over ends with its socket (RFC 5626 keeps it alive). One that has
+        // registered nobody is held only while it speaks: never, past sip.flow_first_message_timeout; idle, past
+        // the idle timeout, as a UDP flow is.
+        if (channel->is_authenticated()) continue;
+        if (!channel->has_spoken()) {
+          const auto first = config->sip_flow_first_message_timeout;
+          const auto open_for = std::chrono::duration_cast<std::chrono::seconds>(now - channel->opened_at()).count();
+          if (first == 0 || open_for < static_cast<std::int64_t>(first)) continue;
+        } else if (quiet_for < static_cast<std::int64_t>(timeout)) {
+          continue;
+        }
+      } else if (quiet_for < static_cast<std::int64_t>(timeout)) {
+        continue;
+      }
 
       // A channel can be filed under several names.
       if (std::find(idle.begin(), idle.end(), channel) == idle.end()) idle.push_back(channel);

@@ -371,6 +371,10 @@ class Core : public std::enable_shared_from_this<Core> {
   std::shared_ptr<Notifier> _notifier;
   std::shared_ptr<PushRefresher> _push_refresher;
   std::shared_ptr<TrunkRegistrar> _trunk_registrar;
+
+  // The flows held, in all and by source address, for sip.max_connections and sip.max_connections_per_source.
+  std::size_t _channel_count = 0;
+  std::map<std::string, std::size_t> _channels_by_source;
   std::map<std::pair<std::string, std::uint16_t>, std::uint64_t> _trunk_responses;
   std::shared_ptr<AddressDiscovery> _address_discovery;
   std::map<std::string, std::shared_ptr<push::PushService>> _push_services;
