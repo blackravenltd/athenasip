@@ -142,6 +142,17 @@ was silently skipped, a TURN username no browser could use.
 
 Dated, and not reopened without asking.
 
+- (2026-10-26) **Conferencing's four questions** (`docs/design/conferencing.md`), Tom:
+  1. Focuses are trunks. `/api/v1/focuses` is a view on the trunks that carry a `focus`
+     attribute, not a record of its own.
+  2. `builtin://` does not route conferences: the point of `lua://` is that this behaviour
+     is configurable. Conferencing is the standard scripts' (`athenasip.standard`), and the
+     node reads a trunk's `focus` attribute only for its API views, never to route.
+  3. Mute state from the start: the node watches each room at its focus for RFC 4575
+     `conference-info` (the design's step 6) as part of the feature, not an option.
+  4. The prefix is the operator's; the quick start shows `conf-` and says a numeric prefix
+     suits phones that cannot dial letters.
+
 - (2026-10-12) **Every flavour of DTMF is handled** (Tom): RFC 4733 telephone-events,
   SIP INFO (`application/dtmf-relay` and `application/dtmf`) and in-band tones, passed
   through when both ends agree and converted when they differ. AthenaPhone does the same
@@ -426,10 +437,64 @@ trunk findings from the 2talk run went first (2026-10-26, `COMPLETED.md`), ahead
 the rest of Milestone 7, because each was a defect in a shipped feature found by a real
 carrier, and small.
 
-**As of 2026-10-26 evening this list is exhausted for this machine**: every item left under
-Next needs Docker (a sipp harness, FreeSWITCH, rtpengine, an image), a device, another
-repository or Tom's answer. The first thing that unblocks the most is Docker on this
-machine (Waiting on Tom, 5).
+**Taken out of turn on 2026-10-26 (Tom): the external review**, below, ahead of everything
+else. After it, the conferencing work resumes with Tom's four answers (Decisions,
+2026-10-26): first taking back the `builtin://` conference routing and REGISTER refusal that
+step 1 built (decision 2), then `/api/v1/focuses` as a view on the trunks with a `focus`
+attribute (decision 1), then step 5 with FreeSWITCH and step 6, the roster from the focus,
+as part of the feature (decision 3).
+
+### The perimeter: the external review of 2026-10-25 (Milestone 8)
+
+`reviews/2026-10-25/athenasip-review.md`: a hostile static review of `abfe320` (0.12.0),
+48 findings, nothing run. Checked against `develop` on 2026-10-26: every finding spot-checked
+still holds. Its verdict is that the engineering is sound and the perimeter has never been
+reviewed adversarially; its order is below, and is the order to work. Each fix lands with
+a regression test from the finding (its item 10), and the unit suite proves all of items 1
+to 5 and 9 here; 6 needs clang (libFuzzer), 7 needs GitHub, 8 is partly Tom's.
+
+- [ ] **1. Size caps and the scan offset** (findings 1, 2, 6): a header block cap (16 KB),
+      a whole-message cap (64 KB), the stream scanned from where the last scan stopped, the
+      connection closed (or 513) when exceeded, a declared body refused at the cap when the
+      header is parsed. `src/channel.cpp:338,376,473`, `src/channel.h:88`.
+- [ ] **2. Strict Content-Length** (4, 5): digits only through `std::from_chars` into
+      `size_t`, duplicates and conflicts refused 400, the stream closed on a framing error,
+      `SIPMessage::body_length` widened. `src/headers/uint_header.cpp:15`,
+      `src/sip_message.h:36`.
+- [ ] **3. Idle timeouts and connection caps** (3, 10): an idle and a first-message timeout
+      for TCP, TLS and WS (RFC 5626 flows with keepalives exempt), global and per-source
+      caps, and UDP handled statelessly until a valid request so a spoofed flood holds no
+      64 KB per source. `src/core.cpp:1373,1410`, `src/servers/udp_server.cpp:84`.
+- [ ] **4. Nonces and Digest** (20, 21, 22, 23, 26): stateless HMAC nonces verified with
+      their timestamp and realm, no per-nonce storage, `nc` tracked and strictly rising,
+      a five-minute lifetime with `stale=true`, the Digest `uri` bound to the Request-URI,
+      `RAND_bytes` for every secret and capability (`Util::generate_random_string` is
+      mt19937), constant-time comparison (25). `src/core.cpp:514`, `src/digest.cpp:42,48`,
+      `src/util.cpp:178`.
+- [ ] **5. SIP-side rate limiting** (24): challenges and failures limited per source and per
+      AOR, a temporary ban, a failure event for fail2ban. `RateLimiter` exists for HTTP only.
+- [ ] **6. Fuzzing** (7): libFuzzer targets for `SIPHeader::parse`, `SIPUri`, the
+      Authorization header, stream and datagram framing, STUN and bencode, seeded from the
+      sipp scenarios, under ASan and UBSan. Needs clang on this machine (Waiting on Tom).
+- [ ] **7. Hosted CI and warnings** (43, 44): a GitHub Actions workflow for the unit suite,
+      ASan with UBSan, TSan, the e2e harnesses in compose and a fuzz smoke; `-Wall -Wextra
+      -Wconversion -Wshadow` and what they find. The workflow file is written here; running
+      it is GitHub's (Tom).
+- [ ] **8. Public claims** (46, 47, 48): "RFC 3261 in full" in the README becomes the
+      transaction layer and section 16 proxying with the gaps listed in Limits (done with
+      item 9); the GitHub About text and athenasip.org are Tom's.
+- [ ] **9. Protocol gaps** (11, 12, 13, 14, 16): the Route set on a non-2xx ACK, 420 for an
+      unsupported Proxy-Require, the registrar's Call-ID and CSeq ordering, Expires clamped
+      before narrowing, an unparseable Max-Forwards refused 400.
+- [ ] **The rest** (8, 9, 15, 17, 18, 19, 27 to 42, 45), each small, after the nine above:
+      method and URI validation, a contacts-per-AOR cap, the dead transaction id, one Allow
+      list, a transaction table cap, the admin API bound to loopback by default, realm and
+      user names validated, SHA-256 subscriber ids, constant-time logins, `mqtts`, rtpengine
+      replies checked by source, Web Push destinations filtered, async resolves, the dead TLS
+      branch, a WebSocket Origin check, timers validated, nonces and URL credentials out of
+      logs, `SIPHeader::print`, the no-op `send`, comments that restate code.
+
+
 
 **This machine** (2026-10-26) builds the node with Lua and nghttp2 from `external/`
 (gitignored, built from source: `cmake --preset tests -DCMAKE_PREFIX_PATH=$PWD/external/prefix`

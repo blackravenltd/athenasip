@@ -182,24 +182,22 @@ FreeSWITCH, which `docker-compose.yml` gains, and sipp as a participant.
 8. **An engine that mixes**: the `conference` capability, rtpengine publish/subscribe as a
    basic SFU behind a trunk-shaped URI, then a real SFU. Its own design when it comes.
 
-## Decisions to make
+## Decisions made (Tom, 2026-10-26)
 
-1. **Is a focus a trunk?** This design says yes: the mechanism (credentials, TLS, outbound
-   proxy, inbound trust, the API, the script reading attributes) is all there, and a focus
-   is a SIP peer calls go to. The alternative is a `focus` record of its own with the same
-   fields, which is cleaner in the API and a day of duplication in the code.
-2. **Does `builtin://` route conferences?** The standard scripts must behave as `builtin://`
-   does, so if the script routes `conf-*` to a focus trunk, so must the builtin policy, which
-   today reads no trunk attribute (the node reads none, by the trunks design). Either the
-   builtin policy makes an exception for `focus`, or conferencing is a `lua://` feature and
-   the equivalence test covers it only under `lua://`. This design assumes the exception.
-3. **The roster's source.** Each participant's call record already says who is in a room
-   as far as the node routed them; the focus's `conference-info` adds what the focus knows
-   (muted, speaking, participants it dialled out to) and costs step 6. Steps 1 to 5 give a
-   roster without it; whether step 6 is worth a lease and a parser is Tom's call, and the
-   console's.
-4. **The name.** `conf-` is a prefix in the trunk's attribute, so an operator may choose
-   `room-` or a number range. The quick start needs one to show; `conf-` is proposed.
+1. **A focus is a trunk.** `/api/v1/focuses` is a view on the trunks that carry a `focus`
+   attribute: the same records, listed and read by that name, with the attribute's fields
+   beside the trunk's. No record of its own.
+2. **`builtin://` does not route conferences.** The point of `lua://` is that this behaviour
+   is configurable: conferencing is `athenasip.standard`'s, so a node that wants rooms runs
+   `lua://` (the standard scripts need no script written). The node reads a trunk's `focus`
+   attribute for its API views only, never to route or to refuse a REGISTER; the equivalence
+   test covers the conference tests under `lua://` alone. Step 1 was first built with a
+   builtin exception and is taken back to this.
+3. **Mute state from the start.** The node watches each room at its focus for RFC 4575
+   `conference-info` (step 6) as part of the feature, not an option: the roster the API
+   gives is the focus's, with the call records as what the node routed.
+4. **The prefix is the operator's.** The quick start shows `conf-` and says a numeric prefix
+   such as `8` suits phones that cannot dial letters.
 
 ## What this does not do
 
