@@ -1282,6 +1282,15 @@ std::string RedisDatastore::_serialise_call(const std::shared_ptr<Call>& call) {
   }
 
   obj["participants"] = std::move(participants);
+
+  // The dialog whole, once, for a node that reads the record to carry it on; both legs of a two-party call share it.
+  for (const auto& participant : call->participants) {
+    if (participant.dialog) {
+      obj["dialog"] = participant.dialog->to_json();
+      break;
+    }
+  }
+
   return boost::json::serialize(obj);
 }
 
@@ -1331,6 +1340,17 @@ std::shared_ptr<Call> RedisDatastore::_parse_call(const std::string& value) cons
         participant.dialog->call_id = call_id;
         participant.dialog->caller_tag = json_string(participant_obj, "caller_tag");
         participant.dialog->callee_tag = json_string(participant_obj, "callee_tag");
+      }
+    }
+  }
+
+  // A record with the dialog whole gives every leg that shares its tags the one dialog, as the node that wrote it had.
+  if (const auto* dialog_obj = obj.if_contains("dialog"); dialog_obj != nullptr && dialog_obj->is_object()) {
+    auto dialog = types::Dialog::from_json(dialog_obj->as_object());
+    for (auto& participant : call->participants) {
+      if (participant.dialog && participant.dialog->call_id == dialog->call_id && participant.dialog->caller_tag == dialog->caller_tag &&
+          participant.dialog->callee_tag == dialog->callee_tag) {
+        participant.dialog = dialog;
       }
     }
   }

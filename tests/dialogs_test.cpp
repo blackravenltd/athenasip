@@ -6,6 +6,7 @@
 //
 #include <gtest/gtest.h>
 
+#include <ctime>
 #include <memory>
 #include <string>
 
@@ -400,4 +401,52 @@ TEST(DialogsTest, ACallWithNoSessionTimerNeverLapses) {
   f.on_strand([&f]() { f.timers->advance(std::chrono::hours(24)); });
 
   EXPECT_EQ(f.dialogs().size(), 1u);
+}
+
+// A dialog read from the call record is carried on here: an in-dialog request from either end finds it, and the
+// session timer runs from the wall-clock expiry the record kept. One already held, or terminated, is left alone.
+TEST(DialogsTest, ADialogFromTheCallRecordIsCarriedOn) {
+  Fixture f;
+  auto dialog = std::make_shared<Dialog>();
+  dialog->call_id = "call-proxy";
+  dialog->caller_tag = "alice";
+  dialog->callee_tag = "bob";
+  dialog->state = Dialog::State::Confirmed;
+  dialog->session_interval = 90;
+  dialog->session_expires_at = std::time(nullptr) + 60;
+
+  f.on_strand([&f, dialog]() { f.core->dialogs()->adopt(dialog); });
+
+  auto bye = std::make_shared<SIPMessage>();
+  bye->header = std::make_shared<SIPHeader>(from_callee("BYE", "z9hG4bK-bye", 2));
+  const auto found = f.on_strand([&f, bye]() { return f.core->dialogs()->find(bye); });
+  ASSERT_NE(found, nullptr);
+  EXPECT_EQ(found->id(), "call-proxy|alice|bob");
+  EXPECT_GT(found->session_deadline.time_since_epoch().count(), 0);
+
+  auto again = std::make_shared<Dialog>(*dialog);
+  f.on_strand([&f, again]() { f.core->dialogs()->adopt(again); });
+  EXPECT_EQ(f.on_strand([&f]() { return f.core->dialogs()->size(); }), 1u);
+
+  auto ended = std::make_shared<Dialog>(*dialog);
+  ended->call_id = "call-ended";
+  ended->state = Dialog::State::Terminated;
+  f.on_strand([&f, ended]() { f.core->dialogs()->adopt(ended); });
+  EXPECT_EQ(f.on_strand([&f]() { return f.core->dialogs()->size(); }), 1u);
+}
+
+// Every change the record keeps raises the dialog's revision: a sequence number moving on a BYE-less request as
+// much as the answer that confirmed it.
+TEST(DialogsTest, TheRevisionMovesWithEveryChangeTheRecordKeeps) {
+  Fixture f;
+  answer(f);
+
+  auto bob_bye = std::make_shared<SIPMessage>();
+  bob_bye->header = std::make_shared<SIPHeader>(from_caller("INFO", "z9hG4bK-info", 2));
+  const auto before = f.on_strand([&f, bob_bye]() { return f.core->dialogs()->find(bob_bye)->revision; });
+  EXPECT_GT(before, 0u) << "confirming it was a change";
+
+  f.receive(f.caller, from_caller("INFO", "z9hG4bK-info", 2));
+  const auto after = f.on_strand([&f, bob_bye]() { return f.core->dialogs()->find(bob_bye)->revision; });
+  EXPECT_GT(after, before);
 }

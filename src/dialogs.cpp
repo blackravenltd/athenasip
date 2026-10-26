@@ -139,11 +139,16 @@ void Dialogs::observe_request(const std::shared_ptr<SIPMessage>& request) {
 
   // 12.2.1.1: each end has its own CSeq sequence.
   const auto cseq = cseq_of(request);
+  bool cseq_moved = false;
 
   if (dialog->is_from_caller(from_tag)) {
-    if (cseq > dialog->caller_cseq) dialog->caller_cseq = cseq;
+    if (cseq > dialog->caller_cseq) {
+      dialog->caller_cseq = cseq;
+      cseq_moved = true;
+    }
   } else if (cseq > dialog->callee_cseq) {
     dialog->callee_cseq = cseq;
+    cseq_moved = true;
   }
 
   // RFC 3261 15.1: a BYE from either end terminates the dialog.
@@ -169,11 +174,16 @@ void Dialogs::observe_request(const std::shared_ptr<SIPMessage>& request) {
     // RFC 4028 section 7: a re-INVITE or UPDATE in the dialog is the refresh.
     if (dialog->session_interval > 0) {
       dialog->session_deadline = _timers->now() + std::chrono::seconds(dialog->session_interval);
+      dialog->session_expires_at = std::time(nullptr) + dialog->session_interval;
       _reschedule_sweep();
     }
 
     _changed(dialog);
+    return;
   }
+
+  // Any other request moved a sequence number the call record keeps.
+  if (cseq_moved) _changed(dialog);
 }
 
 void Dialogs::observe_response(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<SIPMessage>& response) {
@@ -219,6 +229,7 @@ void Dialogs::observe_response(const std::shared_ptr<SIPMessage>& request, const
       dialog->session_interval = session->delta_seconds;
       dialog->refresher = session->refresher;
       dialog->session_deadline = _timers->now() + std::chrono::seconds(dialog->session_interval);
+      dialog->session_expires_at = std::time(nullptr) + dialog->session_interval;
 
       _reschedule_sweep();
     }
@@ -335,6 +346,27 @@ std::size_t Dialogs::size() const {
 
 void Dialogs::terminate(const std::shared_ptr<types::Dialog>& dialog) { _terminate(dialog, "torn down"); }
 
+void Dialogs::adopt(std::shared_ptr<types::Dialog> dialog) {
+  if (!dialog || dialog->call_id.empty() || dialog->state == Dialog::State::Terminated) return;
+
+  auto& branches = _by_call_id[dialog->call_id];
+  for (const auto& existing : branches) {
+    if (existing->caller_tag == dialog->caller_tag && existing->callee_tag == dialog->callee_tag) return;
+  }
+
+  // The record holds the wall-clock expiry; this node's sweep runs on its own steady clock.
+  if (dialog->session_interval > 0 && dialog->session_expires_at > 0) {
+    const auto remaining = static_cast<std::int64_t>(dialog->session_expires_at) - static_cast<std::int64_t>(std::time(nullptr));
+    dialog->session_deadline = _timers->now() + std::chrono::seconds(std::max<std::int64_t>(remaining, 1));
+  }
+  if (dialog->state == Dialog::State::Confirmed) dialog->confirmed_monotonic = _timers->now();
+
+  branches.push_back(dialog);
+  _logger->info("Dialog " + dialog->id() + " taken from the call record");
+
+  if (dialog->session_interval > 0) _reschedule_sweep();
+}
+
 // RFC 4028 section 8: on expiry a proxy discards its session state. It does not send BYE;
 // the endpoints run their own timers and send their own.
 void Dialogs::_sweep() {
@@ -411,6 +443,7 @@ void Dialogs::_terminate(const std::shared_ptr<Dialog>& dialog, const char* reas
 }
 
 void Dialogs::_changed(const std::shared_ptr<Dialog>& dialog) {
+  dialog->revision++;
   if (_on_change) _on_change(dialog);
 }
 

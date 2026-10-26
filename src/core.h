@@ -337,6 +337,11 @@ class Core : public std::enable_shared_from_this<Core> {
 
   void _deliver_to_tu(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction);
 
+  // The second half of _deliver_to_tu, after a request in a dialog this node did not hold has been looked for in
+  // the call record; and the taking in of the call that record described.
+  void _dispatch_to_tu(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction);
+  void _adopt_call(const std::shared_ptr<Call>& call, const std::shared_ptr<SIPMessage>& request);
+
   void _send_status(const std::shared_ptr<SIPMessage>& request, uint16_t code, const std::string& reason);
 
   std::shared_ptr<loggers::Logger> _logger;
