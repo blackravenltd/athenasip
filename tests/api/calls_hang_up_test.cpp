@@ -50,12 +50,19 @@ struct HangUpApiFixture : ProxyFixture {
 
   ~HangUpApiFixture() { admin->stop(); }
 
-  unsigned hang_up(const std::string& call_id, const std::string& token = "admin-token") {
+  unsigned hang_up(const std::string& call_id, const std::string& token = "admin-token") { return request_delete("/api/v1/calls/" + call_id, token); }
+
+  // A participant removed from a room (docs/design/conferencing.md).
+  unsigned leave(const std::string& room, const std::string& call_id, const std::string& token = "admin-token") {
+    return request_delete("/api/v1/conferences/" + room + "/calls/" + call_id, token);
+  }
+
+  unsigned request_delete(const std::string& path, const std::string& token) {
     boost::asio::io_context io_context;
     boost::asio::ip::tcp::socket socket(io_context);
     socket.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address("127.0.0.1"), admin->port()));
 
-    http::request<http::string_body> request{http::verb::delete_, "/api/v1/calls/" + call_id, 11};
+    http::request<http::string_body> request{http::verb::delete_, path, 11};
     request.set(http::field::host, "127.0.0.1");
     if (!token.empty()) request.set(http::field::authorization, "Bearer " + signed_in.presented(token));
     request.prepare_payload();
@@ -114,4 +121,22 @@ TEST(CallsHangUpTest, HangingUpTakesTheManageClusterRole) {
   EXPECT_EQ(f.hang_up("call-proxy", ""), 401u);
   EXPECT_EQ(f.hang_up("call-proxy", "client-token"), 403u);
   EXPECT_TRUE(ProxyFixture::requests_with(f.callee_connection, "BYE").empty());
+}
+
+// A participant removed from a room: the call in the room is ended by the node's own BYE to both ends; a call
+// that is not in that room is not found, whatever room it is in.
+TEST(CallsHangUpTest, AParticipantIsRemovedFromTheRoomItsCallIsIn) {
+  HangUpApiFixture f;
+  f.receive(f.caller, f.invite());
+  f.receive(f.callee, f.response_from_callee(200, "OK"));
+  f.on_strand([&f]() { f.core->call_get("call-proxy")->focus = std::make_shared<types::SIPUri>("sip:conf-sales@example.com"); });
+
+  EXPECT_EQ(f.leave("sip:conf-other@example.com", "call-proxy"), 404u);
+  EXPECT_TRUE(HangUpApiFixture::requests_with(f.callee_connection, "BYE").empty());
+
+  EXPECT_EQ(f.leave("sip:conf-sales@example.com", "call-proxy"), 202u);
+  EXPECT_EQ(HangUpApiFixture::requests_with(f.callee_connection, "BYE").size(), 1u);
+  EXPECT_EQ(HangUpApiFixture::requests_with(f.caller_connection, "BYE").size(), 1u);
+
+  EXPECT_EQ(f.leave("sip:conf-sales@example.com", "call-proxy", "client-token"), 403u);
 }

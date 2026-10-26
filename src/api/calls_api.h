@@ -40,6 +40,9 @@ class CallsAPI : public std::enable_shared_from_this<CallsAPI> {
   // (RFC 4579, docs/design/conferencing.md).
   void _conferences(RouteContext context);
   void _conference(RouteContext context);
+
+  // A participant removed from a room: the node's own BYE to both ends of that call, when the call is in the room.
+  void _leave(RouteContext context);
   void _rooms(RouteContext context, std::function<void(boost::json::array rooms)> then);
   void _hang_up(RouteContext context);
   void _policy_reload(RouteContext context);
