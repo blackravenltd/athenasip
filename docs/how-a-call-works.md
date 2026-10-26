@@ -160,3 +160,19 @@ cannot be reached, so the app asks for push when it registers (RFC 8599).
 
 The node also pushes the app shortly before its registration would expire, so it can
 refresh. [Configuration](configuration.md#push) has the settings for each service.
+
+## An instant message
+
+A SIP MESSAGE (RFC 3428) is a request outside any call: the text is its body, and the
+answer is the final response.
+
+1. Alice's phone sends `MESSAGE sip:bob@example.com` with `Content-Type: text/plain` and
+   the text as the body. The node authenticates her as it would for a call.
+2. The policy decides where it goes, as for an INVITE: `builtin://` and the standard
+   scripts send it to Bob's registered devices, one at a time, newest first. The body is
+   forwarded untouched, and nothing is Record-Routed, since a MESSAGE creates no dialog.
+3. Bob's phone answers 200, which the node relays to Alice. A 4xx from the phone, or no
+   device registered, reaches Alice the same way, as 480 when there was nobody to send to.
+
+The node stores nothing: a message to a subscriber whose devices are all off is refused,
+not kept for later. A device asleep behind push is woken for a MESSAGE as it is for a call.

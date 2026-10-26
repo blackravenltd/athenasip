@@ -458,3 +458,49 @@ TEST(ProxyTest, ARequestUriHostInAnyCaseReachesTheSubscriber) {
   EXPECT_EQ(ProxyFixture::requests_with(f.callee_connection, "INVITE").size(), 1u);
   EXPECT_EQ(ProxyFixture::response_with(f.caller_connection, 404), nullptr);
 }
+
+// RFC 3428: a MESSAGE out of a dialog is proxied like any request, to the subscriber's device, with its body
+// untouched; the device's final response goes back to the sender. No dialog and no Record-Route, since none is
+// created, and nothing is stored: a subscriber with no device registered is told 480.
+TEST(ProxyTest, AnInstantMessageIsRelayedWithItsBodyAndItsAnswer) {
+  ProxyFixture f;
+  f.bind_bob();
+
+  const std::string text = "Are you there?";
+  std::string raw = "MESSAGE sip:bob@example.com SIP/2.0\r\n";
+  raw += "Via: SIP/2.0/UDP 192.0.2.10:5060;branch=z9hG4bK-im\r\n";
+  raw += "From: <sip:alice@example.com>;tag=alice\r\n";
+  raw += "To: <sip:bob@example.com>\r\n";
+  raw += "Call-ID: im-1\r\n";
+  raw += "CSeq: 1 MESSAGE\r\n";
+  raw += "Max-Forwards: 70\r\n";
+  raw += "Content-Type: text/plain\r\n";
+  raw += "Content-Length: " + std::to_string(text.size()) + "\r\n\r\n";
+  raw += text;
+  f.receive(f.caller, raw);
+
+  const auto forwarded = ProxyFixture::requests_with(f.callee_connection, "MESSAGE");
+  ASSERT_EQ(forwarded.size(), 1u);
+  EXPECT_EQ(forwarded[0]->body, text);
+  EXPECT_EQ(forwarded[0]->header->headers_map["Content-Type"][0]->to_string(), "text/plain");
+  EXPECT_FALSE(forwarded[0]->header->contains("Record-Route"));
+
+  std::string answer = "SIP/2.0 200 OK\r\n";
+  for (const auto& via : forwarded[0]->header->headers_map["Via"]) answer += "Via: " + via->to_string() + "\r\n";
+  answer += "From: <sip:alice@example.com>;tag=alice\r\n";
+  answer += "To: <sip:bob@example.com>;tag=bob\r\n";
+  answer += "Call-ID: im-1\r\n";
+  answer += "CSeq: 1 MESSAGE\r\n\r\n";
+  f.receive(f.callee, answer);
+
+  auto relayed = ProxyFixture::response_with(f.caller_connection, 200);
+  ASSERT_NE(relayed, nullptr);
+  EXPECT_EQ(relayed->header->headers_map["CSeq"][0]->to_string(), "1 MESSAGE");
+
+  // Bob gone: nobody to deliver to.
+  ASSERT_TRUE(f.unregister_binding(f.bob, std::make_shared<types::SIPUri>("sip:bob@192.0.2.20:5060"), f.callee));
+  raw.replace(raw.find("z9hG4bK-im"), 10, "z9hG4bK-i2");
+  raw.replace(raw.find("Call-ID: im-1"), 13, "Call-ID: im-2");
+  f.receive(f.caller, raw);
+  EXPECT_NE(ProxyFixture::response_with(f.caller_connection, 480), nullptr);
+}
