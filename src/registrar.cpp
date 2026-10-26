@@ -191,27 +191,17 @@ void Registrar::_on_realm(std::shared_ptr<SIPMessage> request, std::shared_ptr<t
     return _send_challenge(transaction, request, realm);
   }
 
-  auto self = shared_from_this();
-  core->nonce_check(auth->fields["nonce"], [this, self, request, transaction, aor, realm, auth, terms](plugins::Result<bool> checked) {
-    if (!checked.ok) {
-      _logger->error("REGISTER could not check the nonce - " + checked.error);
-      return _send_status(transaction, request, 500, "Server Internal Error");
-    }
-
-    if (!checked.value) {
-      _logger->info("REGISTER nonce " + auth->fields["nonce"] + " not found or expired - challenging");
+  switch (digest::nonce_state(*realm, auth->fields["nonce"])) {
+    case digest::NonceState::bad:
+      _logger->info("REGISTER with a nonce this realm did not mint - challenging");
       return _send_challenge(transaction, request, realm);
-    }
-
-    _on_nonce_checked(request, transaction, aor, realm, auth, terms);
-  });
-}
-
-void Registrar::_on_nonce_checked(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
-                                  std::shared_ptr<types::SIPIdentity> aor, std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Authorization> auth,
-                                  Terms terms) {
-  auto core = _core.lock();
-  if (!core) return;
+    case digest::NonceState::stale:
+      // RFC 7616 3.3: the client signs a fresh nonce without asking its user again.
+      _logger->info("REGISTER with an expired nonce - challenging as stale");
+      return _send_challenge(transaction, request, realm, true);
+    case digest::NonceState::good:
+      break;
+  }
 
   auto self = shared_from_this();
   core->subscriber_get(aor, [this, self, request, transaction, aor, realm, auth, terms](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
@@ -232,9 +222,15 @@ void Registrar::_on_subscriber(std::shared_ptr<SIPMessage> request, std::shared_
     return _send_challenge(transaction, request, realm);
   }
 
-  if (const auto why = digest::verify(*subscriber, *auth, request->header->request_method); !why.empty()) {
+  if (const auto why = digest::verify(*subscriber, *auth, request->header->request_method, request->header->request_uri->to_string()); !why.empty()) {
     _logger->info("REGISTER for " + aor->to_string() + " with " + why + " - challenging");
     return _send_challenge(transaction, request, realm);
+  }
+
+  // A right answer seen before is a replay (RFC 7616 5.6): stale, so a client whose own nc slipped signs again.
+  if (auto core = _core.lock(); !core || !core->nonce_counts().accept(*auth, std::time(nullptr) + realm->nonce_expiry)) {
+    _logger->info("REGISTER for " + aor->to_string() + " replays an answer - challenging as stale");
+    return _send_challenge(transaction, request, realm, true);
   }
 
   request->authenticated = true;
@@ -704,33 +700,16 @@ void Registrar::_send_interval_too_brief(const std::shared_ptr<transactions::Tra
 }
 
 void Registrar::_send_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
-                                const std::shared_ptr<types::Realm>& realm) {
-  auto core = _core.lock();
-  if (!core) return;
-
+                                const std::shared_ptr<types::Realm>& realm, bool stale) {
   auto response = request->generate_response();
   response->header->response_code = 401;
   response->header->response_message = "Unauthorized";
   response->header->add("Reason", "SIP;cause=401;text=\"Unauthorized\"");
 
-  if (!realm) {
-    transaction->send(response);
-    return;
-  }
+  // Nothing is kept for the nonce: it carries its own proof (digest::nonce_mint).
+  if (realm) digest::add_challenges(*response->header, "WWW-Authenticate", realm->name, digest::nonce_mint(*realm), stale);
 
-  auto self = shared_from_this();
-
-  // The nonce must be stored before the challenge is sent, or its own check would fail.
-  core->nonce_create(realm, [this, self, transaction, request, response, realm](plugins::Result<std::string> nonce) {
-    if (!nonce.ok) {
-      _logger->error("Cannot mint a nonce for " + realm->name + " - " + nonce.error);
-      return _send_status(transaction, request, 500, "Server Internal Error");
-    }
-
-    digest::add_challenges(*response->header, "WWW-Authenticate", realm->name, nonce.value);
-
-    transaction->send(response);
-  });
+  transaction->send(response);
 }
 
 }  // namespace athenasip

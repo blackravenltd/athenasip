@@ -87,8 +87,6 @@ class MemoryDatastore : public Datastore {
                              plugins::StatusHandler handler) override;
   void location_list(plugins::Executor on, std::uint64_t subscriber_id, plugins::Handler<std::vector<types::Location>> handler) override;
 
-  void nonce_create(plugins::Executor on, std::string nonce, std::time_t expires_at, plugins::StatusHandler handler) override;
-  void nonce_check(plugins::Executor on, std::string nonce, plugins::Handler<bool> handler) override;
 
   void call_create(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) override;
   void call_update(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) override;
@@ -138,8 +136,6 @@ class MemoryDatastore : public Datastore {
   bool _subscriber_unregister(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact);
   std::vector<types::Location> _location_list(std::uint64_t subscriber_id);
 
-  bool _nonce_create(const std::string& nonce, const std::time_t& expires_at);
-  bool _nonce_check(std::string nonce);
 
   bool _call_create(std::shared_ptr<Call> call);
   void _call_prune(std::time_t now);
@@ -178,7 +174,6 @@ class MemoryDatastore : public Datastore {
   std::unordered_map<std::string, types::Session> _sessions;
   std::unordered_map<std::string, std::shared_ptr<types::Subscriber>> _subscribers;
   std::unordered_map<std::string, types::Location> _locations;
-  std::unordered_map<std::string, std::time_t> _nonces;
   std::unordered_map<std::string, std::shared_ptr<Call>> _calls;
 
   // Presence records by kind and ID. A store this size is read whole; the indexes a networked store needs are

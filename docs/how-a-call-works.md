@@ -41,7 +41,8 @@ the same way.
 A phone tells the node where it is with a REGISTER, for a limited time.
 
 1. The first REGISTER carries no credentials. The node answers **401 Unauthorized** with
-   a Digest challenge: the realm name and a nonce, a random value that expires.
+   a Digest challenge: the realm name and a nonce, a random value signed with the
+   realm's secret, good for five minutes and for one answer.
 2. The phone sends the REGISTER again with a Digest response, a hash of its username,
    password, the realm and the nonce. The password itself never crosses the network.
 3. The node checks the hash against the subscriber's stored credentials and answers

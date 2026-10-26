@@ -236,8 +236,9 @@ paths:
       summary: The event bus, as Server-Sent Events
       description: |
         A `text/event-stream` response that stays open. Every message on `nodes/#`,
-        `subscribers/#`, `calls/#` and `presence/#` is one event, named by its topic, with the
-        message as its data. A comment every fifteen seconds keeps intermediaries from closing an idle
+        `subscribers/#`, `calls/#`, `presence/#` and `trunks/#` (each trunk's registration
+        status, and `trunks/changed` when one is created, changed or deleted) is one event,
+        named by its topic, with the message as its data. A comment every fifteen seconds keeps intermediaries from closing an idle
         stream. A node serves at most 32 at once; past that it answers 503
         `too_many_streams`.
 
@@ -668,7 +669,9 @@ paths:
           required: true
           schema:
             type: string
-          description: The conference URI as dialled, such as sip:conf-sales@example.com
+          description: |
+            The conference URI as dialled, such as sip:conf-sales@example.com, percent-encoded as
+            one path segment: its `:` and `@` as `%3A` and `%40`, as `/calls/{call}` takes a Call-ID.
       responses:
         "200":
           description: The room
@@ -678,6 +681,49 @@ paths:
                 $ref: "#/components/schemas/Conference"
         "404":
           description: Nobody is in it
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /conferences/{uri}/calls/{call}:
+    delete:
+      operationId: leaveConference
+      tags: [calls]
+      summary: Remove a participant
+      description: |
+        The node ends that participant's call with a BYE to both ends (RFC 3261 15.1), as
+        `DELETE /calls/{call}` does. Muting and the like are the focus's and are not proxied.
+      parameters:
+        - name: uri
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The conference URI as dialled, percent-encoded as one path segment
+        - name: call
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The participant's Call-ID, as the room lists it
+      responses:
+        "202":
+          description: The BYEs are sent
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, conference]
+                properties:
+                  id:
+                    type: string
+                  conference:
+                    type: string
+        "404":
+          description: No live call with that Call-ID in that room
+        "409":
+          description: "`not_answered`: the focus has not answered yet; the caller ends it with a CANCEL"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1619,14 +1665,18 @@ components:
           example: sip:sip.acme.example;transport=tls
         proxy:
           type: string
-          description: An outbound proxy, where calls and the REGISTER are sent instead of where the URI says
+          description: >-
+            An outbound proxy, where calls and the REGISTER are sent instead of where the URI
+            says. On an update, an empty string clears it; a field left out is kept.
           example: sip:203.0.113.10:5060
         username:
           type: string
-          description: For the carrier's challenges
+          description: For the carrier's challenges. On an update, an empty string clears it
         password:
           type: string
-          description: Written, never returned
+          description: >-
+            Written, never returned (`password_set` says whether there is one). On an update, an
+            empty string removes it; a field left out keeps it
         register:
           type: object
           properties:
@@ -1647,7 +1697,7 @@ components:
             example: 203.0.113.0/24
         tls_ca:
           type: string
-          description: A CA file for TLS to the trunk; empty is the system's store
+          description: A CA file for TLS to the trunk; empty is the system's store, and on an update an empty string clears it
         attributes:
           type: object
           description: Anything a routing script reads; the node reads none of it
@@ -1676,10 +1726,15 @@ components:
                   enum: [registering, registered, failed]
                 detail:
                   type: string
+                  description: The carrier's response line for registered, the reason for failed, empty while registering
                 expires_at:
                   type: integer
+                  format: int64
+                  description: When the registration lapses, Unix seconds; 0 while not registered
                 at:
                   type: string
+                  format: date-time
+                  description: When the node reported it, ISO 8601 UTC
 
     User:
       type: object
@@ -1900,7 +1955,7 @@ components:
           format: int64
         nonce_expiry:
           type: integer
-          description: How long a Digest nonce stays good, in seconds
+          description: How long a Digest nonce stays good, in seconds. Default 300. A right answer over an older one is challenged again with stale=true.
         registration_timeout:
           type: integer
           description: The longest registration this realm grants, in seconds

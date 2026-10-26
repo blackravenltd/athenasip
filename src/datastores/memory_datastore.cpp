@@ -299,26 +299,6 @@ std::vector<types::Location> MemoryDatastore::_location_list(std::uint64_t subsc
   return locations;
 }
 
-bool MemoryDatastore::_nonce_create(const std::string& nonce, const std::time_t& expires_at) {
-  const auto now = std::time(nullptr);
-
-  if (expires_at <= now) {
-    _logger->warn("nonce_create: refusing to create already-expired nonce");
-    return false;
-  }
-
-  std::lock_guard<std::mutex> lock(_mutex);
-  _nonces[nonce] = expires_at;
-  return true;
-}
-
-bool MemoryDatastore::_nonce_check(std::string nonce) {
-  std::lock_guard<std::mutex> lock(_mutex);
-  _prune_expired();
-
-  return _nonces.find(nonce) != _nonces.end();
-}
-
 bool MemoryDatastore::configure(const YAML::Node& own_root, const Config& system) {
   (void)own_root;
   _call_retention = system.calls_history_retention;
@@ -656,14 +636,6 @@ void MemoryDatastore::location_list(plugins::Executor on, std::uint64_t subscrib
   _complete(std::move(on), std::move(handler), plugins::Result<std::vector<types::Location>>::success(_location_list(subscriber_id)));
 }
 
-void MemoryDatastore::nonce_create(plugins::Executor on, std::string nonce, std::time_t expires_at, plugins::StatusHandler handler) {
-  _complete(std::move(on), std::move(handler), _status(_nonce_create(nonce, expires_at), "nonce_create"));
-}
-
-void MemoryDatastore::nonce_check(plugins::Executor on, std::string nonce, plugins::Handler<bool> handler) {
-  _complete(std::move(on), std::move(handler), plugins::Result<bool>::success(_nonce_check(std::move(nonce))));
-}
-
 void MemoryDatastore::call_create(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) {
   _complete(std::move(on), std::move(handler), _status(_call_create(std::move(call)), "call_create"));
 }
@@ -771,10 +743,6 @@ void MemoryDatastore::_prune_expired() {
 
   for (auto it = _locations.begin(); it != _locations.end();) {
     it = (it->second.expires_at <= now) ? _locations.erase(it) : std::next(it);
-  }
-
-  for (auto it = _nonces.begin(); it != _nonces.end();) {
-    it = (it->second <= now) ? _nonces.erase(it) : std::next(it);
   }
 
   // Sessions are pruned on their absolute expiry. Idle expiry is the caller's rule

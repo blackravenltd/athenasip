@@ -47,6 +47,11 @@ TEST(OpenApiDocumentTest, DescribesTheLiveStateRoutes) {
   EXPECT_EQ(doc["paths"]["/media"]["get"]["operationId"].as<std::string>(), "getMediaEngine");
   EXPECT_EQ(doc["paths"]["/metrics"]["get"]["operationId"].as<std::string>(), "getMetrics");
 
+  // The rooms (RFC 4579), and a participant removed from one.
+  EXPECT_EQ(doc["paths"]["/conferences"]["get"]["operationId"].as<std::string>(), "listConferences");
+  EXPECT_EQ(doc["paths"]["/conferences/{uri}"]["get"]["operationId"].as<std::string>(), "getConference");
+  EXPECT_EQ(doc["paths"]["/conferences/{uri}/calls/{call}"]["delete"]["operationId"].as<std::string>(), "leaveConference");
+
   // Outside /api/v1, so it overrides the server.
   EXPECT_TRUE(doc["paths"]["/metrics"]["servers"].IsSequence());
 

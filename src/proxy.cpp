@@ -448,81 +448,75 @@ void Proxy::_authenticate(const std::shared_ptr<SIPMessage>& request, const std:
     return _send_proxy_challenge(transaction, request, realm);
   }
 
-  auto self = shared_from_this();
-
-  core->nonce_check(credentials->fields["nonce"],
-                    [this, self, request, transaction, realm, caller, credentials, answered, from_must_match, then](plugins::Result<bool> checked) {
-                      auto core = _core.lock();
-                      if (!core) return;
-
-                      if (!checked.ok) {
-                        _logger->error("Could not check a nonce - " + checked.error);
-                        return _send_status(transaction, request, 500, "Server Internal Error");
-                      }
-
-                      if (!checked.value) {
-                        _logger->info("Request from " + caller->to_string() + " with a nonce that is unknown or expired - challenging");
-                        return _send_proxy_challenge(transaction, request, realm);
-                      }
-
-                      // Verify the credentials first, then that they match the From, so each failure gets its own answer.
-                      auto claimed = std::make_shared<SIPIdentity>("sip:" + credentials->fields["username"] + "@" + realm->name);
-
-                      core->subscriber_get(claimed, [this, self, request, transaction, realm, caller, credentials, answered, from_must_match,
-                                                     then](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
-                        if (!found.ok) {
-                          _logger->error("Could not read a subscriber - " + found.error);
-                          return _send_status(transaction, request, 500, "Server Internal Error");
-                        }
-
-                        // Challenged like a wrong password, so subscribers cannot be enumerated.
-                        if (!found.value) {
-                          _logger->info("Request from " + caller->to_string() + " with credentials for no subscriber - challenging");
-                          return _send_proxy_challenge(transaction, request, realm);
-                        }
-
-                        if (const auto why = digest::verify(*found.value, *credentials, request->header->request_method); !why.empty()) {
-                          _logger->info("Request from " + caller->to_string() + " with " + why + " - challenging");
-                          return _send_proxy_challenge(transaction, request, realm);
-                        }
-
-                        if (from_must_match && credentials->fields["username"] != caller->user) {
-                          _logger->info("Request from " + caller->to_string() + " authenticated as " + credentials->fields["username"] + " - 403");
-                          return _send_status(transaction, request, 403, "Forbidden");
-                        }
-
-                        // Remove the used credentials: they are replayable while the nonce lives.
-                        request->header->remove_value("Proxy-Authorization", [&answered](std::shared_ptr<headers::Header> value) { return value == answered; });
-                        request->authenticated = true;
-                        request->authenticated_aor = "sip:" + credentials->fields["username"] + "@" + realm->name;
-
-                        then();
-                      });
-                    });
-}
-
-void Proxy::_send_proxy_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
-                                  const std::shared_ptr<types::Realm>& realm) {
-  auto core = _core.lock();
-  if (!core) return;
+  switch (digest::nonce_state(*realm, credentials->fields["nonce"])) {
+    case digest::NonceState::bad:
+      _logger->info("Request from " + caller->to_string() + " with a nonce this realm did not mint - challenging");
+      return _send_proxy_challenge(transaction, request, realm);
+    case digest::NonceState::stale:
+      _logger->info("Request from " + caller->to_string() + " with an expired nonce - challenging as stale");
+      return _send_proxy_challenge(transaction, request, realm, true);
+    case digest::NonceState::good:
+      break;
+  }
 
   auto self = shared_from_this();
 
-  // The nonce must be stored before it is sent, or it would fail its own check.
-  core->nonce_create(realm, [this, self, transaction, request, realm](plugins::Result<std::string> nonce) {
-    if (!nonce.ok) {
-      _logger->error("Cannot mint a nonce for " + realm->name + " - " + nonce.error);
+  // Verify the credentials first, then that they match the From, so each failure gets its own answer.
+  auto claimed = std::make_shared<SIPIdentity>("sip:" + credentials->fields["username"] + "@" + realm->name);
+
+  core->subscriber_get(claimed, [this, self, request, transaction, realm, caller, credentials, answered, from_must_match,
+                                 then](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
+    auto core = _core.lock();
+    if (!core) return;
+
+    if (!found.ok) {
+      _logger->error("Could not read a subscriber - " + found.error);
       return _send_status(transaction, request, 500, "Server Internal Error");
     }
 
-    auto response = request->generate_response();
-    response->header->response_code = 407;
-    response->header->response_message = "Proxy Authentication Required";
-    digest::add_challenges(*response->header, "Proxy-Authenticate", realm->name, nonce.value);
+    // Challenged like a wrong password, so subscribers cannot be enumerated.
+    if (!found.value) {
+      _logger->info("Request from " + caller->to_string() + " with credentials for no subscriber - challenging");
+      return _send_proxy_challenge(transaction, request, realm);
+    }
 
-    if (auto core = _core.lock()) core->dialogs()->observe_response(request, response);
-    transaction->send(response);
+    if (const auto why = digest::verify(*found.value, *credentials, request->header->request_method, request->header->request_uri->to_string());
+        !why.empty()) {
+      _logger->info("Request from " + caller->to_string() + " with " + why + " - challenging");
+      return _send_proxy_challenge(transaction, request, realm);
+    }
+
+    // A right answer seen before is a replay (RFC 7616 5.6): stale, so a client whose own nc slipped signs again.
+    if (!core->nonce_counts().accept(*credentials, std::time(nullptr) + realm->nonce_expiry)) {
+      _logger->info("Request from " + caller->to_string() + " replays an answer - challenging as stale");
+      return _send_proxy_challenge(transaction, request, realm, true);
+    }
+
+    if (from_must_match && credentials->fields["username"] != caller->user) {
+      _logger->info("Request from " + caller->to_string() + " authenticated as " + credentials->fields["username"] + " - 403");
+      return _send_status(transaction, request, 403, "Forbidden");
+    }
+
+    // Remove the used credentials: they are not the next hop's business.
+    request->header->remove_value("Proxy-Authorization", [&answered](std::shared_ptr<headers::Header> value) { return value == answered; });
+    request->authenticated = true;
+    request->authenticated_aor = "sip:" + credentials->fields["username"] + "@" + realm->name;
+
+    then();
   });
+}
+
+void Proxy::_send_proxy_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
+                                  const std::shared_ptr<types::Realm>& realm, bool stale) {
+  auto response = request->generate_response();
+  response->header->response_code = 407;
+  response->header->response_message = "Proxy Authentication Required";
+
+  // Nothing is kept for the nonce: it carries its own proof (digest::nonce_mint).
+  digest::add_challenges(*response->header, "Proxy-Authenticate", realm->name, digest::nonce_mint(*realm), stale);
+
+  if (auto core = _core.lock()) core->dialogs()->observe_response(request, response);
+  transaction->send(response);
 }
 
 // The RFC 3261 16.6 step 8 hash, with two departures. The topmost Via is left out: it differs on the pass
@@ -2406,46 +2400,53 @@ void Proxy::_authenticate_any(const std::shared_ptr<SIPMessage>& request, const 
     }
     if (!realm.value) return _send_relay_challenge(transaction, request);
 
-    core->nonce_check(credentials->fields["nonce"], [this, self, request, transaction, credentials, answered, then,
-                                                     realm = realm.value](plugins::Result<bool> checked) {
+    switch (digest::nonce_state(*realm.value, credentials->fields["nonce"])) {
+      case digest::NonceState::bad:
+        return _send_relay_challenge(transaction, request);
+      case digest::NonceState::stale:
+        return _send_relay_challenge(transaction, request, true);
+      case digest::NonceState::good:
+        break;
+    }
+
+    auto claimed = std::make_shared<SIPIdentity>("sip:" + credentials->fields["username"] + "@" + realm.value->name);
+    core->subscriber_get(claimed, [this, self, request, transaction, credentials, answered, then,
+                                   realm = realm.value](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
       auto core = _core.lock();
       if (!core) return;
 
-      if (!checked.ok) {
-        _logger->error("Could not check a nonce - " + checked.error);
+      if (!found.ok) {
+        _logger->error("Could not read a subscriber - " + found.error);
         return _send_status(transaction, request, 500, "Server Internal Error");
       }
-      if (!checked.value) return _send_relay_challenge(transaction, request);
 
-      auto claimed = std::make_shared<SIPIdentity>("sip:" + credentials->fields["username"] + "@" + realm->name);
-      core->subscriber_get(claimed, [this, self, request, transaction, credentials, answered, then](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
-        if (!found.ok) {
-          _logger->error("Could not read a subscriber - " + found.error);
-          return _send_status(transaction, request, 500, "Server Internal Error");
-        }
+      // An unknown subscriber is challenged like a wrong password, so subscribers cannot be enumerated.
+      if (!found.value || !digest::verify(*found.value, *credentials, request->header->request_method, request->header->request_uri->to_string()).empty()) {
+        _logger->info("REGISTER to forward with credentials that do not verify - challenging");
+        return _send_relay_challenge(transaction, request);
+      }
 
-        // An unknown subscriber is challenged like a wrong password, so subscribers cannot be enumerated.
-        if (!found.value || !digest::verify(*found.value, *credentials, request->header->request_method).empty()) {
-          _logger->info("REGISTER to forward with credentials that do not verify - challenging");
-          return _send_relay_challenge(transaction, request);
-        }
+      // A right answer seen before is a replay (RFC 7616 5.6).
+      if (!core->nonce_counts().accept(*credentials, std::time(nullptr) + realm->nonce_expiry)) {
+        _logger->info("REGISTER to forward replays an answer - challenging as stale");
+        return _send_relay_challenge(transaction, request, true);
+      }
 
-        // Spent here; the far registrar's Authorization is left alone (22.3).
-        request->header->remove_value("Proxy-Authorization", [&answered](std::shared_ptr<headers::Header> value) { return value == answered; });
-        then();
-      });
+      // Spent here; the far registrar's Authorization is left alone (22.3).
+      request->header->remove_value("Proxy-Authorization", [&answered](std::shared_ptr<headers::Header> value) { return value == answered; });
+      then();
     });
   });
 }
 
 // One challenge for each of this node's realms, each with its own nonce: the From is the foreign address of
 // record, so nothing says which realm the sender belongs to (RFC 3261 22.3 allows several).
-void Proxy::_send_relay_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request) {
+void Proxy::_send_relay_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request, bool stale) {
   auto core = _core.lock();
   if (!core) return;
 
   auto self = shared_from_this();
-  core->datastore->realm_list(core->strand(), [this, self, transaction, request](plugins::Result<std::vector<std::shared_ptr<types::Realm>>> realms) {
+  core->datastore->realm_list(core->strand(), [this, self, transaction, request, stale](plugins::Result<std::vector<std::shared_ptr<types::Realm>>> realms) {
     if (!realms.ok || realms.value.empty()) {
       _logger->info("REGISTER to forward, and no realm here to authenticate it - 403");
       return _send_status(transaction, request, 403, "Forbidden");
@@ -2455,17 +2456,8 @@ void Proxy::_send_relay_challenge(const std::shared_ptr<transactions::Transactio
     response->header->response_code = 407;
     response->header->response_message = "Proxy Authentication Required";
 
-    auto pending = std::make_shared<std::size_t>(realms.value.size());
-    for (const auto& realm : realms.value) {
-      auto core = _core.lock();
-      if (!core) return;
-
-      // The nonce must be stored before it is sent, or it would fail its own check.
-      core->nonce_create(realm, [this, self, transaction, request, response, realm, pending](plugins::Result<std::string> nonce) {
-        if (nonce.ok) digest::add_challenges(*response->header, "Proxy-Authenticate", realm->name, nonce.value);
-        if (--*pending == 0) transaction->send(response);
-      });
-    }
+    for (const auto& realm : realms.value) digest::add_challenges(*response->header, "Proxy-Authenticate", realm->name, digest::nonce_mint(*realm), stale);
+    transaction->send(response);
   });
 }
 

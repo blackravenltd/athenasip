@@ -18,9 +18,9 @@ namespace athenasip::api {
 
 namespace {
 
-// What a console watches: nodes coming and going, subscribers registering, calls starting and ending, and
-// presentities whose state changed.
-constexpr const char* kTopics[] = {"nodes/#", "subscribers/#", "calls/#", "presence/#"};
+// What a console watches: nodes coming and going, subscribers registering, calls starting and ending,
+// presentities whose state changed, and trunks registering or being changed over the API.
+constexpr const char* kTopics[] = {"nodes/#", "subscribers/#", "calls/#", "presence/#", "trunks/#"};
 
 }  // namespace
 
@@ -52,7 +52,7 @@ std::string EventsAPI::format(const std::string& topic, const std::string& messa
 }
 
 void EventsAPI::_stream(RouteContext context) {
-  // Each stream holds a connection and four subscriptions, so there is a ceiling.
+  // Each stream holds a connection and five subscriptions, so there is a ceiling.
   if (_open >= _limit) {
     write_error(context.response, http::status::service_unavailable, "too_many_streams", "this node is already serving its limit of event streams");
     return context.done();

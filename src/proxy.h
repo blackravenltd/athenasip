@@ -334,13 +334,14 @@ class Proxy : public TransactionUser {
   void _authenticate(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
                      const std::shared_ptr<types::Realm>& realm, bool from_must_match, std::function<void()> then);
   void _send_proxy_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
-                             const std::shared_ptr<types::Realm>& realm);
+                             const std::shared_ptr<types::Realm>& realm, bool stale = false);
 
   // Digest in any realm this node serves: a reliable connection one of its subscribers registered over, or
   // credentials for one of its realms. For a REGISTER to forward, whose From is the foreign address of record.
   void _authenticate_any(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
                          std::function<void()> then);
-  void _send_relay_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request);
+  void _send_relay_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
+                             bool stale = false);
 
   // This node as the side facing `facing` sees it, with a flow token in the user part (RFC 5626 5.1): for
   // Record-Route and Path.

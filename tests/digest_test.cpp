@@ -8,9 +8,11 @@
 
 #include <gtest/gtest.h>
 
+#include <ctime>
 #include <string>
 
 #include "types/authorization.h"
+#include "types/realm.h"
 #include "types/subscriber.h"
 #include "util.h"
 
@@ -38,7 +40,7 @@ types::Authorization credentials(const std::string& response) {
 TEST(DigestTest, TheRfc2617ExampleWithQopVerifies) {
   auto answered = credentials("6629fae49393a05397450978507c4ef1");
 
-  EXPECT_EQ(digest::verify(mufasa(), answered, "GET"), "");
+  EXPECT_EQ(digest::verify(mufasa(), answered, "GET", "/dir/index.html"), "");
 }
 
 // A response computed without them does not, once qop is given.
@@ -46,7 +48,7 @@ TEST(DigestTest, AResponseThatIgnoresQopDoesNot) {
   const auto ha1 = Util::md5("Mufasa:testrealm@host.com:Circle Of Life");
   auto answered = credentials(Util::md5(ha1 + ":dcd98b7102dd2f0e8b11d0f600bfb0c093:" + Util::md5("GET:/dir/index.html")));
 
-  EXPECT_NE(digest::verify(mufasa(), answered, "GET"), "");
+  EXPECT_NE(digest::verify(mufasa(), answered, "GET", "/dir/index.html"), "");
 }
 
 // Only qop=auth is supported; auth-int would need the body.
@@ -54,7 +56,7 @@ TEST(DigestTest, AQopOtherThanAuthIsRefused) {
   auto answered = credentials("6629fae49393a05397450978507c4ef1");
   answered.fields["qop"] = "auth-int";
 
-  EXPECT_NE(digest::verify(mufasa(), answered, "GET"), "");
+  EXPECT_NE(digest::verify(mufasa(), answered, "GET", "/dir/index.html"), "");
 }
 
 // RFC 2617 3.5, from the client's side: the example's own response.
@@ -90,7 +92,7 @@ TEST(DigestTest, AnAnswerWithoutQopVerifiesAgainstTheStoredCredential) {
 
   types::Subscriber alice;
   alice.ha1 = Util::md5("alice:example.com:secret");
-  EXPECT_EQ(digest::verify(alice, *answer, "INVITE"), "");
+  EXPECT_EQ(digest::verify(alice, *answer, "INVITE", "sip:bob@example.com"), "");
 }
 
 // A challenge that only takes auth-int, which needs the body hashed, or an algorithm this node lacks, is not
@@ -117,4 +119,96 @@ TEST(DigestTest, CredentialsWriteQopAndNcAsTokens) {
   EXPECT_NE(written.find("qop=auth"), std::string::npos) << written;
   EXPECT_NE(written.find("nc=00000002"), std::string::npos) << written;
   EXPECT_NE(written.find("cnonce=\"c\""), std::string::npos) << written;
+}
+
+// RFC 3261 22.4 (5): the uri the client hashed is the Request-URI it sent. An answer captured from one request
+// does not sign another.
+TEST(DigestTest, AnAnswerForAnotherUriDoesNotVerify) {
+  auto answered = credentials("6629fae49393a05397450978507c4ef1");
+
+  EXPECT_NE(digest::verify(mufasa(), answered, "GET", "/dir/other.html"), "");
+}
+
+namespace {
+types::Realm realm_with_secret(std::uint64_t id, const std::string& secret) {
+  types::Realm realm("example.com");
+  realm.id = id;
+  realm.nonce_secret = secret;
+  realm.nonce_expiry = 300;
+  return realm;
+}
+}  // namespace
+
+// A nonce carries its own proof: the realm that minted it tells it from a forgery without a store, and two
+// mintings differ.
+TEST(DigestTest, ANonceMintedForARealmIsGoodForThatRealmOnly) {
+  const auto realm = realm_with_secret(1, "secret");
+  const auto now = std::time(nullptr);
+  const auto nonce = digest::nonce_mint(realm, now);
+
+  EXPECT_EQ(digest::nonce_state(realm, nonce, now), digest::NonceState::good);
+  EXPECT_NE(digest::nonce_mint(realm, now), nonce);
+
+  // Another realm, or the same one under another secret, did not mint it.
+  EXPECT_EQ(digest::nonce_state(realm_with_secret(2, "secret"), nonce, now), digest::NonceState::bad);
+  EXPECT_EQ(digest::nonce_state(realm_with_secret(1, "other"), nonce, now), digest::NonceState::bad);
+
+  // Nor is a nonce with its minting time rewritten, or one made up, or nothing.
+  auto rewritten = nonce;
+  rewritten.replace(rewritten.find(':' + std::to_string(now) + ':'), std::to_string(now).size() + 2, ":" + std::to_string(now + 9000) + ":");
+  EXPECT_EQ(digest::nonce_state(realm, rewritten, now), digest::NonceState::bad);
+  EXPECT_EQ(digest::nonce_state(realm, "made-up", now), digest::NonceState::bad);
+  EXPECT_EQ(digest::nonce_state(realm, "", now), digest::NonceState::bad);
+}
+
+// RFC 7616 3.3: past the realm's nonce_expiry the nonce is stale, which is a challenge the client answers without
+// asking its user; one from the future was not minted by any clock of ours.
+TEST(DigestTest, ANonceGoesStaleAfterTheRealmsExpiry) {
+  const auto realm = realm_with_secret(1, "secret");
+  const auto now = std::time(nullptr);
+  const auto nonce = digest::nonce_mint(realm, now);
+
+  EXPECT_EQ(digest::nonce_state(realm, nonce, now + 300), digest::NonceState::good);
+  EXPECT_EQ(digest::nonce_state(realm, nonce, now + 301), digest::NonceState::stale);
+  EXPECT_EQ(digest::nonce_state(realm, nonce, now - 61), digest::NonceState::bad);
+}
+
+namespace {
+types::Authorization answer(const std::string& nonce, const std::string& nc = "") {
+  return types::Authorization("Digest username=\"alice\", realm=\"example.com\", nonce=\"" + nonce + "\", uri=\"sip:example.com\", response=\"x\"" +
+                              (nc.empty() ? std::string() : ", qop=auth, cnonce=\"c\", nc=" + nc));
+}
+}  // namespace
+
+// RFC 7616 5.6: without qop a nonce answers once. With qop=auth the nc must rise: the same answer twice, or a lower
+// count, is a replay.
+TEST(DigestTest, AnAnswerIsAcceptedOnceAndACountMustRise) {
+  digest::NonceCounts counts;
+  const auto now = std::time(nullptr);
+
+  EXPECT_TRUE(counts.accept(answer("n1"), now + 300, now));
+  EXPECT_FALSE(counts.accept(answer("n1"), now + 300, now));
+
+  EXPECT_TRUE(counts.accept(answer("n2", "00000001"), now + 300, now));
+  EXPECT_TRUE(counts.accept(answer("n2", "00000002"), now + 300, now));
+  EXPECT_FALSE(counts.accept(answer("n2", "00000002"), now + 300, now));
+  EXPECT_FALSE(counts.accept(answer("n2", "00000001"), now + 300, now));
+  EXPECT_TRUE(counts.accept(answer("n2", "0000000a"), now + 300, now));
+
+  // An nc that is not eight hex digits, or zero, is no count at all.
+  EXPECT_FALSE(counts.accept(answer("n3", "00000000"), now + 300, now));
+  EXPECT_FALSE(counts.accept(answer("n3", "1x"), now + 300, now));
+  EXPECT_FALSE(counts.accept(answer("n3", "000000001"), now + 300, now));
+
+  // Once the nonce has expired its record goes, and a fresh nonce of the same text would start over.
+  EXPECT_TRUE(counts.accept(answer("n1"), now + 600, now + 301));
+}
+
+// Bounded: a flood of distinct nonces cannot grow it without limit.
+TEST(DigestTest, TheCountsAreBounded) {
+  digest::NonceCounts counts(10);
+  const auto now = std::time(nullptr);
+
+  for (int i = 0; i < 100; ++i) EXPECT_TRUE(counts.accept(answer("n" + std::to_string(i)), now + 300, now));
+  EXPECT_LE(counts.size(), 10u);
 }

@@ -104,16 +104,8 @@ struct CoreFixture {
         .ok;
   }
 
-  std::string mint_nonce(const std::shared_ptr<athenasip::types::Realm>& realm) {
-    std::promise<std::string> promise;
-    auto future = promise.get_future();
-
-    core->post([&]() {
-      core->nonce_create(realm, [&promise](athenasip::plugins::Result<std::string> nonce) { promise.set_value(nonce.ok ? nonce.value : std::string()); });
-    });
-
-    return future.get();
-  }
+  // A nonce as this node's challenge would carry it: nothing is stored for one (digest::nonce_mint).
+  std::string mint_nonce(const std::shared_ptr<athenasip::types::Realm>& realm) { return athenasip::digest::nonce_mint(*realm); }
 
   std::shared_ptr<athenasip::Channel> make_channel(const std::string& remote_address, std::shared_ptr<MockConnection>* out = nullptr,
                                                    const std::string& transport = "udp", std::uint16_t remote_port = 5060) {

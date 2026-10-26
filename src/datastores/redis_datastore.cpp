@@ -1003,24 +1003,6 @@ void RedisDatastore::location_list(plugins::Executor on, std::uint64_t subscribe
       });
 }
 
-void RedisDatastore::nonce_create(plugins::Executor on, std::string nonce, std::time_t expires_at, plugins::StatusHandler handler) {
-  const auto now = std::time(nullptr);
-  if (expires_at <= now) {
-    _logger->warn("nonce_create: refusing to create already-expired nonce");
-    return _complete(on, handler, plugins::Status::failure("nonce_create: already expired"));
-  }
-
-  _async_set_ex(_nonce_key(nonce), "1", std::chrono::seconds(expires_at - now), [this, on, handler](RedisError error, bool ok) mutable {
-    _complete(on, handler, !error && ok ? plugins::Status::success() : plugins::Status::failure(error ? error.message() : "nonce_create: SETEX failed"));
-  });
-}
-
-void RedisDatastore::nonce_check(plugins::Executor on, std::string nonce, plugins::Handler<bool> handler) {
-  _async_exists(_nonce_key(nonce), [this, on, handler](RedisError error, bool exists) mutable {
-    _complete(on, handler, error ? plugins::Result<bool>::failure(error.message()) : plugins::Result<bool>::success(exists));
-  });
-}
-
 void RedisDatastore::call_create(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) {
   if (!call || call->id.empty()) return _complete(on, handler, plugins::Status::failure("call_create: no call"));
 
@@ -1738,7 +1720,6 @@ std::string RedisDatastore::_location_key(std::uint64_t subscriber_id, const std
   return "athena:location:" + std::to_string(subscriber_id) + ":" + user + ":" + host + ":" + std::to_string(port);
 }
 
-std::string RedisDatastore::_nonce_key(const std::string& nonce) { return "athena:nonce:" + nonce; }
 
 std::string RedisDatastore::_user_key(const std::string& username) { return "athena:user:" + types::User::normalise(username); }
 

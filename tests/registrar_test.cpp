@@ -13,6 +13,9 @@
 #include <memory>
 #include <string>
 
+#include <ctime>
+
+#include "digest.h"
 #include "headers/authorization_header.h"
 #include "headers/sip_identity_header.h"
 #include "headers/uint_header.h"
@@ -132,6 +135,91 @@ TEST(RegistrarTest, AWrongDigestResponseIsChallenged) {
   EXPECT_TRUE(f.store->location_list(7).empty());
 }
 
+
+// The challenge for a nonce this node did not mint is plain: stale is for an answer that was right over a nonce
+// that had expired (RFC 7616 3.3), and a forgery was not.
+TEST(RegistrarTest, AForgedNonceIsNotStale) {
+  Fixture f;
+
+  f.receive(f.channel, f.register_request(f.credentials("not-a-nonce-this-node-issued")));
+
+  auto response = f.response_with(f.connection, 401);
+  ASSERT_NE(response, nullptr);
+  auto challenge = response->header->headers_map["WWW-Authenticate"][0]->as<AuthorizationHeader>();
+  ASSERT_NE(challenge, nullptr);
+  EXPECT_FALSE(challenge->value->contains_field("stale"));
+}
+
+// A right answer over a nonce older than the realm's nonce_expiry is challenged with stale=true, and the binding
+// is not made.
+TEST(RegistrarTest, AnExpiredNonceIsChallengedAsStale) {
+  Fixture f;
+
+  const auto realm = f.store->realm_get_by_name("example.com");
+  const auto expired = digest::nonce_mint(*realm, std::time(nullptr) - static_cast<std::time_t>(realm->nonce_expiry) - 1);
+  f.receive(f.channel, f.register_request(f.credentials(expired)));
+
+  auto response = f.response_with(f.connection, 401);
+  ASSERT_NE(response, nullptr);
+  auto challenge = response->header->headers_map["WWW-Authenticate"][0]->as<AuthorizationHeader>();
+  ASSERT_NE(challenge, nullptr);
+  EXPECT_EQ(challenge->value->fields["stale"], "true");
+  EXPECT_TRUE(f.store->location_list(7).empty());
+}
+
+// RFC 7616 5.6: an answer without qop spends its nonce. The same Authorization sent again is a replay: challenged
+// as stale, so an honest client signs a fresh nonce, and a captured one is worth one REGISTER at most.
+TEST(RegistrarTest, AReplayedAnswerIsChallengedAsStale) {
+  Fixture f;
+
+  const auto authorization = f.credentials(f.fresh_nonce());
+  f.receive(f.channel, f.register_request(authorization, "600"));
+  ASSERT_NE(f.response_with(f.connection, 200), nullptr);
+
+  f.receive(f.channel, f.register_request(authorization, "0", "", "z9hG4bK-reg-2"));
+
+  auto response = f.response_with(f.connection, 401);
+  ASSERT_NE(response, nullptr);
+  auto challenge = response->header->headers_map["WWW-Authenticate"][0]->as<AuthorizationHeader>();
+  ASSERT_NE(challenge, nullptr);
+  EXPECT_EQ(challenge->value->fields["stale"], "true");
+  // The replayed REGISTER with Expires 0 removed nothing.
+  EXPECT_EQ(f.store->location_list(7).size(), 1u);
+}
+
+// RFC 7616 3.4.3: with qop=auth one nonce answers many requests, each with a higher nc. The count that does not
+// rise is a replay.
+TEST(RegistrarTest, WithQopTheCountMustRiseUnderOneNonce) {
+  Fixture f;
+
+  const auto nonce = f.fresh_nonce();
+  const auto with_count = [&nonce](const std::string& nc) {
+    const auto response = Util::md5(kHa1 + ":" + nonce + ":" + nc + ":cn:auth:" + Util::md5("REGISTER:sip:example.com"));
+    return "Digest username=\"alice\", realm=\"example.com\", nonce=\"" + nonce + "\", uri=\"sip:example.com\", qop=auth, nc=" + nc +
+           ", cnonce=\"cn\", response=\"" + response + "\"";
+  };
+
+  f.receive(f.channel, f.register_request(with_count("00000001"), "600", "", "z9hG4bK-reg-1"));
+  f.receive(f.channel, f.register_request(with_count("00000002"), "600", "", "z9hG4bK-reg-2"));
+  EXPECT_EQ(f.response_with(f.connection, 401), nullptr);
+  EXPECT_EQ(f.responses_with(f.connection, 200).size(), 2u);
+
+  f.receive(f.channel, f.register_request(with_count("00000002"), "600", "", "z9hG4bK-reg-3"));
+  auto response = f.response_with(f.connection, 401);
+  ASSERT_NE(response, nullptr);
+  EXPECT_EQ(response->header->headers_map["WWW-Authenticate"][0]->as<AuthorizationHeader>()->value->fields["stale"], "true");
+}
+
+// RFC 3261 22.4 (5): the uri in the credentials is the Request-URI. An answer that signs another is challenged,
+// so an Authorization captured from one request cannot be put on a different one.
+TEST(RegistrarTest, ADigestUriThatIsNotTheRequestUriIsChallenged) {
+  Fixture f;
+
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce(), "sip:other.example")));
+
+  EXPECT_NE(f.response_with(f.connection, 401), nullptr);
+  EXPECT_TRUE(f.store->location_list(7).empty());
+}
 // RFC 3261 10.3 step 5: an address of record in a domain this registrar does not serve
 // is a 404, not a challenge.
 TEST(RegistrarTest, ARegisterForAnUnservedDomainIs404) {

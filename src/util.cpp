@@ -6,6 +6,8 @@
 //
 #include "util.h"
 
+#include <openssl/rand.h>
+
 #include <limits>
 
 namespace athenasip {
@@ -173,18 +175,17 @@ std::uint64_t Util::stable_id(const std::string& name) {
   return hash == 0 ? 1 : hash;
 }
 
+// From the system's cryptographic generator: what this makes is a branch, a tag, a Call-ID, a cookie, a
+// subscription id, things a peer must not be able to guess from the ones before.
 std::string Util::generate_random_string(const std::string& prefix, uint16_t length) {
-  std::ostringstream tag;
-  std::random_device rd;
-  std::mt19937 gen(rd());
-  std::uniform_int_distribution<> dist(0, 15);
-  tag << prefix;
-  tag << std::hex;
-  for (int i = 0; i < length; ++i) {
-    tag << dist(gen);
-  }
+  static constexpr char kHex[] = "0123456789abcdef";
+  std::vector<unsigned char> bytes((length + 1) / 2);
+  if (!bytes.empty() && RAND_bytes(bytes.data(), static_cast<int>(bytes.size())) != 1) throw std::runtime_error("RAND_bytes failed");
 
-  return tag.str();
+  std::string out = prefix;
+  out.reserve(prefix.size() + length);
+  for (std::size_t i = 0; i < length; ++i) out.push_back(kHex[(bytes[i / 2] >> (i % 2 == 0 ? 4 : 0)) & 0x0f]);
+  return out;
 }
 
 std::string const Util::get_zulu_time() {

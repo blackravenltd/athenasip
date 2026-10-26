@@ -94,8 +94,7 @@ Core::Core(std::shared_ptr<Logger> logger, std::shared_ptr<Config> _config, std:
       config(_config),
       datastore(_datastore),
       events(_events),
-      _strand(boost::asio::make_strand(detail::get_global_io_context())),
-      _nonce_cache(std::make_shared<ExpirySet<std::string>>()) {}
+      _strand(boost::asio::make_strand(detail::get_global_io_context())) {}
 
 void Core::server_register(std::shared_ptr<servers::Server> server) { _servers.push_back(server); }
 
@@ -540,47 +539,6 @@ void Core::channel_close_all() {
 
   for (const auto& channel : channels) channel->close();
 }
-
-void Core::nonce_create(std::shared_ptr<Realm> realm, plugins::Handler<std::string> handler) {
-  std::array<unsigned char, 16> random_bytes;
-
-  if (RAND_bytes(random_bytes.data(), random_bytes.size()) != 1) {
-    throw std::runtime_error("Failed to generate secure random bytes");
-  }
-
-  const uint64_t timestamp = static_cast<uint64_t>(std::time(nullptr));
-
-  const std::string random_hex = Util::to_hex(random_bytes.data(), random_bytes.size());
-
-  // The nonce is realm:random:timestamp, signed with the realm's secret.
-  const std::string raw_nonce = std::to_string(realm->id) + ":" + random_hex + ":" + std::to_string(timestamp);
-
-  unsigned char hmac_result[EVP_MAX_MD_SIZE];
-  unsigned int hmac_len = 0;
-
-  HMAC(EVP_sha256(), realm->nonce_secret.data(), static_cast<int>(realm->nonce_secret.size()), reinterpret_cast<const unsigned char*>(raw_nonce.data()),
-       raw_nonce.size(), hmac_result, &hmac_len);
-
-  const std::string hmac_hex = Util::to_hex(hmac_result, hmac_len);
-  const std::string nonce = raw_nonce + ":" + hmac_hex;
-
-  const auto expires_at = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now() + std::chrono::seconds(realm->nonce_expiry));
-
-  auto self = shared_from_this();
-
-  datastore->nonce_create(_strand, nonce, expires_at, [this, self, nonce, realm, handler](plugins::Status status) mutable {
-    if (!status.ok) {
-      _logger->error("Failed to generate nonce - " + status.error);
-      if (handler) handler(plugins::Result<std::string>::failure(status.error));
-      return;
-    }
-
-    _nonce_cache->add(nonce, realm->nonce_expiry * 1000);
-    if (handler) handler(plugins::Result<std::string>::success(nonce));
-  });
-}
-
-void Core::nonce_check(std::string nonce, plugins::Handler<bool> handler) { datastore->nonce_check(_strand, std::move(nonce), std::move(handler)); }
 
 void Core::process_message(std::shared_ptr<SIPMessage> message) {
   _ensure_transaction_users();

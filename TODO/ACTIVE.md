@@ -74,10 +74,11 @@ session that has lost its context needs to see them first.
    whether a focus is a trunk, whether `builtin://` routes conferences from the trunk's
    attribute, whether the roster is worth the node watching the focus, and the prefix.
    The design proposes an answer to each and steps 1 to 4 are built on them.
-5. **Docker on this machine** (`sudo apt install docker.io` and the `docker` group): it
+5. **Docker on this machine**: installed 2026-10-26, and the `docker` group given; a shell started
+   before that reaches the daemon with `sg docker -c "docker ..."`. It
    unlocks the sipp harnesses, Redis and MQTT for the full suite, the ASan and TSan release
    checks, FreeSWITCH for conferencing step 5, the DTMF and push scenarios and the arm64
-   image. Until then everything built since `0.12.0` is unit-proven only.
+   image. The harnesses have not been run here yet (Waiting on something, Docker).
 
 ## How to prove it
 
@@ -456,12 +457,7 @@ to 5 and 9 here; 6 needs clang (libFuzzer), 7 needs GitHub, 8 is partly Tom's.
 - [x] **1. Size caps and the scan offset** (findings 1, 2, 6) and **2. Strict
       Content-Length** (4, 5): done 2026-10-26 (`COMPLETED.md`).
 - [x] **3. Idle timeouts and connection caps** (3, 10): done 2026-10-26 (`COMPLETED.md`).
-- [ ] **4. Nonces and Digest** (20, 21, 22, 23, 26): stateless HMAC nonces verified with
-      their timestamp and realm, no per-nonce storage, `nc` tracked and strictly rising,
-      a five-minute lifetime with `stale=true`, the Digest `uri` bound to the Request-URI,
-      `RAND_bytes` for every secret and capability (`Util::generate_random_string` is
-      mt19937), constant-time comparison (25). `src/core.cpp:514`, `src/digest.cpp:42,48`,
-      `src/util.cpp:178`.
+- [x] **4. Nonces and Digest** (20, 21, 22, 23, 25, 26): done 2026-10-26 (`COMPLETED.md`).
 - [ ] **5. SIP-side rate limiting** (24): challenges and failures limited per source and per
       AOR, a temporary ban, a failure event for fail2ban. `RateLimiter` exists for HTTP only.
 - [ ] **6. Fuzzing** (7): libFuzzer targets for `SIPHeader::parse`, `SIPUri`, the

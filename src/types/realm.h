@@ -118,7 +118,9 @@ class Realm {
   uint64_t id;
   std::string name;
   std::string nonce_secret;
-  uint32_t nonce_expiry = 3600;
+  // How long a Digest nonce stays good, in seconds. Five minutes: a client that is slow to answer is challenged
+  // again with stale=true and signs again unasked, and a sniffed answer is worth little for long (RFC 7616 5.4).
+  uint32_t nonce_expiry = 300;
 
   // The longest registration this realm grants; a client asking for more is given this (RFC 3261 10.3 step 7).
   uint32_t registration_timeout = 5000;

@@ -115,8 +115,6 @@ class RedisDatastore : public Datastore {
                              plugins::StatusHandler handler) override;
   void location_list(plugins::Executor on, std::uint64_t subscriber_id, plugins::Handler<std::vector<types::Location>> handler) override;
 
-  void nonce_create(plugins::Executor on, std::string nonce, std::time_t expires_at, plugins::StatusHandler handler) override;
-  void nonce_check(plugins::Executor on, std::string nonce, plugins::Handler<bool> handler) override;
 
   void call_create(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) override;
   void call_update(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) override;
@@ -174,7 +172,6 @@ class RedisDatastore : public Datastore {
   static std::string _realm_key(const std::string& realm_name);
   static std::string _subscriber_key(const std::string& realm_name, const std::string& user);
   static std::string _location_key(std::uint64_t subscriber_id, const std::string& user, const std::string& host, std::uint16_t port);
-  static std::string _nonce_key(const std::string& nonce);
   static std::string _user_key(const std::string& username);
   static std::string _trunk_key(const std::string& name);
   static std::string _trunk_status_key(const std::string& name);

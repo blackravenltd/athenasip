@@ -47,8 +47,6 @@ class Registrar : public TransactionUser {
   // a datastore round trip and is named for what it has just learned.
   void _on_realm(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::shared_ptr<types::SIPIdentity> aor,
                  std::shared_ptr<types::Realm> realm, Terms terms);
-  void _on_nonce_checked(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
-                         std::shared_ptr<types::SIPIdentity> aor, std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Authorization> auth, Terms terms);
   void _on_subscriber(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::shared_ptr<types::SIPIdentity> aor,
                       std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Authorization> auth, std::shared_ptr<types::Subscriber> subscriber,
                       Terms terms);
@@ -119,7 +117,7 @@ class Registrar : public TransactionUser {
 
   // 401 with a fresh nonce for the realm, if the realm is known.
   void _send_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
-                       const std::shared_ptr<types::Realm>& realm);
+                       const std::shared_ptr<types::Realm>& realm, bool stale = false);
 
   std::shared_ptr<loggers::Logger> _logger;
   std::weak_ptr<Core> _core;

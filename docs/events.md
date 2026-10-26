@@ -92,7 +92,7 @@ it.
 
 ## Watching from a browser
 
-`GET /api/v1/events` serves `nodes/#`, `subscribers/#`, `calls/#` and `presence/#` as Server-Sent Events,
+`GET /api/v1/events` serves `nodes/#`, `subscribers/#`, `calls/#`, `presence/#` and `trunks/#` as Server-Sent Events,
 one event per message named by its topic, for a console that would rather watch than poll.
 It needs the `view-cluster-status` role, and is in the [API description](api/openapi.yaml).
 
