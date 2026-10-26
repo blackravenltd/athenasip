@@ -45,6 +45,9 @@ plugins::Settings WebpushPushService::settings() {
       required(text("webpush.subject", "", "A mailto: or https: URI a push service can reach you at.")),
       integer("webpush.ttl", "60", "Seconds the push service keeps trying.", 0),
       text("webpush.ca_file", "", "More CA certificates to trust, beside the system's."),
+      boolean("webpush.allow_private_destinations", "false",
+              "Push to a subscription URL that resolves to a private, loopback or link-local address. Off, so a subscriber cannot "
+              "make the node POST to a service inside its network; on for a push service of your own on such an address."),
   };
 }
 
@@ -104,6 +107,8 @@ bool WebpushPushService::configure(const YAML::Node& own_root, const Config& sys
 
   HttpsClient::Options options;
   if (own_root["ca_file"]) options.ca_file = own_root["ca_file"].as<std::string>();
+  // Review finding 34: a subscriber writes the URL this node POSTs to, so by default it must be a public address.
+  options.public_only = !(own_root["allow_private_destinations"] && own_root["allow_private_destinations"].as<bool>());
 
   auto client = std::make_shared<HttpsClient>(_base_logger, options);
   if (!client->error().empty()) {

@@ -178,3 +178,16 @@ TEST(HttpsClientTest, AnswersOnTheCallersExecutor) {
   ASSERT_EQ(future.wait_for(std::chrono::seconds(15)), std::future_status::ready);
   EXPECT_TRUE(future.get());
 }
+
+// Review finding 34: what counts as on the public internet, for a URL a client wrote.
+TEST(HttpsClientTest, PrivateLoopbackAndLinkLocalAddressesAreNotPublic) {
+  const auto is_public = [](const char* text) { return push::HttpsClient::is_public(boost::asio::ip::make_address(text)); };
+
+  for (const auto* address : {"127.0.0.1", "10.1.2.3", "172.16.0.1", "172.31.255.255", "192.168.1.1", "100.64.0.1", "169.254.169.254", "0.0.0.0",
+                              "255.255.255.255", "224.0.0.1", "::1", "::", "fe80::1", "fc00::1", "fd12:3456::1", "::ffff:10.0.0.1", "::ffff:127.0.0.1"}) {
+    EXPECT_FALSE(is_public(address)) << address;
+  }
+  for (const auto* address : {"8.8.8.8", "172.32.0.1", "192.0.2.1", "203.0.113.5", "2001:4860:4860::8888", "::ffff:8.8.8.8"}) {
+    EXPECT_TRUE(is_public(address)) << address;
+  }
+}

@@ -75,7 +75,7 @@ bool parse_target(const std::string& url_string, Target& target, std::string& er
 class Exchange : public std::enable_shared_from_this<Exchange> {
  public:
   Exchange(std::shared_ptr<ssl::context> context, Target target, http::request<http::string_body> request, std::chrono::milliseconds timeout,
-           plugins::Executor on, plugins::Handler<HttpsResponse> handler)
+           bool public_only, plugins::Executor on, plugins::Handler<HttpsResponse> handler)
       : _context(std::move(context)),
         _strand(asio::make_strand(detail::get_global_io_context())),
         _resolver(_strand),
@@ -84,6 +84,7 @@ class Exchange : public std::enable_shared_from_this<Exchange> {
         _target(std::move(target)),
         _request(std::move(request)),
         _timeout(timeout),
+        _public_only(public_only),
         _on(std::move(on)),
         _handler(std::move(handler)) {}
 
@@ -109,11 +110,22 @@ class Exchange : public std::enable_shared_from_this<Exchange> {
     _resolver.async_resolve(_target.host, _target.port,
                             [self = shared_from_this()](const boost::system::error_code& ec, asio::ip::tcp::resolver::results_type results) {
                               if (ec) return self->fail("resolve " + self->_target.host, ec);
-                              self->connect(std::move(results));
+                              self->connect(self->_reachable(results));
                             });
   }
 
-  void connect(asio::ip::tcp::resolver::results_type results) {
+  // What was resolved, without the addresses this exchange may not reach.
+  std::vector<asio::ip::tcp::endpoint> _reachable(const asio::ip::tcp::resolver::results_type& results) const {
+    std::vector<asio::ip::tcp::endpoint> out;
+    for (const auto& entry : results) {
+      if (!_public_only || HttpsClient::is_public(entry.endpoint().address())) out.push_back(entry.endpoint());
+    }
+    return out;
+  }
+
+  void connect(std::vector<asio::ip::tcp::endpoint> results) {
+    if (results.empty()) return finish(plugins::Result<HttpsResponse>::failure("refused: " + _target.host + " is not a public address"));
+
     beast::get_lowest_layer(_stream).async_connect(results, [self = shared_from_this()](const boost::system::error_code& ec, const auto&) {
       if (ec) return self->fail("connect", ec);
       self->handshake();
@@ -185,6 +197,7 @@ class Exchange : public std::enable_shared_from_this<Exchange> {
   Target _target;
   http::request<http::string_body> _request;
   std::chrono::milliseconds _timeout;
+  bool _public_only;
   plugins::Executor _on;
   plugins::Handler<HttpsResponse> _handler;
 
@@ -201,6 +214,25 @@ std::string HttpsResponse::header(std::string_view name) const {
     if (equal_ignoring_case(field, name)) return value;
   }
   return {};
+}
+
+bool HttpsClient::is_public(const asio::ip::address& address) {
+  if (address.is_unspecified() || address.is_loopback() || address.is_multicast()) return false;
+
+  if (address.is_v6()) {
+    const auto v6 = address.to_v6();
+    if (v6.is_v4_mapped()) return is_public(asio::ip::make_address_v4(asio::ip::v4_mapped, v6));
+    // fe80::/10 link-local, fec0::/10 site-local, fc00::/7 unique local (RFC 4193).
+    const auto bytes = v6.to_bytes();
+    if (v6.is_link_local() || v6.is_site_local() || (bytes[0] & 0xfe) == 0xfc) return false;
+    return true;
+  }
+
+  const auto v4 = address.to_v4().to_uint();
+  const auto in = [v4](std::uint32_t network, int bits) { return (v4 >> (32 - bits)) == (network >> (32 - bits)); };
+  // RFC 1918, RFC 6598 shared, RFC 3927 link-local, 0.0.0.0/8, and the limited broadcast.
+  return !(in(0x0A000000, 8) || in(0xAC100000, 12) || in(0xC0A80000, 16) || in(0x64400000, 10) || in(0xA9FE0000, 16) || in(0x00000000, 8) ||
+           v4 == 0xFFFFFFFF);
 }
 
 HttpsClient::HttpsClient(std::shared_ptr<loggers::Logger> logger, Options options)
@@ -239,7 +271,8 @@ void HttpsClient::post(plugins::Executor on, const std::string& url, HttpsHeader
   request.body() = std::move(body);
   request.prepare_payload();
 
-  std::make_shared<Exchange>(_context, std::move(target), std::move(request), _options.timeout, std::move(on), std::move(handler))->start();
+  std::make_shared<Exchange>(_context, std::move(target), std::move(request), _options.timeout, _options.public_only, std::move(on), std::move(handler))
+      ->start();
 }
 
 }  // namespace athenasip::push

@@ -884,6 +884,11 @@
             "ca_file": {
               "description": "More CA certificates to trust, beside the system's.",
               "type": "string"
+            },
+            "allow_private_destinations": {
+              "description": "Push to a subscription URL that resolves to a private, loopback or link-local address. Off, so a subscriber cannot make the node POST to a service inside its network; on for a push service of your own on such an address.",
+              "type": "boolean",
+              "default": false
             }
           },
           "required": [

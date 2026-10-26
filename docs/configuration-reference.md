@@ -285,6 +285,7 @@ Web Push (RFC 8030) with VAPID (RFC 8292), for webpush:// in push.urls.
 | `push.webpush.subject` | text | required | A mailto: or https: URI a push service can reach you at. |
 | `push.webpush.ttl` | integer, 0 or more | `60` | Seconds the push service keeps trying. |
 | `push.webpush.ca_file` | text | none | More CA certificates to trust, beside the system's. |
+| `push.webpush.allow_private_destinations` | true or false | `false` | Push to a subscription URL that resolves to a private, loopback or link-local address. Off, so a subscriber cannot make the node POST to a service inside its network; on for a push service of your own on such an address. |
 
 ## `behaviour`
 

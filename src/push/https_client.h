@@ -6,6 +6,7 @@
 //
 #pragma once
 
+#include <boost/asio/ip/address.hpp>
 #include <boost/asio/ssl/context.hpp>
 #include <chrono>
 #include <memory>
@@ -36,6 +37,10 @@ struct HttpsClientOptions {
   std::string ca_file;
   // From the start of resolution to the last byte of the response.
   std::chrono::milliseconds timeout{std::chrono::seconds(10)};
+  // Connect only to public addresses: those a name resolves to that are private, loopback, link-local or otherwise
+  // not on the internet are dropped, and a name with none left is refused. For a URL a client wrote, as a Web Push
+  // subscription is (review finding 34); it filters what was resolved, so a DNS answer cannot steer it inward.
+  bool public_only = false;
 };
 
 // The push services' HTTP: one request and one response per connection, over TLS with
@@ -44,6 +49,10 @@ struct HttpsClientOptions {
 class HttpsClient {
  public:
   using Options = HttpsClientOptions;
+
+  // Whether an address is on the public internet: not private (RFC 1918, RFC 4193), loopback, link-local, shared
+  // (RFC 6598), unspecified, multicast, or one of those mapped into IPv6.
+  static bool is_public(const boost::asio::ip::address& address);
 
   explicit HttpsClient(std::shared_ptr<loggers::Logger> logger, Options options = {});
 
