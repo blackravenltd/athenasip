@@ -3539,3 +3539,19 @@ passed, 67 skipped (Redis, MQTT, the resolver). Each piece with its test watched
       (`application/dtmf-relay` or `application/dtmf`) from a leg whose far leg takes events or
       tones is answered 200 by the node and played, never forwarded; between two INFO legs it is
       forwarded as before.
+
+### DTMF: key presses rtpengine hears, sent on as INFO, and the documentation (2026-10-26)
+
+- [x] **`rtpengine.dtmf_events`** (host:port, port 0 for any; off when unset): the driver
+      listens there, names it as `DTMF-log-dest` on the offer towards a leg set to `info` (with
+      `block DTMF`, so that leg is not also fed the events or tones), and turns each JSON
+      datagram rtpengine sends (`callid`, `source_tag`, `event` 0 to 15, `duration`) into a
+      `MediaEngine::DtmfEvent` for the listener `Core::media_register` installs
+      (`MediaEngine::dtmf_listen`, in the contract). `LocalUA::key_pressed` finds the dialog, and
+      when the other leg speaks INFO sends it one of the node's own, `application/dtmf-relay`
+      with `Signal` and `Duration`, built as the BYE is (`_bye_to` is now `_request_to`, with a
+      body). Found by the test on the way: the INFO went to the pressing end first.
+- [x] **Docs**: `docs/quick-start/phones.md` (Key presses), `first-trunk.md` (the `dtmf`
+      attribute), `docs/troubleshooting.md` (Key presses do nothing, from
+      `participants[].dtmf`), `docs/media.md`, `docs/configuration.md` and the reference.
+- [x] The suite 1555, 1489 passed, 66 skipped.

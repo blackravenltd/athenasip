@@ -428,24 +428,19 @@ and no interop fixture run here; what they alone would prove is under Waiting on
 RFC 4733 telephone-events, SIP INFO (`application/dtmf-relay` and `application/dtmf`) and
 in-band tones, passed through when both ends agree and converted when they differ.
 Pass-through is proved on the A85 against 2talk (2026-10-12: "3", "*", "0" reached the
-voicemail menu, WebRTC to plain RTP). In on 2026-10-26 (`COMPLETED.md`): the `dtmf`
+voicemail menu, WebRTC to plain RTP). Built on 2026-10-26 (`COMPLETED.md`): the `dtmf`
 setting on realms, subscribers and trunks, each leg's method on the call, rtpengine's
-conversion between events and tones, and INFO played into the media. Left, in order:
+conversion every way (events and tones by its transcoding, INFO played in, and the key
+presses it hears sent on as INFO through `rtpengine.dtmf_events`), and the documentation.
+Unit-proven only; left:
 
-- [ ] **Events and tones towards a leg set to `info`, as INFO.** rtpengine reports each key
-      press it hears as one UDP datagram of JSON to the address the call's `DTMF-log-dest`
-      names (`callid`, `source_tag`, `event` 0 to 15, `duration` in ms, from
-      `daemon/dtmf.c`); the driver opens a socket for them (`rtpengine.dtmf_events`,
-      host:port, off when empty), names it on the offer when `dtmf_to` is `info`, and raises
-      `MediaEngine::on_dtmf`. The proxy sends the far leg an INFO of the node's own, built as
-      `LocalUA::_bye_to` builds a BYE, with `application/dtmf-relay`; the leg's own
-      telephone-event is kept from it by `block DTMF`.
 - [ ] A sipp scenario sending RFC 4733 events through the node, with and without
       rtpengine, and one sending INFO to a leg that takes events (Docker: Waiting on
       something).
-- [ ] Docs: `docs/quick-start/phones.md` and `first-trunk.md` say what a phone and a carrier
-      should be set to, and `docs/troubleshooting.md` how to see which method a call used
-      (`participants[].dtmf`).
+- [ ] Each conversion against a real rtpengine and a phone: an INFO phone to 2talk's
+      voicemail, and 2talk's events to an INFO phone (the A85 or a desk phone set to INFO).
+      The `block DTMF` flag on the offer towards an INFO leg and `DTMF-log-dest` per call
+      are from rtpengine's ng documentation and `daemon/dtmf.c`, not yet seen working.
 
 ### State into the datastore (Milestone 7, decided 2026-10-11)
 
