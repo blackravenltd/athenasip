@@ -75,7 +75,7 @@ class Datastore : public plugins::Plugin {
   // registered on a realm (docs/authentication.md). Optional: the defaults answer
   // "unsupported", and a deployment that wants admin logins needs a driver that implements
   // them.
-  virtual void user_get(plugins::Executor on, std::string username, plugins::Handler<std::shared_ptr<types::User>> handler) {
+  virtual void user_get(plugins::Executor on, std::string /*username*/, plugins::Handler<std::shared_ptr<types::User>> handler) {
     _unsupported<std::shared_ptr<types::User>>(std::move(on), std::move(handler), "user_get");
   }
 

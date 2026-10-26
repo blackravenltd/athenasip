@@ -163,9 +163,9 @@ std::uint64_t hash_of(const std::string& text) {
 RtpengineMediaEngine::RtpengineMediaEngine(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<types::URL> url)
     : _logger(std::make_shared<loggers::LoggerScoped>("rtpengine", std::move(logger))),
       _url(std::move(url)),
+      _public(_logger),
       _strand(boost::asio::make_strand(detail::get_global_io_context())),
-      _receive_buffer(kMaxDatagram),
-      _public(_logger) {
+      _receive_buffer(kMaxDatagram) {
   if (_url && !_url->host.empty()) {
     Engine engine;
     engine.host = _url->host;

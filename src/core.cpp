@@ -90,10 +90,10 @@ std::optional<bool> held_of(const std::string& document) {
 
 Core::Core(std::shared_ptr<Logger> logger, std::shared_ptr<Config> _config, std::shared_ptr<athenasip::datastores::Datastore> _datastore,
            std::shared_ptr<events::EventSystem> _events)
-    : _logger(std::make_unique<LoggerScoped>("core", logger)),
-      config(_config),
+    : config(_config),
       datastore(_datastore),
       events(_events),
+      _logger(std::make_unique<LoggerScoped>("core", logger)),
       _strand(boost::asio::make_strand(detail::get_global_io_context())) {
   auth_limits_reload();
 }

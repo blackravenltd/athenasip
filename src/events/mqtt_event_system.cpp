@@ -98,13 +98,13 @@ MQTTEventSystem::MQTTEventSystem(std::shared_ptr<athenasip::loggers::Logger> log
                                  std::string client_id, std::string username, std::string password, std::uint16_t keep_alive_seconds)
     : _logger(std::make_shared<loggers::LoggerScoped>("mqtt_event_system", std::move(logger))),
       _callback_io_context(detail::get_global_io_context()),
-      _prefix(std::move(prefix)),
       _broker_host(std::move(broker_host)),
       _broker_port(broker_port),
       _client_id(std::move(client_id)),
       _username(std::move(username)),
       _password(std::move(password)),
       _keep_alive_seconds(keep_alive_seconds),
+      _prefix(std::move(prefix)),
       _mqtt_strand(boost::asio::make_strand(_mqtt_io_context)),
       _client(_mqtt_strand) {
   // Not in the initialiser list: by then _client_id's source may have been moved from.

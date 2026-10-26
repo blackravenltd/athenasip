@@ -1500,7 +1500,7 @@ void RedisDatastore::_async_ok(std::string operation, boost::redis::request requ
 
           std::ostringstream oss;
           oss << std::fixed << std::setprecision(3)
-              << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
+              << static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count()) / 1000.0;
           logger->debug(operation + " (" + oss.str() + "ms)");
 
           callback(RedisError{}, ok);
@@ -1541,7 +1541,7 @@ void RedisDatastore::_async_string(std::string operation, boost::redis::request 
 
           std::ostringstream oss;
           oss << std::fixed << std::setprecision(3)
-              << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
+              << static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count()) / 1000.0;
           logger->debug(operation + " (" + oss.str() + "ms)");
 
           callback(RedisError{}, result.value());
@@ -1582,7 +1582,7 @@ void RedisDatastore::_async_integer(std::string operation, boost::redis::request
 
           std::ostringstream oss;
           oss << std::fixed << std::setprecision(3)
-              << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
+              << static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count()) / 1000.0;
           logger->debug(operation + " (" + oss.str() + "ms)");
 
           callback(RedisError{}, static_cast<std::int64_t>(result.value()));
@@ -1623,7 +1623,7 @@ void RedisDatastore::_async_strings(std::string operation, boost::redis::request
 
           std::ostringstream oss;
           oss << std::fixed << std::setprecision(3)
-              << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
+              << static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count()) / 1000.0;
           logger->debug(operation + " (" + oss.str() + "ms)");
 
           callback(RedisError{}, result.value());
@@ -1746,7 +1746,7 @@ std::string RedisDatastore::_session_index_key(const std::string& username) { re
 std::string RedisDatastore::_duration_ms(std::chrono::high_resolution_clock::time_point start) const {
   std::ostringstream oss;
   oss << std::fixed << std::setprecision(3)
-      << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
+      << static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count()) / 1000.0;
   return oss.str();
 }
 

@@ -3820,3 +3820,23 @@ Findings 11, 12, 13, 14 and 16, each with a regression test.
       is installed (`docs/testing.md` shows how): 1622, 1619 passed, 3 skipped, every round
       trip written since `0.12.0` included. Without them the suite is 1621, 1550 passed; the
       Lua subset 375 passed.
+
+### The perimeter, review item 7: CI and warnings (2026-10-26)
+
+Findings 43 and 44.
+
+- [x] **`.github/workflows/ci.yml`**: on every push to `develop` or `main` and every pull
+      request. Boost 1.89 built once and cached; the unit suite with Redis and MQTT under
+      strict warnings as errors, under ASan with UBSan, and under TSan; every sipp harness
+      (`run.sh` plain, `--lua` and `--rtpengine`, `cluster.sh` plain and `--lua`, `trunk.sh`),
+      with the logs kept when one fails. No fuzz smoke yet (item 6, clang). It has not run:
+      this machine cannot run GitHub Actions, and the runners have GCC 14, not 16.
+- [x] **Warnings**: `ATHENA_WARNINGS` (`default` is `-Wall -Wextra`, `strict` adds
+      `-Wconversion`) and `ATHENA_WERROR` on the server's own sources. The strict build had
+      222 distinct findings; the server is now clean under strict as errors. Six initialiser
+      lists put in declaration order (none read a member before it was made), thirteen
+      conversions made explicit where the value was already bounded, two unused parameters.
+      `-Wmissing-field-initializers` (51, the brace-the-first-member idiom) and `-Wshadow`
+      (136, read by kind with a sample of each, none a mistake) are left out, with the reasons
+      in `CMakeLists.txt` and `docs/testing.md`, Warnings and CI. The tests are not built
+      with the flags yet. The suite 1622, 1550 passed.

@@ -74,9 +74,11 @@ bool in_range(const std::string& range, const std::string& address) {
 
   if (network.is_v4() != candidate.is_v4()) return false;
   if (network.is_v4()) {
-    return boost::asio::ip::make_network_v4(candidate.to_v4(), prefix).canonical() == boost::asio::ip::make_network_v4(network.to_v4(), prefix).canonical();
+    return boost::asio::ip::make_network_v4(candidate.to_v4(), static_cast<unsigned short>(prefix)).canonical() ==
+           boost::asio::ip::make_network_v4(network.to_v4(), static_cast<unsigned short>(prefix)).canonical();
   }
-  return boost::asio::ip::make_network_v6(candidate.to_v6(), prefix).canonical() == boost::asio::ip::make_network_v6(network.to_v6(), prefix).canonical();
+  return boost::asio::ip::make_network_v6(candidate.to_v6(), static_cast<unsigned short>(prefix)).canonical() ==
+         boost::asio::ip::make_network_v6(network.to_v6(), static_cast<unsigned short>(prefix)).canonical();
 }
 
 bool Trunk::admits(const std::string& address) const {
