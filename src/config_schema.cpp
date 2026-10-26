@@ -68,6 +68,22 @@ Settings build() {
   s.push_back(integer("sip.max_connections", "10000", "The flows the node holds at once, UDP sources included; one more is closed. 0 is no cap."));
   s.push_back(integer("sip.max_connections_per_source", "64", "The flows one address may hold at once; one more is closed. 0 is no cap."));
 
+  s.push_back(section("sip.auth_limits",
+                      "Digest guessing over SIP, per node: a burst allowance, then a rate per minute, 0 in either turning that limit off "
+                      "(docs/authentication.md, Guessing)."));
+  for (const auto& [name, what, burst, per_minute] : std::initializer_list<std::tuple<const char*, const char*, const char*, const char*>>{
+           {"failures_source", "Wrong answers from one address; past it the address is banned for ban_seconds.", "10", "5"},
+           {"failures_aor", "Wrong answers for one address of record; past it the AOR is closed for ban_seconds to addresses that have not lately "
+                            "authenticated as it.",
+            "10", "5"},
+           {"challenges_source", "Challenges sent to one address; past it a request needing one is answered 403.", "200", "600"}}) {
+    const std::string key = std::string("sip.auth_limits.") + name;
+    s.push_back(section(key, what));
+    s.push_back(integer(key + ".burst", burst, "Allowed at once."));
+    s.push_back(integer(key + ".per_minute", per_minute, "Allowed per minute after that."));
+  }
+  s.push_back(integer("sip.auth_limits.ban_seconds", "900", "How long a ban or a closed AOR lasts, in seconds. 0 bans nothing."));
+
   s.push_back(section("sip.timers", "The RFC 3261 section 17 timers. a to k are multiples of T1 or T4, not milliseconds. Leave them alone."));
   s.push_back(integer("sip.timers.t1_rtt_ms", "500", "T1, the round-trip estimate, in milliseconds.", 1, 65535));
   s.push_back(integer("sip.timers.t2_max_retransmit_interval_ms", "4000", "T2, the longest retransmit interval, in milliseconds.", 1, 65535));

@@ -151,7 +151,7 @@ TEST(ProxyNatTest, AByeReachesAUdpCallerWhoseFlowWasForgottenDuringTheCall) {
   invite += "\r\n";
 
   // A UDP phone is authenticated by answering the challenge, not by its source address.
-  f.receive(alice, f.with_credentials(invite, "alice", "alice-ha1"));
+  f.receive(alice, f.with_credentials(invite, "alice", "alice-ha1", "203.0.113.9"));
   f.receive(f.callee, f.response_from_callee(200, "OK"));
   f.settle();
 

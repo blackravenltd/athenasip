@@ -33,6 +33,11 @@ inline std::string trunk_status(const std::string& name) { return "trunks/" + na
 // scan. A signal, not state: a node that misses it reads them at the scan anyway.
 inline std::string trunks_changed() { return "trunks/changed"; }
 
+// A Digest answer over SIP that did not verify, and an address banned for too many (AuthGuard). Signals, for a
+// console or a fail2ban-like watcher; not retained.
+inline std::string auth_failed() { return "security/auth_failed"; }
+inline std::string source_banned() { return "security/banned"; }
+
 inline std::string call_register(const std::string& call_id) { return "calls/" + call_id + "/register"; }
 
 inline std::string call_unregister(const std::string& call_id) { return "calls/" + call_id + "/unregister"; }

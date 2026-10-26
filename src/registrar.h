@@ -118,6 +118,8 @@ class Registrar : public TransactionUser {
   // 401 with a fresh nonce for the realm, if the realm is known.
   void _send_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
                        const std::shared_ptr<types::Realm>& realm, bool stale = false);
+  void _send_refusal(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
+                     std::chrono::seconds retry_after);
 
   std::shared_ptr<loggers::Logger> _logger;
   std::weak_ptr<Core> _core;

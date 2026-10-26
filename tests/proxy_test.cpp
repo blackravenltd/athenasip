@@ -183,7 +183,7 @@ TEST(ProxyTest, ARetransmittedInviteIsNotForwardedTwice) {
   caller_connection->reliable = false;
 
   // On UDP Alice answers a challenge, and the retransmission carries the same credentials.
-  const auto invite = f.with_credentials(f.invite("z9hG4bK-twice"), "alice", "alice-ha1");
+  const auto invite = f.with_credentials(f.invite("z9hG4bK-twice"), "alice", "alice-ha1", "192.0.2.11");
 
   f.receive(caller, invite);
   f.receive(caller, invite);

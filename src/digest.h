@@ -41,8 +41,11 @@ void add_challenges(SIPHeader& header, const std::string& field, const std::stri
 
 // Nonces. One is the realm's id, random bytes and the second it was minted, with an HMAC over those under the
 // realm's nonce_secret: any node of the cluster that serves the realm can tell its own, and when it was minted,
-// without a store (RFC 7616 5.4), so nothing is kept for a challenge nobody answers.
-std::string nonce_mint(const types::Realm& realm, std::time_t now = std::time(nullptr));
+// without a store (RFC 7616 5.4), so nothing is kept for a challenge nobody answers. The HMAC also covers
+// `source`, the address the challenge went to, which is not in the nonce: an answer from another address is bad,
+// so a nonce fetched from one address cannot be spent from a spoofed one to count failures against it
+// (AuthGuard). Empty binds it to nothing, as over HTTP.
+std::string nonce_mint(const types::Realm& realm, const std::string& source, std::time_t now = std::time(nullptr));
 
 enum class NonceState {
   good,
@@ -51,7 +54,7 @@ enum class NonceState {
   // Not minted for this realm by a node holding its secret: forged, malformed or another realm's.
   bad,
 };
-NonceState nonce_state(const types::Realm& realm, const std::string& nonce, std::time_t now = std::time(nullptr));
+NonceState nonce_state(const types::Realm& realm, const std::string& nonce, const std::string& source, std::time_t now = std::time(nullptr));
 
 // Replay. An answer without qop spends its nonce; with qop=auth the nc must rise with each answer (RFC 7616
 // 3.4.3, 5.6), so a captured answer cannot be sent again while the nonce lives. One per node; the cluster's other

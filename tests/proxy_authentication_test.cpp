@@ -83,7 +83,7 @@ struct AuthFixture : ProxyFixture {
            response + "\", algorithm=MD5\r\n";
   }
 
-  std::string nonce() { return mint_nonce(store->realm_get_by_name("example.com")); }
+  std::string nonce(const std::string& source = "198.51.100.50") { return mint_nonce(store->realm_get_by_name("example.com"), source); }
 
   std::shared_ptr<athenasip::SIPMessage> last_response() {
     auto all = written(phone_connection);
@@ -375,7 +375,7 @@ TEST(ProxyAuthenticationTest, TheRegistrarMarksTheConnectionItAuthenticated) {
   std::shared_ptr<MockConnection> tcp_connection;
   auto tcp = f.make_channel("198.51.100.60", &tcp_connection, "tcp", 49152);
 
-  const auto nonce = f.nonce();
+  const auto nonce = f.nonce("198.51.100.60");
   const auto response = Util::md5(std::string("alice-ha1") + ":" + nonce + ":" + Util::md5("REGISTER:sip:example.com"));
 
   std::string reg = "REGISTER sip:example.com SIP/2.0\r\n";
@@ -417,5 +417,25 @@ TEST(ProxyAuthenticationTest, ATlsConnectionThatIsNotAPeerIsChallenged) {
   f.receive(tls, AuthFixture::request("INVITE", "sip:bob@example.com", "sip:alice@example.com"));
 
   EXPECT_NE(ProxyFixture::response_with(tls_connection, 407), nullptr);
+  EXPECT_EQ(ProxyFixture::request_with(f.callee_connection, "INVITE"), nullptr);
+}
+
+// Review finding 24: wrong answers to the proxy's challenge count against their address as the registrar's do;
+// past the allowance the address is banned and not answered, even with the right answer.
+TEST(ProxyAuthenticationTest, AnAddressThatKeepsGuessingIsBanned) {
+  AuthFixture f;
+  f.config->sip_auth_failures_source = {1, 1};
+  f.core->auth_limits_reload();
+
+  for (int i = 0; i < 2; ++i) {
+    f.receive(f.phone, AuthFixture::request("INVITE", "sip:bob@example.com", "sip:alice@example.com",
+                                            AuthFixture::credentials("alice", "not-alices-ha1", f.nonce(), "INVITE", "sip:bob@example.com")));
+  }
+  EXPECT_EQ(ProxyFixture::responses_with(f.phone_connection, 407).size(), 2u);
+
+  const auto before = ProxyFixture::written(f.phone_connection).size();
+  f.receive(f.phone, AuthFixture::request("INVITE", "sip:bob@example.com", "sip:alice@example.com",
+                                          AuthFixture::credentials("alice", "alice-ha1", f.nonce(), "INVITE", "sip:bob@example.com")));
+  EXPECT_EQ(ProxyFixture::written(f.phone_connection).size(), before);
   EXPECT_EQ(ProxyFixture::request_with(f.callee_connection, "INVITE"), nullptr);
 }

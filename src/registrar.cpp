@@ -191,7 +191,13 @@ void Registrar::_on_realm(std::shared_ptr<SIPMessage> request, std::shared_ptr<t
     return _send_challenge(transaction, request, realm);
   }
 
-  switch (digest::nonce_state(*realm, auth->fields["nonce"])) {
+  // An address of record guessed at from many addresses is closed to strangers for a while (AuthGuard).
+  if (const auto closed = core->auth_closed(*request, aor->uri->canonical_address())) {
+    _logger->info("REGISTER for " + aor->to_string() + ", closed to this address after repeated failures - 403");
+    return _send_refusal(transaction, request, *closed);
+  }
+
+  switch (digest::nonce_state(*realm, auth->fields["nonce"], Core::source_of(*request))) {
     case digest::NonceState::bad:
       _logger->info("REGISTER with a nonce this realm did not mint - challenging");
       return _send_challenge(transaction, request, realm);
@@ -219,11 +225,13 @@ void Registrar::_on_subscriber(std::shared_ptr<SIPMessage> request, std::shared_
                                std::shared_ptr<types::Subscriber> subscriber, Terms terms) {
   if (!subscriber) {
     _logger->info("REGISTER for unknown subscriber " + aor->to_string() + " - challenging");
+    if (auto core = _core.lock()) core->auth_failed(*request, aor->uri->canonical_address(), "no such subscriber");
     return _send_challenge(transaction, request, realm);
   }
 
   if (const auto why = digest::verify(*subscriber, *auth, request->header->request_method, request->header->request_uri->to_string()); !why.empty()) {
     _logger->info("REGISTER for " + aor->to_string() + " with " + why + " - challenging");
+    if (auto core = _core.lock()) core->auth_failed(*request, aor->uri->canonical_address(), why);
     return _send_challenge(transaction, request, realm);
   }
 
@@ -233,6 +241,7 @@ void Registrar::_on_subscriber(std::shared_ptr<SIPMessage> request, std::shared_
     return _send_challenge(transaction, request, realm, true);
   }
 
+  if (auto core = _core.lock()) core->auth_succeeded(*request, aor->uri->canonical_address());
   request->authenticated = true;
 
   // The connection now belongs to this subscriber; see Channel::authenticated_as.
@@ -701,14 +710,30 @@ void Registrar::_send_interval_too_brief(const std::shared_ptr<transactions::Tra
 
 void Registrar::_send_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
                                 const std::shared_ptr<types::Realm>& realm, bool stale) {
+  // Challenges to one address are limited (AuthGuard): past that it is refused, not challenged.
+  if (auto core = _core.lock(); core && !core->auth_may_challenge(*request)) {
+    _logger->info("REGISTER from an address past its challenges - 403");
+    return _send_refusal(transaction, request, std::chrono::seconds(60));
+  }
+
   auto response = request->generate_response();
   response->header->response_code = 401;
   response->header->response_message = "Unauthorized";
   response->header->add("Reason", "SIP;cause=401;text=\"Unauthorized\"");
 
-  // Nothing is kept for the nonce: it carries its own proof (digest::nonce_mint).
-  if (realm) digest::add_challenges(*response->header, "WWW-Authenticate", realm->name, digest::nonce_mint(*realm), stale);
+  // Nothing is kept for the nonce: it carries its own proof, bound to the address it goes to (digest::nonce_mint).
+  if (realm) digest::add_challenges(*response->header, "WWW-Authenticate", realm->name, digest::nonce_mint(*realm, Core::source_of(*request)), stale);
 
+  transaction->send(response);
+}
+
+// RFC 3261 21.4.4 with 20.33: refused for now, and when to try again.
+void Registrar::_send_refusal(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
+                              std::chrono::seconds retry_after) {
+  auto response = request->generate_response();
+  response->header->response_code = 403;
+  response->header->response_message = "Forbidden";
+  response->header->add("Retry-After", std::to_string(retry_after.count()));
   transaction->send(response);
 }
 

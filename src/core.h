@@ -21,6 +21,7 @@
 
 #include "address_discovery.h"
 #include "api/admin_api.h"
+#include "auth_guard.h"
 #include "call.h"
 #include "config.h"
 #include "datastores/datastore.h"
@@ -188,6 +189,20 @@ class Core : public std::enable_shared_from_this<Core> {
   // The Digest answers this node has accepted, against replay (digest::NonceCounts). Nonces themselves are
   // minted and checked without state (digest::nonce_mint, nonce_state).
   digest::NonceCounts& nonce_counts() { return _nonce_counts; }
+
+  // Digest guessing over SIP (AuthGuard, docs/authentication.md, Guessing), by the request's source: its channel's
+  // address. A request with no channel, or from a cluster peer, has no source and is never limited.
+  static std::string source_of(const SIPMessage& message);
+  // The guard again from the config's sip.auth_limits, forgetting what it had counted.
+  void auth_limits_reload();
+  // Whether the address may be sent one more challenge.
+  bool auth_may_challenge(const SIPMessage& message);
+  // The time left while the AOR is closed to this request's address.
+  std::optional<std::chrono::seconds> auth_closed(const SIPMessage& message, const std::string& aor);
+  // A wrong answer, or one for no subscriber: counted, logged for fail2ban and published as security/auth_failed;
+  // the one that bans the address is published as security/banned too.
+  void auth_failed(const SIPMessage& message, const std::string& aor, const std::string& why);
+  void auth_succeeded(const SIPMessage& message, const std::string& aor);
 
   // Messages
   void process_message(std::shared_ptr<SIPMessage> message);
@@ -358,6 +373,7 @@ class Core : public std::enable_shared_from_this<Core> {
   std::shared_ptr<api::AdminAPI> _adminAPI;
 
   digest::NonceCounts _nonce_counts;
+  std::unique_ptr<AuthGuard> _auth_guard;
 
   transactions::TransactionMatcher _matcher;
   std::shared_ptr<TimerSource> _timer_source = default_timer_source();

@@ -81,25 +81,26 @@ void add_challenges(SIPHeader& header, const std::string& field, const std::stri
 }
 
 namespace {
-// The HMAC of the nonce's first three parts, hex.
-std::string nonce_signature(const types::Realm& realm, const std::string& signed_part) {
+// The HMAC of the nonce's first three parts and the address it was sent to, hex.
+std::string nonce_signature(const types::Realm& realm, const std::string& signed_part, const std::string& source) {
   std::array<unsigned char, EVP_MAX_MD_SIZE> mac{};
   unsigned int length = 0;
-  HMAC(EVP_sha256(), realm.nonce_secret.data(), static_cast<int>(realm.nonce_secret.size()), reinterpret_cast<const unsigned char*>(signed_part.data()),
-       signed_part.size(), mac.data(), &length);
+  const auto input = signed_part + "|" + source;
+  HMAC(EVP_sha256(), realm.nonce_secret.data(), static_cast<int>(realm.nonce_secret.size()), reinterpret_cast<const unsigned char*>(input.data()),
+       input.size(), mac.data(), &length);
   return Util::to_hex(mac.data(), static_cast<uint16_t>(length));
 }
 }  // namespace
 
-std::string nonce_mint(const types::Realm& realm, std::time_t now) {
+std::string nonce_mint(const types::Realm& realm, const std::string& source, std::time_t now) {
   std::array<unsigned char, 16> random{};
   if (RAND_bytes(random.data(), static_cast<int>(random.size())) != 1) throw std::runtime_error("RAND_bytes failed");
 
   const auto signed_part = std::to_string(realm.id) + ":" + Util::to_hex(random.data(), random.size()) + ":" + std::to_string(now);
-  return signed_part + ":" + nonce_signature(realm, signed_part);
+  return signed_part + ":" + nonce_signature(realm, signed_part, source);
 }
 
-NonceState nonce_state(const types::Realm& realm, const std::string& nonce, std::time_t now) {
+NonceState nonce_state(const types::Realm& realm, const std::string& nonce, const std::string& source, std::time_t now) {
   // realm:random:minted:signature. The colons are not in any part, so the last one ends the signed part.
   const auto last = nonce.rfind(':');
   if (last == std::string::npos || last == 0) return NonceState::bad;
@@ -107,7 +108,7 @@ NonceState nonce_state(const types::Realm& realm, const std::string& nonce, std:
   const auto signature = nonce.substr(last + 1);
 
   // The realm's own, under its secret, compared in constant time.
-  const auto expected = nonce_signature(realm, signed_part);
+  const auto expected = nonce_signature(realm, signed_part, source);
   if (signature.size() != expected.size() || CRYPTO_memcmp(signature.data(), expected.data(), expected.size()) != 0) return NonceState::bad;
 
   const auto first = signed_part.find(':');
