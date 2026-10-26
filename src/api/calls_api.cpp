@@ -95,6 +95,7 @@ void CallsAPI::register_routes(Router& router) {
   router.add(http::verb::get, "/api/v1/call-records", {view_cluster_status}, [self](RouteContext c) { self->_records(std::move(c)); });
   router.add(http::verb::get, "/api/v1/conferences", {view_cluster_status}, [self](RouteContext c) { self->_conferences(std::move(c)); });
   router.add(http::verb::get, "/api/v1/conferences/{uri}", {view_cluster_status}, [self](RouteContext c) { self->_conference(std::move(c)); });
+  router.add(http::verb::delete_, "/api/v1/conferences/{uri}/calls/{call}", {manage_cluster}, [self](RouteContext c) { self->_leave(std::move(c)); });
   router.add(http::verb::get, "/api/v1/media", {view_cluster_status}, [self](RouteContext c) { self->_media(std::move(c)); });
   router.add(http::verb::get, "/api/v1/media/reoffers", {view_cluster_status}, [self](RouteContext c) { self->_reoffers(std::move(c)); });
   router.add(http::verb::get, "/api/v1/qualify", {view_cluster_status}, [self](RouteContext c) { self->_qualify(std::move(c)); });
@@ -229,6 +230,35 @@ void CallsAPI::_rooms(RouteContext context, std::function<void(boost::json::arra
     boost::json::array out;
     for (auto& [uri, room] : rooms) out.push_back(std::move(room));
     then(std::move(out));
+  });
+}
+
+void CallsAPI::_leave(RouteContext context) {
+  auto core = _core.lock();
+  if (!core) {
+    write_error(context.response, http::status::service_unavailable, "unavailable", "the node is shutting down");
+    return context.done();
+  }
+
+  const auto room = context.parameter("uri");
+  const auto id = context.parameter("call");
+  auto self = shared_from_this();
+
+  core->post([self, core, context, room, id]() mutable {
+    auto call = core->call_get(id);
+    const bool in_room = call && call->focus && call->focus->to_string() == room;
+    const bool sent = in_room && core->local_ua()->hang_up(id, "removed from " + room + " over the admin API");
+
+    boost::asio::post(self->_executor, [context, room, id, in_room, sent]() mutable {
+      if (!in_room) {
+        write_error(context.response, http::status::not_found, "not_found", "no live call with that Call-ID in " + room);
+      } else if (!sent) {
+        write_error(context.response, http::status::conflict, "not_answered", "the focus has not answered; the caller ends it with a CANCEL");
+      } else {
+        write_json(context.response, http::status::accepted, boost::json::object{{"id", id}, {"conference", room}});
+      }
+      context.done();
+    });
   });
 }
 
