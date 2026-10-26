@@ -70,10 +70,12 @@ session that has lost its context needs to see them first.
 3. **`../athenasip-admin` is not checked out on this machine** (2026-10-26). The console
    items under Waiting on something are that repository's, and `test/suite/run.sh` reports
    its spec as missing rather than failing until it is.
-4. **Conferencing's four questions** (`docs/design/conferencing.md`, Decisions to make):
-   whether a focus is a trunk, whether `builtin://` routes conferences from the trunk's
-   attribute, whether the roster is worth the node watching the focus, and the prefix.
-   The design proposes an answer to each and steps 1 to 4 are built on them.
+4. **Security events in the console** (asked by the console session, 2026-10-26): whether
+   the console shows `security/auth_failed` and `security/banned`. A live feed on
+   `/api/v1/events` shows nothing from before the page opened, so the answer may be a list
+   of the bans and closed AORs in force (`GET /api/v1/security/bans`, per node or gathered)
+   instead or as well. Nothing is built until Tom says. (Conferencing's four questions,
+   item 4 before, were answered the same day: Decisions.)
 5. **Docker on this machine**: installed 2026-10-26, and the `docker` group given; a shell started
    before that reaches the daemon with `sg docker -c "docker ..."`. It
    unlocks the sipp harnesses, Redis and MQTT for the full suite, the ASan and TSan release
