@@ -455,10 +455,7 @@ to 5 and 9 here; 6 needs clang (libFuzzer), 7 needs GitHub, 8 is partly Tom's.
 
 - [x] **1. Size caps and the scan offset** (findings 1, 2, 6) and **2. Strict
       Content-Length** (4, 5): done 2026-10-26 (`COMPLETED.md`).
-- [ ] **3. Idle timeouts and connection caps** (3, 10): an idle and a first-message timeout
-      for TCP, TLS and WS (RFC 5626 flows with keepalives exempt), global and per-source
-      caps, and UDP handled statelessly until a valid request so a spoofed flood holds no
-      64 KB per source. `src/core.cpp:1373,1410`, `src/servers/udp_server.cpp:84`.
+- [x] **3. Idle timeouts and connection caps** (3, 10): done 2026-10-26 (`COMPLETED.md`).
 - [ ] **4. Nonces and Digest** (20, 21, 22, 23, 26): stateless HMAC nonces verified with
       their timestamp and realm, no per-nonce storage, `nc` tracked and strictly rising,
       a five-minute lifetime with `stale=true`, the Digest `uri` bound to the Request-URI,

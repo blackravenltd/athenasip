@@ -3691,3 +3691,22 @@ test from the finding.
       `SIPMessage::body_length` is `size_t`, so 2^32 is no longer 0: the bytes after it were
       a request of the attacker's. `TransportFramingTest` gains five, `UIntHeaderTest` is new;
       `docs/architecture.md` has the limits. The suite 1587, 1517 passed, 70 skipped.
+
+### The perimeter, review item 3: flows held within limits (2026-10-26)
+
+Findings 3 and 10, each with a regression test.
+
+- [x] **A connection is held only while it speaks or has registered somebody.** The flow sweep
+      closes a TCP, TLS or WebSocket connection that has sent no whole message within
+      `sip.flow_first_message_timeout` (30 s), and one that registered nobody when idle past
+      `sip.flow_idle_timeout`; a connection a subscriber registered over ends with its socket,
+      as RFC 5626 keeps it alive. `sip.max_connections` (10000) and
+      `sip.max_connections_per_source` (64) cap what the node holds in all and from one address,
+      UDP sources included, enforced in `Core::channel_register` with a count per source.
+- [x] **A spoofed UDP flood holds nothing**: a source the node has no flow for earns one only
+      with a datagram that parses as SIP (a start line, Via and CSeq) or is a STUN keep-alive,
+      checked in `UDPServer` before any state is made; and a channel's 64 KB read buffer is
+      allocated by its first stream read, so a UDP flow never has one. `CoreFlowSweepTest`
+      gains three and loses the rule that a reliable flow is never swept;
+      `TransportFramingTest.UdpRubbishFromANewSourceMakesNoFlow`. The suite 1591, 1520
+      passed, 70 skipped.
