@@ -490,7 +490,7 @@ nothing configured. All four go into `src/config_schema.cpp`,
 ## The order it is built in
 
 Each step ends with its tests passing and is a commit of its own. The tests are written
-from the RFCs first and watched failing, per `CLAUDE.md`.
+from the RFCs first and watched failing, per `CONTRIBUTING.md`.
 
 1. **The datastore contract**: `subscriber` on `Call::Participant`, the index by it, and
    the five presence methods, in `memory://` and `redis://`, tested against a real Redis as

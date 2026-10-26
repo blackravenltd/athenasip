@@ -3452,3 +3452,24 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       lists the attribute. Proved on gbni-1 first with the same setting in its `main.lua`: the call
       then carried G722 both ways (rtpengine: 917 packets in from 2talk, 1184 out). The suite 1529
       of 1530 with Redis and MQTT, the one skipped without a resolver.
+
+### Before and after the 0.12.0 tag (2026-10-13)
+
+- [x] **`sip.log_messages` logs at debug**, and the reference says so (`230dca5`, in
+      `0.12.0`): with `log.level` above debug it logs nothing. Found running the first trunk
+      against 2talk.
+- [x] **Both live nodes on `0.12.0`**: the binary built on fi-1 and copied to gbni-1 with
+      the systemd unit, the previous binary kept as `/usr/local/bin/athenasip.previous` on
+      each; `verify.py` 15 of 15 after.
+
+### The plan rationalised against the tree (2026-10-26)
+
+- [x] **`ACTIVE.md` checked item by item against the code**, the done milestones' scaffolding
+      removed, and what is open split into Next (nothing blocks it, in order) and Waiting on
+      something (each with what it waits on). Closed by the check: why the sipp CANCEL
+      scenarios never caught the 487's CSeq (`cancel_after_180.xml:148` is
+      `<recv response="487"/>` with no CSeq check, and sipp matches a response to the call),
+      which becomes an item to assert it; and the policy's hook count, six since `watch`.
+      The `CLAUDE.md` the plan and `docs/design/presence.md` cited for the sanitizer and
+      test-first rules has never been in the tree: they now cite `docs/testing.md` and
+      `CONTRIBUTING.md`, which say the same.
