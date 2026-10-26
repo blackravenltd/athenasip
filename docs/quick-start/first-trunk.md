@@ -142,8 +142,9 @@ every 30 seconds), and the log says
 - A second carrier for failover: another trunk with the same `prefixes` and
   `"priority": 200`; lower goes first, and the default is 100. A busy or wrong number from
   the first is the answer; anything else tries the second.
-- Service codes such as `*55` for voicemail are not numbers to `athenasip.trunks`; a few
-  lines in `main.lua` send them to the trunk ([Scripting](../scripting.md)).
+- Service codes such as `*55` for voicemail: list them in the trunk's `codes` attribute
+  (`["*55", "*XX"]`, with `X` any digit) and they go out by it as dialled
+  ([Scripting](../scripting.md#trunks)).
 - Hunt groups, out-of-hours routing and blocklists are a few lines of Lua on top of this:
   [`docs/scripting/examples/`](../scripting/examples/).
 - After changing a script, `systemctl reload athenasip` reads it again without a restart

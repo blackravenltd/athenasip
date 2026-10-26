@@ -317,6 +317,7 @@ and a trunk for a UK carrier, created with `POST /api/v1/trunks`, looks like thi
 | `media_profile` | The media the carrier is offered, as a realm's `media_profile`: `rtp` (default, what carriers speak), `mirror`, `webrtc` or `srtp`. A browser or WebRTC phone calling out is converted by the media engine. |
 | `numbers` | The numbers it brings in, each to an address of record |
 | `default` | Where a number in no list goes; without it such a call is refused |
+| `codes` | Service codes it takes, sent as dialled: `["*55", "*XX"]`. `X` is any digit, `N` 2 to 9, `Z` 1 to 9, as a dialplan writes them. A carrier's voicemail (`*55` at 2talk) is one. |
 
 What it does:
 
@@ -324,8 +325,9 @@ What it does:
   from the Request-URI or, when that is the Contact the node registered, from the To, names a
   subscriber through `numbers`. Anything else is refused 404.
 - **Out**: a caller in one of the node's realms dialling a number that is no subscriber goes
-  out by every trunk that carries it, best first. 404, 410, 484, 486, 600, 603 or 604 from a
-  trunk is the answer; any other failure tries the next trunk.
+  out by every trunk that carries it, best first; a service code, by every trunk whose
+  `codes` match it. 404, 410, 484, 486, 600, 603 or 604 from a trunk is the answer; any
+  other failure tries the next trunk.
 - Everything else is `athenasip.standard`.
 
 `docs/scripting/examples/` has scripts built on it: a hunt group, out-of-hours routing to an

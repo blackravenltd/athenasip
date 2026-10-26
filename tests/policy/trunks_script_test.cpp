@@ -261,3 +261,34 @@ TEST(TrunksScriptTest, EveryExampleLoads) {
   }
   EXPECT_GE(loaded, 5u);
 }
+
+// A carrier's service code, such as its voicemail, is no number: a trunk lists the codes it takes, with X for a
+// digit as a dialplan writes it, and the code goes out by that trunk as dialled.
+TEST(TrunksScriptTest, AServiceCodeGoesOutByTheTrunkThatListsIt) {
+  TrunksScriptFixture f;
+  f.add_trunk("twotalk", "sip:sip.2talk.example", R"({"codes": ["*55", "*7X"], "priority": 50})", {});
+  f.add_trunk("backup", "sip:sip.backup.example", R"({"codes": ["*55"]})", {});
+
+  auto request = f.invite("sip:*55@example.com", "sip:alice@example.com", f.phone);
+  auto route = f.route(request);
+  ASSERT_TRUE(route.ok) << route.error;
+  ASSERT_EQ(route.value.kind, policy::RouteDecision::Kind::Forward);
+  ASSERT_EQ(route.value.targets.size(), 2u) << "both trunks take it, the lower priority first";
+  EXPECT_EQ(route.value.targets[0].trunk, "twotalk");
+  EXPECT_EQ(route.value.targets[0].uri->user, "*55");
+  EXPECT_EQ(route.value.targets[1].trunk, "backup");
+
+  request = f.invite("sip:*72@example.com", "sip:alice@example.com", f.phone);
+  route = f.route(request);
+  ASSERT_TRUE(route.ok) << route.error;
+  ASSERT_EQ(route.value.kind, policy::RouteDecision::Kind::Forward);
+  ASSERT_EQ(route.value.targets.size(), 1u) << "*7X is twotalk's alone";
+  EXPECT_EQ(route.value.targets[0].trunk, "twotalk");
+
+  // A code no trunk lists goes nowhere, as a number no trunk carries does.
+  request = f.invite("sip:*5@example.com", "sip:alice@example.com", f.phone);
+  route = f.route(request);
+  ASSERT_TRUE(route.ok) << route.error;
+  EXPECT_EQ(route.value.kind, policy::RouteDecision::Kind::Reply);
+  EXPECT_EQ(route.value.code, 404);
+}
