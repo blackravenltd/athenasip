@@ -3879,3 +3879,7 @@ Findings 43 and 44.
 - [x] **Transaction timers validated** (38): T1 at least 1 ms, T2 at least T1, T4 and the
       A, B, E, F, G, H multipliers at least 1, and a value that is no number is refused; a node
       with one that cannot work does not start. `ConfigTest.TransactionTimersThatCannotWorkAreRefused`.
+- [x] **rtpengine replies only from the engine** (33): a reply whose cookie matches is dropped
+      unless it comes from the engine the request went to, and the request waits for the
+      engine's own; the cookie is `RAND_bytes` since item 4.
+      `RtpengineMediaEngineTest.AReplyFromAnywhereButTheEngineIsDropped`, watched failing first.

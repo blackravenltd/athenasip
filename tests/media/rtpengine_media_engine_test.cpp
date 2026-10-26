@@ -1103,3 +1103,30 @@ TEST(RtpengineMediaEngineTest, WithoutAnEventsAddressNoKeyPressIsReported) {
 
   engine->close();
 }
+
+// Review finding 33: a reply is the engine's only if it comes from the engine. One with the right cookie from any other
+// address is dropped, and the request still waits for, and here times out without, the engine's own answer.
+TEST(RtpengineMediaEngineTest, AReplyFromAnywhereButTheEngineIsDropped) {
+  FakeRtpengine fake;
+  fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
+
+  auto engine = make_engine(fake, "timeout_ms: 150\nattempts: 2");
+  ASSERT_TRUE(engine->connect());
+  const auto before = fake.count();
+
+  // The engine hears the request and says nothing; a forger who saw the cookie answers from elsewhere.
+  fake.swallow(2);
+  std::thread forger([&fake, before]() {
+    for (int i = 0; i < 100 && fake.count() <= before; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    const auto cookie = fake.cookies().at(before);
+    boost::asio::io_context io;
+    boost::asio::ip::udp::socket socket(io, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0));
+    const auto forged = cookie + " " + Bencode::dictionary({{"result", Bencode(std::string("ok"))}}).encode();
+    socket.send_to(boost::asio::buffer(forged), fake.client());
+  });
+
+  EXPECT_FALSE(engine->release(make_call())) << "the forged ok was taken as the engine's";
+  forger.join();
+
+  engine->close();
+}

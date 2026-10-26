@@ -702,6 +702,19 @@ void RtpengineMediaEngine::_on_receive(const boost::system::error_code& ec, std:
   }
 
   auto pending = search->second;
+
+  // Review finding 33: the cookie names the request, but only the engine it went to may answer it. A datagram from
+  // anywhere else could carry forged SDP and media addresses; it is dropped, and the request waits for the engine.
+  if (pending->engine < _engines.size()) {
+    const auto& expected = _engines[pending->engine].endpoint;
+    if (_received_from.address() != expected.address() || _received_from.port() != expected.port()) {
+      _logger->warn("A reply for " + cookie + " from " + _received_from.address().to_string() + ":" + std::to_string(_received_from.port()) +
+                    ", not the engine at " + expected.address().to_string() + ":" + std::to_string(expected.port()) + " - dropped");
+      _receive();
+      return;
+    }
+  }
+
   _pending.erase(search);
 
   if (pending->timer) pending->timer->cancel();

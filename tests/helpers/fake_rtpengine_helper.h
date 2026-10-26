@@ -61,6 +61,12 @@ class FakeRtpengine {
     return _requests.size();
   }
 
+  // Where the last request came from: the driver's socket, which a reply goes back to.
+  boost::asio::ip::udp::endpoint client() const {
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _client;
+  }
+
   // The last request for a command.
   std::optional<athenasip::media::Bencode> last(const std::string& command) const {
     std::lock_guard<std::mutex> lock(_mutex);
@@ -94,6 +100,7 @@ class FakeRtpengine {
 
     {
       std::lock_guard<std::mutex> lock(_mutex);
+      _client = _from;
 
       _cookies.push_back(cookie);
       _requests.push_back(*request);
@@ -118,6 +125,7 @@ class FakeRtpengine {
   boost::asio::io_context _io;
   boost::asio::ip::udp::socket _socket;
   boost::asio::ip::udp::endpoint _from;
+  boost::asio::ip::udp::endpoint _client;
   std::array<char, 65535> _buffer{};
   std::uint16_t _port = 0;
 
