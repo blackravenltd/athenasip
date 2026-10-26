@@ -70,12 +70,8 @@ session that has lost its context needs to see them first.
 3. **`../athenasip-admin` is not checked out on this machine** (2026-10-26). The console
    items under Waiting on something are that repository's, and `test/suite/run.sh` reports
    its spec as missing rather than failing until it is.
-4. **Security events in the console** (asked by the console session, 2026-10-26): whether
-   the console shows `security/auth_failed` and `security/banned`. A live feed on
-   `/api/v1/events` shows nothing from before the page opened, so the answer may be a list
-   of the bans and closed AORs in force (`GET /api/v1/security/bans`, per node or gathered)
-   instead or as well. Nothing is built until Tom says. (Conferencing's four questions,
-   item 4 before, were answered the same day: Decisions.)
+4. (Answered 2026-10-26: the console lists the bans in force and lifts one; `security/#` stays
+   off `/api/v1/events`. Built: `/api/v1/security/...`, `COMPLETED.md`.)
 5. **The GitHub About line and athenasip.org** (review findings 46, 48). The About line says
    "TLS-only", which the node is not by default (`sip.allow_unencrypted` is true and UDP and
    TCP listen); suggested: "Multi-master SIP proxy and registrar: RFC 3261 transactions and

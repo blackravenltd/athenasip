@@ -3842,3 +3842,25 @@ Findings 43 and 44.
       with the flags yet. The suite 1622, 1550 passed.
 - [x] **The workflow is removed** the same day, at Tom's request: no GitHub workflow for CI or
       CD (Decisions). The warning options stay; `docs/testing.md` says how to run them by hand.
+
+### The perimeter, the rest: findings 28, 29 and 34, and the bans in the console (2026-10-26)
+
+- [x] **Web Push only to public addresses** (34): `HttpsClient` with `public_only` filters what
+      it resolved and refuses a name with nothing public left; Web Push sets it unless
+      `push.webpush.allow_private_destinations`. `HttpsClientTest`, `WebpushPushServiceTest`.
+- [x] **Plain admin HTTP on loopback by default** (28): `http.address` defaults to 127.0.0.1,
+      HTTPS with no address to every interface, and a warning when plain HTTP is bound beyond
+      loopback. `ConfigTest.PlainHttpBindsLoopbackAndHttpsEveryInterfaceByDefault`.
+- [x] **Realm and user names validated** (29): a realm is a host name (`Util::is_realm_name`)
+      and a user an RFC 3261 user part (`Util::is_sip_user`), so no store key is read two ways
+      and every identity parses. `UtilTest`, `ProvisioningApiTest`.
+- [x] **The bans in the console** (Tom, through the console session): `GET` and `DELETE
+      /api/v1/security/bans[/{source}]` and `/api/v1/security/closed-aors[/{aor}]`
+      (`view-cluster-status` to read, `manage-cluster` to lift). Every node holds the bans and
+      closures the others publish (`security/banned`, `security/aor_closed`) and lifts what
+      any lifts (`security/ban_lifted`, `security/aor_reopened`); a lift forgets the failures
+      counted. `SecurityApiTest` (four), `AuthGuardTest` (three more), the OpenAPI document.
+- [x] **MD5 stays the last challenge**, in a field of its own: JsSIP keeps only a header's last
+      field and answers only MD5 (from the AthenaPhone session). A comment in
+      `digest::add_challenges`; `RegistrarTest.TheChallengesAreSha256ThenMd5AsSeparateFields`.
+      The suite 1636, 1564 passed.

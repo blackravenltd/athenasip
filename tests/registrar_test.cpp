@@ -116,6 +116,21 @@ TEST(RegistrarTest, AnUnauthenticatedRegisterIsChallenged) {
   EXPECT_FALSE(challenge->value->fields["nonce"].empty());
 }
 
+// RFC 8760 2.1: one challenge per algorithm, SHA-256 first, each in a field of its own. MD5 is the last: JsSIP keeps
+// only a header's last field and answers MD5 alone, so AthenaPhone and the console depend on the order.
+TEST(RegistrarTest, TheChallengesAreSha256ThenMd5AsSeparateFields) {
+  Fixture f;
+
+  f.receive(f.channel, f.register_request());
+
+  auto response = f.response_with(f.connection, 401);
+  ASSERT_NE(response, nullptr);
+  const auto& challenges = response->header->headers_map["WWW-Authenticate"];
+  ASSERT_EQ(challenges.size(), 2u);
+  EXPECT_EQ(challenges[0]->as<AuthorizationHeader>()->value->fields["algorithm"], "SHA-256");
+  EXPECT_EQ(challenges[1]->as<AuthorizationHeader>()->value->fields["algorithm"], "MD5");
+}
+
 // A nonce this node did not issue, or an expired one, is challenged again.
 TEST(RegistrarTest, AnUnknownNonceIsChallenged) {
   Fixture f;

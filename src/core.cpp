@@ -107,7 +107,7 @@ void Core::auth_limits_reload() {
     limits.challenges_source = policy(config->sip_auth_challenges_source);
     limits.ban = std::chrono::seconds(config->sip_auth_ban_seconds);
   }
-  _auth_guard = std::make_unique<AuthGuard>(limits);
+  _auth_guard = std::make_unique<AuthGuard>(limits, config ? config->sip_node_id : std::string());
 }
 
 std::string Core::source_of(const SIPMessage& message) {
@@ -133,17 +133,75 @@ void Core::auth_failed(const SIPMessage& message, const std::string& aor, const 
 
   // One line per failure, in a fixed shape a fail2ban filter can match (docs/authentication.md, Guessing).
   _logger->warn("Authentication failure from " + source + " for " + aor + ": " + why);
-  const auto banned = _auth_guard->failed(source, aor);
+  const auto outcome = _auth_guard->failed(source, aor);
+  const auto seconds = config ? config->sip_auth_ban_seconds : 0;
+  if (outcome.banned) _logger->warn("Banned " + source + " for " + std::to_string(seconds) + " seconds after repeated authentication failures");
+  if (outcome.closed) _logger->warn("Closed " + aor + " to unknown addresses for " + std::to_string(seconds) + " seconds after repeated authentication failures");
 
   if (!events) return;
   const auto node = config ? config->sip_node_id : std::string();
   events->publish(events::topics::auth_failed(),
                   boost::json::serialize(boost::json::object{{"source", source}, {"aor", aor}, {"reason", why}, {"node", node}, {"at", Util::get_zulu_time()}}));
-  if (banned) {
-    _logger->warn("Banned " + source + " for " + std::to_string(config ? config->sip_auth_ban_seconds : 0) + " seconds after repeated authentication failures");
+
+  // The others hold it too (auth_listen).
+  if (outcome.banned) {
     events->publish(events::topics::source_banned(),
-                    boost::json::serialize(boost::json::object{
-                        {"source", source}, {"seconds", config ? config->sip_auth_ban_seconds : 0}, {"node", node}, {"at", Util::get_zulu_time()}}));
+                    boost::json::serialize(boost::json::object{{"source", source}, {"seconds", seconds}, {"node", node}, {"at", Util::get_zulu_time()}}));
+  }
+  if (outcome.closed) {
+    events->publish(events::topics::aor_closed(),
+                    boost::json::serialize(boost::json::object{{"aor", aor}, {"seconds", seconds}, {"node", node}, {"at", Util::get_zulu_time()}}));
+  }
+}
+
+bool Core::auth_lift(const std::string& source) {
+  const bool held = _auth_guard->lift(source);
+  if (events) events->publish(events::topics::ban_lifted(), boost::json::serialize(boost::json::object{{"source", source}, {"node", config->sip_node_id}}));
+  return held;
+}
+
+bool Core::auth_reopen(const std::string& aor) {
+  const bool held = _auth_guard->reopen(aor);
+  if (events) events->publish(events::topics::aor_reopened(), boost::json::serialize(boost::json::object{{"aor", aor}, {"node", config->sip_node_id}}));
+  return held;
+}
+
+// What the other nodes ban, close, lift and reopen, held and done here too, so a guesser spread over the nodes is
+// banned by all of them and the list on any node is the cluster's. A node that starts later misses what was banned
+// before it; a ban is short.
+void Core::auth_listen() {
+  if (!events) return;
+
+  const auto own = config ? config->sip_node_id : std::string();
+  std::weak_ptr<Core> weak = weak_from_this();
+  for (const auto& topic : {events::topics::source_banned(), events::topics::aor_closed(), events::topics::ban_lifted(), events::topics::aor_reopened()}) {
+    events->subscribe(
+        _strand, topic,
+        [weak, own, topic](std::string, std::string message) {
+          auto self = weak.lock();
+          if (!self) return;
+
+          boost::system::error_code bad;
+          const auto parsed = boost::json::parse(message, bad);
+          if (bad || !parsed.is_object()) return;
+          const auto& report = parsed.as_object();
+          const auto text = [&report](const char* key) {
+            const auto* value = report.if_contains(key);
+            return value != nullptr && value->is_string() ? std::string(value->as_string()) : std::string();
+          };
+          const auto node = text("node");
+          if (node == own) return;
+
+          const auto* seconds = report.if_contains("seconds");
+          const auto left = std::chrono::seconds(seconds != nullptr && seconds->is_int64() ? seconds->as_int64() : 0);
+          if (topic == events::topics::source_banned()) self->_auth_guard->ban(text("source"), left, node);
+          if (topic == events::topics::aor_closed()) self->_auth_guard->close(text("aor"), left, node);
+          if (topic == events::topics::ban_lifted()) self->_auth_guard->lift(text("source"));
+          if (topic == events::topics::aor_reopened()) self->_auth_guard->reopen(text("aor"));
+        },
+        [this, self = shared_from_this(), topic](plugins::Result<std::shared_ptr<events::Subscription>> subscribed) {
+          if (!subscribed.ok) _logger->warn("Cannot listen on " + topic + " - " + subscribed.error);
+        });
   }
 }
 
@@ -1274,6 +1332,8 @@ void Core::node_status_start() {
       [this, self = shared_from_this()](plugins::Result<std::shared_ptr<events::Subscription>> subscribed) {
         if (!subscribed.ok) _logger->warn("Cannot listen for the other nodes - " + subscribed.error);
       });
+
+  auth_listen();
 
   _node_status_publish();
 }

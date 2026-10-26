@@ -489,6 +489,24 @@ TEST(ProvisioningApiTest, ASubscriberWithNoCredentialIsRefused) {
   EXPECT_EQ(response.json().at("error").at("code").as_string(), "invalid_request");
 }
 
+// Review finding 29: a realm is a host name and a user an RFC 3261 user part. Realm a:b with user c and realm a with
+// user b:c would otherwise share a store key, and a name with a space or an @ makes an identity that does not parse.
+TEST(ProvisioningApiTest, RealmAndUserNamesMustBeWhatSipCanCarry) {
+  ApiFixture f;
+
+  for (const auto* name : {"a:b", "with space", "at@example.com", "-bad.example"}) {
+    auto response = f.post("/api/v1/realms", std::string(R"({"name":")") + name + R"("})");
+    EXPECT_EQ(response.status, 400u) << name;
+  }
+
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+  for (const auto* user : {"b:c", "a@b", "with space", "100%"}) {
+    auto response = f.post("/api/v1/realms/example.com/subscribers", std::string(R"({"user":")") + user + R"(","password":"secret"})");
+    EXPECT_EQ(response.status, 400u) << user;
+  }
+  EXPECT_EQ(f.post("/api/v1/realms/example.com/subscribers", R"({"user":"+15551234567","password":"secret"})").status, 201u);
+}
+
 TEST(ProvisioningApiTest, ASubscriberIsDeleted) {
   ApiFixture f;
 

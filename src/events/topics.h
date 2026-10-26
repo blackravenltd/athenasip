@@ -37,6 +37,11 @@ inline std::string trunks_changed() { return "trunks/changed"; }
 // console or a fail2ban-like watcher; not retained.
 inline std::string auth_failed() { return "security/auth_failed"; }
 inline std::string source_banned() { return "security/banned"; }
+// An AOR closed to strangers for too many failures for it; an administrator lifting a ban or reopening an AOR. Every
+// node holds what the others ban and lifts what any lifts, so the list is the cluster's.
+inline std::string aor_closed() { return "security/aor_closed"; }
+inline std::string ban_lifted() { return "security/ban_lifted"; }
+inline std::string aor_reopened() { return "security/aor_reopened"; }
 
 inline std::string call_register(const std::string& call_id) { return "calls/" + call_id + "/register"; }
 

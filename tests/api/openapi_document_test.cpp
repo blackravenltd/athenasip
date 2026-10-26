@@ -52,6 +52,12 @@ TEST(OpenApiDocumentTest, DescribesTheLiveStateRoutes) {
   EXPECT_EQ(doc["paths"]["/conferences/{uri}"]["get"]["operationId"].as<std::string>(), "getConference");
   EXPECT_EQ(doc["paths"]["/conferences/{uri}/calls/{call}"]["delete"]["operationId"].as<std::string>(), "leaveConference");
 
+  // The bans and closed AORs guessing put in force, and their lifting (docs/authentication.md, Guessing).
+  EXPECT_EQ(doc["paths"]["/security/bans"]["get"]["operationId"].as<std::string>(), "listBans");
+  EXPECT_EQ(doc["paths"]["/security/bans/{source}"]["delete"]["operationId"].as<std::string>(), "liftBan");
+  EXPECT_EQ(doc["paths"]["/security/closed-aors"]["get"]["operationId"].as<std::string>(), "listClosedAors");
+  EXPECT_EQ(doc["paths"]["/security/closed-aors/{aor}"]["delete"]["operationId"].as<std::string>(), "reopenAor");
+
   // Outside /api/v1, so it overrides the server.
   EXPECT_TRUE(doc["paths"]["/metrics"]["servers"].IsSequence());
 
