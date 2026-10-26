@@ -88,6 +88,22 @@ class Channel : public std::enable_shared_from_this<Channel> {
   std::array<char, 65535> _read_buffer;
   std::string _buffer;
 
+  // What a stream may carry before the node stops reading it: a header block with no end past this is a peer
+  // that is not speaking SIP, and a body declared past this is one the node will not hold. A datagram is bounded
+  // by its own size.
+  static constexpr std::size_t kMaxHeaderBytes = 16 * 1024;
+  static constexpr std::size_t kMaxMessageBytes = 64 * 1024;
+
+  // Where the search for the end of the header block resumes, so a stream fed a byte at a time is read once.
+  std::size_t _scan_from = 0;
+
+  // The stream cannot be framed any further: say why, drop what was buffered, close.
+  void _overflow(const std::string& why);
+
+  // RFC 3261 18.3: the Content-Length, when the message carries exactly one that is a number; false for garbage, a
+  // value that overflows, or two of them, which a peer that meant to confuse the framing would send.
+  static bool _content_length_of(const std::shared_ptr<SIPMessage>& message, std::size_t& length);
+
   // CRLFs seen since the last message, for the keep-alive ping of RFC 5626 4.4.1.
   int _crlf_run = 0;
 

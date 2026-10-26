@@ -33,7 +33,7 @@ class SIPMessage {
 
   std::shared_ptr<SIPHeader> header;
   std::string body;
-  uint body_length = 0;
+  std::size_t body_length = 0;
 
   std::string branch;
   uint16_t source_port;

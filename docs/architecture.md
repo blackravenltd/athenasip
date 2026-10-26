@@ -85,6 +85,12 @@ connection again without resolving the Contact.
 
 A channel writes one message at a time; later writes queue behind the one in flight.
 
+A stream is read within limits: a header block of more than 16 KB with no end, or a
+message of more than 64 KB in all, closes the connection, the second with a 513 Message
+Too Large first (RFC 3261 18.1.1). A Content-Length that is not one number is answered 400
+and closes the stream too, since nothing after it can be framed. A datagram is bounded by
+its own size, and one whose Content-Length is not one number is discarded.
+
 Browsers served over HTTPS can only open `wss`, so secure WebSocket is the only way in for
 a web client.
 
