@@ -172,6 +172,7 @@ The rtpengine:// media engine, over its ng control port.
 | `media.rtpengine.attempts` | integer, 1 or more | `3` | Tries per request. An engine that answers none of them leaves the pool until it answers a ping. |
 | `media.rtpengine.ping_interval` | integer, 1 or more | `10` | Seconds between pings of every engine. |
 | `media.rtpengine.media_address` | text | none | The address rtpengine advertises. Empty leaves it to rtpengine's interfaces. A leg inside sip.localnet is given the node's local address. |
+| `media.rtpengine.dtmf_events` | text | none | host:port this node listens on for the key presses rtpengine hears, which become SIP INFO for a leg set to info (behaviour.dtmf). An address rtpengine can reach; port 0 picks one. Empty is off. |
 
 ## `policy`
 

@@ -164,7 +164,8 @@ is never on the call path, so callers do not wait on it. Use
   `Flags` say how each end sends key presses (`dtmf_from`, `dtmf_to`); an engine that can
   converts when they differ.
 - `play_dtmf`, `start_recording`, `stop_recording`, `join`, `leave` and `roster` default
-  to a failure or an empty answer.
+  to a failure or an empty answer. `dtmf_listen` hands the engine a listener for the key
+  presses it hears and answers whether it will report any; the default reports none.
 - `packets_relayed()` feeds metrics and may return nothing.
 
 ### PushService

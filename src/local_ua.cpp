@@ -7,9 +7,11 @@
 #include "local_ua.h"
 
 #include <algorithm>
+#include <chrono>
 #include <utility>
 #include <vector>
 
+#include "call.h"
 #include "core.h"
 #include "dialogs.h"
 #include "util.h"
@@ -33,8 +35,8 @@ bool LocalUA::hang_up(const std::string& call_id, const std::string& reason) {
 
   for (const auto& dialog : confirmed) {
     // Both are built before either is sent: the first BYE ends the dialog they are built from.
-    auto to_callee = _bye_to(*dialog, true);
-    auto to_caller = _bye_to(*dialog, false);
+    auto to_callee = _request_to(*dialog, true, "BYE");
+    auto to_caller = _request_to(*dialog, false, "BYE");
 
     _logger->info("Hanging up call " + call_id + " towards both ends - " + reason);
 
@@ -55,7 +57,39 @@ bool LocalUA::hang_up(const std::string& call_id, const std::string& reason) {
   return true;
 }
 
-std::shared_ptr<SIPMessage> LocalUA::_bye_to(const types::Dialog& dialog, bool callee) const {
+bool LocalUA::key_pressed(const std::string& call_id, const std::string& source_tag, char digit, std::chrono::milliseconds duration) {
+  auto core = _core.lock();
+  if (!core) return false;
+
+  auto call = core->call_get(call_id);
+  if (!call) return false;
+
+  std::shared_ptr<types::Dialog> dialog;
+  for (const auto& candidate : core->dialogs()->all()) {
+    if (candidate && candidate->call_id == call_id && candidate->state == types::Dialog::State::Confirmed) dialog = candidate;
+  }
+  if (!dialog) return false;
+
+  // The press came from one leg; the other gets the INFO, if INFO is what it speaks.
+  const bool from_caller = dialog->is_from_caller(source_tag);
+  const auto far = call->participant_index(!from_caller);
+  if (!far || call->participants[*far].dtmf != types::MediaPolicy::Dtmf::Info) return false;
+
+  auto info = _request_to(*dialog, from_caller, "INFO", "application/dtmf-relay",
+                          "Signal=" + std::string(1, digit) + "\r\nDuration=" + std::to_string(duration.count()) + "\r\n");
+  if (!info) return false;
+
+  _logger->debug("Sending " + std::string(1, digit) + " as INFO on call " + call_id);
+  core->local_request(info, [this, self = shared_from_this(), call_id](std::shared_ptr<SIPMessage> response) {
+    if (response && response->header && response->header->response_code >= 300) {
+      _logger->info("A key press by INFO for call " + call_id + " was answered " + std::to_string(response->header->response_code));
+    }
+  });
+  return true;
+}
+
+std::shared_ptr<SIPMessage> LocalUA::_request_to(const types::Dialog& dialog, bool callee, const std::string& method, const std::string& content_type,
+                                                 const std::string& body) const {
   auto core = _core.lock();
   if (!core) return nullptr;
 
@@ -81,18 +115,20 @@ std::shared_ptr<SIPMessage> LocalUA::_bye_to(const types::Dialog& dialog, bool c
   const auto branch = std::string("z9hG4bK") + Util::generate_random_string("", 16);
   const auto advertised = core->config->public_address().empty() ? std::string("athenasip.invalid") : core->config->public_address();
 
-  std::string raw = "BYE " + target->to_string() + " SIP/2.0\r\n";
+  std::string raw = method + " " + target->to_string() + " SIP/2.0\r\n";
   raw += "Via: SIP/2.0/UDP " + advertised + ";branch=" + branch + "\r\n";
   raw += "Max-Forwards: 70\r\n";
   for (const auto& route : routes) raw += "Route: <" + route->to_string() + ">\r\n";
   raw += "From: <" + from->uri->to_string() + ">;tag=" + (callee ? dialog.caller_tag : dialog.callee_tag) + "\r\n";
   raw += "To: <" + to->uri->to_string() + ">;tag=" + (callee ? dialog.callee_tag : dialog.caller_tag) + "\r\n";
   raw += "Call-ID: " + dialog.call_id + "\r\n";
-  raw += "CSeq: " + std::to_string(cseq) + " BYE\r\n";
-  raw += "Content-Length: 0\r\n";
+  raw += "CSeq: " + std::to_string(cseq) + " " + method + "\r\n";
+  if (!content_type.empty()) raw += "Content-Type: " + content_type + "\r\n";
+  raw += "Content-Length: " + std::to_string(body.size()) + "\r\n";
 
   auto message = std::make_shared<SIPMessage>();
   message->header = std::make_shared<SIPHeader>(raw);
+  message->body = body;
   message->branch = branch;
   return message;
 }

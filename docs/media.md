@@ -167,9 +167,10 @@ forwarded as any request in a dialog is. When they differ, the node asks rtpengi
 convert: events to tones and tones to events are rtpengine's DTMF transcoding, which puts
 the call's audio through its transcoder; an INFO from a leg set to `info` is answered by
 the node and played into the media by rtpengine, as events or tones, whichever the far
-leg takes. Events or tones towards a leg set to `info` are not turned into INFO yet. The
-builtin relay converts nothing; a call whose legs differ behind it is logged once, as a
-warning naming both methods.
+leg takes; and the events or tones rtpengine hears on a leg become INFO towards a leg set
+to `info`, when `media.rtpengine.dtmf_events` names an address rtpengine can send them to
+([configuration](configuration.md#media)). The builtin relay converts nothing; a call
+whose legs differ behind it is logged once, as a warning naming both methods.
 
 ## Is media flowing?
 

@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <boost/asio/bind_executor.hpp>
+#include <boost/json.hpp>
 #include <boost/asio/dispatch.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <chrono>
@@ -88,6 +89,9 @@ void apply_dtmf(Bencode& command, const Flags& flags) {
   Bencode::List names;
   if (*flags.dtmf_from == Dtmf::Info || *flags.dtmf_to == Dtmf::Info) names.push_back(Bencode(std::string("inject DTMF")));
 
+  // A leg that speaks INFO is told of key presses by INFO, not by the events or tones the other leg sent.
+  if (*flags.dtmf_to == Dtmf::Info) names.push_back(Bencode(std::string("block DTMF")));
+
   if (*flags.dtmf_from == Dtmf::Rfc4733 && *flags.dtmf_to == Dtmf::Inband) {
     names.push_back(Bencode(std::string("always transcode")));
     command.set("codec", Bencode::dictionary({{"strip", Bencode::list({Bencode(std::string("telephone-event"))})}}));
@@ -123,6 +127,24 @@ bool parse_engine(const std::string& text, std::string& host, std::uint16_t& por
     }
   }
 
+  return !host.empty();
+}
+
+// host:port or [v6]:port to listen on, where port may be 0 for any.
+bool parse_listen(const std::string& text, std::string& host, std::uint16_t& port) {
+  const auto colon = text.rfind(':');
+  if (colon == std::string::npos || colon + 1 >= text.size()) return false;
+
+  host = text.substr(0, colon);
+  if (host.size() >= 2 && host.front() == '[' && host.back() == ']') host = host.substr(1, host.size() - 2);
+
+  try {
+    const auto value = std::stoi(text.substr(colon + 1));
+    if (value < 0 || value > 65535) return false;
+    port = static_cast<std::uint16_t>(value);
+  } catch (const std::exception&) {
+    return false;
+  }
   return !host.empty();
 }
 
@@ -167,6 +189,9 @@ plugins::Settings RtpengineMediaEngine::settings() {
       text("rtpengine.media_address", "",
            "The address rtpengine advertises. Empty leaves it to rtpengine's interfaces. A leg inside sip.localnet is given the "
            "node's local address."),
+      text("rtpengine.dtmf_events", "",
+           "host:port this node listens on for the key presses rtpengine hears, which become SIP INFO for a leg set to info "
+           "(behaviour.dtmf). An address rtpengine can reach; port 0 picks one. Empty is off."),
   };
 }
 
@@ -181,6 +206,16 @@ bool RtpengineMediaEngine::configure(const YAML::Node& own_root, const Config& s
     _ping_interval = positive_or(own_root["ping_interval"], _ping_interval);
 
     if (own_root["media_address"]) _media_address = own_root["media_address"].as<std::string>();
+
+    if (own_root["dtmf_events"]) {
+      _dtmf_events = own_root["dtmf_events"].as<std::string>("");
+      std::string host;
+      std::uint16_t port = 0;
+      if (!_dtmf_events.empty() && !parse_listen(_dtmf_events, host, port)) {
+        _logger->error("rtpengine.dtmf_events: cannot read \"" + _dtmf_events + "\" as host:port");
+        return false;
+      }
+    }
 
     if (const auto engines = own_root["engines"]; engines && engines.IsSequence()) {
       for (const auto& entry : engines) {
@@ -282,6 +317,33 @@ void RtpengineMediaEngine::connect(plugins::Executor on, plugins::StatusHandler 
 
     _receive();
 
+    // Where rtpengine sends the key presses it hears, when asked to.
+    if (!_dtmf_events.empty()) {
+      std::string host;
+      std::uint16_t port = 0;
+      parse_listen(_dtmf_events, host, port);
+      auto address = boost::asio::ip::make_address(host, ec);
+      if (ec) {
+        _logger->warn("rtpengine.dtmf_events: " + host + " is not an address - key presses will not become INFO");
+      } else {
+        auto events = std::make_shared<boost::asio::ip::udp::socket>(detail::get_global_io_context());
+        events->open(address.is_v6() ? boost::asio::ip::udp::v6() : boost::asio::ip::udp::v4(), ec);
+        if (!ec) events->bind(boost::asio::ip::udp::endpoint(address, port), ec);
+        if (ec) {
+          _logger->warn("rtpengine.dtmf_events: cannot listen on " + _dtmf_events + " - " + ec.message() + " - key presses will not become INFO");
+        } else {
+          const auto bound = events->local_endpoint();
+          _events_destination = (address.is_v6() ? "[" + address.to_string() + "]" : address.to_string()) + ":" + std::to_string(bound.port());
+          {
+            std::lock_guard<std::mutex> lock(_socket_mutex);
+            _events_socket = std::move(events);
+          }
+          _events_receive();
+          _logger->info("Listening for key presses rtpengine hears on " + _events_destination);
+        }
+      }
+    }
+
     // A UDP socket opens whether or not anything listens, so the pool is connected only once an engine answers a ping.
     _ping_all([this, self, on, handler = std::move(handler)]() mutable {
       if (!is_connected()) {
@@ -356,10 +418,12 @@ void RtpengineMediaEngine::close() {
   _public.stop();
 
   std::shared_ptr<boost::asio::ip::udp::socket> socket;
+  std::shared_ptr<boost::asio::ip::udp::socket> events;
 
   {
     std::lock_guard<std::mutex> lock(_socket_mutex);
     socket = std::move(_socket);
+    events = std::move(_events_socket);
   }
 
   if (!socket) return;
@@ -369,9 +433,10 @@ void RtpengineMediaEngine::close() {
   // because close() also runs from the destructor.
   auto weak = weak_from_this();
 
-  boost::asio::post(_strand, [socket, weak]() {
+  boost::asio::post(_strand, [socket, events, weak]() {
     boost::system::error_code ec;
     socket->close(ec);
+    if (events) events->close(ec);
 
     if (auto self = weak.lock()) {
       if (self->_ping_timer) self->_ping_timer->cancel();
@@ -545,6 +610,69 @@ void RtpengineMediaEngine::_receive() {
       boost::asio::bind_executor(_strand, [this, self, socket](const boost::system::error_code& ec, std::size_t length) { _on_receive(ec, length); }));
 }
 
+bool RtpengineMediaEngine::dtmf_listen(DtmfListener listener) {
+  _dtmf_listener = std::move(listener);
+  return !_dtmf_events.empty();
+}
+
+void RtpengineMediaEngine::_events_receive() {
+  std::shared_ptr<boost::asio::ip::udp::socket> socket;
+  {
+    std::lock_guard<std::mutex> lock(_socket_mutex);
+    socket = _events_socket;
+  }
+  if (!socket || !socket->is_open()) return;
+
+  if (_event_buffer.size() < 4096) _event_buffer.resize(4096);
+
+  auto self = shared_from_this();
+  socket->async_receive_from(
+      boost::asio::buffer(_event_buffer), _event_from,
+      boost::asio::bind_executor(_strand, [this, self, socket](const boost::system::error_code& ec, std::size_t length) { _on_event(ec, length); }));
+}
+
+// One datagram per key press, as daemon/dtmf.c writes it: {"callid", "source_tag", "tags", "type": "DTMF",
+// "timestamp", "source_ip", "event", "duration", "volume"}; event is 0 to 15 (0-9, *, #, A-D), duration in ms.
+void RtpengineMediaEngine::_on_event(const boost::system::error_code& ec, std::size_t length) {
+  if (ec) {
+    if (ec != boost::asio::error::operation_aborted) {
+      _logger->warn("Receiving a key press failed - " + ec.message());
+      _events_receive();
+    }
+    return;
+  }
+
+  const std::string datagram(_event_buffer.data(), length);
+  boost::system::error_code parse_error;
+  const auto parsed = boost::json::parse(datagram, parse_error);
+
+  if (parse_error || !parsed.is_object()) {
+    _logger->warn("A key press from rtpengine was not JSON - ignored");
+  } else {
+    const auto& object = parsed.as_object();
+    const auto* call_id = object.if_contains("callid");
+    const auto* source_tag = object.if_contains("source_tag");
+    const auto* event = object.if_contains("event");
+    const auto* duration = object.if_contains("duration");
+
+    static constexpr char kDigits[] = "0123456789*#ABCD";
+    const auto code = event != nullptr && event->is_number() ? event->to_number<std::int64_t>() : -1;
+
+    if (call_id == nullptr || !call_id->is_string() || source_tag == nullptr || !source_tag->is_string() || code < 0 || code > 15) {
+      _logger->warn("A key press from rtpengine named no call, tag or digit - ignored");
+    } else if (_dtmf_listener) {
+      DtmfEvent pressed;
+      pressed.call_id = std::string(call_id->as_string());
+      pressed.source_tag = std::string(source_tag->as_string());
+      pressed.digit = kDigits[code];
+      pressed.duration = std::chrono::milliseconds(duration != nullptr && duration->is_number() ? duration->to_number<std::int64_t>() : 0);
+      _dtmf_listener(std::move(pressed));
+    }
+  }
+
+  _events_receive();
+}
+
 void RtpengineMediaEngine::_on_receive(const boost::system::error_code& ec, std::size_t length) {
   if (ec) {
     // operation_aborted is close(); after anything else, carry on, since the next datagram may be fine.
@@ -670,6 +798,9 @@ void RtpengineMediaEngine::offer(plugins::Executor on, std::shared_ptr<Call> cal
 
   apply_profile(command, flags.target, flags.rtcp_mux, false);
   apply_dtmf(command, flags);
+
+  // The far leg speaks INFO: the key presses this leg sends are reported here, to be sent on as INFO.
+  if (flags.dtmf_to == types::MediaPolicy::Dtmf::Info && !_events_destination.empty()) command.set("DTMF-log-dest", Bencode(_events_destination));
 
   if (const auto advertise = _advertise_for(flags); !advertise.empty()) command.set("media-address", Bencode(advertise));
 

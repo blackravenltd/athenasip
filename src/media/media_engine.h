@@ -146,6 +146,24 @@ class MediaEngine : public plugins::Plugin {
   // Packets relayed over the engine's lifetime. Optional: the default reports nothing.
   virtual std::optional<std::uint64_t> packets_relayed() const { return std::nullopt; }
 
+  // A key press the engine heard in a leg's media: RFC 4733 event or tone, by the call and the dialog tag of the
+  // leg it came from (RFC 3261 12.1.1), as one of 0-9, *, # or A-D, with how long it was held.
+  struct DtmfEvent {
+    std::string call_id;
+    std::string source_tag;
+    char digit = '0';
+    std::chrono::milliseconds duration{0};
+  };
+  using DtmfListener = std::function<void(DtmfEvent)>;
+
+  // Hears the key presses the engine detects, on whatever thread the engine runs: how the node turns them into SIP
+  // INFO for a leg that speaks it. True when the engine reports them; the default reports none. Called once, before
+  // connect().
+  virtual bool dtmf_listen(DtmfListener listener) {
+    (void)listener;
+    return false;
+  }
+
   // Plays key presses as if the participant had pressed them, into the media it sends: RFC 4733 events where the
   // far end takes them, else tones. How the node carries a SIP INFO across to a leg that does not speak INFO. Each of
   // digits is 0-9, *, # or A-D, and duration is each one's length. When capabilities().dtmf is set; the default

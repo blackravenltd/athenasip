@@ -242,6 +242,7 @@ the driver for what a URL cannot express. [Plugins](plugins.md) describes the co
 | `attempts` | `3` | Total tries per request. An engine that gives no answer in all of them is taken out of the pool until it answers a ping. |
 | `ping_interval` | `10` | Seconds between pings of every engine |
 | `media_address` | unset | Address rtpengine should advertise. Leave unset to let rtpengine's interface configuration decide. May be a host name. A leg inside `sip.localnet` is given the node's local address instead. |
+| `dtmf_events` | unset | `host:port` this node listens on for the key presses rtpengine hears, which it sends on as SIP INFO to a leg set to `info` ([Media](media.md#dtmf)). An address rtpengine can reach; port `0` picks one. Unset, key presses towards an INFO leg are not converted. |
 
 Whether media is anchored at all is [`behaviour.media_anchor`](#behaviour).
 

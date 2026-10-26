@@ -9,8 +9,11 @@
 #include <gtest/gtest.h>
 #include <yaml-cpp/yaml.h>
 
+#include <boost/asio/ip/udp.hpp>
 #include <boost/json.hpp>
+#include <atomic>
 #include <chrono>
+#include <mutex>
 #include <ctime>
 #include <memory>
 #include <set>
@@ -19,6 +22,7 @@
 
 #include "../helpers/fake_rtpengine_helper.h"
 #include "../helpers/sync_media_engine_helper.h"
+#include "../helpers/wait_for_condition_helper.h"
 #include "../mocks/logger_mock.h"
 #include "call.h"
 #include "config.h"
@@ -1020,6 +1024,82 @@ TEST(RtpengineMediaEngineTest, KeyPressesArePlayedInOneDigitAtATime) {
   const auto* duration = plays[0].find("duration");
   ASSERT_NE(duration, nullptr);
   EXPECT_EQ(duration->integer(), 100) << "rtpengine takes no less";
+
+  engine->close();
+}
+
+// With rtpengine.dtmf_events set, the driver listens there, names it on the offer towards a leg that speaks INFO
+// (DTMF-log-dest, with the far leg's own events blocked), and turns each JSON datagram rtpengine sends into a key
+// press for the listener.
+TEST(RtpengineMediaEngineTest, KeyPressesRtpengineHearsAreReportedToTheListener) {
+  using Dtmf = types::MediaPolicy::Dtmf;
+  FakeRtpengine fake;
+  fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
+  fake.answer("offer", ok_with_sdp(kOffer));
+
+  auto engine = make_engine(fake, "timeout_ms: 100\nattempts: 3\ndtmf_events: 127.0.0.1:0");
+
+  std::atomic<bool> heard{false};
+  media::MediaEngine::DtmfEvent pressed;
+  std::mutex mutex;
+  EXPECT_TRUE(engine->driver()->dtmf_listen([&](media::MediaEngine::DtmfEvent event) {
+    std::lock_guard<std::mutex> lock(mutex);
+    pressed = std::move(event);
+    heard = true;
+  }));
+  ASSERT_TRUE(engine->connect());
+
+  Flags flags;
+  flags.participant = 0;
+  flags.dtmf_from = Dtmf::Rfc4733;
+  flags.dtmf_to = Dtmf::Info;
+  ASSERT_TRUE(engine->offer(make_call(), kOffer, flags).ok);
+
+  auto request = fake.last("offer");
+  ASSERT_TRUE(request.has_value());
+  const auto destination = request->string_at("DTMF-log-dest");
+  ASSERT_NE(destination.find("127.0.0.1:"), std::string::npos) << destination;
+  const auto* names = request->find("flags");
+  ASSERT_NE(names, nullptr);
+  bool blocked = false;
+  for (const auto& value : names->values()) blocked = blocked || value.string() == "block DTMF";
+  EXPECT_TRUE(blocked);
+
+  // What daemon/dtmf.c sends, to where the offer said.
+  const auto port = static_cast<std::uint16_t>(std::stoi(destination.substr(destination.rfind(':') + 1)));
+  boost::asio::io_context io;
+  boost::asio::ip::udp::socket socket(io, boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
+  const std::string datagram =
+      R"({"callid":"call-1@example.com","source_tag":"alice-tag","tags":["alice-tag","bob-tag"],"type":"DTMF","timestamp":1,)"
+      R"("source_ip":"192.0.2.10","event":11,"duration":120,"volume":10})";
+  socket.send_to(boost::asio::buffer(datagram), boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), port));
+
+  ASSERT_TRUE(waitForCondition(heard, std::chrono::seconds(2)));
+  std::lock_guard<std::mutex> lock(mutex);
+  EXPECT_EQ(pressed.call_id, "call-1@example.com");
+  EXPECT_EQ(pressed.source_tag, "alice-tag");
+  EXPECT_EQ(pressed.digit, '#');
+  EXPECT_EQ(pressed.duration, std::chrono::milliseconds(120));
+
+  engine->close();
+}
+
+// Without the setting the driver reports no key presses, and an offer names no destination.
+TEST(RtpengineMediaEngineTest, WithoutAnEventsAddressNoKeyPressIsReported) {
+  FakeRtpengine fake;
+  fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
+  fake.answer("offer", ok_with_sdp(kOffer));
+
+  auto engine = make_engine(fake);
+  EXPECT_FALSE(engine->driver()->dtmf_listen([](media::MediaEngine::DtmfEvent) {}));
+  ASSERT_TRUE(engine->connect());
+
+  Flags flags;
+  flags.participant = 0;
+  flags.dtmf_from = types::MediaPolicy::Dtmf::Rfc4733;
+  flags.dtmf_to = types::MediaPolicy::Dtmf::Info;
+  ASSERT_TRUE(engine->offer(make_call(), kOffer, flags).ok);
+  EXPECT_EQ(fake.last("offer")->find("DTMF-log-dest"), nullptr);
 
   engine->close();
 }
