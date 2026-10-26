@@ -6,6 +6,8 @@
 //
 #pragma once
 
+#include <cstdint>
+
 #include "header.h"
 
 using namespace athenasip;
