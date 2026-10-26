@@ -145,7 +145,13 @@
   </send>
 
   <recv response="200"/>
-  <recv response="487"/>
+
+  <!-- RFC 3261 9.2: the 487 answers the INVITE, so its CSeq names the INVITE, not the CANCEL. -->
+  <recv response="487">
+    <action>
+      <ereg regexp="^ *2 INVITE" search_in="hdr" header="CSeq:" check_it="true" assign_to="cseq_invite"/>
+    </action>
+  </recv>
 
   <send>
     <![CDATA[
@@ -162,6 +168,6 @@
     ]]>
   </send>
 
-  <Reference variables="via,invite_branch"/>
+  <Reference variables="via,invite_branch,cseq_invite"/>
 
 </scenario>
