@@ -34,6 +34,7 @@ realm or its subscribers needs the realm roles ([Authentication](authentication.
 | 403 | `REGISTER for <uri>, a domain not served here, and sip.forward_register is never - 403` | The client registers to a domain that is not a realm on this node. Create a realm with that exact name, or set the client's domain to an existing realm. |
 | 404 | `REGISTER for unserved domain <domain> - 404` | The domain after `@` in the client's address is not a realm here. Same fix as 403. |
 | 423 | `REGISTER asked for <n>s, below the realm minimum - 423` | The client asked for a shorter registration than the realm's `registration_minimum`. Lengthen it in the client, or lower the realm's setting. |
+| 403 Too Many Bindings | `REGISTER for <aor> would hold <n> bindings, above the <max> allowed - 403` | The address of record already holds the realm's `registration_max_bindings` (10 by default). Remove stale bindings (Expires 0, or `DELETE` them over the API), or raise the realm's setting. |
 | 423 | `REGISTER asked for push with <n>s, too brief to be woken in time - 423` | A push client must register for at least `push.refresh` + 60 seconds (240 by default). |
 | 555 | `REGISTER asked for <service> push, which is not served or lacks what it needs - 555` | The client asked for a push service not in `push.urls`, or its Contact lacks `pn-param` where the service needs one. See [Push does not wake a phone](#push-does-not-wake-a-phone). |
 

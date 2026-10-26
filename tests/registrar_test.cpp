@@ -931,3 +931,44 @@ TEST(RegistrarTest, AnExpiryBeyondThirtyTwoBitsIsTheRealmsMaximumNotARemoval) {
   f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "", "<sip:alice@192.0.2.10:5060>;expires=60x", "z9hG4bK-bad"));
   EXPECT_NE(f.response_with(f.connection, 400), nullptr);
 }
+
+// Review finding 15: the realm caps how many bindings one address of record holds. A REGISTER that would leave more
+// is refused 403 and changes nothing; replacing or removing a binding is always allowed, at the cap or not.
+TEST(RegistrarTest, AnAorHoldsNoMoreBindingsThanTheRealmAllows) {
+  Fixture f;
+  auto realm = f.store->realm_get_by_name("example.com");
+  realm->registration_max_bindings = 2;
+  f.store->realm_update(realm);
+
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "600", "<sip:alice@192.0.2.10:5060>", "z9hG4bK-1"));
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "600", "<sip:alice@192.0.2.11:5060>", "z9hG4bK-2"));
+  ASSERT_EQ(f.store->location_list(7).size(), 2u);
+
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "600", "<sip:alice@192.0.2.12:5060>", "z9hG4bK-3"));
+  EXPECT_NE(f.response_with(f.connection, 403), nullptr);
+  EXPECT_EQ(f.store->location_list(7).size(), 2u);
+
+  // A refresh of one held, and a swap in one request, stay within it.
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "600", "<sip:alice@192.0.2.10:5060>", "z9hG4bK-4"));
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "600",
+                                          "<sip:alice@192.0.2.11:5060>;expires=0, <sip:alice@192.0.2.12:5060>", "z9hG4bK-5"));
+  EXPECT_EQ(f.responses_with(f.connection, 200).size(), 4u);
+  std::string held;
+  for (const auto& location : f.store->location_list(7)) held += location.contact->to_string() + " ";
+  EXPECT_EQ(f.store->location_list(7).size(), 2u) << held;
+}
+
+// RFC 3261 10.2.1: a contact's expires parameter is its own; the Expires header field is the default for the
+// others. One REGISTER that removes a binding and adds another does both.
+TEST(RegistrarTest, AContactsExpiresParameterIsItsOwnNotTheOthersDefault) {
+  Fixture f;
+
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "600", "<sip:alice@192.0.2.11:5060>", "z9hG4bK-1"));
+  ASSERT_EQ(f.store->location_list(7).size(), 1u);
+
+  f.receive(f.channel, f.register_request(f.credentials(f.fresh_nonce()), "600",
+                                          "<sip:alice@192.0.2.11:5060>;expires=0, <sip:alice@192.0.2.12:5060>", "z9hG4bK-2"));
+  const auto held = f.store->location_list(7);
+  ASSERT_EQ(held.size(), 1u);
+  EXPECT_EQ(held[0].contact->host, "192.0.2.12");
+}

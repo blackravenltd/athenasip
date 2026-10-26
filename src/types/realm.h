@@ -129,6 +129,11 @@ class Realm {
   // the default, accepts any. RFC 3261 10.3 says to reject only when refreshes would degrade the registrar.
   uint32_t registration_minimum = 0;
 
+  // The most bindings one address of record may hold. A REGISTER that would leave more is refused 403, so one
+  // subscriber's credentials cannot fill the location store or fork every call to thousands of contacts (review
+  // finding 15). Zero is no cap.
+  uint32_t registration_max_bindings = 10;
+
   // What this realm does differently from the server's default.
   Behaviour behaviour;
 

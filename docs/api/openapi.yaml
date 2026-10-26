@@ -2075,6 +2075,11 @@ components:
         registration_timeout:
           type: integer
           description: The longest registration this realm grants, in seconds
+        registration_max_bindings:
+          type: integer
+          description: >-
+            The most bindings one address of record may hold, 10 by default; a REGISTER that would
+            leave more is refused 403. Zero is no cap.
         registration_minimum:
           type: integer
           description: >-
@@ -2174,6 +2179,8 @@ components:
           type: integer
         registration_timeout:
           type: integer
+        registration_max_bindings:
+          type: integer
         registration_minimum:
           type: integer
         behaviour:
@@ -2191,6 +2198,8 @@ components:
         nonce_expiry:
           type: integer
         registration_timeout:
+          type: integer
+        registration_max_bindings:
           type: integer
         registration_minimum:
           type: integer

@@ -248,6 +248,7 @@ void ProvisioningAPI::_realm_create(RouteContext context) {
   if (const auto expiry = uint_field(*body, "nonce_expiry")) realm->nonce_expiry = *expiry;
   if (const auto timeout = uint_field(*body, "registration_timeout")) realm->registration_timeout = *timeout;
   if (const auto minimum = uint_field(*body, "registration_minimum")) realm->registration_minimum = *minimum;
+  if (const auto cap = uint_field(*body, "registration_max_bindings")) realm->registration_max_bindings = *cap;
 
   if (auto refused = read_behaviour(*body, realm->behaviour); !refused.empty() || !(refused = read_attributes(*body, realm->attributes)).empty()) {
     write_error(context.response, http::status::bad_request, "invalid_request", refused);
@@ -291,6 +292,7 @@ void ProvisioningAPI::_realm_update(RouteContext context) {
     if (const auto expiry = uint_field(*body, "nonce_expiry")) realm->nonce_expiry = *expiry;
     if (const auto timeout = uint_field(*body, "registration_timeout")) realm->registration_timeout = *timeout;
     if (const auto minimum = uint_field(*body, "registration_minimum")) realm->registration_minimum = *minimum;
+    if (const auto cap = uint_field(*body, "registration_max_bindings")) realm->registration_max_bindings = *cap;
 
     if (auto refused = read_behaviour(*body, realm->behaviour); !refused.empty() || !(refused = read_attributes(*body, realm->attributes)).empty()) {
       write_error(context.response, http::status::bad_request, "invalid_request", refused);
@@ -898,6 +900,7 @@ boost::json::object ProvisioningAPI::_realm_json(const types::Realm& realm) cons
   object["nonce_expiry"] = realm.nonce_expiry;
   object["registration_timeout"] = realm.registration_timeout;
   object["registration_minimum"] = realm.registration_minimum;
+  object["registration_max_bindings"] = realm.registration_max_bindings;
   // What the realm chose (null where it inherits), and the effective result over the
   // server's default.
   boost::json::object chosen;

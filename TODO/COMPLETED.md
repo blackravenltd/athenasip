@@ -3864,3 +3864,15 @@ Findings 43 and 44.
       field and answers only MD5 (from the AthenaPhone session). A comment in
       `digest::add_challenges`; `RegistrarTest.TheChallengesAreSha256ThenMd5AsSeparateFields`.
       The suite 1636, 1564 passed.
+
+### The perimeter, the rest: finding 15, a cap on bindings (2026-10-26)
+
+- [x] **A realm caps the bindings one AOR holds**: `registration_max_bindings`, 10 by default,
+      0 for none; a REGISTER that would leave more is `403 Too Many Bindings` and changes
+      nothing, counting what it replaces and removes. The realm record (both drivers), the API,
+      the OpenAPI document and the Lua realm view carry it.
+      `RegistrarTest.AnAorHoldsNoMoreBindingsThanTheRealmAllows`.
+- [x] **Found on the way, RFC 3261 10.2.1**: the registrar took the first contact's `expires`
+      parameter as the default for every contact, so `<a>;expires=0, <b>` removed b too. The
+      Expires header field is the default now, and a contact's parameter its own.
+      `RegistrarTest.AContactsExpiresParameterIsItsOwnNotTheOthersDefault`.

@@ -203,7 +203,9 @@ void Registrar::on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<
           _logger->error("REGISTER accepted by the policy with no realm - 500");
           return _send_status(transaction, request, 500, "Server Internal Error");
         }
-        return _on_realm(request, transaction, aor, decision.realm, Terms{decision.max_expires, decision.min_expires, decision.qualify_interval});
+        return _on_realm(request, transaction, aor, decision.realm,
+                         Terms{decision.max_expires, decision.min_expires, decision.qualify_interval,
+                               decision.realm ? decision.realm->registration_max_bindings : 0u});
     }
   });
 }
@@ -399,7 +401,8 @@ void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared
   // RFC 3261 10.3 step 7: an update from the Call-ID that last wrote a binding needs a higher CSeq; one that is not
   // higher is a REGISTER out of order, late over UDP or replayed by a failover, and would undo a newer one. The
   // whole request fails, as a request out of order in a dialog does (12.2.2).
-  core->location_list(subscriber->id, [this, self, request, transaction, subscriber, bindings, expires](plugins::Result<std::vector<types::Location>> found) {
+  core->location_list(subscriber->id, [this, self, request, transaction, subscriber, bindings, expires,
+                                       terms](plugins::Result<std::vector<types::Location>> found) {
     if (found.ok) {
       const auto order = order_of(*request);
       for (const auto& location : found.value) {
@@ -408,6 +411,24 @@ void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared
           _logger->info("REGISTER for " + subscriber->identity->to_string() + " with CSeq " + std::to_string(order.second) + ", not above the " +
                         std::to_string(location.cseq) + " that last wrote " + binding.contact->to_string() + " - 500");
           return _send_status(transaction, request, 500, "Server Internal Error");
+        }
+      }
+
+      // The realm's cap on bindings (review finding 15): what the AOR would hold once this request is applied, each
+      // contact replacing or removing the binding it names and adding one where it names none.
+      if (terms.max_bindings != 0) {
+        std::size_t after = found.value.size();
+        for (const auto& binding : *bindings) {
+          const bool held = std::any_of(found.value.begin(), found.value.end(), [&binding](const types::Location& location) {
+            return same_binding(location, binding.contact, binding.instance, binding.reg_id);
+          });
+          if (held && binding.expires == 0) --after;
+          if (!held && binding.expires != 0) ++after;
+        }
+        if (after > terms.max_bindings) {
+          _logger->info("REGISTER for " + subscriber->identity->to_string() + " would hold " + std::to_string(after) + " bindings, above the " +
+                        std::to_string(terms.max_bindings) + " allowed - 403");
+          return _send_status(transaction, request, 403, "Too Many Bindings");
         }
       }
     }
@@ -518,18 +539,10 @@ void Registrar::_store_binding(std::shared_ptr<SIPMessage> request, std::shared_
       binding.instance, binding.reg_id, binding.push, order_of(*request).first, order_of(*request).second);
 }
 
+// RFC 3261 10.2.1: the Expires header field is the default for every contact that has no expires parameter of its own.
+// A contact's own parameter is that contact's alone (the binding loop reads it), never the default for the others:
+// `<a>;expires=0, <b>` removes a and registers b.
 std::uint32_t Registrar::_requested_expiry(const std::shared_ptr<SIPMessage>& request, const Terms& terms) const {
-  if (request->header->contains("Contact")) {
-    auto contact = request->header->headers_map["Contact"][0]->as<SIPIdentityHeader>();
-    if (contact != nullptr && contact->value != nullptr) {
-      const auto tag = contact->value->tags.find("expires");
-      // One that is no number falls through to the Expires header.
-      if (tag != contact->value->tags.end()) {
-        if (const auto asked = number_of(tag->second)) return expiry_of(*asked);
-      }
-    }
-  }
-
   if (request->header->contains("Expires")) {
     auto expires = request->header->headers_map["Expires"][0]->as<UIntHeader>();
     if (expires != nullptr) return expiry_of(expires->value);

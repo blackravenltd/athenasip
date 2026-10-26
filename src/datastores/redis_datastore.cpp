@@ -1119,6 +1119,7 @@ std::string RedisDatastore::_serialise_realm(const std::shared_ptr<types::Realm>
   obj["nonce_expiry"] = realm->nonce_expiry;
   obj["registration_timeout"] = realm->registration_timeout;
   obj["registration_minimum"] = realm->registration_minimum;
+  obj["registration_max_bindings"] = realm->registration_max_bindings;
   // Only what the realm chose is stored; an unset setting inherits the server's default.
   // The profile is stored under the key "media_profiles".
   if (realm->behaviour.media_anchor) obj["media_anchor"] = *realm->behaviour.media_anchor;
@@ -1140,6 +1141,8 @@ std::shared_ptr<types::Realm> RedisDatastore::_parse_realm(const std::string& va
   realm->nonce_expiry = json_uint32(obj, "nonce_expiry");
   realm->registration_timeout = json_uint32(obj, "registration_timeout");
   realm->registration_minimum = json_uint32(obj, "registration_minimum");
+  // A realm stored before the cap existed gets the default.
+  if (obj.if_contains("registration_max_bindings")) realm->registration_max_bindings = json_uint32(obj, "registration_max_bindings");
 
   // Absent is unset. A stored value that does not parse leaves the setting unset.
   if (const auto* anchor = obj.if_contains("media_anchor"); anchor != nullptr && anchor->is_bool()) realm->behaviour.media_anchor = anchor->as_bool();
