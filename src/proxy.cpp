@@ -1255,7 +1255,8 @@ void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::sha
       if (call) {
         if (const auto caller = call->participant_index(true)) call->participants[*caller].trunk = context->request->trunk;
         if (const auto callee = call->participant_index(false)) call->participants[*callee].trunk = context->current.trunk;
-        if (context->current.focus) call->focus = context->current.focus;
+        // The room by its name, not as this caller spelt it (docs/design/conferencing.md, The room's name).
+        if (context->current.focus) call->focus = std::make_shared<types::SIPUri>(context->current.focus->canonical_address());
       }
 
       // A call that left by a trunk keeps the trunk and the CSeq raise for its in-dialog requests.

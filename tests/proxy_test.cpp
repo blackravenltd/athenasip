@@ -510,8 +510,10 @@ TEST(ProxyTest, AnInstantMessageIsRelayedWithItsBodyAndItsAnswer) {
 }
 
 // RFC 4579 (docs/design/conferencing.md): an INVITE to a conference URI goes to its focus, a trunk, with the room
-// as the user part, and the call records the room as its focus once the focus answers.
+// as the user part, and the call records the room as its focus once the focus answers, by its name rather than as
+// this caller spelt it. Conferencing is the standard scripts' (decision 2), so this is proved under them.
 TEST(ProxyTest, ACallToAConferenceUriGoesToItsFocusAndTheCallRecordsTheRoom) {
+  if (!CoreFixture::lua_policy()) GTEST_SKIP() << "conferencing is athenasip.standard's; run with ATHENA_TEST_POLICY=lua";
   ProxyFixture f;
   std::shared_ptr<MockConnection> focus_connection;
   auto focus = f.make_channel("192.0.2.40", &focus_connection);
@@ -522,7 +524,7 @@ TEST(ProxyTest, ACallToAConferenceUriGoesToItsFocusAndTheCallRecordsTheRoom) {
   rooms->attributes = boost::json::parse(R"({"focus": {"prefix": "conf-"}})").as_object();
   ASSERT_TRUE(f.store->trunk_create(rooms));
 
-  f.receive(f.caller, f.invite("z9hG4bK-room", "sip:conf-sales@example.com"));
+  f.receive(f.caller, f.invite("z9hG4bK-room", "sip:conf-sales@EXAMPLE.com;transport=udp"));
 
   const auto forwarded = ProxyFixture::requests_with(focus_connection, "INVITE");
   ASSERT_EQ(forwarded.size(), 1u);

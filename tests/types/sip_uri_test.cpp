@@ -84,3 +84,11 @@ TEST(SIPUriTest, RoundTrips) {
   const std::string simple = "sip:bob@example.com";
   EXPECT_EQ(SIPUri(simple).to_string(), simple);
 }
+
+// The address a URI names, as a key: the host lowercased, the port, parameters and headers dropped, and the
+// scheme sip whatever was dialled; the user part is kept as spelt, since RFC 3261 19.1.4 makes it case-sensitive.
+TEST(SIPUriTest, TheCanonicalAddressIsUserAtLowercaseHost) {
+  EXPECT_EQ(SIPUri("sip:conf-Sales@EXAMPLE.com:5060;transport=ws?Subject=x").canonical_address(), "sip:conf-Sales@example.com");
+  EXPECT_EQ(SIPUri("sips:alice@Example.COM").canonical_address(), "sip:alice@example.com");
+  EXPECT_EQ(SIPUri("sip:example.com;lr").canonical_address(), "sip:example.com");
+}

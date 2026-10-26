@@ -3747,3 +3747,20 @@ Findings 20, 21, 22, 23, 25 and 26, each with a regression test.
       `EventsApiTest.TrunkChangesArriveOnTheStream`, `OpenApiDocumentTest` asserts the three
       conference operations. The suite 1602, 1533 passed, 69 skipped; the Lua equivalence
       subset 351 passed.
+
+### Conferencing, decision 2 taken in: rooms are the scripts' (2026-10-26)
+
+- [x] **`builtin://` no longer routes rooms or refuses their REGISTER**: the focus routing and the
+      refusal added with step 1 are taken out of `src/policy/builtin_policy.cpp`, and the two
+      tests that proved them (`ProxyTest.ACallToAConferenceUriGoesToItsFocusAndTheCallRecordsTheRoom`,
+      `RegistrarTest.ARegisterForAConferenceUriIsRefused`) run under `ATHENA_TEST_POLICY=lua`
+      and skip under builtin (`CoreFixture::lua_policy`). `docs/scripting.md`'s `focus` row,
+      `docs/design/conferencing.md` and the OpenAPI `TrunkWrite.attributes` say so.
+- [x] **A room has one name.** `SIPUri::canonical_address` is `sip:user@host`, host lowercased,
+      nothing else; the proxy records the call's `focus` as that, and `GET /conferences/{uri}`
+      and the DELETE canonicalise what they are asked, so a client that dialled
+      `sip:conf-sales@EXAMPLE.com;transport=ws` finds `sip:conf-sales@example.com`.
+      `SIPUriTest.TheCanonicalAddressIsUserAtLowercaseHost`; the proxy and calls API tests
+      dial the room with a transport parameter and the host in capitals. The suite 1603, 1532
+      passed, 71 skipped (the two conference tests among them, which pass in the Lua subset of
+      365).

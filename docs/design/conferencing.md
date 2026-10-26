@@ -86,10 +86,11 @@ quick start for conferencing writes that dialplan out.
 **Routing** (`src/policy/`, `scripts/athenasip/trunks.lua`). `trunks.route` already sends a
 number out by the trunk that carries it. It gains: a Request-URI that is a conference URI
 of a focus trunk in the caller's realm goes to that trunk by `a.route.trunk(trunk, {user =
-request.uri.user, focus = request.uri})`, for any method. `builtin://` gains the same rule
-from the same attribute, since the standard scripts must behave exactly as it does: the
-builtin policy reads trunks only to answer their challenges today; it would read the focus
-attribute too. (Decision 1 asks whether that is the right place.)
+request.uri.user, focus = request.uri})`, for any method. `builtin://` does not: what a
+room is belongs to policy (decision 2), so a node that wants rooms runs `lua://`, and the
+builtin policy goes on reading trunks only to answer their challenges. The node reads the
+`focus` attribute itself only for the API's views (the rooms a client may dial, and the
+focuses as a view on the trunks).
 
 **The target** (`policy::Target`, `src/policy/policy.h`; `Proxy::Target`, `src/proxy.h`).
 A target gains `focus`, the conference URI the request is for. The proxy sets
@@ -99,7 +100,12 @@ else in the proxy changes: a call to a focus is a call to a trunk.
 
 **The registrar.** A REGISTER for an address of record that is a conference URI of the
 realm is refused 403: a room is not a subscriber. The registrar asks the policy's
-`register` hook already; the builtin rule and `standard.lua` refuse the name.
+`register` hook already; `standard.lua` refuses the name, and `builtin://` knows no rooms.
+
+**The room's name.** The call records the room as `sip:` + the user part as dialled + `@`
++ the host lowercased, with no port, parameters or headers (`SIPUri::canonical_address`),
+and the API canonicalises the `{uri}` it is asked for the same way, so a client that dialled
+`sip:conf-sales@EXAMPLE.com;transport=ws` finds its room as `sip:conf-sales@example.com`.
 
 **The notifier** (`src/notifier.*`). A SUBSCRIBE for `conference` is forwarded to the
 focus by the routing above, as any package the node is not the notifier for is forwarded
@@ -164,8 +170,8 @@ FreeSWITCH, which `docker-compose.yml` gains, and sipp as a participant.
 
 1. **A focus is a trunk**: `attributes.focus` documented in `docs/scripting.md` under
    Trunks without writing Lua, `trunks.is_conference(uri)` and `trunks.focus_for(uri)`, the
-   route for any method with `focus` on the target, `builtin://` reading the same attribute,
-   and the registrar refusing the name. `tests/policy`, `tests/registrar_test.cpp`.
+   route for any method with `focus` on the target, and the registrar refusing the name,
+   in `athenasip.standard` alone (decision 2). `tests/policy`, `tests/registrar_test.cpp`.
 2. **`Call::focus` from the target**, shown by `/api/v1/calls` and grouped by
    `/api/v1/conferences`, and the `dialog` package confirmed for the room while a call has
    it as focus (a BLF key for a room). `tests/proxy_test.cpp`, `tests/api`,

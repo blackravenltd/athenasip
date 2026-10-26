@@ -464,4 +464,10 @@ TEST(CallsApiTest, TheRoomsWithAnyoneInThemAreListedFromTheCallRecords) {
   ASSERT_EQ(one.status, 200u) << one.body;
   EXPECT_EQ(one.json().as_object().at("uri").as_string(), "sip:conf-sales@example.com");
   EXPECT_EQ(f.get("/api/v1/conferences/sip:conf-empty@example.com").status, 404u);
+
+  // Asked for as a client dialled it, with its own spelling of the host and a transport parameter, it is the
+  // same room (docs/design/conferencing.md, The room's name).
+  const auto as_dialled = f.get("/api/v1/conferences/sip%3Aconf-sales%40EXAMPLE.com%3Btransport%3Dws");
+  ASSERT_EQ(as_dialled.status, 200u) << as_dialled.body;
+  EXPECT_EQ(as_dialled.json().as_object().at("uri").as_string(), "sip:conf-sales@example.com");
 }

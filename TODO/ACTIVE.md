@@ -544,12 +544,14 @@ After the above. The order is the milestone's own:
       `Call` already carries a focus URI and per-participant legs (`src/call.h:94`).
       **Designed 2026-10-26: `docs/design/conferencing.md`**, a focus as a trunk with an
       `attributes.focus`, eight steps, the first four provable without a focus. Its four
-      questions are under Waiting on Tom; steps 1 to 4 assume the answers it proposes and
-      are reversible if the answers differ. Steps 1 to 4 are in (`COMPLETED.md`): the
-      routing and the REGISTER refusal in `builtin://` and `athenasip.standard` alike, the
-      room on the call and in `/api/v1/conferences`, a BLF key for a room, a participant
-      removed over the API, and the rooms in the subscriber's configuration. Step 5 onward
-      needs a FreeSWITCH in the compose files and sipp (Docker: Waiting on something).
+      questions are answered (Decisions, 2026-10-26). Steps 1 to 4 are in (`COMPLETED.md`): the
+      routing and the REGISTER refusal in `athenasip.standard` alone, the room on the call by
+      its canonical name and in `/api/v1/conferences`, a BLF key for a room, a participant
+      removed over the API, and the rooms in the subscriber's configuration. Still to do before
+      step 5: `/api/v1/focuses` as a view on the trunks with a `focus` attribute (decision 1),
+      and the quick start's `conf-` prefix with the numeric-prefix note (decision 4), which
+      waits for a focus to show. Step 5 onward needs a FreeSWITCH in the compose files and
+      sipp (Docker is now installed: Waiting on something).
 - [ ] RFC 4575 conference event package proxied to participants; roster in the admin
       and client APIs (the design's step 6, and its decision 3).
 - [ ] `MediaEngine::conference` capability implemented for rtpengine publish/subscribe
@@ -603,6 +605,12 @@ Each with what it waits on. None is forgotten; none can be worked here today.
 
 **Docker on this machine** (the sipp harnesses, Redis and MQTT):
 
+- [ ] Two RFC 5626 flows on two nodes: the console Phone now registers reg-id 1 and 2 with one
+      +sip.instance, each flow preferring a different node (console 9be5a40). Unit tests prove
+      both bindings side by side and one flow at a time per instance on one node
+      (`RegistrarTest.ASecondRegIdIsASecondFlow`, `ProxyOutboundTest`); an interop case with
+      two nodes proves a call reaches the flow held by the other node, and that a 430 or a
+      closed flow there moves to the flow here.
 - [ ] Everything changed since `0.12.0` run through `docs/testing.md`'s Before a release:
       the CANCEL scenarios now assert the 487's CSeq (`cancel_after_180.xml`, one node and
       `across-cancel-ringing`), which only sipp proves; the trunk harness against the

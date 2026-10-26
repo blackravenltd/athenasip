@@ -1700,7 +1700,10 @@ components:
           description: A CA file for TLS to the trunk; empty is the system's store, and on an update an empty string clears it
         attributes:
           type: object
-          description: Anything a routing script reads; the node reads none of it
+          description: >-
+            Anything a routing script reads (docs/scripting.md, Trunks without writing Lua). The
+            node itself reads `focus` for its API views (the rooms a client may dial) and nothing
+            else; `dtmf`, `media_profile`, `codes`, `numbers` and the rest are the standard scripts'.
           additionalProperties: true
 
     Trunk:
