@@ -412,10 +412,10 @@ http:
 
 | Key | Default | Meaning |
 |---|---|---|
-| `address` | `0.0.0.0` | Bind address |
+| `address` | `127.0.0.1` | Plain HTTP bind address. Loopback unless set, since plain HTTP carries passwords and session tokens in clear; the node warns at start when it binds anything else |
 | `port` | required | Plain HTTP port |
 | `tls.enable` | `false` | Add an HTTPS listener serving the same API and console |
-| `tls.address` | `http.address` | HTTPS bind address |
+| `tls.address` | `http.address` when that is set, otherwise `0.0.0.0` | HTTPS bind address |
 | `tls.port` | `8443` | HTTPS port |
 | `tls.cert_pem_filename`, `tls.key_pem_filename` | the `tls` section's | HTTPS certificate and key. With neither available the node does not start. |
 

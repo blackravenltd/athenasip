@@ -529,6 +529,17 @@ int main(int argc, char* argv[]) {
   if (config->http_api_enable || config->http_files_enable) {
     auto adminAPI = std::make_shared<api::AdminAPI>(logger, config->http_address, config->http_port);
 
+    // Review finding 28: plain HTTP beyond this host carries administrators' passwords and session tokens in clear.
+    if (config->http_api_enable) {
+      boost::system::error_code bad;
+      const auto bound = boost::asio::ip::make_address(config->http_address, bad);
+      if (bad || !bound.is_loopback()) {
+        logger->warn("The admin API is plain HTTP on " + config->http_address + ":" + std::to_string(config->http_port) +
+                     ": passwords and session tokens cross the network in clear. Bind http.address to 127.0.0.1 and use http.tls for "
+                     "anything else.");
+      }
+    }
+
     // HTTPS that was asked for and cannot start stops the node.
     if (config->http_tls_enable && !adminAPI->tls_enable(config->http_tls_address, config->http_tls_port, config->http_tls_cert(), config->http_tls_key())) {
       logger->error("Could not start the HTTPS listener on " + config->http_tls_address + ":" + std::to_string(config->http_tls_port));

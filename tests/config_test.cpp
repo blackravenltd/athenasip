@@ -548,6 +548,25 @@ TEST(ConfigTest, TheRateLimitsAreConfigurable) {
 
 // Admin HTTPS is off by default, listens beside plain HTTP on its own port, and uses the tls
 // section's certificate unless http.tls names another.
+// Review finding 28: plain HTTP carries passwords and session tokens in clear, so it binds loopback unless told
+// otherwise; HTTPS is for anyone, so with no address given it binds every interface.
+TEST(ConfigTest, PlainHttpBindsLoopbackAndHttpsEveryInterfaceByDefault) {
+  bool ok = false;
+
+  ConfigFile unset(
+      "sip:\n  node_id: test-node\ntls:\n  enable: false\n  cert_pem_filename: /tls/node.cer\n  key_pem_filename: /tls/node.key\n"
+      "http:\n  port: 8080\n  tls:\n    enable: true\n");
+  auto config = unset.load(ok);
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(config->http_address, "127.0.0.1");
+  EXPECT_EQ(config->http_tls_address, "0.0.0.0");
+
+  ConfigFile given("sip:\n  node_id: test-node\nhttp:\n  address: 0.0.0.0\n  port: 8080\n");
+  config = given.load(ok);
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(config->http_address, "0.0.0.0");
+}
+
 TEST(ConfigTest, TheAdminListenerOffersHttpsWhenAsked) {
   bool ok = false;
 

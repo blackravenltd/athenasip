@@ -176,12 +176,14 @@ Settings build() {
   s.push_back(integer("calls.history_retention", "2592000", "Seconds an ended call's record is kept. 0 keeps records for ever."));
 
   s.push_back(section("http", "The admin API, the console and the file server. No section, no listener."));
-  s.push_back(text("http.address", "0.0.0.0", "The address to bind."));
+  s.push_back(text("http.address", "127.0.0.1",
+                   "The address plain HTTP binds. Loopback unless set, since it carries passwords and session tokens in clear; a "
+                   "node warns when it binds any other without TLS."));
   s.push_back(required(port("http.port", "", "The port to bind.")));
 
   s.push_back(section("http.tls", "An HTTPS listener beside the plain one. Browsers give the microphone only to a secure page."));
   s.push_back(boolean("http.tls.enable", "false", "Serve HTTPS."));
-  s.push_back(text("http.tls.address", "", "The address to bind. Empty is http.address."));
+  s.push_back(text("http.tls.address", "", "The address HTTPS binds. Empty is http.address when that is set, otherwise every interface."));
   s.push_back(port("http.tls.port", "8443", "The port to bind."));
   s.push_back(text("http.tls.cert_pem_filename", "", "The certificate, PEM. Empty uses the tls section's."));
   s.push_back(text("http.tls.key_pem_filename", "", "The certificate's key, PEM. Empty uses the tls section's."));

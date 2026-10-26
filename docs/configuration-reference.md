@@ -333,7 +333,7 @@ The admin API, the console and the file server. No section, no listener.
 
 | Setting | Takes | Default | |
 |---|---|---|---|
-| `http.address` | text | `0.0.0.0` | The address to bind. |
+| `http.address` | text | `127.0.0.1` | The address plain HTTP binds. Loopback unless set, since it carries passwords and session tokens in clear; a node warns when it binds any other without TLS. |
 | `http.port` | integer, 0 to 65535 | required | The port to bind. |
 
 ### `http.tls`
@@ -343,7 +343,7 @@ An HTTPS listener beside the plain one. Browsers give the microphone only to a s
 | Setting | Takes | Default | |
 |---|---|---|---|
 | `http.tls.enable` | true or false | `false` | Serve HTTPS. |
-| `http.tls.address` | text | none | The address to bind. Empty is http.address. |
+| `http.tls.address` | text | none | The address HTTPS binds. Empty is http.address when that is set, otherwise every interface. |
 | `http.tls.port` | integer, 0 to 65535 | `8443` | The port to bind. |
 | `http.tls.cert_pem_filename` | text | none | The certificate, PEM. Empty uses the tls section's. |
 | `http.tls.key_pem_filename` | text | none | The certificate's key, PEM. Empty uses the tls section's. |
