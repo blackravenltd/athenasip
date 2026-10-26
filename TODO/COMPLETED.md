@@ -3600,3 +3600,23 @@ passed, 67 skipped (Redis, MQTT, the resolver). Each piece with its test watched
       attempts against 100 to 300 ms timers while the fake answered from its own thread. The
       fake takes its port from TCP first and retries on a collision, and those tests give it a
       second. Five runs of the suite clean. The whole suite 1567, 1498 passed, 69 skipped.
+
+### A URI's host compares without regard to case (2026-10-26)
+
+- [x] **A subscriber is found whatever case the request spells the realm in.** Both datastores
+      keyed subscribers by the host as written, so `sip:bob@EXAMPLE.COM` reached nobody; RFC
+      3261 19.1.4 compares hosts case-insensitively and user parts not. The key folds the host
+      now (`memory://` and `redis://`; a Redis store written before this has lower-case realm
+      names already, since realms are created by name). `MemoryDatastoreTest` and
+      `RedisDatastoreTest.ASubscriberIsFoundWhateverCaseTheHostIsSpeltIn`,
+      `ProxyTest.ARequestUriHostInAnyCaseReachesTheSubscriber`.
+
+### The on_call_ended hook (2026-10-26)
+
+- [x] **`on_call_ended(call)`**, the seventh hook: a notification, asked nothing, when a call
+      this node held ends by a BYE from either end or by the node's own hand (the media
+      timeout, the duration limit, an administrator), once per call. `call` is `{id, state,
+      created_at, answered_at, ended_at, participants = {{identity, subscriber, trunk,
+      originator}}}`. `builtin://` ignores it; a script without it is left alone.
+      `CallEndedHookTest`, with a script counting in the datastore. The suite 1572, 1502
+      passed, 70 skipped.

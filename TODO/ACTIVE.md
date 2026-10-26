@@ -178,7 +178,8 @@ Dated, and not reopened without asking.
   configuration option for every case makes a configuration nobody can read and still
   cannot express the next case. `policy` is a plugin kind with five hooks (`authorize`,
   `route`, `on_failure`, `register`, `init`; presence added a sixth, `watch`, on
-  2026-10-11). Two drivers ship and both stay: `builtin://`
+  2026-10-11, and `on_call_ended`, a notification, came on 2026-10-26). Two drivers ship and
+  both stay: `builtin://`
   is today's behaviour in C++ and the default, so a plain node runs no script;
   `lua://` runs Lua 5.4 scripts, and the standard scripts reproduce `builtin://` exactly,
   which a fixture in the tree keeps checked. Trunks are records in the datastore plus
@@ -463,15 +464,7 @@ from bindings in the store), channels and flow tokens (transport), the live `Cal
 - [ ] A sipp scenario for push (RFC 8599) with a fake provider, so the harness proves
       what `tests/push/` proves only in units: a sleeping client woken, then the INVITE
       delivered down the flow it opens.
-- [ ] `on_call_ended(call)` as a notification hook, for concurrency counters: the first
-      candidate for a seventh hook, after the six (`authorize`, `route`, `on_failure`,
-      `register`, `init`, `watch`) have been used.
 - [ ] An arm64 Docker image beside the amd64 one, and the SDK headers in the packages.
-- [ ] **A Request-URI whose host differs in case from the realm's name does not find the
-      subscriber**, it appears: an INVITE to `sip:bob@EXAMPLE.COM` in a unit test reached
-      nobody (2026-10-26, while writing `MediaProfileTest.TheReportNamesTheSubscriberNotWhatWasDialled`;
-      not looked into further). RFC 3261 19.1.4 compares hosts case-insensitively. Confirm
-      with a test from the RFC, then fix.
 
 ### Milestone 7, the rest - conferencing and the web client
 
