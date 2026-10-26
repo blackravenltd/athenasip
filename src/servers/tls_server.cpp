@@ -17,8 +17,8 @@ namespace athenasip::servers {
 
 TLSServer::TLSServer(std::shared_ptr<Logger> logger, std::shared_ptr<Core> core, const std::string& bind_address, short port)
     : Server(std::make_unique<LoggerScoped>("tls_server", logger), core),
-      _port(port),
       _acceptor(_io_context, ip::tcp::endpoint(ip::make_address(bind_address), port)),
+      _port(port),
       ctx(ssl::context::tls_server) {}
 
 bool TLSServer::set_certificates(std::string cert, std::string key) { return load_tls_certificates(_logger, ctx, cert, key); }

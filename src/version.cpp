@@ -26,13 +26,13 @@ Version::Version(const std::string& versionString) : major(0), minor(0), patch(0
     }
     switch (numTokens) {
       case 0:
-        major = num;
+        major = static_cast<uint8_t>(num);
         break;
       case 1:
-        minor = num;
+        minor = static_cast<uint8_t>(num);
         break;
       case 2:
-        patch = num;
+        patch = static_cast<uint8_t>(num);
         break;
     }
     ++numTokens;

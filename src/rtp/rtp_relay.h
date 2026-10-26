@@ -24,7 +24,7 @@ class RTPRelay : public std::enable_shared_from_this<RTPRelay> {
       : _logger(std::make_shared<LoggerScoped>("rtprelay", logger)), _bind_address(bind_address), _min_port(min_port), _max_port(max_port) {}
 
   void start() {
-    for (int i = _min_port; i < _max_port; i++) _available_ports.insert(i);
+    for (int i = _min_port; i < _max_port; i++) _available_ports.insert(static_cast<std::uint16_t>(i));
     _logger->info("Started on " + _bind_address + ", Available Ports " + std::to_string(_min_port) + " - " + std::to_string(_max_port));
   }
 

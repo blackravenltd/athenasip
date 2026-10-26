@@ -470,10 +470,9 @@ to 5 and 9 here; 6 needs clang (libFuzzer), 7 needs GitHub, 8 is partly Tom's.
 - [ ] **6. Fuzzing** (7): libFuzzer targets for `SIPHeader::parse`, `SIPUri`, the
       Authorization header, stream and datagram framing, STUN and bencode, seeded from the
       sipp scenarios, under ASan and UBSan. Needs clang on this machine (Waiting on Tom).
-- [ ] **7. Hosted CI and warnings** (43, 44): a GitHub Actions workflow for the unit suite,
-      ASan with UBSan, TSan, the e2e harnesses in compose and a fuzz smoke; `-Wall -Wextra
-      -Wconversion -Wshadow` and what they find. The workflow file is written here; running
-      it is GitHub's (Tom).
+- [x] **7. Hosted CI and warnings** (43, 44): done 2026-10-26 (`COMPLETED.md`), but for a fuzz
+      smoke, which waits on item 6. The workflow has not run yet: GitHub runs it on the next
+      push, and its first run may need a fix or two (GCC 14 there, 16 here).
 - [x] **8. Public claims** (47): the README says what of RFC 3261 is built and lists the
       departures, the review and what is not yet in Limits (2026-10-26). The GitHub About
       text (46, "TLS-only") and athenasip.org (48) are Tom's: Waiting on Tom.

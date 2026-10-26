@@ -5,6 +5,9 @@ project(athenasip VERSION 0.12.0 LANGUAGES CXX)
 option(ATHENA_BUILD_TESTING "Build test targets" OFF)
 set(ATHENA_SANITIZE "none" CACHE STRING "Sanitizer to build with: none, address, thread")
 set_property(CACHE ATHENA_SANITIZE PROPERTY STRINGS none address thread)
+set(ATHENA_WARNINGS "default" CACHE STRING "Warnings to build with: default (-Wall -Wextra), strict (also -Wconversion), none")
+set_property(CACHE ATHENA_WARNINGS PROPERTY STRINGS default strict none)
+option(ATHENA_WERROR "Treat warnings as errors" OFF)
 
 # Single-config generators leave CMAKE_BUILD_TYPE empty: no optimisation, no debug info.
 get_property(ATHENA_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
@@ -24,6 +27,22 @@ elseif(ATHENA_SANITIZE STREQUAL "thread")
     set(ATHENA_SANITIZE_FLAGS -fsanitize=thread -fno-omit-frame-pointer)
 elseif(NOT ATHENA_SANITIZE STREQUAL "none")
     message(FATAL_ERROR "ATHENA_SANITIZE must be one of: none, address, thread")
+endif()
+
+# The server's own sources, never the third-party headers it includes. Review finding 44. Not
+# -Wmissing-field-initializers: a struct here gives every member a default, and brace-initialising its first
+# (`AuthDecision{Kind::Accept}`) is the idiom. Not -Wshadow in strict: a callback taking `core` from its weak
+# pointer again, or a nested handler naming its `error` as the outer one does, is the idiom too; it is for an
+# audit by hand (docs/testing.md, Warnings).
+if(ATHENA_WARNINGS STREQUAL "default")
+    set(ATHENA_WARNING_FLAGS -Wall -Wextra -Wno-missing-field-initializers)
+elseif(ATHENA_WARNINGS STREQUAL "strict")
+    set(ATHENA_WARNING_FLAGS -Wall -Wextra -Wno-missing-field-initializers -Wconversion)
+elseif(NOT ATHENA_WARNINGS STREQUAL "none")
+    message(FATAL_ERROR "ATHENA_WARNINGS must be one of: default, strict, none")
+endif()
+if(ATHENA_WERROR AND ATHENA_WARNING_FLAGS)
+    list(APPEND ATHENA_WARNING_FLAGS -Werror)
 endif()
 
 configure_file(
@@ -157,6 +176,10 @@ if(ATHENA_SANITIZE_FLAGS)
     target_link_options(athena_core PUBLIC ${ATHENA_SANITIZE_FLAGS})
 endif()
 
+if(ATHENA_WARNING_FLAGS)
+    target_compile_options(athena_core PRIVATE ${ATHENA_WARNING_FLAGS})
+endif()
+
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/include")
     target_include_directories(athena_core
         PUBLIC
@@ -181,6 +204,9 @@ target_include_directories(athena_core PUBLIC ${LUA_INCLUDE_DIR})
 add_executable(athenasip "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
 
 target_link_libraries(athenasip PRIVATE athena_core)
+if(ATHENA_WARNING_FLAGS)
+    target_compile_options(athenasip PRIVATE ${ATHENA_WARNING_FLAGS})
+endif()
 
 # Plugin modules (plugins.path) use the server's own code, so it exports its symbols.
 set_target_properties(athenasip PROPERTIES ENABLE_EXPORTS ON)

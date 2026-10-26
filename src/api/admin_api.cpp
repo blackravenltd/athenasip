@@ -338,7 +338,7 @@ void AdminAPI::_do_accept_tls() {
 }
 
 HttpMiddleware AdminAPI::send_status_end(uint16_t code, std::string message) {
-  return [code, message](const http::request<http::string_body>& req, const std::string&, std::shared_ptr<http::response<http::string_body>> res,
+  return [code, message](const http::request<http::string_body>&, const std::string&, std::shared_ptr<http::response<http::string_body>> res,
                          std::function<void(bool)> next) {
     res->result(code);
     res->set(http::field::server, "AthenaSIP");

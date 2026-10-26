@@ -17,8 +17,8 @@ namespace athenasip::servers {
 
 TCPServer::TCPServer(std::shared_ptr<Logger> logger, std::shared_ptr<Core> core, const std::string& bind_address, short port)
     : Server(std::make_unique<LoggerScoped>("tcp_server", logger), core),
-      _port(port),
-      _acceptor(_io_context, ip::tcp::endpoint(ip::make_address(bind_address), port)) {}
+      _acceptor(_io_context, ip::tcp::endpoint(ip::make_address(bind_address), port)),
+      _port(port) {}
 
 void TCPServer::start() {
   _logger->debug("Starting...");

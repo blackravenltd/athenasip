@@ -133,6 +133,32 @@ change against a node.
   UBSAN_OPTIONS=suppressions=/tmp/ubsan.supp ASAN_OPTIONS=detect_container_overflow=0 ./build-asan/athenasip_tests
   ```
 
+## Warnings and CI
+
+The server builds with `-Wall -Wextra` by default (`ATHENA_WARNINGS=default`).
+`ATHENA_WARNINGS=strict` adds `-Wconversion`, and `ATHENA_WERROR=ON` makes either fatal.
+The server's own sources are clean under strict, as of 2026-10-26; the tests are not
+built with these flags yet.
+
+```bash
+cmake -S . -B build-warn -DATHENA_WARNINGS=strict -DATHENA_WERROR=ON
+cmake --build build-warn --target athenasip
+```
+
+Two warnings are left out on purpose. `-Wmissing-field-initializers`: a struct here gives
+every member a default and is brace-initialised by its first (`AuthDecision{Kind::Accept}`).
+`-Wshadow`: of its 136 findings, 39 are a callback taking `core` from its weak pointer
+again and 30 a nested Redis handler naming its `error` as the outer one does; the rest
+are callbacks naming what they hand on after the thing it came from (the same request,
+the answer's `sdp` where the offer's is not captured, an error code). They were read by
+kind with a sample of each on 2026-10-26, and none read was a mistake. Pass `-Wshadow` in
+`CMAKE_CXX_FLAGS` for that audit again.
+
+`.github/workflows/ci.yml` runs on every push and pull request: the suite with Redis and
+MQTT under strict warnings as errors, under ASan with UBSan and under TSan, and each sipp
+harness (`run.sh` with and without `--lua` and `--rtpengine`, `cluster.sh`, `trunk.sh`).
+There is no fuzzing yet.
+
 ## The sipp harness
 
 sipp clients against a node in Docker, asserting what the RFCs require.
