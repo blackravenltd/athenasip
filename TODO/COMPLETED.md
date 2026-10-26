@@ -3555,3 +3555,15 @@ passed, 67 skipped (Redis, MQTT, the resolver). Each piece with its test watched
       attribute), `docs/troubleshooting.md` (Key presses do nothing, from
       `participants[].dtmf`), `docs/media.md`, `docs/configuration.md` and the reference.
 - [x] The suite 1555, 1489 passed, 66 skipped.
+
+### State into the datastore: the trunk registration status as a record (2026-10-26)
+
+- [x] **`Datastore::trunk_status_set` and `trunk_status_get`**: one record per trunk
+      ({trunk, node, state, detail, expires_at, at}), replaced whole, deleted with the trunk, in
+      `memory://` and `redis://` (`athena:trunk-status:<name>`). The registrar writes it from
+      the node holding the lease, before the first REGISTER goes and on every answer or failure,
+      and then publishes the retained `trunks/<name>/status` as the signal. `/api/v1/trunks`
+      reads the record on any node; `TrunkStatuses`, the map each node rebuilt from the bus, is
+      gone with its subscription. `TrunkRegistrarTest.TheStatusIsARecordInTheDatastore`,
+      `TrunksApiTest.ATrunkShowsItsRegistrationAsTheNodeHoldingItRecorded`, and the datastore
+      tests in memory and Redis. The suite 1558, 1491 passed, 67 skipped.
