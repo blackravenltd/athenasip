@@ -3876,3 +3876,6 @@ Findings 43 and 44.
       parameter as the default for every contact, so `<a>;expires=0, <b>` removed b too. The
       Expires header field is the default now, and a contact's parameter its own.
       `RegistrarTest.AContactsExpiresParameterIsItsOwnNotTheOthersDefault`.
+- [x] **Transaction timers validated** (38): T1 at least 1 ms, T2 at least T1, T4 and the
+      A, B, E, F, G, H multipliers at least 1, and a value that is no number is refused; a node
+      with one that cannot work does not start. `ConfigTest.TransactionTimersThatCannotWorkAreRefused`.

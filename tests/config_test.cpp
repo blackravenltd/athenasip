@@ -857,3 +857,21 @@ TEST(ConfigTest, TheDtmfMethodIsReadAndAnUnknownOneIsRefused) {
   wrong.load(ok);
   EXPECT_FALSE(ok);
 }
+
+// Review finding 38: a transaction timer that cannot work stops the node at start rather than looping. T1 of 0 would
+// re-arm Timer A at 0 ms; T2 below T1 breaks the backoff; a zero multiplier does the same to its timer.
+TEST(ConfigTest, TransactionTimersThatCannotWorkAreRefused) {
+  for (const auto* timers : {"t1_rtt_ms: 0", "t1_rtt_ms: 500\n    t2_max_retransmit_interval_ms: 400", "t4_network_propagation_ms: 0",
+                             "a_invite_initial: 0", "f_non_invite_timeout: 0", "t1_rtt_ms: not-a-number"}) {
+    bool ok = true;
+    ConfigFile file(std::string("sip:\n  node_id: test-node\n  timers:\n    ") + timers + "\n");
+    file.load(ok);
+    EXPECT_FALSE(ok) << timers;
+  }
+
+  // D, I, J and K may be 0, as on a reliable transport; T2 may equal T1.
+  bool ok = false;
+  ConfigFile fine("sip:\n  node_id: test-node\n  timers:\n    t1_rtt_ms: 500\n    t2_max_retransmit_interval_ms: 500\n    d_invite_duration: 0\n");
+  fine.load(ok);
+  EXPECT_TRUE(ok);
+}
