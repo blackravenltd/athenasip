@@ -3710,3 +3710,40 @@ Findings 3 and 10, each with a regression test.
       gains three and loses the rule that a reliable flow is never swept;
       `TransportFramingTest.UdpRubbishFromANewSourceMakesNoFlow`. The suite 1591, 1520
       passed, 70 skipped.
+
+### The perimeter, review item 4: nonces and Digest (2026-10-26)
+
+Findings 20, 21, 22, 23, 25 and 26, each with a regression test.
+
+- [x] **A nonce carries its own proof.** `digest::nonce_mint` makes one from the realm's id,
+      sixteen random bytes and the second it was minted, with an HMAC-SHA256 under the realm's
+      `nonce_secret`; `digest::nonce_state` tells good, stale (older than the realm's
+      `nonce_expiry`, now 300 s by default) and bad (not minted under that secret, malformed,
+      or from the future) with nothing looked up. The datastore's `nonce_create` and
+      `nonce_check` are gone from the contract, both drivers, the sync helper and their tests
+      (`plugins::API_VERSION` 23); `Core` keeps no nonce cache. A stale nonce is challenged with
+      `stale=true` over SIP (`digest::add_challenges`) and HTTP alike, a forged one plainly.
+- [x] **An answer is good once.** `digest::NonceCounts`, one in `Core` for SIP and one in
+      `SubscriberAuth` for HTTP: without qop the nonce is spent by the first right answer; with
+      qop=auth the `nc` must rise, parsed as eight hex digits. Checked after the response
+      verifies, so only a right answer spends a count; a replay is challenged as stale. Bounded
+      at 100000, pruned with the nonces' expiry.
+- [x] **The uri is the Request-URI.** `digest::verify` takes the request's own URI and refuses
+      credentials that sign another (RFC 3261 22.4 (5)); over HTTP it is the request target.
+      Responses and nonce signatures compare with `CRYPTO_memcmp`.
+- [x] **`Util::generate_random_string` draws from `RAND_bytes`**, so branches, tags, Call-IDs,
+      cookies and subscription ids are not mt19937's.
+- [x] Tests: `DigestTest` gains five (uri, mint and state, expiry, counts, bound);
+      `RegistrarTest` five (forged not stale, expired stale, replay stale, nc rising, uri);
+      `ProxyAuthenticationTest` two (replay, uri); `ProvisioningApiTest` one (HTTP replay and
+      expiry). `docs/authentication.md` has a Nonces section; the troubleshooting table, the
+      clustering table, the call walkthrough and the realm's `nonce_expiry` in the OpenAPI
+      document follow.
+- [x] **For the console, asked for over the session bridge the same day:** `DELETE
+      /conferences/{uri}/calls/{call}` in the OpenAPI document (it was in the code only), the
+      conference `uri` parameter said to be percent-encoded as one segment, the trunk
+      `registration` fields given their formats, and `/api/v1/events` serving `trunks/#` (the
+      registration status and `trunks/changed`) so a trunks screen need not poll;
+      `EventsApiTest.TrunkChangesArriveOnTheStream`, `OpenApiDocumentTest` asserts the three
+      conference operations. The suite 1602, 1533 passed, 69 skipped; the Lua equivalence
+      subset 351 passed.

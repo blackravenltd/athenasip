@@ -125,7 +125,7 @@ TEST(TrunkRegistrarTest, TheCarriersChallengeIsAnswered) {
   types::Authorization credentials(first(sent[1], "Authorization"));
   types::Subscriber as_the_carrier_knows_it;
   as_the_carrier_knows_it.ha1 = Util::md5("4420:acme.example:s3cret");
-  EXPECT_EQ(digest::verify(as_the_carrier_knows_it, credentials, "REGISTER"), "");
+  EXPECT_EQ(digest::verify(as_the_carrier_knows_it, credentials, "REGISTER", sent[1]->header->request_uri->to_string()), "");
 
   f.answer(sent[1], 200, "OK", "Contact: " + first(sent[1], "Contact") + ";expires=120\r\n");
   const auto status = f.status();

@@ -6,9 +6,6 @@
 //
 #pragma once
 
-#include <openssl/hmac.h>
-#include <openssl/rand.h>
-
 #include <boost/asio/post.hpp>
 #include <boost/asio/ssl.hpp>
 #include <boost/asio/strand.hpp>
@@ -28,6 +25,7 @@
 #include "config.h"
 #include "datastores/datastore.h"
 #include "dialogs.h"
+#include "digest.h"
 #include "dns/sip_locator.h"
 #include "events/event_system.h"
 #include "expiry_set.h"
@@ -104,7 +102,7 @@ class Core : public std::enable_shared_from_this<Core> {
   void server_start_all();
   void server_stop_all();
 
-  // Realms, subscribers and nonces live in the datastore. These calls are async and never
+  // Realms and subscribers live in the datastore. These calls are async and never
   // block; each handler runs on the strand.
   void realm_get_by_name(std::string realm, plugins::Handler<std::shared_ptr<Realm>> handler);
 
@@ -187,9 +185,9 @@ class Core : public std::enable_shared_from_this<Core> {
   };
   Advertised advertised_for(const Channel& channel) const;
 
-  // Nonce
-  void nonce_create(std::shared_ptr<Realm> realm, plugins::Handler<std::string> handler);
-  void nonce_check(std::string nonce, plugins::Handler<bool> handler);
+  // The Digest answers this node has accepted, against replay (digest::NonceCounts). Nonces themselves are
+  // minted and checked without state (digest::nonce_mint, nonce_state).
+  digest::NonceCounts& nonce_counts() { return _nonce_counts; }
 
   // Messages
   void process_message(std::shared_ptr<SIPMessage> message);
@@ -359,7 +357,7 @@ class Core : public std::enable_shared_from_this<Core> {
 
   std::shared_ptr<api::AdminAPI> _adminAPI;
 
-  std::shared_ptr<ExpirySet<std::string>> _nonce_cache;
+  digest::NonceCounts _nonce_counts;
 
   transactions::TransactionMatcher _matcher;
   std::shared_ptr<TimerSource> _timer_source = default_timer_source();

@@ -29,7 +29,8 @@ realm or its subscribers needs the realm roles ([Authentication](authentication.
 |---|---|---|
 | 401, again and again | `REGISTER for <aor> with a Digest response that does not match - challenging` | Wrong password, or the client's authentication user name differs from its user name. Reset the password over the API. |
 | 401, again and again | `REGISTER for unknown subscriber <aor> - challenging` | No such subscriber in that realm. Check the user part and that the subscriber exists under `/api/v1/realms/<realm>/subscribers`. |
-| 401, again and again | `REGISTER nonce <nonce> not found or expired - challenging` | The nonce the client answered is unknown. In a cluster, check every node uses the same `redis://` datastore. |
+| 401, again and again | `REGISTER with a nonce this realm did not mint - challenging` | The nonce the client answered was not minted under this realm's `nonce_secret`. In a cluster, check every node uses the same `redis://` datastore, so they share the realm. |
+| 401 with `stale=true`, then 200 | `REGISTER with an expired nonce - challenging as stale` | Normal: the client took longer than the realm's `nonce_expiry` (default 300 s) to answer and signs a fresh nonce. If it never gets to 200, its clock or the node's is far out, or it keeps answering the old nonce. |
 | 403 | `REGISTER for <uri>, a domain not served here, and sip.forward_register is never - 403` | The client registers to a domain that is not a realm on this node. Create a realm with that exact name, or set the client's domain to an existing realm. |
 | 404 | `REGISTER for unserved domain <domain> - 404` | The domain after `@` in the client's address is not a realm here. Same fix as 403. |
 | 423 | `REGISTER asked for <n>s, below the realm minimum - 423` | The client asked for a shorter registration than the realm's `registration_minimum`. Lengthen it in the client, or lower the realm's setting. |

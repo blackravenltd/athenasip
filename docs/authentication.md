@@ -27,6 +27,24 @@ challenges REGISTER with 401. The proxy challenges calls with 407 (RFC 3261 22.3
 In-dialog requests, ACK and CANCEL are never challenged. A UDP client answers a 407 on
 every call. The Digest arithmetic is in `src/digest.h`.
 
+### Nonces
+
+A nonce is the realm's id, random bytes and the second it was minted, signed with the
+realm's `nonce_secret` (an HMAC). Any node serving the realm can tell its own nonce, and
+how old it is, without looking anything up, so nothing is stored for a challenge nobody
+answers. A nonce is good for the realm's `nonce_expiry` (default 300 seconds); a right
+answer over an older one is challenged again with `stale=true`, which a client answers
+with a fresh nonce without asking its user. A nonce that was not minted here is
+challenged plainly.
+
+An answer is good once. Without `qop`, the nonce is spent by the first right answer;
+with `qop=auth`, each answer under the nonce must carry a higher `nc` than the last. A
+second copy of an answer is a replay and is challenged as stale. Each node keeps its own
+count of the answers it accepted, bounded, and forgets them with the nonce; a replay
+sent to another node of the cluster is therefore held off by the nonce lifetime, not
+the count. The `uri` in the credentials must be the Request-URI, so an answer captured
+from one request does not sign another, and responses are compared in constant time.
+
 Subscribers are provisioned at `/api/v1/realms/{realm}/subscribers`.
 
 ### Over HTTP
@@ -34,9 +52,10 @@ Subscribers are provisioned at `/api/v1/realms/{realm}/subscribers`.
 A subscriber's softphone reaches its own routes, all under `/api/v1/subscriber/{realm}/`,
 with HTTP Digest (RFC 7616) and the same username and password it registers with: the HTTP
 realm is the SIP realm, so the stored HA1 is the key and nothing else is kept. The node
-answers 401 with two challenges, SHA-256 then MD5, each with `qop="auth"`; a nonce that has
-expired is challenged again with `stale=true`. A wrong password and an unknown subscriber
-get the same 401, and failures are rate limited by source address like an open route.
+answers 401 with two challenges, SHA-256 then MD5, each with `qop="auth"`; the nonces,
+their lifetime, replay and the `uri` binding are as [above](#nonces). A wrong password and
+an unknown subscriber get the same 401, and failures are rate limited by source address
+like an open route.
 
 These credentials open nothing outside that prefix, and a user's session opens nothing
 inside it. The routes: `config` (where to signal, ICE servers with a minted TURN

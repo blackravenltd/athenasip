@@ -488,18 +488,6 @@ TEST(RedisDatastoreTest, RegistrationWithoutAFlowLeavesItEmpty) {
   ASSERT_TRUE(datastore->subscriber_delete(subscriber->identity));
 }
 
-TEST(RedisDatastoreTest, NonceRoundTripsAndIsRefusedWhenAlreadyExpired) {
-  REQUIRE_REDIS(datastore);
-  const auto nonce = "nonce-" + unique_suffix();
-  const auto now = std::time(nullptr);
-
-  ASSERT_TRUE(datastore->nonce_create(nonce, now + 60));
-  EXPECT_TRUE(datastore->nonce_check(nonce));
-
-  EXPECT_FALSE(datastore->nonce_create("stale-" + nonce, now - 1));
-  EXPECT_FALSE(datastore->nonce_check("stale-" + nonce));
-}
-
 // A multi-party call round-trips with its participants.
 TEST(RedisDatastoreTest, CallRoundTripsWithItsParticipants) {
   REQUIRE_REDIS(datastore);

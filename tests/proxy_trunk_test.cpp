@@ -134,7 +134,7 @@ TEST(ProxyTrunkTest, ACarriersChallengeIsAnsweredWithTheTrunksCredentials) {
   types::Authorization credentials(first(retried, "Proxy-Authorization"));
   types::Subscriber as_the_carrier_knows_it;
   as_the_carrier_knows_it.ha1 = Util::md5("4420:acme.example:s3cret");
-  EXPECT_EQ(digest::verify(as_the_carrier_knows_it, credentials, "INVITE"), "");
+  EXPECT_EQ(digest::verify(as_the_carrier_knows_it, credentials, "INVITE", retried->header->request_uri->to_string()), "");
   EXPECT_EQ(credentials.fields["username"], "4420");
 
   // The 407 was ACKed, as every non-2xx is (RFC 3261 17.1.1.3), and never reached the caller.

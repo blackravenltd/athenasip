@@ -11,6 +11,7 @@
 #include <string>
 
 #include "../datastores/datastore.h"
+#include "../digest.h"
 #include "../loggers/logger.h"
 #include "../loggers/logger_scoped.h"
 #include "../plugins/plugin.h"
@@ -48,11 +49,14 @@ class SubscriberAuth : public std::enable_shared_from_this<SubscriberAuth> {
              std::function<void(Outcome)> then);
 
  private:
-  void _challenge(const std::string& realm_name, std::uint32_t nonce_expiry, bool stale, std::function<void(Outcome)> then);
+  void _challenge(const types::Realm& realm, bool stale, std::function<void(Outcome)> then);
 
   std::shared_ptr<loggers::LoggerScoped> _logger;
   std::shared_ptr<datastores::Datastore> _datastore;
   plugins::Executor _executor;
+  // The answers accepted, against replay. HTTP's own: a SIP answer cannot sign an HTTP request anyway, its
+  // method and uri being SIP's.
+  digest::NonceCounts _counts;
 };
 
 }  // namespace athenasip::api

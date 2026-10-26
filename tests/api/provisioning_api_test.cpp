@@ -13,6 +13,7 @@
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/json.hpp>
+#include <ctime>
 #include <memory>
 #include <string>
 
@@ -21,6 +22,7 @@
 #include "../helpers/sync_datastore_helper.h"
 #include "../mocks/logger_mock.h"
 #include "api/admin_api.h"
+#include "digest.h"
 #include "api/router.h"
 #include "api/subscriber_auth.h"
 #include "config.h"
@@ -145,10 +147,13 @@ struct ApiFixture {
     const auto ha1 = hash(user + ":" + realm + ":" + password);
     const auto response = hash(ha1 + ":" + nonce + ":00000001:0a4f113b:auth:" + hash(std::string(http::to_string(method)) + ":" + target));
 
-    return request(method, target, "", body,
-                   "Digest username=\"" + user + "\", realm=\"" + realm + "\", nonce=\"" + nonce + "\", uri=\"" + target + "\", algorithm=" + algorithm +
-                       ", qop=auth, nc=00000001, cnonce=\"0a4f113b\", response=\"" + response + "\"");
+    last_authorization = "Digest username=\"" + user + "\", realm=\"" + realm + "\", nonce=\"" + nonce + "\", uri=\"" + target + "\", algorithm=" + algorithm +
+                         ", qop=auth, nc=00000001, cnonce=\"0a4f113b\", response=\"" + response + "\"";
+    return request(method, target, "", body, last_authorization);
   }
+
+  // The Authorization the last as_subscriber sent, for sending again.
+  std::string last_authorization;
 
   Response post(const std::string& target, const std::string& body, const std::string& token = "admin-token") {
     return request(http::verb::post, target, token, body);
@@ -875,6 +880,35 @@ TEST(ProvisioningApiTest, AWrongPasswordOrAnUnknownSubscriberIsChallengedAgain) 
 
   EXPECT_EQ(f.as_subscriber(http::verb::get, "/api/v1/subscriber/example.com/config", "alice", "wrong").status, 401u);
   EXPECT_EQ(f.as_subscriber(http::verb::get, "/api/v1/subscriber/example.com/config", "mallory", "secret").status, 401u);
+}
+
+// RFC 7616 5.6: the same answer sent again is a replay, challenged with stale=true so the client signs a fresh
+// nonce without asking its user. A nonce that has expired gets the same.
+TEST(ProvisioningApiTest, AReplayedOrExpiredSubscriberAnswerIsChallengedAsStale) {
+  ApiFixture f;
+  seed_alice(f);
+
+  ASSERT_EQ(f.as_subscriber(http::verb::get, "/api/v1/subscriber/example.com/config", "alice", "secret").status, 200u);
+  auto replayed = f.request(http::verb::get, "/api/v1/subscriber/example.com/config", "", "", f.last_authorization);
+  ASSERT_EQ(replayed.status, 401u);
+  ASSERT_EQ(replayed.challenges.size(), 2u);
+  EXPECT_NE(replayed.challenges[0].find("stale=true"), std::string::npos) << replayed.challenges[0];
+
+  // A first answer is not stale, nor is one over a nonce that was never minted here.
+  auto wrong = f.as_subscriber(http::verb::get, "/api/v1/subscriber/example.com/config", "alice", "wrong");
+  ASSERT_EQ(wrong.status, 401u);
+  EXPECT_EQ(wrong.challenges[0].find("stale"), std::string::npos) << wrong.challenges[0];
+
+  const auto realm = f.store->realm_get_by_name("example.com");
+  const auto expired = digest::nonce_mint(*realm, std::time(nullptr) - static_cast<std::time_t>(realm->nonce_expiry) - 1);
+  const auto target = std::string("/api/v1/subscriber/example.com/config");
+  const auto ha1 = Util::md5("alice:example.com:secret");
+  const auto response = Util::md5(ha1 + ":" + expired + ":00000001:0a4f113b:auth:" + Util::md5("GET:" + target));
+  auto stale = f.request(http::verb::get, target, "", "",
+                         "Digest username=\"alice\", realm=\"example.com\", nonce=\"" + expired + "\", uri=\"" + target +
+                             "\", algorithm=MD5, qop=auth, nc=00000001, cnonce=\"0a4f113b\", response=\"" + response + "\"");
+  ASSERT_EQ(stale.status, 401u);
+  EXPECT_NE(stale.challenges[0].find("stale=true"), std::string::npos) << stale.challenges[0];
 }
 
 // A user's session opens no subscriber route, and a subscriber's credentials open no other route.

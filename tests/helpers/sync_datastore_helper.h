@@ -198,13 +198,6 @@ class SyncDatastore {
         [this, subscriber_id](auto on, auto handler) { _store->location_list(std::move(on), subscriber_id, std::move(handler)); });
   }
 
-  bool nonce_create(const std::string& nonce, std::time_t expires_at) {
-    return _status([this, nonce, expires_at](auto on, auto handler) { _store->nonce_create(std::move(on), nonce, expires_at, std::move(handler)); });
-  }
-
-  bool nonce_check(const std::string& nonce) {
-    return _value<bool>([this, nonce](auto on, auto handler) { _store->nonce_check(std::move(on), nonce, std::move(handler)); });
-  }
 
   bool call_create(std::shared_ptr<athenasip::Call> call) {
     return _status([this, call](auto on, auto handler) { _store->call_create(std::move(on), call, std::move(handler)); });

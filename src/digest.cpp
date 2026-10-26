@@ -6,7 +6,15 @@
 //
 #include "digest.h"
 
+#include <openssl/crypto.h>
+#include <openssl/evp.h>
+#include <openssl/hmac.h>
+#include <openssl/rand.h>
+
+#include <array>
+#include <charconv>
 #include <cstdio>
+#include <stdexcept>
 
 #include "util.h"
 
@@ -17,7 +25,11 @@ bool is_complete(const std::shared_ptr<types::Authorization>& credentials) {
          credentials->contains_field("response") && credentials->contains_field("uri");
 }
 
-std::string verify(const types::Subscriber& subscriber, types::Authorization& credentials, const std::string& method) {
+std::string verify(const types::Subscriber& subscriber, types::Authorization& credentials, const std::string& method, const std::string& request_uri) {
+  // RFC 3261 22.4 (5): the uri the client hashed is the Request-URI it sent, so an answer captured from one
+  // request cannot sign another.
+  if (credentials.fields["uri"] != request_uri) return "a Digest uri that is not the Request-URI";
+
   // RFC 8760: the algorithm the client answered with selects the hash. Absent means MD5
   // (RFC 2617 3.2.1).
   const auto algorithm = Util::to_upper(credentials.contains_field("algorithm") ? credentials.fields["algorithm"] : "MD5");
@@ -45,12 +57,16 @@ std::string verify(const types::Subscriber& subscriber, types::Authorization& cr
   }
   expected = Util::to_lower(expected);
 
-  if (expected != Util::to_lower(credentials.fields["response"])) return "a Digest response that does not match";
+  // In constant time: how long a comparison takes must not say how much of the answer was right.
+  const auto given = Util::to_lower(credentials.fields["response"]);
+  if (given.size() != expected.size() || CRYPTO_memcmp(given.data(), expected.data(), expected.size()) != 0) {
+    return "a Digest response that does not match";
+  }
 
   return "";
 }
 
-void add_challenges(SIPHeader& header, const std::string& field, const std::string& realm, const std::string& nonce) {
+void add_challenges(SIPHeader& header, const std::string& field, const std::string& realm, const std::string& nonce, bool stale) {
   // SHA-256 first as the preferred algorithm, then MD5, which is all most SIP clients
   // support (RFC 3261 22.4). Both are sent because the subscriber is not yet known.
   for (const auto& algorithm : {std::string("SHA-256"), std::string("MD5")}) {
@@ -59,9 +75,102 @@ void add_challenges(SIPHeader& header, const std::string& field, const std::stri
     challenge.fields["realm"] = realm;
     challenge.fields["nonce"] = nonce;
     challenge.fields["algorithm"] = algorithm;
-
+    if (stale) challenge.fields["stale"] = "true";
     header.add(field, challenge.to_string());
   }
+}
+
+namespace {
+// The HMAC of the nonce's first three parts, hex.
+std::string nonce_signature(const types::Realm& realm, const std::string& signed_part) {
+  std::array<unsigned char, EVP_MAX_MD_SIZE> mac{};
+  unsigned int length = 0;
+  HMAC(EVP_sha256(), realm.nonce_secret.data(), static_cast<int>(realm.nonce_secret.size()), reinterpret_cast<const unsigned char*>(signed_part.data()),
+       signed_part.size(), mac.data(), &length);
+  return Util::to_hex(mac.data(), static_cast<uint16_t>(length));
+}
+}  // namespace
+
+std::string nonce_mint(const types::Realm& realm, std::time_t now) {
+  std::array<unsigned char, 16> random{};
+  if (RAND_bytes(random.data(), static_cast<int>(random.size())) != 1) throw std::runtime_error("RAND_bytes failed");
+
+  const auto signed_part = std::to_string(realm.id) + ":" + Util::to_hex(random.data(), random.size()) + ":" + std::to_string(now);
+  return signed_part + ":" + nonce_signature(realm, signed_part);
+}
+
+NonceState nonce_state(const types::Realm& realm, const std::string& nonce, std::time_t now) {
+  // realm:random:minted:signature. The colons are not in any part, so the last one ends the signed part.
+  const auto last = nonce.rfind(':');
+  if (last == std::string::npos || last == 0) return NonceState::bad;
+  const auto signed_part = nonce.substr(0, last);
+  const auto signature = nonce.substr(last + 1);
+
+  // The realm's own, under its secret, compared in constant time.
+  const auto expected = nonce_signature(realm, signed_part);
+  if (signature.size() != expected.size() || CRYPTO_memcmp(signature.data(), expected.data(), expected.size()) != 0) return NonceState::bad;
+
+  const auto first = signed_part.find(':');
+  const auto second = signed_part.find(':', first == std::string::npos ? std::string::npos : first + 1);
+  if (first == std::string::npos || second == std::string::npos) return NonceState::bad;
+  if (signed_part.substr(0, first) != std::to_string(realm.id)) return NonceState::bad;
+
+  const auto minted_text = signed_part.substr(second + 1);
+  std::int64_t minted = 0;
+  const auto parsed = std::from_chars(minted_text.data(), minted_text.data() + minted_text.size(), minted);
+  if (parsed.ec != std::errc() || parsed.ptr != minted_text.data() + minted_text.size()) return NonceState::bad;
+
+  // From the future is not ours either: a clock cannot have signed what it has not reached, bar skew between
+  // nodes, which a minute covers.
+  if (minted > static_cast<std::int64_t>(now) + 60) return NonceState::bad;
+  if (static_cast<std::int64_t>(now) - minted > static_cast<std::int64_t>(realm.nonce_expiry)) return NonceState::stale;
+  return NonceState::good;
+}
+
+NonceCounts::NonceCounts(std::size_t capacity) : _capacity(capacity) {}
+
+bool NonceCounts::accept(const types::Authorization& credentials, std::time_t expires_at, std::time_t now) {
+  const auto field = [&credentials](const std::string& name) -> std::string {
+    const auto found = credentials.fields.find(name);
+    return found == credentials.fields.end() ? std::string() : found->second;
+  };
+  const auto nonce = field("nonce");
+  if (nonce.empty()) return false;
+
+  // RFC 7616 3.4: nc is eight hex digits. Without qop there is no count, and the nonce is good for one answer.
+  std::uint32_t nc = 0;
+  if (!field("qop").empty()) {
+    const auto text = field("nc");
+    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), nc, 16);
+    if (text.empty() || text.size() > 8 || parsed.ec != std::errc() || parsed.ptr != text.data() + text.size() || nc == 0) return false;
+  }
+
+  std::lock_guard<std::mutex> lock(_mutex);
+
+  // Forgotten with the nonce. Full means a flood of distinct nonces; the oldest answers go, and with them the
+  // guard against a replay of those, which the nonce lifetime bounds.
+  if (_seen.size() >= _capacity) {
+    for (auto it = _seen.begin(); it != _seen.end();) it = it->second.expires_at <= now ? _seen.erase(it) : std::next(it);
+    while (_seen.size() >= _capacity) _seen.erase(_seen.begin());
+  }
+
+  const auto found = _seen.find(nonce);
+  if (found == _seen.end()) {
+    _seen.emplace(nonce, Seen{nc, expires_at});
+    return true;
+  }
+  if (found->second.expires_at <= now) {
+    found->second = Seen{nc, expires_at};
+    return true;
+  }
+  if (nc <= found->second.last_nc) return false;
+  found->second.last_nc = nc;
+  return true;
+}
+
+std::size_t NonceCounts::size() {
+  std::lock_guard<std::mutex> lock(_mutex);
+  return _seen.size();
 }
 
 namespace {

@@ -187,6 +187,42 @@ TEST(ProxyAuthenticationTest, ANonceThisNodeNeverMintedIsChallengedAgain) {
   EXPECT_EQ(response->header->response_code, 407);
 }
 
+// RFC 7616 5.6: a right answer spends its nonce. The same Proxy-Authorization on a second INVITE is a replay,
+// challenged with stale=true, so a captured answer places one call at most and an honest client signs afresh.
+TEST(ProxyAuthenticationTest, AReplayedAnswerIsChallengedAsStale) {
+  AuthFixture f;
+
+  const auto answer = AuthFixture::credentials("alice", "alice-ha1", f.nonce(), "INVITE", "sip:bob@example.com");
+  f.receive(f.phone, AuthFixture::request("INVITE", "sip:bob@example.com", "sip:alice@example.com", answer));
+  ASSERT_NE(ProxyFixture::request_with(f.callee_connection, "INVITE"), nullptr);
+
+  auto again = AuthFixture::request("INVITE", "sip:bob@example.com", "sip:alice@example.com", answer);
+  again.replace(again.find("Call-ID: call-auth"), std::string("Call-ID: call-auth").size(), "Call-ID: call-auth-2");
+  f.receive(f.phone, again);
+
+  auto response = f.last_response();
+  ASSERT_NE(response, nullptr);
+  EXPECT_EQ(response->header->response_code, 407);
+  auto challenge = response->header->headers_map["Proxy-Authenticate"][0]->as<headers::AuthorizationHeader>();
+  ASSERT_NE(challenge, nullptr);
+  EXPECT_EQ(challenge->value->fields["stale"], "true");
+  EXPECT_EQ(ProxyFixture::requests_with(f.callee_connection, "INVITE").size(), 1u);
+}
+
+// RFC 3261 22.4 (5): the uri the answer signs is the Request-URI. Captured from a call to one target, it does not
+// place a call to another.
+TEST(ProxyAuthenticationTest, AnAnswerForAnotherRequestUriIsChallengedAgain) {
+  AuthFixture f;
+
+  f.receive(f.phone, AuthFixture::request("INVITE", "sip:+15551234567@198.51.100.99", "sip:alice@example.com",
+                                          AuthFixture::credentials("alice", "alice-ha1", f.nonce(), "INVITE", "sip:bob@example.com")));
+
+  auto response = f.last_response();
+  ASSERT_NE(response, nullptr);
+  EXPECT_EQ(response->header->response_code, 407);
+  EXPECT_EQ(f.forwarded_off_node(), 0u);
+}
+
 // Valid credentials for one subscriber do not authorise a From naming another.
 TEST(ProxyAuthenticationTest, CredentialsForSomebodyElseAreRefused) {
   AuthFixture f;

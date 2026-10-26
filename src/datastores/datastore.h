@@ -225,8 +225,6 @@ class Datastore : public plugins::Plugin {
   // Every unexpired binding for a subscriber (RFC 3261 16.5 needs them all).
   virtual void location_list(plugins::Executor on, std::uint64_t subscriber_id, plugins::Handler<std::vector<types::Location>> handler) = 0;
 
-  virtual void nonce_create(plugins::Executor on, std::string nonce, std::time_t expires_at, plugins::StatusHandler handler) = 0;
-  virtual void nonce_check(plugins::Executor on, std::string nonce, plugins::Handler<bool> handler) = 0;
 
   // Calls.
   virtual void call_create(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) = 0;

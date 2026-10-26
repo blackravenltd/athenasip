@@ -173,6 +173,20 @@ TEST(EventsApiTest, PresenceChangesArriveOnTheStream) {
   EXPECT_TRUE(EventsFixture::read_until(stream, "event: " + events::topics::presence_changed("sip:bob@example.com"))) << stream.received;
 }
 
+// A trunks screen updates from each trunk's registration status and from trunks/changed without polling.
+TEST(EventsApiTest, TrunkChangesArriveOnTheStream) {
+  EventsFixture f;
+  auto stream = f.open();
+  ASSERT_TRUE(f.wait_for_open(1));
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+  f.bus->publish(events::topics::trunk_status("carrier"), R"({"state":"registered"})");
+  f.bus->publish(events::topics::trunks_changed(), "carrier");
+
+  EXPECT_TRUE(EventsFixture::read_until(stream, "event: " + events::topics::trunk_status("carrier"))) << stream.received;
+  EXPECT_TRUE(EventsFixture::read_until(stream, "event: " + events::topics::trunks_changed())) << stream.received;
+}
+
 // It needs the role the other status routes need.
 TEST(EventsApiTest, NoTokenIsRefused) {
   EventsFixture f;

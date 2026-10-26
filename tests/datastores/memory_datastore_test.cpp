@@ -231,24 +231,6 @@ TEST(MemoryDatastoreTest, ExpiredRegistrationsAreNotReturned) {
   EXPECT_EQ(datastore->location_list(7).size(), 1u);
 }
 
-TEST(MemoryDatastoreTest, NonceRoundTripsAndExpires) {
-  auto datastore = make_datastore();
-  const auto now = std::time(nullptr);
-
-  ASSERT_TRUE(datastore->nonce_create("live-nonce", now + 60));
-  EXPECT_TRUE(datastore->nonce_check("live-nonce"));
-
-  EXPECT_FALSE(datastore->nonce_check("never-created"));
-}
-
-TEST(MemoryDatastoreTest, AlreadyExpiredNonceIsRefused) {
-  auto datastore = make_datastore();
-  const auto now = std::time(nullptr);
-
-  EXPECT_FALSE(datastore->nonce_create("stale", now - 1));
-  EXPECT_FALSE(datastore->nonce_check("stale"));
-}
-
 TEST(MemoryDatastoreTest, CallRoundTrips) {
   auto datastore = make_datastore();
 

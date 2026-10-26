@@ -7,13 +7,17 @@
 #pragma once
 
 #include <cstdint>
+#include <ctime>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "sip_header.h"
 #include "types/authorization.h"
+#include "types/realm.h"
 #include "types/subscriber.h"
 
 namespace athenasip::digest {
@@ -25,12 +29,52 @@ namespace athenasip::digest {
 // than refuse.
 bool is_complete(const std::shared_ptr<types::Authorization>& credentials);
 
-// Returns empty when the credentials match the subscriber's stored HA1 for the method,
-// otherwise the reason. The caller checks the nonce first.
-std::string verify(const types::Subscriber& subscriber, types::Authorization& credentials, const std::string& method);
+// Returns empty when the credentials match the subscriber's stored HA1 for the method and
+// `request_uri`, the request's own, otherwise the reason. The caller checks the nonce
+// first (nonce_state), and the count after (NonceCounts), so only an answer that is right
+// spends one.
+std::string verify(const types::Subscriber& subscriber, types::Authorization& credentials, const std::string& method, const std::string& request_uri);
 
-// RFC 8760 section 2.1: one challenge per algorithm, most preferred first, into `field`.
-void add_challenges(SIPHeader& header, const std::string& field, const std::string& realm, const std::string& nonce);
+// RFC 8760 section 2.1: one challenge per algorithm, most preferred first, into `field`. `stale` (RFC 7616 3.3)
+// tells the client its answer was right but the nonce was not, so it signs again without asking its user.
+void add_challenges(SIPHeader& header, const std::string& field, const std::string& realm, const std::string& nonce, bool stale = false);
+
+// Nonces. One is the realm's id, random bytes and the second it was minted, with an HMAC over those under the
+// realm's nonce_secret: any node of the cluster that serves the realm can tell its own, and when it was minted,
+// without a store (RFC 7616 5.4), so nothing is kept for a challenge nobody answers.
+std::string nonce_mint(const types::Realm& realm, std::time_t now = std::time(nullptr));
+
+enum class NonceState {
+  good,
+  // Minted here, but older than the realm's nonce_expiry.
+  stale,
+  // Not minted for this realm by a node holding its secret: forged, malformed or another realm's.
+  bad,
+};
+NonceState nonce_state(const types::Realm& realm, const std::string& nonce, std::time_t now = std::time(nullptr));
+
+// Replay. An answer without qop spends its nonce; with qop=auth the nc must rise with each answer (RFC 7616
+// 3.4.3, 5.6), so a captured answer cannot be sent again while the nonce lives. One per node; the cluster's other
+// nodes have their own, which is why a nonce is short-lived. Bounded, and safe from any thread.
+class NonceCounts {
+ public:
+  explicit NonceCounts(std::size_t capacity = 100000);
+
+  // Whether `credentials` is the first answer seen with its nonce and nc. `expires_at` is when the nonce does.
+  bool accept(const types::Authorization& credentials, std::time_t expires_at, std::time_t now = std::time(nullptr));
+
+  std::size_t size();
+
+ private:
+  struct Seen {
+    std::uint32_t last_nc;
+    std::time_t expires_at;
+  };
+
+  std::mutex _mutex;
+  std::unordered_map<std::string, Seen> _seen;
+  std::size_t _capacity;
+};
 
 // RFC 3261 22.2 and 22.3 from the client's side, for this node answering a server that challenged it (a carrier on
 // a trunk): the credentials answering one challenge for a request to `uri`. MD5 and SHA-256, plain or -sess
