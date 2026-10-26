@@ -445,17 +445,11 @@ Unit-proven only; left:
 ### State into the datastore (Milestone 7, decided 2026-10-11)
 
 What the decision finds in the tree, re-checked 2026-10-26. Each item is small on its own;
-together they are what lets a node be replaced without anything being lost. The trunk
-registration status and the re-offer reports are records since 2026-10-26
-(`COMPLETED.md`). Left:
-
-- [ ] **Dialog state in the call record** (Tom, 2026-10-11: yes). `Dialogs`
-      (`src/dialogs.h`) holds each dialog's route set, targets, CSeqs and session timer in
-      memory, and the call record holds only the tags. The rest goes into the call record
-      at the moments it is already written, and the CSeqs as in-dialog requests pass.
-      Nothing on the call path waits for the write, as today. `Dialogs` becomes a cache of
-      those records, rebuilt from the store on a miss, so an in-dialog request reaching
-      another node finds its dialog.
+together they are what lets a node be replaced without anything being lost. All three are
+done (2026-10-26, `COMPLETED.md`): the trunk registration status and the re-offer reports
+are records, and the call record carries the dialog whole, so a request inside a dialog
+reaching a node that does not hold it finds it there. What does not move with it is the
+media and the signalling path (Parked).
 
 Per node by design, and not items: rate-limit buckets (`src/api/rate_limiter.h`, a node
 protecting itself), metrics counters (scraped per node), the DNS cache, address
@@ -473,11 +467,6 @@ from bindings in the store), channels and flow tokens (transport), the live `Cal
       candidate for a seventh hook, after the six (`authorize`, `route`, `on_failure`,
       `register`, `init`, `watch`) have been used.
 - [ ] An arm64 Docker image beside the amd64 one, and the SDK headers in the packages.
-- [ ] **`DnsResolverTest` is flaky on this machine** (2026-10-26): three runs of the suite
-      alone failed three different tests (`ASilentServerIsPassedOverForTheNext`,
-      `AReplyWithTheWrongIdIsIgnored`, `ALostQueryIsAskedAgain`), each timing a fake UDP
-      server on a loaded four-core Pi; the code is as at `0.12.0`. Make the tests advance a
-      manual clock, or widen their bounds, rather than race the machine.
 - [ ] **A Request-URI whose host differs in case from the realm's name does not find the
       subscriber**, it appears: an INVITE to `sip:bob@EXAMPLE.COM` in a unit test reached
       nobody (2026-10-26, while writing `MediaProfileTest.TheReportNamesTheSubscriberNotWhatWasDialled`;
@@ -572,9 +561,10 @@ Kept in the tree or history, not on any list:
   build path since 2026-09-21, the way Lua was. May become an `rtpproxy://` driver with
   `bridge` only; not a priority.
 - A node taking over a live dialog's signalling when the node in its Record-Route dies.
-  The dialog's state will be in the call record (Next, State into the datastore, Tom
-  2026-10-11), so this is routing and media, not replication: an in-dialog request has
-  to reach a surviving node, and that node has to take the media over.
+  The dialog's state is in the call record and a surviving node that is sent a request in
+  it carries the dialog on (2026-10-26), so this is routing and media, not replication: the
+  request has to reach a surviving node, whose address is not in the dialog's Record-Route,
+  and that node has to take the media over.
 - Parallel forking. The fork is serial: one branch at a time, best response wins. 16.7's
   response context is written to hold more than one branch and the CANCEL path already
   walks it, so the change is in `_forward_next` rather than in the shape. Forking

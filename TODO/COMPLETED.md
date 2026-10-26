@@ -3577,3 +3577,26 @@ passed, 67 skipped (Redis, MQTT, the resolver). Each piece with its test watched
       expiry. The proxy records through the store and waits for nothing; `/api/v1/media/reoffers`
       reads the store on any node; `Core::reoffers()` is gone. The suite 1560, 1491 passed, 68
       skipped, one failure in `DnsResolverTest` that is the machine's (`ACTIVE.md`).
+
+### State into the datastore: the dialog in the call record (2026-10-26)
+
+- [x] **The call record carries the dialog whole** (`types::Dialog::to_json`/`from_json`: both
+      ends, their targets, the route set, the sequence numbers, the state, the session timer on
+      the wall clock, the trunk and its CSeq offset), and is written whenever the dialog moves
+      under the call, not only when the call's state does: `Dialogs` raises a revision on every
+      change it records, a sequence number moving on any in-dialog request included, and
+      `Core::_on_dialog_change` writes when the revision it last wrote differs. Nothing on the
+      call path waits for the write.
+- [x] **A request in a dialog this node does not hold reads the record** (`Core::_deliver_to_tu`,
+      once, before anything sees the request): a call whose dialog matches is taken in
+      (`Dialogs::adopt`, the session deadline rebuilt from the wall-clock expiry) and held as
+      any other, its media left where the node that began it anchored it. Proved with a second
+      `Core` of the same name on the same store, as the node after a restart: Bob's BYE reaching
+      it closes the record (`CoreDialogRecordTest`), where before the record stayed Connected
+      for ever. `docs/architecture.md` says what moves and what does not.
+- [x] **`DnsResolverTest` was flaky here** for two reasons: the fake nameserver bound UDP on an
+      ephemeral port and then TCP on the same number, which another test's listener could
+      still hold (a constructor exception, the `0 ms` failures); and three tests counted
+      attempts against 100 to 300 ms timers while the fake answered from its own thread. The
+      fake takes its port from TCP first and retries on a collision, and those tests give it a
+      second. Five runs of the suite clean. The whole suite 1567, 1498 passed, 69 skipped.
