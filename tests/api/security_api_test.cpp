@@ -19,6 +19,7 @@
 #include <thread>
 #include <vector>
 
+#include "../helpers/bus_heard_helper.h"
 #include "../helpers/core_fixture_helper.h"
 #include "../helpers/signed_in_users_helper.h"
 #include "api/admin_api.h"
@@ -127,8 +128,8 @@ TEST(SecurityApiTest, ALiftEndsTheBanAndIsToldToTheCluster) {
   SecurityFixture f;
   f.guess("198.51.100.7", "sip:alice@example.com");
 
-  std::vector<std::string> lifts;
-  f.bus->subscribe(events::topics::ban_lifted(), [&lifts](const std::string&, const std::string& message) { lifts.push_back(message); });
+  auto heard = std::make_shared<BusHeard>();
+  f.bus->subscribe(events::topics::ban_lifted(), BusHeard::into(heard));
 
   EXPECT_EQ(f.request(http::verb::delete_, "/api/v1/security/bans/198.51.100.7", "client-token").status, 403u) << "reading is not lifting";
 
@@ -136,6 +137,7 @@ TEST(SecurityApiTest, ALiftEndsTheBanAndIsToldToTheCluster) {
   ASSERT_EQ(lifted.status, 200u) << lifted.body;
   EXPECT_FALSE(f.core->auth_guard().banned("198.51.100.7"));
   EXPECT_FALSE(f.core->auth_guard().failed("198.51.100.7", "sip:bob@example.com").banned) << "its count started again";
+  const auto lifts = heard->wait_for(1);
   ASSERT_EQ(lifts.size(), 1u);
   EXPECT_NE(lifts[0].find("198.51.100.7"), std::string::npos);
 

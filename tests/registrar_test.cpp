@@ -20,6 +20,7 @@
 #include "headers/authorization_header.h"
 #include "headers/sip_identity_header.h"
 #include "headers/uint_header.h"
+#include "helpers/bus_heard_helper.h"
 #include "helpers/core_fixture_helper.h"
 #include "util.h"
 
@@ -782,15 +783,17 @@ TEST(RegistrarTest, AnAddressThatKeepsGuessingIsBannedAndThenNotAnswered) {
   f.config->sip_auth_failures_source = {3, 1};
   f.core->auth_limits_reload();
 
-  std::vector<std::string> failures;
-  std::vector<std::string> bans;
-  f.bus->subscribe(events::topics::auth_failed(), [&failures](const std::string&, const std::string& message) { failures.push_back(message); });
-  f.bus->subscribe(events::topics::source_banned(), [&bans](const std::string&, const std::string& message) { bans.push_back(message); });
+  auto heard_failures = std::make_shared<BusHeard>();
+  auto heard_bans = std::make_shared<BusHeard>();
+  f.bus->subscribe(events::topics::auth_failed(), BusHeard::into(heard_failures));
+  f.bus->subscribe(events::topics::source_banned(), BusHeard::into(heard_bans));
 
   for (int i = 0; i < 4; ++i) {
     f.receive(f.channel, f.register_request(wrong_credentials(f.fresh_nonce()), "", "", "z9hG4bK-guess-" + std::to_string(i)));
   }
   EXPECT_EQ(f.responses_with(f.connection, 401).size(), 4u);
+  const auto failures = heard_failures->wait_for(4);
+  const auto bans = heard_bans->wait_for(1);
   ASSERT_EQ(failures.size(), 4u);
   EXPECT_NE(failures[0].find("\"source\":\"192.0.2.10\""), std::string::npos) << failures[0];
   EXPECT_NE(failures[0].find("\"aor\":\"sip:alice@example.com\""), std::string::npos) << failures[0];

@@ -3887,3 +3887,13 @@ Findings 43 and 44.
       host name with `async_resolve` on its strand, one after another, before it sets up the pool.
       `PublicAddress::start`'s first lookup stays synchronous on purpose, on the caller's thread at
       start, and says so. `RtpengineMediaEngineTest.AnEngineNamedByAHostNameIsLookedUpAndUsed`.
+- [x] **Strict start line and fields** (8, 9): the Method is an RFC 3261 token, the Request-URI
+      must parse, nothing follows `SIP/2.0`, every field name is a token, and a line with no colon
+      ends the parse there, so nothing half parsed passes the 400 gate. Bare LF stays accepted
+      (RFC 3261 7.5), documented in `docs/architecture.md`. `SIPHeaderRFCTest` gains four, watched
+      failing first.
+- [x] **Two tests of mine fixed**: `SecurityApiTest.ALiftEndsTheBanAndIsToldToTheCluster` read the
+      bus before the delivery, and it and `RegistrarTest.AnAddressThatKeepsGuessingIsBanned...`
+      let a late delivery write into a dead local, which crashed one suite run. `BusHeard`
+      (`tests/helpers/bus_heard_helper.h`) holds what was heard by shared pointer and waits for
+      it. Fifty repeats and three full runs clean: 1645, 1573 passed.
