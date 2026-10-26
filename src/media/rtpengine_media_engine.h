@@ -74,6 +74,9 @@ class RtpengineMediaEngine : public MediaEngine, public std::enable_shared_from_
 
   void play_dtmf(plugins::Executor on, std::shared_ptr<Call> call, std::size_t participant, std::string digits, std::chrono::milliseconds duration,
                  plugins::StatusHandler handler) override;
+
+  // Key presses rtpengine hears, when rtpengine.dtmf_events names an address for it to send them to.
+  bool dtmf_listen(DtmfListener listener) override;
   void start_recording(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) override;
   void stop_recording(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) override;
 
@@ -140,6 +143,11 @@ class RtpengineMediaEngine : public MediaEngine, public std::enable_shared_from_
   void _send(const std::shared_ptr<Pending>& pending);
   void _receive();
   void _on_receive(const boost::system::error_code& ec, std::size_t length);
+
+  // The DTMF events socket: one JSON datagram per key press rtpengine heard, to the address each call's
+  // DTMF-log-dest named.
+  void _events_receive();
+  void _on_event(const boost::system::error_code& ec, std::size_t length);
   void _on_timeout(const std::string& cookie);
   void _fail_all(const std::string& reason);
 
@@ -189,6 +197,15 @@ class RtpengineMediaEngine : public MediaEngine, public std::enable_shared_from_
 
   // Sized for the largest UDP payload.
   std::vector<char> _receive_buffer;
+
+  // rtpengine.dtmf_events as configured (host:port, empty for off), the socket bound to it, and where it is bound as
+  // rtpengine is told it (the port resolved when the setting gave 0).
+  std::string _dtmf_events;
+  std::shared_ptr<boost::asio::ip::udp::socket> _events_socket;
+  std::string _events_destination;
+  boost::asio::ip::udp::endpoint _event_from;
+  std::vector<char> _event_buffer;
+  DtmfListener _dtmf_listener;
 
   std::unordered_map<std::string, std::shared_ptr<Pending>> _pending;
 };

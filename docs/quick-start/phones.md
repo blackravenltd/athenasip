@@ -72,6 +72,24 @@ Where a phone offers TCP or TLS, prefer it: the node keeps answering down the co
 the phone opened, which stays open through NAT, where a UDP mapping can close between
 calls without anyone noticing.
 
+## Key presses
+
+A phone sends the keys pressed during a call one of three ways: RFC 4733 events in the
+media (the setting most phones call "RFC 2833" or "RTP event"), SIP INFO, or tones in the
+audio. Set the phone to RFC 4733 and leave the node's `behaviour.dtmf` at `auto`: the node
+reads the method from what the phone offers. A phone that can only send INFO needs the
+subscriber told so, since nothing in its offer says it:
+
+```
+curl -X PUT "$ATHENA_API/realms/example.com/subscribers/alice" \
+  -H "Authorization: Bearer $ATHENA_ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"behaviour": {"dtmf": "info"}}'
+```
+
+With rtpengine, the node converts between a phone and a far end that differ; the builtin
+relay does not, so with it every end has to use one method. [Behaviour](../behaviour.md#dtmf)
+has the rules and [Media](../media.md#dtmf) what each engine does.
+
 ## Check it
 
 ```

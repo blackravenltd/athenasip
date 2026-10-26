@@ -76,6 +76,20 @@ media engine. [Media](media.md#is-media-flowing) has the other tools.
 | rtpengine advertises the wrong address | The SDP names an address phones cannot reach | Fix rtpengine's `--interface`, or set `media.rtpengine.media_address` |
 | A browser behind strict NAT | Browser calls fail through some networks only | Add a TURN server to `http.api.ice_servers` and set `turn_shared_secret` |
 
+## Key presses do nothing
+
+The call has audio but a voicemail menu or an IVR ignores the keys. Each leg of a call
+sends key presses one way, RFC 4733 events, SIP INFO or tones, and the far end has to get
+them the way it listens for them. `GET /api/v1/calls` shows what the node decided for each
+leg as `participants[].dtmf`; [Behaviour](behaviour.md#dtmf) has the rules.
+
+| Cause | How to tell | Fix |
+|---|---|---|
+| The two legs differ and the engine cannot convert | `Call <id> sends key presses as <a> on one leg and <b> on the other, and builtin cannot convert` in the log | Set both ends to one method, or use rtpengine, which converts |
+| A phone sends INFO but the node thinks it sends tones | Its leg shows `inband`; the phone's log shows INFO sent and answered 200 | Set the subscriber's `behaviour.dtmf` to `info`: nothing in an offer says INFO |
+| Events towards a leg set to `info` are not turned into INFO | `media.rtpengine.dtmf_events` is unset, or names an address rtpengine cannot reach | Set it to an address and port rtpengine can send to ([Media](media.md#dtmf)) |
+| A carrier takes events but the phone sends tones | The phone's leg shows `inband`, the carrier's `rfc4733`, and rtpengine is in use | Nothing: rtpengine detects the tones and sends events. If the carrier still hears nothing, the phone's tones are too short or quiet; set the phone to RFC 4733. |
+
 ## A browser cannot connect
 
 - **A page served over HTTPS can only open `wss://`.** Enable a secure WebSocket listener:

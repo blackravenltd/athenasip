@@ -1134,6 +1134,14 @@ std::shared_ptr<Call> Core::call_get(std::string callId) {
 void Core::media_register(std::shared_ptr<media::MediaEngine> engine) {
   media = std::move(engine);
 
+  // Key presses the engine hears become INFO for a leg that speaks it, on the strand.
+  std::weak_ptr<Core> weak_self = weak_from_this();
+  media->dtmf_listen([weak_self](media::MediaEngine::DtmfEvent event) {
+    auto self = weak_self.lock();
+    if (!self) return;
+    self->post([self, event = std::move(event)]() { self->local_ua()->key_pressed(event.call_id, event.source_tag, event.digit, event.duration); });
+  });
+
   // The media half of the call sweep needs an engine.
   _call_sweep_schedule();
 }

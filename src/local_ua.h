@@ -6,6 +6,7 @@
 //
 #pragma once
 
+#include <chrono>
 #include <memory>
 #include <string>
 
@@ -32,9 +33,16 @@ class LocalUA : public std::enable_shared_from_this<LocalUA> {
   // Sends a BYE to both ends of every confirmed dialog of the call. False when this node holds none.
   bool hang_up(const std::string& call_id, const std::string& reason);
 
+  // A key press the media engine heard from the leg whose dialog tag this is: sent to the other leg as a SIP INFO
+  // (application/dtmf-relay) when that leg speaks INFO (docs/behaviour.md, dtmf). False when it does not, or the
+  // call is not one this node holds.
+  bool key_pressed(const std::string& call_id, const std::string& source_tag, char digit, std::chrono::milliseconds duration);
+
  private:
-  // The BYE the far end would send to this one: to the callee as the caller, or to the caller as the callee.
-  std::shared_ptr<SIPMessage> _bye_to(const types::Dialog& dialog, bool callee) const;
+  // The request the far end would send to this one, inside the dialog: to the callee as the caller, or to the caller
+  // as the callee. With a body, its type and bytes.
+  std::shared_ptr<SIPMessage> _request_to(const types::Dialog& dialog, bool callee, const std::string& method, const std::string& content_type = "",
+                                          const std::string& body = "") const;
 
   std::shared_ptr<loggers::LoggerScoped> _logger;
   std::weak_ptr<Core> _core;

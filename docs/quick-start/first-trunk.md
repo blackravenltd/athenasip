@@ -90,10 +90,11 @@ curl -X POST "$ATHENA_API/trunks" \
 | `country` | Lets a subscriber dial `020 7123 4567` as well as `+44 20 7123 4567` |
 | `caller_id` | The number the people you call see |
 | `numbers` | Your numbers, each to the subscriber it rings |
+| `dtmf` | How the carrier sends key presses, when it is not RFC 4733: `info` or `inband`. Leave it out for a carrier that offers `telephone-event`, which is most. |
 
 [Scripting](../scripting.md#trunks-without-writing-lua) has every attribute: priorities
-between trunks, a number format for carriers that do not take a `+`, and a default for
-numbers no list names.
+between trunks, a number format for carriers that do not take a `+`, service codes, and a
+default for numbers no list names.
 
 ## 4. Check it answers and registered
 
