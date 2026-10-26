@@ -12,6 +12,7 @@
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include <tuple>
 
 #include "config_schema.h"
 #include "util.h"
@@ -139,7 +140,7 @@ bool Config::load_from_yaml(const std::string& filename) {
   }
 
   YAML::Node sip_timers = sip["timers"];
-  if (sip_timers) {
+  if (sip_timers) try {
     if (sip_timers["t1_rtt_ms"]) sip_timer_t1_rtt_ms = sip_timers["t1_rtt_ms"].as<uint16_t>();
     if (sip_timers["t2_max_retransmit_interval_ms"]) sip_timer_t2_max_retransmit_interval_ms = sip_timers["t2_max_retransmit_interval_ms"].as<uint16_t>();
     if (sip_timers["t4_network_propagation_ms"]) sip_timer_t4_network_propagation_ms = sip_timers["t4_network_propagation_ms"].as<uint16_t>();
@@ -163,6 +164,29 @@ bool Config::load_from_yaml(const std::string& filename) {
       } else {
         sip_timer_c_invite_proxy_ms = configured;
       }
+    }
+  } catch (const std::exception& e) {
+    _logger->error("Invalid 'sip.timers': each is a number - " + std::string(e.what()));
+    return false;
+  }
+
+  // Review finding 38: a T1 of 0 makes Timer A re-arm at 0 ms, a busy loop of retransmissions; a T2 below T1 breaks
+  // the backoff (RFC 3261 17.1.2.2); a zero retransmit or timeout multiplier does the same to its timer. D, I, J and
+  // K may be 0, as on a reliable transport.
+  for (const auto& [name, value, minimum] : std::initializer_list<std::tuple<const char*, std::uint32_t, std::uint32_t>>{
+           {"t1_rtt_ms", sip_timer_t1_rtt_ms, 1},
+           {"t2_max_retransmit_interval_ms", sip_timer_t2_max_retransmit_interval_ms, sip_timer_t1_rtt_ms},
+           {"t4_network_propagation_ms", sip_timer_t4_network_propagation_ms, 1},
+           {"a_invite_initial", sip_timer_a_invite_initial, 1},
+           {"b_invite_timeout", sip_timer_b_invite_timeout, 1},
+           {"e_non_invite_initial", sip_timer_e_non_invite_initial, 1},
+           {"f_non_invite_timeout", sip_timer_f_non_invite_timeout, 1},
+           {"g_server_invite_initial", sip_timer_g_server_invite_initial, 1},
+           {"h_server_invite_timeout", sip_timer_h_server_invite_timeout, 1}}) {
+    if (value < minimum) {
+      _logger->error("'sip.timers." + std::string(name) + "' is " + std::to_string(value) + ": it is at least " + std::to_string(minimum) +
+                     (std::string(name).rfind("t2", 0) == 0 ? " (T2 is never below T1)" : ""));
+      return false;
     }
   }
 
