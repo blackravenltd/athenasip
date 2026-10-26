@@ -428,20 +428,24 @@ and no interop fixture run here; what they alone would prove is under Waiting on
 RFC 4733 telephone-events, SIP INFO (`application/dtmf-relay` and `application/dtmf`) and
 in-band tones, passed through when both ends agree and converted when they differ.
 Pass-through is proved on the A85 against 2talk (2026-10-12: "3", "*", "0" reached the
-voicemail menu, WebRTC to plain RTP). Nothing in `src/` yet knows DTMF exists. For the
-node, in order; the last two need the phone or a carrier to prove and are listed again
-under Waiting on something:
+voicemail menu, WebRTC to plain RTP). In on 2026-10-26 (`COMPLETED.md`): the `dtmf`
+setting on realms, subscribers and trunks, each leg's method on the call, rtpengine's
+conversion between events and tones, and INFO played into the media. Left, in order:
 
+- [ ] **Events and tones towards a leg set to `info`, as INFO.** rtpengine reports each key
+      press it hears as one UDP datagram of JSON to the address the call's `DTMF-log-dest`
+      names (`callid`, `source_tag`, `event` 0 to 15, `duration` in ms, from
+      `daemon/dtmf.c`); the driver opens a socket for them (`rtpengine.dtmf_events`,
+      host:port, off when empty), names it on the offer when `dtmf_to` is `info`, and raises
+      `MediaEngine::on_dtmf`. The proxy sends the far leg an INFO of the node's own, built as
+      `LocalUA::_bye_to` builds a BYE, with `application/dtmf-relay`; the leg's own
+      telephone-event is kept from it by `block DTMF`.
 - [ ] A sipp scenario sending RFC 4733 events through the node, with and without
-      rtpengine, and SIP INFO proxied in dialog.
-- [ ] A per-leg DTMF setting on realms, subscribers and trunks (`auto`, `rfc4733`,
-      `info`, `inband`), as `media_profile` is, in the behaviour section and the trunk's
-      attributes.
-- [ ] Conversion when the legs differ: INFO to RFC 4733 by rtpengine's `play DTMF`,
-      RFC 4733 to INFO from rtpengine's DTMF events, in-band by transcoding (rtpengine
-      with transcoding, or say plainly when the engine cannot).
-- [ ] Docs: what a phone and a carrier should be set to, and how to see which flavour a
-      call used.
+      rtpengine, and one sending INFO to a leg that takes events (Docker: Waiting on
+      something).
+- [ ] Docs: `docs/quick-start/phones.md` and `first-trunk.md` say what a phone and a carrier
+      should be set to, and `docs/troubleshooting.md` how to see which method a call used
+      (`participants[].dtmf`).
 
 ### State into the datastore (Milestone 7, decided 2026-10-11)
 

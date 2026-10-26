@@ -3512,3 +3512,30 @@ machine); the sipp harnesses wait on Docker (`ACTIVE.md`, Waiting on something).
       the target is nobody's binding. `MediaProfileTest.TheReportNamesTheSubscriberNotWhatWasDialled`.
 - [x] **`src/headers/uint_header.h` includes `<cstdint>`**: GCC 16 with Boost 1.92 no longer
       brings it in transitively, and the tree did not build on this machine without it.
+
+### DTMF, every flavour: the setting, the engine's conversion, and INFO played in (2026-10-26)
+
+The 2026-10-12 decision, built as far as this machine proves it: the unit suite 1551, 1484
+passed, 67 skipped (Redis, MQTT, the resolver). Each piece with its test watched failing first.
+
+- [x] **`behaviour.dtmf`**: `auto` (default), `rfc4733`, `info` or `inband`, on the server, a
+      realm and a subscriber (API, Redis, Lua), with `MediaPolicy::Dtmf` beside the profile. A
+      trunk's `dtmf` attribute goes with the target (`route.trunk`/`route.uri` option `dtmf`)
+      for a call out and as the route's `caller_dtmf` for a call in; `athenasip.trunks` passes
+      both. `docs/behaviour.md` has the rules, the reference the setting.
+- [x] **Each leg's method on the call.** `Participant.dtmf_setting` from the trunk's word, the
+      subscriber's setting, else the realm's; `Participant.dtmf` once the leg has described
+      itself, `auto` resolving to `rfc4733` when it offered `telephone-event`
+      (`Flags::telephone_event`) and `inband` otherwise. Shown as `participants[].dtmf` in
+      `/api/v1/calls`. The caller's subscriber is read for every INVITE now, not only a delayed
+      offer (`Proxy::_read_caller_profile`).
+- [x] **The engine told both ends' methods** (`Flags::dtmf_from`, `dtmf_to`). rtpengine converts:
+      events to tones by `always transcode` with `telephone-event` stripped, tones to events by
+      `codec-transcode=telephone-event`, and `inject DTMF` in the offer and the answer when a leg
+      speaks INFO. An engine without `transcode` leaves them, and the operator is warned once per
+      call, naming both methods.
+- [x] **INFO played in**: `MediaEngine::play_dtmf` (contract 22, capability `dtmf`; rtpengine
+      sends one `play DTMF` per digit, from the pressing participant's tag). A SIP INFO
+      (`application/dtmf-relay` or `application/dtmf`) from a leg whose far leg takes events or
+      tones is answered 200 by the node and played, never forwarded; between two INFO legs it is
+      forwarded as before.
