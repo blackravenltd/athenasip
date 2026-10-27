@@ -27,6 +27,17 @@ challenges REGISTER with 401. The proxy challenges calls with 407 (RFC 3261 22.3
 In-dialog requests, ACK and CANCEL are never challenged. A UDP client answers a 407 on
 every call. The Digest arithmetic is in `src/digest.h`.
 
+**A connection trusts what registered over it.** The second row trusts a TCP, TLS or
+WebSocket connection for the subscriber whose REGISTER it carried, which spares a phone a
+407 on every call. It is per connection, not per address, but a connection several
+clients share, such as one an SBC or another proxy holds open to this node, carries one
+trust for all of them: whoever sends on it after one of them registered is that
+subscriber. With the standard policy the From must still name the subscriber who
+registered; a policy that sets `from_must_match = false` drops even that, so one
+registration on a shared connection lets anyone on it call as anyone. Do not set it on a
+node that such a connection reaches, and put a shared edge in front as a trunk or a
+cluster peer instead (review finding 27).
+
 ### Nonces
 
 A nonce is the realm's id, random bytes and the second it was minted, signed with the

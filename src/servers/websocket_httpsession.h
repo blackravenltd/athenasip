@@ -12,6 +12,7 @@
 #include <boost/beast/http.hpp>
 #include <boost/beast/websocket.hpp>
 #include <boost/beast/websocket/ssl.hpp>
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <utility>
@@ -57,6 +58,24 @@ class WebsocketHTTPSessionFor : public std::enable_shared_from_this<WebsocketHTT
 
     _logger->debug(std::string(http::to_string(_request.method())) + " " + std::string(_request.target()));
 
+    // A browser names the page that opened the socket in Origin (RFC 6455 4.1). With sip.websocket_allowed_origins
+    // set, a page from anywhere else is refused, so another site cannot have a visitor's browser open flows here
+    // (review finding 37). No Origin, as a phone sends, is not a browser and is let through.
+    if (const auto origin = _request.find(http::field::origin); origin != _request.end() && _core && _core->config) {
+      const auto& allowed = _core->config->sip_websocket_allowed_origins;
+      const std::string given(origin->value());
+      if (!allowed.empty() && std::find(allowed.begin(), allowed.end(), given) == allowed.end()) {
+        _logger->info("WebSocket upgrade from origin " + given + ", not one allowed - 403");
+        auto refused = std::make_shared<http::response<http::string_body>>(http::status::forbidden, _request.version());
+        refused->set(http::field::content_type, "text/plain");
+        refused->body() = "Origin not allowed";
+        refused->prepare_payload();
+        auto self = this->shared_from_this();
+        http::async_write(*_stream, *refused, [self, refused](boost::system::error_code, std::size_t) { self->_close_socket(); });
+        return;
+      }
+    }
+
     // Any path is accepted: RFC 7118 names none, clients habitually use "/ws", and this listener serves only SIP.
     if (_request.method() == http::verb::get && websocket::is_upgrade(_request)) {
       _do_upgrade();
@@ -74,6 +93,10 @@ class WebsocketHTTPSessionFor : public std::enable_shared_from_this<WebsocketHTT
 
   void _do_upgrade() {
     auto ws = std::make_unique<websocket::stream<Stream>>(std::move(*_stream));
+
+    // No message larger than a channel takes (Channel::kMaxMessageBytes): beast would otherwise gather up to 16 MB of
+    // one before the channel's own limit could see it.
+    ws->read_message_max(64 * 1024);
 
     // RFC 7118 section 4: the server must name the "sip" subprotocol back.
     ws->set_option(websocket::stream_base::decorator([](websocket::response_type& response) { response.set(http::field::sec_websocket_protocol, "sip"); }));

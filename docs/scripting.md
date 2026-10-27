@@ -246,7 +246,7 @@ error, which `pcall` catches like any other.
 |---|---|
 | `athenasip.auth.accept()` | |
 | `athenasip.auth.trusted{trunk = name}` | A request from a trunk, proved by where it came from; `route` sees `request.trunk` |
-| `athenasip.auth.digest{realm = realm, from_must_match = true}` | `realm = "*"` is any realm here, with a challenge for each. `from_must_match = false` accepts any subscriber's credentials, and any connection a subscriber registered over. |
+| `athenasip.auth.digest{realm = realm, from_must_match = true}` | `realm = "*"` is any realm here, with a challenge for each. `from_must_match = false` accepts any subscriber's credentials, and any connection a subscriber registered over, whoever sends on it: never on a node a shared connection (an SBC, another proxy) reaches ([Authentication](authentication.md)). |
 | `athenasip.auth.reject(code, reason)` | |
 | `athenasip.route.subscriber(subscriber, {bindings = b})` | Every device of a subscriber, in the node's order, by push or through another node as needed |
 | `{ring_timeout = seconds}` | On any target: how long an INVITE may ring there before the node moves on, with a CANCEL if it rang. Unset is timer C, three minutes. |

@@ -103,6 +103,15 @@ bool Config::load_from_yaml(const std::string& filename) {
   if (sip["log_messages"]) sip_log_messages = sip["log_messages"].as<bool>();
   if (sip["public_address"]) sip_public_address = sip["public_address"].as<std::string>();
 
+  if (sip["websocket_allowed_origins"]) {
+    try {
+      sip_websocket_allowed_origins = sip["websocket_allowed_origins"].as<std::vector<std::string>>();
+    } catch (const std::exception&) {
+      _logger->error("Invalid 'sip.websocket_allowed_origins': it is a list of origins, such as [\"https://console.example.com\"]");
+      return false;
+    }
+  }
+
   if (sip["localnet"]) {
     try {
       sip_localnet = sip["localnet"].as<std::vector<std::string>>();
@@ -766,6 +775,7 @@ std::string Config::effective_yaml() const {
   out << YAML::Key << "node_id" << YAML::Value << sip_node_id;
   out << YAML::Key << "public_address" << YAML::Value << sip_public_address;
   out << YAML::Key << "localnet" << YAML::Value << YAML::Flow << sip_localnet;
+  out << YAML::Key << "websocket_allowed_origins" << YAML::Value << YAML::Flow << sip_websocket_allowed_origins;
   out << YAML::Key << "allow_unencrypted" << YAML::Value << sip_allow_unencrypted;
   out << YAML::Key << "forward_register" << YAML::Value << sip_forward_register;
   out << YAML::Key << "log_messages" << YAML::Value << sip_log_messages;
