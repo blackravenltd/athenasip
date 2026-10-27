@@ -475,13 +475,13 @@ to 5 and 9 here; 6 needs clang (libFuzzer), 7 needs GitHub, 8 is partly Tom's.
       departures, the review and what is not yet in Limits (2026-10-26). The GitHub About
       text (46, "TLS-only") and athenasip.org (48) are Tom's: Waiting on Tom.
 - [x] **9. Protocol gaps** (11, 12, 13, 14, 16): done 2026-10-26 (`COMPLETED.md`).
-- [ ] **The rest** (8, 9, 15, 17, 18, 19, 27 to 42, 45), each small, after the nine above:
-      method and URI validation, a contacts-per-AOR cap, the dead transaction id, one Allow
-      list, a transaction table cap, the admin API bound to loopback by default, realm and
-      user names validated, SHA-256 subscriber ids, constant-time logins, `mqtts`, rtpengine
-      replies checked by source, Web Push destinations filtered, async resolves, the dead TLS
-      branch, a WebSocket Origin check, timers validated, nonces and URL credentials out of
-      logs, `SIPHeader::print`, the no-op `send`, comments that restate code.
+- [x] **The rest**, done 2026-10-26 and 27 (`COMPLETED.md`): 8, 9, 15, 17, 18, 19, 27, 28, 29,
+      31, 33, 34, 35, 36, 37, 38, 39, 40, 41, each with a regression test but 27 (documented).
+- [ ] **Still open from the review:** 30, subscriber ids are FNV-1a-64 (`Util::stable_id`): a
+      new id is a migration of every stored subscriber and binding key, so it waits for a
+      decision on how (Waiting on Tom). 32, MQTT without TLS: `mqtts://` with the cluster CA, the
+      next larger piece. 42, comments that restate code: as files are touched. 45, adversarial
+      tests: each fix above brought its own; a fuzz corpus comes with item 6.
 
 
 
