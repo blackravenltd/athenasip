@@ -41,6 +41,9 @@ Settings build() {
   s.push_back(list("sip.localnet",
                    "Prefixes on this node's side of the router, such as 192.168.0.0/16. A far end inside them is given the local address "
                    "and port; everyone else the public ones."));
+  s.push_back(list("sip.websocket_allowed_origins",
+                   "The web origins whose pages may open a SIP WebSocket here, such as https://console.example.com. Empty allows any; a "
+                   "request with no Origin, as a phone sends, is always allowed."));
   s.push_back(boolean("sip.allow_unencrypted", "true", "False refuses to start with a udp, tcp or plain websocket listener."));
   s.push_back(choice("sip.forward_register", "subscribers", {"subscribers", "never"},
                      "A REGISTER for a domain this node does not serve (RFC 3261 10.3): subscribers forwards one from this node's own "

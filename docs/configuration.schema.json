@@ -26,6 +26,14 @@
           },
           "default": []
         },
+        "websocket_allowed_origins": {
+          "description": "The web origins whose pages may open a SIP WebSocket here, such as https://console.example.com. Empty allows any; a request with no Origin, as a phone sends, is always allowed.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
         "allow_unencrypted": {
           "description": "False refuses to start with a udp, tcp or plain websocket listener.",
           "type": "boolean",

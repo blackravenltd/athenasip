@@ -61,6 +61,10 @@ class Config {
   bool parse_localnet();
   bool in_localnet(const boost::asio::ip::address& address) const;
 
+  // sip.websocket_allowed_origins: the web origins (https://console.example.com) whose pages may open a SIP WebSocket
+  // here. Empty allows any, as before; a request with no Origin, a phone's, is always allowed (review finding 37).
+  std::vector<std::string> sip_websocket_allowed_origins;
+
   // The public port for udp, tcp, tls, ws or wss, or zero.
   std::uint16_t public_port_for(const std::string& transport) const;
 

@@ -316,12 +316,12 @@ int main(int argc, char* argv[]) {
 
   auto datastore = Datastore::create_driver(logger, config->db_url);
   if (!datastore) {
-    logger->error("Unknown datastore scheme: " + config->db_url);
+    logger->error("Unknown datastore scheme: " + cli::redacted(config->db_url));
   }
 
   auto events = EventSystem::create_driver(logger, config->events_url);
   if (!events) {
-    logger->error("Unknown event scheme: " + config->events_url);
+    logger->error("Unknown event scheme: " + cli::redacted(config->events_url));
   }
 
   if (!events || !datastore) {
@@ -344,7 +344,7 @@ int main(int argc, char* argv[]) {
       connect_and_wait([&datastore](plugins::Executor on, plugins::StatusHandler handler) { datastore->connect(std::move(on), std::move(handler)); });
 
   if (!datastore_connected.ok) {
-    logger->error("Datastore Connection Failed: " + config->db_url + " - " + datastore_connected.error);
+    logger->error("Datastore Connection Failed: " + cli::redacted(config->db_url) + " - " + datastore_connected.error);
     return -3;
   }
 
@@ -455,13 +455,13 @@ int main(int argc, char* argv[]) {
 
   if (!events_connected.ok) {
     datastore->close();
-    logger->error("Event System Connection Failed: " + config->events_url + " - " + events_connected.error);
+    logger->error("Event System Connection Failed: " + cli::redacted(config->events_url) + " - " + events_connected.error);
     return -3;
   }
 
   auto media_engine = media::MediaEngine::create_driver(logger, config->media_url);
   if (!media_engine) {
-    logger->error("Unknown media scheme: " + config->media_url);
+    logger->error("Unknown media scheme: " + cli::redacted(config->media_url));
     datastore->close();
     events->close();
     return -2;
@@ -479,7 +479,7 @@ int main(int argc, char* argv[]) {
       connect_and_wait([&media_engine](plugins::Executor on, plugins::StatusHandler handler) { media_engine->connect(std::move(on), std::move(handler)); });
 
   if (!media_connected.ok) {
-    logger->error("Media Engine Connection Failed: " + config->media_url + " - " + media_connected.error);
+    logger->error("Media Engine Connection Failed: " + cli::redacted(config->media_url) + " - " + media_connected.error);
     datastore->close();
     events->close();
     return -3;

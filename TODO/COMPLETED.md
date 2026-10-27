@@ -3907,3 +3907,17 @@ Findings 43 and 44.
       that INFO with a bare 500 and lost the digit. It now forwards the INFO end to end instead.
       `MediaProfileTest.AnInfoTheEngineCannotPlayIsForwardedInstead`, watched failing first. The
       suite 1644, 1572 passed.
+- [x] **Login timing** (31): an unknown or disabled user is checked against a decoy hash of the
+      same cost, so a refusal takes as long whether or not the name exists (0 ms against 164 ms
+      before). `SessionsTest.AnUnknownUserTakesAsLongToRefuseAsAWrongPassword`, watched failing.
+- [x] **WebSocket upgrade** (37): `sip.websocket_allowed_origins` refuses a browser page from any
+      other origin with 403 (a request with no Origin, a phone's, always passes), and beast holds
+      no message over 64 KB. `WebsocketServerTest.AnOriginNotAllowedIsRefusedAtTheUpgrade`.
+- [x] **Credentials out of the logs** (39): the datastore, event and media URLs are logged with
+      their password masked (`cli::redacted`, as `--check` already did); nonces are no longer
+      logged since item 4.
+- [x] **A shared connection's trust documented** (27): `docs/authentication.md` and the scripting
+      reference say what one registration on a connection an SBC or proxy shares trusts, and that
+      `from_must_match = false` must not be set where one reaches. The suite 1646, 1574 passed.
+- [x] **The AthenaPhone suite against the fixture** (f001aab): 121 passed, 0 failed; live tests 20
+      passed, INFO DTMF and the subscriber config among them; no 400 from the stricter parser.

@@ -51,10 +51,13 @@ void Sessions::login(std::string username, std::string password, std::function<v
 
     auto user = result.value;
 
-    // One answer for all three. Timing still differs - an unknown user skips the PBKDF2 -
-    // which the login rate limit bounds.
-    if (!user) return handler(Login::refused("no such user"));
-    if (user->disabled) return handler(Login::refused("the user is disabled"));
+    // One answer for all three, and one time (review finding 31): an unknown or disabled user is checked against a
+    // hash of the same cost, so how long a refusal takes does not say whether the name exists.
+    if (!user || user->disabled) {
+      static const std::string decoy = types::Password::hash("athenasip-decoy");
+      types::Password::verify(password, decoy);
+      return handler(Login::refused(!user ? "no such user" : "the user is disabled"));
+    }
     if (!types::Password::verify(password, user->password_hash)) return handler(Login::refused("the password does not verify"));
 
     const auto token = _new_token();

@@ -16,6 +16,7 @@ The node, and how it treats SIP.
 | `sip.node_id` | text | required | This node's name. Unique in the cluster. |
 | `sip.public_address` | text | none | The address this node tells others to reach it on. Needed in a container, behind NAT or a balancer; empty falls back to the bind address, or to one peers have seen this node at. |
 | `sip.localnet` | list | `[]` | Prefixes on this node's side of the router, such as 192.168.0.0/16. A far end inside them is given the local address and port; everyone else the public ones. |
+| `sip.websocket_allowed_origins` | list | `[]` | The web origins whose pages may open a SIP WebSocket here, such as https://console.example.com. Empty allows any; a request with no Origin, as a phone sends, is always allowed. |
 | `sip.allow_unencrypted` | true or false | `true` | False refuses to start with a udp, tcp or plain websocket listener. |
 | `sip.forward_register` | one of `subscribers`, `never` | `subscribers` | A REGISTER for a domain this node does not serve (RFC 3261 10.3): subscribers forwards one from this node's own subscribers; never answers 403. |
 | `sip.log_messages` | true or false | `false` | Log every message in full, not only its first line, at debug: with log.level above debug it logs nothing. Credentials are redacted. |
