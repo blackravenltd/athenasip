@@ -3921,3 +3921,10 @@ Findings 43 and 44.
       `from_must_match = false` must not be set where one reaches. The suite 1646, 1574 passed.
 - [x] **The AthenaPhone suite against the fixture** (f001aab): 121 passed, 0 failed; live tests 20
       passed, INFO DTMF and the subscriber config among them; no 400 from the stricter parser.
+- [x] **MQTT over TLS** (32): `mqtts://` speaks TLS 1.2 or later to the broker, on 8883 by
+      default, verifying its certificate against the system's roots and `mqtt.ca_file` and its
+      name against the URL's host (SNI and host name verification set by the customisation points
+      boost.mqtt5 asks for). One client or the other behind an adapter, so the run logic is
+      unchanged. `MqttEventSystemTest.TlsCarriesAMessageToABrokerItTrusts` and
+      `...TlsRefusesABrokerItDoesNotTrust`, against a Mosquitto with a TLS listener in Docker
+      (`ATHENA_TEST_MQTTS_URL`). With Redis, MQTT and MQTT over TLS the suite is 1648, 1645 passed.
