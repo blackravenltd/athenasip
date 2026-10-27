@@ -604,6 +604,10 @@
               "description": "Put before every topic, so clusters can share a broker.",
               "type": "string",
               "default": "athenasip/"
+            },
+            "ca_file": {
+              "description": "For mqtts://: more CA certificates to trust for the broker, beside the system's. The broker's name is checked against its certificate.",
+              "type": "string"
             }
           }
         }

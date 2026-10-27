@@ -181,6 +181,7 @@ The mqtt:// event bus. The URL names the broker; this says how to talk to it.
 | `events.mqtt.username` | text | none | The broker username, if not in the URL. |
 | `events.mqtt.password` | text | none | The broker password, if not in the URL. |
 | `events.mqtt.prefix` | text | `athenasip/` | Put before every topic, so clusters can share a broker. |
+| `events.mqtt.ca_file` | text | none | For mqtts://: more CA certificates to trust for the broker, beside the system's. The broker's name is checked against its certificate. |
 
 ## `media`
 

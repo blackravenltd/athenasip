@@ -12,7 +12,9 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/strand.hpp>
+#include <boost/asio/ssl.hpp>
 #include <boost/mqtt5.hpp>
+#include <boost/mqtt5/ssl.hpp>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -84,6 +86,64 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
   void publish_event(std::string event_name, std::string message, Completion completion, bool retain = false);
 
   using MQTTClient = mqtt::mqtt_client<asio::ip::tcp::socket>;
+  using MQTTTlsClient = mqtt::mqtt_client<asio::ssl::stream<asio::ip::tcp::socket>, asio::ssl::context>;
+
+  // The plain client or the TLS one, chosen by the URL's scheme (mqtt:// or mqtts://, review finding 32), behind the
+  // calls this driver makes, so neither the call sites nor the run logic know which. Made by configure_client.
+  struct Client {
+    std::unique_ptr<MQTTClient> plain;
+    std::unique_ptr<MQTTTlsClient> secure;
+
+    template <typename Fn>
+    void visit(Fn&& fn) {
+      if (secure) {
+        fn(*secure);
+      } else if (plain) {
+        fn(*plain);
+      }
+    }
+
+    template <typename... A>
+    void async_run(A&&... a) {
+      visit([&](auto& c) { c.async_run(std::forward<A>(a)...); });
+    }
+    template <typename... A>
+    void async_subscribe(A&&... a) {
+      visit([&](auto& c) { c.async_subscribe(std::forward<A>(a)...); });
+    }
+    template <mqtt::qos_e Q, typename... A>
+    void async_publish(A&&... a) {
+      visit([&](auto& c) { c.template async_publish<Q>(std::forward<A>(a)...); });
+    }
+    template <typename... A>
+    void async_receive(A&&... a) {
+      visit([&](auto& c) { c.async_receive(std::forward<A>(a)...); });
+    }
+    template <typename... A>
+    void async_disconnect(A&&... a) {
+      visit([&](auto& c) { c.async_disconnect(std::forward<A>(a)...); });
+    }
+    template <typename... A>
+    Client& brokers(A&&... a) {
+      visit([&](auto& c) { c.brokers(std::forward<A>(a)...); });
+      return *this;
+    }
+    template <typename... A>
+    Client& credentials(A&&... a) {
+      visit([&](auto& c) { c.credentials(std::forward<A>(a)...); });
+      return *this;
+    }
+    template <typename... A>
+    Client& keep_alive(A&&... a) {
+      visit([&](auto& c) { c.keep_alive(std::forward<A>(a)...); });
+      return *this;
+    }
+    template <typename... A>
+    Client& will(A&&... a) {
+      visit([&](auto& c) { c.will(std::forward<A>(a)...); });
+      return *this;
+    }
+  };
   using MQTTStrand = asio::strand<asio::io_context::executor_type>;
   using MQTTWorkGuard = asio::executor_work_guard<asio::io_context::executor_type>;
 
@@ -112,7 +172,11 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
   asio::io_context _mqtt_io_context;
   MQTTStrand _mqtt_strand;
   std::optional<MQTTWorkGuard> _mqtt_work_guard;
-  MQTTClient _client;
+  Client _client;
+
+  // mqtts://: TLS to the broker, verified against the system's roots and `mqtt.ca_file` when given.
+  bool _tls = false;
+  std::string _ca_file;
 
   // Identifies the current run. One mqtt_client is reused across connect/close cycles, so a
   // completion from a finished run can arrive while the next is starting; each run captures

@@ -19,6 +19,24 @@
 #include "../config.h"
 #include "../util.h"
 
+// What boost.mqtt5 asks of a TLS stream it does not know (detail/async_traits.hpp): the handshake's direction, and the
+// server name. The name is checked against the broker's certificate, as the system's TLS clients do.
+namespace boost::mqtt5 {
+
+template <>
+struct tls_handshake_type<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> {
+  static constexpr auto client = boost::asio::ssl::stream_base::client;
+  static constexpr auto server = boost::asio::ssl::stream_base::server;
+};
+
+template <>
+void assign_tls_sni(const authority_path& ap, boost::asio::ssl::context& /*ctx*/, boost::asio::ssl::stream<boost::asio::ip::tcp::socket>& stream) {
+  SSL_set_tlsext_host_name(stream.native_handle(), ap.host.c_str());
+  stream.set_verify_callback(boost::asio::ssl::host_name_verification(ap.host));
+}
+
+}  // namespace boost::mqtt5
+
 namespace athenasip::events {
 namespace {
 
@@ -105,8 +123,7 @@ MQTTEventSystem::MQTTEventSystem(std::shared_ptr<athenasip::loggers::Logger> log
       _password(std::move(password)),
       _keep_alive_seconds(keep_alive_seconds),
       _prefix(std::move(prefix)),
-      _mqtt_strand(boost::asio::make_strand(_mqtt_io_context)),
-      _client(_mqtt_strand) {
+      _mqtt_strand(boost::asio::make_strand(_mqtt_io_context)) {
   // Not in the initialiser list: by then _client_id's source may have been moved from.
   _client_id_was_given = !_client_id.empty();
   if (!_client_id_was_given) _client_id = default_client_id();
@@ -130,6 +147,7 @@ plugins::Settings MQTTEventSystem::settings() {
       text("mqtt.username", "", "The broker username, if not in the URL."),
       text("mqtt.password", "", "The broker password, if not in the URL."),
       text("mqtt.prefix", "athenasip/", "Put before every topic, so clusters can share a broker."),
+      text("mqtt.ca_file", "", "For mqtts://: more CA certificates to trust for the broker, beside the system's. The broker's name is checked against its certificate."),
   };
 }
 
@@ -442,9 +460,10 @@ void MQTTEventSystem::apply_url(std::shared_ptr<types::URL> url) {
     value.erase(0, scheme_pos + 3);
   }
 
+  // mqtts://: TLS to the broker on 8883 unless a port is given (review finding 32).
   if (scheme == "mqtts") {
     _broker_port = 8883;
-    _logger->warn("mqtts:// selected, but MQTT TLS transport is not implemented by this backend yet");
+    _tls = true;
   }
 
   const auto path_pos = value.find('/');
@@ -569,11 +588,27 @@ bool MQTTEventSystem::configure(const YAML::Node& own_root, const Config& system
   if (own_root["username"]) _username = own_root["username"].as<std::string>();
   if (own_root["password"]) _password = own_root["password"].as<std::string>();
   if (own_root["prefix"]) _prefix = normalise_prefix(own_root["prefix"].as<std::string>());
+  if (own_root["ca_file"]) _ca_file = own_root["ca_file"].as<std::string>();
 
   return true;
 }
 
 void MQTTEventSystem::configure_client() {
+  // Made once and reused across runs, as the one client was before TLS.
+  if (_tls && !_client.secure) {
+    asio::ssl::context context(asio::ssl::context::tls_client);
+    context.set_options(asio::ssl::context::default_workarounds | asio::ssl::context::no_tlsv1 | asio::ssl::context::no_tlsv1_1);
+    context.set_default_verify_paths();
+    if (!_ca_file.empty()) {
+      boost::system::error_code failed;
+      context.load_verify_file(_ca_file, failed);
+      if (failed) _logger->error("mqtt.ca_file: could not load " + _ca_file + " - " + failed.message());
+    }
+    context.set_verify_mode(asio::ssl::verify_peer);
+    _client.secure = std::make_unique<MQTTTlsClient>(_mqtt_strand, std::move(context));
+  }
+  if (!_tls && !_client.plain) _client.plain = std::make_unique<MQTTClient>(_mqtt_strand);
+
   _client.brokers(_broker_host, _broker_port).credentials(_client_id).keep_alive(_keep_alive_seconds);
 
   if (!_username.empty()) {

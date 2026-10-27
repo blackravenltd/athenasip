@@ -481,7 +481,7 @@ to 5 and 9 here; 6 needs clang (libFuzzer), 7 needs GitHub, 8 is partly Tom's.
       new id is a migration of every stored subscriber and binding key, so it waits for a
       decision on how (Waiting on Tom). 32, MQTT without TLS: `mqtts://` with the cluster CA, the
       next larger piece. 42, comments that restate code: as files are touched. 45, adversarial
-      tests: each fix above brought its own; a fuzz corpus comes with item 6.
+      tests: each fix above brought its own; a fuzz corpus comes with item 6. (32 done 2026-10-27.)
 
 
 

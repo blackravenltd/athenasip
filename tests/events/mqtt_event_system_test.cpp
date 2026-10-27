@@ -17,8 +17,11 @@
 #include <thread>
 #include <vector>
 
+#include <yaml-cpp/yaml.h>
+
 #include "../helpers/sync_event_system_helper.h"
 #include "../mocks/logger_mock.h"
+#include "config.h"
 #include "events/topics.h"
 #include "types/url.h"
 
@@ -365,4 +368,51 @@ TEST(MqttEventSystemTest, AClosedRunDoesNotTakeTheNextOneDownWithIt) {
     bus->close();
     EXPECT_FALSE(bus->is_connected()) << "cycle " << cycle;
   }
+}
+
+// Review finding 32: mqtts:// speaks TLS to the broker, verifying its certificate against the system's roots and
+// mqtt.ca_file, and its name against the URL's host. Against a TLS broker named by ATHENA_TEST_MQTTS_URL, with
+// certificates from tls/ (the snakeoil one names localhost):
+//   ATHENA_TEST_MQTTS_URL=mqtts://localhost:8883 ./build-tests/athenasip_tests --gtest_filter='MqttEventSystemTest.Tls*'
+namespace {
+
+std::shared_ptr<SyncEventSystem> connect_tls(const std::string& ca_file) {
+  const char* url = std::getenv("ATHENA_TEST_MQTTS_URL");
+  if (url == nullptr) return nullptr;
+
+  auto logger = std::make_shared<MockLogger>();
+  auto events = std::make_shared<MQTTEventSystem>(logger, std::make_shared<types::URL>(url));
+  YAML::Node settings;
+  settings["ca_file"] = ca_file;
+  settings["connect_timeout_ms"] = 2000;
+  events->configure(settings, Config(logger));
+  return std::make_shared<SyncEventSystem>(events);
+}
+
+}  // namespace
+
+TEST(MqttEventSystemTest, TlsCarriesAMessageToABrokerItTrusts) {
+  if (std::getenv("ATHENA_TEST_MQTTS_URL") == nullptr) GTEST_SKIP() << "ATHENA_TEST_MQTTS_URL is not set";
+  auto bus = connect_tls(std::string(ATHENA_TEST_SOURCE_DIR) + "/tls/ca/snakeca.crt");
+  ASSERT_TRUE(bus->connect()) << bus->last_error();
+
+  const auto topic = unique_topic("tls");
+  Received received;
+  auto subscription = bus->subscribe(topic, [&received](const std::string& name, const std::string& payload) { received.add(name, payload); });
+  ASSERT_NE(subscription, nullptr) << bus->last_error();
+  EXPECT_TRUE(bus->publish(topic, "over tls"));
+  ASSERT_TRUE(eventually(received, 1));
+  EXPECT_EQ(received.all()[0].second, "over tls");
+
+  bus->unsubscribe(subscription);
+  bus->close();
+}
+
+// A broker whose certificate no trusted CA signed is not spoken to: the connection fails rather than carrying the
+// cluster's events to whoever answered.
+TEST(MqttEventSystemTest, TlsRefusesABrokerItDoesNotTrust) {
+  if (std::getenv("ATHENA_TEST_MQTTS_URL") == nullptr) GTEST_SKIP() << "ATHENA_TEST_MQTTS_URL is not set";
+  auto bus = connect_tls("");
+  EXPECT_FALSE(bus->connect());
+  bus->close();
 }
