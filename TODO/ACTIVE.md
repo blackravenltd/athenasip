@@ -20,13 +20,14 @@ built on node-a and copied to node-b with the systemd unit; the previous binary 
   trunk `node-b` to node-b, registering as node-b's subscriber 1003 through 10.102.1.50.
   Deploying there is standing-authorised; touch the files changed since the last deploy
   before building (a stale object crash-looped it on 2026-10-09).
-- `node-b` (10.102.1.50) as `node-b.example.com` behind the other site's NAT:
-  native rtpengine, the binary built on node-a. Each deploy there needs the maintainer's yes. `lua://`
-  since 2026-10-12 (previous configuration `config.yaml.before-trunks`): `main.lua` is
-  `athenasip.trunks` plus service codes (`*55`, `*NN`) out by the trunk `carrier`, a real
-  carrier: the maintainer's number +1 555 0100 rings `ada`, and the carrier allows no other
-  calls out. API user `trunks` (manage-trunks, manage-cluster, view-cluster-status), its
-  password in `/root/.athenasip-trunks-password`.
+- `node-b`, now **node-b** on 10.102.1.20 (the maintainer reinstalled the host; AthenaSIP set up
+  again on 2026-11-01 at his request, `develop` at `1b1c3c5` built on the host): the realm
+  `athenasip.com`, secure transports only (TLS 5061 and WSS 8089 on 10.102.1.20; nothing
+  unencrypted), Redis and Mosquitto on loopback, rtpengine and coturn (3478, TLS 5349) on
+  10.102.1.20, the admin API and console on loopback behind the shared HAProxy at
+  `https://athenasip.com` (Let's Encrypt, DNS-01 by hand). Each deploy there needs the maintainer's yes.
+  The old node's `lua://` trunk to the carrier, its subscribers and the node-a trunk to it are gone
+  with the reinstall; `test/interop/live.json` still describes them.
 - A probe on node-a (`athenasip-probe.timer`) runs `test/interop/verify.py
   test/interop/live.json` every 15 minutes and publishes `athenasip/probes/node-a/calls`.
   A manual run at the same time as the probe fails some checks: both use subscribers 1901
@@ -450,6 +451,20 @@ else. After it, the conferencing work resumes with the maintainer's four answers
 step 1 built (decision 2), then `/api/v1/focuses` as a view on the trunks with a `focus`
 attribute (decision 1), then step 5 with FreeSWITCH and step 6, the roster from the focus,
 as part of the feature (decision 3).
+
+### Found setting up node-b (2026-11-01)
+
+- [ ] `websocket.tls: true` refuses to start without `websocket.cert_pem_filename` and
+      `key_pem_filename`, though the reference says an empty one uses the `tls` section's.
+      The reference is the intent; the config check is what to fix.
+- [ ] The rtpengine control socket (`src/media/rtpengine_media_engine.cpp:320`) is opened
+      unbound, so it sits on `0.0.0.0` at an ephemeral port. Replies from anything but the
+      engine are already dropped; bind it to the address that reaches the engine (loopback
+      for a local one) so a node told to use one address uses only that.
+- [ ] **PROXY protocol v2 from a trusted proxy**, on the HTTP and WebSocket listeners
+      (asked of the maintainer, not yet answered). Behind HAProxy every connection comes from HAProxy, so
+      the per-source API limits are shared by everyone, and SIP over `wss://athenasip.com/ws`
+      on 443 would put every browser behind one address for the Digest guessing bans.
 
 ### The perimeter: the external review of 2026-10-25 (Milestone 8)
 
