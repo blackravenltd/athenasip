@@ -607,7 +607,7 @@ TEST(RedisDatastoreTest, UserWithNoRolesRoundTrips) {
 TEST(RedisDatastoreTest, UsernamesAreOneNamespaceWhateverTheirCase) {
   REQUIRE_REDIS(datastore);
   const auto suffix = unique_suffix();
-  const auto mixed = "the maintainer-" + suffix;
+  const auto mixed = "Ada-" + suffix;
 
   ASSERT_TRUE(datastore->user_create(make_user(mixed, {})));
 

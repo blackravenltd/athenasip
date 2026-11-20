@@ -104,7 +104,7 @@ function NewUserDialogue({ api, onClose, onSaved }: { api: AdminApi; onClose: ()
       </label>
       <p className="field-hint">
         A user signs in to this console and the API. It is not a subscriber, and adding one does not
-        add the other. Usernames ignore case: the maintainer and ada are the same user.
+        add the other. Usernames ignore case: Ada and ada are the same user.
       </p>
       <RoleFields roles={roles} busy={busy} onChange={setRoles} />
       {roles.length === 0 && (
