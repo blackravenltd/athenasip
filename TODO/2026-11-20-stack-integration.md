@@ -135,6 +135,10 @@ before pinning. This part is open for work after AthenaSIP 0.13.0.
   stand. SIP between nodes stays RFC 3261 over mutual TLS (Decisions, 2026-09-17).
 - `dannan::config` (defaults, YAML, `secrets.yaml`, environment, flags, each value saying where
   it came from) in place of `src/config.*`, which also takes the secrets out of `config.yaml`.
+  With it, the stack's names for a node's log settings (the coordinating session, 2026-11-20):
+  `log.level` (all, debug, info, warn, error; `dannan::status::parse_log_level`) and `log.format`
+  (text, json; `parse_log_format`). Flags and environment variables for them only if the binary
+  keeps those layers, which is open with the maintainer.
 - Trunk takeover on Dannan's agreement register works today, but only a split's majority side
   keeps its trunks registered. Not taken: Dagda's lease serves both sides and is the design.
 
