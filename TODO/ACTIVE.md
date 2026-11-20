@@ -482,7 +482,8 @@ as part of the feature (decision 3).
       static Boost libraries (thread, json, charconv) are built plain today, which is why UBSan's
       `vptr` check on Boost.JSON is suppressed (`docs/testing.md`). `tools/ci.sh deps` builds an
       instrumented copy for `asan` and one for `tsan`, and the suppressions go. When Dannan and
-      Dagda are linked, they are built from source with the same flags, by the option Dannan adds.
+      Dagda are linked, they are built from source with the same flags: `DANNAN_SANITIZE=address`
+      or `thread`, from Dannan `0.10.0`, set before `FetchContent_MakeAvailable(dannan)`.
 - [ ] The sipp, cluster and trunk harnesses (`test/e2e/`) run AthenaSIP nodes and sipp directly
       on claimed machines of the build cluster, not under docker compose (the maintainer, 2026-11-20:
       "They should use the cluster as the other projects do"). `0.13.0` was gated without them,
