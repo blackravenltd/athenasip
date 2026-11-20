@@ -14,6 +14,23 @@ week, under Milestone 1. Everything after that is dated as it landed.
 
 Newest first. The detail is below, oldest first.
 
+- **0.13.0** (2026-11-20): the external review's fixes, conferencing, and the project's
+  housekeeping as one of the cluster stack. From the review: streams and flows held within
+  limits, Content-Length as one number or nothing, Digest nonces that carry their own proof and
+  are bound to the address they went to, SIP-side guessing limits with bans held cluster-wide,
+  the plain admin API on loopback unless told otherwise, strict start lines and field names,
+  rtpengine replies taken only from the engine asked, and the protocol gaps it named. A
+  conference URI routes to a focus behind a trunk (RFC 4579) under `lua://`, with rooms listed,
+  a participant removed over the API and a BLF key for a room. DTMF is converted between RFC
+  4733, INFO and in-band per leg; instant messages are relayed and held; trunk status, re-offer
+  reports and the dialog are kept in the datastore; `mqtts://` speaks TLS to the broker. The
+  admin console lives in `console/`. Packages are built with debhelper for Debian 13, nine
+  libFuzzer targets cover the parsers of untrusted bytes, and `tools/ci.sh` runs on GitHub. The
+  gate, on an arm64 build machine: release, ASan with UBSan, TSan (1644 tests each) and the fuzz
+  targets, and it found the presence API answering from the Core strand, which is fixed. Not in
+  the gate: the sipp and cluster harnesses, which need Docker Compose and are being rebuilt for
+  the build cluster, and LeakSanitizer, whose first run reported leaks at the suite's exit that
+  are not yet sorted (`ACTIVE.md`).
 - **0.12.0** (2026-10-13): presence and BLF, and the first real carrier. The node is the
   notifier for `presence` and `dialog` (RFC 6665, 3856, 4235) and accepts PUBLISH (RFC
   3903): a desk phone's BLF key lights while a colleague is on a call, across the cluster,
