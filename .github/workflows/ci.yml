@@ -54,7 +54,7 @@ jobs:
       - run: tools/ci.sh deps
       - run: tools/ci.sh ${{ matrix.step }}
       - if: matrix.step == 'coverage'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: build-ci-coverage/coverage.info
           token: ${{ secrets.CODECOV_TOKEN }}
