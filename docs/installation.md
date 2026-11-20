@@ -4,18 +4,25 @@ A node is one binary, one configuration file and one systemd unit. The defaults 
 in-process datastore, event system and media relay, so a working node needs no Redis, no
 broker and no media server.
 
-## Building a Debian package
+## Debian packages
 
-Releases do not ship one for now, but a checkout builds one, for Debian 13 (trixie) and its
-derivatives, in Docker:
+For Debian 13 (trixie) and its derivatives, on amd64 and arm64, from the apt repository:
 
 ```bash
-docker build --target deb --output dist .
-sudo apt install ./dist/athenasip_*.deb
+sudo curl -fsSLo /etc/apt/sources.list.d/tomcully.sources https://tomcully.com/apt/tomcully.sources
+sudo apt update && sudo apt install athenasip
 ```
 
-`--platform linux/arm64` builds one for ARM. Boost is linked in statically, so the package
-depends only on what Debian ships: OpenSSL, yaml-cpp, nghttp2 and Lua.
+Or build one from a checkout, with debhelper. Boost is linked in statically from
+`/opt/athenasip-deps`, which `tools/ci.sh deps` builds once, so the package depends only on
+what Debian ships: OpenSSL, yaml-cpp, nghttp2 and Lua.
+
+```bash
+sudo tools/ci.sh deps
+sudo apt install debhelper
+dpkg-buildpackage -us -uc -b
+sudo apt install ../athenasip_*.deb
+```
 
 | | |
 |---|---|

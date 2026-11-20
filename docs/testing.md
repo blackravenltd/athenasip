@@ -10,7 +10,8 @@
 | [Live call](#the-live-call) | did a person hear it | a device |
 | [The whole suite](#the-whole-suite) | do the node, the console and AthenaPhone agree | Docker, the sibling repositories |
 
-Everything runs on a developer machine. There is no hosted CI.
+Every push runs `tools/ci.sh` on GitHub ([Warnings and CI](#warnings-and-ci)); the layers that
+need Docker, a device or a person are run by hand.
 
 ## Before a release
 
@@ -23,6 +24,7 @@ ATHENA_TEST_MQTT_URL=mqtt://127.0.0.1:1883 ./build-tests/athenasip_tests
 
 cmake --preset asan && cmake --build build-asan -j8 && ./build-asan/athenasip_tests
 cmake --preset tsan && cmake --build build-tsan -j8 && ./build-tsan/athenasip_tests
+tools/ci.sh fuzz
 
 test/e2e/run.sh
 test/e2e/run.sh --rtpengine
@@ -154,8 +156,27 @@ the answer's `sdp` where the offer's is not captured, an error code). They were 
 kind with a sample of each on 2026-10-26, and none read was a mistake. Pass `-Wshadow` in
 `CMAKE_CXX_FLAGS` for that audit again.
 
-There is no hosted CI, by decision (2026-10-26): every run here is on a developer machine,
-and the release checklist above is the gate. There is no fuzzing yet.
+`tools/ci.sh` holds each check as a step, the same on GitHub and in a local `debian:trixie`
+container: `deps` (the packages, and Boost built once into `/opt/athenasip-deps`), `check`
+(the header block on every source), `release` (g++, warnings as errors, the unit suite with a
+Redis and a broker of its own), `clang`, `asan`, `tsan`, `coverage` (lcov over `src/`),
+`fuzz` and `console`. `.github/workflows/ci.yml` runs them on every push, with `release` on
+arm64 as well, and `codeql.yml` scans the C++ and the console. The release checklist above
+stays the gate for what a runner cannot reach.
+
+## Fuzzing
+
+One libFuzzer target per parser of untrusted bytes, under `fuzz/`: the SIP message head,
+URIs, name-addrs, Authorization and Via values, URLs, rtpengine's bencode, STUN and DNS
+responses. They need clang, and run with ASan and UBSan:
+
+```bash
+tools/ci.sh fuzz                   # every target, 60 seconds each
+FUZZ_SECONDS=600 tools/ci.sh fuzz  # longer
+```
+
+A parser may refuse its input by returning or throwing; a crash, a hang or a read out of
+bounds is a finding, and the input that caused it becomes a unit test.
 
 ## The sipp harness
 

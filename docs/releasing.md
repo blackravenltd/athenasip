@@ -1,11 +1,8 @@
 # AthenaSIP - Releasing
 
-A release is a tag on `main` and what is built from it: the Docker image and the Homebrew
-formula's source. Everything is built from the tag, so what users install is exactly what the
-tag says.
-
-No Debian packages ship with a release for now (the maintainer, 2026-10-12). The Dockerfile's `deb`
-target stays, so anyone can build one ([Installation](installation.md)).
+A release is a tag on `main` and what is built from it: the Debian packages, the Docker image
+and the Homebrew formula's source. Everything is built from the tag, so what users install is
+exactly what the tag says.
 
 ## Once, before the first release
 
@@ -53,6 +50,16 @@ Check it reports the version before anything points at it:
 docker run --rm --entrypoint athenasip "tomcully/athenasip:$VERSION" --version
 ```
 
+The Debian packages, on a trixie machine of each architecture (amd64 and arm64), from a
+checkout of the tag:
+
+```bash
+sudo tools/ci.sh deps && dpkg-buildpackage -us -uc -b && lintian ../athenasip_*.changes
+```
+
+They go into the apt repository's `incoming/athenasip/$VERSION/`, and the repository's owner
+signs and uploads it.
+
 ## 3. Publish the release on GitHub
 
 ```bash
@@ -98,8 +105,7 @@ brew services start athenasip
 ```
 
 The formula builds from source on the user's machine, which takes a few minutes. Prebuilt
-bottles are a later step and need a workflow to build them; there is no hosted CI here, so
-they would be built on a Mac and uploaded by hand.
+bottles are a later step.
 
 ## 5. Afterwards
 

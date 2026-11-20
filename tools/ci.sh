@@ -14,6 +14,7 @@
 #   tools/ci.sh asan       AddressSanitizer and UndefinedBehaviourSanitizer
 #   tools/ci.sh tsan       ThreadSanitizer
 #   tools/ci.sh coverage   an lcov report of src/ in build-ci-coverage/coverage.info
+#   tools/ci.sh fuzz       every fuzz target for FUZZ_SECONDS (default 60) each, with ASan and UBSan
 #   tools/ci.sh console    the console's typecheck, unit tests and build
 #
 # JOBS sets the parallelism (default: every core). docs/testing.md has the rest.
@@ -83,9 +84,19 @@ case "${1:-}" in
       --ignore-errors mismatch,inconsistent,negative
     lcov --summary "$ROOT/build-ci-coverage/coverage.info" --ignore-errors inconsistent
     ;;
+  fuzz)
+    build="$ROOT/build-ci-fuzz"
+    cmake -S . -B "$build" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_COMPILER=clang++ -DATHENA_SANITIZE=address -DATHENA_BUILD_FUZZING=ON \
+      -DBOOST_ROOT="$DEPS" -DBoost_USE_STATIC_LIBS=ON >/dev/null
+    cmake --build "$build" -j"$JOBS"
+    for target in "$build"/athenasip_fuzz_*; do
+      mkdir -p "$build/corpus/$(basename "$target")"
+      "$target" -max_total_time="${FUZZ_SECONDS:-60}" -max_len=8192 -print_final_stats=1 "$build/corpus/$(basename "$target")" 2>&1 | tail -n 4
+    done
+    ;;
   console) (cd console && npm ci --no-audit --no-fund && npm run typecheck && npm test && npx vite build) ;;
   *)
-    echo "usage: tools/ci.sh deps|check|release|clang|asan|tsan|coverage|console" >&2
+    echo "usage: tools/ci.sh deps|check|release|clang|asan|tsan|coverage|fuzz|console" >&2
     exit 2
     ;;
 esac

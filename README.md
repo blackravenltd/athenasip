@@ -51,7 +51,21 @@ every external piece it can use is a plugin behind one contract.
   meant, and `athenasip --print-schema` gives your editor a schema to check the file as you
   type.
 
+## Install
+
+On Debian 13 (trixie), amd64 or arm64:
+
+```
+sudo curl -fsSLo /etc/apt/sources.list.d/tomcully.sources https://tomcully.com/apt/tomcully.sources
+sudo apt update && sudo apt install athenasip
+```
+
+Then [A server on Linux](docs/quick-start/linux-server.md) sets it up. Elsewhere, see
+[Installation](docs/installation.md) and [Compiling](docs/compiling.md).
+
 ## Get started
+
+To try it without installing anything:
 
 ```
 docker/up.sh
@@ -118,7 +132,7 @@ next step:
 * [Events](docs/events.md) - the topic scheme
 * [Glossary](docs/glossary.md)
 * [Testing](docs/testing.md)
-* [Releasing](docs/releasing.md) - the tag, the image and the Homebrew formula
+* [Releasing](docs/releasing.md) - the tag, the packages, the image and the Homebrew formula
 * [Admin API](docs/api/openapi.yaml)
 * [Interop fixture](test/interop/README.md) - a node to point a real SIP client at
 * [Contributing](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md)

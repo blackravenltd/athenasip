@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.23...4.2)
 
-project(athenasip VERSION 0.12.0 LANGUAGES CXX)
+project(athenasip VERSION 0.13.0 LANGUAGES CXX)
 
 option(ATHENA_BUILD_TESTING "Build test targets" OFF)
 set(ATHENA_SANITIZE "none" CACHE STRING "Sanitizer to build with: none, address, thread")
@@ -8,6 +8,7 @@ set_property(CACHE ATHENA_SANITIZE PROPERTY STRINGS none address thread)
 set(ATHENA_WARNINGS "default" CACHE STRING "Warnings to build with: default (-Wall -Wextra), strict (also -Wconversion), none")
 set_property(CACHE ATHENA_WARNINGS PROPERTY STRINGS default strict none)
 option(ATHENA_WERROR "Treat warnings as errors" OFF)
+option(ATHENA_BUILD_FUZZING "Build each fuzz target under fuzz/ as its own libFuzzer binary (clang)" OFF)
 
 # Single-config generators leave CMAKE_BUILD_TYPE empty: no optimisation, no debug info.
 get_property(ATHENA_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
@@ -336,29 +337,21 @@ if(UNIX AND NOT APPLE)
             DESTINATION ${ATHENA_SYSTEMD_UNIT_DIR})
 endif()
 
-# --- Packages ---------------------------------------------------------------------
+# --- Fuzzing -----------------------------------------------------------------------
 #
-# cpack -G DEB: the install above as a Debian package. Configure with
-# -DCMAKE_INSTALL_PREFIX=/usr and -DBoost_USE_STATIC_LIBS=ON, so the package depends only on
-# what Debian ships; dpkg-shlibdeps names those. `docker build --target deb` does all of it.
-
-set(CPACK_PACKAGE_NAME athenasip)
-set(CPACK_PACKAGE_VENDOR "Tom Cully")
-set(CPACK_PACKAGE_CONTACT "Tom Cully <mail@tomcully.com>")
-set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Secure, minimal, cloud-native SIP server")
-set(CPACK_PACKAGE_DESCRIPTION "A multi-master, clusterable SIP proxy and registrar, RFC 3261 in full, with routing in Lua and trunks to carriers.")
-set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/blackravenltd/athenasip")
-set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
-
-# The configuration and the unit are installed at absolute paths, which only DESTDIR staging packages.
-set(CPACK_SET_DESTDIR ON)
-
-set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
-set(CPACK_DEBIAN_PACKAGE_SECTION net)
-set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
-set(CPACK_DEBIAN_PACKAGE_DEPENDS "adduser")
-set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
-    "${CMAKE_CURRENT_SOURCE_DIR}/packaging/debian/conffiles;${CMAKE_CURRENT_SOURCE_DIR}/packaging/debian/postinst;${CMAKE_CURRENT_SOURCE_DIR}/packaging/debian/prerm;${CMAKE_CURRENT_SOURCE_DIR}/packaging/debian/postrm")
-set(CPACK_DEBIAN_PACKAGE_CONTROL_STRICT_PERMISSION TRUE)
-
-include(CPack)
+# One libFuzzer binary per parser of untrusted bytes, with ASan and UBSan: fuzz/<name>_fuzz.cpp builds athenasip_fuzz_<name>.
+if(ATHENA_BUILD_FUZZING)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR "ATHENA_BUILD_FUZZING needs clang (libFuzzer): set CMAKE_CXX_COMPILER=clang++")
+    endif()
+    file(GLOB ATHENA_FUZZ_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/fuzz/*_fuzz.cpp")
+    foreach(source ${ATHENA_FUZZ_SOURCES})
+        get_filename_component(name ${source} NAME_WE)
+        string(REGEX REPLACE "_fuzz$" "" name ${name})
+        add_executable(athenasip_fuzz_${name} ${source})
+        target_link_libraries(athenasip_fuzz_${name} PRIVATE athena_core)
+        target_compile_features(athenasip_fuzz_${name} PRIVATE cxx_std_20)
+        target_compile_options(athenasip_fuzz_${name} PRIVATE -fsanitize=fuzzer)
+        target_link_options(athenasip_fuzz_${name} PRIVATE -fsanitize=fuzzer)
+    endforeach()
+endif()

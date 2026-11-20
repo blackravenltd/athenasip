@@ -1,0 +1,29 @@
+Source: athenasip
+Section: net
+Priority: optional
+Maintainer: tomdionysus <tomdionysus@users.noreply.github.com>
+Build-Depends: debhelper-compat (= 13),
+               cmake (>= 3.23),
+               liblua5.4-dev,
+               libnghttp2-dev,
+               libssl-dev,
+               libyaml-cpp-dev,
+               pkgconf
+Standards-Version: 4.7.2
+Homepage: https://github.com/blackravenltd/athenasip
+Vcs-Git: https://github.com/blackravenltd/athenasip.git
+Vcs-Browser: https://github.com/blackravenltd/athenasip
+Rules-Requires-Root: no
+
+Package: athenasip
+Architecture: any
+Depends: adduser, ${misc:Depends}, ${shlibs:Depends}
+Description: multi-master, clusterable SIP proxy and registrar
+ AthenaSIP is a SIP server: RFC 3261 transactions, registrar and proxying,
+ SIP over WebSocket with WebRTC media through rtpengine, presence and busy
+ lamp fields, trunks to carriers and routing scripted in Lua.
+ .
+ A single node needs nothing but itself. Nodes that share a Redis and an
+ MQTT broker form a cluster in which any node serves any subscriber. The
+ datastore, event bus, media engine, push services and routing policy are
+ plugins behind one contract.
