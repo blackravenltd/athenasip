@@ -46,7 +46,8 @@ struct FakeNameserver {
   tcp::acceptor acceptor{io};
   std::thread thread;
 
-  Mode mode = Mode::Answer;
+  // Set by the test while the server's thread is already reading it.
+  std::atomic<Mode> mode{Mode::Answer};
   std::vector<std::uint8_t> answer = from_hex(kIptelSrv);
   std::atomic<int> asked{0};
   std::atomic<int> asked_over_tcp{0};
@@ -105,7 +106,7 @@ struct FakeNameserver {
         socket.async_send_to(net::buffer(*data), _from, [data](const boost::system::error_code&, std::size_t) {});
       };
 
-      switch (mode) {
+      switch (mode.load()) {
         case Mode::Answer:
           send(_reply_to(_buffer.data(), false));
           break;

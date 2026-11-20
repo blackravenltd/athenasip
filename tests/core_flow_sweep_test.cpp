@@ -53,7 +53,7 @@ TEST(CoreFlowSweepTest, AUdpFlowThatHasGoneQuietIsForgotten) {
   f.core->flow_sweep_start();
 
   // Past the timeout, on the injected clock.
-  f.timers->advance(std::chrono::seconds(400));
+  f.advance(std::chrono::seconds(400));
   f.settle();
 
   EXPECT_EQ(f.on_strand([&]() { return f.core->channel_find(flow_id); }), nullptr);
@@ -69,11 +69,11 @@ TEST(CoreFlowSweepTest, AUdpFlowStillInUseIsLeftAlone) {
   f.core->flow_sweep_start();
 
   // Two idle stretches, each shorter than the timeout, with activity between.
-  f.timers->advance(std::chrono::seconds(200));
+  f.advance(std::chrono::seconds(200));
   f.settle();
   channel->touch();
 
-  f.timers->advance(std::chrono::seconds(200));
+  f.advance(std::chrono::seconds(200));
   f.settle();
 
   EXPECT_NE(f.on_strand([&]() { return f.core->channel_find(flow_id); }), nullptr);
@@ -91,7 +91,7 @@ TEST(CoreFlowSweepTest, AReliableFlowThatRegisteredSomebodyIsNeverSweptHoweverQu
 
   f.core->flow_sweep_start();
 
-  f.timers->advance(std::chrono::seconds(4000));
+  f.advance(std::chrono::seconds(4000));
   f.settle();
 
   EXPECT_NE(f.on_strand([&]() { return f.core->channel_find(flow_id); }), nullptr);
@@ -109,11 +109,11 @@ TEST(CoreFlowSweepTest, AReliableFlowThatNeverSpeaksIsClosedAfterTheFirstMessage
 
   f.core->flow_sweep_start();
 
-  f.timers->advance(std::chrono::seconds(20));
+  f.advance(std::chrono::seconds(20));
   f.settle();
   EXPECT_NE(f.on_strand([&]() { return f.core->channel_find(flow_id); }), nullptr) << "not yet";
 
-  f.timers->advance(std::chrono::seconds(100));
+  f.advance(std::chrono::seconds(100));
   f.settle();
   EXPECT_EQ(f.on_strand([&]() { return f.core->channel_find(flow_id); }), nullptr);
 }
@@ -125,16 +125,17 @@ TEST(CoreFlowSweepTest, AReliableFlowThatRegisteredNobodyIsSweptWhenIdle) {
 
   auto channel = flow(f, "tcp", "198.51.100.10", 5060, /*reliable=*/true);
   const auto flow_id = channel->flow_id();
-  f.receive(channel, "OPTIONS sip:example.com SIP/2.0\r\nVia: SIP/2.0/TCP 198.51.100.10:5060;branch=z9hG4bK-opt\r\nFrom: <sip:x@example.com>;tag=x\r\n"
-                     "To: <sip:example.com>\r\nCall-ID: opt\r\nCSeq: 1 OPTIONS\r\nMax-Forwards: 70\r\n\r\n");
+  f.receive(channel,
+            "OPTIONS sip:example.com SIP/2.0\r\nVia: SIP/2.0/TCP 198.51.100.10:5060;branch=z9hG4bK-opt\r\nFrom: <sip:x@example.com>;tag=x\r\n"
+            "To: <sip:example.com>\r\nCall-ID: opt\r\nCSeq: 1 OPTIONS\r\nMax-Forwards: 70\r\n\r\n");
 
   f.core->flow_sweep_start();
 
-  f.timers->advance(std::chrono::seconds(100));
+  f.advance(std::chrono::seconds(100));
   f.settle();
   EXPECT_NE(f.on_strand([&]() { return f.core->channel_find(flow_id); }), nullptr) << "spoke lately";
 
-  f.timers->advance(std::chrono::seconds(400));
+  f.advance(std::chrono::seconds(400));
   f.settle();
   EXPECT_EQ(f.on_strand([&]() { return f.core->channel_find(flow_id); }), nullptr);
 }
@@ -173,7 +174,7 @@ TEST(CoreFlowSweepTest, ATimeoutOfZeroForgetsNothing) {
 
   f.core->flow_sweep_start();
 
-  f.timers->advance(std::chrono::seconds(100000));
+  f.advance(std::chrono::seconds(100000));
   f.settle();
 
   EXPECT_NE(f.on_strand([&]() { return f.core->channel_find(flow_id); }), nullptr);
@@ -189,7 +190,7 @@ TEST(CoreFlowSweepTest, ManyOneShotFlowsDoNotAccumulate) {
   }
 
   f.core->flow_sweep_start();
-  f.timers->advance(std::chrono::seconds(400));
+  f.advance(std::chrono::seconds(400));
   f.settle();
 
   for (std::uint16_t i = 0; i < 40; ++i) {
@@ -205,13 +206,13 @@ TEST(CoreFlowSweepTest, TheSweepKeepsRunning) {
   f.core->flow_sweep_start();
 
   // The sweep re-arms after a pass that finds nothing: the flow below is made after the first pass.
-  f.timers->advance(std::chrono::seconds(400));
+  f.advance(std::chrono::seconds(400));
   f.settle();
 
   auto channel = flow(f, "udp", "198.51.100.7", 5060, /*reliable=*/false);
   const auto flow_id = channel->flow_id();
 
-  f.timers->advance(std::chrono::seconds(400));
+  f.advance(std::chrono::seconds(400));
   f.settle();
 
   EXPECT_EQ(f.on_strand([&]() { return f.core->channel_find(flow_id); }), nullptr);
@@ -241,7 +242,7 @@ TEST(CoreFlowSweepTest, ForgettingAFlowSaysSoOnTheBus) {
   core->call_on_strand([&]() { core->channel_register(channel->flow_id(), channel); });
 
   core->flow_sweep_start();
-  timers->advance(std::chrono::seconds(400));
+  core->call_on_strand([&]() { timers->advance(std::chrono::seconds(400)); });
 
   // The strand and the bus both settle on the global io_context.
   for (int i = 0; i < 32; ++i) core->call_on_strand([]() {});
@@ -277,7 +278,7 @@ TEST(CoreFlowSweepTest, ForgettingAFlowClosesItsConnection) {
   f.settle();
 
   f.core->flow_sweep_start();
-  f.timers->advance(std::chrono::seconds(400));
+  f.advance(std::chrono::seconds(400));
   f.settle();
 
   EXPECT_FALSE(connection->is_open()) << "the connection has to be closed, not just dropped from the registry";

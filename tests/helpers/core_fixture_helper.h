@@ -75,6 +75,11 @@ struct CoreFixture {
     return core->call_on_strand(std::forward<Fn>(fn));
   }
 
+  // A timer of Core's own reads those registries when it fires, so the clock is moved on the strand as well.
+  void advance(std::chrono::milliseconds by) {
+    on_strand([&]() { timers->advance(by); });
+  }
+
   // Starts a handler-answered Core call on the strand and blocks for the answer.
   template <typename Start>
   athenasip::plugins::Status await_on_strand(Start start) {
