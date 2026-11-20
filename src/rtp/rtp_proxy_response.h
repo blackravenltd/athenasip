@@ -1,6 +1,9 @@
 //
 // AthenaSIP - Secure, Minimal, Cloud-Native SIP Server
 //
+// Copyright (C) 2026 Tom Cully <mail@tomcully.com>
+// Licensed under the GNU GPLv3 – see <https://www.gnu.org/licenses/gpl-3.0.html>
+//
 // Example-only code: Asynchronous UDP RTPproxy client with Boost.Asio
 // featuring robust error handling, concurrency via strands, etc.
 //

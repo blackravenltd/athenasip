@@ -2,6 +2,12 @@
 
 # AthenaSIP
 
+[![CI](https://github.com/blackravenltd/athenasip/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/blackravenltd/athenasip/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/blackravenltd/athenasip/branch/develop/graph/badge.svg)](https://codecov.io/gh/blackravenltd/athenasip)
+[![CodeQL](https://github.com/blackravenltd/athenasip/actions/workflows/codeql.yml/badge.svg?branch=develop)](https://github.com/blackravenltd/athenasip/actions/workflows/codeql.yml)
+[![Release](https://img.shields.io/github/v/release/blackravenltd/athenasip)](https://github.com/blackravenltd/athenasip/releases)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+
 AthenaSIP is a multi-master, clusterable SIP server built for standards compliance and
 for running without a telecoms background. A single node needs nothing but itself, and
 every external piece it can use is a plugin behind one contract.
@@ -90,8 +96,7 @@ next step:
   proxy; Record-Route is always written twice (RFC 5658 permits it).
 * An external security review (2026-10-25) found 48 issues; the transport limits,
   Content-Length, flow caps, Digest nonces, SIP-side guessing limits and the protocol
-  gaps it named are fixed, and the rest are being worked through. There is no fuzzing
-  harness, and testing runs on developer machines, not hosted CI.
+  gaps it named are fixed, and the rest are being worked through.
 
 ## Documentation
 

@@ -67,16 +67,10 @@ Nothing below can move until these are settled, and each one has somebody or som
 stopped against it. They are here rather than scattered through the lists because a
 session that has lost its context needs to see them first.
 
-1. **The stack's seven decisions** (`TODO/2026-11-20-stack-integration.md`, Decisions for the maintainer):
-   whether AthenaSIP is a hosted system of the stack or a product beside it; a native `dagda://`
-   driver or `redis://` at Mimir; `mqtt://` at Lir; whether Dannan is linked into the node at
-   all (built from source against Boost 1.89); the group rules against this plan's decisions
-   (hosted CI and badges, coverage, debs in releases, squash merges, builds on the build cluster, the
-   dashboard rule); admin users local with Lugh as an option, or Lugh only; and no SIP Digest
-   credentials in Lugh. Each has a recommendation there.
-   The coordinator session relayed answers to the first and fifth the same day (AthenaSIP
-   joins the stack; hosted CI, CodeQL, debs and the dashboard rule apply): they are in that
-   document as relayed, and reverse "No hosted CI" under Decisions only once the maintainer confirms here.
+1. **What is left of the stack's decisions** (`TODO/2026-11-20-stack-integration.md`): whether
+   admin users stay local beside Lugh or move to Lugh alone, and the Boost version (agreed
+   with Dannan to try the system Boost with the Redis and MQTT clients as pinned sources).
+   The rest are answered (Decisions, 2026-11-20).
 2. **node-b** (2026-11-01): the router forwards to 10.102.1.20 (TCP 5061, 8089, 5349; UDP and
    TCP 3478; UDP 22000-22200 and 24000-24100) and TCP 80 to 10.102.1.50, after which the node is
    tested from outside; PROXY protocol v2 (Next, Found setting up node-b); and the
@@ -172,8 +166,14 @@ was silently skipped, a TURN username no browser could use.
 
 Dated, and not reopened without asking.
 
-- (2026-10-26) **No hosted CI.** The maintainer had the GitHub Actions workflow removed: no GitHub workflow
-  for CI or CD. Tests and the release checklist run on a developer machine (`docs/testing.md`).
+- (2026-11-20) **AthenaSIP is part of the cluster stack** (the maintainer, confirmed in session), and
+  takes its group rules: hosted CI kept green with badges, coverage and CodeQL (`tools/ci.sh`,
+  `.github/`), which replaces the 2026-10-26 decision against hosted CI; Debian packages at
+  each release by the stack's convention; heavy builds and tests on the shared build cluster;
+  the console in this repository (`console/`). The datastore's route into the stack is a native
+  `dagda://` driver, written as Dagda's register map, leases and log are released, with
+  `redis://` until then; `memory://`, `redis://`, `local://` and `mqtt://` all stay.
+  `TODO/2026-11-20-stack-integration.md` has the plan.
 - (2026-10-26) **Conferencing's four questions** (`docs/design/conferencing.md`), the maintainer:
   1. Focuses are trunks. `/api/v1/focuses` is a view on the trunks that carry a `focus`
      attribute, not a record of its own.

@@ -1,0 +1,57 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  schedule:
+    - cron: '17 4 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  cpp:
+    name: c-cpp
+    runs-on: ubuntu-24.04
+    container: debian:trixie
+    timeout-minutes: 180
+    env:
+      ATHENA_DEPS: /opt/athenasip-deps
+      BOOST_VERSION: 1.89.0
+    steps:
+      - run: apt-get update -qq && apt-get install -y -qq --no-install-recommends ca-certificates git curl gnupg
+      - uses: actions/checkout@v4
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: actions/cache@v4
+        with:
+          path: /opt/athenasip-deps
+          key: boost-${{ env.BOOST_VERSION }}-trixie-${{ runner.arch }}
+      - run: tools/ci.sh deps
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: c-cpp
+          queries: security-and-quality
+          build-mode: manual
+      - run: |
+          cmake -S . -B build-codeql -DCMAKE_BUILD_TYPE=Release -DBOOST_ROOT="$ATHENA_DEPS" -DBoost_USE_STATIC_LIBS=ON
+          cmake --build build-codeql -j"$(nproc)"
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:c-cpp
+
+  console:
+    name: javascript-typescript
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          queries: security-and-quality
+          build-mode: none
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:javascript-typescript

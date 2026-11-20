@@ -37,8 +37,10 @@ cmake --preset tests && cmake --build build-tests -j8
 ./build-tests/athenasip_tests
 ```
 
-Run the test binary, not `ctest`. Everything runs on a developer machine; there is no
-hosted CI.
+Run the test binary, not `ctest`. Every push runs `tools/ci.sh` on GitHub: the header
+check, g++ with warnings as errors, clang, ASan with UBSan, TSan, coverage and the console's
+tests, each step the same in a local `debian:trixie` container. The sipp harnesses, the
+cluster and the browser and phone calls are gates run by hand ([docs/testing.md](docs/testing.md)).
 
 Write tests from the RFC, not from the current behaviour: write the test for what the
 standard requires, watch it fail, then fix the code.

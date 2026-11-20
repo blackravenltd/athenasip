@@ -26,9 +26,8 @@ Dagda's D5, D6 and D9, and Dannan's atomic commit across replica sets.
 
 ## Decisions for the maintainer
 
-**Relayed the same day by the coordinator session as the maintainer's answers, and to be confirmed by the maintainer in
-this session before any of it is acted on** (a decision recorded in `ACTIVE.md` is reversed only
-on his word here, and publishing needs his word at the time):
+**Answered the same day, and confirmed by the maintainer in session** (the first five through the
+coordinator session, then here):
 
 - 1: AthenaSIP joins the Cluster Stack; the group rules and the no-duplication audit apply.
 - 5: hosted CI replaces "No hosted CI" (GitHub CI green, badges, Codecov, a release badge,
@@ -40,7 +39,7 @@ on his word here, and publishing needs his word at the time):
   datastore needs the maintainer's ruling.
 - 3, 4, 6 and 7 are not answered. Joining the stack implies 4 (Dannan is linked).
 
-A second relay followed, also to be confirmed by the maintainer here:
+A second set followed, of which the datastore route and the backends are confirmed here:
 
 - 2 is closed: a native `dagda://` driver, written as Dagda's D6, D5 and D9 land; `redis://` until
   then; Mimir is not the route. AthenaSIP's requirements table goes to Dagda.
