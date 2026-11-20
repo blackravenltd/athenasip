@@ -125,6 +125,10 @@ As asked, before those answers arrived:
 
 ### B. When Dannan 0.10.0 is tagged (needs decision 4)
 
+Tagged 2026-11-20 (Dannan's session): pin `GIT_TAG 0.10.0` or `find_package(dannan 0.10.0 CONFIG
+REQUIRED)`; the library package is `libdannan0.10`; read "Adopting 0.10.0" in its `CHANGELOG.md`
+before pinning. This part is open for work after AthenaSIP 0.13.0.
+
 - Inter-node SIP over Dannan's listener and connector (`dannan::listen`, no node in-process),
   with certificates from `dannan-ca` in place of `--ca-init` and `--ca-node` and
   `src/cluster_ca.*`. Dannan has not checked that its CA's files fit the listener as they
