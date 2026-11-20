@@ -25,6 +25,11 @@ and nothing on the call path waits for it.
 | `calls/<call_id>/state` | A call changes state | no | The state |
 | `calls/<call_id>/unregister` | A call ends | no | The call id |
 | `trunks/<name>/status` | The node registering a trunk starts, succeeds or fails | yes | [Trunk status](#trunk-status) |
+| `trunks/changed` | A trunk is created, changed or deleted over the API; every node reads the trunks at once instead of at its next scan | no | The trunk's name |
+| `security/auth_failed` | A Digest answer over SIP did not verify ([Guessing](authentication.md#guessing)) | no | `{source, aor, reason, node, at}` |
+| `security/banned` | An address is banned for repeated failures; every node holds it | no | `{source, seconds, node, at}` |
+| `security/aor_closed` | An address of record is closed to strangers for repeated failures; every node holds it | no | `{aor, seconds, node, at}` |
+| `security/ban_lifted`, `security/aor_reopened` | An administrator lifted a ban or reopened an AOR (`DELETE /api/v1/security/...`); every node does the same | no | `{source}` or `{aor}`, and `node` |
 | `presence/<aor>/changed` | A subscriber's presence may have changed: a binding written or removed, a call it is on written, a publication made or removed | no | [Presence changed](#presence-changed) |
 
 `<transport>` is `udp`, `tcp`, `tls`, `ws` or `wss`. `<endpoint>` is `host:port`.
@@ -91,7 +96,7 @@ it.
 
 ## Watching from a browser
 
-`GET /api/v1/events` serves `nodes/#`, `subscribers/#`, `calls/#` and `presence/#` as Server-Sent Events,
+`GET /api/v1/events` serves `nodes/#`, `subscribers/#`, `calls/#`, `presence/#` and `trunks/#` as Server-Sent Events,
 one event per message named by its topic, for a console that would rather watch than poll.
 It needs the `view-cluster-status` role, and is in the [API description](api/openapi.yaml).
 
@@ -129,7 +134,7 @@ events:
 | Prefix | Prepended on publish and subscribe and stripped on delivery, so one broker can carry several clusters. A missing trailing `/` is added. |
 | Client identifier | Must be unique on the broker, or the broker disconnects the older connection. Defaults to `athenasip-<node_id>`. |
 | Startup | The node waits up to `connect_timeout_ms` for the broker and does not start without it. After that the client reconnects on its own. |
-| TLS | `mqtts://` is not implemented. |
+| TLS | `mqtts://host` speaks TLS 1.2 or later to the broker, on 8883 unless a port is given, verifying its certificate against the system's roots and `mqtt.ca_file`, and its name against the host. Without it, cluster events and the broker credentials cross the network in clear: keep a plain `mqtt://` broker on a private network with ACLs. |
 
 `client_id`, `keep_alive`, `connect_timeout_ms` and `prefix` are also accepted as URL query
 parameters; the `events.mqtt` section wins where both are given.

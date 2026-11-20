@@ -548,6 +548,25 @@ TEST(ConfigTest, TheRateLimitsAreConfigurable) {
 
 // Admin HTTPS is off by default, listens beside plain HTTP on its own port, and uses the tls
 // section's certificate unless http.tls names another.
+// Review finding 28: plain HTTP carries passwords and session tokens in clear, so it binds loopback unless told
+// otherwise; HTTPS is for anyone, so with no address given it binds every interface.
+TEST(ConfigTest, PlainHttpBindsLoopbackAndHttpsEveryInterfaceByDefault) {
+  bool ok = false;
+
+  ConfigFile unset(
+      "sip:\n  node_id: test-node\ntls:\n  enable: false\n  cert_pem_filename: /tls/node.cer\n  key_pem_filename: /tls/node.key\n"
+      "http:\n  port: 8080\n  tls:\n    enable: true\n");
+  auto config = unset.load(ok);
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(config->http_address, "127.0.0.1");
+  EXPECT_EQ(config->http_tls_address, "0.0.0.0");
+
+  ConfigFile given("sip:\n  node_id: test-node\nhttp:\n  address: 0.0.0.0\n  port: 8080\n");
+  config = given.load(ok);
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(config->http_address, "0.0.0.0");
+}
+
 TEST(ConfigTest, TheAdminListenerOffersHttpsWhenAsked) {
   bool ok = false;
 
@@ -812,4 +831,47 @@ TEST(ConfigTest, TheExampleConfigurationLoadsBackAsTheSame) {
   ASSERT_TRUE(ok) << effective;
 
   EXPECT_EQ(reloaded->effective_yaml(), effective);
+}
+
+// behaviour.dtmf names how a leg sends key presses, and an unknown name is refused rather than read as auto.
+TEST(ConfigTest, TheDtmfMethodIsReadAndAnUnknownOneIsRefused) {
+  ConfigFile file(
+      "sip:\n  node_id: test-node\n"
+      "behaviour:\n  dtmf: info\n");
+  bool ok = false;
+  auto config = file.load(ok);
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(config->behaviour.dtmf, types::MediaPolicy::Dtmf::Info);
+  EXPECT_NE(config->effective_yaml().find("dtmf: info"), std::string::npos) << config->effective_yaml();
+
+  ConfigFile unset("sip:\n  node_id: test-node\n");
+  config = unset.load(ok);
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(config->behaviour.dtmf, types::MediaPolicy::Dtmf::Auto);
+  EXPECT_NE(config->effective_yaml().find("dtmf: auto"), std::string::npos) << config->effective_yaml();
+
+  ConfigFile wrong(
+      "sip:\n  node_id: test-node\n"
+      "behaviour:\n  dtmf: rfc2833\n");
+  ok = true;
+  wrong.load(ok);
+  EXPECT_FALSE(ok);
+}
+
+// Review finding 38: a transaction timer that cannot work stops the node at start rather than looping. T1 of 0 would
+// re-arm Timer A at 0 ms; T2 below T1 breaks the backoff; a zero multiplier does the same to its timer.
+TEST(ConfigTest, TransactionTimersThatCannotWorkAreRefused) {
+  for (const auto* timers : {"t1_rtt_ms: 0", "t1_rtt_ms: 500\n    t2_max_retransmit_interval_ms: 400", "t4_network_propagation_ms: 0",
+                             "a_invite_initial: 0", "f_non_invite_timeout: 0", "t1_rtt_ms: not-a-number"}) {
+    bool ok = true;
+    ConfigFile file(std::string("sip:\n  node_id: test-node\n  timers:\n    ") + timers + "\n");
+    file.load(ok);
+    EXPECT_FALSE(ok) << timers;
+  }
+
+  // D, I, J and K may be 0, as on a reliable transport; T2 may equal T1.
+  bool ok = false;
+  ConfigFile fine("sip:\n  node_id: test-node\n  timers:\n    t1_rtt_ms: 500\n    t2_max_retransmit_interval_ms: 500\n    d_invite_duration: 0\n");
+  fine.load(ok);
+  EXPECT_TRUE(ok);
 }

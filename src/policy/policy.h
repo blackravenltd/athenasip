@@ -27,6 +27,7 @@
 #include "../types/trunk.h"
 
 namespace athenasip {
+class Call;
 class Config;
 }
 
@@ -156,6 +157,14 @@ struct Target {
   // Uri: the trunk this leaves by, by name. The node answers its challenges with the trunk's credentials.
   std::string trunk;
 
+  // Uri: how this leg sends key presses, when the policy knows (a trunk's attribute). A subscriber target's is
+  // its subscriber's or its realm's, read by the node.
+  std::optional<types::MediaPolicy::Dtmf> dtmf;
+
+  // Uri: the conference this request is for, when the target is its focus (RFC 4579, docs/design/conferencing.md):
+  // the conference URI as dialled, kept on the call so the API can group a room's calls.
+  std::shared_ptr<types::SIPUri> focus;
+
   // How long an INVITE branch may ring before the node gives up on it and moves on: a CANCEL if it rang, a 408 to
   // the policy either way. Unset is timer C (RFC 3261 16.8), minutes.
   std::optional<std::chrono::seconds> ring_timeout;
@@ -190,6 +199,10 @@ struct RouteDecision {
   // Forward: the call's media policy and whether Contacts are rewritten; the node's defaults when absent.
   std::optional<types::MediaPolicy> media;
   std::optional<bool> rewrite_contact;
+
+  // Forward: how the caller's leg sends key presses, when the policy knows better than the caller's subscriber or
+  // realm: a call in by a trunk, with the trunk's attribute.
+  std::optional<types::MediaPolicy::Dtmf> caller_dtmf;
 
   // Reply.
   std::uint16_t code = 480;
@@ -354,6 +367,13 @@ class Policy : public plugins::Plugin {
 
   // A REGISTER, before it is challenged.
   virtual void register_(plugins::Executor on, std::shared_ptr<RequestView> request, plugins::Handler<RegisterDecision> handler) = 0;
+
+  // A call this node held has ended, by a BYE from either end or by the node's own hand: told, not asked. For
+  // counters and records a script keeps; the default does nothing.
+  virtual void on_call_ended(plugins::Executor on, std::shared_ptr<Call> call) {
+    (void)on;
+    (void)call;
+  }
 
   // An authorised SUBSCRIBE for a package this node is the notifier for. `watcher` is the address of record the
   // watcher was proven to be, empty if it was not; `presentity` the address of record watched. By default, a

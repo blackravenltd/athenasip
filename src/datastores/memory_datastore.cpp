@@ -299,26 +299,6 @@ std::vector<types::Location> MemoryDatastore::_location_list(std::uint64_t subsc
   return locations;
 }
 
-bool MemoryDatastore::_nonce_create(const std::string& nonce, const std::time_t& expires_at) {
-  const auto now = std::time(nullptr);
-
-  if (expires_at <= now) {
-    _logger->warn("nonce_create: refusing to create already-expired nonce");
-    return false;
-  }
-
-  std::lock_guard<std::mutex> lock(_mutex);
-  _nonces[nonce] = expires_at;
-  return true;
-}
-
-bool MemoryDatastore::_nonce_check(std::string nonce) {
-  std::lock_guard<std::mutex> lock(_mutex);
-  _prune_expired();
-
-  return _nonces.find(nonce) != _nonces.end();
-}
-
 bool MemoryDatastore::configure(const YAML::Node& own_root, const Config& system) {
   (void)own_root;
   _call_retention = system.calls_history_retention;
@@ -491,9 +471,46 @@ void MemoryDatastore::trunk_delete(plugins::Executor on, std::string name, plugi
   bool deleted = false;
   {
     std::lock_guard<std::mutex> lock(_mutex);
-    deleted = _trunks.erase(types::Trunk::normalise(name)) != 0;
+    const auto key = types::Trunk::normalise(name);
+    deleted = _trunks.erase(key) != 0;
+    _trunk_statuses.erase(key);
   }
   _complete(std::move(on), std::move(handler), _status(deleted, "trunk_delete"));
+}
+
+void MemoryDatastore::reoffer_record(plugins::Executor on, std::string subscriber, media::Profile rejected, std::optional<media::Profile> took,
+                                     plugins::StatusHandler handler) {
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    _reoffers.record(subscriber, rejected, took);
+  }
+  _complete(std::move(on), std::move(handler), plugins::Status::success());
+}
+
+void MemoryDatastore::reoffer_list(plugins::Executor on, plugins::Handler<std::vector<media::Reoffer>> handler) {
+  std::vector<media::Reoffer> out;
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    out = _reoffers.list();
+  }
+  _complete(std::move(on), std::move(handler), plugins::Result<std::vector<media::Reoffer>>::success(std::move(out)));
+}
+
+void MemoryDatastore::trunk_status_set(plugins::Executor on, std::string name, boost::json::object status, plugins::StatusHandler handler) {
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    _trunk_statuses[types::Trunk::normalise(name)] = std::move(status);
+  }
+  _complete(std::move(on), std::move(handler), plugins::Status::success());
+}
+
+void MemoryDatastore::trunk_status_get(plugins::Executor on, std::string name, plugins::Handler<std::optional<boost::json::object>> handler) {
+  std::optional<boost::json::object> found;
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (const auto it = _trunk_statuses.find(types::Trunk::normalise(name)); it != _trunk_statuses.end()) found = it->second;
+  }
+  _complete(std::move(on), std::move(handler), plugins::Result<std::optional<boost::json::object>>::success(std::move(found)));
 }
 
 void MemoryDatastore::trunk_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::Trunk>>> handler) {
@@ -619,14 +636,6 @@ void MemoryDatastore::location_list(plugins::Executor on, std::uint64_t subscrib
   _complete(std::move(on), std::move(handler), plugins::Result<std::vector<types::Location>>::success(_location_list(subscriber_id)));
 }
 
-void MemoryDatastore::nonce_create(plugins::Executor on, std::string nonce, std::time_t expires_at, plugins::StatusHandler handler) {
-  _complete(std::move(on), std::move(handler), _status(_nonce_create(nonce, expires_at), "nonce_create"));
-}
-
-void MemoryDatastore::nonce_check(plugins::Executor on, std::string nonce, plugins::Handler<bool> handler) {
-  _complete(std::move(on), std::move(handler), plugins::Result<bool>::success(_nonce_check(std::move(nonce))));
-}
-
 void MemoryDatastore::call_create(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) {
   _complete(std::move(on), std::move(handler), _status(_call_create(std::move(call)), "call_create"));
 }
@@ -722,7 +731,8 @@ std::vector<types::PresenceRecord> MemoryDatastore::_presence_select(Keep keep) 
   return records;
 }
 
-std::string MemoryDatastore::_subscriber_key(const std::string& realm_name, const std::string& user) { return realm_name + ":" + user; }
+// RFC 3261 19.1.4: the host of a URI compares without regard to case; the user part with.
+std::string MemoryDatastore::_subscriber_key(const std::string& realm_name, const std::string& user) { return Util::to_lower(realm_name) + ":" + user; }
 
 std::string MemoryDatastore::_location_key(std::uint64_t subscriber_id, const std::string& user, const std::string& host, std::uint16_t port) {
   return std::to_string(subscriber_id) + ":" + user + ":" + host + ":" + std::to_string(port);
@@ -733,10 +743,6 @@ void MemoryDatastore::_prune_expired() {
 
   for (auto it = _locations.begin(); it != _locations.end();) {
     it = (it->second.expires_at <= now) ? _locations.erase(it) : std::next(it);
-  }
-
-  for (auto it = _nonces.begin(); it != _nonces.end();) {
-    it = (it->second <= now) ? _nonces.erase(it) : std::next(it);
   }
 
   // Sessions are pruned on their absolute expiry. Idle expiry is the caller's rule

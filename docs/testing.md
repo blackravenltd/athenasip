@@ -6,11 +6,12 @@
 | [Sanitizers](#sanitizers) | is it memory- and thread-safe under the same tests | not routine, see below |
 | [sipp harness](#the-sipp-harness) | does a real client on a real socket agree | Docker |
 | [Interop fixture](#the-interop-fixture) | does a particular SIP client work, on every transport | Docker |
-| [Browser call](#the-browser-call) | does a browser agree, with media through rtpengine | Docker, `../athenasip-admin` |
+| [Browser call](#the-browser-call) | does a browser agree, with media through rtpengine | Docker, `console/` |
 | [Live call](#the-live-call) | did a person hear it | a device |
 | [The whole suite](#the-whole-suite) | do the node, the console and AthenaPhone agree | Docker, the sibling repositories |
 
-Everything runs on a developer machine. There is no hosted CI.
+A push to `develop` or `main` runs `tools/ci.sh` on GitHub ([Warnings and CI](#warnings-and-ci)); the layers that
+need Docker, a device or a person are run by hand.
 
 ## Before a release
 
@@ -23,6 +24,7 @@ ATHENA_TEST_MQTT_URL=mqtt://127.0.0.1:1883 ./build-tests/athenasip_tests
 
 cmake --preset asan && cmake --build build-asan -j8 && ./build-asan/athenasip_tests
 cmake --preset tsan && cmake --build build-tsan -j8 && ./build-tsan/athenasip_tests
+tools/ci.sh fuzz
 
 test/e2e/run.sh
 test/e2e/run.sh --rtpengine
@@ -42,7 +44,7 @@ test/suite/run.sh --device     # also what needs a phone and a person
 
 It runs the unit tests and the sipp harnesses, then brings the interop fixture up twice,
 with direct media and relayed through coturn, and runs each sibling project's suite against
-it: `npm run test:athenasip` in `../athenasip-admin` and `../athenaphone`
+it: `npm run test:athenasip` in `console/` and `../athenaphone`
 (`ATHENA_SUITE_ADMIN_REPO` and `ATHENA_SUITE_PHONE_REPO` move them). Results, with each
 project's `summary.json` and the machine's load every ten seconds (`load.log`), are under `test/suite/results/`.
 
@@ -74,6 +76,18 @@ mosquitto -p 1883 -d
 
 ATHENA_TEST_REDIS_URL=redis://127.0.0.1:6399 \
 ATHENA_TEST_MQTT_URL=mqtt://127.0.0.1:1883 ./build-tests/athenasip_tests
+```
+
+Or, with neither installed, throwaway containers (Mosquitto 2 listens only on loopback
+unless told otherwise, hence the two-line configuration):
+
+```bash
+printf 'listener 1883 0.0.0.0\nallow_anonymous true\n' > /tmp/mosquitto.conf
+docker run -d --rm --name athena-test-redis -p 127.0.0.1:6399:6379 redis:7-alpine redis-server --save ''
+docker run -d --rm --name athena-test-mqtt -p 127.0.0.1:1883:1883 \
+  -v /tmp/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro eclipse-mosquitto:2
+# ... the run above, then
+docker stop athena-test-redis athena-test-mqtt
 ```
 
 Every test runs against the `builtin://` policy. `ATHENA_TEST_POLICY=lua` runs them
@@ -120,6 +134,52 @@ change against a node.
   printf 'vptr:boost/json/*\nvptr:boost/container/*\nvptr:*memory_resource*\n' > /tmp/ubsan.supp
   UBSAN_OPTIONS=suppressions=/tmp/ubsan.supp ASAN_OPTIONS=detect_container_overflow=0 ./build-asan/athenasip_tests
   ```
+
+## Warnings and CI
+
+The server builds with `-Wall -Wextra` by default (`ATHENA_WARNINGS=default`).
+`ATHENA_WARNINGS=strict` adds `-Wconversion`, and `ATHENA_WERROR=ON` makes either fatal.
+The server's own sources are clean under strict, as of 2026-10-26; the tests are not
+built with these flags yet.
+
+```bash
+cmake -S . -B build-warn -DATHENA_WARNINGS=strict -DATHENA_WERROR=ON
+cmake --build build-warn --target athenasip
+```
+
+Two warnings are left out on purpose. `-Wmissing-field-initializers`: a struct here gives
+every member a default and is brace-initialised by its first (`AuthDecision{Kind::Accept}`).
+`-Wshadow`: of its 136 findings, 39 are a callback taking `core` from its weak pointer
+again and 30 a nested Redis handler naming its `error` as the outer one does; the rest
+are callbacks naming what they hand on after the thing it came from (the same request,
+the answer's `sdp` where the offer's is not captured, an error code). They were read by
+kind with a sample of each on 2026-10-26, and none read was a mistake. Pass `-Wshadow` in
+`CMAKE_CXX_FLAGS` for that audit again.
+
+`tools/ci.sh` holds each check as a step, the same on GitHub and in a local `debian:trixie`
+container: `deps` (the packages, and Boost built once into `/opt/athenasip-deps`), `check`
+(the header block on every source), `release` (g++, warnings as errors, the unit suite with a
+Redis and a broker of its own), `clang`, `asan`, `tsan`, `coverage` (lcov over `src/`),
+`fuzz` and `console`. `.github/workflows/ci.yml` runs them on a push to `develop` or `main` and
+on a pull request, with `release` on arm64 as well; a change to prose alone (`TODO/`, `docs/`
+apart from `docs/api/`, any Markdown) builds nothing. `codeql.yml` scans the C++ and the
+console on a push to `main` and once a week. A feature branch is checked on a build machine
+with the same script. The release checklist above stays the gate for what a runner cannot
+reach.
+
+## Fuzzing
+
+One libFuzzer target per parser of untrusted bytes, under `fuzz/`: the SIP message head,
+URIs, name-addrs, Authorization and Via values, URLs, rtpengine's bencode, STUN and DNS
+responses. They need clang, and run with ASan and UBSan:
+
+```bash
+tools/ci.sh fuzz                   # every target, 60 seconds each
+FUZZ_SECONDS=600 tools/ci.sh fuzz  # longer
+```
+
+A parser may refuse its input by returning or throwing; a crash, a hang or a read out of
+bounds is a finding, and the input that caused it becomes a unit test.
 
 ## The sipp harness
 
@@ -169,11 +229,11 @@ test/interop/browser.sh --relay  # only media relayed through coturn
 ```
 
 Two headless Chromium contexts register, call each other through rtpengine and check
-their own media counters. The page and the Playwright spec live in `../athenasip-admin`;
+their own media counters. The page and the Playwright spec live in `console/`;
 `browser.sh` owns the fixture and passes its environment to the spec. See
 [`test/interop/README.md`](../test/interop/README.md#the-browser-call).
 
-`e2e/phone-call.spec.ts` in `../athenasip-admin` is the same browser calling a real
+`e2e/phone-call.spec.ts` in `console/` is the same browser calling a real
 phone, with video, through whatever node it is pointed at. Somebody has to answer the
 phone.
 

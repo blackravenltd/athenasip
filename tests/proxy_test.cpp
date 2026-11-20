@@ -6,6 +6,10 @@
 //
 #include <gtest/gtest.h>
 
+#include <boost/json.hpp>
+
+#include "types/trunk.h"
+
 #include <memory>
 #include <string>
 
@@ -127,6 +131,36 @@ TEST(ProxyTest, MaxForwardsZeroIs483AndIsNotForwarded) {
   EXPECT_EQ(f.request_with(f.callee_connection, "INVITE"), nullptr);
 }
 
+// Review finding 16: a Max-Forwards that is no number cannot be decremented, so the request is refused rather than
+// forwarded with its hop count intact.
+TEST(ProxyTest, AMaxForwardsThatIsNoNumberIs400AndIsNotForwarded) {
+  Fixture f;
+  f.bind_bob();
+
+  f.receive(f.caller, f.invite("z9hG4bK-invite", "sip:bob@example.com", "seventy"));
+
+  EXPECT_NE(f.response_with(f.caller_connection, 400), nullptr);
+  EXPECT_EQ(f.request_with(f.callee_connection, "INVITE"), nullptr);
+}
+
+// RFC 3261 16.3 step 5, review finding 12: a request that requires of proxies an extension this one lacks is 420
+// Bad Extension, with each tag in Unsupported, and is not forwarded.
+TEST(ProxyTest, AProxyRequireThisProxyLacksIs420WithUnsupported) {
+  Fixture f;
+  f.bind_bob();
+
+  auto invite = f.invite("z9hG4bK-invite", "sip:bob@example.com");
+  invite.insert(invite.find("Max-Forwards:"), "Proxy-Require: foo, bar\r\n");
+  f.receive(f.caller, invite);
+
+  auto refused = f.response_with(f.caller_connection, 420);
+  ASSERT_NE(refused, nullptr);
+  ASSERT_EQ(refused->header->headers_map["Unsupported"].size(), 2u);
+  EXPECT_EQ(refused->header->headers_map["Unsupported"][0]->to_string(), "foo");
+  EXPECT_EQ(refused->header->headers_map["Unsupported"][1]->to_string(), "bar");
+  EXPECT_EQ(f.request_with(f.callee_connection, "INVITE"), nullptr);
+}
+
 // RFC 3261 16.6 step 3: a missing Max-Forwards is added with the default.
 TEST(ProxyTest, AMissingMaxForwardsIsSuppliedOnForward) {
   Fixture f;
@@ -179,7 +213,7 @@ TEST(ProxyTest, ARetransmittedInviteIsNotForwardedTwice) {
   caller_connection->reliable = false;
 
   // On UDP Alice answers a challenge, and the retransmission carries the same credentials.
-  const auto invite = f.with_credentials(f.invite("z9hG4bK-twice"), "alice", "alice-ha1");
+  const auto invite = f.with_credentials(f.invite("z9hG4bK-twice"), "alice", "alice-ha1", "192.0.2.11");
 
   f.receive(caller, invite);
   f.receive(caller, invite);
@@ -445,4 +479,101 @@ TEST(ProxyTest, TheCalleesTryingIsNotForwarded) {
 
   EXPECT_EQ(ProxyFixture::responses_with(f.caller_connection, 100).size(), trying_before);
   EXPECT_NE(ProxyFixture::response_with(f.caller_connection, 180), nullptr);
+}
+
+// RFC 3261 19.1.4: the host of a Request-URI compares without regard to case, so a call dialled with the realm in
+// capitals reaches the subscriber as one in lower case does.
+TEST(ProxyTest, ARequestUriHostInAnyCaseReachesTheSubscriber) {
+  ProxyFixture f;
+  f.bind_bob();
+
+  f.receive(f.caller, f.invite("z9hG4bK-case", "sip:bob@EXAMPLE.COM"));
+
+  EXPECT_EQ(ProxyFixture::requests_with(f.callee_connection, "INVITE").size(), 1u);
+  EXPECT_EQ(ProxyFixture::response_with(f.caller_connection, 404), nullptr);
+}
+
+// RFC 3428: a MESSAGE out of a dialog is proxied like any request, to the subscriber's device, with its body
+// untouched; the device's final response goes back to the sender. No dialog and no Record-Route, since none is
+// created, and nothing is stored: a subscriber with no device registered is told 480.
+TEST(ProxyTest, AnInstantMessageIsRelayedWithItsBodyAndItsAnswer) {
+  ProxyFixture f;
+  f.bind_bob();
+
+  const std::string text = "Are you there?";
+  std::string raw = "MESSAGE sip:bob@example.com SIP/2.0\r\n";
+  raw += "Via: SIP/2.0/UDP 192.0.2.10:5060;branch=z9hG4bK-im\r\n";
+  raw += "From: <sip:alice@example.com>;tag=alice\r\n";
+  raw += "To: <sip:bob@example.com>\r\n";
+  raw += "Call-ID: im-1\r\n";
+  raw += "CSeq: 1 MESSAGE\r\n";
+  raw += "Max-Forwards: 70\r\n";
+  raw += "Content-Type: text/plain\r\n";
+  raw += "Content-Length: " + std::to_string(text.size()) + "\r\n\r\n";
+  raw += text;
+  f.receive(f.caller, raw);
+
+  const auto forwarded = ProxyFixture::requests_with(f.callee_connection, "MESSAGE");
+  ASSERT_EQ(forwarded.size(), 1u);
+  EXPECT_EQ(forwarded[0]->body, text);
+  EXPECT_EQ(forwarded[0]->header->headers_map["Content-Type"][0]->to_string(), "text/plain");
+  EXPECT_FALSE(forwarded[0]->header->contains("Record-Route"));
+
+  std::string answer = "SIP/2.0 200 OK\r\n";
+  for (const auto& via : forwarded[0]->header->headers_map["Via"]) answer += "Via: " + via->to_string() + "\r\n";
+  answer += "From: <sip:alice@example.com>;tag=alice\r\n";
+  answer += "To: <sip:bob@example.com>;tag=bob\r\n";
+  answer += "Call-ID: im-1\r\n";
+  answer += "CSeq: 1 MESSAGE\r\n\r\n";
+  f.receive(f.callee, answer);
+
+  auto relayed = ProxyFixture::response_with(f.caller_connection, 200);
+  ASSERT_NE(relayed, nullptr);
+  EXPECT_EQ(relayed->header->headers_map["CSeq"][0]->to_string(), "1 MESSAGE");
+
+  // Bob gone: nobody to deliver to.
+  ASSERT_TRUE(f.unregister_binding(f.bob, std::make_shared<types::SIPUri>("sip:bob@192.0.2.20:5060"), f.callee));
+  raw.replace(raw.find("z9hG4bK-im"), 10, "z9hG4bK-i2");
+  raw.replace(raw.find("Call-ID: im-1"), 13, "Call-ID: im-2");
+  f.receive(f.caller, raw);
+  EXPECT_NE(ProxyFixture::response_with(f.caller_connection, 480), nullptr);
+}
+
+// RFC 4579 (docs/design/conferencing.md): an INVITE to a conference URI goes to its focus, a trunk, with the room
+// as the user part, and the call records the room as its focus once the focus answers, by its name rather than as
+// this caller spelt it. Conferencing is the standard scripts' (decision 2), so this is proved under them.
+TEST(ProxyTest, ACallToAConferenceUriGoesToItsFocusAndTheCallRecordsTheRoom) {
+  if (!CoreFixture::lua_policy()) GTEST_SKIP() << "conferencing is athenasip.standard's; run with ATHENA_TEST_POLICY=lua";
+  ProxyFixture f;
+  std::shared_ptr<MockConnection> focus_connection;
+  auto focus = f.make_channel("192.0.2.40", &focus_connection);
+
+  auto rooms = std::make_shared<types::Trunk>();
+  rooms->name = "rooms";
+  rooms->uri = "sip:192.0.2.40:5060";
+  rooms->attributes = boost::json::parse(R"({"focus": {"prefix": "conf-"}})").as_object();
+  ASSERT_TRUE(f.store->trunk_create(rooms));
+
+  f.receive(f.caller, f.invite("z9hG4bK-room", "sip:conf-sales@EXAMPLE.com;transport=udp"));
+
+  const auto forwarded = ProxyFixture::requests_with(focus_connection, "INVITE");
+  ASSERT_EQ(forwarded.size(), 1u);
+  EXPECT_EQ(forwarded[0]->header->request_uri->to_string(), "sip:conf-sales@192.0.2.40:5060");
+  EXPECT_EQ(ProxyFixture::response_with(f.caller_connection, 404), nullptr);
+
+  std::string answer = "SIP/2.0 200 OK\r\n";
+  for (const auto& via : forwarded[0]->header->headers_map["Via"]) answer += "Via: " + via->to_string() + "\r\n";
+  for (const auto& route : forwarded[0]->header->headers_map["Record-Route"]) answer += "Record-Route: " + route->to_string() + "\r\n";
+  answer += "From: <sip:alice@example.com>;tag=alice\r\n";
+  answer += "To: <sip:conf-sales@example.com>;tag=focus\r\n";
+  answer += "Call-ID: call-proxy\r\n";
+  answer += "CSeq: 1 INVITE\r\n";
+  answer += "Contact: <sip:conf-sales@192.0.2.40:5060;isfocus>\r\n\r\n";
+  f.receive(focus, answer);
+
+  ASSERT_NE(ProxyFixture::response_with(f.caller_connection, 200), nullptr);
+  const auto call = f.store->call_get("call-proxy");
+  ASSERT_NE(call, nullptr);
+  ASSERT_NE(call->focus, nullptr);
+  EXPECT_EQ(call->focus->to_string(), "sip:conf-sales@example.com");
 }

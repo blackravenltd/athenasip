@@ -426,3 +426,24 @@ TEST(SessionsTest, LoggingOneSessionOutLeavesTheOthersAlone) {
   EXPECT_EQ(fixture.resolve(first.value.token).outcome, Sessions::Outcome::refused);
   EXPECT_TRUE(fixture.resolve(second.value.token).ok());
 }
+
+// Review finding 31: a refusal takes as long whether or not the name exists. An unknown user is checked against a hash
+// of the same cost as a real one, so timing does not list the users. Measured against a user stored at the default
+// cost, with a wide margin for a busy machine.
+TEST(SessionsTest, AnUnknownUserTakesAsLongToRefuseAsAWrongPassword) {
+  Fixture fixture;
+  auto ada = fixture.add_user("ada", {});
+  ada->password_hash = types::Password::hash(kPassword);
+  ASSERT_TRUE(fixture.store->user_update(ada));
+
+  const auto timed = [&fixture](const std::string& username) {
+    const auto start = std::chrono::steady_clock::now();
+    EXPECT_EQ(fixture.login(username, "not it").outcome, Sessions::Outcome::refused);
+    return std::chrono::steady_clock::now() - start;
+  };
+
+  const auto wrong = timed("ada");
+  const auto unknown = timed("nobody");
+  EXPECT_GT(unknown * 2, wrong) << "unknown " << std::chrono::duration_cast<std::chrono::milliseconds>(unknown).count() << " ms, wrong password "
+                                << std::chrono::duration_cast<std::chrono::milliseconds>(wrong).count() << " ms";
+}

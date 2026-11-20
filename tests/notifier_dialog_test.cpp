@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <ctime>
 #include <memory>
 #include <set>
 #include <string>
@@ -238,4 +239,36 @@ TEST(DialogPackageTest, AnAorTravelsTheBusIntact) {
   EXPECT_EQ(std::count(topic.begin(), topic.end(), '/'), 2);
   EXPECT_EQ(events::topics::presence_changed_aor(topic), aor);
   EXPECT_EQ(events::topics::presence_changed_aor("nodes/a/status"), "");
+}
+
+// A BLF key for a conference room (docs/design/conferencing.md): the room is a presentity of its own, whose line
+// is in use while anyone's call to its focus is up.
+TEST(DialogPackageTest, AKeyForARoomLightsWhileAnyoneIsInIt) {
+  DialogPackageFixture f;
+  f.watch("sip:conf-sales@example.com");
+  EXPECT_EQ(f.latest().find("<dialog "), std::string::npos) << "an empty room";
+
+  f.on_strand([&f]() {
+    auto call = std::make_shared<Call>();
+    call->id = "call-room";
+    call->state = Call::State::Connected;
+    call->answered_at = std::time(nullptr);
+    call->focus = std::make_shared<types::SIPUri>("sip:conf-sales@example.com");
+    auto& alice = call->add_participant(std::make_shared<types::SIPIdentity>("sip:alice@example.com"), nullptr, true);
+    alice.subscriber = "sip:alice@example.com";
+    auto& room = call->add_participant(std::make_shared<types::SIPIdentity>("sip:conf-sales@192.0.2.40:5060"));
+    room.trunk = "rooms";
+    f.core->call_register(call);
+  });
+  f.settle();
+
+  const auto calls = f.on_strand([&f]() { return f.core->call_list(); });
+  const auto dialogs = Notifier::dialogs_of("sip:conf-sales@example.com", calls);
+  ASSERT_EQ(dialogs.size(), 1u);
+  EXPECT_EQ(dialogs[0].state, "confirmed");
+  EXPECT_EQ(dialogs[0].direction, "recipient");
+  EXPECT_EQ(dialogs[0].local, "sip:conf-sales@example.com");
+  EXPECT_EQ(dialogs[0].remote, "sip:alice@example.com");
+
+  EXPECT_TRUE(Notifier::dialogs_of("sip:conf-other@example.com", f.on_strand([&f]() { return f.core->call_list(); })).empty());
 }

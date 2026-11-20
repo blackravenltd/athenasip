@@ -7,6 +7,8 @@
 
 #include "core.h"
 
+#include "headers/sip_identity_header.h"
+
 #include <algorithm>
 #include <atomic>
 #include <boost/asio/connect.hpp>
@@ -88,12 +90,124 @@ std::optional<bool> held_of(const std::string& document) {
 
 Core::Core(std::shared_ptr<Logger> logger, std::shared_ptr<Config> _config, std::shared_ptr<athenasip::datastores::Datastore> _datastore,
            std::shared_ptr<events::EventSystem> _events)
-    : _logger(std::make_unique<LoggerScoped>("core", logger)),
-      config(_config),
+    : config(_config),
       datastore(_datastore),
       events(_events),
-      _strand(boost::asio::make_strand(detail::get_global_io_context())),
-      _nonce_cache(std::make_shared<ExpirySet<std::string>>()) {}
+      _logger(std::make_unique<LoggerScoped>("core", logger)),
+      _strand(boost::asio::make_strand(detail::get_global_io_context())) {
+  auth_limits_reload();
+}
+
+void Core::auth_limits_reload() {
+  const auto policy = [](const Config::RateLimit& limit) { return AuthGuard::Policy{limit.burst, limit.per_minute}; };
+  AuthGuard::Limits limits;
+  if (config) {
+    limits.failures_source = policy(config->sip_auth_failures_source);
+    limits.failures_aor = policy(config->sip_auth_failures_aor);
+    limits.challenges_source = policy(config->sip_auth_challenges_source);
+    limits.ban = std::chrono::seconds(config->sip_auth_ban_seconds);
+  }
+  _auth_guard = std::make_unique<AuthGuard>(limits, config ? config->sip_node_id : std::string());
+}
+
+std::string Core::source_of(const SIPMessage& message) {
+  const auto channel = message.channel.lock();
+  if (!channel || !channel->peer_node().empty()) return "";
+  return channel->source_address();
+}
+
+bool Core::auth_may_challenge(const SIPMessage& message) {
+  const auto source = source_of(message);
+  return source.empty() || _auth_guard->may_challenge(source);
+}
+
+std::optional<std::chrono::seconds> Core::auth_closed(const SIPMessage& message, const std::string& aor) {
+  const auto source = source_of(message);
+  if (source.empty()) return std::nullopt;
+  return _auth_guard->aor_closed(source, aor);
+}
+
+void Core::auth_failed(const SIPMessage& message, const std::string& aor, const std::string& why) {
+  const auto source = source_of(message);
+  if (source.empty()) return;
+
+  // One line per failure, in a fixed shape a fail2ban filter can match (docs/authentication.md, Guessing).
+  _logger->warn("Authentication failure from " + source + " for " + aor + ": " + why);
+  const auto outcome = _auth_guard->failed(source, aor);
+  const auto seconds = config ? config->sip_auth_ban_seconds : 0;
+  if (outcome.banned) _logger->warn("Banned " + source + " for " + std::to_string(seconds) + " seconds after repeated authentication failures");
+  if (outcome.closed) _logger->warn("Closed " + aor + " to unknown addresses for " + std::to_string(seconds) + " seconds after repeated authentication failures");
+
+  if (!events) return;
+  const auto node = config ? config->sip_node_id : std::string();
+  events->publish(events::topics::auth_failed(),
+                  boost::json::serialize(boost::json::object{{"source", source}, {"aor", aor}, {"reason", why}, {"node", node}, {"at", Util::get_zulu_time()}}));
+
+  // The others hold it too (auth_listen).
+  if (outcome.banned) {
+    events->publish(events::topics::source_banned(),
+                    boost::json::serialize(boost::json::object{{"source", source}, {"seconds", seconds}, {"node", node}, {"at", Util::get_zulu_time()}}));
+  }
+  if (outcome.closed) {
+    events->publish(events::topics::aor_closed(),
+                    boost::json::serialize(boost::json::object{{"aor", aor}, {"seconds", seconds}, {"node", node}, {"at", Util::get_zulu_time()}}));
+  }
+}
+
+bool Core::auth_lift(const std::string& source) {
+  const bool held = _auth_guard->lift(source);
+  if (events) events->publish(events::topics::ban_lifted(), boost::json::serialize(boost::json::object{{"source", source}, {"node", config->sip_node_id}}));
+  return held;
+}
+
+bool Core::auth_reopen(const std::string& aor) {
+  const bool held = _auth_guard->reopen(aor);
+  if (events) events->publish(events::topics::aor_reopened(), boost::json::serialize(boost::json::object{{"aor", aor}, {"node", config->sip_node_id}}));
+  return held;
+}
+
+// What the other nodes ban, close, lift and reopen, held and done here too, so a guesser spread over the nodes is
+// banned by all of them and the list on any node is the cluster's. A node that starts later misses what was banned
+// before it; a ban is short.
+void Core::auth_listen() {
+  if (!events) return;
+
+  const auto own = config ? config->sip_node_id : std::string();
+  std::weak_ptr<Core> weak = weak_from_this();
+  for (const auto& topic : {events::topics::source_banned(), events::topics::aor_closed(), events::topics::ban_lifted(), events::topics::aor_reopened()}) {
+    events->subscribe(
+        _strand, topic,
+        [weak, own, topic](std::string, std::string message) {
+          auto self = weak.lock();
+          if (!self) return;
+
+          boost::system::error_code bad;
+          const auto parsed = boost::json::parse(message, bad);
+          if (bad || !parsed.is_object()) return;
+          const auto& report = parsed.as_object();
+          const auto text = [&report](const char* key) {
+            const auto* value = report.if_contains(key);
+            return value != nullptr && value->is_string() ? std::string(value->as_string()) : std::string();
+          };
+          const auto node = text("node");
+          if (node == own) return;
+
+          const auto* seconds = report.if_contains("seconds");
+          const auto left = std::chrono::seconds(seconds != nullptr && seconds->is_int64() ? seconds->as_int64() : 0);
+          if (topic == events::topics::source_banned()) self->_auth_guard->ban(text("source"), left, node);
+          if (topic == events::topics::aor_closed()) self->_auth_guard->close(text("aor"), left, node);
+          if (topic == events::topics::ban_lifted()) self->_auth_guard->lift(text("source"));
+          if (topic == events::topics::aor_reopened()) self->_auth_guard->reopen(text("aor"));
+        },
+        [this, self = shared_from_this(), topic](plugins::Result<std::shared_ptr<events::Subscription>> subscribed) {
+          if (!subscribed.ok) _logger->warn("Cannot listen on " + topic + " - " + subscribed.error);
+        });
+  }
+}
+
+void Core::auth_succeeded(const SIPMessage& message, const std::string& aor) {
+  if (const auto source = source_of(message); !source.empty()) _auth_guard->succeeded(source, aor);
+}
 
 void Core::server_register(std::shared_ptr<servers::Server> server) { _servers.push_back(server); }
 
@@ -119,7 +233,7 @@ void Core::location_list(std::uint64_t subscriber_id, plugins::Handler<std::vect
 
 void Core::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel,
                                std::uint32_t expires_seconds, std::string path, plugins::StatusHandler handler, std::string instance, std::uint32_t reg_id,
-                               bool push) {
+                               bool push, std::string call_id, std::uint64_t cseq) {
   // RFC 3261 10.3 step 7: every successful REGISTER writes the binding. It records the
   // flow and the node holding it, the only way back to a client whose Contact is
   // unreachable (RFC 5626).
@@ -130,6 +244,8 @@ void Core::subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shar
   binding.instance = std::move(instance);
   binding.reg_id = reg_id;
   binding.push = push;
+  binding.call_id = std::move(call_id);
+  binding.cseq = cseq;
   if (channel) binding.flow_id = channel->flow_id();
 
   // The event waits for the write.
@@ -179,6 +295,27 @@ std::string Core::channel_key(const std::string& transport, const std::string& h
 std::string Core::channel_key(const std::string& transport, const std::string& endpoint) { return Util::to_lower(transport) + "://" + endpoint; }
 
 bool Core::channel_register(std::string endpoint, std::shared_ptr<Channel> channel) {
+  // The caps: how many flows the node holds in all, and how many from one address, so neither a flood of
+  // connections nor one of spoofed datagrams exhausts it. A flow past either is closed before it is filed.
+  if (channel->_connection) {
+    const auto source = channel->_connection->remote_endpoint().address().to_string();
+    const auto from_source = _channels_by_source.count(source) != 0 ? _channels_by_source.at(source) : 0;
+
+    if (config->sip_max_connections > 0 && _channel_count >= config->sip_max_connections) {
+      _logger->warn("Refusing a flow from " + source + " - the node holds " + std::to_string(_channel_count) + " already (sip.max_connections)");
+      channel->close();
+      return false;
+    }
+    if (config->sip_max_connections_per_source > 0 && from_source >= config->sip_max_connections_per_source) {
+      _logger->warn("Refusing a flow from " + source + " - it holds " + std::to_string(from_source) + " already (sip.max_connections_per_source)");
+      channel->close();
+      return false;
+    }
+
+    _channels_by_source[source] = from_source + 1;
+    _channel_count++;
+  }
+
   _channels[endpoint] = channel;
   _channels_by_token[channel->flow_token()] = channel;
 
@@ -217,6 +354,15 @@ bool Core::channel_unregister(std::string endpoint, std::shared_ptr<Channel> cha
   // Remove every name the channel is filed under, aliases included.
   const auto removed = std::erase_if(_channels, [&channel](const auto& entry) { return entry.second == channel; });
   _channels_by_token.erase(channel->flow_token());
+
+  // A channel that was filed was counted; one refused at the cap never was.
+  if (removed > 0 && channel->_connection) {
+    const auto source = channel->_connection->remote_endpoint().address().to_string();
+    if (auto counted = _channels_by_source.find(source); counted != _channels_by_source.end()) {
+      if (--counted->second == 0) _channels_by_source.erase(counted);
+    }
+    if (_channel_count > 0) _channel_count--;
+  }
 
   _logger->debug("Unregistered Channel " + endpoint + (removed > 1 ? " and " + std::to_string(removed - 1) + " alias(es)" : ""));
   return true;
@@ -509,47 +655,6 @@ void Core::channel_close_all() {
   for (const auto& channel : channels) channel->close();
 }
 
-void Core::nonce_create(std::shared_ptr<Realm> realm, plugins::Handler<std::string> handler) {
-  std::array<unsigned char, 16> random_bytes;
-
-  if (RAND_bytes(random_bytes.data(), random_bytes.size()) != 1) {
-    throw std::runtime_error("Failed to generate secure random bytes");
-  }
-
-  const uint64_t timestamp = static_cast<uint64_t>(std::time(nullptr));
-
-  const std::string random_hex = Util::to_hex(random_bytes.data(), random_bytes.size());
-
-  // The nonce is realm:random:timestamp, signed with the realm's secret.
-  const std::string raw_nonce = std::to_string(realm->id) + ":" + random_hex + ":" + std::to_string(timestamp);
-
-  unsigned char hmac_result[EVP_MAX_MD_SIZE];
-  unsigned int hmac_len = 0;
-
-  HMAC(EVP_sha256(), realm->nonce_secret.data(), static_cast<int>(realm->nonce_secret.size()), reinterpret_cast<const unsigned char*>(raw_nonce.data()),
-       raw_nonce.size(), hmac_result, &hmac_len);
-
-  const std::string hmac_hex = Util::to_hex(hmac_result, hmac_len);
-  const std::string nonce = raw_nonce + ":" + hmac_hex;
-
-  const auto expires_at = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now() + std::chrono::seconds(realm->nonce_expiry));
-
-  auto self = shared_from_this();
-
-  datastore->nonce_create(_strand, nonce, expires_at, [this, self, nonce, realm, handler](plugins::Status status) mutable {
-    if (!status.ok) {
-      _logger->error("Failed to generate nonce - " + status.error);
-      if (handler) handler(plugins::Result<std::string>::failure(status.error));
-      return;
-    }
-
-    _nonce_cache->add(nonce, realm->nonce_expiry * 1000);
-    if (handler) handler(plugins::Result<std::string>::success(nonce));
-  });
-}
-
-void Core::nonce_check(std::string nonce, plugins::Handler<bool> handler) { datastore->nonce_check(_strand, std::move(nonce), std::move(handler)); }
-
 void Core::process_message(std::shared_ptr<SIPMessage> message) {
   _ensure_transaction_users();
 
@@ -574,6 +679,15 @@ void Core::process_message(std::shared_ptr<SIPMessage> message) {
     return;
   }
 
+  // An address banned for guessing (AuthGuard) is not answered at all: an answer would tell a scanner it is
+  // heard, and over UDP would be traffic sent wherever a spoofed source pointed.
+  if (const auto source = source_of(*message); !source.empty()) {
+    if (const auto left = _auth_guard->banned(source)) {
+      _logger->debug("Request from " + source + ", banned for " + std::to_string(left->count()) + " more seconds - dropped");
+      return;
+    }
+  }
+
   const auto& method = message->header->request_method;
 
   // RFC 3261 17.1.1.3: an ACK for a non-2xx is absorbed by its INVITE server transaction.
@@ -594,6 +708,14 @@ void Core::process_message(std::shared_ptr<SIPMessage> message) {
   auto existing = _matcher.match_request(message);
   if (existing) {
     existing->receive(message);
+    return;
+  }
+
+  // Review finding 19: each transaction lives up to 64 T1, so a flood of new requests could hold an unbounded table.
+  // Past sip.max_transactions a new one is answered 503 statelessly, and the client tries again later (21.5.4).
+  if (config->sip_max_transactions != 0 && _matcher.size() >= config->sip_max_transactions && message->header->request_method != "ACK") {
+    _logger->warn("Holding " + std::to_string(_matcher.size()) + " transactions, the most allowed - 503");
+    _send_status(message, 503, "Service Unavailable", 5);
     return;
   }
 
@@ -850,6 +972,56 @@ bool Core::names_this_node(const SIPUri& uri) const { return _proxy && _proxy->n
 void Core::_deliver_to_tu(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction) {
   _ensure_transaction_users();
 
+  // A request in a dialog this node does not hold may be in one another node began, or one this node began before
+  // it restarted: the call record says (all state lives in the datastore). Read once, before anything sees the
+  // request; an INVITE with no To tag is a new call and has no record to read.
+  std::string to_tag;
+  if (request->header->contains("To")) {
+    if (auto to = request->header->headers_map["To"][0]->as<SIPIdentityHeader>(); to != nullptr && to->value != nullptr) {
+      if (const auto tag = to->value->tags.find("tag"); tag != to->value->tags.end()) to_tag = tag->second;
+    }
+  }
+
+  if (!to_tag.empty() && !_dialogs->find(request)) {
+    const auto call_id = request->header->contains("Call-ID") ? request->header->headers_map["Call-ID"][0]->to_string() : std::string();
+    if (!call_id.empty() && !call_get(call_id)) {
+      auto self = shared_from_this();
+      datastore->call_get(_strand, call_id, [this, self, request, transaction](plugins::Result<std::shared_ptr<Call>> found) {
+        if (found.ok && found.value) _adopt_call(found.value, request);
+        _dispatch_to_tu(request, transaction);
+      });
+      return;
+    }
+  }
+
+  _dispatch_to_tu(request, transaction);
+}
+
+// A call read from the record because a request in its dialog arrived here: the dialog is carried on, the call
+// held as any other, its media left where it was anchored.
+void Core::_adopt_call(const std::shared_ptr<Call>& call, const std::shared_ptr<SIPMessage>& request) {
+  if (!call || call->state == Call::State::Closed || call_get(call->id)) return;
+
+  std::shared_ptr<types::Dialog> dialog;
+  for (const auto& participant : call->participants) {
+    if (participant.dialog && _dialogs->find(request) == nullptr && participant.dialog->state != types::Dialog::State::Terminated) {
+      dialog = participant.dialog;
+      break;
+    }
+  }
+  if (!dialog) return;
+
+  _dialogs->adopt(dialog);
+  if (!_dialogs->find(request)) return;
+
+  // The media was anchored by the node the caller reached, and stays there (docs/architecture.md).
+  if (call->node != config->sip_node_id) call->media_elsewhere = true;
+  call->dialog_revision = dialog->revision;
+  _calls[call->id] = call;
+  _logger->info("Call " + call->id + " taken from its record for a request in its dialog");
+}
+
+void Core::_dispatch_to_tu(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction) {
   // Retransmissions never get this far (RFC 3261 17.2.1), so the dialog tracker sees each
   // request once.
   request->dialog = request->header->contains("To") ? _dialogs->find(request) : nullptr;
@@ -979,7 +1151,7 @@ std::shared_ptr<transactions::TransactionBase> Core::client_transaction_start(st
   return transaction;
 }
 
-void Core::_send_status(const std::shared_ptr<SIPMessage>& request, uint16_t code, const std::string& reason) {
+void Core::_send_status(const std::shared_ptr<SIPMessage>& request, uint16_t code, const std::string& reason, std::uint32_t retry_after) {
   auto channel = request->channel.lock();
 
   if (!channel) {
@@ -990,6 +1162,7 @@ void Core::_send_status(const std::shared_ptr<SIPMessage>& request, uint16_t cod
   auto response = request->generate_response();
   response->header->response_code = code;
   response->header->response_message = reason;
+  if (retry_after != 0) response->header->add("Retry-After", std::to_string(retry_after));
 
   channel->send(response);
 }
@@ -1078,13 +1251,20 @@ void Core::_on_dialog_change(const std::shared_ptr<types::Dialog>& dialog) {
       break;
   }
 
-  if (call->state == previous) return;
+  // The record is written when the call's state changed, and when the dialog moved under it (a target, a sequence
+  // number, the session): what another node needs to carry the dialog on.
+  const bool dialog_moved = call->dialog_revision != dialog->revision;
+  call->dialog_revision = dialog->revision;
+  if (call->state == previous && !dialog_moved) return;
 
-  events->publish(events::topics::call_state(call->id), Call::state_to_string(call->state));
+  if (call->state != previous) events->publish(events::topics::call_state(call->id), Call::state_to_string(call->state));
 
   _call_record_write(call);
 
-  if (call->state != Call::State::Closed) return;
+  if (call->state == previous || call->state != Call::State::Closed) return;
+
+  // The policy is told once, for its own counters and records.
+  if (auto hook = policy()) hook->on_call_ended(_strand, call);
 
   // The dialog ending is the only signal that the call is over, so the media is released
   // here. The handler holds the call until the engine answers.
@@ -1134,6 +1314,14 @@ std::shared_ptr<Call> Core::call_get(std::string callId) {
 void Core::media_register(std::shared_ptr<media::MediaEngine> engine) {
   media = std::move(engine);
 
+  // Key presses the engine hears become INFO for a leg that speaks it, on the strand.
+  std::weak_ptr<Core> weak_self = weak_from_this();
+  media->dtmf_listen([weak_self](media::MediaEngine::DtmfEvent event) {
+    auto self = weak_self.lock();
+    if (!self) return;
+    self->post([self, event = std::move(event)]() { self->local_ua()->key_pressed(event.call_id, event.source_tag, event.digit, event.duration); });
+  });
+
   // The media half of the call sweep needs an engine.
   _call_sweep_schedule();
 }
@@ -1154,16 +1342,7 @@ void Core::node_status_start() {
         if (!subscribed.ok) _logger->warn("Cannot listen for the other nodes - " + subscribed.error);
       });
 
-  // And which node has each trunk registered.
-  std::weak_ptr<TrunkStatuses> weak_trunks = _trunk_statuses;
-  events->subscribe(
-      _strand, "trunks/+/status",
-      [weak_trunks](std::string topic, std::string message) {
-        if (auto trunks = weak_trunks.lock()) trunks->observe(topic, message);
-      },
-      [this, self = shared_from_this()](plugins::Result<std::shared_ptr<events::Subscription>> subscribed) {
-        if (!subscribed.ok) _logger->warn("Cannot listen for the trunks' registrations - " + subscribed.error);
-      });
+  auth_listen();
 
   _node_status_publish();
 }
@@ -1269,6 +1448,7 @@ std::string Core::node_status_json(const std::string& status) const {
     if (capabilities.conference) can.push_back("conference");
     if (capabilities.record) can.push_back("record");
     if (capabilities.transcode) can.push_back("transcode");
+    if (capabilities.dtmf) can.push_back("dtmf");
     engine["capabilities"] = std::move(can);
 
     boost::json::array produces;
@@ -1350,10 +1530,23 @@ void Core::_flow_sweep() {
     for (const auto& [endpoint, channel] : _channels) {
       if (!channel || !channel->_connection) continue;
 
-      if (channel->_connection->is_reliable()) continue;
-
       const auto quiet_for = std::chrono::duration_cast<std::chrono::seconds>(now - channel->last_activity()).count();
-      if (quiet_for < static_cast<std::int64_t>(timeout)) continue;
+
+      if (channel->_connection->is_reliable()) {
+        // A connection a subscriber registered over ends with its socket (RFC 5626 keeps it alive). One that has
+        // registered nobody is held only while it speaks: never, past sip.flow_first_message_timeout; idle, past
+        // the idle timeout, as a UDP flow is.
+        if (channel->is_authenticated()) continue;
+        if (!channel->has_spoken()) {
+          const auto first = config->sip_flow_first_message_timeout;
+          const auto open_for = std::chrono::duration_cast<std::chrono::seconds>(now - channel->opened_at()).count();
+          if (first == 0 || open_for < static_cast<std::int64_t>(first)) continue;
+        } else if (quiet_for < static_cast<std::int64_t>(timeout)) {
+          continue;
+        }
+      } else if (quiet_for < static_cast<std::int64_t>(timeout)) {
+        continue;
+      }
 
       // A channel can be filed under several names.
       if (std::find(idle.begin(), idle.end(), channel) == idle.end()) idle.push_back(channel);
@@ -1515,6 +1708,8 @@ void Core::_close_orphan(const std::shared_ptr<Call>& call, const std::string& r
 
   call->state = Call::State::Closed;
   call->ended_at = std::time(nullptr);
+
+  if (auto hook = policy()) hook->on_call_ended(_strand, call);
 
   datastore->call_update(_strand, call, [this, self = shared_from_this(), call](plugins::Status status) {
     if (!status.ok) {

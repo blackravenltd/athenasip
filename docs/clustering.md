@@ -8,7 +8,7 @@ the service with it. Any node serves any subscriber. Terms are in the
 
 | Shared, through | What |
 |---|---|
-| The datastore (Redis) | Realms, subscribers, trunks, bindings, administrators and their sessions, Digest nonces, call records, and which node registers each trunk |
+| The datastore (Redis) | Realms, subscribers, trunks, bindings, administrators and their sessions, call records, and which node registers each trunk |
 | The event bus (an MQTT broker) | Each node's status: whether it is up, its addresses, its inter-node listener and its policy. This is how nodes find each other. Each trunk's registration. |
 
 | Not shared | Why it matters |

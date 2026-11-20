@@ -37,8 +37,12 @@ struct Fixture {
   push_test::TempFile key_file{push_test::private_pem(key)};
   std::shared_ptr<WebpushPushService> service = std::make_shared<WebpushPushService>(logger, std::make_shared<types::URL>("webpush://"));
 
+  // The test's push service listens on loopback, which a node refuses unless told otherwise.
+  bool allow_private = true;
+
   bool configure(const std::string& extra = "", const std::string& subject = "mailto:ops@example.com") {
-    const std::string yaml = "vapid_private_key: " + key_file.path() + "\nsubject: \"" + subject + "\"\nca_file: " + TestHttpsServer::ca_file() + "\n" + extra;
+    const std::string yaml = "vapid_private_key: " + key_file.path() + "\nsubject: \"" + subject + "\"\nca_file: " + TestHttpsServer::ca_file() + "\n" +
+                             (allow_private ? "allow_private_destinations: true\n" : "") + extra;
     return service->configure(YAML::Load(yaml), Config(logger));
   }
 };
@@ -326,4 +330,19 @@ TEST(WebpushPushServiceTest, ReportsAnUnreachablePushService) {
   }
 
   EXPECT_FALSE(push_test::send(*fixture.service, subscription(url)).ok);
+}
+
+// Review finding 34: a subscriber writes the URL this node POSTs to. By default one that resolves to a private,
+// loopback or link-local address is refused, and nothing is sent: a subscriber cannot aim the node, with its VAPID
+// signature, at a service inside its network.
+TEST(WebpushPushServiceTest, RefusesASubscriptionOnAPrivateAddressUnlessAllowed) {
+  TestHttpsServer server(answering(201));
+  Fixture fixture;
+  fixture.allow_private = false;
+  ASSERT_TRUE(fixture.configure());
+
+  const auto status = push_test::send(*fixture.service, subscription(server.url("/p/1")));
+  EXPECT_FALSE(status.ok);
+  EXPECT_NE(status.error.find("not a public address"), std::string::npos) << status.error;
+  EXPECT_TRUE(server.requests().empty());
 }

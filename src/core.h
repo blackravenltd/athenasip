@@ -6,9 +6,6 @@
 //
 #pragma once
 
-#include <openssl/hmac.h>
-#include <openssl/rand.h>
-
 #include <boost/asio/post.hpp>
 #include <boost/asio/ssl.hpp>
 #include <boost/asio/strand.hpp>
@@ -24,10 +21,12 @@
 
 #include "address_discovery.h"
 #include "api/admin_api.h"
+#include "auth_guard.h"
 #include "call.h"
 #include "config.h"
 #include "datastores/datastore.h"
 #include "dialogs.h"
+#include "digest.h"
 #include "dns/sip_locator.h"
 #include "events/event_system.h"
 #include "expiry_set.h"
@@ -36,7 +35,6 @@
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
 #include "media/media_engine.h"
-#include "media/reoffers.h"
 #include "node_directory.h"
 #include "plugins/plugin.h"
 #include "policy/policy.h"
@@ -105,7 +103,7 @@ class Core : public std::enable_shared_from_this<Core> {
   void server_start_all();
   void server_stop_all();
 
-  // Realms, subscribers and nonces live in the datastore. These calls are async and never
+  // Realms and subscribers live in the datastore. These calls are async and never
   // block; each handler runs on the strand.
   void realm_get_by_name(std::string realm, plugins::Handler<std::shared_ptr<Realm>> handler);
 
@@ -115,7 +113,7 @@ class Core : public std::enable_shared_from_this<Core> {
   // this node agreed to push to (RFC 8599).
   void subscriber_register(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel,
                            std::uint32_t expires_seconds, std::string path, plugins::StatusHandler handler, std::string instance = "", std::uint32_t reg_id = 0,
-                           bool push = false);
+                           bool push = false, std::string call_id = "", std::uint64_t cseq = 0);
   void subscriber_unregister(std::shared_ptr<Subscriber> subscriber, std::shared_ptr<SIPUri> contact, std::shared_ptr<Channel> channel,
                              plugins::StatusHandler handler);
   void location_list(std::uint64_t subscriber_id, plugins::Handler<std::vector<types::Location>> handler);
@@ -145,7 +143,6 @@ class Core : public std::enable_shared_from_this<Core> {
   const FlowTokens& flow_tokens() const { return _flow_tokens; }
 
   // The subscribers this node has had to re-offer in the other media profile.
-  media::Reoffers& reoffers() { return _reoffers; }
 
   // The RFC 3263 server locator. Built on first use from /etc/resolv.conf unless one is set.
   std::shared_ptr<dns::SipLocator> locator();
@@ -189,9 +186,30 @@ class Core : public std::enable_shared_from_this<Core> {
   };
   Advertised advertised_for(const Channel& channel) const;
 
-  // Nonce
-  void nonce_create(std::shared_ptr<Realm> realm, plugins::Handler<std::string> handler);
-  void nonce_check(std::string nonce, plugins::Handler<bool> handler);
+  // The Digest answers this node has accepted, against replay (digest::NonceCounts). Nonces themselves are
+  // minted and checked without state (digest::nonce_mint, nonce_state).
+  digest::NonceCounts& nonce_counts() { return _nonce_counts; }
+
+  // Digest guessing over SIP (AuthGuard, docs/authentication.md, Guessing), by the request's source: its channel's
+  // address. A request with no channel, or from a cluster peer, has no source and is never limited.
+  static std::string source_of(const SIPMessage& message);
+  // The guard again from the config's sip.auth_limits, forgetting what it had counted.
+  void auth_limits_reload();
+  // Whether the address may be sent one more challenge.
+  bool auth_may_challenge(const SIPMessage& message);
+  // The time left while the AOR is closed to this request's address.
+  std::optional<std::chrono::seconds> auth_closed(const SIPMessage& message, const std::string& aor);
+  // A wrong answer, or one for no subscriber: counted, logged for fail2ban and published as security/auth_failed;
+  // the one that bans the address is published as security/banned too.
+  void auth_failed(const SIPMessage& message, const std::string& aor, const std::string& why);
+  void auth_succeeded(const SIPMessage& message, const std::string& aor);
+  // What is in force, on this node and those it has heard from.
+  AuthGuard& auth_guard() { return *_auth_guard; }
+  // Lifted by an administrator, here and, over the bus, on every other node. Whether this node held it.
+  bool auth_lift(const std::string& source);
+  bool auth_reopen(const std::string& aor);
+  // Hears the other nodes' bans, closures and lifts. Started with the node's status.
+  void auth_listen();
 
   // Messages
   void process_message(std::shared_ptr<SIPMessage> message);
@@ -288,9 +306,6 @@ class Core : public std::enable_shared_from_this<Core> {
   // Registers this node to the trunks that ask for it (TrunkRegistrar). Started by main once the listeners are up.
   std::shared_ptr<TrunkRegistrar> trunk_registrar();
 
-  // What the nodes have said of their trunk registrations, from the bus.
-  std::shared_ptr<TrunkStatuses> trunk_statuses() const { return _trunk_statuses; }
-
   // The final responses branches sent out by each trunk have ended in, by trunk and code, since this node started.
   // For the metrics. On the strand.
   void trunk_response_count(const std::string& trunk, std::uint16_t code) { _trunk_responses[{trunk, code}]++; }
@@ -342,7 +357,12 @@ class Core : public std::enable_shared_from_this<Core> {
 
   void _deliver_to_tu(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction);
 
-  void _send_status(const std::shared_ptr<SIPMessage>& request, uint16_t code, const std::string& reason);
+  // The second half of _deliver_to_tu, after a request in a dialog this node did not hold has been looked for in
+  // the call record; and the taking in of the call that record described.
+  void _dispatch_to_tu(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction);
+  void _adopt_call(const std::shared_ptr<Call>& call, const std::shared_ptr<SIPMessage>& request);
+
+  void _send_status(const std::shared_ptr<SIPMessage>& request, uint16_t code, const std::string& reason, std::uint32_t retry_after = 0);
 
   std::shared_ptr<loggers::Logger> _logger;
 
@@ -354,13 +374,13 @@ class Core : public std::enable_shared_from_this<Core> {
   std::set<std::string> _local_addresses;
 
   FlowTokens _flow_tokens;
-  media::Reoffers _reoffers;
 
   std::vector<std::shared_ptr<Server>> _servers;
 
   std::shared_ptr<api::AdminAPI> _adminAPI;
 
-  std::shared_ptr<ExpirySet<std::string>> _nonce_cache;
+  digest::NonceCounts _nonce_counts;
+  std::unique_ptr<AuthGuard> _auth_guard;
 
   transactions::TransactionMatcher _matcher;
   std::shared_ptr<TimerSource> _timer_source = default_timer_source();
@@ -372,7 +392,10 @@ class Core : public std::enable_shared_from_this<Core> {
   std::shared_ptr<Notifier> _notifier;
   std::shared_ptr<PushRefresher> _push_refresher;
   std::shared_ptr<TrunkRegistrar> _trunk_registrar;
-  std::shared_ptr<TrunkStatuses> _trunk_statuses = std::make_shared<TrunkStatuses>();
+
+  // The flows held, in all and by source address, for sip.max_connections and sip.max_connections_per_source.
+  std::size_t _channel_count = 0;
+  std::map<std::string, std::size_t> _channels_by_source;
   std::map<std::pair<std::string, std::uint16_t>, std::uint64_t> _trunk_responses;
   std::shared_ptr<AddressDiscovery> _address_discovery;
   std::map<std::string, std::shared_ptr<push::PushService>> _push_services;

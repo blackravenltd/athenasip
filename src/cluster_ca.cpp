@@ -74,9 +74,11 @@ CertPtr new_certificate(EVP_PKEY* key, const std::string& common_name, long days
   X509_gmtime_adj(X509_getm_notAfter(certificate.get()), days * 24 * 60 * 60);
   X509_set_pubkey(certificate.get(), key);
 
-  X509_NAME* subject = X509_get_subject_name(certificate.get());
-  X509_NAME_add_entry_by_txt(subject, "O", MBSTRING_ASC, reinterpret_cast<const unsigned char*>("AthenaSIP"), -1, -1, 0);
-  X509_NAME_add_entry_by_txt(subject, "CN", MBSTRING_ASC, reinterpret_cast<const unsigned char*>(common_name.c_str()), -1, -1, 0);
+  // Built apart and copied in: OpenSSL 4 hands a certificate's own name out as const.
+  std::unique_ptr<X509_NAME, void (*)(X509_NAME*)> subject(X509_NAME_new(), X509_NAME_free);
+  X509_NAME_add_entry_by_txt(subject.get(), "O", MBSTRING_ASC, reinterpret_cast<const unsigned char*>("AthenaSIP"), -1, -1, 0);
+  X509_NAME_add_entry_by_txt(subject.get(), "CN", MBSTRING_ASC, reinterpret_cast<const unsigned char*>(common_name.c_str()), -1, -1, 0);
+  X509_set_subject_name(certificate.get(), subject.get());
 
   return certificate;
 }

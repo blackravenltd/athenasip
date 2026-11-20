@@ -116,12 +116,15 @@ class SIPHeader {
   // gets a 400 (RFC 3261 8.2.1, 16.3).
   bool is_valid() const { return _valid; }
 
+  // Marks a message that parsed but cannot be trusted, such as one whose Content-Length is garbage or doubled: Core
+  // answers it 400 as it does a malformed start line.
+  void invalidate() { _valid = false; }
+
   friend std::string operator+(const SIPHeader& header, const std::string& str);
   friend std::string operator+(const std::string& str, const SIPHeader& header);
   friend std::string operator+(std::shared_ptr<SIPHeader> header, const std::string& str);
   friend std::string operator+(const std::string& str, std::shared_ptr<SIPHeader> header);
 
-  void print() const;
 
  private:
   void _store_parsed_field(const std::string& field_name, const std::string& value);

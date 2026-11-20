@@ -135,6 +135,12 @@ is never on the call path, so callers do not wait on it. Use
   the matching `*_update` fails if it does not. The API tells "already exists" from
   "not found" by which failed.
 - `session_delete` succeeds whether or not the hash was held.
+- `reoffer_record` and `reoffer_list` keep which subscribers refused the media profile they
+  were first offered, one record per subscriber and profile with a count, for about thirty
+  days; `GET /api/v1/media/reoffers` reads them on any node. Optional.
+- `trunk_status_set` and `trunk_status_get` keep what the node registering a trunk last
+  reported of it, one record per trunk, replaced whole and deleted with the trunk; the
+  API on any node reads it. Optional, as the `trunk_*` operations are.
 - `realm_delete` also deletes the realm's subscribers and their bindings.
 - A session's absolute expiry and a binding's `expires_seconds` are the store's to
   enforce.
@@ -156,12 +162,16 @@ is never on the call path, so callers do not wait on it. Use
 
 ### MediaEngine
 
-- `capabilities()` reports `bridge`, `conference`, `record` and `transcode`;
-  `produces(profile)` reports which media profiles the engine can generate.
+- `capabilities()` reports `bridge`, `conference`, `record`, `transcode` and `dtmf` (the
+  engine can play key presses into a leg's media, `play_dtmf`); `produces(profile)` reports
+  which media profiles the engine can generate.
 - `offer`, `answer`, `release` and `query` are required. An engine that cannot carry an
-  offer returns a failed `media::Result`; the SDP then passes through untouched.
-- `start_recording`, `stop_recording`, `join`, `leave` and `roster` default to a failure
-  or an empty answer.
+  offer returns a failed `media::Result`; the SDP then passes through untouched. The
+  `Flags` say how each end sends key presses (`dtmf_from`, `dtmf_to`); an engine that can
+  converts when they differ.
+- `play_dtmf`, `start_recording`, `stop_recording`, `join`, `leave` and `roster` default
+  to a failure or an empty answer. `dtmf_listen` hands the engine a listener for the key
+  presses it hears and answers whether it will report any; the default reports none.
 - `packets_relayed()` feeds metrics and may return nothing.
 
 ### PushService

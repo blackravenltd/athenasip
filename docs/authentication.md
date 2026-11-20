@@ -27,16 +27,87 @@ challenges REGISTER with 401. The proxy challenges calls with 407 (RFC 3261 22.3
 In-dialog requests, ACK and CANCEL are never challenged. A UDP client answers a 407 on
 every call. The Digest arithmetic is in `src/digest.h`.
 
+**A connection trusts what registered over it.** The second row trusts a TCP, TLS or
+WebSocket connection for the subscriber whose REGISTER it carried, which spares a phone a
+407 on every call. It is per connection, not per address, but a connection several
+clients share, such as one an SBC or another proxy holds open to this node, carries one
+trust for all of them: whoever sends on it after one of them registered is that
+subscriber. With the standard policy the From must still name the subscriber who
+registered; a policy that sets `from_must_match = false` drops even that, so one
+registration on a shared connection lets anyone on it call as anyone. Do not set it on a
+node that such a connection reaches, and put a shared edge in front as a trunk or a
+cluster peer instead (review finding 27).
+
+### Nonces
+
+A nonce is the realm's id, random bytes and the second it was minted, signed with the
+realm's `nonce_secret` (an HMAC). Any node serving the realm can tell its own nonce, and
+how old it is, without looking anything up, so nothing is stored for a challenge nobody
+answers. A nonce is good for the realm's `nonce_expiry` (default 300 seconds); a right
+answer over an older one is challenged again with `stale=true`, which a client answers
+with a fresh nonce without asking its user. A nonce that was not minted here is
+challenged plainly.
+
+An answer is good once. Without `qop`, the nonce is spent by the first right answer;
+with `qop=auth`, each answer under the nonce must carry a higher `nc` than the last. A
+second copy of an answer is a replay and is challenged as stale. Each node keeps its own
+count of the answers it accepted, bounded, and forgets them with the nonce; a replay
+sent to another node of the cluster is therefore held off by the nonce lifetime, not
+the count. The `uri` in the credentials must be the Request-URI, so an answer captured
+from one request does not sign another, and responses are compared in constant time.
+
 Subscribers are provisioned at `/api/v1/realms/{realm}/subscribers`.
+
+### Guessing
+
+Each node counts wrong Digest answers over SIP, a wrong response or one for a subscriber
+that does not exist, by the address they came from and by the address of record they
+claimed (`sip.auth_limits`, all per node):
+
+| Limit | Default | Past it |
+|---|---|---|
+| `failures_source` | 10 at once, then 5 a minute | The address is banned for `ban_seconds` (900): nothing it sends is answered |
+| `failures_aor` | 10 at once, then 5 a minute | The AOR is closed for `ban_seconds` to every address that has not authenticated as it in the last two hours: 403 with `Retry-After` |
+| `challenges_source` | 200 at once, then 600 a minute | A request that needs a challenge is 403 with `Retry-After` |
+
+Closing an AOR rather than locking it means a guess spread over many addresses stops
+while the subscriber's own phone goes on registering. A nonce is bound to the address its
+challenge went to (it signs the address without carrying it), so an answer spoofed from
+another address is challenged and counts against nobody: a ban cannot be aimed at a phone
+by forging its source. Cluster peers are never limited. Failures are counted per node, but
+a ban or a closure is told to the other nodes over the bus and every node holds it, so a
+guesser spread over a cluster is banned by all of it once any node bans it.
+
+`GET /api/v1/security/bans` and `GET /api/v1/security/closed-aors` list what is in force
+(`view-cluster-status`); `DELETE /api/v1/security/bans/{source}` and
+`DELETE /api/v1/security/closed-aors/{aor}` lift one on every node and forget the failures
+counted against it (`manage-cluster`). A node that starts after a ban was made does not
+hold it; bans are short.
+
+Every failure is logged at warning level in one shape, and published on the bus as
+`security/auth_failed`; the failure that bans an address is published as `security/banned`
+too ([Events](events.md)):
+
+```
+Authentication failure from 198.51.100.7 for sip:alice@example.com: a Digest response that does not match
+```
+
+A fail2ban filter for a ban at the firewall, longer than the node's own:
+
+```ini
+[Definition]
+failregex = Authentication failure from <HOST> for \S+:
+```
 
 ### Over HTTP
 
 A subscriber's softphone reaches its own routes, all under `/api/v1/subscriber/{realm}/`,
 with HTTP Digest (RFC 7616) and the same username and password it registers with: the HTTP
 realm is the SIP realm, so the stored HA1 is the key and nothing else is kept. The node
-answers 401 with two challenges, SHA-256 then MD5, each with `qop="auth"`; a nonce that has
-expired is challenged again with `stale=true`. A wrong password and an unknown subscriber
-get the same 401, and failures are rate limited by source address like an open route.
+answers 401 with two challenges, SHA-256 then MD5, each with `qop="auth"`; the nonces,
+their lifetime, replay and the `uri` binding are as [above](#nonces). A wrong password and
+an unknown subscriber get the same 401, and failures are rate limited by source address
+like an open route.
 
 These credentials open nothing outside that prefix, and a user's session opens nothing
 inside it. The routes: `config` (where to signal, ICE servers with a minted TURN

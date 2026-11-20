@@ -207,3 +207,30 @@ TEST(WebsocketServerTest, RefusesToBeSecureWithoutBothFiles) {
   EXPECT_FALSE(fixture.server->set_certificates(kCert, ""));
   EXPECT_FALSE(fixture.server->set_certificates(std::string(ATHENA_TEST_SOURCE_DIR) + "/tls/nosuch.cer", kKey));
 }
+
+// Review finding 37: with sip.websocket_allowed_origins set, a browser page from another origin is refused at the
+// upgrade, so a site a visitor happens to open cannot have their browser hold flows here. A listed origin, and a
+// client that sends no Origin as a phone does, are let in.
+TEST(WebsocketServerTest, AnOriginNotAllowedIsRefusedAtTheUpgrade) {
+  WebsocketFixture fixture(false);
+  fixture.config->sip_websocket_allowed_origins = {"https://console.example.com"};
+
+  const auto upgrade = [&fixture](const std::string& origin) {
+    net::io_context io;
+    websocket::stream<tcp::socket> ws(io);
+    net::connect(ws.next_layer(), std::vector<tcp::endpoint>{tcp::endpoint(net::ip::make_address("127.0.0.1"), fixture.port())});
+    ws.set_option(websocket::stream_base::decorator([origin](websocket::request_type& request) {
+      request.set(http::field::sec_websocket_protocol, "sip");
+      if (!origin.empty()) request.set(http::field::origin, origin);
+    }));
+    websocket::response_type response;
+    beast::error_code ec;
+    ws.handshake(response, fixture.authority(), "/", ec);
+    if (!ec) ws.close(websocket::close_code::normal, ec);
+    return response.result_int();
+  };
+
+  EXPECT_EQ(upgrade("https://elsewhere.example"), 403u);
+  EXPECT_EQ(upgrade("https://console.example.com"), 101u);
+  EXPECT_EQ(upgrade(""), 101u) << "no Origin: not a browser";
+}

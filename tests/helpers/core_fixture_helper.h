@@ -59,15 +59,25 @@ struct CoreFixture {
 
     // ATHENA_TEST_POLICY=lua runs every test against the standard scripts instead of builtin://, which must give
     // the same answers (tests/policy/policy_equivalence_test.cpp runs the suite that way).
-    if (const char* policy = std::getenv("ATHENA_TEST_POLICY"); policy != nullptr && std::string(policy) == "lua") {
-      core->policy_register(std::make_shared<athenasip::policy::LuaPolicy>(logger, nullptr));
-    }
+    if (lua_policy()) core->policy_register(std::make_shared<athenasip::policy::LuaPolicy>(logger, nullptr));
+  }
+
+  // Whether this run is against the standard scripts. What is the scripts' alone, such as conferencing
+  // (docs/design/conferencing.md, decision 2), is proved under them and skipped under builtin://.
+  static bool lua_policy() {
+    const char* policy = std::getenv("ATHENA_TEST_POLICY");
+    return policy != nullptr && std::string(policy) == "lua";
   }
 
   // Core's registries are strand-confined, so a test reaches them the way a server does.
   template <typename Fn>
   auto on_strand(Fn&& fn) {
     return core->call_on_strand(std::forward<Fn>(fn));
+  }
+
+  // A timer of Core's own reads those registries when it fires, so the clock is moved on the strand as well.
+  void advance(std::chrono::milliseconds by) {
+    on_strand([&]() { timers->advance(by); });
   }
 
   // Starts a handler-answered Core call on the strand and blocks for the answer.
@@ -104,15 +114,9 @@ struct CoreFixture {
         .ok;
   }
 
-  std::string mint_nonce(const std::shared_ptr<athenasip::types::Realm>& realm) {
-    std::promise<std::string> promise;
-    auto future = promise.get_future();
-
-    core->post([&]() {
-      core->nonce_create(realm, [&promise](athenasip::plugins::Result<std::string> nonce) { promise.set_value(nonce.ok ? nonce.value : std::string()); });
-    });
-
-    return future.get();
+  // A nonce as this node's challenge to `source` would carry it: nothing is stored for one (digest::nonce_mint).
+  std::string mint_nonce(const std::shared_ptr<athenasip::types::Realm>& realm, const std::string& source = "192.0.2.10") {
+    return athenasip::digest::nonce_mint(*realm, source);
   }
 
   std::shared_ptr<athenasip::Channel> make_channel(const std::string& remote_address, std::shared_ptr<MockConnection>* out = nullptr,

@@ -65,9 +65,9 @@ docker/up.sh --console   # also serve a build of the admin console on the API po
 docker/up.sh --build     # build the node's image from the checkout rather than pull it
 ```
 
-`--console` serves `../athenasip-admin/build`, or the directory in `ATHENA_CONSOLE_DIR`.
+`--console` serves `console/build`, or the directory in `ATHENA_CONSOLE_DIR`.
 Build it first with `npm run build` in the
-[AthenaSIP Admin](https://github.com/blackravenltd/athenasip-admin) repository.
+[console/](../../console/) directory.
 
 ## Before anyone else can reach it
 

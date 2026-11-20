@@ -59,6 +59,11 @@ class MemoryDatastore : public Datastore {
   void trunk_update(plugins::Executor on, std::shared_ptr<types::Trunk> trunk, plugins::StatusHandler handler) override;
   void trunk_delete(plugins::Executor on, std::string name, plugins::StatusHandler handler) override;
   void trunk_list(plugins::Executor on, plugins::Handler<std::vector<std::shared_ptr<types::Trunk>>> handler) override;
+  void reoffer_record(plugins::Executor on, std::string subscriber, media::Profile rejected, std::optional<media::Profile> took,
+                      plugins::StatusHandler handler) override;
+  void reoffer_list(plugins::Executor on, plugins::Handler<std::vector<media::Reoffer>> handler) override;
+  void trunk_status_set(plugins::Executor on, std::string name, boost::json::object status, plugins::StatusHandler handler) override;
+  void trunk_status_get(plugins::Executor on, std::string name, plugins::Handler<std::optional<boost::json::object>> handler) override;
 
   void lease(plugins::Executor on, std::string name, std::string holder, std::uint32_t seconds, plugins::Handler<bool> handler) override;
   void counter_add(plugins::Executor on, std::string name, std::int64_t delta, std::uint32_t seconds, plugins::Handler<std::int64_t> handler) override;
@@ -82,8 +87,6 @@ class MemoryDatastore : public Datastore {
                              plugins::StatusHandler handler) override;
   void location_list(plugins::Executor on, std::uint64_t subscriber_id, plugins::Handler<std::vector<types::Location>> handler) override;
 
-  void nonce_create(plugins::Executor on, std::string nonce, std::time_t expires_at, plugins::StatusHandler handler) override;
-  void nonce_check(plugins::Executor on, std::string nonce, plugins::Handler<bool> handler) override;
 
   void call_create(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) override;
   void call_update(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) override;
@@ -133,8 +136,6 @@ class MemoryDatastore : public Datastore {
   bool _subscriber_unregister(std::shared_ptr<types::Subscriber> subscriber, std::shared_ptr<types::SIPUri> contact);
   std::vector<types::Location> _location_list(std::uint64_t subscriber_id);
 
-  bool _nonce_create(const std::string& nonce, const std::time_t& expires_at);
-  bool _nonce_check(std::string nonce);
 
   bool _call_create(std::shared_ptr<Call> call);
   void _call_prune(std::time_t now);
@@ -162,6 +163,8 @@ class MemoryDatastore : public Datastore {
   std::unordered_map<std::string, std::shared_ptr<types::Realm>> _realms;
   std::unordered_map<std::string, std::shared_ptr<types::User>> _users;
   std::map<std::string, types::Trunk> _trunks;
+  std::map<std::string, boost::json::object> _trunk_statuses;
+  media::Reoffers _reoffers;
 
   // name -> holder and when the lease lapses.
   std::map<std::string, std::pair<std::string, std::time_t>> _leases;
@@ -171,7 +174,6 @@ class MemoryDatastore : public Datastore {
   std::unordered_map<std::string, types::Session> _sessions;
   std::unordered_map<std::string, std::shared_ptr<types::Subscriber>> _subscribers;
   std::unordered_map<std::string, types::Location> _locations;
-  std::unordered_map<std::string, std::time_t> _nonces;
   std::unordered_map<std::string, std::shared_ptr<Call>> _calls;
 
   // Presence records by kind and ID. A store this size is read whole; the indexes a networked store needs are

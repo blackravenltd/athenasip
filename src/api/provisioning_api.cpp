@@ -82,6 +82,14 @@ std::string read_behaviour(const boost::json::object& body, types::Behaviour& be
       } else {
         return "behaviour.media_profile is mirror, transport, webrtc, rtp, srtp or null";
       }
+    } else if (key == "dtmf") {
+      if (value.is_null()) {
+        behaviour.dtmf.reset();
+      } else if (const auto dtmf = value.is_string() ? types::MediaPolicy::parse_dtmf(std::string(value.as_string())) : std::nullopt) {
+        behaviour.dtmf = *dtmf;
+      } else {
+        return "behaviour.dtmf is auto, rfc4733, info, inband or null";
+      }
     } else if (key == "rewrite_contact") {
       if (value.is_null()) {
         behaviour.rewrite_contact.reset();
@@ -107,22 +115,32 @@ std::string read_behaviour(const boost::json::object& body, types::Behaviour& be
   return "";
 }
 
-// A subscriber's behaviour section has one setting: what its endpoint is. Anchoring is a
-// realm's choice.
+// A subscriber's behaviour section has the settings that are about its endpoint: what it is, and how it sends
+// key presses. Anchoring is a realm's choice.
 std::string read_behaviour(const boost::json::object& body, types::Subscriber& subscriber) {
   const auto* section = body.if_contains("behaviour");
   if (section == nullptr) return "";
   if (!section->is_object()) return "behaviour is an object";
 
   for (const auto& [key, value] : section->as_object()) {
-    if (key != "media_profile") return "a subscriber's behaviour has no setting called " + std::string(key);
-
-    if (value.is_null()) {
-      subscriber.media_profile.reset();
-    } else if (const auto profiles = value.is_string() ? types::MediaPolicy::parse_profiles(std::string(value.as_string())) : std::nullopt) {
-      subscriber.media_profile = *profiles;
+    if (key == "media_profile") {
+      if (value.is_null()) {
+        subscriber.media_profile.reset();
+      } else if (const auto profiles = value.is_string() ? types::MediaPolicy::parse_profiles(std::string(value.as_string())) : std::nullopt) {
+        subscriber.media_profile = *profiles;
+      } else {
+        return "behaviour.media_profile is mirror, transport, webrtc, rtp, srtp or null";
+      }
+    } else if (key == "dtmf") {
+      if (value.is_null()) {
+        subscriber.dtmf.reset();
+      } else if (const auto dtmf = value.is_string() ? types::MediaPolicy::parse_dtmf(std::string(value.as_string())) : std::nullopt) {
+        subscriber.dtmf = *dtmf;
+      } else {
+        return "behaviour.dtmf is auto, rfc4733, info, inband or null";
+      }
     } else {
-      return "behaviour.media_profile is mirror, transport, webrtc, rtp, srtp or null";
+      return "a subscriber's behaviour has no setting called " + std::string(key);
     }
   }
 
@@ -215,6 +233,12 @@ void ProvisioningAPI::_realm_create(RouteContext context) {
     return context.done();
   }
 
+  // A SIP host, so the identities built on it parse and the keys built on it are read one way (review finding 29).
+  if (!Util::is_realm_name(*name)) {
+    write_error(context.response, http::status::bad_request, "invalid_request", "name is a host name: letters, digits, hyphens and dots");
+    return context.done();
+  }
+
   auto realm = std::make_shared<types::Realm>(*name);
   realm->id = Util::stable_id("realm:" + *name);
 
@@ -224,6 +248,7 @@ void ProvisioningAPI::_realm_create(RouteContext context) {
   if (const auto expiry = uint_field(*body, "nonce_expiry")) realm->nonce_expiry = *expiry;
   if (const auto timeout = uint_field(*body, "registration_timeout")) realm->registration_timeout = *timeout;
   if (const auto minimum = uint_field(*body, "registration_minimum")) realm->registration_minimum = *minimum;
+  if (const auto cap = uint_field(*body, "registration_max_bindings")) realm->registration_max_bindings = *cap;
 
   if (auto refused = read_behaviour(*body, realm->behaviour); !refused.empty() || !(refused = read_attributes(*body, realm->attributes)).empty()) {
     write_error(context.response, http::status::bad_request, "invalid_request", refused);
@@ -267,6 +292,7 @@ void ProvisioningAPI::_realm_update(RouteContext context) {
     if (const auto expiry = uint_field(*body, "nonce_expiry")) realm->nonce_expiry = *expiry;
     if (const auto timeout = uint_field(*body, "registration_timeout")) realm->registration_timeout = *timeout;
     if (const auto minimum = uint_field(*body, "registration_minimum")) realm->registration_minimum = *minimum;
+    if (const auto cap = uint_field(*body, "registration_max_bindings")) realm->registration_max_bindings = *cap;
 
     if (auto refused = read_behaviour(*body, realm->behaviour); !refused.empty() || !(refused = read_attributes(*body, realm->attributes)).empty()) {
       write_error(context.response, http::status::bad_request, "invalid_request", refused);
@@ -342,6 +368,12 @@ void ProvisioningAPI::_subscriber_create(RouteContext context) {
     const auto user = string_field(*body, "user");
     if (!user || user->empty()) {
       write_error(context.response, http::status::bad_request, "invalid_request", "user is required");
+      return context.done();
+    }
+
+    // RFC 3261 25.1: what a SIP URI's user part may hold, so sip:user@realm parses (review finding 29).
+    if (!Util::is_sip_user(*user)) {
+      write_error(context.response, http::status::bad_request, "invalid_request", "user is a SIP user part: no @, colon, space or control character");
       return context.done();
     }
 
@@ -688,9 +720,34 @@ void ProvisioningAPI::_subscriber_config(RouteContext context) {
     }
     expects["push"] = std::move(push);
 
-    out["realm"] = std::move(expects);
-    write_json(context.response, http::status::ok, out);
-    context.done();
+    // RFC 4579: the rooms a client may dial, as the prefixes of the focus trunks serving this realm
+    // (docs/design/conferencing.md); a store with no trunks has none.
+    _datastore->trunk_list(_executor, [out, expects, realm, context](plugins::Result<std::vector<std::shared_ptr<types::Trunk>>> trunks) mutable {
+      boost::json::array conferences;
+      if (trunks.ok) {
+        for (const auto& trunk : trunks.value) {
+          const auto* focus = trunk ? trunk->attributes.if_contains("focus") : nullptr;
+          if (focus == nullptr || !focus->is_object()) continue;
+          const auto* prefix = focus->as_object().if_contains("prefix");
+          if (prefix == nullptr || !prefix->is_string() || prefix->as_string().empty()) continue;
+
+          bool served = true;
+          if (const auto* realms = focus->as_object().if_contains("realms"); realms != nullptr && realms->is_array() && !realms->as_array().empty()) {
+            served = false;
+            for (const auto& name : realms->as_array()) {
+              served = served || (name.is_string() && Util::to_lower(std::string(name.as_string())) == Util::to_lower(realm->name));
+            }
+          }
+          if (!served) continue;
+
+          conferences.push_back(boost::json::object{{"prefix", std::string(prefix->as_string())}, {"trunk", trunk->name}});
+        }
+      }
+      expects["conferences"] = std::move(conferences);
+      out["realm"] = std::move(expects);
+      write_json(context.response, http::status::ok, out);
+      context.done();
+    });
   });
 }
 
@@ -843,12 +900,14 @@ boost::json::object ProvisioningAPI::_realm_json(const types::Realm& realm) cons
   object["nonce_expiry"] = realm.nonce_expiry;
   object["registration_timeout"] = realm.registration_timeout;
   object["registration_minimum"] = realm.registration_minimum;
+  object["registration_max_bindings"] = realm.registration_max_bindings;
   // What the realm chose (null where it inherits), and the effective result over the
   // server's default.
   boost::json::object chosen;
   chosen["media_anchor"] = realm.behaviour.media_anchor ? boost::json::value(*realm.behaviour.media_anchor) : boost::json::value(nullptr);
   chosen["media_profile"] =
       realm.behaviour.media_profile ? boost::json::value(types::MediaPolicy::to_string(*realm.behaviour.media_profile)) : boost::json::value(nullptr);
+  chosen["dtmf"] = realm.behaviour.dtmf ? boost::json::value(types::MediaPolicy::to_string(*realm.behaviour.dtmf)) : boost::json::value(nullptr);
   chosen["rewrite_contact"] = realm.behaviour.rewrite_contact ? boost::json::value(*realm.behaviour.rewrite_contact) : boost::json::value(nullptr);
   chosen["qualify_interval"] = realm.behaviour.qualify_interval ? boost::json::value(*realm.behaviour.qualify_interval) : boost::json::value(nullptr);
   object["behaviour"] = std::move(chosen);
@@ -857,6 +916,7 @@ boost::json::object ProvisioningAPI::_realm_json(const types::Realm& realm) cons
     boost::json::object json;
     json["media_anchor"] = policy.anchor;
     json["media_profile"] = types::MediaPolicy::to_string(policy.profiles);
+    json["dtmf"] = types::MediaPolicy::to_string(policy.dtmf);
     json["qualify_interval"] = qualify_interval;
     json["rewrite_contact"] = rewrite_contact;
     return json;
@@ -886,6 +946,7 @@ boost::json::object ProvisioningAPI::_subscriber_json(const types::Subscriber& s
   boost::json::object behaviour;
   behaviour["media_profile"] =
       subscriber.media_profile ? boost::json::value(types::MediaPolicy::to_string(*subscriber.media_profile)) : boost::json::value(nullptr);
+  behaviour["dtmf"] = subscriber.dtmf ? boost::json::value(types::MediaPolicy::to_string(*subscriber.dtmf)) : boost::json::value(nullptr);
   object["behaviour"] = std::move(behaviour);
   object["attributes"] = subscriber.attributes;
 

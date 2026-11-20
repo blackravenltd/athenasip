@@ -99,6 +99,8 @@ types::Location parse_location(const std::string& value) {
   if (obj.if_contains("path")) location.path = json_string(obj, "path");
   if (obj.if_contains("instance")) location.instance = json_string(obj, "instance");
   if (const auto* reg_id = obj.if_contains("reg_id"); reg_id != nullptr && reg_id->is_number()) location.reg_id = reg_id->to_number<std::uint32_t>();
+  if (obj.if_contains("call_id")) location.call_id = json_string(obj, "call_id");
+  if (const auto* cseq = obj.if_contains("cseq"); cseq != nullptr && cseq->is_number()) location.cseq = cseq->to_number<std::uint64_t>();
   if (const auto* push = obj.if_contains("push"); push != nullptr && push->is_bool()) location.push = push->as_bool();
 
   return location;
@@ -548,13 +550,117 @@ void RedisDatastore::trunk_update(plugins::Executor on, std::shared_ptr<types::T
 void RedisDatastore::trunk_delete(plugins::Executor on, std::string name, plugins::StatusHandler handler) {
   const auto normalised = types::Trunk::normalise(name);
 
-  _async_del(_trunk_key(name), [this, on, handler, normalised](RedisError error, std::int64_t removed) mutable {
+  _async_del(_trunk_key(name), [this, on, handler, name, normalised](RedisError error, std::int64_t removed) mutable {
     if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
 
-    _async_srem(_trunk_index_key(), normalised, [this, on, handler, removed](RedisError error, bool) mutable {
+    _async_srem(_trunk_index_key(), normalised, [this, on, handler, name, removed](RedisError error, bool) mutable {
       if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
-      _complete(on, handler, _status(removed > 0, "trunk_delete"));
+
+      // The status goes with the trunk.
+      _async_del(_trunk_status_key(name), [this, on, handler, removed](RedisError error, std::int64_t) mutable {
+        if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
+        _complete(on, handler, _status(removed > 0, "trunk_delete"));
+      });
     });
+  });
+}
+
+namespace {
+
+// Thirty days: long enough to notice a phone that keeps needing the other profile, short enough that a phone
+// replaced is forgotten.
+constexpr std::chrono::seconds kReofferRetention{30 * 24 * 3600};
+
+}  // namespace
+
+// Read, raised, written back with the retention renewed. Two nodes reporting the same subscriber at once may lose
+// one count to the other, which the report can bear.
+void RedisDatastore::reoffer_record(plugins::Executor on, std::string subscriber, media::Profile rejected, std::optional<media::Profile> took,
+                                    plugins::StatusHandler handler) {
+  const std::string member = subscriber + "|" + media::setting_name(rejected);
+  const auto key = _reoffer_key(member);
+
+  _async_get(key, [this, on, handler, key, member, subscriber, rejected, took](RedisError error, std::optional<std::string> value) mutable {
+    if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
+
+    media::Reoffer entry;
+    entry.subscriber = subscriber;
+    entry.rejected = rejected;
+    if (value) {
+      boost::system::error_code parse_error;
+      const auto parsed = boost::json::parse(*value, parse_error);
+      if (!parse_error && parsed.is_object()) entry.count = json_uint64(parsed.as_object(), "count");
+    }
+    entry.took = took;
+    entry.count++;
+    entry.last_at = std::time(nullptr);
+
+    boost::json::object obj;
+    obj["subscriber"] = entry.subscriber;
+    obj["rejected"] = media::setting_name(entry.rejected);
+    obj["took"] = entry.took ? boost::json::value(media::setting_name(*entry.took)) : boost::json::value(nullptr);
+    obj["count"] = entry.count;
+    obj["last_at"] = static_cast<std::int64_t>(entry.last_at);
+
+    _async_set_ex(key, boost::json::serialize(obj), kReofferRetention, [this, on, handler, member](RedisError error, bool) mutable {
+      if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
+      _async_sadd(_reoffer_index_key(), member, [this, on, handler](RedisError error, bool) mutable {
+        if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
+        _complete(on, handler, plugins::Status::success());
+      });
+    });
+  });
+}
+
+void RedisDatastore::reoffer_list(plugins::Executor on, plugins::Handler<std::vector<media::Reoffer>> handler) {
+  using Answer = plugins::Result<std::vector<media::Reoffer>>;
+
+  _read_index(
+      _reoffer_index_key(), [](const std::string& member) { return _reoffer_key(member); },
+      [this, on, handler](RedisError error, std::vector<std::pair<std::string, std::string>> records) mutable {
+        if (error) return _complete(on, handler, Answer::failure(error.message()));
+
+        std::vector<media::Reoffer> out;
+        for (const auto& [member, value] : records) {
+          boost::system::error_code parse_error;
+          const auto parsed = boost::json::parse(value, parse_error);
+          if (parse_error || !parsed.is_object()) continue;
+          const auto& obj = parsed.as_object();
+
+          media::Reoffer entry;
+          entry.subscriber = json_string(obj, "subscriber");
+          const auto rejected = media::parse_setting(json_string(obj, "rejected"));
+          if (!rejected) continue;
+          entry.rejected = *rejected;
+          if (const auto* took = obj.if_contains("took"); took != nullptr && took->is_string()) entry.took = media::parse_setting(std::string(took->as_string()));
+          entry.count = json_uint64(obj, "count");
+          entry.last_at = static_cast<std::time_t>(json_uint64(obj, "last_at"));
+          out.push_back(std::move(entry));
+        }
+
+        std::stable_sort(out.begin(), out.end(), [](const media::Reoffer& a, const media::Reoffer& b) { return a.last_at > b.last_at; });
+        _complete(on, handler, Answer::success(std::move(out)));
+      });
+}
+
+void RedisDatastore::trunk_status_set(plugins::Executor on, std::string name, boost::json::object status, plugins::StatusHandler handler) {
+  _async_set(_trunk_status_key(name), boost::json::serialize(status), [this, on, handler](RedisError error, bool) mutable {
+    if (error) return _complete(on, handler, plugins::Status::failure(error.message()));
+    _complete(on, handler, plugins::Status::success());
+  });
+}
+
+void RedisDatastore::trunk_status_get(plugins::Executor on, std::string name, plugins::Handler<std::optional<boost::json::object>> handler) {
+  using Answer = plugins::Result<std::optional<boost::json::object>>;
+
+  _async_get(_trunk_status_key(name), [this, on, handler](RedisError error, std::optional<std::string> value) mutable {
+    if (error) return _complete(on, handler, Answer::failure(error.message()));
+    if (!value) return _complete(on, handler, Answer::success(std::nullopt));
+
+    boost::system::error_code parse_error;
+    const auto parsed = boost::json::parse(*value, parse_error);
+    if (parse_error || !parsed.is_object()) return _complete(on, handler, Answer::success(std::nullopt));
+    _complete(on, handler, Answer::success(parsed.as_object()));
   });
 }
 
@@ -683,6 +789,7 @@ std::shared_ptr<types::Subscriber> RedisDatastore::_parse_subscriber(const std::
   // Optional: a subscriber imported as a bare MD5 hash has no SHA-256 credential.
   if (obj.if_contains("ha1_sha256")) subscriber->ha1_sha256 = json_string(obj, "ha1_sha256");
   if (obj.contains("media_profile")) subscriber->media_profile = types::MediaPolicy::parse_profiles(json_string(obj, "media_profile"));
+  if (obj.contains("dtmf")) subscriber->dtmf = types::MediaPolicy::parse_dtmf(json_string(obj, "dtmf"));
   if (const auto* attributes = obj.if_contains("attributes"); attributes != nullptr && attributes->is_object()) {
     subscriber->attributes = attributes->as_object();
   }
@@ -843,6 +950,8 @@ void RedisDatastore::subscriber_register(plugins::Executor on, std::shared_ptr<t
   if (!binding.node_id.empty()) location["node_id"] = binding.node_id;
   if (!binding.instance.empty()) location["instance"] = binding.instance;
   if (binding.reg_id != 0) location["reg_id"] = binding.reg_id;
+  if (!binding.call_id.empty()) location["call_id"] = binding.call_id;
+  if (binding.cseq != 0) location["cseq"] = binding.cseq;
   if (binding.push) location["push"] = true;
 
   const auto key = _location_key(subscriber->id, contact->user, contact->host, port);
@@ -896,24 +1005,6 @@ void RedisDatastore::location_list(plugins::Executor on, std::uint64_t subscribe
         }
         _complete(on, handler, Answer::success(std::move(locations)));
       });
-}
-
-void RedisDatastore::nonce_create(plugins::Executor on, std::string nonce, std::time_t expires_at, plugins::StatusHandler handler) {
-  const auto now = std::time(nullptr);
-  if (expires_at <= now) {
-    _logger->warn("nonce_create: refusing to create already-expired nonce");
-    return _complete(on, handler, plugins::Status::failure("nonce_create: already expired"));
-  }
-
-  _async_set_ex(_nonce_key(nonce), "1", std::chrono::seconds(expires_at - now), [this, on, handler](RedisError error, bool ok) mutable {
-    _complete(on, handler, !error && ok ? plugins::Status::success() : plugins::Status::failure(error ? error.message() : "nonce_create: SETEX failed"));
-  });
-}
-
-void RedisDatastore::nonce_check(plugins::Executor on, std::string nonce, plugins::Handler<bool> handler) {
-  _async_exists(_nonce_key(nonce), [this, on, handler](RedisError error, bool exists) mutable {
-    _complete(on, handler, error ? plugins::Result<bool>::failure(error.message()) : plugins::Result<bool>::success(exists));
-  });
 }
 
 void RedisDatastore::call_create(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) {
@@ -1028,10 +1119,12 @@ std::string RedisDatastore::_serialise_realm(const std::shared_ptr<types::Realm>
   obj["nonce_expiry"] = realm->nonce_expiry;
   obj["registration_timeout"] = realm->registration_timeout;
   obj["registration_minimum"] = realm->registration_minimum;
+  obj["registration_max_bindings"] = realm->registration_max_bindings;
   // Only what the realm chose is stored; an unset setting inherits the server's default.
   // The profile is stored under the key "media_profiles".
   if (realm->behaviour.media_anchor) obj["media_anchor"] = *realm->behaviour.media_anchor;
   if (realm->behaviour.media_profile) obj["media_profiles"] = types::MediaPolicy::to_string(*realm->behaviour.media_profile);
+  if (realm->behaviour.dtmf) obj["dtmf"] = types::MediaPolicy::to_string(*realm->behaviour.dtmf);
   if (realm->behaviour.qualify_interval) obj["qualify_interval"] = *realm->behaviour.qualify_interval;
   if (realm->behaviour.rewrite_contact) obj["rewrite_contact"] = *realm->behaviour.rewrite_contact;
   if (!realm->attributes.empty()) obj["attributes"] = realm->attributes;
@@ -1048,10 +1141,13 @@ std::shared_ptr<types::Realm> RedisDatastore::_parse_realm(const std::string& va
   realm->nonce_expiry = json_uint32(obj, "nonce_expiry");
   realm->registration_timeout = json_uint32(obj, "registration_timeout");
   realm->registration_minimum = json_uint32(obj, "registration_minimum");
+  // A realm stored before the cap existed gets the default.
+  if (obj.if_contains("registration_max_bindings")) realm->registration_max_bindings = json_uint32(obj, "registration_max_bindings");
 
   // Absent is unset. A stored value that does not parse leaves the setting unset.
   if (const auto* anchor = obj.if_contains("media_anchor"); anchor != nullptr && anchor->is_bool()) realm->behaviour.media_anchor = anchor->as_bool();
   if (obj.contains("media_profiles")) realm->behaviour.media_profile = types::MediaPolicy::parse_profiles(json_string(obj, "media_profiles"));
+  if (obj.contains("dtmf")) realm->behaviour.dtmf = types::MediaPolicy::parse_dtmf(json_string(obj, "dtmf"));
   if (const auto* rewrite = obj.if_contains("rewrite_contact"); rewrite != nullptr && rewrite->is_bool()) realm->behaviour.rewrite_contact = rewrite->as_bool();
   if (const auto* qualify = obj.if_contains("qualify_interval"); qualify != nullptr && qualify->is_number()) {
     const auto seconds = qualify->to_number<std::int64_t>();
@@ -1139,6 +1235,7 @@ std::string RedisDatastore::_serialise_subscriber(const std::shared_ptr<types::S
 
   // Written only when the subscriber chose one; absent takes the realm's.
   if (subscriber->media_profile) obj["media_profile"] = types::MediaPolicy::to_string(*subscriber->media_profile);
+  if (subscriber->dtmf) obj["dtmf"] = types::MediaPolicy::to_string(*subscriber->dtmf);
   if (!subscriber->attributes.empty()) obj["attributes"] = subscriber->attributes;
   obj["uri"] = subscriber->identity->uri->to_string();
   return boost::json::serialize(obj);
@@ -1174,6 +1271,15 @@ std::string RedisDatastore::_serialise_call(const std::shared_ptr<Call>& call) {
   }
 
   obj["participants"] = std::move(participants);
+
+  // The dialog whole, once, for a node that reads the record to carry it on; both legs of a two-party call share it.
+  for (const auto& participant : call->participants) {
+    if (participant.dialog) {
+      obj["dialog"] = participant.dialog->to_json();
+      break;
+    }
+  }
+
   return boost::json::serialize(obj);
 }
 
@@ -1223,6 +1329,17 @@ std::shared_ptr<Call> RedisDatastore::_parse_call(const std::string& value) cons
         participant.dialog->call_id = call_id;
         participant.dialog->caller_tag = json_string(participant_obj, "caller_tag");
         participant.dialog->callee_tag = json_string(participant_obj, "callee_tag");
+      }
+    }
+  }
+
+  // A record with the dialog whole gives every leg that shares its tags the one dialog, as the node that wrote it had.
+  if (const auto* dialog_obj = obj.if_contains("dialog"); dialog_obj != nullptr && dialog_obj->is_object()) {
+    auto dialog = types::Dialog::from_json(dialog_obj->as_object());
+    for (auto& participant : call->participants) {
+      if (participant.dialog && participant.dialog->call_id == dialog->call_id && participant.dialog->caller_tag == dialog->caller_tag &&
+          participant.dialog->callee_tag == dialog->callee_tag) {
+        participant.dialog = dialog;
       }
     }
   }
@@ -1386,7 +1503,7 @@ void RedisDatastore::_async_ok(std::string operation, boost::redis::request requ
 
           std::ostringstream oss;
           oss << std::fixed << std::setprecision(3)
-              << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
+              << static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count()) / 1000.0;
           logger->debug(operation + " (" + oss.str() + "ms)");
 
           callback(RedisError{}, ok);
@@ -1427,7 +1544,7 @@ void RedisDatastore::_async_string(std::string operation, boost::redis::request 
 
           std::ostringstream oss;
           oss << std::fixed << std::setprecision(3)
-              << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
+              << static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count()) / 1000.0;
           logger->debug(operation + " (" + oss.str() + "ms)");
 
           callback(RedisError{}, result.value());
@@ -1468,7 +1585,7 @@ void RedisDatastore::_async_integer(std::string operation, boost::redis::request
 
           std::ostringstream oss;
           oss << std::fixed << std::setprecision(3)
-              << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
+              << static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count()) / 1000.0;
           logger->debug(operation + " (" + oss.str() + "ms)");
 
           callback(RedisError{}, static_cast<std::int64_t>(result.value()));
@@ -1509,7 +1626,7 @@ void RedisDatastore::_async_strings(std::string operation, boost::redis::request
 
           std::ostringstream oss;
           oss << std::fixed << std::setprecision(3)
-              << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
+              << static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count()) / 1000.0;
           logger->debug(operation + " (" + oss.str() + "ms)");
 
           callback(RedisError{}, result.value());
@@ -1601,13 +1718,15 @@ std::string RedisDatastore::_presence_aor_index_prefix(types::PresenceRecord::Ki
 
 std::string RedisDatastore::_presence_node_index_prefix() { return "athena:index:presence-node:"; }
 
-std::string RedisDatastore::_subscriber_key(const std::string& realm_name, const std::string& user) { return "athena:subscriber:" + realm_name + ":" + user; }
+// RFC 3261 19.1.4: the host of a URI compares without regard to case; the user part with.
+std::string RedisDatastore::_subscriber_key(const std::string& realm_name, const std::string& user) {
+  return "athena:subscriber:" + Util::to_lower(realm_name) + ":" + user;
+}
 
 std::string RedisDatastore::_location_key(std::uint64_t subscriber_id, const std::string& user, const std::string& host, std::uint16_t port) {
   return "athena:location:" + std::to_string(subscriber_id) + ":" + user + ":" + host + ":" + std::to_string(port);
 }
 
-std::string RedisDatastore::_nonce_key(const std::string& nonce) { return "athena:nonce:" + nonce; }
 
 std::string RedisDatastore::_user_key(const std::string& username) { return "athena:user:" + types::User::normalise(username); }
 
@@ -1617,6 +1736,12 @@ std::string RedisDatastore::_user_index_key() { return "athena:index:users"; }
 
 std::string RedisDatastore::_trunk_key(const std::string& name) { return "athena:trunk:" + types::Trunk::normalise(name); }
 
+std::string RedisDatastore::_trunk_status_key(const std::string& name) { return "athena:trunk-status:" + types::Trunk::normalise(name); }
+
+std::string RedisDatastore::_reoffer_key(const std::string& member) { return "athena:reoffer:" + member; }
+
+std::string RedisDatastore::_reoffer_index_key() { return "athena:index:reoffers"; }
+
 std::string RedisDatastore::_trunk_index_key() { return "athena:index:trunks"; }
 
 std::string RedisDatastore::_session_index_key(const std::string& username) { return "athena:index:sessions:" + types::User::normalise(username); }
@@ -1624,7 +1749,7 @@ std::string RedisDatastore::_session_index_key(const std::string& username) { re
 std::string RedisDatastore::_duration_ms(std::chrono::high_resolution_clock::time_point start) const {
   std::ostringstream oss;
   oss << std::fixed << std::setprecision(3)
-      << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
+      << static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count()) / 1000.0;
   return oss.str();
 }
 

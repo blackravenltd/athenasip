@@ -6,6 +6,7 @@
 //
 #pragma once
 
+#include <boost/json.hpp>
 #include <chrono>
 #include <cstdint>
 #include <ctime>
@@ -84,6 +85,19 @@ struct Dialog {
   // When the callee answered, on the steady clock: what a maximum call duration is measured from. `confirmed_at`
   // is the wall-clock time for the call record.
   std::chrono::steady_clock::time_point confirmed_monotonic{};
+
+  // The session deadline on the wall clock, for the call record, which another node reads it back from; the steady
+  // deadline is this node's own.
+  std::time_t session_expires_at = 0;
+
+  // Raised on every change Dialogs records (state, targets, route set, sequence numbers, session), so the call
+  // record is written when the dialog moved and not only when the call's state did.
+  std::uint64_t revision = 0;
+
+  // The dialog as the call record keeps it (all state lives in the datastore, 2026-10-11), so a node that reads the
+  // record can carry the dialog on: everything above but the steady-clock times.
+  boost::json::object to_json() const;
+  static std::shared_ptr<Dialog> from_json(const boost::json::object& object);
 
   // 12.1.1: Call-ID plus both tags. Empty until the callee has answered.
   std::string id() const;

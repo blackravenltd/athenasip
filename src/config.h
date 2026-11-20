@@ -61,6 +61,10 @@ class Config {
   bool parse_localnet();
   bool in_localnet(const boost::asio::ip::address& address) const;
 
+  // sip.websocket_allowed_origins: the web origins (https://console.example.com) whose pages may open a SIP WebSocket
+  // here. Empty allows any, as before; a request with no Origin, a phone's, is always allowed (review finding 37).
+  std::vector<std::string> sip_websocket_allowed_origins;
+
   // The public port for udp, tcp, tls, ws or wss, or zero.
   std::uint16_t public_port_for(const std::string& transport) const;
 
@@ -128,6 +132,17 @@ class Config {
   // How long a UDP flow may sit idle before it is forgotten, in seconds. Zero never
   // forgets. Keep it above 32 seconds (64*T1), so no live transaction loses its flow.
   std::uint32_t sip_flow_idle_timeout = 300;
+
+  // sip.flow_first_message_timeout: seconds a TCP, TLS or WebSocket connection may stay open without a whole
+  // message arriving before it is closed. Zero never closes one for that.
+  std::uint32_t sip_flow_first_message_timeout = 30;
+
+  // sip.max_connections and sip.max_connections_per_source: the flows the node holds in all, and from one address,
+  // UDP flows included. Zero is no cap.
+  std::uint32_t sip_max_connections = 10000;
+  std::uint32_t sip_max_connections_per_source = 64;
+  // sip.max_transactions: the transactions held at once; a new request past it is 503 with Retry-After. 0 is no cap.
+  std::uint32_t sip_max_transactions = 50000;
 
   // tls, tcp, udp and websocket: the listeners. public_port is the port a router forwards
   // to the listener; zero means the bound port.
@@ -254,6 +269,14 @@ class Config {
   RateLimit http_api_limit_login_user{5, 1};
   // A signed-in caller, by session.
   RateLimit http_api_limit_session{60, 300};
+
+  // sip.auth_limits: Digest guessing over SIP (AuthGuard, docs/authentication.md, Guessing). Failures by source
+  // address ban it for ban_seconds; failures for one address of record close it to strangers as long; challenges
+  // by source address past theirs are 403. Zero in a limit turns it off.
+  RateLimit sip_auth_failures_source{10, 5};
+  RateLimit sip_auth_failures_aor{10, 5};
+  RateLimit sip_auth_challenges_source{200, 600};
+  std::uint32_t sip_auth_ban_seconds = 900;
 
   // log.level (debug, info, warn, error) and log.format (text, json).
   loggers::LogLevel log_level = loggers::LogLevel::DEBUG;

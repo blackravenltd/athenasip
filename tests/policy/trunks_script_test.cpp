@@ -73,8 +73,13 @@ struct TrunksScriptFixture : CoreFixture {
 
   std::shared_ptr<policy::RequestView> invite(const std::string& uri, const std::string& from, const std::shared_ptr<Channel>& over,
                                               const std::string& to = "") {
-    std::string raw = "INVITE " + uri + " SIP/2.0\r\nVia: SIP/2.0/UDP 192.0.2.99;branch=z9hG4bK-t\r\n";
-    raw += "From: <" + from + ">;tag=f\r\nTo: <" + (to.empty() ? uri : to) + ">\r\nCall-ID: trunks\r\nCSeq: 1 INVITE\r\n";
+    return request_of("INVITE", uri, from, over, to);
+  }
+
+  std::shared_ptr<policy::RequestView> request_of(const std::string& method, const std::string& uri, const std::string& from,
+                                                  const std::shared_ptr<Channel>& over, const std::string& to = "") {
+    std::string raw = method + " " + uri + " SIP/2.0\r\nVia: SIP/2.0/UDP 192.0.2.99;branch=z9hG4bK-t\r\n";
+    raw += "From: <" + from + ">;tag=f\r\nTo: <" + (to.empty() ? uri : to) + ">\r\nCall-ID: trunks\r\nCSeq: 1 " + method + "\r\n";
     auto view = std::make_shared<policy::RequestView>();
     view->message = std::make_shared<SIPMessage>();
     view->message->header = std::make_shared<SIPHeader>(raw);
@@ -88,6 +93,11 @@ struct TrunksScriptFixture : CoreFixture {
 
   plugins::Result<policy::RouteDecision> route(const std::shared_ptr<policy::RequestView>& request) {
     return ask_policy<policy::RouteDecision>(core, [&](plugins::Executor on, plugins::Handler<policy::RouteDecision> h) { lua->route(on, request, h); });
+  }
+
+  plugins::Result<policy::RegisterDecision> register_(const std::shared_ptr<policy::RequestView>& request) {
+    return ask_policy<policy::RegisterDecision>(core,
+                                                [&](plugins::Executor on, plugins::Handler<policy::RegisterDecision> h) { lua->register_(on, request, h); });
   }
 };
 
@@ -260,4 +270,111 @@ TEST(TrunksScriptTest, EveryExampleLoads) {
     ++loaded;
   }
   EXPECT_GE(loaded, 5u);
+}
+
+// A carrier's service code, such as its voicemail, is no number: a trunk lists the codes it takes, with X for a
+// digit as a dialplan writes it, and the code goes out by that trunk as dialled.
+TEST(TrunksScriptTest, AServiceCodeGoesOutByTheTrunkThatListsIt) {
+  TrunksScriptFixture f;
+  f.add_trunk("twotalk", "sip:sip.the carrier.example", R"({"codes": ["*55", "*7X"], "priority": 50})", {});
+  f.add_trunk("backup", "sip:sip.backup.example", R"({"codes": ["*55"]})", {});
+
+  auto request = f.invite("sip:*55@example.com", "sip:alice@example.com", f.phone);
+  auto route = f.route(request);
+  ASSERT_TRUE(route.ok) << route.error;
+  ASSERT_EQ(route.value.kind, policy::RouteDecision::Kind::Forward);
+  ASSERT_EQ(route.value.targets.size(), 2u) << "both trunks take it, the lower priority first";
+  EXPECT_EQ(route.value.targets[0].trunk, "twotalk");
+  EXPECT_EQ(route.value.targets[0].uri->user, "*55");
+  EXPECT_EQ(route.value.targets[1].trunk, "backup");
+
+  request = f.invite("sip:*72@example.com", "sip:alice@example.com", f.phone);
+  route = f.route(request);
+  ASSERT_TRUE(route.ok) << route.error;
+  ASSERT_EQ(route.value.kind, policy::RouteDecision::Kind::Forward);
+  ASSERT_EQ(route.value.targets.size(), 1u) << "*7X is twotalk's alone";
+  EXPECT_EQ(route.value.targets[0].trunk, "twotalk");
+
+  // A code no trunk lists goes nowhere, as a number no trunk carries does.
+  request = f.invite("sip:*5@example.com", "sip:alice@example.com", f.phone);
+  route = f.route(request);
+  ASSERT_TRUE(route.ok) << route.error;
+  EXPECT_EQ(route.value.kind, policy::RouteDecision::Kind::Reply);
+  EXPECT_EQ(route.value.code, 404);
+}
+
+// A trunk's dtmf attribute is the carrier leg's method: on the target out, for the trunk dialled, and as the
+// caller's in, for the trunk the call came by. A trunk that says nothing leaves it to the node.
+TEST(TrunksScriptTest, ATrunksDtmfIsTheCarrierLegsMethod) {
+  TrunksScriptFixture f;
+  f.add_trunk("ivr", "sip:sip.ivr.example", R"({"prefixes": ["+49"], "dtmf": "info"})", {});
+
+  auto request = f.invite("sip:+4930123456@example.com", "sip:alice@example.com", f.phone);
+  auto route = f.route(request);
+  ASSERT_TRUE(route.ok) << route.error;
+  ASSERT_EQ(route.value.kind, policy::RouteDecision::Kind::Forward);
+  ASSERT_EQ(route.value.targets.size(), 1u);
+  EXPECT_EQ(route.value.targets[0].trunk, "ivr");
+  EXPECT_EQ(route.value.targets[0].dtmf, types::MediaPolicy::Dtmf::Info);
+  EXPECT_FALSE(route.value.caller_dtmf.has_value()) << "the caller is a subscriber, read by the node";
+
+  request = f.invite("sip:+442071234567@example.com", "sip:alice@example.com", f.phone);
+  route = f.route(request);
+  ASSERT_TRUE(route.ok) << route.error;
+  ASSERT_FALSE(route.value.targets.empty());
+  EXPECT_FALSE(route.value.targets[0].dtmf.has_value()) << "acme says nothing";
+
+  f.add_trunk("buzz", "sip:sip.buzz.example", R"({"dtmf": "inband", "numbers": {"+442071234567": "sip:alice@example.com"}})", {"198.51.100.0/24"});
+  auto buzz = f.make_channel("198.51.100.7");
+  request = f.invite("sip:+442071234567@192.0.2.1", "sip:+447700900123@sip.buzz.example", buzz);
+  const auto auth = f.authorize(request);
+  ASSERT_TRUE(auth.ok) << auth.error;
+  ASSERT_EQ(auth.value.trunk, "buzz");
+  request->trunk = auth.value.trunk;
+  route = f.route(request);
+  ASSERT_TRUE(route.ok) << route.error;
+  ASSERT_EQ(route.value.kind, policy::RouteDecision::Kind::Forward);
+  EXPECT_EQ(route.value.caller_dtmf, types::MediaPolicy::Dtmf::Inband);
+  ASSERT_TRUE(route.value.media.has_value());
+  EXPECT_EQ(route.value.media->dtmf, types::MediaPolicy::Dtmf::Auto) << "the realm's, for the subscriber's leg";
+}
+
+// RFC 4579 (docs/design/conferencing.md): a trunk whose focus attribute names a prefix is the focus of every
+// conference URI starting with it, in the realms it names. Any request to a room goes to the focus as a call
+// out by that trunk, with the room as the user part and on the target; a REGISTER for a room is refused.
+TEST(TrunksScriptTest, AConferenceUriGoesToItsFocusAndCannotRegister) {
+  TrunksScriptFixture f;
+  f.add_trunk("rooms", "sip:192.0.2.40:5060", R"({"focus": {"prefix": "conf-", "realms": ["example.com"]}, "media_profile": "mirror"})", {});
+
+  for (const char* method : {"INVITE", "SUBSCRIBE", "REFER"}) {
+    auto request = f.request_of(method, "sip:conf-sales@example.com", "sip:alice@example.com", f.phone);
+    const auto route = f.route(request);
+    ASSERT_TRUE(route.ok) << method << ": " << route.error;
+    ASSERT_EQ(route.value.kind, policy::RouteDecision::Kind::Forward) << method;
+    ASSERT_EQ(route.value.targets.size(), 1u) << method;
+    EXPECT_EQ(route.value.targets[0].trunk, "rooms");
+    EXPECT_EQ(route.value.targets[0].uri->to_string(), "sip:conf-sales@192.0.2.40:5060");
+    ASSERT_NE(route.value.targets[0].focus, nullptr);
+    EXPECT_EQ(route.value.targets[0].focus->to_string(), "sip:conf-sales@example.com");
+    ASSERT_TRUE(route.value.media.has_value());
+    EXPECT_EQ(route.value.media->profiles, types::MediaPolicy::Profiles::Mirror) << "the trunk's media_profile";
+  }
+
+  // The prefix in another realm is nobody's room: an ordinary address of record, here with no subscriber.
+  auto elsewhere = f.request_of("INVITE", "sip:conf-sales@other.example", "sip:alice@example.com", f.phone);
+  auto route = f.route(elsewhere);
+  ASSERT_TRUE(route.ok) << route.error;
+  EXPECT_TRUE(route.value.targets.empty() || route.value.targets[0].focus == nullptr);
+
+  // A room is not a subscriber.
+  auto registering = f.request_of("REGISTER", "sip:example.com", "sip:conf-sales@example.com", f.phone, "sip:conf-sales@example.com");
+  const auto decision = f.register_(registering);
+  ASSERT_TRUE(decision.ok) << decision.error;
+  EXPECT_EQ(decision.value.kind, policy::RegisterDecision::Kind::Reject);
+  EXPECT_EQ(decision.value.code, 403);
+
+  auto alice = f.request_of("REGISTER", "sip:example.com", "sip:alice@example.com", f.phone, "sip:alice@example.com");
+  const auto accepted = f.register_(alice);
+  ASSERT_TRUE(accepted.ok) << accepted.error;
+  EXPECT_NE(accepted.value.kind, policy::RegisterDecision::Kind::Reject);
 }

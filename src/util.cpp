@@ -6,7 +6,10 @@
 //
 #include "util.h"
 
+#include <openssl/rand.h>
+
 #include <limits>
+#include <string_view>
 
 namespace athenasip {
 
@@ -111,6 +114,40 @@ std::filesystem::path Util::expand_path(const std::string& path) {
   return std::filesystem::absolute(p);
 }
 
+bool Util::is_realm_name(const std::string& name) {
+  if (name.empty() || name.size() > 253) return false;
+
+  std::size_t start = 0;
+  while (true) {
+    const auto dot = name.find('.', start);
+    const auto label = name.substr(start, dot == std::string::npos ? std::string::npos : dot - start);
+    if (label.empty() || label.size() > 63 || label.front() == '-' || label.back() == '-') return false;
+    for (const char c : label) {
+      if (!std::isalnum(static_cast<unsigned char>(c)) && c != '-') return false;
+    }
+    if (dot == std::string::npos) return true;
+    start = dot + 1;
+  }
+}
+
+bool Util::is_sip_user(const std::string& user) {
+  if (user.empty()) return false;
+
+  for (std::size_t i = 0; i < user.size(); ++i) {
+    const auto c = static_cast<unsigned char>(user[i]);
+    if (std::isalnum(c)) continue;
+    // mark, then user-unreserved.
+    if (std::string_view("-_.!~*'()&=+$,;?/").find(static_cast<char>(c)) != std::string_view::npos) continue;
+    // escaped: % HEXDIG HEXDIG.
+    if (c == '%' && i + 2 < user.size() && std::isxdigit(static_cast<unsigned char>(user[i + 1])) && std::isxdigit(static_cast<unsigned char>(user[i + 2]))) {
+      i += 2;
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
 bool Util::is_ipv4_private(const std::string& ipv4) {
   std::istringstream iss(ipv4);
   std::array<int, 4> parts{};
@@ -173,18 +210,17 @@ std::uint64_t Util::stable_id(const std::string& name) {
   return hash == 0 ? 1 : hash;
 }
 
+// From the system's cryptographic generator: what this makes is a branch, a tag, a Call-ID, a cookie, a
+// subscription id, things a peer must not be able to guess from the ones before.
 std::string Util::generate_random_string(const std::string& prefix, uint16_t length) {
-  std::ostringstream tag;
-  std::random_device rd;
-  std::mt19937 gen(rd());
-  std::uniform_int_distribution<> dist(0, 15);
-  tag << prefix;
-  tag << std::hex;
-  for (int i = 0; i < length; ++i) {
-    tag << dist(gen);
-  }
+  static constexpr char kHex[] = "0123456789abcdef";
+  std::vector<unsigned char> bytes((length + 1) / 2);
+  if (!bytes.empty() && RAND_bytes(bytes.data(), static_cast<int>(bytes.size())) != 1) throw std::runtime_error("RAND_bytes failed");
 
-  return tag.str();
+  std::string out = prefix;
+  out.reserve(prefix.size() + length);
+  for (std::size_t i = 0; i < length; ++i) out.push_back(kHex[(bytes[i / 2] >> (i % 2 == 0 ? 4 : 0)) & 0x0f]);
+  return out;
 }
 
 std::string const Util::get_zulu_time() {

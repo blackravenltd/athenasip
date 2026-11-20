@@ -33,7 +33,7 @@ for argument in "$@"; do
   esac
 done
 
-ADMIN_REPO="${ATHENA_SUITE_ADMIN_REPO:-$ROOT/../athenasip-admin}"
+ADMIN_REPO="${ATHENA_SUITE_ADMIN_REPO:-$ROOT/console}"
 PHONE_REPO="${ATHENA_SUITE_PHONE_REPO:-$ROOT/../athenaphone}"
 RESULTS="$ROOT/test/suite/results/$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$RESULTS"

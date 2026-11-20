@@ -333,6 +333,28 @@ TEST(RedisDatastoreTest, AnOutboundBindingKeepsItsInstanceAndRegId) {
   datastore->subscriber_delete(subscriber->identity);
 }
 
+// RFC 3261 10.3 step 7: the Call-ID and CSeq of the REGISTER that wrote a binding survive the store, so any node can
+// refuse one out of order.
+TEST(RedisDatastoreTest, ABindingKeepsTheCallIdAndCSeqThatWroteIt) {
+  REQUIRE_REDIS(datastore);
+  const auto realm = "order-" + unique_suffix() + ".example";
+  auto subscriber = make_subscriber(5255, "sip:dave@" + realm);
+  ASSERT_TRUE(datastore->subscriber_create(subscriber));
+
+  types::Location binding;
+  binding.contact = std::make_shared<types::SIPUri>("sip:dave@192.0.2.10:5060");
+  binding.call_id = "a84b4c76e66710@pc33.example.com";
+  binding.cseq = 314159;
+  ASSERT_TRUE(datastore->subscriber_register(subscriber, binding, 3600));
+
+  const auto found = datastore->location_list(5255);
+  ASSERT_EQ(found.size(), 1u);
+  EXPECT_EQ(found[0].call_id, "a84b4c76e66710@pc33.example.com");
+  EXPECT_EQ(found[0].cseq, 314159u);
+
+  datastore->subscriber_delete(subscriber->identity);
+}
+
 // RFC 8599: whether this cluster pushes to a binding, and its pn-* parameters, survive the store, so any node can
 // push.
 TEST(RedisDatastoreTest, APushBindingKeepsItsPushParameters) {
@@ -488,18 +510,6 @@ TEST(RedisDatastoreTest, RegistrationWithoutAFlowLeavesItEmpty) {
   ASSERT_TRUE(datastore->subscriber_delete(subscriber->identity));
 }
 
-TEST(RedisDatastoreTest, NonceRoundTripsAndIsRefusedWhenAlreadyExpired) {
-  REQUIRE_REDIS(datastore);
-  const auto nonce = "nonce-" + unique_suffix();
-  const auto now = std::time(nullptr);
-
-  ASSERT_TRUE(datastore->nonce_create(nonce, now + 60));
-  EXPECT_TRUE(datastore->nonce_check(nonce));
-
-  EXPECT_FALSE(datastore->nonce_create("stale-" + nonce, now - 1));
-  EXPECT_FALSE(datastore->nonce_check("stale-" + nonce));
-}
-
 // A multi-party call round-trips with its participants.
 TEST(RedisDatastoreTest, CallRoundTripsWithItsParticipants) {
   REQUIRE_REDIS(datastore);
@@ -597,7 +607,7 @@ TEST(RedisDatastoreTest, UserWithNoRolesRoundTrips) {
 TEST(RedisDatastoreTest, UsernamesAreOneNamespaceWhateverTheirCase) {
   REQUIRE_REDIS(datastore);
   const auto suffix = unique_suffix();
-  const auto mixed = "the maintainer-" + suffix;
+  const auto mixed = "Ada-" + suffix;
 
   ASSERT_TRUE(datastore->user_create(make_user(mixed, {})));
 
@@ -1127,4 +1137,122 @@ TEST(RedisDatastoreTest, ASubscriberLearnedOnUpdateFindsTheCall) {
 
   ASSERT_TRUE(datastore->call_update(make_call("call-" + x, Call::State::Ringing, s1, s2)));
   EXPECT_EQ(call_ids(datastore->call_list_for_subscriber(s2)), (std::vector<std::string>{"call-" + x}));
+}
+
+// A realm's and a subscriber's dtmf survive the store, and absent stays unset.
+TEST(RedisDatastoreTest, TheDtmfMethodRoundTrips) {
+  REQUIRE_REDIS(datastore);
+  const auto name = "dtmf-" + unique_suffix() + ".example";
+
+  auto realm = make_realm(name);
+  realm->behaviour.dtmf = types::MediaPolicy::Dtmf::Info;
+  ASSERT_TRUE(datastore->realm_create(realm));
+  auto found = datastore->realm_get_by_name(name);
+  ASSERT_NE(found, nullptr);
+  EXPECT_EQ(found->behaviour.dtmf, types::MediaPolicy::Dtmf::Info);
+
+  auto chose = make_subscriber(4345, "sip:keys@" + name);
+  chose->dtmf = types::MediaPolicy::Dtmf::Inband;
+  ASSERT_TRUE(datastore->subscriber_create(chose));
+  auto silent = make_subscriber(4346, "sip:quiet@" + name);
+  ASSERT_TRUE(datastore->subscriber_create(silent));
+
+  auto read = datastore->subscriber_get(chose->identity);
+  ASSERT_NE(read, nullptr);
+  EXPECT_EQ(read->dtmf, types::MediaPolicy::Dtmf::Inband);
+  read = datastore->subscriber_get(silent->identity);
+  ASSERT_NE(read, nullptr);
+  EXPECT_FALSE(read->dtmf.has_value());
+}
+
+// A trunk's registration status is a record beside the trunk, replaced whole, and gone with the trunk.
+TEST(RedisDatastoreTest, ATrunksStatusIsARecordThatGoesWithTheTrunk) {
+  REQUIRE_REDIS(datastore);
+  auto trunk = std::make_shared<types::Trunk>();
+  trunk->name = "Status" + unique_suffix();
+  trunk->uri = "sip:sip.acme.example";
+  ASSERT_TRUE(datastore->trunk_create(trunk));
+
+  EXPECT_FALSE(datastore->trunk_status_get(trunk->name).has_value());
+
+  boost::json::object status;
+  status["node"] = "sip-0001";
+  status["state"] = "registered";
+  ASSERT_TRUE(datastore->trunk_status_set(trunk->name, status));
+  auto found = datastore->trunk_status_get(Util::to_upper(trunk->name));
+  ASSERT_TRUE(found.has_value());
+  EXPECT_EQ(found->at("node").as_string(), "sip-0001");
+
+  ASSERT_TRUE(datastore->trunk_delete(trunk->name));
+  EXPECT_FALSE(datastore->trunk_status_get(trunk->name).has_value());
+}
+
+// A re-offer is one record per subscriber and refused profile, counted up on each report, listed most recent first.
+TEST(RedisDatastoreTest, ReoffersAreCountedPerSubscriberAndListedMostRecentFirst) {
+  REQUIRE_REDIS(datastore);
+  const auto phone = "sip:phone-" + unique_suffix() + "@example.com";
+  const auto fax = "sip:fax-" + unique_suffix() + "@example.com";
+
+  ASSERT_TRUE(datastore->reoffer_record(fax, media::Profile::WebRtc, std::nullopt));
+  ASSERT_TRUE(datastore->reoffer_record(phone, media::Profile::PlainRtp, media::Profile::WebRtc));
+  ASSERT_TRUE(datastore->reoffer_record(phone, media::Profile::PlainRtp, media::Profile::WebRtc));
+
+  const auto listed = datastore->reoffer_list();
+  const media::Reoffer* found_phone = nullptr;
+  const media::Reoffer* found_fax = nullptr;
+  for (const auto& entry : listed) {
+    if (entry.subscriber == phone) found_phone = &entry;
+    if (entry.subscriber == fax) found_fax = &entry;
+  }
+  ASSERT_NE(found_phone, nullptr);
+  ASSERT_NE(found_fax, nullptr);
+  EXPECT_EQ(found_phone->count, 2u);
+  EXPECT_EQ(found_phone->rejected, media::Profile::PlainRtp);
+  EXPECT_EQ(found_phone->took, media::Profile::WebRtc);
+  EXPECT_EQ(found_fax->count, 1u);
+  EXPECT_FALSE(found_fax->took.has_value());
+}
+
+// The record keeps the dialog whole, and every leg that shares its tags gets the one dialog back.
+TEST(RedisDatastoreTest, TheCallRecordKeepsTheDialogWhole) {
+  REQUIRE_REDIS(datastore);
+  const auto id = "dialog-" + unique_suffix();
+
+  auto dialog = std::make_shared<types::Dialog>();
+  dialog->call_id = id;
+  dialog->caller_tag = "alice-tag";
+  dialog->callee_tag = "bob-tag";
+  dialog->state = types::Dialog::State::Confirmed;
+  dialog->caller_cseq = 4;
+  dialog->route_set = {std::make_shared<types::SIPUri>("sip:abc@192.0.2.1:5060;lr")};
+  dialog->callee_target = std::make_shared<types::SIPUri>("sip:bob@192.0.2.20:5060");
+
+  auto call = std::make_shared<Call>();
+  call->id = id;
+  call->state = Call::State::Connected;
+  call->add_participant(std::make_shared<types::SIPIdentity>("sip:alice@example.com"), nullptr, true);
+  call->add_participant(std::make_shared<types::SIPIdentity>("sip:bob@example.com"));
+  for (auto& participant : call->participants) participant.dialog = dialog;
+  ASSERT_TRUE(datastore->call_create(call));
+
+  auto found = datastore->call_get(id);
+  ASSERT_NE(found, nullptr);
+  ASSERT_EQ(found->participants.size(), 2u);
+  ASSERT_NE(found->participants[0].dialog, nullptr);
+  EXPECT_EQ(found->participants[0].dialog, found->participants[1].dialog) << "one dialog, shared";
+  EXPECT_EQ(found->participants[0].dialog->caller_cseq, 4u);
+  ASSERT_EQ(found->participants[0].dialog->route_set.size(), 1u);
+  EXPECT_EQ(found->participants[0].dialog->callee_target->to_string(), "sip:bob@192.0.2.20:5060");
+  EXPECT_EQ(found->participants[0].dialog->state, types::Dialog::State::Confirmed);
+}
+
+// RFC 3261 19.1.4: a URI's host compares without regard to case; the user part does not fold.
+TEST(RedisDatastoreTest, ASubscriberIsFoundWhateverCaseTheHostIsSpeltIn) {
+  REQUIRE_REDIS(datastore);
+  const auto realm = "case-" + unique_suffix() + ".example";
+  auto subscriber = make_subscriber(4347, "sip:bob@" + realm);
+  ASSERT_TRUE(datastore->subscriber_create(subscriber));
+
+  EXPECT_NE(datastore->subscriber_get(std::make_shared<types::SIPIdentity>("sip:bob@" + Util::to_upper(realm))), nullptr);
+  EXPECT_EQ(datastore->subscriber_get(std::make_shared<types::SIPIdentity>("sip:BOB@" + realm)), nullptr);
 }

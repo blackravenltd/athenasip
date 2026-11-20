@@ -99,6 +99,12 @@ class Proxy : public TransactionUser {
     // The trunk this target leaves by: its challenges are answered with the trunk's credentials.
     std::string trunk;
 
+    // How this leg sends key presses, when the policy said (a trunk's attribute).
+    std::optional<types::MediaPolicy::Dtmf> dtmf;
+
+    // The conference this target is the focus of, as dialled (RFC 4579).
+    std::shared_ptr<SIPUri> focus;
+
     // TLS to a trunk is verified against this CA file, empty for the system's store. Set once the trunk is read.
     std::optional<std::string> tls_ca;
 
@@ -164,14 +170,17 @@ class Proxy : public TransactionUser {
     // The realm's media policy, when target determination found a realm. In-dialog requests use the call's.
     std::optional<types::MediaPolicy> media_policy;
 
-    // The callee subscriber's media profile.
+    // The callee subscriber's media profile, and how its endpoint sends key presses.
     std::optional<types::MediaPolicy::Profiles> callee_profile;
+    std::optional<types::MediaPolicy::Dtmf> callee_dtmf;
 
     // Whether Contacts are rewritten to where messages came from (types::Behaviour).
     bool rewrite_contact = false;
 
-    // The caller subscriber's media profile, read only for an INVITE without SDP (RFC 3264 section 5).
+    // The caller subscriber's media profile, read only for an INVITE without SDP (RFC 3264 section 5), and how
+    // the caller's leg sends key presses: the policy's word (a trunk's attribute), else the subscriber's setting.
     std::optional<types::MediaPolicy::Profiles> caller_profile;
+    std::optional<types::MediaPolicy::Dtmf> caller_dtmf;
 
     // The target of the branch in flight, and the profile offered to it when the callee had not stated one. A
     // 488 to that offer earns one re-offer.
@@ -222,6 +231,12 @@ class Proxy : public TransactionUser {
   void _preprocess_routes(const std::shared_ptr<SIPMessage>& request) const;
 
   // RFC 3261 16.5: fills a context and calls _forward_next, or answers the caller when there is no target.
+  // A SIP INFO carrying key presses, in a dialog whose far leg does not speak INFO: played into the media by the
+  // engine and answered here. True when the request was taken; false leaves it to be forwarded as any other. When the
+  // engine cannot play it, `otherwise` forwards it after all.
+  bool _play_dtmf(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
+                  std::function<void()> otherwise);
+
   void _determine_targets(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
                           const std::string& loop_token);
 
@@ -311,6 +326,8 @@ class Proxy : public TransactionUser {
 
   void _send_status(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request, std::uint16_t code,
                     const std::string& reason);
+  void _send_refusal(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
+                     std::chrono::seconds retry_after);
 
   // Asks the policy whether the request may be forwarded, and carries out its answer (RFC 3261 22.3). `then`
   // runs only if it may; otherwise the request has been answered.
@@ -321,13 +338,14 @@ class Proxy : public TransactionUser {
   void _authenticate(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
                      const std::shared_ptr<types::Realm>& realm, bool from_must_match, std::function<void()> then);
   void _send_proxy_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
-                             const std::shared_ptr<types::Realm>& realm);
+                             const std::shared_ptr<types::Realm>& realm, bool stale = false);
 
   // Digest in any realm this node serves: a reliable connection one of its subscribers registered over, or
   // credentials for one of its realms. For a REGISTER to forward, whose From is the foreign address of record.
   void _authenticate_any(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
                          std::function<void()> then);
-  void _send_relay_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request);
+  void _send_relay_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
+                             bool stale = false);
 
   // This node as the side facing `facing` sees it, with a flow token in the user part (RFC 5626 5.1): for
   // Record-Route and Path.

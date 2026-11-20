@@ -9,8 +9,11 @@
 #include <gtest/gtest.h>
 #include <yaml-cpp/yaml.h>
 
+#include <boost/asio/ip/udp.hpp>
 #include <boost/json.hpp>
+#include <atomic>
 #include <chrono>
+#include <mutex>
 #include <ctime>
 #include <memory>
 #include <set>
@@ -19,6 +22,7 @@
 
 #include "../helpers/fake_rtpengine_helper.h"
 #include "../helpers/sync_media_engine_helper.h"
+#include "../helpers/wait_for_condition_helper.h"
 #include "../mocks/logger_mock.h"
 #include "call.h"
 #include "config.h"
@@ -922,6 +926,224 @@ TEST(RtpengineMediaEngineTest, AQueryForACallTheEngineDoesNotHoldSaysSo) {
   const auto document = boost::json::parse(held.value).as_object();
   ASSERT_TRUE(document.contains("held"));
   EXPECT_FALSE(document.at("held").as_bool());
+
+  engine->close();
+}
+
+// Key presses are converted when the two legs send them differently: RFC 4733 to tones by stripping
+// telephone-event and transcoding, tones to RFC 4733 by offering telephone-event, and INFO by asking for
+// DTMF injection in the offer and the answer. Legs that agree, or one unknown, ask for nothing.
+TEST(RtpengineMediaEngineTest, KeyPressesAreConvertedWhenTheLegsDiffer) {
+  using Dtmf = types::MediaPolicy::Dtmf;
+  FakeRtpengine fake;
+  fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
+  fake.answer("offer", ok_with_sdp(kOffer));
+  fake.answer("answer", ok_with_sdp(kOffer));
+
+  auto engine = make_engine(fake);
+  ASSERT_TRUE(engine->connect());
+
+  auto offer = [&](std::optional<Dtmf> from, std::optional<Dtmf> to) {
+    Flags flags;
+    flags.participant = 0;
+    flags.dtmf_from = from;
+    flags.dtmf_to = to;
+    EXPECT_TRUE(engine->offer(make_call(), kOffer, flags).ok);
+    auto request = fake.last("offer");
+    EXPECT_TRUE(request.has_value());
+    return *request;
+  };
+  auto has_flag = [](const Bencode& request, const std::string& name) {
+    const auto* flags = request.find("flags");
+    if (flags == nullptr) return false;
+    for (const auto& value : flags->values()) {
+      if (value.string() == name) return true;
+    }
+    return false;
+  };
+  auto codec = [](const Bencode& request, const std::string& key) {
+    const auto* codec = request.find("codec");
+    const auto* list = codec == nullptr ? nullptr : codec->find(key);
+    return list != nullptr && list->values().size() == 1 && list->values()[0].string() == "telephone-event";
+  };
+
+  auto request = offer(Dtmf::Rfc4733, Dtmf::Inband);
+  EXPECT_TRUE(has_flag(request, "always transcode"));
+  EXPECT_TRUE(codec(request, "strip"));
+  EXPECT_FALSE(has_flag(request, "inject DTMF"));
+
+  request = offer(Dtmf::Inband, Dtmf::Rfc4733);
+  EXPECT_TRUE(codec(request, "transcode"));
+  EXPECT_FALSE(has_flag(request, "always transcode"));
+
+  request = offer(Dtmf::Info, Dtmf::Rfc4733);
+  EXPECT_TRUE(has_flag(request, "inject DTMF"));
+  EXPECT_EQ(request.find("codec"), nullptr);
+
+  request = offer(Dtmf::Rfc4733, Dtmf::Rfc4733);
+  EXPECT_EQ(request.find("flags"), nullptr) << "the legs agree";
+  EXPECT_EQ(request.find("codec"), nullptr);
+
+  request = offer(Dtmf::Rfc4733, std::nullopt);
+  EXPECT_EQ(request.find("flags"), nullptr) << "the far leg is not known yet";
+
+  // The answer carries the injection flag too, as rtpengine requires.
+  Flags flags;
+  flags.participant = 1;
+  flags.dtmf_from = Dtmf::Rfc4733;
+  flags.dtmf_to = Dtmf::Info;
+  ASSERT_TRUE(engine->answer(make_call(), kOffer, flags).ok);
+  auto answer = fake.last("answer");
+  ASSERT_TRUE(answer.has_value());
+  EXPECT_TRUE(has_flag(*answer, "inject DTMF"));
+
+  engine->close();
+}
+
+// Key presses by INFO are played into the media: one "play DTMF" per digit, named by the participant's own tag
+// as the end the event comes from, with the length the INFO gave, clamped to what rtpengine takes.
+TEST(RtpengineMediaEngineTest, KeyPressesArePlayedInOneDigitAtATime) {
+  FakeRtpengine fake;
+  fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
+
+  auto engine = make_engine(fake);
+  ASSERT_TRUE(engine->connect());
+  EXPECT_TRUE(engine->capabilities().dtmf);
+
+  ASSERT_TRUE(engine->play_dtmf(make_call(), 0, "5*", std::chrono::milliseconds(50)).ok);
+
+  std::vector<Bencode> plays;
+  for (const auto& request : fake.requests()) {
+    if (request.string_at("command") == "play DTMF") plays.push_back(request);
+  }
+  ASSERT_EQ(plays.size(), 2u);
+  EXPECT_EQ(plays[0].string_at("call-id"), "call-1@example.com");
+  EXPECT_EQ(plays[0].string_at("from-tag"), "alice-tag");
+  EXPECT_EQ(plays[0].string_at("code"), "5");
+  EXPECT_EQ(plays[1].string_at("code"), "*");
+  const auto* duration = plays[0].find("duration");
+  ASSERT_NE(duration, nullptr);
+  EXPECT_EQ(duration->integer(), 100) << "rtpengine takes no less";
+
+  engine->close();
+}
+
+// With rtpengine.dtmf_events set, the driver listens there, names it on the offer towards a leg that speaks INFO
+// (DTMF-log-dest, with the far leg's own events blocked), and turns each JSON datagram rtpengine sends into a key
+// press for the listener.
+TEST(RtpengineMediaEngineTest, KeyPressesRtpengineHearsAreReportedToTheListener) {
+  using Dtmf = types::MediaPolicy::Dtmf;
+  FakeRtpengine fake;
+  fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
+  fake.answer("offer", ok_with_sdp(kOffer));
+
+  auto engine = make_engine(fake, "timeout_ms: 100\nattempts: 3\ndtmf_events: 127.0.0.1:0");
+
+  std::atomic<bool> heard{false};
+  media::MediaEngine::DtmfEvent pressed;
+  std::mutex mutex;
+  EXPECT_TRUE(engine->driver()->dtmf_listen([&](media::MediaEngine::DtmfEvent event) {
+    std::lock_guard<std::mutex> lock(mutex);
+    pressed = std::move(event);
+    heard = true;
+  }));
+  ASSERT_TRUE(engine->connect());
+
+  Flags flags;
+  flags.participant = 0;
+  flags.dtmf_from = Dtmf::Rfc4733;
+  flags.dtmf_to = Dtmf::Info;
+  ASSERT_TRUE(engine->offer(make_call(), kOffer, flags).ok);
+
+  auto request = fake.last("offer");
+  ASSERT_TRUE(request.has_value());
+  const auto destination = request->string_at("DTMF-log-dest");
+  ASSERT_NE(destination.find("127.0.0.1:"), std::string::npos) << destination;
+  const auto* names = request->find("flags");
+  ASSERT_NE(names, nullptr);
+  bool blocked = false;
+  for (const auto& value : names->values()) blocked = blocked || value.string() == "block DTMF";
+  EXPECT_TRUE(blocked);
+
+  // What daemon/dtmf.c sends, to where the offer said.
+  const auto port = static_cast<std::uint16_t>(std::stoi(destination.substr(destination.rfind(':') + 1)));
+  boost::asio::io_context io;
+  boost::asio::ip::udp::socket socket(io, boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
+  const std::string datagram =
+      R"({"callid":"call-1@example.com","source_tag":"alice-tag","tags":["alice-tag","bob-tag"],"type":"DTMF","timestamp":1,)"
+      R"("source_ip":"192.0.2.10","event":11,"duration":120,"volume":10})";
+  socket.send_to(boost::asio::buffer(datagram), boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), port));
+
+  ASSERT_TRUE(waitForCondition(heard, std::chrono::seconds(2)));
+  std::lock_guard<std::mutex> lock(mutex);
+  EXPECT_EQ(pressed.call_id, "call-1@example.com");
+  EXPECT_EQ(pressed.source_tag, "alice-tag");
+  EXPECT_EQ(pressed.digit, '#');
+  EXPECT_EQ(pressed.duration, std::chrono::milliseconds(120));
+
+  engine->close();
+}
+
+// Without the setting the driver reports no key presses, and an offer names no destination.
+TEST(RtpengineMediaEngineTest, WithoutAnEventsAddressNoKeyPressIsReported) {
+  FakeRtpengine fake;
+  fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
+  fake.answer("offer", ok_with_sdp(kOffer));
+
+  auto engine = make_engine(fake);
+  EXPECT_FALSE(engine->driver()->dtmf_listen([](media::MediaEngine::DtmfEvent) {}));
+  ASSERT_TRUE(engine->connect());
+
+  Flags flags;
+  flags.participant = 0;
+  flags.dtmf_from = types::MediaPolicy::Dtmf::Rfc4733;
+  flags.dtmf_to = types::MediaPolicy::Dtmf::Info;
+  ASSERT_TRUE(engine->offer(make_call(), kOffer, flags).ok);
+  EXPECT_EQ(fake.last("offer")->find("DTMF-log-dest"), nullptr);
+
+  engine->close();
+}
+
+// Review finding 33: a reply is the engine's only if it comes from the engine. One with the right cookie from any other
+// address is dropped, and the request still waits for, and here times out without, the engine's own answer.
+TEST(RtpengineMediaEngineTest, AReplyFromAnywhereButTheEngineIsDropped) {
+  FakeRtpengine fake;
+  fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
+
+  auto engine = make_engine(fake, "timeout_ms: 150\nattempts: 2");
+  ASSERT_TRUE(engine->connect());
+  const auto before = fake.count();
+
+  // The engine hears the request and says nothing; a forger who saw the cookie answers from elsewhere.
+  fake.swallow(2);
+  std::thread forger([&fake, before]() {
+    for (int i = 0; i < 100 && fake.count() <= before; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    const auto cookie = fake.cookies().at(before);
+    boost::asio::io_context io;
+    boost::asio::ip::udp::socket socket(io, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 0));
+    const auto forged = cookie + " " + Bencode::dictionary({{"result", Bencode(std::string("ok"))}}).encode();
+    socket.send_to(boost::asio::buffer(forged), fake.client());
+  });
+
+  EXPECT_FALSE(engine->release(make_call())) << "the forged ok was taken as the engine's";
+  forger.join();
+
+  engine->close();
+}
+
+// Review finding 35: an engine named by a host name is looked up with async_resolve, never a blocking resolve on the
+// strand, and the pool is set up once it has an address.
+TEST(RtpengineMediaEngineTest, AnEngineNamedByAHostNameIsLookedUpAndUsed) {
+  FakeRtpengine fake;
+  fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
+
+  auto logger = std::make_shared<MockLogger>();
+  auto url = std::make_shared<types::URL>("rtpengine://localhost:" + std::to_string(fake.port()));
+  auto engine = std::make_shared<SyncMediaEngine>(std::make_shared<RtpengineMediaEngine>(logger, url));
+  ASSERT_TRUE(engine->configure(YAML::Load("timeout_ms: 200\nattempts: 2"), Config(logger)));
+
+  ASSERT_TRUE(engine->connect());
+  EXPECT_TRUE(fake.last("ping").has_value());
 
   engine->close();
 }

@@ -41,6 +41,9 @@ Settings build() {
   s.push_back(list("sip.localnet",
                    "Prefixes on this node's side of the router, such as 192.168.0.0/16. A far end inside them is given the local address "
                    "and port; everyone else the public ones."));
+  s.push_back(list("sip.websocket_allowed_origins",
+                   "The web origins whose pages may open a SIP WebSocket here, such as https://console.example.com. Empty allows any; a "
+                   "request with no Origin, as a phone sends, is always allowed."));
   s.push_back(boolean("sip.allow_unencrypted", "true", "False refuses to start with a udp, tcp or plain websocket listener."));
   s.push_back(choice("sip.forward_register", "subscribers", {"subscribers", "never"},
                      "A REGISTER for a domain this node does not serve (RFC 3261 10.3): subscribers forwards one from this node's own "
@@ -60,7 +63,30 @@ Settings build() {
                       "Seconds an anchored call may carry no media before each end is sent a BYE. 0 turns it off. RTCP counts, so a call "
                       "on hold is not silent."));
   s.push_back(integer("sip.connect_timeout_ms", "4000", "How long opening a connection to a next hop may take, in milliseconds."));
-  s.push_back(integer("sip.flow_idle_timeout", "300", "Seconds a UDP flow may sit idle before it is forgotten. 0 never forgets. Keep it above 32 (64 * T1)."));
+  s.push_back(integer("sip.flow_idle_timeout", "300",
+                      "Seconds a UDP flow, or a connection that registered nobody, may sit idle before it is closed. 0 never closes one for "
+                      "that. Keep it above 32 (64 * T1)."));
+  s.push_back(integer("sip.flow_first_message_timeout", "30",
+                      "Seconds a TCP, TLS or WebSocket connection may stay open without a whole message arriving. 0 never closes one for that."));
+  s.push_back(integer("sip.max_connections", "10000", "The flows the node holds at once, UDP sources included; one more is closed. 0 is no cap."));
+  s.push_back(integer("sip.max_connections_per_source", "64", "The flows one address may hold at once; one more is closed. 0 is no cap."));
+  s.push_back(integer("sip.max_transactions", "50000", "The transactions held at once; a new request past it is answered 503 with Retry-After. 0 is no cap."));
+
+  s.push_back(section("sip.auth_limits",
+                      "Digest guessing over SIP, per node: a burst allowance, then a rate per minute, 0 in either turning that limit off "
+                      "(docs/authentication.md, Guessing)."));
+  for (const auto& [name, what, burst, per_minute] : std::initializer_list<std::tuple<const char*, const char*, const char*, const char*>>{
+           {"failures_source", "Wrong answers from one address; past it the address is banned for ban_seconds.", "10", "5"},
+           {"failures_aor", "Wrong answers for one address of record; past it the AOR is closed for ban_seconds to addresses that have not lately "
+                            "authenticated as it.",
+            "10", "5"},
+           {"challenges_source", "Challenges sent to one address; past it a request needing one is answered 403.", "200", "600"}}) {
+    const std::string key = std::string("sip.auth_limits.") + name;
+    s.push_back(section(key, what));
+    s.push_back(integer(key + ".burst", burst, "Allowed at once."));
+    s.push_back(integer(key + ".per_minute", per_minute, "Allowed per minute after that."));
+  }
+  s.push_back(integer("sip.auth_limits.ban_seconds", "900", "How long a ban or a closed AOR lasts, in seconds. 0 bans nothing."));
 
   s.push_back(section("sip.timers", "The RFC 3261 section 17 timers. a to k are multiples of T1 or T4, not milliseconds. Leave them alone."));
   s.push_back(integer("sip.timers.t1_rtt_ms", "500", "T1, the round-trip estimate, in milliseconds.", 1, 65535));
@@ -133,6 +159,9 @@ Settings build() {
   s.push_back(choice("behaviour.media_profile", "mirror", {"mirror", "transport", "webrtc", "rtp", "srtp"},
                      "What each leg's media is offered as: mirror gives each leg what it offered; the others are explained in "
                      "docs/behaviour.md."));
+  s.push_back(choice("behaviour.dtmf", "auto", {"auto", "rfc4733", "info", "inband"},
+                     "How a leg sends key presses: RFC 4733 telephone-events, SIP INFO or tones in the audio. auto reads it from what the "
+                     "leg offers. The engine converts between legs that differ; docs/behaviour.md."));
   s.push_back(integer("behaviour.qualify_interval", "0", "Seconds between OPTIONS to a registered client. 0 is never.", 5, 86400, true));
   s.push_back(boolean("behaviour.rewrite_contact", "false", "Rewrite a registering client's Contact to the address it was seen at."));
 
@@ -151,12 +180,14 @@ Settings build() {
   s.push_back(integer("calls.history_retention", "2592000", "Seconds an ended call's record is kept. 0 keeps records for ever."));
 
   s.push_back(section("http", "The admin API, the console and the file server. No section, no listener."));
-  s.push_back(text("http.address", "0.0.0.0", "The address to bind."));
+  s.push_back(text("http.address", "127.0.0.1",
+                   "The address plain HTTP binds. Loopback unless set, since it carries passwords and session tokens in clear; a "
+                   "node warns when it binds any other without TLS."));
   s.push_back(required(port("http.port", "", "The port to bind.")));
 
   s.push_back(section("http.tls", "An HTTPS listener beside the plain one. Browsers give the microphone only to a secure page."));
   s.push_back(boolean("http.tls.enable", "false", "Serve HTTPS."));
-  s.push_back(text("http.tls.address", "", "The address to bind. Empty is http.address."));
+  s.push_back(text("http.tls.address", "", "The address HTTPS binds. Empty is http.address when that is set, otherwise every interface."));
   s.push_back(port("http.tls.port", "8443", "The port to bind."));
   s.push_back(text("http.tls.cert_pem_filename", "", "The certificate, PEM. Empty uses the tls section's."));
   s.push_back(text("http.tls.key_pem_filename", "", "The certificate's key, PEM. Empty uses the tls section's."));

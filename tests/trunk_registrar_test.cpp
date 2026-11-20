@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "digest.h"
+#include "events/topics.h"
 #include "headers/cseq_header.h"
 #include "helpers/core_fixture_helper.h"
 #include "types/authorization.h"
@@ -124,7 +125,7 @@ TEST(TrunkRegistrarTest, TheCarriersChallengeIsAnswered) {
   types::Authorization credentials(first(sent[1], "Authorization"));
   types::Subscriber as_the_carrier_knows_it;
   as_the_carrier_knows_it.ha1 = Util::md5("4420:acme.example:s3cret");
-  EXPECT_EQ(digest::verify(as_the_carrier_knows_it, credentials, "REGISTER"), "");
+  EXPECT_EQ(digest::verify(as_the_carrier_knows_it, credentials, "REGISTER", sent[1]->header->request_uri->to_string()), "");
 
   f.answer(sent[1], 200, "OK", "Contact: " + first(sent[1], "Contact") + ";expires=120\r\n");
   const auto status = f.status();
@@ -219,6 +220,28 @@ TEST(TrunkRegistrarTest, ATrunkThatStopsAskingIsUnregistered) {
   EXPECT_EQ(f.registers().size(), 2u) << "nothing more is sent";
 }
 
+// A trunk created, changed or deleted over the API is announced on the bus, and read then, not at the next scan.
+TEST(TrunkRegistrarTest, ATrunkChangedOnTheBusIsReadAtOnce) {
+  RegistrarFixture f;
+  f.start();
+  f.answer(f.registers()[0], 200, "OK", "Expires: 3600\r\n");
+
+  auto acme = f.store->trunk_get("acme");
+  acme->register_enabled = false;
+  ASSERT_TRUE(f.store->trunk_update(acme));
+  ASSERT_TRUE(f.bus->publish(events::topics::trunks_changed(), "acme"));
+  f.settle();
+
+  const auto sent = f.registers();
+  ASSERT_EQ(sent.size(), 2u) << "unregistered without waiting for the scan";
+  EXPECT_EQ(first(sent[1], "Expires"), "0");
+
+  // The scan the bus prompted stands in for the one that was due.
+  f.answer(sent[1], 200, "OK");
+  f.advance(TrunkRegistrar::kScan);
+  EXPECT_EQ(f.registers().size(), 2u);
+}
+
 // A node that loses the lease stops without unregistering: the binding is now the other node's to keep.
 TEST(TrunkRegistrarTest, ANodeThatLosesTheLeaseSendsNothing) {
   RegistrarFixture f;
@@ -251,4 +274,22 @@ TEST(TrunkRegistrarTest, ARegisterGoesThroughTheTrunksOutboundProxy) {
   ASSERT_EQ(sent.size(), 1u) << "sent to the proxy, which is the carrier channel here";
   EXPECT_EQ(sent[0]->header->request_uri->to_string(), "sip:acme.example");
   EXPECT_NE(first(sent[0], "To").find("sip:4420@acme.example"), std::string::npos);
+}
+
+// What the node reports of a trunk is a record in the datastore, written by the node holding the lease before the
+// bus is told, so the API on any node reads it from the store (all state lives in the datastore, 2026-10-11).
+TEST(TrunkRegistrarTest, TheStatusIsARecordInTheDatastore) {
+  RegistrarFixture f;
+  f.start();
+
+  auto recorded = f.store->trunk_status_get("acme");
+  ASSERT_TRUE(recorded.has_value()) << "registering is a state too";
+  EXPECT_EQ(recorded->at("state").as_string(), "registering");
+  EXPECT_EQ(recorded->at("node").as_string(), "test-node");
+
+  f.answer(f.registers()[0], 200, "OK", "Expires: 300\r\n");
+  recorded = f.store->trunk_status_get("acme");
+  ASSERT_TRUE(recorded.has_value());
+  EXPECT_EQ(recorded->at("state").as_string(), "registered");
+  EXPECT_GT(recorded->at("expires_at").as_int64(), 0);
 }

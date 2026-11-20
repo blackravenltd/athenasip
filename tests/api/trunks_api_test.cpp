@@ -15,6 +15,7 @@
 #include <memory>
 #include <string>
 
+#include "../helpers/recording_event_system_helper.h"
 #include "../helpers/signed_in_users_helper.h"
 #include "../helpers/sync_datastore_helper.h"
 #include "../mocks/logger_mock.h"
@@ -45,6 +46,7 @@ struct TrunksFixture {
   std::shared_ptr<api::AdminAPI> admin;
   std::shared_ptr<api::Router> router;
   std::shared_ptr<api::TrunksAPI> trunks;
+  std::shared_ptr<RecordingEventSystem> events = std::make_shared<RecordingEventSystem>();
   SignedInUsers signed_in;
 
   TrunksFixture() {
@@ -59,6 +61,7 @@ struct TrunksFixture {
     bearer->sessions_register(sessions);
 
     trunks = std::make_shared<api::TrunksAPI>(logger, datastore, admin->executor());
+    trunks->events_register(events);
     trunks->register_routes(*router);
 
     admin->middlewares.push_back(router->middleware("/api/"));
@@ -160,6 +163,24 @@ TEST(TrunksApiTest, ADeletedTrunkIsGone) {
   EXPECT_EQ(f.request(http::verb::delete_, "/api/v1/trunks/acme").status, 404u);
 }
 
+// Each create, change and delete is announced as trunks/changed, so every node's registrar reads the trunks at
+// once rather than at its next scan. A refused request announces nothing.
+TEST(TrunksApiTest, AChangeIsAnnouncedOnTheBus) {
+  TrunksFixture f;
+  ASSERT_EQ(f.request(http::verb::post, "/api/v1/trunks", TrunksFixture::acme()).status, 201u);
+  ASSERT_EQ(f.request(http::verb::put, "/api/v1/trunks/acme", R"({"name": "other"})").status, 400u);
+  ASSERT_EQ(f.request(http::verb::put, "/api/v1/trunks/acme", R"({"inbound_addresses": ["198.51.100.0/24"]})").status, 200u);
+  ASSERT_EQ(f.request(http::verb::delete_, "/api/v1/trunks/acme").status, 204u);
+  ASSERT_EQ(f.request(http::verb::delete_, "/api/v1/trunks/acme").status, 404u);
+
+  const auto announced = f.events->published();
+  ASSERT_EQ(announced.size(), 3u);
+  for (const auto& [topic, name] : announced) {
+    EXPECT_EQ(topic, "trunks/changed");
+    EXPECT_EQ(name, "acme");
+  }
+}
+
 // A trunk's credentials are the carrier's: only manage-trunks reads or writes them.
 TEST(TrunksApiTest, TrunksTakeManageTrunks) {
   TrunksFixture f;
@@ -168,17 +189,24 @@ TEST(TrunksApiTest, TrunksTakeManageTrunks) {
   EXPECT_EQ(f.request(http::verb::get, "/api/v1/trunks", "", "").status, 401u);
 }
 
-// The registration the node holding a trunk last reported, for an operator to see without reading a log.
-TEST(TrunksApiTest, ATrunkShowsItsRegistrationAsTheNodeHoldingItReported) {
+// The registration the node holding a trunk last recorded, read from the datastore on any node, for an operator
+// to see without reading a log. A trunk that registers nowhere shows none, whatever was recorded.
+TEST(TrunksApiTest, ATrunkShowsItsRegistrationAsTheNodeHoldingItRecorded) {
   TrunksFixture f;
-  auto statuses = std::make_shared<TrunkStatuses>();
-  f.trunks->statuses_register(statuses);
   ASSERT_EQ(f.request(http::verb::post, "/api/v1/trunks", TrunksFixture::acme()).status, 201u);
 
   EXPECT_TRUE(f.request(http::verb::get, "/api/v1/trunks/acme").json().at("registration").is_null()) << "nobody has said yet";
 
-  statuses->observe("trunks/acme/status", R"({"trunk": "acme", "node": "sip-0001", "state": "registered", "detail": "200 OK", "expires_at": 1})");
-  const auto registration = f.request(http::verb::get, "/api/v1/trunks/acme").json().at("registration").as_object();
+  ASSERT_TRUE(f.store->trunk_status_set(
+      "acme", boost::json::parse(R"({"trunk": "acme", "node": "sip-0001", "state": "registered", "detail": "200 OK", "expires_at": 1})").as_object()));
+  auto registration = f.request(http::verb::get, "/api/v1/trunks/acme").json().at("registration").as_object();
   EXPECT_EQ(registration.at("node").as_string(), "sip-0001");
   EXPECT_EQ(registration.at("state").as_string(), "registered");
+
+  const auto listed = boost::json::parse(f.request(http::verb::get, "/api/v1/trunks").body).as_array();
+  ASSERT_EQ(listed.size(), 1u);
+  EXPECT_EQ(listed[0].as_object().at("registration").as_object().at("node").as_string(), "sip-0001");
+
+  ASSERT_EQ(f.request(http::verb::put, "/api/v1/trunks/acme", R"({"register": {"enabled": false}})").status, 200u);
+  EXPECT_TRUE(f.request(http::verb::get, "/api/v1/trunks/acme").json().at("registration").is_null());
 }

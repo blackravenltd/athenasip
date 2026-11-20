@@ -7,6 +7,7 @@
 #pragma once
 
 #include <array>
+#include <vector>
 #include <boost/asio/dispatch.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/system/error_code.hpp>
@@ -63,10 +64,19 @@ class Channel : public std::enable_shared_from_this<Channel> {
 
   // The node id from the peer's cluster certificate on a mutual TLS flow. Empty for a client.
   std::string peer_node() const { return _connection ? _connection->peer_identity() : std::string(); }
+
+  // The far end's address, without the port: what a source is limited and challenged as (AuthGuard).
+  std::string source_address() const { return _connection ? _connection->remote_endpoint().address().to_string() : std::string(); }
+
   bool is_authenticated_as(const std::string& aor) const;
 
   // Whether a REGISTER has authenticated anyone over this connection.
   bool is_authenticated() const { return !_authenticated.empty(); }
+
+  // Whether a whole message has ever arrived on this flow, and when the flow opened: a connection that has said
+  // nothing for sip.flow_first_message_timeout is closed by the sweep.
+  bool has_spoken() const { return _spoke; }
+  std::chrono::steady_clock::time_point opened_at() const { return _opened_at; }
 
   State state = State::Normal;
 
@@ -85,8 +95,28 @@ class Channel : public std::enable_shared_from_this<Channel> {
 
   std::set<std::string> _authenticated;
 
-  std::array<char, 65535> _read_buffer;
+  // Allocated by the first stream read: a UDP flow, which the server reads for, never pays for it.
+  std::vector<char> _read_buffer;
   std::string _buffer;
+
+  bool _spoke = false;
+  std::chrono::steady_clock::time_point _opened_at = std::chrono::steady_clock::now();
+
+  // What a stream may carry before the node stops reading it: a header block with no end past this is a peer
+  // that is not speaking SIP, and a body declared past this is one the node will not hold. A datagram is bounded
+  // by its own size.
+  static constexpr std::size_t kMaxHeaderBytes = 16 * 1024;
+  static constexpr std::size_t kMaxMessageBytes = 64 * 1024;
+
+  // Where the search for the end of the header block resumes, so a stream fed a byte at a time is read once.
+  std::size_t _scan_from = 0;
+
+  // The stream cannot be framed any further: say why, drop what was buffered, close.
+  void _overflow(const std::string& why);
+
+  // RFC 3261 18.3: the Content-Length, when the message carries exactly one that is a number; false for garbage, a
+  // value that overflows, or two of them, which a peer that meant to confuse the framing would send.
+  static bool _content_length_of(const std::shared_ptr<SIPMessage>& message, std::size_t& length);
 
   // CRLFs seen since the last message, for the keep-alive ping of RFC 5626 4.4.1.
   int _crlf_run = 0;

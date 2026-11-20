@@ -156,7 +156,7 @@ ua.call("sip:bob@example.com", {
 
 The page itself must be served over HTTPS, or the browser gives it no microphone or
 camera. The node can serve it from `http.files` on the HTTPS listener, which is how the
-[AthenaSIP Admin](https://github.com/blackravenltd/athenasip-admin) console's softphone
+console's softphone ([console/](../../console/))
 works.
 
 ## When it does not work

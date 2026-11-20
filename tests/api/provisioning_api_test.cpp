@@ -13,6 +13,7 @@
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/json.hpp>
+#include <ctime>
 #include <memory>
 #include <string>
 
@@ -21,6 +22,7 @@
 #include "../helpers/sync_datastore_helper.h"
 #include "../mocks/logger_mock.h"
 #include "api/admin_api.h"
+#include "digest.h"
 #include "api/router.h"
 #include "api/subscriber_auth.h"
 #include "config.h"
@@ -145,10 +147,13 @@ struct ApiFixture {
     const auto ha1 = hash(user + ":" + realm + ":" + password);
     const auto response = hash(ha1 + ":" + nonce + ":00000001:0a4f113b:auth:" + hash(std::string(http::to_string(method)) + ":" + target));
 
-    return request(method, target, "", body,
-                   "Digest username=\"" + user + "\", realm=\"" + realm + "\", nonce=\"" + nonce + "\", uri=\"" + target + "\", algorithm=" + algorithm +
-                       ", qop=auth, nc=00000001, cnonce=\"0a4f113b\", response=\"" + response + "\"");
+    last_authorization = "Digest username=\"" + user + "\", realm=\"" + realm + "\", nonce=\"" + nonce + "\", uri=\"" + target + "\", algorithm=" + algorithm +
+                         ", qop=auth, nc=00000001, cnonce=\"0a4f113b\", response=\"" + response + "\"";
+    return request(method, target, "", body, last_authorization);
   }
+
+  // The Authorization the last as_subscriber sent, for sending again.
+  std::string last_authorization;
 
   Response post(const std::string& target, const std::string& body, const std::string& token = "admin-token") {
     return request(http::verb::post, target, token, body);
@@ -482,6 +487,24 @@ TEST(ProvisioningApiTest, ASubscriberWithNoCredentialIsRefused) {
   auto response = f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice"})");
   EXPECT_EQ(response.status, 400u);
   EXPECT_EQ(response.json().at("error").at("code").as_string(), "invalid_request");
+}
+
+// Review finding 29: a realm is a host name and a user an RFC 3261 user part. Realm a:b with user c and realm a with
+// user b:c would otherwise share a store key, and a name with a space or an @ makes an identity that does not parse.
+TEST(ProvisioningApiTest, RealmAndUserNamesMustBeWhatSipCanCarry) {
+  ApiFixture f;
+
+  for (const auto* name : {"a:b", "with space", "at@example.com", "-bad.example"}) {
+    auto response = f.post("/api/v1/realms", std::string(R"({"name":")") + name + R"("})");
+    EXPECT_EQ(response.status, 400u) << name;
+  }
+
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+  for (const auto* user : {"b:c", "a@b", "with space", "100%"}) {
+    auto response = f.post("/api/v1/realms/example.com/subscribers", std::string(R"({"user":")") + user + R"(","password":"secret"})");
+    EXPECT_EQ(response.status, 400u) << user;
+  }
+  EXPECT_EQ(f.post("/api/v1/realms/example.com/subscribers", R"({"user":"+15551234567","password":"secret"})").status, 201u);
 }
 
 TEST(ProvisioningApiTest, ASubscriberIsDeleted) {
@@ -877,6 +900,35 @@ TEST(ProvisioningApiTest, AWrongPasswordOrAnUnknownSubscriberIsChallengedAgain) 
   EXPECT_EQ(f.as_subscriber(http::verb::get, "/api/v1/subscriber/example.com/config", "mallory", "secret").status, 401u);
 }
 
+// RFC 7616 5.6: the same answer sent again is a replay, challenged with stale=true so the client signs a fresh
+// nonce without asking its user. A nonce that has expired gets the same.
+TEST(ProvisioningApiTest, AReplayedOrExpiredSubscriberAnswerIsChallengedAsStale) {
+  ApiFixture f;
+  seed_alice(f);
+
+  ASSERT_EQ(f.as_subscriber(http::verb::get, "/api/v1/subscriber/example.com/config", "alice", "secret").status, 200u);
+  auto replayed = f.request(http::verb::get, "/api/v1/subscriber/example.com/config", "", "", f.last_authorization);
+  ASSERT_EQ(replayed.status, 401u);
+  ASSERT_EQ(replayed.challenges.size(), 2u);
+  EXPECT_NE(replayed.challenges[0].find("stale=true"), std::string::npos) << replayed.challenges[0];
+
+  // A first answer is not stale, nor is one over a nonce that was never minted here.
+  auto wrong = f.as_subscriber(http::verb::get, "/api/v1/subscriber/example.com/config", "alice", "wrong");
+  ASSERT_EQ(wrong.status, 401u);
+  EXPECT_EQ(wrong.challenges[0].find("stale"), std::string::npos) << wrong.challenges[0];
+
+  const auto realm = f.store->realm_get_by_name("example.com");
+  const auto expired = digest::nonce_mint(*realm, "", std::time(nullptr) - static_cast<std::time_t>(realm->nonce_expiry) - 1);
+  const auto target = std::string("/api/v1/subscriber/example.com/config");
+  const auto ha1 = Util::md5("alice:example.com:secret");
+  const auto response = Util::md5(ha1 + ":" + expired + ":00000001:0a4f113b:auth:" + Util::md5("GET:" + target));
+  auto stale = f.request(http::verb::get, target, "", "",
+                         "Digest username=\"alice\", realm=\"example.com\", nonce=\"" + expired + "\", uri=\"" + target +
+                             "\", algorithm=MD5, qop=auth, nc=00000001, cnonce=\"0a4f113b\", response=\"" + response + "\"");
+  ASSERT_EQ(stale.status, 401u);
+  EXPECT_NE(stale.challenges[0].find("stale=true"), std::string::npos) << stale.challenges[0];
+}
+
 // A user's session opens no subscriber route, and a subscriber's credentials open no other route.
 TEST(ProvisioningApiTest, SubscriberAndUserCredentialsDoNotCross) {
   ApiFixture f;
@@ -949,4 +1001,71 @@ TEST(ProvisioningApiTest, RealmsAndSubscribersCarryAttributesForScripts) {
   EXPECT_EQ(alice.at("caller_id").as_string(), "+442012345678");
 
   EXPECT_EQ(f.put("/api/v1/realms/example.com", R"({"attributes":"country=44"})").status, 400u);
+}
+
+// A realm's dtmf is chosen, shown over the server's default, and taken back with null; an unknown method is a 400.
+TEST(ProvisioningApiTest, ARealmChoosesHowItsLegsSendKeyPresses) {
+  ApiFixture f;
+  f.config->behaviour.dtmf = types::MediaPolicy::Dtmf::Rfc4733;
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+
+  auto json = f.get("/api/v1/realms/example.com").json();
+  EXPECT_TRUE(json.at("behaviour").at("dtmf").is_null());
+  EXPECT_EQ(json.at("behaviour_effective").at("dtmf").as_string(), "rfc4733") << "the server's, inherited";
+  EXPECT_EQ(json.at("behaviour_default").at("dtmf").as_string(), "rfc4733");
+
+  auto updated = f.put("/api/v1/realms/example.com", R"({"behaviour":{"dtmf":"info"}})");
+  ASSERT_EQ(updated.status, 200u) << updated.body;
+  json = f.get("/api/v1/realms/example.com").json();
+  EXPECT_EQ(json.at("behaviour").at("dtmf").as_string(), "info");
+  EXPECT_EQ(json.at("behaviour_effective").at("dtmf").as_string(), "info");
+
+  EXPECT_EQ(f.put("/api/v1/realms/example.com", R"({"behaviour":{"dtmf":"rfc2833"}})").status, 400u);
+  EXPECT_EQ(f.get("/api/v1/realms/example.com").json().at("behaviour").at("dtmf").as_string(), "info") << "unchanged";
+
+  ASSERT_EQ(f.put("/api/v1/realms/example.com", R"({"behaviour":{"dtmf":null}})").status, 200u);
+  EXPECT_TRUE(f.get("/api/v1/realms/example.com").json().at("behaviour").at("dtmf").is_null());
+}
+
+// A subscriber's dtmf is its endpoint's, above the realm's.
+TEST(ProvisioningApiTest, ASubscriberChoosesHowItsEndpointSendsKeyPresses) {
+  ApiFixture f;
+  ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+  ASSERT_EQ(f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice","password":"secret","behaviour":{"dtmf":"inband"}})").status, 201u);
+  EXPECT_EQ(f.get("/api/v1/realms/example.com/subscribers/alice").json().at("behaviour").at("dtmf").as_string(), "inband");
+
+  EXPECT_EQ(f.put("/api/v1/realms/example.com/subscribers/alice", R"({"behaviour":{"dtmf":"tones"}})").status, 400u);
+
+  ASSERT_EQ(f.put("/api/v1/realms/example.com/subscribers/alice", R"({"behaviour":{"dtmf":null}})").status, 200u);
+  EXPECT_TRUE(f.get("/api/v1/realms/example.com/subscribers/alice").json().at("behaviour").at("dtmf").is_null());
+}
+
+// RFC 4579 (docs/design/conferencing.md): the subscriber's configuration says which prefixes are rooms, from the
+// focus trunks serving the realm, so a softphone can offer a "join a room" screen; none without a focus.
+TEST(ProvisioningApiTest, TheSubscriberConfigurationNamesTheRoomsItMayDial) {
+  ApiFixture f;
+  seed_alice(f);
+
+  auto before = alice_config(f);
+  ASSERT_EQ(before.status, 200u) << before.body;
+  EXPECT_TRUE(before.json().at("realm").at("conferences").as_array().empty());
+
+  auto rooms = std::make_shared<types::Trunk>();
+  rooms->name = "rooms";
+  rooms->uri = "sip:192.0.2.40:5060";
+  rooms->attributes = boost::json::parse(R"({"focus": {"prefix": "conf-", "realms": ["example.com"]}})").as_object();
+  ASSERT_TRUE(f.store->trunk_create(rooms));
+
+  auto elsewhere = std::make_shared<types::Trunk>();
+  elsewhere->name = "elsewhere";
+  elsewhere->uri = "sip:192.0.2.41:5060";
+  elsewhere->attributes = boost::json::parse(R"({"focus": {"prefix": "room-", "realms": ["other.example"]}})").as_object();
+  ASSERT_TRUE(f.store->trunk_create(elsewhere));
+
+  auto after = alice_config(f);
+  ASSERT_EQ(after.status, 200u) << after.body;
+  const auto conferences = after.json().at("realm").at("conferences").as_array();
+  ASSERT_EQ(conferences.size(), 1u) << after.body;
+  EXPECT_EQ(conferences[0].as_object().at("prefix").as_string(), "conf-");
+  EXPECT_EQ(conferences[0].as_object().at("trunk").as_string(), "rooms");
 }

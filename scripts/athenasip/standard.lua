@@ -51,8 +51,29 @@ function std.authorize(request)
   return a.auth.reject(403, "Forbidden")
 end
 
+-- The trunk that is the focus of a conference URI (RFC 4579, docs/design/conferencing.md): one whose focus
+-- attribute's prefix starts the user part, in one of the realms it names or in any when it names none. Nil for a
+-- URI that is nobody's room, or on a store that holds no trunks.
+function std.focus_for(uri)
+  if not uri or not uri.user or uri.user == "" then return nil end
+  local ok, trunks = pcall(a.store.trunks)
+  if not ok then return nil end
+
+  for _, trunk in ipairs(trunks) do
+    local focus = trunk.attributes.focus
+    if type(focus) == "table" and type(focus.prefix) == "string" and focus.prefix ~= "" and uri.user:sub(1, #focus.prefix) == focus.prefix then
+      local realms = focus.realms
+      if type(realms) ~= "table" or #realms == 0 then return trunk end
+      for _, name in ipairs(realms) do
+        if name:lower() == uri.host:lower() then return trunk end
+      end
+    end
+  end
+  return nil
+end
+
 -- RFC 3261 16.5: a Request-URI in a realm here is an address of record, whose bindings are the targets. Any other
--- is itself the only target.
+-- is itself the only target. A conference URI goes to its focus, whatever the method, as a call out by a trunk.
 function std.route(request)
   local called = request.uri
   local realm = a.store.realm(called.host:lower())
@@ -60,6 +81,14 @@ function std.route(request)
   if not realm then
     local server = a.config.behaviour
     return a.route.forward({a.route.uri(called)}, {media = server, rewrite_contact = server.rewrite_contact})
+  end
+
+  local focus = std.focus_for(called)
+  if focus then
+    local behaviour = realm.behaviour_effective
+    local media = {media_anchor = behaviour.media_anchor, media_profile = focus.attributes.media_profile or "rtp"}
+    return a.route.forward({a.route.trunk(focus, {user = called.user, focus = called, dtmf = focus.attributes.dtmf})},
+                           {media = media, rewrite_contact = behaviour.rewrite_contact})
   end
 
   local subscriber = a.store.subscriber(called)
@@ -91,6 +120,11 @@ function std.register(request)
 
   local realm = a.store.realm(to.uri.host:lower())
   if realm then
+    -- A room is not a subscriber.
+    if std.focus_for(to.uri) then
+      a.log.info("REGISTER for " .. tostring(to.uri) .. ", a conference, not a subscriber - 403")
+      return a.register.reject(403, "Forbidden")
+    end
     return a.register.accept{
       realm = realm,
       max_expires = realm.registration_timeout,

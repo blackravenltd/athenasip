@@ -29,6 +29,20 @@ inline std::string subscriber_status(const std::string& uri) { return "subscribe
 // Retained: whether the node holding a trunk's registration has it registered.
 inline std::string trunk_status(const std::string& name) { return "trunks/" + name + "/status"; }
 
+// A trunk created, changed or deleted over the API, so every node reads the trunks now rather than at its next
+// scan. A signal, not state: a node that misses it reads them at the scan anyway.
+inline std::string trunks_changed() { return "trunks/changed"; }
+
+// A Digest answer over SIP that did not verify, and an address banned for too many (AuthGuard). Signals, for a
+// console or a fail2ban-like watcher; not retained.
+inline std::string auth_failed() { return "security/auth_failed"; }
+inline std::string source_banned() { return "security/banned"; }
+// An AOR closed to strangers for too many failures for it; an administrator lifting a ban or reopening an AOR. Every
+// node holds what the others ban and lifts what any lifts, so the list is the cluster's.
+inline std::string aor_closed() { return "security/aor_closed"; }
+inline std::string ban_lifted() { return "security/ban_lifted"; }
+inline std::string aor_reopened() { return "security/aor_reopened"; }
+
 inline std::string call_register(const std::string& call_id) { return "calls/" + call_id + "/register"; }
 
 inline std::string call_unregister(const std::string& call_id) { return "calls/" + call_id + "/unregister"; }

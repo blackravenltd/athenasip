@@ -14,6 +14,23 @@ week, under Milestone 1. Everything after that is dated as it landed.
 
 Newest first. The detail is below, oldest first.
 
+- **0.13.0** (2026-11-20): the external review's fixes, conferencing, and the project's
+  housekeeping as one of the cluster stack. From the review: streams and flows held within
+  limits, Content-Length as one number or nothing, Digest nonces that carry their own proof and
+  are bound to the address they went to, SIP-side guessing limits with bans held cluster-wide,
+  the plain admin API on loopback unless told otherwise, strict start lines and field names,
+  rtpengine replies taken only from the engine asked, and the protocol gaps it named. A
+  conference URI routes to a focus behind a trunk (RFC 4579) under `lua://`, with rooms listed,
+  a participant removed over the API and a BLF key for a room. DTMF is converted between RFC
+  4733, INFO and in-band per leg; instant messages are relayed and held; trunk status, re-offer
+  reports and the dialog are kept in the datastore; `mqtts://` speaks TLS to the broker. The
+  admin console lives in `console/`. Packages are built with debhelper for Debian 13, nine
+  libFuzzer targets cover the parsers of untrusted bytes, and `tools/ci.sh` runs on GitHub. The
+  gate, on an arm64 build machine: release, ASan with UBSan, TSan (1644 tests each) and the fuzz
+  targets, and it found the presence API answering from the Core strand, which is fixed. Not in
+  the gate: the sipp and cluster harnesses, which need Docker Compose and are being rebuilt for
+  the build cluster, and LeakSanitizer, whose first run reported leaks at the suite's exit that
+  are not yet sorted (`ACTIVE.md`).
 - **0.12.0** (2026-10-13): presence and BLF, and the first real carrier. The node is the
   notifier for `presence` and `dialog` (RFC 6665, 3856, 4235) and accepts PUBLISH (RFC
   3903): a desk phone's BLF key lights while a colleague is on a call, across the cluster,
@@ -3452,3 +3469,479 @@ The design is `docs/design/scripting-1-the-node.md` and `scripting-2-the-engine.
       lists the attribute. Proved on node-b first with the same setting in its `main.lua`: the call
       then carried G722 both ways (rtpengine: 917 packets in from the carrier, 1184 out). The suite 1529
       of 1530 with Redis and MQTT, the one skipped without a resolver.
+
+### Before and after the 0.12.0 tag (2026-10-13)
+
+- [x] **`sip.log_messages` logs at debug**, and the reference says so (`230dca5`, in
+      `0.12.0`): with `log.level` above debug it logs nothing. Found running the first trunk
+      against the carrier.
+- [x] **Both live nodes on `0.12.0`**: the binary built on node-a and copied to node-b with
+      the systemd unit, the previous binary kept as `/usr/local/bin/athenasip.previous` on
+      each; `verify.py` 15 of 15 after.
+
+### The plan rationalised against the tree (2026-10-26)
+
+- [x] **`ACTIVE.md` checked item by item against the code**, the done milestones' scaffolding
+      removed, and what is open split into Next (nothing blocks it, in order) and Waiting on
+      something (each with what it waits on). Closed by the check: why the sipp CANCEL
+      scenarios never caught the 487's CSeq (`cancel_after_180.xml:148` is
+      `<recv response="487"/>` with no CSeq check, and sipp matches a response to the call),
+      which becomes an item to assert it; and the policy's hook count, six since `watch`.
+      The `CLAUDE.md` the plan and `docs/design/presence.md` cited for the sanitizer and
+      test-first rules has never been in the tree: they now cite `docs/testing.md` and
+      `CONTRIBUTING.md`, which say the same.
+
+### Trunks, what running against the carrier found (2026-10-26)
+
+The six findings of the 2026-10-12 run, each with a unit test watched failing first. The
+suite 1536 ran, 1471 passed, 65 skipped (Redis, MQTT and the resolver are not on this
+machine); the sipp harnesses wait on Docker (`ACTIVE.md`, Waiting on something).
+
+- [x] **A trunk changed over the API is read at once.** `TrunksAPI` announces each create,
+      change and delete as `trunks/changed` (the trunk's name; `docs/events.md`), and every
+      node's `TrunkRegistrar` listens from `start()` and scans on the strand when it hears it,
+      the scan it prompts standing in for the one that was due. A node that misses the message
+      still scans at `kScan`. `TrunkRegistrarTest.ATrunkChangedOnTheBusIsReadAtOnce`,
+      `TrunksApiTest.AChangeIsAnnouncedOnTheBus`; the quick start says a few seconds again.
+- [x] **An OPTIONS to the Contact the node registered is answered by the node** (RFC 3261
+      11.2): `TrunkRegistrar::registered_contact(user)` says whether a user part is a Contact
+      this node registers, and the proxy answers an OPTIONS for it at this node's address
+      rather than routing it in by the number, so the subscriber's phone no longer answers the
+      carrier's keepalive every minute. A NOTIFY there, a voicemail's `message-summary`, is
+      still routed in by the number: that is the phone's message-waiting light, and nothing
+      stores voicemail here (Decisions, 2026-10-11).
+      `ProxyTrunkTest.AnOptionsToTheContactRegisteredToTheCarrierIsAnsweredByThisNode`.
+- [x] **Service codes are a trunk attribute**: `codes`, a list such as `["*55", "*XX"]`, with
+      `X` any digit, `N` 2 to 9 and `Z` 1 to 9 as a dialplan writes them. `athenasip.trunks`
+      sends a code out, as dialled, by every trunk whose `codes` match, lower priority first;
+      node-b's `main.lua` lines for `*55` are no longer needed.
+      `TrunksScriptTest.AServiceCodeGoesOutByTheTrunkThatListsIt`.
+- [x] **Why the sipp CANCEL scenarios never caught the 487's CSeq**: `cancel_after_180.xml`
+      received the 487 with no check, and sipp matches a response to the call, not to the
+      CSeq method. It now asserts `CSeq: 2 INVITE` on the 487, on one node and across two
+      (`across-cancel-ringing` runs the same file). Not yet run here: no Docker.
+- [x] **`--check` behind a router that hairpins**: a STUN answer naming a private address is
+      reported as the server having been answered from inside the network, with the public
+      address unverified, instead of failing it.
+      `CliCheckTest.APrivateAddressFromTheStunServerIsAHairpinNotAFailure`.
+- [x] **The re-offer report names the subscriber** whose binding refused the offer
+      (`Target.subscriber`), not the Request-URI the carrier dialled; the Request-URI only when
+      the target is nobody's binding. `MediaProfileTest.TheReportNamesTheSubscriberNotWhatWasDialled`.
+- [x] **`src/headers/uint_header.h` includes `<cstdint>`**: GCC 16 with Boost 1.92 no longer
+      brings it in transitively, and the tree did not build on this machine without it.
+
+### DTMF, every flavour: the setting, the engine's conversion, and INFO played in (2026-10-26)
+
+The 2026-10-12 decision, built as far as this machine proves it: the unit suite 1551, 1484
+passed, 67 skipped (Redis, MQTT, the resolver). Each piece with its test watched failing first.
+
+- [x] **`behaviour.dtmf`**: `auto` (default), `rfc4733`, `info` or `inband`, on the server, a
+      realm and a subscriber (API, Redis, Lua), with `MediaPolicy::Dtmf` beside the profile. A
+      trunk's `dtmf` attribute goes with the target (`route.trunk`/`route.uri` option `dtmf`)
+      for a call out and as the route's `caller_dtmf` for a call in; `athenasip.trunks` passes
+      both. `docs/behaviour.md` has the rules, the reference the setting.
+- [x] **Each leg's method on the call.** `Participant.dtmf_setting` from the trunk's word, the
+      subscriber's setting, else the realm's; `Participant.dtmf` once the leg has described
+      itself, `auto` resolving to `rfc4733` when it offered `telephone-event`
+      (`Flags::telephone_event`) and `inband` otherwise. Shown as `participants[].dtmf` in
+      `/api/v1/calls`. The caller's subscriber is read for every INVITE now, not only a delayed
+      offer (`Proxy::_read_caller_profile`).
+- [x] **The engine told both ends' methods** (`Flags::dtmf_from`, `dtmf_to`). rtpengine converts:
+      events to tones by `always transcode` with `telephone-event` stripped, tones to events by
+      `codec-transcode=telephone-event`, and `inject DTMF` in the offer and the answer when a leg
+      speaks INFO. An engine without `transcode` leaves them, and the operator is warned once per
+      call, naming both methods.
+- [x] **INFO played in**: `MediaEngine::play_dtmf` (contract 22, capability `dtmf`; rtpengine
+      sends one `play DTMF` per digit, from the pressing participant's tag). A SIP INFO
+      (`application/dtmf-relay` or `application/dtmf`) from a leg whose far leg takes events or
+      tones is answered 200 by the node and played, never forwarded; between two INFO legs it is
+      forwarded as before.
+
+### DTMF: key presses rtpengine hears, sent on as INFO, and the documentation (2026-10-26)
+
+- [x] **`rtpengine.dtmf_events`** (host:port, port 0 for any; off when unset): the driver
+      listens there, names it as `DTMF-log-dest` on the offer towards a leg set to `info` (with
+      `block DTMF`, so that leg is not also fed the events or tones), and turns each JSON
+      datagram rtpengine sends (`callid`, `source_tag`, `event` 0 to 15, `duration`) into a
+      `MediaEngine::DtmfEvent` for the listener `Core::media_register` installs
+      (`MediaEngine::dtmf_listen`, in the contract). `LocalUA::key_pressed` finds the dialog, and
+      when the other leg speaks INFO sends it one of the node's own, `application/dtmf-relay`
+      with `Signal` and `Duration`, built as the BYE is (`_bye_to` is now `_request_to`, with a
+      body). Found by the test on the way: the INFO went to the pressing end first.
+- [x] **Docs**: `docs/quick-start/phones.md` (Key presses), `first-trunk.md` (the `dtmf`
+      attribute), `docs/troubleshooting.md` (Key presses do nothing, from
+      `participants[].dtmf`), `docs/media.md`, `docs/configuration.md` and the reference.
+- [x] The suite 1555, 1489 passed, 66 skipped.
+
+### State into the datastore: the trunk registration status as a record (2026-10-26)
+
+- [x] **`Datastore::trunk_status_set` and `trunk_status_get`**: one record per trunk
+      ({trunk, node, state, detail, expires_at, at}), replaced whole, deleted with the trunk, in
+      `memory://` and `redis://` (`athena:trunk-status:<name>`). The registrar writes it from
+      the node holding the lease, before the first REGISTER goes and on every answer or failure,
+      and then publishes the retained `trunks/<name>/status` as the signal. `/api/v1/trunks`
+      reads the record on any node; `TrunkStatuses`, the map each node rebuilt from the bus, is
+      gone with its subscription. `TrunkRegistrarTest.TheStatusIsARecordInTheDatastore`,
+      `TrunksApiTest.ATrunkShowsItsRegistrationAsTheNodeHoldingItRecorded`, and the datastore
+      tests in memory and Redis. The suite 1558, 1491 passed, 67 skipped.
+
+### State into the datastore: the re-offer reports as records (2026-10-26)
+
+- [x] **`Datastore::reoffer_record` and `reoffer_list`**: one record per subscriber and refused
+      profile, counted up and timed on each report, most recent first; `memory://` through the
+      `media::Reoffers` map as before (now with a sequence to order two from one second),
+      `redis://` as `athena:reoffer:<subscriber>|<profile>` with an index set and a thirty-day
+      expiry. The proxy records through the store and waits for nothing; `/api/v1/media/reoffers`
+      reads the store on any node; `Core::reoffers()` is gone. The suite 1560, 1491 passed, 68
+      skipped, one failure in `DnsResolverTest` that is the machine's (`ACTIVE.md`).
+
+### State into the datastore: the dialog in the call record (2026-10-26)
+
+- [x] **The call record carries the dialog whole** (`types::Dialog::to_json`/`from_json`: both
+      ends, their targets, the route set, the sequence numbers, the state, the session timer on
+      the wall clock, the trunk and its CSeq offset), and is written whenever the dialog moves
+      under the call, not only when the call's state does: `Dialogs` raises a revision on every
+      change it records, a sequence number moving on any in-dialog request included, and
+      `Core::_on_dialog_change` writes when the revision it last wrote differs. Nothing on the
+      call path waits for the write.
+- [x] **A request in a dialog this node does not hold reads the record** (`Core::_deliver_to_tu`,
+      once, before anything sees the request): a call whose dialog matches is taken in
+      (`Dialogs::adopt`, the session deadline rebuilt from the wall-clock expiry) and held as
+      any other, its media left where the node that began it anchored it. Proved with a second
+      `Core` of the same name on the same store, as the node after a restart: Bob's BYE reaching
+      it closes the record (`CoreDialogRecordTest`), where before the record stayed Connected
+      for ever. `docs/architecture.md` says what moves and what does not.
+- [x] **`DnsResolverTest` was flaky here** for two reasons: the fake nameserver bound UDP on an
+      ephemeral port and then TCP on the same number, which another test's listener could
+      still hold (a constructor exception, the `0 ms` failures); and three tests counted
+      attempts against 100 to 300 ms timers while the fake answered from its own thread. The
+      fake takes its port from TCP first and retries on a collision, and those tests give it a
+      second. Five runs of the suite clean. The whole suite 1567, 1498 passed, 69 skipped.
+
+### A URI's host compares without regard to case (2026-10-26)
+
+- [x] **A subscriber is found whatever case the request spells the realm in.** Both datastores
+      keyed subscribers by the host as written, so `sip:bob@EXAMPLE.COM` reached nobody; RFC
+      3261 19.1.4 compares hosts case-insensitively and user parts not. The key folds the host
+      now (`memory://` and `redis://`; a Redis store written before this has lower-case realm
+      names already, since realms are created by name). `MemoryDatastoreTest` and
+      `RedisDatastoreTest.ASubscriberIsFoundWhateverCaseTheHostIsSpeltIn`,
+      `ProxyTest.ARequestUriHostInAnyCaseReachesTheSubscriber`.
+
+### The on_call_ended hook (2026-10-26)
+
+- [x] **`on_call_ended(call)`**, the seventh hook: a notification, asked nothing, when a call
+      this node held ends by a BYE from either end or by the node's own hand (the media
+      timeout, the duration limit, an administrator), once per call. `call` is `{id, state,
+      created_at, answered_at, ended_at, participants = {{identity, subscriber, trunk,
+      originator}}}`. `builtin://` ignores it; a script without it is left alone.
+      `CallEndedHookTest`, with a script counting in the datastore. The suite 1572, 1502
+      passed, 70 skipped.
+
+### SIP MESSAGE relay, proved and described (2026-10-26)
+
+- [x] **A MESSAGE out of a dialog is relayed** (RFC 3428): authenticated as a call is, routed by
+      the policy to the subscriber's devices with its body untouched and no Record-Route, its
+      final response relayed back, 480 with nobody to send to, and a sleeping device pushed as
+      for a call (the push branch takes any request for a new dialog or none). The proxy did
+      this already; `ProxyTest.AnInstantMessageIsRelayedWithItsBodyAndItsAnswer` holds it, and
+      `docs/how-a-call-works.md` has An instant message. Nothing is stored for later.
+- [x] **`ProxyDatagramTest` raced its own TCP connect**: the flow was asserted right after
+      `settle()`, which drains the strand but not the io_context thread the connect completes
+      on; the helper waits up to two seconds. Five runs clean. The suite 1573, 1503 passed, 70
+      skipped.
+
+### Conferencing, steps 1 and 2: a focus is a trunk, and the room on the call (2026-10-26)
+
+`docs/design/conferencing.md` is the design; these are its first two steps, built on the
+answers it proposes to its four questions.
+
+- [x] **A focus is a trunk** with `attributes.focus` (`{prefix, realms}`). A request to a URI
+      whose user part starts with the prefix, in one of the realms (any when none is named),
+      goes to the trunk with the room as the user part and the room on the target
+      (`Target::focus`, `route.trunk`/`route.uri` option `focus`), whatever the method, with
+      the trunk's `media_profile` (default `rtp`) and `dtmf`; a REGISTER for a room is refused
+      403 before any challenge. `athenasip.standard` (`std.focus_for`) and `builtin://`
+      (`focus_for`, `to_focus`, the builtin reading a trunk attribute for the first time:
+      decision 2 of the design) do it alike, so `athenasip.trunks` needs nothing and the
+      equivalence test holds. `TrunksScriptTest.AConferenceUriGoesToItsFocusAndCannotRegister`,
+      `ProxyTest.ACallToAConferenceUriGoesToItsFocusAndTheCallRecordsTheRoom`,
+      `RegistrarTest.ARegisterForAConferenceUriIsRefused`.
+- [x] **The room on the call**: `Call::focus` set from the answering target, shown as `focus`
+      in `/api/v1/calls`, and `GET /api/v1/conferences` (and `/{uri}`) listing every room with
+      anyone in it from the call records, grouped by conference URI, with the focus trunk and
+      each participant. The `dialog` package treats a room as a presentity of its own: a BLF
+      key for `conf-sales` lights while anyone's call to its focus is up
+      (`Notifier::dialogs_of`, `docs/presence.md`). `CallsApiTest.TheRoomsWithAnyoneInThemAreListedFromTheCallRecords`,
+      `DialogPackageTest.AKeyForARoomLightsWhileAnyoneIsInIt`. The suite 1578, 1508 passed,
+      70 skipped.
+- [x] Found on the way: an object compiled while its source was being edited is newer than
+      the source and trusted by the next build; `ACTIVE.md` says to touch what changed.
+
+### Conferencing, steps 3 and 4: a participant removed, and the rooms in the configuration (2026-10-26)
+
+- [x] **`DELETE /api/v1/conferences/{uri}/calls/{call}`** (`manage-cluster`): the call must be in
+      that room, and is ended by the node's own BYE to both ends (`LocalUA::hang_up`, as
+      `DELETE /api/v1/calls/{call}` does); 404 for a call not in the room, 409 for one the focus
+      has not answered. `CallsHangUpTest.AParticipantIsRemovedFromTheRoomItsCallIsIn`.
+- [x] **`realm.conferences` in `GET /api/v1/subscriber/{realm}/config`**: the prefix and trunk of
+      each focus serving the realm, for a softphone's "join a room" screen; empty without one.
+      `ProvisioningApiTest.TheSubscriberConfigurationNamesTheRoomsItMayDial`. The suite 1580,
+      1510 passed, 70 skipped. Steps 5 to 8 need FreeSWITCH (`ACTIVE.md`).
+
+### The perimeter, review items 1 and 2: framing caps and a strict Content-Length (2026-10-26)
+
+`reviews/2026-10-25/athenasip-review.md`, findings 1, 2, 4, 5 and 6, each with a regression
+test from the finding.
+
+- [x] **A stream is read within limits** (`Channel::kMaxHeaderBytes` 16 KB, `kMaxMessageBytes`
+      64 KB): a header block with no end past 16 KB closes the connection; a body declared past
+      the message cap is answered 513 Message Too Large (RFC 3261 18.1.1) and the stream closed,
+      since the body cannot be skipped; the search for the end of the header block resumes
+      three bytes before where it last stopped, so a drip of one byte at a time is read once,
+      not rescanned from the start.
+- [x] **Content-Length is one number or nothing** (`UIntHeader::parse` through
+      `std::from_chars`, 1*DIGIT and 64 bits wide, which Max-Forwards and Expires read too):
+      garbage, a sign, an overflow or two Content-Length headers leave a stream unframeable,
+      so the request is answered 400 (`SIPHeader::invalidate`, answered by Core as a malformed
+      start line is) and the connection closed; a datagram so framed is discarded.
+      `SIPMessage::body_length` is `size_t`, so 2^32 is no longer 0: the bytes after it were
+      a request of the attacker's. `TransportFramingTest` gains five, `UIntHeaderTest` is new;
+      `docs/architecture.md` has the limits. The suite 1587, 1517 passed, 70 skipped.
+
+### The perimeter, review item 3: flows held within limits (2026-10-26)
+
+Findings 3 and 10, each with a regression test.
+
+- [x] **A connection is held only while it speaks or has registered somebody.** The flow sweep
+      closes a TCP, TLS or WebSocket connection that has sent no whole message within
+      `sip.flow_first_message_timeout` (30 s), and one that registered nobody when idle past
+      `sip.flow_idle_timeout`; a connection a subscriber registered over ends with its socket,
+      as RFC 5626 keeps it alive. `sip.max_connections` (10000) and
+      `sip.max_connections_per_source` (64) cap what the node holds in all and from one address,
+      UDP sources included, enforced in `Core::channel_register` with a count per source.
+- [x] **A spoofed UDP flood holds nothing**: a source the node has no flow for earns one only
+      with a datagram that parses as SIP (a start line, Via and CSeq) or is a STUN keep-alive,
+      checked in `UDPServer` before any state is made; and a channel's 64 KB read buffer is
+      allocated by its first stream read, so a UDP flow never has one. `CoreFlowSweepTest`
+      gains three and loses the rule that a reliable flow is never swept;
+      `TransportFramingTest.UdpRubbishFromANewSourceMakesNoFlow`. The suite 1591, 1520
+      passed, 70 skipped.
+
+### The perimeter, review item 4: nonces and Digest (2026-10-26)
+
+Findings 20, 21, 22, 23, 25 and 26, each with a regression test.
+
+- [x] **A nonce carries its own proof.** `digest::nonce_mint` makes one from the realm's id,
+      sixteen random bytes and the second it was minted, with an HMAC-SHA256 under the realm's
+      `nonce_secret`; `digest::nonce_state` tells good, stale (older than the realm's
+      `nonce_expiry`, now 300 s by default) and bad (not minted under that secret, malformed,
+      or from the future) with nothing looked up. The datastore's `nonce_create` and
+      `nonce_check` are gone from the contract, both drivers, the sync helper and their tests
+      (`plugins::API_VERSION` 23); `Core` keeps no nonce cache. A stale nonce is challenged with
+      `stale=true` over SIP (`digest::add_challenges`) and HTTP alike, a forged one plainly.
+- [x] **An answer is good once.** `digest::NonceCounts`, one in `Core` for SIP and one in
+      `SubscriberAuth` for HTTP: without qop the nonce is spent by the first right answer; with
+      qop=auth the `nc` must rise, parsed as eight hex digits. Checked after the response
+      verifies, so only a right answer spends a count; a replay is challenged as stale. Bounded
+      at 100000, pruned with the nonces' expiry.
+- [x] **The uri is the Request-URI.** `digest::verify` takes the request's own URI and refuses
+      credentials that sign another (RFC 3261 22.4 (5)); over HTTP it is the request target.
+      Responses and nonce signatures compare with `CRYPTO_memcmp`.
+- [x] **`Util::generate_random_string` draws from `RAND_bytes`**, so branches, tags, Call-IDs,
+      cookies and subscription ids are not mt19937's.
+- [x] Tests: `DigestTest` gains five (uri, mint and state, expiry, counts, bound);
+      `RegistrarTest` five (forged not stale, expired stale, replay stale, nc rising, uri);
+      `ProxyAuthenticationTest` two (replay, uri); `ProvisioningApiTest` one (HTTP replay and
+      expiry). `docs/authentication.md` has a Nonces section; the troubleshooting table, the
+      clustering table, the call walkthrough and the realm's `nonce_expiry` in the OpenAPI
+      document follow.
+- [x] **For the console, asked for over the session bridge the same day:** `DELETE
+      /conferences/{uri}/calls/{call}` in the OpenAPI document (it was in the code only), the
+      conference `uri` parameter said to be percent-encoded as one segment, the trunk
+      `registration` fields given their formats, and `/api/v1/events` serving `trunks/#` (the
+      registration status and `trunks/changed`) so a trunks screen need not poll;
+      `EventsApiTest.TrunkChangesArriveOnTheStream`, `OpenApiDocumentTest` asserts the three
+      conference operations. The suite 1602, 1533 passed, 69 skipped; the Lua equivalence
+      subset 351 passed.
+
+### Conferencing, decision 2 taken in: rooms are the scripts' (2026-10-26)
+
+- [x] **`builtin://` no longer routes rooms or refuses their REGISTER**: the focus routing and the
+      refusal added with step 1 are taken out of `src/policy/builtin_policy.cpp`, and the two
+      tests that proved them (`ProxyTest.ACallToAConferenceUriGoesToItsFocusAndTheCallRecordsTheRoom`,
+      `RegistrarTest.ARegisterForAConferenceUriIsRefused`) run under `ATHENA_TEST_POLICY=lua`
+      and skip under builtin (`CoreFixture::lua_policy`). `docs/scripting.md`'s `focus` row,
+      `docs/design/conferencing.md` and the OpenAPI `TrunkWrite.attributes` say so.
+- [x] **A room has one name.** `SIPUri::canonical_address` is `sip:user@host`, host lowercased,
+      nothing else; the proxy records the call's `focus` as that, and `GET /conferences/{uri}`
+      and the DELETE canonicalise what they are asked, so a client that dialled
+      `sip:conf-sales@EXAMPLE.com;transport=ws` finds `sip:conf-sales@example.com`.
+      `SIPUriTest.TheCanonicalAddressIsUserAtLowercaseHost`; the proxy and calls API tests
+      dial the room with a transport parameter and the host in capitals. The suite 1603, 1532
+      passed, 71 skipped (the two conference tests among them, which pass in the Lua subset of
+      365).
+
+### The perimeter, review item 5: guessing over SIP (2026-10-26)
+
+Finding 24, with regression tests.
+
+- [x] **`AuthGuard`** (`src/auth_guard.*`), one per node in `Core`: wrong Digest answers (a
+      response that does not match, or one for no subscriber) counted by source address and by
+      address of record. An address past `sip.auth_limits.failures_source` (10, then 5 a minute)
+      is banned for `ban_seconds` (900) and nothing it sends is answered (`Core::process_message`);
+      an AOR past `failures_aor` is closed for as long to every address that has not
+      authenticated as it in two hours, answered 403 with `Retry-After`, so a spread guess stops
+      without shutting out the subscriber's phone; past `challenges_source` (200, then 600 a
+      minute) a request needing a challenge is 403. Registrar, proxy and the REGISTER relay
+      alike; cluster peers are never limited.
+- [x] **A nonce is bound to the address its challenge went to**: its HMAC covers the address,
+      which it does not carry, so a nonce fetched from one address and answered from a spoofed
+      one is challenged and counts against nobody. A ban cannot be aimed at a phone by forging
+      its source. HTTP nonces bind to nothing (the HTTP limits cover that side).
+- [x] **For fail2ban and a console**: each failure is one warning line, `Authentication failure
+      from <address> for <aor>: <why>`, and `security/auth_failed` on the bus; the ban is
+      `security/banned`. `docs/authentication.md` has a Guessing section with a filter;
+      `docs/events.md` the topics; the configuration reference the settings.
+- [x] `api::RateLimiter` is bounded even when no bucket has refilled: keys made up faster than
+      the refill no longer grow it without limit; the fullest go first.
+- [x] Tests: `AuthGuardTest` (five), `RateLimiterTest.ItIsBoundedEvenWhenNoBucketHasRefilled`,
+      `DigestTest.ANonceIsGoodOnlyFromTheAddressItWasSentTo`, `RegistrarTest` four (ban and
+      silence, AOR closed to strangers only, a spoofed nonce counts against nobody, challenge
+      limit), `ProxyAuthenticationTest.AnAddressThatKeepsGuessingIsBanned`. The suite 1615,
+      1543 passed, 72 skipped; the Lua subset 370 passed.
+
+### The perimeter, review item 9: protocol gaps (2026-10-26)
+
+Findings 11, 12, 13, 14 and 16, each with a regression test.
+
+- [x] **The ACK for a failure carries the INVITE's Route set** (RFC 3261 17.1.1.3), every value
+      in order, so it follows the INVITE through loose routers.
+      `InviteClientTransactionTest.TheAckCarriesTheInvitesRouteSet`.
+- [x] **Proxy-Require is enforced** (16.3 step 5): this proxy supports no extension a request
+      can require of it, so any tag is 420 Bad Extension with each in `Unsupported`; ACK and
+      CANCEL pass. `ProxyTest.AProxyRequireThisProxyLacksIs420WithUnsupported`.
+- [x] **The registrar orders updates** (10.3 step 7): a binding records the Call-ID and CSeq
+      of the REGISTER that wrote it (`types::Location`, both drivers, plugin API 24); a
+      REGISTER from that Call-ID whose CSeq is not higher fails 500 and changes nothing, and
+      `Contact: *` leaves such a binding alone. `RegistrarTest` gains two; the test fixtures
+      that sent every REGISTER with CSeq 1 now count up, as a client does;
+      `RedisDatastoreTest.ABindingKeepsTheCallIdAndCSeqThatWroteIt`.
+- [x] **An expiry is clamped, not wrapped**: `Expires` and a contact's `expires` beyond 32 bits
+      are the largest there is, then the realm's maximum, never 0; a contact `expires` or
+      `reg-id` that is not wholly a number is refused, where `stoul` read `60x` as 60.
+      `RegistrarTest.AnExpiryBeyondThirtyTwoBitsIsTheRealmsMaximumNotARemoval`.
+- [x] **A Max-Forwards that is no number is 400**, not forwarded undecremented.
+      `ProxyTest.AMaxForwardsThatIsNoNumberIs400AndIsNotForwarded`.
+- [x] **Redis and MQTT run here for the first time**, in throwaway containers now that Docker
+      is installed (`docs/testing.md` shows how): 1622, 1619 passed, 3 skipped, every round
+      trip written since `0.12.0` included. Without them the suite is 1621, 1550 passed; the
+      Lua subset 375 passed.
+
+### The perimeter, review item 7: CI and warnings (2026-10-26)
+
+Findings 43 and 44.
+
+- [x] **`.github/workflows/ci.yml`**: on every push to `develop` or `main` and every pull
+      request. Boost 1.89 built once and cached; the unit suite with Redis and MQTT under
+      strict warnings as errors, under ASan with UBSan, and under TSan; every sipp harness
+      (`run.sh` plain, `--lua` and `--rtpengine`, `cluster.sh` plain and `--lua`, `trunk.sh`),
+      with the logs kept when one fails. No fuzz smoke yet (item 6, clang). It has not run:
+      this machine cannot run GitHub Actions, and the runners have GCC 14, not 16.
+- [x] **Warnings**: `ATHENA_WARNINGS` (`default` is `-Wall -Wextra`, `strict` adds
+      `-Wconversion`) and `ATHENA_WERROR` on the server's own sources. The strict build had
+      222 distinct findings; the server is now clean under strict as errors. Six initialiser
+      lists put in declaration order (none read a member before it was made), thirteen
+      conversions made explicit where the value was already bounded, two unused parameters.
+      `-Wmissing-field-initializers` (51, the brace-the-first-member idiom) and `-Wshadow`
+      (136, read by kind with a sample of each, none a mistake) are left out, with the reasons
+      in `CMakeLists.txt` and `docs/testing.md`, Warnings and CI. The tests are not built
+      with the flags yet. The suite 1622, 1550 passed.
+- [x] **The workflow is removed** the same day, at the maintainer's request: no GitHub workflow for CI or
+      CD (Decisions). The warning options stay; `docs/testing.md` says how to run them by hand.
+
+### The perimeter, the rest: findings 28, 29 and 34, and the bans in the console (2026-10-26)
+
+- [x] **Web Push only to public addresses** (34): `HttpsClient` with `public_only` filters what
+      it resolved and refuses a name with nothing public left; Web Push sets it unless
+      `push.webpush.allow_private_destinations`. `HttpsClientTest`, `WebpushPushServiceTest`.
+- [x] **Plain admin HTTP on loopback by default** (28): `http.address` defaults to 127.0.0.1,
+      HTTPS with no address to every interface, and a warning when plain HTTP is bound beyond
+      loopback. `ConfigTest.PlainHttpBindsLoopbackAndHttpsEveryInterfaceByDefault`.
+- [x] **Realm and user names validated** (29): a realm is a host name (`Util::is_realm_name`)
+      and a user an RFC 3261 user part (`Util::is_sip_user`), so no store key is read two ways
+      and every identity parses. `UtilTest`, `ProvisioningApiTest`.
+- [x] **The bans in the console** (the maintainer, through the console session): `GET` and `DELETE
+      /api/v1/security/bans[/{source}]` and `/api/v1/security/closed-aors[/{aor}]`
+      (`view-cluster-status` to read, `manage-cluster` to lift). Every node holds the bans and
+      closures the others publish (`security/banned`, `security/aor_closed`) and lifts what
+      any lifts (`security/ban_lifted`, `security/aor_reopened`); a lift forgets the failures
+      counted. `SecurityApiTest` (four), `AuthGuardTest` (three more), the OpenAPI document.
+- [x] **MD5 stays the last challenge**, in a field of its own: JsSIP keeps only a header's last
+      field and answers only MD5 (from the AthenaPhone session). A comment in
+      `digest::add_challenges`; `RegistrarTest.TheChallengesAreSha256ThenMd5AsSeparateFields`.
+      The suite 1636, 1564 passed.
+
+### The perimeter, the rest: finding 15, a cap on bindings (2026-10-26)
+
+- [x] **A realm caps the bindings one AOR holds**: `registration_max_bindings`, 10 by default,
+      0 for none; a REGISTER that would leave more is `403 Too Many Bindings` and changes
+      nothing, counting what it replaces and removes. The realm record (both drivers), the API,
+      the OpenAPI document and the Lua realm view carry it.
+      `RegistrarTest.AnAorHoldsNoMoreBindingsThanTheRealmAllows`.
+- [x] **Found on the way, RFC 3261 10.2.1**: the registrar took the first contact's `expires`
+      parameter as the default for every contact, so `<a>;expires=0, <b>` removed b too. The
+      Expires header field is the default now, and a contact's parameter its own.
+      `RegistrarTest.AContactsExpiresParameterIsItsOwnNotTheOthersDefault`.
+- [x] **Transaction timers validated** (38): T1 at least 1 ms, T2 at least T1, T4 and the
+      A, B, E, F, G, H multipliers at least 1, and a value that is no number is refused; a node
+      with one that cannot work does not start. `ConfigTest.TransactionTimersThatCannotWorkAreRefused`.
+- [x] **rtpengine replies only from the engine** (33): a reply whose cookie matches is dropped
+      unless it comes from the engine the request went to, and the request waits for the
+      engine's own; the cookie is `RAND_bytes` since item 4.
+      `RtpengineMediaEngineTest.AReplyFromAnywhereButTheEngineIsDropped`, watched failing first.
+- [x] **No blocking resolve on a strand** (35): the rtpengine driver looks up engines named by a
+      host name with `async_resolve` on its strand, one after another, before it sets up the pool.
+      `PublicAddress::start`'s first lookup stays synchronous on purpose, on the caller's thread at
+      start, and says so. `RtpengineMediaEngineTest.AnEngineNamedByAHostNameIsLookedUpAndUsed`.
+- [x] **Strict start line and fields** (8, 9): the Method is an RFC 3261 token, the Request-URI
+      must parse, nothing follows `SIP/2.0`, every field name is a token, and a line with no colon
+      ends the parse there, so nothing half parsed passes the 400 gate. Bare LF stays accepted
+      (RFC 3261 7.5), documented in `docs/architecture.md`. `SIPHeaderRFCTest` gains four, watched
+      failing first.
+- [x] **Two tests of mine fixed**: `SecurityApiTest.ALiftEndsTheBanAndIsToldToTheCluster` read the
+      bus before the delivery, and it and `RegistrarTest.AnAddressThatKeepsGuessingIsBanned...`
+      let a late delivery write into a dead local, which crashed one suite run. `BusHeard`
+      (`tests/helpers/bus_heard_helper.h`) holds what was heard by shared pointer and waits for
+      it. Fifty repeats and three full runs clean: 1645, 1573 passed.
+- [x] **Small ones** (17, 18, 19, 36, 40, 41): the dead `SIPMessage::get_transaction_id` and its two
+      tests go (the matcher has its own); one Allow list, `SIPMessage::allowed_methods`, for every
+      response and the OPTIONS answer; `sip.max_transactions` (50000) answers a new request past it
+      503 with Retry-After; the unreachable blocking TLS handshake goes; the `print` functions that
+      printed a pointer go; `send()` on an INVITE client transaction logs an error.
+- [x] **An INFO the engine cannot play is forwarded** (from the AthenaPhone suite): rtpengine
+      refuses to inject DTMF before a leg has sent media ("No SSRC context"), and the node answered
+      that INFO with a bare 500 and lost the digit. It now forwards the INFO end to end instead.
+      `MediaProfileTest.AnInfoTheEngineCannotPlayIsForwardedInstead`, watched failing first. The
+      suite 1644, 1572 passed.
+- [x] **Login timing** (31): an unknown or disabled user is checked against a decoy hash of the
+      same cost, so a refusal takes as long whether or not the name exists (0 ms against 164 ms
+      before). `SessionsTest.AnUnknownUserTakesAsLongToRefuseAsAWrongPassword`, watched failing.
+- [x] **WebSocket upgrade** (37): `sip.websocket_allowed_origins` refuses a browser page from any
+      other origin with 403 (a request with no Origin, a phone's, always passes), and beast holds
+      no message over 64 KB. `WebsocketServerTest.AnOriginNotAllowedIsRefusedAtTheUpgrade`.
+- [x] **Credentials out of the logs** (39): the datastore, event and media URLs are logged with
+      their password masked (`cli::redacted`, as `--check` already did); nonces are no longer
+      logged since item 4.
+- [x] **A shared connection's trust documented** (27): `docs/authentication.md` and the scripting
+      reference say what one registration on a connection an SBC or proxy shares trusts, and that
+      `from_must_match = false` must not be set where one reaches. The suite 1646, 1574 passed.
+- [x] **The AthenaPhone suite against the fixture** (f001aab): 121 passed, 0 failed; live tests 20
+      passed, INFO DTMF and the subscriber config among them; no 400 from the stricter parser.
+- [x] **MQTT over TLS** (32): `mqtts://` speaks TLS 1.2 or later to the broker, on 8883 by
+      default, verifying its certificate against the system's roots and `mqtt.ca_file` and its
+      name against the URL's host (SNI and host name verification set by the customisation points
+      boost.mqtt5 asks for). One client or the other behind an adapter, so the run logic is
+      unchanged. `MqttEventSystemTest.TlsCarriesAMessageToABrokerItTrusts` and
+      `...TlsRefusesABrokerItDoesNotTrust`, against a Mosquitto with a TLS listener in Docker
+      (`ATHENA_TEST_MQTTS_URL`). With Redis, MQTT and MQTT over TLS the suite is 1648, 1645 passed.

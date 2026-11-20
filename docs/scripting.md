@@ -110,6 +110,7 @@ The entry script defines up to six global functions.
 | `authorize(request)` | A request that starts something reaches the node, or a REGISTER for another domain is to be forwarded | How the caller is proved: `athenasip.auth.accept()`, `.digest{}`, `.trusted{}` or `.reject()` |
 | `route(request)` | An authorised request has no Route and no flow token to follow | `athenasip.route.forward()` with targets, `athenasip.route.reply()`, a bare list of targets, or `nil` (480) |
 | `on_failure(request, response, state)` | A branch ended in 3xx to 5xx and there may be more to try | `"next"`, `"stop"`, or a list of targets to try first. Optional: without it, `"next"`. |
+| `on_call_ended(call)` | A call this node held has ended, by a BYE from either end or by the node's own hand | Nothing: a notification, for counters and records the script keeps. `call` is `{id, state, created_at, answered_at, ended_at, participants = {{identity, subscriber, trunk, originator}, ...}}`. Optional. |
 | `register(request)` | A REGISTER arrives, before it is challenged | `athenasip.register.accept{}`, `.forward()` or `.reject()` |
 | `watch(request, watcher, presentity, package)` | An authorised SUBSCRIBE for `presence` or `dialog` reaches the node as notifier | `athenasip.watch.accept()`, `.reject(code, reason)` (403 by default) or `.forward()`, which routes it as before presence. Optional: without it, a watcher proven in the presentity's own realm is accepted and anyone else refused. |
 | `init()` | The scripts load | Nothing. Optional. Cannot read the store. |
@@ -180,14 +181,14 @@ Everything is under the global `athenasip`.
 | `athenasip.node.id`, `.public_address` | |
 | `athenasip.node.names(host, port)` | Whether an address is this node's own |
 | `athenasip.config.get("sip.forward_register")` | Any setting, by its dotted name; its default when the file does not set it |
-| `athenasip.config.behaviour` | The server's `{media_anchor, media_profile, qualify_interval, rewrite_contact}` |
+| `athenasip.config.behaviour` | The server's `{media_anchor, media_profile, dtmf, qualify_interval, rewrite_contact}` |
 | `athenasip.log.debug/info/warn/error(text)` | To the node's log, with the script's file and line. `print` logs at info. |
 | `athenasip.sip.uri(text)` | Parses a URI |
 | `athenasip.sip.in_range(range, address)` | Whether an address is in a CIDR range, or in any of a list of them |
 
-A realm has `name`, `id`, `registration_timeout`, `registration_minimum`, `behaviour`
+A realm has `name`, `id`, `registration_timeout`, `registration_minimum`, `registration_max_bindings`, `behaviour`
 (what it set itself), `behaviour_effective` (over the server's) and `attributes`. A
-subscriber has `id`, `aor`, `uri`, `realm`, `media_profile` and `attributes`.
+subscriber has `id`, `aor`, `uri`, `realm`, `media_profile`, `dtmf` and `attributes`.
 
 `attributes` is a free-form object set over the API on a realm, a subscriber or a trunk
 (`"attributes": {"forward_to": "sip:bob@example.com"}`), which a script reads as plain Lua
@@ -213,9 +214,14 @@ A trunk is a carrier or a PBX, kept over the API (`/api/v1/trunks`, role
 One node of a cluster registers each trunk that asks to be, holding a lease on it in the
 datastore; when that node stops, another takes over within two minutes. What it last
 reported is the trunk's `registration` in the API (`registering`, `registered` or
-`failed`, with the reason), and is published, retained, as `trunks/<name>/status`. A
+`failed`, with the reason), a record in the datastore that any node's API reads, and is
+published, retained, as `trunks/<name>/status` to say it changed. A
 changed trunk is registered again; a removed one, or one no longer registering, is
-unregistered.
+unregistered. The API announces each create, change and delete as `trunks/changed`, so
+every node acts within a few seconds; one that misses the message reads the trunks on
+its own every 30 seconds. An OPTIONS the carrier sends to the Contact the node registered
+is answered by the node (RFC 3261 11.2), not routed to a subscriber; a NOTIFY there, such
+as a voicemail's `message-summary`, is routed in by the number like a call.
 
 A script sees `name`, `uri`, `username`, `registers`, `contact_user` (the user part of the
 Contact registered, which is the username when the trunk does not set one),
@@ -240,13 +246,13 @@ error, which `pcall` catches like any other.
 |---|---|
 | `athenasip.auth.accept()` | |
 | `athenasip.auth.trusted{trunk = name}` | A request from a trunk, proved by where it came from; `route` sees `request.trunk` |
-| `athenasip.auth.digest{realm = realm, from_must_match = true}` | `realm = "*"` is any realm here, with a challenge for each. `from_must_match = false` accepts any subscriber's credentials, and any connection a subscriber registered over. |
+| `athenasip.auth.digest{realm = realm, from_must_match = true}` | `realm = "*"` is any realm here, with a challenge for each. `from_must_match = false` accepts any subscriber's credentials, and any connection a subscriber registered over, whoever sends on it: never on a node a shared connection (an SBC, another proxy) reaches ([Authentication](authentication.md)). |
 | `athenasip.auth.reject(code, reason)` | |
 | `athenasip.route.subscriber(subscriber, {bindings = b})` | Every device of a subscriber, in the node's order, by push or through another node as needed |
 | `{ring_timeout = seconds}` | On any target: how long an INVITE may ring there before the node moves on, with a CANCEL if it rang. Unset is timer C, three minutes. |
-| `athenasip.route.uri(uri, {next_hop = uri, trunk = name})` | One URI, located by RFC 3263; with `trunk`, the node answers that trunk's challenges |
-| `athenasip.route.trunk(trunk, {user = number})` | Out by a trunk: its URI with the number as the user part |
-| `athenasip.route.forward(targets, {media = m, rewrite_contact = r})` | `media` as `config.behaviour` and `behaviour_effective` give it |
+| `athenasip.route.uri(uri, {next_hop = uri, trunk = name, dtmf = d})` | One URI, located by RFC 3263; with `trunk`, the node answers that trunk's challenges. `dtmf` says how that leg sends key presses when the script knows ([Behaviour](behaviour.md#dtmf)). |
+| `athenasip.route.trunk(trunk, {user = number, dtmf = d})` | Out by a trunk: its URI with the number as the user part. `athenasip.trunks` passes the trunk's `dtmf` attribute. |
+| `athenasip.route.forward(targets, {media = m, rewrite_contact = r, caller_dtmf = d})` | `media` as `config.behaviour` and `behaviour_effective` give it. `caller_dtmf` is how the caller's leg sends key presses when the policy knows better than its subscriber or realm: the trunk's attribute, for a call in by a trunk ([Behaviour](behaviour.md#dtmf)). |
 | `athenasip.route.reply(code, reason)` | Also `athenasip.route.reject` |
 | `athenasip.register.accept{realm =, max_expires =, min_expires =, qualify =}` | |
 | `athenasip.register.forward()` | RFC 3261 10.3 step 1 |
@@ -311,8 +317,11 @@ and a trunk for a UK carrier, created with `POST /api/v1/trunks`, looks like thi
 | `caller_id` | The number presented calling out, set as the From and asserted in `P-Asserted-Identity` |
 | `from_domain` | The host of that From, for a carrier that checks the From is its own |
 | `media_profile` | The media the carrier is offered, as a realm's `media_profile`: `rtp` (default, what carriers speak), `mirror`, `webrtc` or `srtp`. A browser or WebRTC phone calling out is converted by the media engine. |
+| `dtmf` | How the carrier sends key presses, as a realm's `dtmf`: `auto` (default), `rfc4733`, `info` or `inband` ([Behaviour](behaviour.md#dtmf)) |
 | `numbers` | The numbers it brings in, each to an address of record |
 | `default` | Where a number in no list goes; without it such a call is refused |
+| `codes` | Service codes it takes, sent as dialled: `["*55", "*XX"]`. `X` is any digit, `N` 2 to 9, `Z` 1 to 9, as a dialplan writes them. A carrier's voicemail (`*55` at one carrier) is one. |
+| `focus` | The trunk is a conference focus (RFC 4579): `{"prefix": "conf-", "realms": ["example.com"]}`. A request to a URI whose user part starts with the prefix, in one of the realms (any when none is named), goes to the trunk with the room as the user part, whatever the method; a REGISTER for a room is refused 403. `athenasip.standard` does this, so a node on `lua://` needs no script written for it; `builtin://` does not route rooms, since what a room is belongs to policy, and reads the attribute only for the API's views ([Conferencing](design/conferencing.md)). |
 
 What it does:
 
@@ -320,8 +329,9 @@ What it does:
   from the Request-URI or, when that is the Contact the node registered, from the To, names a
   subscriber through `numbers`. Anything else is refused 404.
 - **Out**: a caller in one of the node's realms dialling a number that is no subscriber goes
-  out by every trunk that carries it, best first. 404, 410, 484, 486, 600, 603 or 604 from a
-  trunk is the answer; any other failure tries the next trunk.
+  out by every trunk that carries it, best first; a service code, by every trunk whose
+  `codes` match it. 404, 410, 484, 486, 600, 603 or 604 from a trunk is the answer; any
+  other failure tries the next trunk.
 - Everything else is `athenasip.standard`.
 
 `docs/scripting/examples/` has scripts built on it: a hunt group, out-of-hours routing to an

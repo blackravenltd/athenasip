@@ -15,7 +15,7 @@ apt install build-essential cmake pkg-config git wget ca-certificates \
   libssl-dev libyaml-cpp-dev libnghttp2-dev liblua5.4-dev
 ```
 
-AthenaSIP needs Boost 1.87 or newer. Debian 13 ships 1.83, so build the three libraries it
+AthenaSIP needs Boost 1.87.0 or newer. Debian 13 ships 1.83.0, so build the three libraries it
 links and install them with the headers under `/usr/local`:
 
 ```
@@ -102,8 +102,8 @@ http:
     enable: false                      # until a console is installed for it to serve
 ```
 
-The admin API answers on plain HTTP on 8080 too. Bind `http.address` to `127.0.0.1` to
-keep that on the host and use 8443 from elsewhere. `sip.allow_unencrypted: false`, with
+The admin API answers on plain HTTP on 8080 too, on this host only: `http.address` is
+`127.0.0.1` unless set. Use 8443 from elsewhere. `sip.allow_unencrypted: false`, with
 the `udp`, `tcp` and plain `websocket` sections removed, limits phones to TLS.
 
 Check the file before starting anything:

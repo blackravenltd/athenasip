@@ -12,6 +12,7 @@
 
 #include "../config.h"
 #include "../loggers/logger_scoped.h"
+#include "../call.h"
 #include "../script/lua_library.h"
 
 namespace athenasip::policy {
@@ -153,6 +154,24 @@ std::optional<Target> target_at(lua_State* L, int idx, std::string& error) {
     lua_pop(L, 1);
     auto target = Target::to(std::move(uri), std::move(next_hop), text_field(L, idx, "trunk"));
     if (const auto ring = integer_field(L, idx, "ring_timeout"); ring && *ring > 0) target.ring_timeout = std::chrono::seconds(*ring);
+    if (const auto dtmf = text_field(L, idx, "dtmf"); !dtmf.empty()) {
+      target.dtmf = types::MediaPolicy::parse_dtmf(dtmf);
+      if (!target.dtmf) {
+        error = "dtmf \"" + dtmf + "\" is none of auto, rfc4733, info, inband";
+        return std::nullopt;
+      }
+    }
+
+    lua_getfield(L, idx, "focus");
+    if (!lua_isnil(L, -1)) {
+      target.focus = script::to_uri(L, -1);
+      if (!target.focus) {
+        lua_pop(L, 1);
+        error = "a target's focus does not parse as a URI";
+        return std::nullopt;
+      }
+    }
+    lua_pop(L, 1);
     return target;
   }
 
@@ -178,8 +197,8 @@ std::optional<std::vector<Target>> targets_at(lua_State* L, int idx, std::string
   return targets;
 }
 
-// {media_anchor =, media_profile =}, as athenasip.config.behaviour and a realm's behaviour_effective give it, over
-// the server's defaults.
+// {media_anchor =, media_profile =, dtmf =}, as athenasip.config.behaviour and a realm's behaviour_effective give
+// it, over the server's defaults.
 std::optional<types::MediaPolicy> media_at(lua_State* L, int idx, const types::MediaPolicy& server, std::string& error) {
   if (!lua_istable(L, idx)) return std::nullopt;
 
@@ -193,6 +212,15 @@ std::optional<types::MediaPolicy> media_at(lua_State* L, int idx, const types::M
       return std::nullopt;
     }
     media.profiles = *parsed;
+  }
+
+  if (const auto dtmf = text_field(L, idx, "dtmf"); !dtmf.empty()) {
+    const auto parsed = types::MediaPolicy::parse_dtmf(dtmf);
+    if (!parsed) {
+      error = "dtmf \"" + dtmf + "\" is none of auto, rfc4733, info, inband";
+      return std::nullopt;
+    }
+    media.dtmf = *parsed;
   }
   return media;
 }
@@ -272,6 +300,11 @@ plugins::Result<RouteDecision> route_from(lua_State* L, int results, const Confi
   if (!error.empty()) return refused<RouteDecision>("route", error);
 
   out.rewrite_contact = boolean_field(L, idx, "rewrite_contact");
+
+  if (const auto dtmf = text_field(L, idx, "caller_dtmf"); !dtmf.empty()) {
+    out.caller_dtmf = types::MediaPolicy::parse_dtmf(dtmf);
+    if (!out.caller_dtmf) return refused<RouteDecision>("route", "caller_dtmf \"" + dtmf + "\" is none of auto, rfc4733, info, inband");
+  }
   return plugins::Result<RouteDecision>::success(std::move(out));
 }
 
@@ -460,6 +493,47 @@ void LuaPolicy::register_(plugins::Executor on, std::shared_ptr<RequestView> req
       [on, handler](lua_State* L, int results, const std::string& error) {
         _complete(on, handler, error.empty() ? register_from(L, results) : plugins::Result<RegisterDecision>::failure(error));
       });
+}
+
+// on_call_ended(call): {id, state, created_at, answered_at, ended_at, participants = {{identity, subscriber,
+// trunk, originator}, ...}}. Nothing is answered; an error is logged by the engine and changes nothing.
+void LuaPolicy::on_call_ended(plugins::Executor on, std::shared_ptr<Call> call) {
+  if (!call || !_engine->defines("on_call_ended")) return;
+
+  _engine->call(
+      on, "on_call_ended",
+      [call](lua_State* L, const std::shared_ptr<bool>&) {
+        auto set_text = [L](const char* key, const std::string& value) {
+          lua_pushlstring(L, value.data(), value.size());
+          lua_setfield(L, -2, key);
+        };
+        auto set_integer = [L](const char* key, std::int64_t value) {
+          lua_pushinteger(L, static_cast<lua_Integer>(value));
+          lua_setfield(L, -2, key);
+        };
+
+        lua_createtable(L, 0, 6);
+        set_text("id", call->id);
+        set_text("state", Call::state_to_string(call->state));
+        set_integer("created_at", static_cast<std::int64_t>(call->created_at));
+        set_integer("answered_at", static_cast<std::int64_t>(call->answered_at));
+        set_integer("ended_at", static_cast<std::int64_t>(call->ended_at));
+
+        lua_createtable(L, static_cast<int>(call->participants.size()), 0);
+        lua_Integer index = 1;
+        for (const auto& participant : call->participants) {
+          lua_createtable(L, 0, 4);
+          set_text("identity", participant.identity && participant.identity->uri ? participant.identity->uri->to_string() : "");
+          set_text("subscriber", participant.subscriber);
+          set_text("trunk", participant.trunk);
+          lua_pushboolean(L, participant.originator);
+          lua_setfield(L, -2, "originator");
+          lua_seti(L, -2, index++);
+        }
+        lua_setfield(L, -2, "participants");
+        return 1;
+      },
+      [](lua_State*, int, const std::string&) {});
 }
 
 void LuaPolicy::watch(plugins::Executor on, std::shared_ptr<RequestView> request, std::string watcher, std::string presentity, std::string package,

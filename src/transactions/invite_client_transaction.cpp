@@ -92,8 +92,10 @@ void InviteClientTransaction::receive(std::shared_ptr<SIPMessage> message) {
 }
 
 void InviteClientTransaction::send(std::shared_ptr<SIPMessage> message) {
-  // A client transaction sends exactly one request, through start().
-  (void)message;
+  // A client transaction sends exactly one request, through start(); a call here is a mistake in the caller, said
+  // rather than swallowed (review finding 41).
+  _logger->error("send() on an INVITE client transaction, which sends only its request through start() - " +
+                 (message && message->header ? message->header->summary() : std::string("nothing")) + " dropped");
 }
 
 std::shared_ptr<SIPMessage> InviteClientTransaction::_build_ack(const std::shared_ptr<SIPMessage>& response) const {
@@ -122,6 +124,12 @@ std::shared_ptr<SIPMessage> InviteClientTransaction::_build_ack(const std::share
   if (_request->header->contains("CSeq")) {
     auto cseq = _request->header->headers_map["CSeq"][0]->as<headers::CSeqHeader>();
     if (cseq != nullptr) ack->header->add("CSeq", std::make_shared<headers::CSeqHeader>(cseq->sequence, "ACK"));
+  }
+
+  // RFC 3261 17.1.1.3: the INVITE's Route header fields, all of them in order, so the ACK takes the INVITE's path
+  // through loose routers rather than its own, and the far end stops retransmitting its failure.
+  if (_request->header->contains("Route")) {
+    for (const auto& route : _request->header->headers_map["Route"]) ack->header->add("Route", route);
   }
 
   if (_request->header->contains("Max-Forwards")) ack->header->add("Max-Forwards", _request->header->headers_map["Max-Forwards"][0]);

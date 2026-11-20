@@ -6,6 +6,10 @@
 //
 #pragma once
 
+#include <charconv>
+#include <cstdint>
+#include <system_error>
+
 #include "header.h"
 
 using namespace athenasip;

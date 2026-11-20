@@ -2,13 +2,20 @@
 
 # AthenaSIP
 
+[![CI](https://github.com/blackravenltd/athenasip/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/blackravenltd/athenasip/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/blackravenltd/athenasip/branch/develop/graph/badge.svg)](https://codecov.io/gh/blackravenltd/athenasip)
+[![CodeQL](https://github.com/blackravenltd/athenasip/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/blackravenltd/athenasip/actions/workflows/codeql.yml)
+[![Release](https://img.shields.io/github/v/release/blackravenltd/athenasip)](https://github.com/blackravenltd/athenasip/releases)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+
 AthenaSIP is a multi-master, clusterable SIP server built for standards compliance and
 for running without a telecoms background. A single node needs nothing but itself, and
 every external piece it can use is a plugin behind one contract.
 
-* **Standards first.** RFC 3261 in full - the four transaction machines, timers A to K,
-  section 16 proxy behaviour - plus 3263, 3327, 3581, 4028, 5626, 6026, 7118, 8760 and
-  8866, proven by a sipp harness.
+* **Standards first.** RFC 3261's transaction layer (the four machines, timers A to K),
+  registrar (section 10) and section 16 proxying, plus 3263, 3327, 3581, 4028, 5626, 6026,
+  7118, 8760 and 8866, proven by unit tests on a fake clock and a sipp harness. Where it
+  departs from them is listed in [Limits](#limits).
 * **Runs on its own.** The defaults are `memory://`, `local://` and `builtin://`: one
   process, no database, no broker, no media server. Redis, MQTT and rtpengine are there
   when you want them.
@@ -38,13 +45,27 @@ every external piece it can use is a plugin behind one contract.
 * **API-driven.** Realms, subscribers and administrators are provisioned over a JSON API
   described by [an OpenAPI document](docs/api/openapi.yaml). Administrators sign in for a
   session token and hold roles; there are no configured tokens to leak. The React admin
-  console is [AthenaSIP Admin](https://github.com/blackravenltd/athenasip-admin).
+  console is in [console/](console/).
 * **Easy to configure.** One annotated YAML file. `athenasip --check` tries every
   dependency and certificate before you start, a misspelt key is named with the one you
   meant, and `athenasip --print-schema` gives your editor a schema to check the file as you
   type.
 
+## Install
+
+On Debian 13 (trixie), amd64 or arm64:
+
+```
+sudo curl -fsSLo /etc/apt/sources.list.d/tomcully.sources https://tomcully.com/apt/tomcully.sources
+sudo apt update && sudo apt install athenasip
+```
+
+Then [A server on Linux](docs/quick-start/linux-server.md) sets it up. Elsewhere, see
+[Installation](docs/installation.md) and [Compiling](docs/compiling.md).
+
 ## Get started
+
+To try it without installing anything:
 
 ```
 docker/up.sh
@@ -65,9 +86,8 @@ next step:
 
 ## Companion projects
 
-* [AthenaSIP Admin](https://github.com/blackravenltd/athenasip-admin) - the administration
-  console, with a phone in the browser. A static React bundle the node serves beside its
-  admin API (`docker/up.sh --console`). Alpha.
+* [The console](console/) - the administration console, with a phone in the browser. A
+  static React bundle the node serves beside its admin API (`docker/up.sh --console`). Alpha.
 * [AthenaPhone](https://github.com/blackravenltd/athenaphone) - an open source SIP
   softphone for Android, audio and video over UDP, TCP, TLS or WebSocket with WebRTC
   media, for AthenaSIP or any standards-compliant SIP server. Working, not yet released.
@@ -80,9 +100,17 @@ next step:
   against the real services.
 * Trunks are tested against sipp as a carrier, and one real carrier
   has carried calls in, a call out to its voicemail and RFC 4733 DTMF.
-* Conferencing is not built yet.
+* Conferencing routes a room to a focus behind a trunk (RFC 4579) under `lua://`; the
+  roster from the focus and a focus of the node's own are not built yet, and it is proven by
+  unit tests only, not yet against a running focus.
 * The example configuration enables plaintext UDP and TCP so a first call is easy;
   `sip.allow_unencrypted: false` limits a node to TLS and secure WebSocket.
+* Deliberate departures from the RFCs: serial forking only; no `Flow-Timer` (RFC 5626);
+  a media-anchoring node rewrites the SDP it forwards, which section 16.6 forbids a pure
+  proxy; Record-Route is always written twice (RFC 5658 permits it).
+* An external security review (2026-10-25) found 48 issues; the transport limits,
+  Content-Length, flow caps, Digest nonces, SIP-side guessing limits and the protocol
+  gaps it named are fixed, and the rest are being worked through.
 
 ## Documentation
 
@@ -104,10 +132,15 @@ next step:
 * [Events](docs/events.md) - the topic scheme
 * [Glossary](docs/glossary.md)
 * [Testing](docs/testing.md)
-* [Releasing](docs/releasing.md) - the tag, the image and the Homebrew formula
+* [Releasing](docs/releasing.md) - the tag, the packages, the image and the Homebrew formula
 * [Admin API](docs/api/openapi.yaml)
 * [Interop fixture](test/interop/README.md) - a node to point a real SIP client at
-* [Contributing](CONTRIBUTING.md)
+* [Contributing](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md)
+
+## Code of conduct
+
+Everyone taking part in this project is expected to follow the
+[Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 

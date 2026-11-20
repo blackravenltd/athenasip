@@ -28,6 +28,13 @@ namespace athenasip::api {
 
 namespace {
 
+// The room as the call records name it, from however the request spelt it (docs/design/conferencing.md, The
+// room's name); a text that is no URI is matched as it is.
+std::string room_of(const std::string& text) {
+  const types::SIPUri uri(text);
+  return uri.valid ? uri.canonical_address() : text;
+}
+
 boost::json::value profile_json(const std::optional<media::Profile>& profile) {
   if (!profile) return nullptr;
 
@@ -93,6 +100,9 @@ void CallsAPI::register_routes(Router& router) {
   // Ending a call changes the cluster's state, so reading calls is not enough.
   router.add(http::verb::delete_, "/api/v1/calls/{call}", {manage_cluster}, [self](RouteContext c) { self->_hang_up(std::move(c)); });
   router.add(http::verb::get, "/api/v1/call-records", {view_cluster_status}, [self](RouteContext c) { self->_records(std::move(c)); });
+  router.add(http::verb::get, "/api/v1/conferences", {view_cluster_status}, [self](RouteContext c) { self->_conferences(std::move(c)); });
+  router.add(http::verb::get, "/api/v1/conferences/{uri}", {view_cluster_status}, [self](RouteContext c) { self->_conference(std::move(c)); });
+  router.add(http::verb::delete_, "/api/v1/conferences/{uri}/calls/{call}", {manage_cluster}, [self](RouteContext c) { self->_leave(std::move(c)); });
   router.add(http::verb::get, "/api/v1/media", {view_cluster_status}, [self](RouteContext c) { self->_media(std::move(c)); });
   router.add(http::verb::get, "/api/v1/media/reoffers", {view_cluster_status}, [self](RouteContext c) { self->_reoffers(std::move(c)); });
   router.add(http::verb::get, "/api/v1/qualify", {view_cluster_status}, [self](RouteContext c) { self->_qualify(std::move(c)); });
@@ -177,6 +187,106 @@ void CallsAPI::_records(RouteContext context) {
     for (const auto& call : calls) out.push_back(_record_json(*call));
 
     write_json(context.response, http::status::ok, out);
+    context.done();
+  });
+}
+
+// Every room with anyone in it, as the call records say, wherever in the cluster each participant's call is: the
+// room's URI, its focus trunk, and each participant with when they joined.
+void CallsAPI::_rooms(RouteContext context, std::function<void(boost::json::array)> then) {
+  auto core = _core.lock();
+  if (!core || !core->datastore) {
+    write_error(context.response, http::status::service_unavailable, "unavailable", "the node is shutting down");
+    return context.done();
+  }
+
+  core->datastore->call_list(_executor, [context, then = std::move(then)](plugins::Result<std::vector<std::shared_ptr<Call>>> found) mutable {
+    if (!found.ok) {
+      write_error(context.response, http::status::internal_server_error, "datastore_error", found.error);
+      return context.done();
+    }
+
+    std::map<std::string, boost::json::object> rooms;
+    for (const auto& call : found.value) {
+      if (!call || !call->focus || call->state == Call::State::Closed) continue;
+      const auto uri = call->focus->to_string();
+
+      auto& room = rooms[uri];
+      if (room.empty()) {
+        room["uri"] = uri;
+        room["focus"] = nullptr;
+        room["participants"] = boost::json::array{};
+      }
+
+      for (const auto& participant : call->participants) {
+        if (!participant.trunk.empty() && !participant.originator) {
+          room["focus"] = participant.trunk;
+          continue;
+        }
+        boost::json::object entry;
+        entry["call"] = call->id;
+        entry["identity"] = participant.identity && participant.identity->uri ? participant.identity->uri->to_string() : std::string();
+        entry["subscriber"] = participant.subscriber.empty() ? boost::json::value(nullptr) : boost::json::value(participant.subscriber);
+        entry["state"] = Call::state_to_string(call->state);
+        entry["joined_at"] = time_json(call->answered_at != 0 ? call->answered_at : call->created_at);
+        entry["node"] = participant.node_id;
+        room["participants"].as_array().push_back(std::move(entry));
+      }
+    }
+
+    boost::json::array out;
+    for (auto& [uri, room] : rooms) out.push_back(std::move(room));
+    then(std::move(out));
+  });
+}
+
+void CallsAPI::_leave(RouteContext context) {
+  auto core = _core.lock();
+  if (!core) {
+    write_error(context.response, http::status::service_unavailable, "unavailable", "the node is shutting down");
+    return context.done();
+  }
+
+  const auto room = room_of(context.parameter("uri"));
+  const auto id = context.parameter("call");
+  auto self = shared_from_this();
+
+  core->post([self, core, context, room, id]() mutable {
+    auto call = core->call_get(id);
+    const bool in_room = call && call->focus && call->focus->to_string() == room;
+    const bool sent = in_room && core->local_ua()->hang_up(id, "removed from " + room + " over the admin API");
+
+    boost::asio::post(self->_executor, [context, room, id, in_room, sent]() mutable {
+      if (!in_room) {
+        write_error(context.response, http::status::not_found, "not_found", "no live call with that Call-ID in " + room);
+      } else if (!sent) {
+        write_error(context.response, http::status::conflict, "not_answered", "the focus has not answered; the caller ends it with a CANCEL");
+      } else {
+        write_json(context.response, http::status::accepted, boost::json::object{{"id", id}, {"conference", room}});
+      }
+      context.done();
+    });
+  });
+}
+
+void CallsAPI::_conferences(RouteContext context) {
+  _rooms(context, [context](boost::json::array rooms) mutable {
+    write_json(context.response, http::status::ok, rooms);
+    context.done();
+  });
+}
+
+
+void CallsAPI::_conference(RouteContext context) {
+  const auto wanted = room_of(context.parameter("uri"));
+  _rooms(context, [context, wanted](boost::json::array rooms) mutable {
+    for (auto& room : rooms) {
+      if (room.as_object().at("uri").as_string() == wanted) {
+        write_json(context.response, http::status::ok, room.as_object());
+        return context.done();
+      }
+    }
+    write_error(context.response, http::status::not_found, "not_found", "nobody is in " + wanted);
     context.done();
   });
 }
@@ -324,12 +434,16 @@ boost::json::object CallsAPI::_call_json(const Call& call) {
   out["created_at"] = time_json(call.created_at);
   out["answered_at"] = time_json(call.answered_at);
 
+  // The conference this call is a leg of, when its callee is a room's focus (RFC 4579); null for a call between two.
+  out["focus"] = call.focus ? boost::json::value(call.focus->to_string()) : boost::json::value(nullptr);
+
   boost::json::array participants;
   for (const auto& participant : call.participants) {
     boost::json::object entry;
     entry["identity"] = participant.identity && participant.identity->uri ? participant.identity->uri->to_string() : std::string();
     entry["originator"] = participant.originator;
     entry["profile"] = profile_json(participant.profile);
+    entry["dtmf"] = participant.dtmf ? boost::json::value(types::MediaPolicy::to_string(*participant.dtmf)) : boost::json::value(nullptr);
     if (participant.trunk.empty()) {
       entry["trunk"] = nullptr;
     } else {
@@ -403,6 +517,7 @@ void CallsAPI::_media(RouteContext context) {
       if (can.conference) capabilities.push_back("conference");
       if (can.record) capabilities.push_back("record");
       if (can.transcode) capabilities.push_back("transcode");
+      if (can.dtmf) capabilities.push_back("dtmf");
     }
     out["capabilities"] = std::move(capabilities);
 
@@ -423,10 +538,15 @@ void CallsAPI::_reoffers(RouteContext context) {
   }
 
   auto self = shared_from_this();
-  core->post([self, core, context]() mutable {
-    boost::json::array out;
+  core->datastore->reoffer_list(_executor, [self, context](plugins::Result<std::vector<media::Reoffer>> found) mutable {
+    // A store that keeps none has none to list.
+    if (!found.ok && found.error.find("does not support") == std::string::npos) {
+      write_error(context.response, http::status::internal_server_error, "datastore_error", found.error);
+      return context.done();
+    }
 
-    for (const auto& reoffer : core->reoffers().list()) {
+    boost::json::array out;
+    for (const auto& reoffer : found.value) {
       boost::json::object entry;
       entry["subscriber"] = reoffer.subscriber;
       entry["rejected"] = setting_json(reoffer.rejected);
@@ -437,10 +557,8 @@ void CallsAPI::_reoffers(RouteContext context) {
       out.push_back(std::move(entry));
     }
 
-    boost::asio::post(self->_executor, [context, out = std::move(out)]() mutable {
-      write_json(context.response, http::status::ok, out);
-      context.done();
-    });
+    write_json(context.response, http::status::ok, out);
+    context.done();
   });
 }
 

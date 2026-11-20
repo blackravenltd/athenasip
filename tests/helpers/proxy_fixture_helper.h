@@ -48,8 +48,9 @@ struct ProxyFixture : CoreFixture {
   }
 
   // The request with a Proxy-Authorization answering this node's 407 (RFC 3261 22.3): RFC 2617 digest without qop.
-  std::string with_credentials(const std::string& raw, const std::string& user, const std::string& ha1) {
-    const auto nonce = mint_nonce(store->realm_get_by_name("example.com"));
+  // `source` is the address the request comes from, which the nonce is bound to (digest::nonce_mint).
+  std::string with_credentials(const std::string& raw, const std::string& user, const std::string& ha1, const std::string& source = "192.0.2.10") {
+    const auto nonce = mint_nonce(store->realm_get_by_name("example.com"), source);
 
     const auto line_end = raw.find("\r\n");
     const auto first = raw.substr(0, line_end);

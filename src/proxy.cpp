@@ -7,6 +7,7 @@
 #include "proxy.h"
 
 #include <chrono>
+#include <sstream>
 #include <set>
 #include <utility>
 
@@ -80,6 +81,59 @@ std::string tag_of(const std::shared_ptr<SIPMessage>& message, const std::string
 
   const auto tag = identity->value->tags.find("tag");
   return tag == identity->value->tags.end() ? "" : tag->second;
+}
+
+// The key presses a SIP INFO carries, with each one's length: application/dtmf-relay ("Signal=5", "Duration=160",
+// the Cisco and Asterisk form) or application/dtmf (the digits alone). Nothing for any other INFO.
+std::optional<std::pair<std::string, std::chrono::milliseconds>> dtmf_in(const SIPMessage& message) {
+  if (!message.header->contains("Content-Type")) return std::nullopt;
+  const auto type = Util::to_lower(message.header->headers_map.at("Content-Type")[0]->to_string());
+  const bool relay = type.find("application/dtmf-relay") != std::string::npos;
+  const bool bare = !relay && type.find("application/dtmf") != std::string::npos;
+
+  auto digits_of = [](const std::string& text) {
+    std::string digits;
+    for (const char c : text) {
+      const char upper = static_cast<char>(c >= 'a' && c <= 'd' ? c - 'a' + 'A' : c);
+      if ((upper >= '0' && upper <= '9') || upper == '*' || upper == '#' || (upper >= 'A' && upper <= 'D')) digits.push_back(upper);
+    }
+    return digits;
+  };
+
+  std::chrono::milliseconds duration{160};
+  std::string digits;
+
+  if (relay) {
+    std::istringstream lines(message.body);
+    std::string line;
+    while (std::getline(lines, line)) {
+      const auto equals = line.find('=');
+      if (equals == std::string::npos) continue;
+      const auto key = Util::to_lower(Util::trim(line.substr(0, equals)));
+      const auto value = Util::trim(line.substr(equals + 1));
+      if (key == "signal") digits = digits_of(value);
+      if (key == "duration") {
+        try {
+          duration = std::chrono::milliseconds(std::stol(value));
+        } catch (const std::exception&) {
+        }
+      }
+    }
+  } else if (bare) {
+    digits = digits_of(message.body);
+  } else {
+    return std::nullopt;
+  }
+
+  if (digits.empty()) return std::nullopt;
+  return std::make_pair(digits, duration);
+}
+
+// What a leg's dtmf setting comes to once it has described itself: auto is RFC 4733 when it offered
+// telephone-event, else tones in the audio (docs/behaviour.md, dtmf).
+types::MediaPolicy::Dtmf dtmf_of(types::MediaPolicy::Dtmf setting, bool telephone_event) {
+  if (setting != types::MediaPolicy::Dtmf::Auto) return setting;
+  return telephone_event ? types::MediaPolicy::Dtmf::Rfc4733 : types::MediaPolicy::Dtmf::Inband;
 }
 
 std::string value_of(const std::shared_ptr<SIPMessage>& message, const std::string& field) {
@@ -209,6 +263,13 @@ void Proxy::on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<tran
     return _send_status(transaction, request, 400, "Bad Request");
   }
 
+  // RFC 3261 16.3 step 3 needs the number: a Max-Forwards that is not one would be forwarded undecremented, and only
+  // the loop token would stop it going round (review finding 16).
+  if (request->header->contains("Max-Forwards") && request->header->headers_map["Max-Forwards"][0]->as<UIntHeader>() == nullptr) {
+    _logger->info("Request with a Max-Forwards that is no number - 400");
+    return _send_status(transaction, request, 400, "Bad Request");
+  }
+
   // RFC 3261 16.3.4: computed before route preprocessing changes the fields it hashes.
   const auto token = _loop_token(request);
 
@@ -217,15 +278,41 @@ void Proxy::on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<tran
     return _send_status(transaction, request, 482, "Loop Detected");
   }
 
+  // 16.3 step 5: an extension the request requires of proxies that this one does not support is 420, naming it in
+  // Unsupported (20.40). This proxy implements no extension a request can require of it, so every tag is one; an ACK
+  // or a CANCEL is never answered so (8.2.2.3), and goes on.
+  const auto& method = request->header->request_method;
+  if (method != "ACK" && method != "CANCEL" && request->header->contains("Proxy-Require")) {
+    std::vector<std::string> unsupported;
+    for (const auto& value : request->header->headers_map["Proxy-Require"]) {
+      const auto tag = Util::trim(value->to_string());
+      if (!tag.empty()) unsupported.push_back(tag);
+    }
+    if (!unsupported.empty()) {
+      _logger->info("Request requires of proxies what this one does not support - 420");
+      auto response = request->generate_response();
+      response->header->response_code = 420;
+      response->header->response_message = "Bad Extension";
+      for (const auto& tag : unsupported) response->header->add("Unsupported", tag);
+      if (auto core = _core.lock()) core->dialogs()->observe_response(request, response);
+      return transaction ? transaction->send(response) : void();
+    }
+  }
+
   // RFC 3261 11.2: an OPTIONS for this node is answered by it. 16.3 step 3: so is one that has run out of hops.
   if (request->header->request_method == "OPTIONS") {
     const auto& uri = request->header->request_uri;
     auto max_forwards = request->header->contains("Max-Forwards") ? request->header->headers_map["Max-Forwards"][0]->as<UIntHeader>() : nullptr;
     if (max_forwards != nullptr && max_forwards->value == 0) return _answer_options(transaction, request);
 
+    const auto discovered = core->address_discovery()->finding();
+    const auto this_node = _names_this_node(*uri) || (discovered && discovered->address == uri->host);
+
+    // The Contact this node registered to a trunk is this node too: the carrier's keepalives come there.
+    if (!uri->user.empty() && this_node && core->trunk_registrar()->registered_contact(uri->user)) return _answer_options(transaction, request);
+
     if (uri->user.empty()) {
-      const auto discovered = core->address_discovery()->finding();
-      if (_names_this_node(*uri) || (discovered && discovered->address == uri->host)) return _answer_options(transaction, request);
+      if (this_node) return _answer_options(transaction, request);
 
       // A realm served here, with no user, is this node as well.
       auto self = shared_from_this();
@@ -263,8 +350,51 @@ void Proxy::_proceed(const std::shared_ptr<SIPMessage>& request, const std::shar
       return core->notifier()->on_request(request, transaction,
                                           [this, self, request, transaction, token]() { _determine_targets(request, transaction, token); });
     }
+
+    // Key presses by INFO, for a far leg that takes them in its media instead.
+    if (request->header->request_method == "INFO" &&
+        _play_dtmf(request, transaction, [this, self, request, transaction, token]() { _determine_targets(request, transaction, token); })) {
+      return;
+    }
+
     _determine_targets(request, transaction, token);
   });
+}
+
+bool Proxy::_play_dtmf(const std::shared_ptr<SIPMessage>& request, const std::shared_ptr<transactions::TransactionBase>& transaction,
+                       std::function<void()> otherwise) {
+  auto core = _core.lock();
+  if (!core || !core->media || !core->media->capabilities().dtmf) return false;
+
+  const auto pressed = dtmf_in(*request);
+  if (!pressed) return false;
+
+  auto call = core->call_get(value_of(request, "Call-ID"));
+  auto dialog = core->dialogs()->find(request);
+  if (!call || !dialog || call->media_elsewhere) return false;
+
+  const bool from_caller = dialog->is_from_caller(tag_of(request, "From"));
+  const auto sender = call->participant_index(from_caller);
+  const auto far = call->participant_index(!from_caller);
+  if (!sender || !far) return false;
+
+  // A far leg that speaks INFO gets the INFO; one not yet heard from is given the benefit of the forward.
+  const auto& method = call->participants[*far].dtmf;
+  if (!method || *method == types::MediaPolicy::Dtmf::Info) return false;
+
+  auto self = shared_from_this();
+  core->media->play_dtmf(core->strand(), call, *sender, pressed->first, pressed->second,
+                         [this, self, request, transaction, pressed, call, otherwise](plugins::Status played) {
+                           // The engine could not play it, as before the leg has sent any media (rtpengine: "No SSRC context"):
+                           // the INFO goes on to the far end as it came, so the key press still arrives rather than a 500.
+                           if (!played.ok) {
+                             _logger->warn("Could not play key presses into call " + call->id + " - " + played.error + " - forwarding the INFO");
+                             return otherwise();
+                           }
+                           _logger->debug("Played " + pressed->first + " into call " + call->id + " for an INFO");
+                           _send_status(transaction, request, 200, "OK");
+                         });
+  return true;
 }
 
 std::shared_ptr<policy::RequestView> Proxy::_view(const std::shared_ptr<SIPMessage>& request, bool relay) const {
@@ -352,81 +482,92 @@ void Proxy::_authenticate(const std::shared_ptr<SIPMessage>& request, const std:
     return _send_proxy_challenge(transaction, request, realm);
   }
 
-  auto self = shared_from_this();
+  // The address of record the answer claims, by its name: closed to strangers after repeated failures (AuthGuard).
+  const auto aor = types::SIPUri("sip:" + credentials->fields["username"] + "@" + realm->name).canonical_address();
+  if (const auto closed = core->auth_closed(*request, aor)) {
+    _logger->info("Request from " + caller->to_string() + " for " + aor + ", closed to this address after repeated failures - 403");
+    return _send_refusal(transaction, request, *closed);
+  }
 
-  core->nonce_check(credentials->fields["nonce"],
-                    [this, self, request, transaction, realm, caller, credentials, answered, from_must_match, then](plugins::Result<bool> checked) {
-                      auto core = _core.lock();
-                      if (!core) return;
-
-                      if (!checked.ok) {
-                        _logger->error("Could not check a nonce - " + checked.error);
-                        return _send_status(transaction, request, 500, "Server Internal Error");
-                      }
-
-                      if (!checked.value) {
-                        _logger->info("Request from " + caller->to_string() + " with a nonce that is unknown or expired - challenging");
-                        return _send_proxy_challenge(transaction, request, realm);
-                      }
-
-                      // Verify the credentials first, then that they match the From, so each failure gets its own answer.
-                      auto claimed = std::make_shared<SIPIdentity>("sip:" + credentials->fields["username"] + "@" + realm->name);
-
-                      core->subscriber_get(claimed, [this, self, request, transaction, realm, caller, credentials, answered, from_must_match,
-                                                     then](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
-                        if (!found.ok) {
-                          _logger->error("Could not read a subscriber - " + found.error);
-                          return _send_status(transaction, request, 500, "Server Internal Error");
-                        }
-
-                        // Challenged like a wrong password, so subscribers cannot be enumerated.
-                        if (!found.value) {
-                          _logger->info("Request from " + caller->to_string() + " with credentials for no subscriber - challenging");
-                          return _send_proxy_challenge(transaction, request, realm);
-                        }
-
-                        if (const auto why = digest::verify(*found.value, *credentials, request->header->request_method); !why.empty()) {
-                          _logger->info("Request from " + caller->to_string() + " with " + why + " - challenging");
-                          return _send_proxy_challenge(transaction, request, realm);
-                        }
-
-                        if (from_must_match && credentials->fields["username"] != caller->user) {
-                          _logger->info("Request from " + caller->to_string() + " authenticated as " + credentials->fields["username"] + " - 403");
-                          return _send_status(transaction, request, 403, "Forbidden");
-                        }
-
-                        // Remove the used credentials: they are replayable while the nonce lives.
-                        request->header->remove_value("Proxy-Authorization", [&answered](std::shared_ptr<headers::Header> value) { return value == answered; });
-                        request->authenticated = true;
-                        request->authenticated_aor = "sip:" + credentials->fields["username"] + "@" + realm->name;
-
-                        then();
-                      });
-                    });
-}
-
-void Proxy::_send_proxy_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
-                                  const std::shared_ptr<types::Realm>& realm) {
-  auto core = _core.lock();
-  if (!core) return;
+  switch (digest::nonce_state(*realm, credentials->fields["nonce"], Core::source_of(*request))) {
+    case digest::NonceState::bad:
+      _logger->info("Request from " + caller->to_string() + " with a nonce this realm did not mint - challenging");
+      return _send_proxy_challenge(transaction, request, realm);
+    case digest::NonceState::stale:
+      _logger->info("Request from " + caller->to_string() + " with an expired nonce - challenging as stale");
+      return _send_proxy_challenge(transaction, request, realm, true);
+    case digest::NonceState::good:
+      break;
+  }
 
   auto self = shared_from_this();
 
-  // The nonce must be stored before it is sent, or it would fail its own check.
-  core->nonce_create(realm, [this, self, transaction, request, realm](plugins::Result<std::string> nonce) {
-    if (!nonce.ok) {
-      _logger->error("Cannot mint a nonce for " + realm->name + " - " + nonce.error);
+  // Verify the credentials first, then that they match the From, so each failure gets its own answer.
+  auto claimed = std::make_shared<SIPIdentity>("sip:" + credentials->fields["username"] + "@" + realm->name);
+
+  core->subscriber_get(claimed, [this, self, request, transaction, realm, caller, credentials, answered, from_must_match,
+                                 aor, then](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
+    auto core = _core.lock();
+    if (!core) return;
+
+    if (!found.ok) {
+      _logger->error("Could not read a subscriber - " + found.error);
       return _send_status(transaction, request, 500, "Server Internal Error");
     }
 
-    auto response = request->generate_response();
-    response->header->response_code = 407;
-    response->header->response_message = "Proxy Authentication Required";
-    digest::add_challenges(*response->header, "Proxy-Authenticate", realm->name, nonce.value);
+    // Challenged like a wrong password, so subscribers cannot be enumerated.
+    if (!found.value) {
+      _logger->info("Request from " + caller->to_string() + " with credentials for no subscriber - challenging");
+      core->auth_failed(*request, aor, "no such subscriber");
+      return _send_proxy_challenge(transaction, request, realm);
+    }
 
-    if (auto core = _core.lock()) core->dialogs()->observe_response(request, response);
-    transaction->send(response);
+    if (const auto why = digest::verify(*found.value, *credentials, request->header->request_method, request->header->request_uri->to_string());
+        !why.empty()) {
+      _logger->info("Request from " + caller->to_string() + " with " + why + " - challenging");
+      core->auth_failed(*request, aor, why);
+      return _send_proxy_challenge(transaction, request, realm);
+    }
+
+    // A right answer seen before is a replay (RFC 7616 5.6): stale, so a client whose own nc slipped signs again.
+    if (!core->nonce_counts().accept(*credentials, std::time(nullptr) + realm->nonce_expiry)) {
+      _logger->info("Request from " + caller->to_string() + " replays an answer - challenging as stale");
+      return _send_proxy_challenge(transaction, request, realm, true);
+    }
+
+    if (from_must_match && credentials->fields["username"] != caller->user) {
+      _logger->info("Request from " + caller->to_string() + " authenticated as " + credentials->fields["username"] + " - 403");
+      return _send_status(transaction, request, 403, "Forbidden");
+    }
+
+    core->auth_succeeded(*request, aor);
+
+    // Remove the used credentials: they are not the next hop's business.
+    request->header->remove_value("Proxy-Authorization", [&answered](std::shared_ptr<headers::Header> value) { return value == answered; });
+    request->authenticated = true;
+    request->authenticated_aor = "sip:" + credentials->fields["username"] + "@" + realm->name;
+
+    then();
   });
+}
+
+void Proxy::_send_proxy_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
+                                  const std::shared_ptr<types::Realm>& realm, bool stale) {
+  // Challenges to one address are limited (AuthGuard): past that it is refused, not challenged.
+  if (auto core = _core.lock(); core && !core->auth_may_challenge(*request)) {
+    _logger->info("Request from an address past its challenges - 403");
+    return _send_refusal(transaction, request, std::chrono::seconds(60));
+  }
+
+  auto response = request->generate_response();
+  response->header->response_code = 407;
+  response->header->response_message = "Proxy Authentication Required";
+
+  // Nothing is kept for the nonce: it carries its own proof, bound to the address it goes to (digest::nonce_mint).
+  digest::add_challenges(*response->header, "Proxy-Authenticate", realm->name, digest::nonce_mint(*realm, Core::source_of(*request)), stale);
+
+  if (auto core = _core.lock()) core->dialogs()->observe_response(request, response);
+  transaction->send(response);
 }
 
 // The RFC 3261 16.6 step 8 hash, with two departures. The topmost Via is left out: it differs on the pass
@@ -606,6 +747,7 @@ void Proxy::_determine_targets(const std::shared_ptr<SIPMessage>& request, const
     // Read once here rather than per message with a body, and kept on the call for in-dialog requests, which ask
     // the policy nothing.
     if (decision.media) context->media_policy = *decision.media;
+    if (decision.caller_dtmf) context->caller_dtmf = decision.caller_dtmf;
     if (decision.rewrite_contact) {
       context->rewrite_contact = *decision.rewrite_contact;
       if (auto call = core->call_get(value_of(request, "Call-ID"))) call->rewrite_contact = context->rewrite_contact;
@@ -641,6 +783,8 @@ void Proxy::_expand(const std::shared_ptr<Context>& context, std::vector<policy:
       target.flow = _flow_to(*target.next_hop);
       target.trunk = spec.trunk;
       target.ring_timeout = spec.ring_timeout;
+      target.dtmf = spec.dtmf;
+      target.focus = spec.focus;
       into->push_back(std::move(target));
     }
     return _expand(context, std::move(specs), index + 1, std::move(into), std::move(then));
@@ -648,8 +792,9 @@ void Proxy::_expand(const std::shared_ptr<Context>& context, std::vector<policy:
 
   if (!spec.subscriber) return _expand(context, std::move(specs), index + 1, std::move(into), std::move(then));
 
-  // The first subscriber's profile is the callee's, for what the engine offers it.
+  // The first subscriber's profile is the callee's, for what the engine offers it; likewise how it sends key presses.
   if (!context->callee_profile) context->callee_profile = spec.subscriber->media_profile;
+  if (!context->callee_dtmf) context->callee_dtmf = spec.subscriber->dtmf;
 
   // The subscriber whose bindings these are: the line that rings, whatever the To said.
   const auto& identity = spec.subscriber->identity;
@@ -820,14 +965,23 @@ void Proxy::_rewrite_contact(const std::shared_ptr<SIPMessage>& message, const s
 void Proxy::_read_caller_profile(const std::shared_ptr<Context>& context, std::function<void()> then) {
   auto core = _core.lock();
   const auto& request = context->request;
-  if (!core || request->header->request_method != "INVITE" || has_sdp(request) || !request->header->contains("From")) return then();
+  if (!core || request->header->request_method != "INVITE" || !request->header->contains("From")) return then();
+
+  // The profile matters only for a delayed offer (RFC 3264 section 5); how the caller sends key presses, for every
+  // call, unless the policy already said (a trunk's attribute).
+  const bool want_profile = !has_sdp(request);
+  const bool want_dtmf = !context->caller_dtmf;
+  if (!want_profile && !want_dtmf) return then();
 
   auto from = request->header->headers_map["From"][0]->as<SIPIdentityHeader>();
   if (from == nullptr || from->value == nullptr || from->value->uri == nullptr) return then();
 
   auto identity = std::make_shared<SIPIdentity>(from->value->uri->to_string());
-  core->subscriber_get(identity, [context, then = std::move(then)](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
-    if (found.ok && found.value) context->caller_profile = found.value->media_profile;
+  core->subscriber_get(identity, [context, want_profile, want_dtmf, then = std::move(then)](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
+    if (found.ok && found.value) {
+      if (want_profile) context->caller_profile = found.value->media_profile;
+      if (want_dtmf) context->caller_dtmf = found.value->dtmf;
+    }
     then();
   });
 }
@@ -1147,10 +1301,13 @@ void Proxy::_on_response(const std::shared_ptr<Context>& context, const std::sha
 
       if (core && !context->current.trunk.empty()) core->trunk_response_count(context->current.trunk, static_cast<std::uint16_t>(code));
 
-      // For the record: the trunk the call came in by, and the one the answering branch left by.
+      // For the record: the trunk the call came in by, the one the answering branch left by, and the conference the
+      // answering branch is the focus of.
       if (call) {
         if (const auto caller = call->participant_index(true)) call->participants[*caller].trunk = context->request->trunk;
         if (const auto callee = call->participant_index(false)) call->participants[*callee].trunk = context->current.trunk;
+        // The room by its name, not as this caller spelt it (docs/design/conferencing.md, The room's name).
+        if (context->current.focus) call->focus = std::make_shared<types::SIPUri>(context->current.focus->canonical_address());
       }
 
       // A call that left by a trunk keeps the trunk and the CSeq raise for its in-dialog requests.
@@ -1474,8 +1631,17 @@ void Proxy::_report_reoffer(const std::shared_ptr<Context>& context, bool took) 
   auto core = _core.lock();
   if (!core) return;
 
-  const auto subscriber = context->request->header->request_uri->to_string();
-  core->reoffers().record(subscriber, *current.rejected, took ? current.profile : std::nullopt);
+  // The subscriber whose binding refused the offer; the Request-URI only when the target is nobody's binding, since
+  // a call in by a trunk names the number dialled, not who answered.
+  const auto subscriber = current.subscriber.empty() ? context->request->header->request_uri->to_string() : current.subscriber;
+
+  // A record for the operator on any node (all state lives in the datastore); nothing on the call path waits for it.
+  core->datastore->reoffer_record(core->strand(), subscriber, *current.rejected, took ? current.profile : std::nullopt,
+                                  [this, self = shared_from_this(), subscriber](plugins::Status written) {
+                                    if (!written.ok && written.error.find("does not support") == std::string::npos) {
+                                      _logger->warn("Cannot record the re-offer for " + subscriber + " - " + written.error);
+                                    }
+                                  });
 
   if (took) _logger->warn(subscriber + " took the other media profile after refusing the first - see /api/v1/media/reoffers");
 }
@@ -1549,6 +1715,22 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
     if (const auto caller = call->participant_index(true)) call->participants[*caller].subscriber_profile = context->caller_profile;
   }
 
+  // And how each leg sends key presses: the target's own word (a trunk's attribute) over the subscriber's setting;
+  // a leg with neither follows the realm's, read below.
+  if (context) {
+    if (const auto callee = call->participant_index(false)) {
+      auto& leg = call->participants[*callee];
+      if (context->current.dtmf) {
+        leg.dtmf_setting = context->current.dtmf;
+      } else if (!leg.dtmf_setting) {
+        leg.dtmf_setting = context->callee_dtmf;
+      }
+    }
+    if (const auto caller = call->participant_index(true); caller && !call->participants[*caller].dtmf_setting) {
+      call->participants[*caller].dtmf_setting = context->caller_dtmf;
+    }
+  }
+
   const auto& policy = call->media_policy;
 
   // A realm that does not anchor media gets plain proxy behaviour (RFC 3261 16.6): the SDP is untouched.
@@ -1576,6 +1758,30 @@ void Proxy::_anchor_media(const std::shared_ptr<SIPMessage>& request, const std:
   // Record what this leg stated (ICE, DTLS, SRTP) before the engine rewrites the body; later descriptions for
   // this leg are produced from it.
   if (const auto stated = flags.stated()) call->participants[*participant].profile = *stated;
+
+  // How this leg sends key presses, now that it has described itself, and how the far one does, so the engine can
+  // convert between them. A far leg set to auto that has not described itself is unknown yet.
+  {
+    auto& sender = call->participants[*participant];
+    if (flags.readable) sender.dtmf = dtmf_of(sender.dtmf_setting.value_or(policy.dtmf), flags.telephone_event);
+    flags.dtmf_from = sender.dtmf;
+    if (recipient) {
+      const auto& far = call->participants[*recipient];
+      if (far.dtmf) {
+        flags.dtmf_to = far.dtmf;
+      } else if (const auto setting = far.dtmf_setting.value_or(policy.dtmf); setting != types::MediaPolicy::Dtmf::Auto) {
+        flags.dtmf_to = setting;
+      }
+    }
+
+    if (flags.dtmf_from && flags.dtmf_to && *flags.dtmf_from != *flags.dtmf_to && !core->media->capabilities().transcode &&
+        !call->dtmf_conversion_warned) {
+      call->dtmf_conversion_warned = true;
+      _logger->warn("Call " + call->id + " sends key presses as " + types::MediaPolicy::to_string(*flags.dtmf_from) + " on one leg and " +
+                    types::MediaPolicy::to_string(*flags.dtmf_to) + " on the other, and " + core->media->name() +
+                    " cannot convert - set both ends to one method (behaviour.dtmf)");
+    }
+  }
 
   // The profile to produce for the far leg, in order of precedence: a re-offer after a 488, what the leg has
   // stated, what it said when qualified, its subscriber's setting, then the realm's setting or the outgoing
@@ -2176,9 +2382,7 @@ void Proxy::_answer_options(const std::shared_ptr<transactions::TransactionBase>
   const bool presence = core && core->config->presence_enable && core->datastore && core->datastore->supports_presence();
 
   response->header->remove_value("Allow", [](const std::shared_ptr<headers::Header>&) { return true; });
-  response->header->add("Allow", std::make_shared<headers::StringHeader>(std::string("INVITE, ACK, CANCEL, BYE, OPTIONS, REGISTER, UPDATE, INFO, PRACK, "
-                                                                                     "MESSAGE, SUBSCRIBE, NOTIFY, REFER") +
-                                                                         (presence ? ", PUBLISH" : "")));
+  response->header->add("Allow", std::make_shared<headers::StringHeader>(SIPMessage::allowed_methods(presence)));
   response->header->add("Accept", std::make_shared<headers::StringHeader>("application/sdp"));
   response->header->add("Accept-Encoding", std::make_shared<headers::StringHeader>("identity"));
   response->header->add("Accept-Language", std::make_shared<headers::StringHeader>("en"));
@@ -2246,46 +2450,68 @@ void Proxy::_authenticate_any(const std::shared_ptr<SIPMessage>& request, const 
     }
     if (!realm.value) return _send_relay_challenge(transaction, request);
 
-    core->nonce_check(credentials->fields["nonce"], [this, self, request, transaction, credentials, answered, then,
-                                                     realm = realm.value](plugins::Result<bool> checked) {
+    switch (digest::nonce_state(*realm.value, credentials->fields["nonce"], Core::source_of(*request))) {
+      case digest::NonceState::bad:
+        return _send_relay_challenge(transaction, request);
+      case digest::NonceState::stale:
+        return _send_relay_challenge(transaction, request, true);
+      case digest::NonceState::good:
+        break;
+    }
+
+    const auto aor = types::SIPUri("sip:" + credentials->fields["username"] + "@" + realm.value->name).canonical_address();
+    if (const auto closed = core->auth_closed(*request, aor)) {
+      _logger->info("REGISTER to forward for " + aor + ", closed to this address after repeated failures - 403");
+      return _send_refusal(transaction, request, *closed);
+    }
+
+    auto claimed = std::make_shared<SIPIdentity>("sip:" + credentials->fields["username"] + "@" + realm.value->name);
+    core->subscriber_get(claimed, [this, self, request, transaction, credentials, answered, then,
+                                   aor, realm = realm.value](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
       auto core = _core.lock();
       if (!core) return;
 
-      if (!checked.ok) {
-        _logger->error("Could not check a nonce - " + checked.error);
+      if (!found.ok) {
+        _logger->error("Could not read a subscriber - " + found.error);
         return _send_status(transaction, request, 500, "Server Internal Error");
       }
-      if (!checked.value) return _send_relay_challenge(transaction, request);
 
-      auto claimed = std::make_shared<SIPIdentity>("sip:" + credentials->fields["username"] + "@" + realm->name);
-      core->subscriber_get(claimed, [this, self, request, transaction, credentials, answered, then](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
-        if (!found.ok) {
-          _logger->error("Could not read a subscriber - " + found.error);
-          return _send_status(transaction, request, 500, "Server Internal Error");
-        }
+      // An unknown subscriber is challenged like a wrong password, so subscribers cannot be enumerated.
+      const auto why = found.value ? digest::verify(*found.value, *credentials, request->header->request_method, request->header->request_uri->to_string())
+                                   : std::string("no such subscriber");
+      if (!why.empty()) {
+        _logger->info("REGISTER to forward with credentials that do not verify - challenging");
+        core->auth_failed(*request, aor, why);
+        return _send_relay_challenge(transaction, request);
+      }
 
-        // An unknown subscriber is challenged like a wrong password, so subscribers cannot be enumerated.
-        if (!found.value || !digest::verify(*found.value, *credentials, request->header->request_method).empty()) {
-          _logger->info("REGISTER to forward with credentials that do not verify - challenging");
-          return _send_relay_challenge(transaction, request);
-        }
+      // A right answer seen before is a replay (RFC 7616 5.6).
+      if (!core->nonce_counts().accept(*credentials, std::time(nullptr) + realm->nonce_expiry)) {
+        _logger->info("REGISTER to forward replays an answer - challenging as stale");
+        return _send_relay_challenge(transaction, request, true);
+      }
 
-        // Spent here; the far registrar's Authorization is left alone (22.3).
-        request->header->remove_value("Proxy-Authorization", [&answered](std::shared_ptr<headers::Header> value) { return value == answered; });
-        then();
-      });
+      core->auth_succeeded(*request, aor);
+
+      // Spent here; the far registrar's Authorization is left alone (22.3).
+      request->header->remove_value("Proxy-Authorization", [&answered](std::shared_ptr<headers::Header> value) { return value == answered; });
+      then();
     });
   });
 }
 
 // One challenge for each of this node's realms, each with its own nonce: the From is the foreign address of
 // record, so nothing says which realm the sender belongs to (RFC 3261 22.3 allows several).
-void Proxy::_send_relay_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request) {
+void Proxy::_send_relay_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request, bool stale) {
   auto core = _core.lock();
   if (!core) return;
+  if (!core->auth_may_challenge(*request)) {
+    _logger->info("REGISTER to forward from an address past its challenges - 403");
+    return _send_refusal(transaction, request, std::chrono::seconds(60));
+  }
 
   auto self = shared_from_this();
-  core->datastore->realm_list(core->strand(), [this, self, transaction, request](plugins::Result<std::vector<std::shared_ptr<types::Realm>>> realms) {
+  core->datastore->realm_list(core->strand(), [this, self, transaction, request, stale](plugins::Result<std::vector<std::shared_ptr<types::Realm>>> realms) {
     if (!realms.ok || realms.value.empty()) {
       _logger->info("REGISTER to forward, and no realm here to authenticate it - 403");
       return _send_status(transaction, request, 403, "Forbidden");
@@ -2295,17 +2521,8 @@ void Proxy::_send_relay_challenge(const std::shared_ptr<transactions::Transactio
     response->header->response_code = 407;
     response->header->response_message = "Proxy Authentication Required";
 
-    auto pending = std::make_shared<std::size_t>(realms.value.size());
-    for (const auto& realm : realms.value) {
-      auto core = _core.lock();
-      if (!core) return;
-
-      // The nonce must be stored before it is sent, or it would fail its own check.
-      core->nonce_create(realm, [this, self, transaction, request, response, realm, pending](plugins::Result<std::string> nonce) {
-        if (nonce.ok) digest::add_challenges(*response->header, "Proxy-Authenticate", realm->name, nonce.value);
-        if (--*pending == 0) transaction->send(response);
-      });
-    }
+    for (const auto& realm : realms.value) digest::add_challenges(*response->header, "Proxy-Authenticate", realm->name, digest::nonce_mint(*realm, Core::source_of(*request)), stale);
+    transaction->send(response);
   });
 }
 
@@ -2456,6 +2673,20 @@ Proxy::NextHop Proxy::_next_hop_of(const SIPUri& uri) {
   hop.port = uri.port.value_or(hop.transport == "tls" ? 5061 : 5060);
 
   return hop;
+}
+
+// RFC 3261 21.4.4 with 20.33: refused for now, and when to try again.
+void Proxy::_send_refusal(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
+                          std::chrono::seconds retry_after) {
+  if (!transaction) return;
+
+  auto response = request->generate_response();
+  response->header->response_code = 403;
+  response->header->response_message = "Forbidden";
+  response->header->add("Retry-After", std::to_string(retry_after.count()));
+
+  if (auto core = _core.lock()) core->dialogs()->observe_response(request, response);
+  transaction->send(response);
 }
 
 void Proxy::_send_status(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request, std::uint16_t code,

@@ -7,8 +7,10 @@
 #include "registrar.h"
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <ctime>
+#include <limits>
 #include <map>
 #include <optional>
 #include <sstream>
@@ -19,6 +21,7 @@
 #include "core.h"
 #include "digest.h"
 #include "headers/authorization_header.h"
+#include "headers/cseq_header.h"
 #include "headers/sip_identity_header.h"
 #include "headers/string_header.h"
 #include "headers/uint_header.h"
@@ -34,6 +37,18 @@ using athenasip::headers::SIPIdentityHeader;
 using athenasip::headers::UIntHeader;
 
 namespace {
+
+// A decimal number, all of the text, or nothing: "12abc" is not 12.
+std::optional<std::uint64_t> number_of(const std::string& text) {
+  std::uint64_t value = 0;
+  const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
+  if (text.empty() || parsed.ec != std::errc() || parsed.ptr != text.data() + text.size()) return std::nullopt;
+  return value;
+}
+
+// An expiry as the registrar holds one, 32 bits: a larger one asked for is the largest there is, which the realm's
+// maximum then cuts down, never a wrap to a small number or to 0, which would remove the binding (review finding 14).
+std::uint32_t expiry_of(std::uint64_t asked) { return static_cast<std::uint32_t>(std::min<std::uint64_t>(asked, std::numeric_limits<std::uint32_t>::max())); }
 
 // RFC 3261 10.2.2: a single Contact of "*" (STAR, 20.10) with Expires 0 removes every
 // binding.
@@ -77,14 +92,36 @@ std::optional<std::pair<std::string, std::uint32_t>> outbound_of(const std::shar
   std::string value = instance->second;
   if (value.size() >= 2 && value.front() == '"' && value.back() == '"') value = value.substr(1, value.size() - 2);
 
-  try {
-    const auto id = std::stoul(reg_id->second);
-    if (id == 0 || id > 0x7FFFFFFFul) throw std::out_of_range("reg-id");
-    return std::make_pair(value, static_cast<std::uint32_t>(id));
-  } catch (const std::exception&) {
+  const auto id = number_of(reg_id->second);
+  if (!id || *id == 0 || *id > 0x7FFFFFFFul) {
     malformed = true;
     return std::nullopt;
   }
+  return std::make_pair(value, static_cast<std::uint32_t>(*id));
+}
+
+// RFC 3261 10.3 step 7: the REGISTER's Call-ID and CSeq number, which order the updates to a binding.
+std::pair<std::string, std::uint64_t> order_of(const SIPMessage& request) {
+  std::string call_id;
+  if (request.header->contains("Call-ID")) call_id = request.header->headers_map["Call-ID"][0]->to_string();
+  std::uint64_t cseq = 0;
+  if (request.header->contains("CSeq")) {
+    if (const auto header = request.header->headers_map["CSeq"][0]->as<headers::CSeqHeader>()) cseq = header->sequence;
+  }
+  return {call_id, cseq};
+}
+
+// Whether a stored binding is the one a contact in a REGISTER names: the same flow for outbound (RFC 5626 6),
+// otherwise the same contact as the store keys it, by user, host and port.
+bool same_binding(const types::Location& location, const std::shared_ptr<types::SIPUri>& contact, const std::string& instance, std::uint32_t reg_id) {
+  if (reg_id != 0) return location.reg_id == reg_id && location.instance == instance;
+  return location.contact && contact && location.reg_id == 0 && location.contact->user == contact->user &&
+         Util::to_lower(location.contact->host) == Util::to_lower(contact->host) && location.contact->port.value_or(0) == contact->port.value_or(0);
+}
+
+// Step 7: a binding last written from this Call-ID with a CSeq as high or higher is a REGISTER out of order.
+bool out_of_order(const types::Location& location, const std::pair<std::string, std::uint64_t>& order) {
+  return !order.first.empty() && location.call_id == order.first && order.second <= location.cseq;
 }
 
 // RFC 5626 section 6: through an edge proxy, outbound needs the first hop to keep the
@@ -166,7 +203,9 @@ void Registrar::on_request(std::shared_ptr<SIPMessage> request, std::shared_ptr<
           _logger->error("REGISTER accepted by the policy with no realm - 500");
           return _send_status(transaction, request, 500, "Server Internal Error");
         }
-        return _on_realm(request, transaction, aor, decision.realm, Terms{decision.max_expires, decision.min_expires, decision.qualify_interval});
+        return _on_realm(request, transaction, aor, decision.realm,
+                         Terms{decision.max_expires, decision.min_expires, decision.qualify_interval,
+                               decision.realm ? decision.realm->registration_max_bindings : 0u});
     }
   });
 }
@@ -191,27 +230,23 @@ void Registrar::_on_realm(std::shared_ptr<SIPMessage> request, std::shared_ptr<t
     return _send_challenge(transaction, request, realm);
   }
 
-  auto self = shared_from_this();
-  core->nonce_check(auth->fields["nonce"], [this, self, request, transaction, aor, realm, auth, terms](plugins::Result<bool> checked) {
-    if (!checked.ok) {
-      _logger->error("REGISTER could not check the nonce - " + checked.error);
-      return _send_status(transaction, request, 500, "Server Internal Error");
-    }
+  // An address of record guessed at from many addresses is closed to strangers for a while (AuthGuard).
+  if (const auto closed = core->auth_closed(*request, aor->uri->canonical_address())) {
+    _logger->info("REGISTER for " + aor->to_string() + ", closed to this address after repeated failures - 403");
+    return _send_refusal(transaction, request, *closed);
+  }
 
-    if (!checked.value) {
-      _logger->info("REGISTER nonce " + auth->fields["nonce"] + " not found or expired - challenging");
+  switch (digest::nonce_state(*realm, auth->fields["nonce"], Core::source_of(*request))) {
+    case digest::NonceState::bad:
+      _logger->info("REGISTER with a nonce this realm did not mint - challenging");
       return _send_challenge(transaction, request, realm);
-    }
-
-    _on_nonce_checked(request, transaction, aor, realm, auth, terms);
-  });
-}
-
-void Registrar::_on_nonce_checked(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
-                                  std::shared_ptr<types::SIPIdentity> aor, std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Authorization> auth,
-                                  Terms terms) {
-  auto core = _core.lock();
-  if (!core) return;
+    case digest::NonceState::stale:
+      // RFC 7616 3.3: the client signs a fresh nonce without asking its user again.
+      _logger->info("REGISTER with an expired nonce - challenging as stale");
+      return _send_challenge(transaction, request, realm, true);
+    case digest::NonceState::good:
+      break;
+  }
 
   auto self = shared_from_this();
   core->subscriber_get(aor, [this, self, request, transaction, aor, realm, auth, terms](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
@@ -229,14 +264,23 @@ void Registrar::_on_subscriber(std::shared_ptr<SIPMessage> request, std::shared_
                                std::shared_ptr<types::Subscriber> subscriber, Terms terms) {
   if (!subscriber) {
     _logger->info("REGISTER for unknown subscriber " + aor->to_string() + " - challenging");
+    if (auto core = _core.lock()) core->auth_failed(*request, aor->uri->canonical_address(), "no such subscriber");
     return _send_challenge(transaction, request, realm);
   }
 
-  if (const auto why = digest::verify(*subscriber, *auth, request->header->request_method); !why.empty()) {
+  if (const auto why = digest::verify(*subscriber, *auth, request->header->request_method, request->header->request_uri->to_string()); !why.empty()) {
     _logger->info("REGISTER for " + aor->to_string() + " with " + why + " - challenging");
+    if (auto core = _core.lock()) core->auth_failed(*request, aor->uri->canonical_address(), why);
     return _send_challenge(transaction, request, realm);
   }
 
+  // A right answer seen before is a replay (RFC 7616 5.6): stale, so a client whose own nc slipped signs again.
+  if (auto core = _core.lock(); !core || !core->nonce_counts().accept(*auth, std::time(nullptr) + realm->nonce_expiry)) {
+    _logger->info("REGISTER for " + aor->to_string() + " replays an answer - challenging as stale");
+    return _send_challenge(transaction, request, realm, true);
+  }
+
+  if (auto core = _core.lock()) core->auth_succeeded(*request, aor->uri->canonical_address());
   request->authenticated = true;
 
   // The connection now belongs to this subscriber; see Channel::authenticated_as.
@@ -274,9 +318,11 @@ void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared
         return _send_status(transaction, request, 500, "Server Internal Error");
       }
 
+      // Step 6 with step 7's ordering: a binding this Call-ID last wrote with a CSeq as high or higher stays.
+      const auto order = order_of(*request);
       auto bindings = std::make_shared<std::vector<Binding>>();
       for (const auto& location : found.value) {
-        if (location.contact) bindings->push_back(Binding{location.contact, 0});
+        if (location.contact && !out_of_order(location, order)) bindings->push_back(Binding{location.contact, 0});
       }
 
       _write_bindings(request, transaction, subscriber, bindings, 0, 0);
@@ -295,11 +341,9 @@ void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared
     auto contact_requested = requested;
     const auto tag = contact->value->tags.find("expires");
     if (tag != contact->value->tags.end()) {
-      try {
-        contact_requested = static_cast<std::uint32_t>(std::stoul(tag->second));
-      } catch (const std::exception&) {
-        return _send_status(transaction, request, 400, "Bad Request");
-      }
+      const auto asked = number_of(tag->second);
+      if (!asked) return _send_status(transaction, request, 400, "Bad Request");
+      contact_requested = expiry_of(*asked);
     }
 
     // Step 7: the first contact that is too brief refuses the whole request.
@@ -354,7 +398,43 @@ void Registrar::_apply_bindings(std::shared_ptr<SIPMessage> request, std::shared
     bindings->push_back(std::move(binding));
   }
 
-  _write_bindings(request, transaction, subscriber, bindings, 0, expires);
+  // RFC 3261 10.3 step 7: an update from the Call-ID that last wrote a binding needs a higher CSeq; one that is not
+  // higher is a REGISTER out of order, late over UDP or replayed by a failover, and would undo a newer one. The
+  // whole request fails, as a request out of order in a dialog does (12.2.2).
+  core->location_list(subscriber->id, [this, self, request, transaction, subscriber, bindings, expires,
+                                       terms](plugins::Result<std::vector<types::Location>> found) {
+    if (found.ok) {
+      const auto order = order_of(*request);
+      for (const auto& location : found.value) {
+        for (const auto& binding : *bindings) {
+          if (!same_binding(location, binding.contact, binding.instance, binding.reg_id) || !out_of_order(location, order)) continue;
+          _logger->info("REGISTER for " + subscriber->identity->to_string() + " with CSeq " + std::to_string(order.second) + ", not above the " +
+                        std::to_string(location.cseq) + " that last wrote " + binding.contact->to_string() + " - 500");
+          return _send_status(transaction, request, 500, "Server Internal Error");
+        }
+      }
+
+      // The realm's cap on bindings (review finding 15): what the AOR would hold once this request is applied, each
+      // contact replacing or removing the binding it names and adding one where it names none.
+      if (terms.max_bindings != 0) {
+        std::size_t after = found.value.size();
+        for (const auto& binding : *bindings) {
+          const bool held = std::any_of(found.value.begin(), found.value.end(), [&binding](const types::Location& location) {
+            return same_binding(location, binding.contact, binding.instance, binding.reg_id);
+          });
+          if (held && binding.expires == 0) --after;
+          if (!held && binding.expires != 0) ++after;
+        }
+        if (after > terms.max_bindings) {
+          _logger->info("REGISTER for " + subscriber->identity->to_string() + " would hold " + std::to_string(after) + " bindings, above the " +
+                        std::to_string(terms.max_bindings) + " allowed - 403");
+          return _send_status(transaction, request, 403, "Too Many Bindings");
+        }
+      }
+    }
+
+    _write_bindings(request, transaction, subscriber, bindings, 0, expires);
+  });
 }
 
 void Registrar::_write_bindings(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
@@ -456,27 +536,16 @@ void Registrar::_store_binding(std::shared_ptr<SIPMessage> request, std::shared_
 
         next();
       },
-      binding.instance, binding.reg_id, binding.push);
+      binding.instance, binding.reg_id, binding.push, order_of(*request).first, order_of(*request).second);
 }
 
+// RFC 3261 10.2.1: the Expires header field is the default for every contact that has no expires parameter of its own.
+// A contact's own parameter is that contact's alone (the binding loop reads it), never the default for the others:
+// `<a>;expires=0, <b>` removes a and registers b.
 std::uint32_t Registrar::_requested_expiry(const std::shared_ptr<SIPMessage>& request, const Terms& terms) const {
-  if (request->header->contains("Contact")) {
-    auto contact = request->header->headers_map["Contact"][0]->as<SIPIdentityHeader>();
-    if (contact != nullptr && contact->value != nullptr) {
-      const auto tag = contact->value->tags.find("expires");
-      if (tag != contact->value->tags.end()) {
-        try {
-          return static_cast<std::uint32_t>(std::stoul(tag->second));
-        } catch (const std::exception&) {
-          // Fall through to the Expires header.
-        }
-      }
-    }
-  }
-
   if (request->header->contains("Expires")) {
     auto expires = request->header->headers_map["Expires"][0]->as<UIntHeader>();
-    if (expires != nullptr) return static_cast<std::uint32_t>(expires->value);
+    if (expires != nullptr) return expiry_of(expires->value);
   }
 
   // RFC 3261 10.3 step 7: with neither, the local default applies, which is the realm's
@@ -704,33 +773,32 @@ void Registrar::_send_interval_too_brief(const std::shared_ptr<transactions::Tra
 }
 
 void Registrar::_send_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
-                                const std::shared_ptr<types::Realm>& realm) {
-  auto core = _core.lock();
-  if (!core) return;
+                                const std::shared_ptr<types::Realm>& realm, bool stale) {
+  // Challenges to one address are limited (AuthGuard): past that it is refused, not challenged.
+  if (auto core = _core.lock(); core && !core->auth_may_challenge(*request)) {
+    _logger->info("REGISTER from an address past its challenges - 403");
+    return _send_refusal(transaction, request, std::chrono::seconds(60));
+  }
 
   auto response = request->generate_response();
   response->header->response_code = 401;
   response->header->response_message = "Unauthorized";
   response->header->add("Reason", "SIP;cause=401;text=\"Unauthorized\"");
 
-  if (!realm) {
-    transaction->send(response);
-    return;
-  }
+  // Nothing is kept for the nonce: it carries its own proof, bound to the address it goes to (digest::nonce_mint).
+  if (realm) digest::add_challenges(*response->header, "WWW-Authenticate", realm->name, digest::nonce_mint(*realm, Core::source_of(*request)), stale);
 
-  auto self = shared_from_this();
+  transaction->send(response);
+}
 
-  // The nonce must be stored before the challenge is sent, or its own check would fail.
-  core->nonce_create(realm, [this, self, transaction, request, response, realm](plugins::Result<std::string> nonce) {
-    if (!nonce.ok) {
-      _logger->error("Cannot mint a nonce for " + realm->name + " - " + nonce.error);
-      return _send_status(transaction, request, 500, "Server Internal Error");
-    }
-
-    digest::add_challenges(*response->header, "WWW-Authenticate", realm->name, nonce.value);
-
-    transaction->send(response);
-  });
+// RFC 3261 21.4.4 with 20.33: refused for now, and when to try again.
+void Registrar::_send_refusal(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
+                              std::chrono::seconds retry_after) {
+  auto response = request->generate_response();
+  response->header->response_code = 403;
+  response->header->response_message = "Forbidden";
+  response->header->add("Retry-After", std::to_string(retry_after.count()));
+  transaction->send(response);
 }
 
 }  // namespace athenasip

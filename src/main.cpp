@@ -27,6 +27,7 @@
 #include "api/presence_api.h"
 #include "api/provisioning_api.h"
 #include "api/router.h"
+#include "api/security_api.h"
 #include "api/sessions.h"
 #include "api/static_middleware.h"
 #include "api/subscriber_auth.h"
@@ -315,12 +316,12 @@ int main(int argc, char* argv[]) {
 
   auto datastore = Datastore::create_driver(logger, config->db_url);
   if (!datastore) {
-    logger->error("Unknown datastore scheme: " + config->db_url);
+    logger->error("Unknown datastore scheme: " + cli::redacted(config->db_url));
   }
 
   auto events = EventSystem::create_driver(logger, config->events_url);
   if (!events) {
-    logger->error("Unknown event scheme: " + config->events_url);
+    logger->error("Unknown event scheme: " + cli::redacted(config->events_url));
   }
 
   if (!events || !datastore) {
@@ -343,7 +344,7 @@ int main(int argc, char* argv[]) {
       connect_and_wait([&datastore](plugins::Executor on, plugins::StatusHandler handler) { datastore->connect(std::move(on), std::move(handler)); });
 
   if (!datastore_connected.ok) {
-    logger->error("Datastore Connection Failed: " + config->db_url + " - " + datastore_connected.error);
+    logger->error("Datastore Connection Failed: " + cli::redacted(config->db_url) + " - " + datastore_connected.error);
     return -3;
   }
 
@@ -454,13 +455,13 @@ int main(int argc, char* argv[]) {
 
   if (!events_connected.ok) {
     datastore->close();
-    logger->error("Event System Connection Failed: " + config->events_url + " - " + events_connected.error);
+    logger->error("Event System Connection Failed: " + cli::redacted(config->events_url) + " - " + events_connected.error);
     return -3;
   }
 
   auto media_engine = media::MediaEngine::create_driver(logger, config->media_url);
   if (!media_engine) {
-    logger->error("Unknown media scheme: " + config->media_url);
+    logger->error("Unknown media scheme: " + cli::redacted(config->media_url));
     datastore->close();
     events->close();
     return -2;
@@ -478,7 +479,7 @@ int main(int argc, char* argv[]) {
       connect_and_wait([&media_engine](plugins::Executor on, plugins::StatusHandler handler) { media_engine->connect(std::move(on), std::move(handler)); });
 
   if (!media_connected.ok) {
-    logger->error("Media Engine Connection Failed: " + config->media_url + " - " + media_connected.error);
+    logger->error("Media Engine Connection Failed: " + cli::redacted(config->media_url) + " - " + media_connected.error);
     datastore->close();
     events->close();
     return -3;
@@ -529,6 +530,17 @@ int main(int argc, char* argv[]) {
   if (config->http_api_enable || config->http_files_enable) {
     auto adminAPI = std::make_shared<api::AdminAPI>(logger, config->http_address, config->http_port);
 
+    // Review finding 28: plain HTTP beyond this host carries administrators' passwords and session tokens in clear.
+    if (config->http_api_enable) {
+      boost::system::error_code bad;
+      const auto bound = boost::asio::ip::make_address(config->http_address, bad);
+      if (bad || !bound.is_loopback()) {
+        logger->warn("The admin API is plain HTTP on " + config->http_address + ":" + std::to_string(config->http_port) +
+                     ": passwords and session tokens cross the network in clear. Bind http.address to 127.0.0.1 and use http.tls for "
+                     "anything else.");
+      }
+    }
+
     // HTTPS that was asked for and cannot start stops the node.
     if (config->http_tls_enable && !adminAPI->tls_enable(config->http_tls_address, config->http_tls_port, config->http_tls_cert(), config->http_tls_key())) {
       logger->error("Could not start the HTTPS listener on " + config->http_tls_address + ":" + std::to_string(config->http_tls_port));
@@ -573,7 +585,7 @@ int main(int argc, char* argv[]) {
       users->register_routes(*api_router);
 
       auto trunks = std::make_shared<api::TrunksAPI>(logger, datastore, adminAPI->executor());
-      trunks->statuses_register(core->trunk_statuses());
+      trunks->events_register(events);
       trunks->register_routes(*api_router);
 
       // Live calls, the media engine and /metrics, read from Core on its strand.
@@ -583,6 +595,10 @@ int main(int argc, char* argv[]) {
       // Who watches whom, and each subscriber's presence, read through the notifier on the Core strand.
       auto presence_api = std::make_shared<api::PresenceAPI>(logger, core, adminAPI->executor());
       presence_api->register_routes(*api_router);
+
+      // The bans and closed AORs that guessing over SIP put in force, and a lift (docs/authentication.md, Guessing).
+      auto security_api = std::make_shared<api::SecurityAPI>(logger, core, adminAPI->executor());
+      security_api->register_routes(*api_router);
 
       // The event bus as Server-Sent Events, on a response the listener holds open.
       auto events_api = std::make_shared<api::EventsAPI>(logger, events, adminAPI->executor());

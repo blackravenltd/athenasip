@@ -45,9 +45,9 @@ class RTPRelaySet : public std::enable_shared_from_this<RTPRelaySet> {
 
   // `relayed` is the owning relay's running total of packets sent on, shared by every set it allocates.
   RTPRelaySet(std::shared_ptr<Logger> logger, const std::string& _bind_address, uint16_t _port, std::shared_ptr<std::atomic<std::uint64_t>> relayed = nullptr)
-      : _relayed(std::move(relayed)),
+      : bind_address(_bind_address),
         port(_port),
-        bind_address(_bind_address),
+        _relayed(std::move(relayed)),
         _logger(std::make_shared<LoggerScoped>(_bind_address + ":" + std::to_string(_port), logger)),
         _io_context(detail::get_global_io_context()),
         _socket(_io_context, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address(_bind_address), _port)),

@@ -9,7 +9,7 @@ rtpengine on the media path, and a person listens. The browser half is automated
 - A device with AthenaPhone on the same network as this machine: not a guest network,
   and no VPN routing its traffic elsewhere.
 - Docker running, and a build of the admin client:
-  `(cd ../athenasip-admin && npm run build)`.
+  `(cd console && npm run build)`.
 - Free ports. AthenaPhone's Asterisk fixture uses 5060, 5061 and 8088 too, so stop it or
   move this fixture (step 1).
 - On macOS, allow incoming connections when asked, or the phone's REGISTER never arrives.
@@ -114,8 +114,9 @@ engine.
 
 - The node logs every message in full, with credentials redacted:
   `docker logs athenasip-interop | grep -A 30 "INVITE sip:"`
-- The browser: `window.__athenaSoftphone.state()` in the console gives `localSdp` and
-  `remoteSdp`; `stats()` gives the selected candidate pair, the codec and the DTLS state.
+- The browser: `window.__athenaSoftphone.state()` in the console gives `localSdp`,
+  `remoteSdp` and `flows` (how many RFC 5626 flows the registrar holds for it);
+  `stats()` gives the selected candidate pair, the codec and the DTLS state.
 - AthenaPhone: its own SIP trace.
 
 ## 8. Record the result

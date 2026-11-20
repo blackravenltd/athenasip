@@ -12,6 +12,7 @@
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include <tuple>
 
 #include "config_schema.h"
 #include "util.h"
@@ -56,6 +57,20 @@ bool Config::load_from_yaml(const std::string& filename) {
     return false;
   }
 
+  for (const auto& [key, field] : std::initializer_list<std::pair<const char*, std::uint32_t*>>{
+           {"flow_first_message_timeout", &sip_flow_first_message_timeout},
+           {"max_connections", &sip_max_connections},
+           {"max_connections_per_source", &sip_max_connections_per_source},
+           {"max_transactions", &sip_max_transactions}}) {
+    if (!sip[key]) continue;
+    try {
+      *field = sip[key].as<std::uint32_t>();
+    } catch (const std::exception& e) {
+      _logger->error("Invalid value for 'sip." + std::string(key) + "': " + std::string(e.what()));
+      return false;
+    }
+  }
+
   if (sip["flow_idle_timeout"]) {
     try {
       sip_flow_idle_timeout = sip["flow_idle_timeout"].as<std::uint32_t>();
@@ -64,8 +79,38 @@ bool Config::load_from_yaml(const std::string& filename) {
       return false;
     }
   }
+  if (YAML::Node limits = sip["auth_limits"]) {
+    const auto read = [&limits](const char* name, RateLimit& into) {
+      YAML::Node limit = limits[name];
+      if (!limit) return;
+      if (limit["burst"]) into.burst = limit["burst"].as<std::uint32_t>();
+      if (limit["per_minute"]) into.per_minute = limit["per_minute"].as<std::uint32_t>();
+    };
+
+    try {
+      read("failures_source", sip_auth_failures_source);
+      read("failures_aor", sip_auth_failures_aor);
+      read("challenges_source", sip_auth_challenges_source);
+      if (limits["ban_seconds"]) sip_auth_ban_seconds = limits["ban_seconds"].as<std::uint32_t>();
+    } catch (const std::exception& e) {
+      _logger->error("Invalid 'sip.auth_limits': failures_source, failures_aor and challenges_source each take burst and per_minute, and "
+                     "ban_seconds is a number - " +
+                     std::string(e.what()));
+      return false;
+    }
+  }
+
   if (sip["log_messages"]) sip_log_messages = sip["log_messages"].as<bool>();
   if (sip["public_address"]) sip_public_address = sip["public_address"].as<std::string>();
+
+  if (sip["websocket_allowed_origins"]) {
+    try {
+      sip_websocket_allowed_origins = sip["websocket_allowed_origins"].as<std::vector<std::string>>();
+    } catch (const std::exception&) {
+      _logger->error("Invalid 'sip.websocket_allowed_origins': it is a list of origins, such as [\"https://console.example.com\"]");
+      return false;
+    }
+  }
 
   if (sip["localnet"]) {
     try {
@@ -105,7 +150,7 @@ bool Config::load_from_yaml(const std::string& filename) {
   }
 
   YAML::Node sip_timers = sip["timers"];
-  if (sip_timers) {
+  if (sip_timers) try {
     if (sip_timers["t1_rtt_ms"]) sip_timer_t1_rtt_ms = sip_timers["t1_rtt_ms"].as<uint16_t>();
     if (sip_timers["t2_max_retransmit_interval_ms"]) sip_timer_t2_max_retransmit_interval_ms = sip_timers["t2_max_retransmit_interval_ms"].as<uint16_t>();
     if (sip_timers["t4_network_propagation_ms"]) sip_timer_t4_network_propagation_ms = sip_timers["t4_network_propagation_ms"].as<uint16_t>();
@@ -129,6 +174,29 @@ bool Config::load_from_yaml(const std::string& filename) {
       } else {
         sip_timer_c_invite_proxy_ms = configured;
       }
+    }
+  } catch (const std::exception& e) {
+    _logger->error("Invalid 'sip.timers': each is a number - " + std::string(e.what()));
+    return false;
+  }
+
+  // Review finding 38: a T1 of 0 makes Timer A re-arm at 0 ms, a busy loop of retransmissions; a T2 below T1 breaks
+  // the backoff (RFC 3261 17.1.2.2); a zero retransmit or timeout multiplier does the same to its timer. D, I, J and
+  // K may be 0, as on a reliable transport.
+  for (const auto& [name, value, minimum] : std::initializer_list<std::tuple<const char*, std::uint32_t, std::uint32_t>>{
+           {"t1_rtt_ms", sip_timer_t1_rtt_ms, 1},
+           {"t2_max_retransmit_interval_ms", sip_timer_t2_max_retransmit_interval_ms, sip_timer_t1_rtt_ms},
+           {"t4_network_propagation_ms", sip_timer_t4_network_propagation_ms, 1},
+           {"a_invite_initial", sip_timer_a_invite_initial, 1},
+           {"b_invite_timeout", sip_timer_b_invite_timeout, 1},
+           {"e_non_invite_initial", sip_timer_e_non_invite_initial, 1},
+           {"f_non_invite_timeout", sip_timer_f_non_invite_timeout, 1},
+           {"g_server_invite_initial", sip_timer_g_server_invite_initial, 1},
+           {"h_server_invite_timeout", sip_timer_h_server_invite_timeout, 1}}) {
+    if (value < minimum) {
+      _logger->error("'sip.timers." + std::string(name) + "' is " + std::to_string(value) + ": it is at least " + std::to_string(minimum) +
+                     (std::string(name).rfind("t2", 0) == 0 ? " (T2 is never below T1)" : ""));
+      return false;
     }
   }
 
@@ -419,6 +487,16 @@ bool Config::load_from_yaml(const std::string& filename) {
       behaviour.profiles = *profiles;
     }
 
+    if (behaviour_section["dtmf"]) {
+      const auto named = behaviour_section["dtmf"].as<std::string>();
+      const auto dtmf = types::MediaPolicy::parse_dtmf(named);
+      if (!dtmf) {
+        _logger->error("Unknown 'behaviour.dtmf' '" + named + "': it is one of auto, rfc4733, info or inband");
+        return false;
+      }
+      behaviour.dtmf = *dtmf;
+    }
+
     if (behaviour_section["qualify_interval"]) {
       std::int64_t seconds = -1;
       try {
@@ -509,10 +587,10 @@ bool Config::load_from_yaml(const std::string& filename) {
   // http
   YAML::Node http = config["http"];
   if (http) {
-    if (http["address"])
-      http_address = http["address"].as<std::string>();
-    else
-      http_address = "0.0.0.0";
+    // Plain HTTP carries passwords and session tokens in clear, so unless told otherwise it is only for this host
+    // (review finding 28); HTTPS is for anyone, so its default is every interface.
+    const bool address_given = static_cast<bool>(http["address"]);
+    http_address = address_given ? http["address"].as<std::string>() : "127.0.0.1";
 
     if (http["port"]) {
       try {
@@ -539,7 +617,7 @@ bool Config::load_from_yaml(const std::string& filename) {
       }
     }
 
-    if (http_tls_address.empty()) http_tls_address = http_address;
+    if (http_tls_address.empty()) http_tls_address = address_given ? http_address : "0.0.0.0";
 
     if (http_tls_enable && (http_tls_cert().empty() || http_tls_key().empty())) {
       _logger->error("'http.tls' needs a certificate and a key: cert_pem_filename and key_pem_filename here, or in the 'tls' section");
@@ -697,6 +775,7 @@ std::string Config::effective_yaml() const {
   out << YAML::Key << "node_id" << YAML::Value << sip_node_id;
   out << YAML::Key << "public_address" << YAML::Value << sip_public_address;
   out << YAML::Key << "localnet" << YAML::Value << YAML::Flow << sip_localnet;
+  out << YAML::Key << "websocket_allowed_origins" << YAML::Value << YAML::Flow << sip_websocket_allowed_origins;
   out << YAML::Key << "allow_unencrypted" << YAML::Value << sip_allow_unencrypted;
   out << YAML::Key << "forward_register" << YAML::Value << sip_forward_register;
   out << YAML::Key << "log_messages" << YAML::Value << sip_log_messages;
@@ -707,6 +786,21 @@ std::string Config::effective_yaml() const {
   out << YAML::Key << "media_timeout" << YAML::Value << sip_media_timeout;
   out << YAML::Key << "connect_timeout_ms" << YAML::Value << sip_connect_timeout_ms;
   out << YAML::Key << "flow_idle_timeout" << YAML::Value << sip_flow_idle_timeout;
+  out << YAML::Key << "flow_first_message_timeout" << YAML::Value << sip_flow_first_message_timeout;
+  out << YAML::Key << "max_connections" << YAML::Value << sip_max_connections;
+  out << YAML::Key << "max_connections_per_source" << YAML::Value << sip_max_connections_per_source;
+  out << YAML::Key << "max_transactions" << YAML::Value << sip_max_transactions;
+
+  out << YAML::Key << "auth_limits" << YAML::Value << YAML::BeginMap;
+  for (const auto& [name, limit] : std::initializer_list<std::pair<const char*, const RateLimit*>>{
+           {"failures_source", &sip_auth_failures_source}, {"failures_aor", &sip_auth_failures_aor}, {"challenges_source", &sip_auth_challenges_source}}) {
+    out << YAML::Key << name << YAML::Value << YAML::BeginMap;
+    out << YAML::Key << "burst" << YAML::Value << limit->burst;
+    out << YAML::Key << "per_minute" << YAML::Value << limit->per_minute;
+    out << YAML::EndMap;
+  }
+  out << YAML::Key << "ban_seconds" << YAML::Value << sip_auth_ban_seconds;
+  out << YAML::EndMap;
 
   out << YAML::Key << "timers" << YAML::Value << YAML::BeginMap;
   out << YAML::Key << "t1_rtt_ms" << YAML::Value << sip_timer_t1_rtt_ms;
@@ -797,6 +891,7 @@ std::string Config::effective_yaml() const {
   out << YAML::Key << "behaviour" << YAML::Value << YAML::BeginMap;
   out << YAML::Key << "media_anchor" << YAML::Value << behaviour.anchor;
   out << YAML::Key << "media_profile" << YAML::Value << types::MediaPolicy::to_string(behaviour.profiles);
+  out << YAML::Key << "dtmf" << YAML::Value << types::MediaPolicy::to_string(behaviour.dtmf);
   out << YAML::Key << "qualify_interval" << YAML::Value << behaviour_qualify_interval;
   out << YAML::Key << "rewrite_contact" << YAML::Value << behaviour_rewrite_contact;
   out << YAML::EndMap;

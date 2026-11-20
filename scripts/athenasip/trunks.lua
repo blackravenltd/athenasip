@@ -18,8 +18,10 @@
 --   caller_id     the number presented when calling out, in E.164
 --   from_domain   the host of the From when calling out, for a carrier that authenticates the From as its own
 --   media_profile the media it is offered, as a realm's: "rtp" (default, what carriers speak), "mirror", "webrtc", "srtp"
+--   dtmf          how it sends key presses, as a realm's: "auto" (default), "rfc4733", "info" or "inband"
 --   numbers       the numbers it brings in, each to an address of record: {"+442071234567": "sip:alice@example.com"}
 --   default       where a number in no list goes; without it, such a call is refused
+--   codes         service codes it takes, sent as dialled: {"*55", "*XX"}; X is any digit, N is 2 to 9, Z is 1 to 9
 --
 -- Everything else is athenasip.standard's: subscribers calling each other, and registrations.
 
@@ -44,6 +46,50 @@ end
 -- Whether a user part is a number someone dialled rather than a name.
 function trunks.is_number(user)
   return user ~= nil and user:match("^%+?[%d%s%-%.%(%)]+$") ~= nil and user:match("%d") ~= nil
+end
+
+-- Whether a user part is a service code: a carrier's voicemail or feature code, starting * or #, such as "*55".
+function trunks.is_code(user)
+  return user ~= nil and user:match("^[%*#][%*#%d]*$") ~= nil
+end
+
+-- Whether a code dialled matches a pattern from a trunk's codes: digit for digit, with X any digit, N 2 to 9 and
+-- Z 1 to 9, as a dialplan writes them.
+function trunks.code_matches(pattern, dialled)
+  if #pattern ~= #dialled then return false end
+  for i = 1, #pattern do
+    local want, have = pattern:sub(i, i), dialled:sub(i, i)
+    local digit = have:match("%d") ~= nil
+    if want == "X" then
+      if not digit then return false end
+    elseif want == "N" then
+      if not digit or have < "2" then return false end
+    elseif want == "Z" then
+      if not digit or have < "1" then return false end
+    elseif want ~= have then
+      return false
+    end
+  end
+  return true
+end
+
+-- The trunks that take a service code, best first, each with the code as dialled.
+function trunks.for_code(dialled)
+  local found = {}
+  for _, trunk in ipairs(a.store.trunks()) do
+    for _, pattern in ipairs(trunk.attributes.codes or {}) do
+      if trunks.code_matches(pattern, dialled) then
+        found[#found + 1] = {trunk = trunk, number = dialled, longest = #pattern, priority = trunk.attributes.priority or 100}
+        break
+      end
+    end
+  end
+
+  table.sort(found, function(x, y)
+    if x.priority ~= y.priority then return x.priority < y.priority end
+    return x.trunk.name < y.trunk.name
+  end)
+  return found
 end
 
 -- The trunks that carry a number, best first, each with the number as that trunk reads it.
@@ -121,12 +167,15 @@ function trunks.inbound(request)
 
   local realm = a.store.realm(subscriber.realm)
   local behaviour = realm and realm.behaviour_effective or a.config.behaviour
-  return a.route.forward({a.route.subscriber(subscriber, {bindings = bindings})}, {media = behaviour, rewrite_contact = behaviour.rewrite_contact})
+  -- The carrier's leg sends key presses as the trunk says; the subscriber's leg follows its own setting.
+  return a.route.forward({a.route.subscriber(subscriber, {bindings = bindings})},
+                         {media = behaviour, rewrite_contact = behaviour.rewrite_contact, caller_dtmf = trunk.attributes.dtmf})
 end
 
 -- A subscriber dialling a number no subscriber has: out by the best trunk, the others after it.
 function trunks.outbound(request, realm)
-  local candidates = trunks.for_number(request.uri.user)
+  local dialled = request.uri.user
+  local candidates = trunks.is_code(dialled) and trunks.for_code(dialled) or trunks.for_number(dialled)
   if #candidates == 0 then
     a.log.info("No trunk carries " .. request.uri.user .. " - 404")
     return a.route.reply(404, "Not Found")
@@ -134,7 +183,7 @@ function trunks.outbound(request, realm)
 
   local targets = {}
   for _, candidate in ipairs(candidates) do
-    targets[#targets + 1] = a.route.trunk(candidate.trunk, {user = as_dialled(candidate.trunk, candidate.number)})
+    targets[#targets + 1] = a.route.trunk(candidate.trunk, {user = as_dialled(candidate.trunk, candidate.number), dtmf = candidate.trunk.attributes.dtmf})
   end
 
   -- The first trunk's caller ID, asserted to the carrier (RFC 3325 9.1).
@@ -159,7 +208,8 @@ function trunks.route(request)
   -- Only a caller in one of this node's realms, which authorize has already made prove itself, calls out.
   local from = request.from
   local realm = from and a.store.realm(from.uri.host:lower())
-  if realm and trunks.is_number(request.uri.user) and not a.store.subscriber(request.uri) then return trunks.outbound(request, realm) end
+  local user = request.uri.user
+  if realm and (trunks.is_number(user) or trunks.is_code(user)) and not a.store.subscriber(request.uri) then return trunks.outbound(request, realm) end
 
   return std.route(request)
 end

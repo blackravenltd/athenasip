@@ -29,10 +29,12 @@ realm or its subscribers needs the realm roles ([Authentication](authentication.
 |---|---|---|
 | 401, again and again | `REGISTER for <aor> with a Digest response that does not match - challenging` | Wrong password, or the client's authentication user name differs from its user name. Reset the password over the API. |
 | 401, again and again | `REGISTER for unknown subscriber <aor> - challenging` | No such subscriber in that realm. Check the user part and that the subscriber exists under `/api/v1/realms/<realm>/subscribers`. |
-| 401, again and again | `REGISTER nonce <nonce> not found or expired - challenging` | The nonce the client answered is unknown. In a cluster, check every node uses the same `redis://` datastore. |
+| 401, again and again | `REGISTER with a nonce this realm did not mint - challenging` | The nonce the client answered was not minted under this realm's `nonce_secret`. In a cluster, check every node uses the same `redis://` datastore, so they share the realm. |
+| 401 with `stale=true`, then 200 | `REGISTER with an expired nonce - challenging as stale` | Normal: the client took longer than the realm's `nonce_expiry` (default 300 s) to answer and signs a fresh nonce. If it never gets to 200, its clock or the node's is far out, or it keeps answering the old nonce. |
 | 403 | `REGISTER for <uri>, a domain not served here, and sip.forward_register is never - 403` | The client registers to a domain that is not a realm on this node. Create a realm with that exact name, or set the client's domain to an existing realm. |
 | 404 | `REGISTER for unserved domain <domain> - 404` | The domain after `@` in the client's address is not a realm here. Same fix as 403. |
 | 423 | `REGISTER asked for <n>s, below the realm minimum - 423` | The client asked for a shorter registration than the realm's `registration_minimum`. Lengthen it in the client, or lower the realm's setting. |
+| 403 Too Many Bindings | `REGISTER for <aor> would hold <n> bindings, above the <max> allowed - 403` | The address of record already holds the realm's `registration_max_bindings` (10 by default). Stale bindings go when their client removes them (Expires 0) or when they expire; or raise the realm's setting. |
 | 423 | `REGISTER asked for push with <n>s, too brief to be woken in time - 423` | A push client must register for at least `push.refresh` + 60 seconds (240 by default). |
 | 555 | `REGISTER asked for <service> push, which is not served or lacks what it needs - 555` | The client asked for a push service not in `push.urls`, or its Contact lacks `pn-param` where the service needs one. See [Push does not wake a phone](#push-does-not-wake-a-phone). |
 
@@ -75,6 +77,20 @@ media engine. [Media](media.md#is-media-flowing) has the other tools.
 | LAN phones given the public address | Phones on the node's own network get no audio, outside phones do | List the LAN in `sip.localnet` |
 | rtpengine advertises the wrong address | The SDP names an address phones cannot reach | Fix rtpengine's `--interface`, or set `media.rtpengine.media_address` |
 | A browser behind strict NAT | Browser calls fail through some networks only | Add a TURN server to `http.api.ice_servers` and set `turn_shared_secret` |
+
+## Key presses do nothing
+
+The call has audio but a voicemail menu or an IVR ignores the keys. Each leg of a call
+sends key presses one way, RFC 4733 events, SIP INFO or tones, and the far end has to get
+them the way it listens for them. `GET /api/v1/calls` shows what the node decided for each
+leg as `participants[].dtmf`; [Behaviour](behaviour.md#dtmf) has the rules.
+
+| Cause | How to tell | Fix |
+|---|---|---|
+| The two legs differ and the engine cannot convert | `Call <id> sends key presses as <a> on one leg and <b> on the other, and builtin cannot convert` in the log | Set both ends to one method, or use rtpengine, which converts |
+| A phone sends INFO but the node thinks it sends tones | Its leg shows `inband`; the phone's log shows INFO sent and answered 200 | Set the subscriber's `behaviour.dtmf` to `info`: nothing in an offer says INFO |
+| Events towards a leg set to `info` are not turned into INFO | `media.rtpengine.dtmf_events` is unset, or names an address rtpengine cannot reach | Set it to an address and port rtpengine can send to ([Media](media.md#dtmf)) |
+| A carrier takes events but the phone sends tones | The phone's leg shows `inband`, the carrier's `rfc4733`, and rtpengine is in use | Nothing: rtpengine detects the tones and sends events. If the carrier still hears nothing, the phone's tones are too short or quiet; set the phone to RFC 4733. |
 
 ## A browser cannot connect
 

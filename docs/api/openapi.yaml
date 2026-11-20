@@ -236,8 +236,9 @@ paths:
       summary: The event bus, as Server-Sent Events
       description: |
         A `text/event-stream` response that stays open. Every message on `nodes/#`,
-        `subscribers/#`, `calls/#` and `presence/#` is one event, named by its topic, with the
-        message as its data. A comment every fifteen seconds keeps intermediaries from closing an idle
+        `subscribers/#`, `calls/#`, `presence/#` and `trunks/#` (each trunk's registration
+        status, and `trunks/changed` when one is created, changed or deleted) is one event,
+        named by its topic, with the message as its data. A comment every fifteen seconds keeps intermediaries from closing an idle
         stream. A node serves at most 32 at once; past that it answers 503
         `too_many_streams`.
 
@@ -633,6 +634,101 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /conferences:
+    get:
+      operationId: listConferences
+      tags: [calls]
+      summary: The rooms with somebody in them
+      description: |
+        Every conference URI with a live call to its focus (RFC 4579), from the call records,
+        so every node gives the same list, with who is in each as the node routed them.
+        What the focus itself knows of the room is not here yet
+        (docs/design/conferencing.md, step 6).
+      responses:
+        "200":
+          description: The rooms
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Conference"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /conferences/{uri}:
+    get:
+      operationId: getConference
+      tags: [calls]
+      summary: One room
+      parameters:
+        - name: uri
+          in: path
+          required: true
+          schema:
+            type: string
+          description: |
+            The conference URI as dialled, such as sip:conf-sales@example.com, percent-encoded as
+            one path segment: its `:` and `@` as `%3A` and `%40`, as `/calls/{call}` takes a Call-ID.
+      responses:
+        "200":
+          description: The room
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conference"
+        "404":
+          description: Nobody is in it
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /conferences/{uri}/calls/{call}:
+    delete:
+      operationId: leaveConference
+      tags: [calls]
+      summary: Remove a participant
+      description: |
+        The node ends that participant's call with a BYE to both ends (RFC 3261 15.1), as
+        `DELETE /calls/{call}` does. Muting and the like are the focus's and are not proxied.
+      parameters:
+        - name: uri
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The conference URI as dialled, percent-encoded as one path segment
+        - name: call
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The participant's Call-ID, as the room lists it
+      responses:
+        "202":
+          description: The BYEs are sent
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, conference]
+                properties:
+                  id:
+                    type: string
+                  conference:
+                    type: string
+        "404":
+          description: No live call with that Call-ID in that room
+        "409":
+          description: "`not_answered`: the focus has not answered yet; the caller ends it with a CANCEL"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /calls:
     get:
       operationId: listCalls
@@ -932,9 +1028,10 @@ paths:
       description: |
         When a callee answers an offer this node's engine produced with 488 Not Acceptable
         Here, the node offers it the other profile once (WebRTC for plain RTP and back).
-        This lists each subscriber that needed that, on this node since it started, most
-        recent first. `suggested_media_profile` is the value to set as the subscriber's
-        `behaviour.media_profile`; the node does not set it.
+        This lists each subscriber that needed that, recorded in the datastore by whichever
+        node saw it and kept for thirty days, most recent first. `suggested_media_profile`
+        is the value to set as the subscriber's `behaviour.media_profile`; the node does not
+        set it.
       responses:
         "200":
           description: The re-offers, most recent first
@@ -944,6 +1041,119 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/MediaReoffer"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /security/bans:
+    get:
+      operationId: listBans
+      tags: [status]
+      summary: The addresses banned for guessing passwords over SIP
+      description: |
+        An address that answers too many Digest challenges wrongly is banned, and nothing it
+        sends is answered until the ban ends (sip.auth_limits, docs/authentication.md,
+        Guessing). Every node holds the bans the others make, heard over the bus, so this is
+        the cluster's list as this node knows it; a node that started after a ban was made
+        does not have it.
+      responses:
+        "200":
+          description: The bans in force, soonest to end first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Ban"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /security/bans/{source}:
+    delete:
+      operationId: liftBan
+      tags: [status]
+      summary: Lift a ban
+      description: |
+        Ends the ban on every node, here at once and on the others over the bus, and forgets
+        the failures counted against the address, so its next wrong password is not a ban
+        straight back.
+      parameters:
+        - name: source
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The banned address, percent-encoded as one path segment
+      responses:
+        "200":
+          description: Lifted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [source]
+                properties:
+                  source:
+                    type: string
+        "404":
+          description: "`not_found`: this node held no such ban; the lift was still sent to the others"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /security/closed-aors:
+    get:
+      operationId: listClosedAors
+      tags: [status]
+      summary: The addresses of record closed to strangers for guessing
+      description: |
+        An address of record whose password is guessed at, wrongly, too often from anywhere is
+        closed for a while to every address that has not lately authenticated as it, which is
+        answered 403 with Retry-After; its own phones go on registering. Held cluster-wide as
+        bans are.
+      responses:
+        "200":
+          description: The closures in force, soonest to end first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ClosedAor"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /security/closed-aors/{aor}:
+    delete:
+      operationId: reopenAor
+      tags: [status]
+      summary: Reopen an address of record
+      description: Ends the closure on every node and forgets the failures counted against the address of record.
+      parameters:
+        - name: aor
+          in: path
+          required: true
+          schema:
+            type: string
+          description: |
+            The address of record, such as sip:alice@example.com, percent-encoded as one path
+            segment; matched as sip:user@host with the host lowercased.
+      responses:
+        "200":
+          description: Reopened
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [aor]
+                properties:
+                  aor:
+                    type: string
+        "404":
+          description: "`not_found`: this node held no such closure; the reopening was still sent to the others"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1420,10 +1630,26 @@ components:
         realm:
           type: object
           description: Present when `realm` was asked for.
-          required: [name, registration, outbound, push]
+          required: [name, registration, outbound, push, conferences]
           properties:
             name:
               type: string
+            conferences:
+              type: array
+              description: >-
+                RFC 4579. The rooms a client may dial, as the prefix of each conference focus
+                serving the realm: a URI whose user part starts with it is a room. Empty when
+                the realm has no focus.
+              items:
+                type: object
+                required: [prefix, trunk]
+                properties:
+                  prefix:
+                    type: string
+                    example: conf-
+                  trunk:
+                    type: string
+                    description: The focus trunk's name
             registration:
               type: object
               description: |
@@ -1552,14 +1778,18 @@ components:
           example: sip:sip.acme.example;transport=tls
         proxy:
           type: string
-          description: An outbound proxy, where calls and the REGISTER are sent instead of where the URI says
+          description: >-
+            An outbound proxy, where calls and the REGISTER are sent instead of where the URI
+            says. On an update, an empty string clears it; a field left out is kept.
           example: sip:203.0.113.10:5060
         username:
           type: string
-          description: For the carrier's challenges
+          description: For the carrier's challenges. On an update, an empty string clears it
         password:
           type: string
-          description: Written, never returned
+          description: >-
+            Written, never returned (`password_set` says whether there is one). On an update, an
+            empty string removes it; a field left out keeps it
         register:
           type: object
           properties:
@@ -1580,10 +1810,13 @@ components:
             example: 203.0.113.0/24
         tls_ca:
           type: string
-          description: A CA file for TLS to the trunk; empty is the system's store
+          description: A CA file for TLS to the trunk; empty is the system's store, and on an update an empty string clears it
         attributes:
           type: object
-          description: Anything a routing script reads; the node reads none of it
+          description: >-
+            Anything a routing script reads (docs/scripting.md, Trunks without writing Lua). The
+            node itself reads `focus` for its API views (the rooms a client may dial) and nothing
+            else; `dtmf`, `media_profile`, `codes`, `numbers` and the rest are the standard scripts'.
           additionalProperties: true
 
     Trunk:
@@ -1609,10 +1842,15 @@ components:
                   enum: [registering, registered, failed]
                 detail:
                   type: string
+                  description: The carrier's response line for registered, the reason for failed, empty while registering
                 expires_at:
                   type: integer
+                  format: int64
+                  description: When the registration lapses, Unix seconds; 0 while not registered
                 at:
                   type: string
+                  format: date-time
+                  description: When the node reported it, ISO 8601 UTC
 
     User:
       type: object
@@ -1833,10 +2071,15 @@ components:
           format: int64
         nonce_expiry:
           type: integer
-          description: How long a Digest nonce stays good, in seconds
+          description: How long a Digest nonce stays good, in seconds. Default 300. A right answer over an older one is challenged again with stale=true.
         registration_timeout:
           type: integer
           description: The longest registration this realm grants, in seconds
+        registration_max_bindings:
+          type: integer
+          description: >-
+            The most bindings one address of record may hold, 10 by default; a REGISTER that would
+            leave more is refused 403. Zero is no cap.
         registration_minimum:
           type: integer
           description: >-
@@ -1877,6 +2120,14 @@ components:
             caller offered. transport makes ws and wss WebRTC and everything else plain
             RTP. rtp, webrtc and srtp (RFC 4568 keys in the description) make every leg
             that.
+        dtmf:
+          type: string
+          nullable: true
+          enum: [auto, rfc4733, info, inband, null]
+          description: >-
+            How a leg in this realm sends key presses: RFC 4733 telephone-events, SIP INFO
+            or tones in the audio. auto reads it from what the leg offers, and never means
+            INFO. The media engine converts between legs that differ.
         qualify_interval:
           type: integer
           nullable: true
@@ -1903,6 +2154,9 @@ components:
         media_profile:
           type: string
           enum: [mirror, transport, rtp, webrtc, srtp]
+        dtmf:
+          type: string
+          enum: [auto, rfc4733, info, inband]
         qualify_interval:
           type: integer
         rewrite_contact:
@@ -1925,6 +2179,8 @@ components:
           type: integer
         registration_timeout:
           type: integer
+        registration_max_bindings:
+          type: integer
         registration_minimum:
           type: integer
         behaviour:
@@ -1942,6 +2198,8 @@ components:
         nonce_expiry:
           type: integer
         registration_timeout:
+          type: integer
+        registration_max_bindings:
           type: integer
         registration_minimum:
           type: integer
@@ -2042,7 +2300,7 @@ components:
     SubscriberBehaviour:
       type: object
       description: >-
-        The one behaviour setting that is about an endpoint rather than a realm. Null, or
+        The behaviour settings that are about an endpoint rather than a realm. Null, or
         absent, takes the realm's; null in an update goes back to it. Any other setting, or
         an unknown value, is a 400 and changes nothing.
       additionalProperties: false
@@ -2055,6 +2313,14 @@ components:
             What this subscriber's endpoint is, as Asterisk's webrtc=yes says. It decides the
             first description produced towards the endpoint, above the realm's behaviour
             and below what the endpoint has itself said in an offer or answer.
+        dtmf:
+          type: string
+          nullable: true
+          enum: [auto, rfc4733, info, inband, null]
+          description: >-
+            How this subscriber's endpoint sends key presses, above the realm's behaviour:
+            RFC 4733 telephone-events, SIP INFO or tones in the audio. auto reads it from
+            what the endpoint offers.
 
     SubscriberCreate:
       type: object
@@ -2091,6 +2357,79 @@ components:
         behaviour:
           $ref: '#/components/schemas/SubscriberBehaviour'
 
+    Ban:
+      type: object
+      required: [source, node, since, until, seconds_left]
+      properties:
+        source:
+          type: string
+          description: The banned address
+        node:
+          type: string
+          description: The node that banned it
+        since:
+          type: string
+          format: date-time
+          description: When this node began to hold it
+        until:
+          type: string
+          format: date-time
+        seconds_left:
+          type: integer
+    ClosedAor:
+      type: object
+      required: [aor, node, since, until, seconds_left]
+      properties:
+        aor:
+          type: string
+          description: The address of record, as sip:user@host
+        node:
+          type: string
+        since:
+          type: string
+          format: date-time
+        until:
+          type: string
+          format: date-time
+        seconds_left:
+          type: integer
+    Conference:
+      type: object
+      required: [uri, focus, participants]
+      description: >-
+        A room with somebody in it, as the call records say: every live call whose callee is
+        the room's focus (RFC 4579, docs/design/conferencing.md), wherever in the cluster it
+        is carried.
+      properties:
+        uri:
+          type: string
+          description: The conference URI as dialled
+        focus:
+          type: string
+          nullable: true
+          description: The trunk that is the room's focus, once it has answered a call
+        participants:
+          type: array
+          items:
+            type: object
+            required: [call, identity, subscriber, state, joined_at, node]
+            properties:
+              call:
+                type: string
+              identity:
+                type: string
+              subscriber:
+                type: string
+                nullable: true
+              state:
+                type: string
+                enum: [Initial, Trying, Ringing, Connected, Closing]
+              joined_at:
+                type: string
+                format: date-time
+              node:
+                type: string
+
     Call:
       type: object
       required: [id, state, created_at, answered_at, participants, media]
@@ -2098,6 +2437,12 @@ components:
         id:
           type: string
           description: The Call-ID
+        focus:
+          type: string
+          nullable: true
+          description: >-
+            The conference URI this call is a leg of, when its callee is a room's focus (RFC
+            4579); null for a call between two.
         state:
           type: string
           enum: [Initial, Trying, Ringing, Connected, Closing, Closed]
@@ -2187,7 +2532,7 @@ components:
           type: array
           items:
             type: string
-            enum: [bridge, conference, record, transcode]
+            enum: [bridge, conference, record, transcode, dtmf]
 
     Registration:
       type: object

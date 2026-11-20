@@ -221,7 +221,7 @@ case "$PUBLIC_ADDRESS" in
 esac
 
 # The admin client is built in its own repository and mounted when present.
-export ATHENA_INTEROP_ADMIN_DIR="${ATHENA_INTEROP_ADMIN_DIR:-$HERE/../../../athenasip-admin/build}"
+export ATHENA_INTEROP_ADMIN_DIR="${ATHENA_INTEROP_ADMIN_DIR:-$HERE/../../console/build}"
 FILES_ENABLE="false"
 
 if [[ "$SERVE_ADMIN" == "yes" ]]; then
@@ -231,7 +231,7 @@ No admin client to serve at ${ATHENA_INTEROP_ADMIN_DIR}
 
 Build it first:
 
-  (cd ../athenasip-admin && VITE_ATHENASIP_LIVE=true npm run build)
+  (cd console && VITE_ATHENASIP_LIVE=true npm run build)
 
 or point ATHENA_INTEROP_ADMIN_DIR at a directory that has one. Starting a node that
 serves nothing would only fail later and further away.

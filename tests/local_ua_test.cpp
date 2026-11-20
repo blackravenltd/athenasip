@@ -180,3 +180,47 @@ TEST(LocalUATest, AnEndReachableOnlyByItsFlowIsSentItsByeThere) {
   ASSERT_EQ(byes.size(), 1u);
   EXPECT_EQ(byes[0]->header->request_uri->to_string(), "sip:k3j2@df7jal23ls0d.invalid;transport=ws");
 }
+
+// A key press the engine heard on one leg is sent to the other as an INFO of the node's own, when that leg
+// speaks INFO: in the dialog, with the far end's CSeq, carrying application/dtmf-relay.
+TEST(LocalUATest, AKeyPressHeardOnOneLegIsSentToTheOtherAsInfo) {
+  HangUpFixture f;
+  f.connect_call();
+  f.on_strand([&f]() {
+    auto call = f.core->call_get("call-proxy");
+    ASSERT_NE(call, nullptr);
+    ASSERT_EQ(call->participants.size(), 2u);
+    call->participants[1].dtmf = types::MediaPolicy::Dtmf::Info;
+  });
+
+  const bool sent = f.on_strand([&f]() { return f.core->local_ua()->key_pressed("call-proxy", "alice", '5', std::chrono::milliseconds(160)); });
+  f.settle();
+  EXPECT_TRUE(sent);
+
+  const auto infos = HangUpFixture::requests_with(f.callee_connection, "INFO");
+  std::string log;
+  for (const auto& line : f.logger->lines(loggers::LogLevel::INFO)) log += line + "\n";
+  for (const auto& line : f.logger->lines(loggers::LogLevel::WARN)) log += line + "\n";
+  ASSERT_EQ(infos.size(), 1u) << "callee saw:\n" << f.callee_connection->written << "\ncaller saw:\n" << f.caller_connection->written << "\nlog:\n" << log;
+  EXPECT_EQ(HangUpFixture::tag(infos[0], "From"), "alice");
+  EXPECT_EQ(HangUpFixture::tag(infos[0], "To"), "bob");
+  EXPECT_EQ(HangUpFixture::value_of(infos[0], "Content-Type"), "application/dtmf-relay");
+  EXPECT_EQ(infos[0]->body, "Signal=5\r\nDuration=160\r\n");
+  EXPECT_TRUE(HangUpFixture::requests_with(f.caller_connection, "INFO").empty());
+}
+
+// A far leg that takes key presses in its media gets them there, from the engine, and no INFO.
+TEST(LocalUATest, AKeyPressTowardsALegThatTakesEventsIsNoInfo) {
+  HangUpFixture f;
+  f.connect_call();
+  f.on_strand([&f]() {
+    auto call = f.core->call_get("call-proxy");
+    ASSERT_NE(call, nullptr);
+    call->participants[1].dtmf = types::MediaPolicy::Dtmf::Rfc4733;
+  });
+
+  const bool sent = f.on_strand([&f]() { return f.core->local_ua()->key_pressed("call-proxy", "alice", '5', std::chrono::milliseconds(160)); });
+  f.settle();
+  EXPECT_FALSE(sent);
+  EXPECT_TRUE(HangUpFixture::requests_with(f.callee_connection, "INFO").empty());
+}

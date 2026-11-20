@@ -1,7 +1,9 @@
 # AthenaSIP - Architecture
 
 AthenaSIP is a multi-master, clusterable SIP proxy and registrar. Any node serves any
-subscriber. Registrations survive a node dying; dialogs in flight on that node do not.
+subscriber. Registrations survive a node dying. A dialog's state is in the call record
+too, so a request inside it reaching another node finds the dialog; the media that node
+anchored, and the signalling path through it, do not move yet.
 
 The layering is RFC 3261's:
 
@@ -82,6 +84,25 @@ flow id a binding records (RFC 5626), so the node holding a binding can find the
 connection again without resolving the Contact.
 
 A channel writes one message at a time; later writes queue behind the one in flight.
+
+A stream is read within limits: a header block of more than 16 KB with no end, or a
+message of more than 64 KB in all, closes the connection, the second with a 513 Message
+Too Large first (RFC 3261 18.1.1). A Content-Length that is not one number is answered 400
+and closes the stream too, since nothing after it can be framed. A datagram is bounded by
+its own size, and one whose Content-Length is not one number is discarded.
+
+A message is parsed strictly, and one that fails is answered 400 before anything reads it:
+the request line is exactly a Method that is an RFC 3261 token, a Request-URI that parses
+and `SIP/2.0`; every field name is a token; a line with no colon ends the parse there. Line
+endings are CRLF when this node sends, and a bare LF is accepted when it receives (RFC 3261
+7.5's robustness), so a header block mixing the two reads the same.
+
+Flows are held within limits too ([configuration](configuration.md#sip)): a connection that
+sends no whole message within `sip.flow_first_message_timeout` is closed, one that registered
+nobody is closed when idle for `sip.flow_idle_timeout`, a UDP source earns a flow only with a
+datagram that is SIP or STUN, and `sip.max_connections` and `sip.max_connections_per_source`
+cap what the node holds in all and from one address. A connection a subscriber registered
+over is kept however quiet.
 
 Browsers served over HTTPS can only open `wss`, so secure WebSocket is the only way in for
 a web client.

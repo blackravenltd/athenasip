@@ -41,14 +41,14 @@ class Registrar : public TransactionUser {
     std::uint32_t max_expires = 0;
     std::uint32_t min_expires = 0;
     std::uint32_t qualify_interval = 0;
+    // The most bindings the AOR may hold; zero is no cap (the realm's registration_max_bindings).
+    std::uint32_t max_bindings = 0;
   };
 
   // The steps of RFC 3261 10.3, once the policy has accepted the REGISTER into a realm. Each stage resumes after
   // a datastore round trip and is named for what it has just learned.
   void _on_realm(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::shared_ptr<types::SIPIdentity> aor,
                  std::shared_ptr<types::Realm> realm, Terms terms);
-  void _on_nonce_checked(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction,
-                         std::shared_ptr<types::SIPIdentity> aor, std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Authorization> auth, Terms terms);
   void _on_subscriber(std::shared_ptr<SIPMessage> request, std::shared_ptr<transactions::TransactionBase> transaction, std::shared_ptr<types::SIPIdentity> aor,
                       std::shared_ptr<types::Realm> realm, std::shared_ptr<types::Authorization> auth, std::shared_ptr<types::Subscriber> subscriber,
                       Terms terms);
@@ -119,7 +119,9 @@ class Registrar : public TransactionUser {
 
   // 401 with a fresh nonce for the realm, if the realm is known.
   void _send_challenge(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
-                       const std::shared_ptr<types::Realm>& realm);
+                       const std::shared_ptr<types::Realm>& realm, bool stale = false);
+  void _send_refusal(const std::shared_ptr<transactions::TransactionBase>& transaction, const std::shared_ptr<SIPMessage>& request,
+                     std::chrono::seconds retry_after);
 
   std::shared_ptr<loggers::Logger> _logger;
   std::weak_ptr<Core> _core;

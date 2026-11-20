@@ -16,6 +16,7 @@ The node, and how it treats SIP.
 | `sip.node_id` | text | required | This node's name. Unique in the cluster. |
 | `sip.public_address` | text | none | The address this node tells others to reach it on. Needed in a container, behind NAT or a balancer; empty falls back to the bind address, or to one peers have seen this node at. |
 | `sip.localnet` | list | `[]` | Prefixes on this node's side of the router, such as 192.168.0.0/16. A far end inside them is given the local address and port; everyone else the public ones. |
+| `sip.websocket_allowed_origins` | list | `[]` | The web origins whose pages may open a SIP WebSocket here, such as https://console.example.com. Empty allows any; a request with no Origin, as a phone sends, is always allowed. |
 | `sip.allow_unencrypted` | true or false | `true` | False refuses to start with a udp, tcp or plain websocket listener. |
 | `sip.forward_register` | one of `subscribers`, `never` | `subscribers` | A REGISTER for a domain this node does not serve (RFC 3261 10.3): subscribers forwards one from this node's own subscribers; never answers 403. |
 | `sip.log_messages` | true or false | `false` | Log every message in full, not only its first line, at debug: with log.level above debug it logs nothing. Credentials are redacted. |
@@ -25,7 +26,46 @@ The node, and how it treats SIP.
 | `sip.max_call_duration` | integer | `0` | The longest any call is held, in seconds; each end is then sent a BYE. 0 is no limit. It cuts live calls too. |
 | `sip.media_timeout` | integer | `300` | Seconds an anchored call may carry no media before each end is sent a BYE. 0 turns it off. RTCP counts, so a call on hold is not silent. |
 | `sip.connect_timeout_ms` | integer | `4000` | How long opening a connection to a next hop may take, in milliseconds. |
-| `sip.flow_idle_timeout` | integer | `300` | Seconds a UDP flow may sit idle before it is forgotten. 0 never forgets. Keep it above 32 (64 * T1). |
+| `sip.flow_idle_timeout` | integer | `300` | Seconds a UDP flow, or a connection that registered nobody, may sit idle before it is closed. 0 never closes one for that. Keep it above 32 (64 * T1). |
+| `sip.flow_first_message_timeout` | integer | `30` | Seconds a TCP, TLS or WebSocket connection may stay open without a whole message arriving. 0 never closes one for that. |
+| `sip.max_connections` | integer | `10000` | The flows the node holds at once, UDP sources included; one more is closed. 0 is no cap. |
+| `sip.max_connections_per_source` | integer | `64` | The flows one address may hold at once; one more is closed. 0 is no cap. |
+| `sip.max_transactions` | integer | `50000` | The transactions held at once; a new request past it is answered 503 with Retry-After. 0 is no cap. |
+
+### `sip.auth_limits`
+
+Digest guessing over SIP, per node: a burst allowance, then a rate per minute, 0 in either turning that limit off (docs/authentication.md, Guessing).
+
+| Setting | Takes | Default | |
+|---|---|---|---|
+| `sip.auth_limits.ban_seconds` | integer | `900` | How long a ban or a closed AOR lasts, in seconds. 0 bans nothing. |
+
+#### `sip.auth_limits.failures_source`
+
+Wrong answers from one address; past it the address is banned for ban_seconds.
+
+| Setting | Takes | Default | |
+|---|---|---|---|
+| `sip.auth_limits.failures_source.burst` | integer | `10` | Allowed at once. |
+| `sip.auth_limits.failures_source.per_minute` | integer | `5` | Allowed per minute after that. |
+
+#### `sip.auth_limits.failures_aor`
+
+Wrong answers for one address of record; past it the AOR is closed for ban_seconds to addresses that have not lately authenticated as it.
+
+| Setting | Takes | Default | |
+|---|---|---|---|
+| `sip.auth_limits.failures_aor.burst` | integer | `10` | Allowed at once. |
+| `sip.auth_limits.failures_aor.per_minute` | integer | `5` | Allowed per minute after that. |
+
+#### `sip.auth_limits.challenges_source`
+
+Challenges sent to one address; past it a request needing one is answered 403.
+
+| Setting | Takes | Default | |
+|---|---|---|---|
+| `sip.auth_limits.challenges_source.burst` | integer | `200` | Allowed at once. |
+| `sip.auth_limits.challenges_source.per_minute` | integer | `600` | Allowed per minute after that. |
 
 ### `sip.timers`
 
@@ -141,6 +181,7 @@ The mqtt:// event bus. The URL names the broker; this says how to talk to it.
 | `events.mqtt.username` | text | none | The broker username, if not in the URL. |
 | `events.mqtt.password` | text | none | The broker password, if not in the URL. |
 | `events.mqtt.prefix` | text | `athenasip/` | Put before every topic, so clusters can share a broker. |
+| `events.mqtt.ca_file` | text | none | For mqtts://: more CA certificates to trust for the broker, beside the system's. The broker's name is checked against its certificate. |
 
 ## `media`
 
@@ -172,6 +213,7 @@ The rtpengine:// media engine, over its ng control port.
 | `media.rtpengine.attempts` | integer, 1 or more | `3` | Tries per request. An engine that answers none of them leaves the pool until it answers a ping. |
 | `media.rtpengine.ping_interval` | integer, 1 or more | `10` | Seconds between pings of every engine. |
 | `media.rtpengine.media_address` | text | none | The address rtpengine advertises. Empty leaves it to rtpengine's interfaces. A leg inside sip.localnet is given the node's local address. |
+| `media.rtpengine.dtmf_events` | text | none | host:port this node listens on for the key presses rtpengine hears, which become SIP INFO for a leg set to info (behaviour.dtmf). An address rtpengine can reach; port 0 picks one. Empty is off. |
 
 ## `policy`
 
@@ -246,6 +288,7 @@ Web Push (RFC 8030) with VAPID (RFC 8292), for webpush:// in push.urls.
 | `push.webpush.subject` | text | required | A mailto: or https: URI a push service can reach you at. |
 | `push.webpush.ttl` | integer, 0 or more | `60` | Seconds the push service keeps trying. |
 | `push.webpush.ca_file` | text | none | More CA certificates to trust, beside the system's. |
+| `push.webpush.allow_private_destinations` | true or false | `false` | Push to a subscription URL that resolves to a private, loopback or link-local address. Off, so a subscriber cannot make the node POST to a service inside its network; on for a push service of your own on such an address. |
 
 ## `behaviour`
 
@@ -255,6 +298,7 @@ The defaults for what differs between SIP servers. A realm overrides any of them
 |---|---|---|---|
 | `behaviour.media_anchor` | true or false | `true` | Relay media through the media engine. False leaves it end to end, which fails behind NAT. |
 | `behaviour.media_profile` | one of `mirror`, `transport`, `webrtc`, `rtp`, `srtp` | `mirror` | What each leg's media is offered as: mirror gives each leg what it offered; the others are explained in docs/behaviour.md. |
+| `behaviour.dtmf` | one of `auto`, `rfc4733`, `info`, `inband` | `auto` | How a leg sends key presses: RFC 4733 telephone-events, SIP INFO or tones in the audio. auto reads it from what the leg offers. The engine converts between legs that differ; docs/behaviour.md. |
 | `behaviour.qualify_interval` | 0, or 5 to 86400 | `0` | Seconds between OPTIONS to a registered client. 0 is never. |
 | `behaviour.rewrite_contact` | true or false | `false` | Rewrite a registering client's Contact to the address it was seen at. |
 
@@ -292,7 +336,7 @@ The admin API, the console and the file server. No section, no listener.
 
 | Setting | Takes | Default | |
 |---|---|---|---|
-| `http.address` | text | `0.0.0.0` | The address to bind. |
+| `http.address` | text | `127.0.0.1` | The address plain HTTP binds. Loopback unless set, since it carries passwords and session tokens in clear; a node warns when it binds any other without TLS. |
 | `http.port` | integer, 0 to 65535 | required | The port to bind. |
 
 ### `http.tls`
@@ -302,7 +346,7 @@ An HTTPS listener beside the plain one. Browsers give the microphone only to a s
 | Setting | Takes | Default | |
 |---|---|---|---|
 | `http.tls.enable` | true or false | `false` | Serve HTTPS. |
-| `http.tls.address` | text | none | The address to bind. Empty is http.address. |
+| `http.tls.address` | text | none | The address HTTPS binds. Empty is http.address when that is set, otherwise every interface. |
 | `http.tls.port` | integer, 0 to 65535 | `8443` | The port to bind. |
 | `http.tls.cert_pem_filename` | text | none | The certificate, PEM. Empty uses the tls section's. |
 | `http.tls.key_pem_filename` | text | none | The certificate's key, PEM. Empty uses the tls section's. |

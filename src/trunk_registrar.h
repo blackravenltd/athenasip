@@ -16,6 +16,7 @@
 #include <optional>
 #include <string>
 
+#include "events/event_system.h"
 #include "loggers/logger.h"
 #include "loggers/logger_scoped.h"
 #include "sip_message.h"
@@ -28,24 +29,11 @@ namespace athenasip {
 class Core;
 class Channel;
 
-// What every node has said of the trunks it registers to, from the retained trunks/<name>/status on the bus, for
-// the API to show whichever node holds a trunk. Read from any thread.
-class TrunkStatuses {
- public:
-  void observe(const std::string& topic, const std::string& message);
-
-  // The last report for a trunk, by its name as stored; nothing when no node has reported it.
-  std::optional<boost::json::object> find(const std::string& name) const;
-
- private:
-  mutable std::mutex _mutex;
-  std::map<std::string, boost::json::object> _reports;
-};
-
 // RFC 3261 10 as a client: this node registers to each trunk that asks for it, so the carrier knows where to send
 // calls. One node of a cluster does, by a lease in the datastore; another takes over when the lease lapses. The
 // carrier's challenges are answered with the trunk's credentials, the registration is refreshed before it runs
-// out, and a failure is retried with backoff. Each trunk's state goes on the bus as trunks/<name>/status.
+// out, and a failure is retried with backoff. Each trunk's state is a record in the datastore (trunk_status_set), which
+// the API on any node reads, and goes on the bus as trunks/<name>/status to say it changed.
 class TrunkRegistrar : public std::enable_shared_from_this<TrunkRegistrar> {
  public:
   // How often the trunks are read again, and how long the lease on each is held between readings.
@@ -65,15 +53,19 @@ class TrunkRegistrar : public std::enable_shared_from_this<TrunkRegistrar> {
 
   TrunkRegistrar(std::shared_ptr<loggers::Logger> logger, std::weak_ptr<Core> core);
 
-  // Reads the trunks now and every kScan after. On the strand.
+  // Reads the trunks now, every kScan after, and whenever the bus says one changed (trunks/changed). On the strand.
   void start();
   void stop();
 
-  // Reads the trunks now, as start does and each scan does.
+  // Reads the trunks now, as start does and each scan does. The next scheduled scan is kScan from now.
   void scan();
 
   // The trunks this node registers, by name.
   std::map<std::string, Status> statuses() const;
+
+  // Whether user is the user part of a Contact this node registers to a trunk, so what the carrier sends there,
+  // such as an OPTIONS keepalive, is addressed to this node and not to a subscriber. On the strand.
+  bool registered_contact(const std::string& user) const;
 
  private:
   struct Registration {
@@ -98,6 +90,7 @@ class TrunkRegistrar : public std::enable_shared_from_this<TrunkRegistrar> {
   };
 
   void _schedule_scan();
+  void _unlisten();
   void _keep(const types::Trunk& trunk);
   // Stops registering. With unregister, the carrier's binding is removed first (Expires 0, RFC 3261 10.2.2): the
   // trunk no longer asks to be registered. Without, another node has the lease and the binding is now its.
@@ -116,6 +109,7 @@ class TrunkRegistrar : public std::enable_shared_from_this<TrunkRegistrar> {
   std::weak_ptr<Core> _core;
   std::map<std::string, Registration> _registrations;
   std::shared_ptr<Timer> _scan_timer;
+  std::shared_ptr<events::Subscription> _changed;
   bool _running = false;
 };
 

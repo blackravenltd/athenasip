@@ -103,6 +103,23 @@ class SyncDatastore {
         [this](auto on, auto handler) { _store->trunk_list(std::move(on), std::move(handler)); });
   }
 
+  bool reoffer_record(const std::string& subscriber, athenasip::media::Profile rejected, std::optional<athenasip::media::Profile> took) {
+    return _status([this, subscriber, rejected, took](auto on, auto handler) { _store->reoffer_record(std::move(on), subscriber, rejected, took, std::move(handler)); });
+  }
+
+  std::vector<athenasip::media::Reoffer> reoffer_list() {
+    return _value<std::vector<athenasip::media::Reoffer>>([this](auto on, auto handler) { _store->reoffer_list(std::move(on), std::move(handler)); });
+  }
+
+  bool trunk_status_set(const std::string& name, boost::json::object status) {
+    return _status([this, name, status](auto on, auto handler) { _store->trunk_status_set(std::move(on), name, status, std::move(handler)); });
+  }
+
+  std::optional<boost::json::object> trunk_status_get(const std::string& name) {
+    return _value<std::optional<boost::json::object>>(
+        [this, name](auto on, auto handler) { _store->trunk_status_get(std::move(on), name, std::move(handler)); });
+  }
+
   bool lease(const std::string& name, const std::string& holder, std::uint32_t seconds) {
     return _value<bool>([this, name, holder, seconds](auto on, auto handler) { _store->lease(std::move(on), name, holder, seconds, std::move(handler)); });
   }
@@ -181,13 +198,6 @@ class SyncDatastore {
         [this, subscriber_id](auto on, auto handler) { _store->location_list(std::move(on), subscriber_id, std::move(handler)); });
   }
 
-  bool nonce_create(const std::string& nonce, std::time_t expires_at) {
-    return _status([this, nonce, expires_at](auto on, auto handler) { _store->nonce_create(std::move(on), nonce, expires_at, std::move(handler)); });
-  }
-
-  bool nonce_check(const std::string& nonce) {
-    return _value<bool>([this, nonce](auto on, auto handler) { _store->nonce_check(std::move(on), nonce, std::move(handler)); });
-  }
 
   bool call_create(std::shared_ptr<athenasip::Call> call) {
     return _status([this, call](auto on, auto handler) { _store->call_create(std::move(on), call, std::move(handler)); });

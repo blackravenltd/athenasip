@@ -1,0 +1,65 @@
+/*
+ * The AthenaSIP palette: a near-black ground, three layered surfaces, a
+ * three-step text ramp and a blue-steel accent ramp. The structure is shared
+ * with macha-client and AthenaPhone.
+ *
+ * The accent marks where you are: the active nav item, the focused control,
+ * the primary action. It never means "good". Green, amber and red are
+ * reserved for state: up, watch, broken.
+ *
+ * Dark only. `color-scheme: dark` makes form controls and scrollbars follow.
+ */
+:root {
+  color-scheme: dark;
+
+  /* Ground and layered surfaces. */
+  --ground: #0e0e0f;
+  --surface: #171719;
+  --surface-2: #222226;
+  --surface-3: #2a2a2e;
+
+  /* Text ramp: body, secondary, and the faint step for metadata and labels. */
+  --text: #e2e2e5;
+  --text-dim: #aaaab2;
+  /* Labels the readout column, so it must pass AA for text: 5.23:1 at worst. */
+  --text-faint: #8a8a93;
+
+  /* Hairlines: white at low alpha, so they hold on any surface. */
+  --border-soft: #ffffff12;
+  --border: #ffffff1a;
+  --border-strong: #ffffff24;
+
+  /* Accent: blue-steel, near-black through most of the ramp. */
+  --steel-950: #000203;
+  --steel-900: #000508;
+  --steel-800: #000a11;
+  --steel-700: #00101d;
+  --steel-600: #00182b;
+  --steel-500: #00223d;
+  --steel-400: #063458;
+  --accent: var(--steel-500);
+  --accent-surface: #00101da8;
+  --accent-surface-strong: #00223dc2;
+  --accent-focus-wash: #06345824;
+  --accent-glow: #0d5a9428;
+
+  /*
+   * Focus ring. Used only for outlines, borders, the spinner arc, the meter
+   * fill and checkbox `accent-color`, never text, so it needs 3:1 (WCAG
+   * 1.4.11); it measures 4.23:1 at worst. Keep the same value as AthenaPhone.
+   */
+  --focus: #4d8ec3;
+
+  /* Semantic state: up, watch, broken. Never decorative, and used for nothing else. */
+  --ok: #58c07c;
+  --ok-surface: #0c2a18;
+  --warn: #e0a758;
+  --warn-surface: #2e2110;
+  --danger: #ff9b9b;
+  --danger-surface: #3a0a10;
+  --danger-border: #8a303b;
+
+  --glass-blur: blur(10px) saturate(118%);
+  --navigation-surface: linear-gradient(#0e0e0ff7, #0e0e0fdf);
+  --navigation-blur: blur(12px);
+}

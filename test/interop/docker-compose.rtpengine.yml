@@ -44,7 +44,8 @@ services:
       start_period: 2s
 
   rtpengine:
-    image: drachtio/rtpengine:latest
+    # amd64 only; on an arm64 host build test/interop/rtpengine (Debian's package) and name it here.
+    image: ${ATHENA_INTEROP_RTPENGINE_IMAGE:-drachtio/rtpengine:latest}
     container_name: ${ATHENA_INTEROP_NAME:-athenasip-interop}-rtpengine
     command:
       - rtpengine

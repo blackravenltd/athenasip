@@ -115,6 +115,7 @@ struct CallsFixture : CoreFixture {
 
     auto& alice = call->add_participant(std::make_shared<types::SIPIdentity>("sip:alice@example.com"), nullptr, true);
     alice.profile = media::Profile::WebRtc;
+    alice.dtmf = types::MediaPolicy::Dtmf::Rfc4733;
     call->add_participant(std::make_shared<types::SIPIdentity>("sip:bob@example.com"));
 
     on_strand([&]() { core->call_register(call); });
@@ -165,6 +166,8 @@ TEST(CallsApiTest, ListsTheLiveCallsWithWhatTheEngineCarried) {
   EXPECT_EQ(participants[0].as_object().at("identity").as_string(), "sip:alice@example.com");
   EXPECT_TRUE(participants[0].as_object().at("originator").as_bool());
   EXPECT_EQ(participants[0].as_object().at("profile").as_string(), "webrtc");
+  EXPECT_EQ(participants[0].as_object().at("dtmf").as_string(), "rfc4733");
+  EXPECT_TRUE(participants[1].as_object().at("dtmf").is_null()) << "a leg that has not described itself has no method yet";
   EXPECT_TRUE(participants[1].as_object().at("profile").is_null()) << "a leg that has not described itself has no profile yet";
 
   const auto& media = call.at("media").as_object();
@@ -305,11 +308,10 @@ TEST(CallsApiTest, NoMediaEngineIsSaidPlainly) {
 // value the subscriber API takes.
 TEST(CallsApiTest, ReoffersSayWhichSubscribersNeededTheOtherProfile) {
   CallsFixture f;
-  f.on_strand([&]() {
-    f.core->reoffers().record("sip:phone@example.com", media::Profile::PlainRtp, media::Profile::WebRtc, 1000);
-    f.core->reoffers().record("sip:phone@example.com", media::Profile::PlainRtp, media::Profile::WebRtc, 2000);
-    f.core->reoffers().record("sip:fax@example.com", media::Profile::WebRtc, std::nullopt, 1500);
-  });
+  // Recorded in the datastore, from whichever node saw the re-offer; the fax first, so the phone is more recent.
+  ASSERT_TRUE(f.store->reoffer_record("sip:fax@example.com", media::Profile::WebRtc, std::nullopt));
+  ASSERT_TRUE(f.store->reoffer_record("sip:phone@example.com", media::Profile::PlainRtp, media::Profile::WebRtc));
+  ASSERT_TRUE(f.store->reoffer_record("sip:phone@example.com", media::Profile::PlainRtp, media::Profile::WebRtc));
 
   const auto response = f.get("/api/v1/media/reoffers");
   ASSERT_EQ(response.status, 200u) << response.body;
@@ -425,4 +427,47 @@ TEST(CallsApiTest, MetricsTakeACredential) {
   CallsFixture f;
 
   EXPECT_EQ(f.get("/metrics", "").status, 401u);
+}
+
+// RFC 4579 (docs/design/conferencing.md): a call to a room's focus carries the room, and the rooms with anyone in
+// them are listed from the call records, grouped by conference URI, with who is in each.
+TEST(CallsApiTest, TheRoomsWithAnyoneInThemAreListedFromTheCallRecords) {
+  CallsFixture f;
+  f.add_call("call-two@example.com");
+
+  auto first = f.add_call("call-sales-1@example.com");
+  auto second = f.add_call("call-sales-2@example.com");
+  f.on_strand([&]() {
+    for (auto& call : {first, second}) {
+      call->focus = std::make_shared<types::SIPUri>("sip:conf-sales@example.com");
+      call->participants[1].trunk = "rooms";
+      call->participants[0].subscriber = "sip:alice@example.com";
+    }
+  });
+
+  const auto call = f.get("/api/v1/calls/call-sales-1@example.com");
+  ASSERT_EQ(call.status, 200u) << call.body;
+  EXPECT_EQ(call.json().as_object().at("focus").as_string(), "sip:conf-sales@example.com");
+  EXPECT_TRUE(f.get("/api/v1/calls/call-two@example.com").json().as_object().at("focus").is_null());
+
+  const auto rooms = f.get("/api/v1/conferences");
+  ASSERT_EQ(rooms.status, 200u) << rooms.body;
+  const auto list = boost::json::parse(rooms.body).as_array();
+  ASSERT_EQ(list.size(), 1u) << rooms.body;
+  const auto& room = list[0].as_object();
+  EXPECT_EQ(room.at("uri").as_string(), "sip:conf-sales@example.com");
+  EXPECT_EQ(room.at("focus").as_string(), "rooms");
+  ASSERT_EQ(room.at("participants").as_array().size(), 2u);
+  EXPECT_EQ(room.at("participants").as_array()[0].as_object().at("subscriber").as_string(), "sip:alice@example.com");
+
+  const auto one = f.get("/api/v1/conferences/sip:conf-sales@example.com");
+  ASSERT_EQ(one.status, 200u) << one.body;
+  EXPECT_EQ(one.json().as_object().at("uri").as_string(), "sip:conf-sales@example.com");
+  EXPECT_EQ(f.get("/api/v1/conferences/sip:conf-empty@example.com").status, 404u);
+
+  // Asked for as a client dialled it, with its own spelling of the host and a transport parameter, it is the
+  // same room (docs/design/conferencing.md, The room's name).
+  const auto as_dialled = f.get("/api/v1/conferences/sip%3Aconf-sales%40EXAMPLE.com%3Btransport%3Dws");
+  ASSERT_EQ(as_dialled.status, 200u) << as_dialled.body;
+  EXPECT_EQ(as_dialled.json().as_object().at("uri").as_string(), "sip:conf-sales@example.com");
 }

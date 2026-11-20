@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <boost/asio/bind_executor.hpp>
+#include <boost/json.hpp>
 #include <boost/asio/dispatch.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <chrono>
@@ -77,6 +78,30 @@ void apply_profile(Bencode& command, Flags::Profile profile, bool source_wants_m
   }
 }
 
+// Converts key presses between two legs that send them differently (docs/behaviour.md, dtmf). RFC 4733 events to
+// and from tones in the audio is rtpengine's DTMF transcoding: telephone-event stripped from the description and
+// the call always transcoded, or telephone-event offered where the far leg had none. INFO is played in by the
+// node, which needs inject DTMF in the offer and the answer alike. Either leg unknown, nothing is asked for.
+void apply_dtmf(Bencode& command, const Flags& flags) {
+  using Dtmf = types::MediaPolicy::Dtmf;
+  if (!flags.dtmf_from || !flags.dtmf_to || *flags.dtmf_from == *flags.dtmf_to) return;
+
+  Bencode::List names;
+  if (*flags.dtmf_from == Dtmf::Info || *flags.dtmf_to == Dtmf::Info) names.push_back(Bencode(std::string("inject DTMF")));
+
+  // A leg that speaks INFO is told of key presses by INFO, not by the events or tones the other leg sent.
+  if (*flags.dtmf_to == Dtmf::Info) names.push_back(Bencode(std::string("block DTMF")));
+
+  if (*flags.dtmf_from == Dtmf::Rfc4733 && *flags.dtmf_to == Dtmf::Inband) {
+    names.push_back(Bencode(std::string("always transcode")));
+    command.set("codec", Bencode::dictionary({{"strip", Bencode::list({Bencode(std::string("telephone-event"))})}}));
+  } else if (*flags.dtmf_from == Dtmf::Inband && *flags.dtmf_to == Dtmf::Rfc4733) {
+    command.set("codec", Bencode::dictionary({{"transcode", Bencode::list({Bencode(std::string("telephone-event"))})}}));
+  }
+
+  if (!names.empty()) command.set("flags", Bencode::list(std::move(names)));
+}
+
 // host, host:port or [v6]:port.
 bool parse_engine(const std::string& text, std::string& host, std::uint16_t& port) {
   host = text;
@@ -105,6 +130,24 @@ bool parse_engine(const std::string& text, std::string& host, std::uint16_t& por
   return !host.empty();
 }
 
+// host:port or [v6]:port to listen on, where port may be 0 for any.
+bool parse_listen(const std::string& text, std::string& host, std::uint16_t& port) {
+  const auto colon = text.rfind(':');
+  if (colon == std::string::npos || colon + 1 >= text.size()) return false;
+
+  host = text.substr(0, colon);
+  if (host.size() >= 2 && host.front() == '[' && host.back() == ']') host = host.substr(1, host.size() - 2);
+
+  try {
+    const auto value = std::stoi(text.substr(colon + 1));
+    if (value < 0 || value > 65535) return false;
+    port = static_cast<std::uint16_t>(value);
+  } catch (const std::exception&) {
+    return false;
+  }
+  return !host.empty();
+}
+
 // FNV-1a: the same on every node, so nodes sharing a pool put a call on the same engine.
 std::uint64_t hash_of(const std::string& text) {
   std::uint64_t hash = 14695981039346656037ull;
@@ -120,9 +163,9 @@ std::uint64_t hash_of(const std::string& text) {
 RtpengineMediaEngine::RtpengineMediaEngine(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<types::URL> url)
     : _logger(std::make_shared<loggers::LoggerScoped>("rtpengine", std::move(logger))),
       _url(std::move(url)),
+      _public(_logger),
       _strand(boost::asio::make_strand(detail::get_global_io_context())),
-      _receive_buffer(kMaxDatagram),
-      _public(_logger) {
+      _receive_buffer(kMaxDatagram) {
   if (_url && !_url->host.empty()) {
     Engine engine;
     engine.host = _url->host;
@@ -146,6 +189,9 @@ plugins::Settings RtpengineMediaEngine::settings() {
       text("rtpengine.media_address", "",
            "The address rtpengine advertises. Empty leaves it to rtpengine's interfaces. A leg inside sip.localnet is given the "
            "node's local address."),
+      text("rtpengine.dtmf_events", "",
+           "host:port this node listens on for the key presses rtpengine hears, which become SIP INFO for a leg set to info "
+           "(behaviour.dtmf). An address rtpengine can reach; port 0 picks one. Empty is off."),
   };
 }
 
@@ -160,6 +206,16 @@ bool RtpengineMediaEngine::configure(const YAML::Node& own_root, const Config& s
     _ping_interval = positive_or(own_root["ping_interval"], _ping_interval);
 
     if (own_root["media_address"]) _media_address = own_root["media_address"].as<std::string>();
+
+    if (own_root["dtmf_events"]) {
+      _dtmf_events = own_root["dtmf_events"].as<std::string>("");
+      std::string host;
+      std::uint16_t port = 0;
+      if (!_dtmf_events.empty() && !parse_listen(_dtmf_events, host, port)) {
+        _logger->error("rtpengine.dtmf_events: cannot read \"" + _dtmf_events + "\" as host:port");
+        return false;
+      }
+    }
 
     if (const auto engines = own_root["engines"]; engines && engines.IsSequence()) {
       for (const auto& entry : engines) {
@@ -190,10 +246,35 @@ Capabilities RtpengineMediaEngine::capabilities() const {
   capabilities.bridge = true;
   capabilities.record = true;
   capabilities.transcode = true;
+  capabilities.dtmf = true;
   return capabilities;
 }
 
 bool RtpengineMediaEngine::is_connected() const { return _up.load(std::memory_order_relaxed) > 0; }
+
+void RtpengineMediaEngine::_look_up(std::size_t index, std::function<void()> then) {
+  // Past the last engine: carry on, on the strand.
+  if (index >= _engines.size()) return boost::asio::dispatch(_strand, std::move(then));
+
+  boost::system::error_code literal;
+  boost::asio::ip::make_address(_engines[index].host, literal);
+  if (!literal) return _look_up(index + 1, std::move(then));
+
+  auto self = shared_from_this();
+  auto resolver = std::make_shared<boost::asio::ip::udp::resolver>(_strand);
+  const auto host = _engines[index].host;
+  resolver->async_resolve(boost::asio::ip::udp::v4(), host, std::to_string(_engines[index].port),
+                          [this, self, resolver, index, host, then = std::move(then)](const boost::system::error_code& ec,
+                                                                                     boost::asio::ip::udp::resolver::results_type results) mutable {
+                            if (ec || results.empty()) {
+                              _logger->error("Could not resolve " + host + (ec ? " - " + ec.message() : std::string()));
+                            } else {
+                              _engines[index].found = results.begin()->endpoint();
+                              _engines[index].looked_up = true;
+                            }
+                            _look_up(index + 1, std::move(then));
+                          });
+}
 
 void RtpengineMediaEngine::connect(plugins::Executor on, plugins::StatusHandler handler) {
   if (is_connected()) return _complete(std::move(on), std::move(handler), plugins::Status::success());
@@ -208,7 +289,7 @@ void RtpengineMediaEngine::connect(plugins::Executor on, plugins::StatusHandler 
 
   auto self = shared_from_this();
 
-  boost::asio::dispatch(_strand, [this, self, on, handler = std::move(handler)]() mutable {
+  _look_up(0, [this, self, on, handler = std::move(handler)]() mutable {
     std::optional<boost::asio::ip::udp> protocol;
 
     for (auto& engine : _engines) {
@@ -216,19 +297,9 @@ void RtpengineMediaEngine::connect(plugins::Executor on, plugins::StatusHandler 
       auto address = boost::asio::ip::make_address(engine.host, ec);
 
       if (ec) {
-        // A name: resolved with a blocking call, acceptable only here at startup, before there is a call to hold up.
-        try {
-          boost::asio::ip::udp::resolver resolver(detail::get_global_io_context());
-          auto endpoints = resolver.resolve(boost::asio::ip::udp::v4(), engine.host, std::to_string(engine.port));
-          if (endpoints.empty()) {
-            _logger->error("Could not resolve " + engine.host);
-            continue;
-          }
-          engine.endpoint = *endpoints.begin();
-        } catch (const std::exception& e) {
-          _logger->error("Could not resolve " + engine.host + " - " + e.what());
-          continue;
-        }
+        // A name, looked up already (_look_up).
+        if (!engine.looked_up) continue;
+        engine.endpoint = engine.found;
       } else {
         engine.endpoint = boost::asio::ip::udp::endpoint(address, engine.port);
       }
@@ -259,6 +330,33 @@ void RtpengineMediaEngine::connect(plugins::Executor on, plugins::StatusHandler 
     }
 
     _receive();
+
+    // Where rtpengine sends the key presses it hears, when asked to.
+    if (!_dtmf_events.empty()) {
+      std::string host;
+      std::uint16_t port = 0;
+      parse_listen(_dtmf_events, host, port);
+      auto address = boost::asio::ip::make_address(host, ec);
+      if (ec) {
+        _logger->warn("rtpengine.dtmf_events: " + host + " is not an address - key presses will not become INFO");
+      } else {
+        auto events = std::make_shared<boost::asio::ip::udp::socket>(detail::get_global_io_context());
+        events->open(address.is_v6() ? boost::asio::ip::udp::v6() : boost::asio::ip::udp::v4(), ec);
+        if (!ec) events->bind(boost::asio::ip::udp::endpoint(address, port), ec);
+        if (ec) {
+          _logger->warn("rtpengine.dtmf_events: cannot listen on " + _dtmf_events + " - " + ec.message() + " - key presses will not become INFO");
+        } else {
+          const auto bound = events->local_endpoint();
+          _events_destination = (address.is_v6() ? "[" + address.to_string() + "]" : address.to_string()) + ":" + std::to_string(bound.port());
+          {
+            std::lock_guard<std::mutex> lock(_socket_mutex);
+            _events_socket = std::move(events);
+          }
+          _events_receive();
+          _logger->info("Listening for key presses rtpengine hears on " + _events_destination);
+        }
+      }
+    }
 
     // A UDP socket opens whether or not anything listens, so the pool is connected only once an engine answers a ping.
     _ping_all([this, self, on, handler = std::move(handler)]() mutable {
@@ -334,10 +432,12 @@ void RtpengineMediaEngine::close() {
   _public.stop();
 
   std::shared_ptr<boost::asio::ip::udp::socket> socket;
+  std::shared_ptr<boost::asio::ip::udp::socket> events;
 
   {
     std::lock_guard<std::mutex> lock(_socket_mutex);
     socket = std::move(_socket);
+    events = std::move(_events_socket);
   }
 
   if (!socket) return;
@@ -347,9 +447,10 @@ void RtpengineMediaEngine::close() {
   // because close() also runs from the destructor.
   auto weak = weak_from_this();
 
-  boost::asio::post(_strand, [socket, weak]() {
+  boost::asio::post(_strand, [socket, events, weak]() {
     boost::system::error_code ec;
     socket->close(ec);
+    if (events) events->close(ec);
 
     if (auto self = weak.lock()) {
       if (self->_ping_timer) self->_ping_timer->cancel();
@@ -523,6 +624,69 @@ void RtpengineMediaEngine::_receive() {
       boost::asio::bind_executor(_strand, [this, self, socket](const boost::system::error_code& ec, std::size_t length) { _on_receive(ec, length); }));
 }
 
+bool RtpengineMediaEngine::dtmf_listen(DtmfListener listener) {
+  _dtmf_listener = std::move(listener);
+  return !_dtmf_events.empty();
+}
+
+void RtpengineMediaEngine::_events_receive() {
+  std::shared_ptr<boost::asio::ip::udp::socket> socket;
+  {
+    std::lock_guard<std::mutex> lock(_socket_mutex);
+    socket = _events_socket;
+  }
+  if (!socket || !socket->is_open()) return;
+
+  if (_event_buffer.size() < 4096) _event_buffer.resize(4096);
+
+  auto self = shared_from_this();
+  socket->async_receive_from(
+      boost::asio::buffer(_event_buffer), _event_from,
+      boost::asio::bind_executor(_strand, [this, self, socket](const boost::system::error_code& ec, std::size_t length) { _on_event(ec, length); }));
+}
+
+// One datagram per key press, as daemon/dtmf.c writes it: {"callid", "source_tag", "tags", "type": "DTMF",
+// "timestamp", "source_ip", "event", "duration", "volume"}; event is 0 to 15 (0-9, *, #, A-D), duration in ms.
+void RtpengineMediaEngine::_on_event(const boost::system::error_code& ec, std::size_t length) {
+  if (ec) {
+    if (ec != boost::asio::error::operation_aborted) {
+      _logger->warn("Receiving a key press failed - " + ec.message());
+      _events_receive();
+    }
+    return;
+  }
+
+  const std::string datagram(_event_buffer.data(), length);
+  boost::system::error_code parse_error;
+  const auto parsed = boost::json::parse(datagram, parse_error);
+
+  if (parse_error || !parsed.is_object()) {
+    _logger->warn("A key press from rtpengine was not JSON - ignored");
+  } else {
+    const auto& object = parsed.as_object();
+    const auto* call_id = object.if_contains("callid");
+    const auto* source_tag = object.if_contains("source_tag");
+    const auto* event = object.if_contains("event");
+    const auto* duration = object.if_contains("duration");
+
+    static constexpr char kDigits[] = "0123456789*#ABCD";
+    const auto code = event != nullptr && event->is_number() ? event->to_number<std::int64_t>() : -1;
+
+    if (call_id == nullptr || !call_id->is_string() || source_tag == nullptr || !source_tag->is_string() || code < 0 || code > 15) {
+      _logger->warn("A key press from rtpengine named no call, tag or digit - ignored");
+    } else if (_dtmf_listener) {
+      DtmfEvent pressed;
+      pressed.call_id = std::string(call_id->as_string());
+      pressed.source_tag = std::string(source_tag->as_string());
+      pressed.digit = kDigits[code];
+      pressed.duration = std::chrono::milliseconds(duration != nullptr && duration->is_number() ? duration->to_number<std::int64_t>() : 0);
+      _dtmf_listener(std::move(pressed));
+    }
+  }
+
+  _events_receive();
+}
+
 void RtpengineMediaEngine::_on_receive(const boost::system::error_code& ec, std::size_t length) {
   if (ec) {
     // operation_aborted is close(); after anything else, carry on, since the next datagram may be fine.
@@ -552,6 +716,19 @@ void RtpengineMediaEngine::_on_receive(const boost::system::error_code& ec, std:
   }
 
   auto pending = search->second;
+
+  // Review finding 33: the cookie names the request, but only the engine it went to may answer it. A datagram from
+  // anywhere else could carry forged SDP and media addresses; it is dropped, and the request waits for the engine.
+  if (pending->engine < _engines.size()) {
+    const auto& expected = _engines[pending->engine].endpoint;
+    if (_received_from.address() != expected.address() || _received_from.port() != expected.port()) {
+      _logger->warn("A reply for " + cookie + " from " + _received_from.address().to_string() + ":" + std::to_string(_received_from.port()) +
+                    ", not the engine at " + expected.address().to_string() + ":" + std::to_string(expected.port()) + " - dropped");
+      _receive();
+      return;
+    }
+  }
+
   _pending.erase(search);
 
   if (pending->timer) pending->timer->cancel();
@@ -647,6 +824,10 @@ void RtpengineMediaEngine::offer(plugins::Executor on, std::shared_ptr<Call> cal
   command.set("replace", Bencode::list({Bencode(std::string("origin")), Bencode(std::string("session-connection")), Bencode(std::string("sdp-version"))}));
 
   apply_profile(command, flags.target, flags.rtcp_mux, false);
+  apply_dtmf(command, flags);
+
+  // The far leg speaks INFO: the key presses this leg sends are reported here, to be sent on as INFO.
+  if (flags.dtmf_to == types::MediaPolicy::Dtmf::Info && !_events_destination.empty()) command.set("DTMF-log-dest", Bencode(_events_destination));
 
   if (const auto advertise = _advertise_for(flags); !advertise.empty()) command.set("media-address", Bencode(advertise));
 
@@ -674,6 +855,7 @@ void RtpengineMediaEngine::answer(plugins::Executor on, std::shared_ptr<Call> ca
   command.set("replace", Bencode::list({Bencode(std::string("origin")), Bencode(std::string("session-connection")), Bencode(std::string("sdp-version"))}));
 
   apply_profile(command, flags.target, flags.rtcp_mux, true);
+  apply_dtmf(command, flags);
   if (const auto advertise = _advertise_for(flags); !advertise.empty()) command.set("media-address", Bencode(advertise));
 
   _call_request(std::move(command), recorded_engine(call), call->id, [call, on, handler = std::move(handler)](Answered answered) mutable {
@@ -774,6 +956,33 @@ std::string RtpengineMediaEngine::_idle_document(const std::shared_ptr<Call>& ca
 
   return "{\"call_id\":\"" + call->id + "\",\"engine\":\"rtpengine\",\"streams\":" + std::to_string(streams) + ",\"idle_seconds\":" + idle +
          ",\"legs\":" + legs + "}";
+}
+
+// One "play DTMF" per digit, in order; rtpengine queues them. The participant named is the one the event comes
+// from, so the call must have been offered and answered with inject DTMF (apply_dtmf), which is what a leg set to
+// info earns.
+void RtpengineMediaEngine::play_dtmf(plugins::Executor on, std::shared_ptr<Call> call, std::size_t participant, std::string digits,
+                                     std::chrono::milliseconds duration, plugins::StatusHandler handler) {
+  if (!is_connected()) return _complete(std::move(on), std::move(handler), plugins::Status::failure("rtpengine is not connected"));
+  if (digits.empty()) return _complete(std::move(on), std::move(handler), plugins::Status::success());
+
+  Flags flags;
+  flags.participant = participant;
+  const auto tags = _tags_for(call, flags, false);
+  if (!tags.ok) return _complete(std::move(on), std::move(handler), plugins::Status::failure("no dialog tag for the participant"));
+
+  auto command = _command("play DTMF", call);
+  command.set("from-tag", Bencode(tags.from));
+  command.set("code", Bencode(std::string(1, digits.front())));
+  command.set("duration", Bencode(static_cast<std::int64_t>(std::clamp<std::int64_t>(duration.count(), 100, 5000))));
+
+  auto self = shared_from_this();
+  _call_request(std::move(command), recorded_engine(call), call->id,
+                [this, self, on, call, participant, rest = digits.substr(1), duration, handler = std::move(handler)](Answered answered) mutable {
+                  const auto error = answered.error.empty() ? _error_of(answered.reply) : answered.error;
+                  if (!error.empty()) return _complete(std::move(on), std::move(handler), plugins::Status::failure(error));
+                  play_dtmf(std::move(on), call, participant, rest, duration, std::move(handler));
+                });
 }
 
 void RtpengineMediaEngine::start_recording(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) {

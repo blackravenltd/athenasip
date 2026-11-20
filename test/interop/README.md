@@ -86,6 +86,11 @@ test/interop/up.sh --rtpengine
 
 With `--rtpengine`:
 
+- The `drachtio/rtpengine` image is amd64 only. On an arm64 host (a Raspberry Pi), build
+  rtpengine from Debian's package and point the fixture at it:
+  `docker build -t athenasip-rtpengine test/interop/rtpengine` once, then
+  `ATHENA_INTEROP_RTPENGINE_IMAGE=athenasip-rtpengine test/interop/up.sh --rtpengine`.
+
 - The fixture moves off loopback. `up.sh` detects this host's LAN address, advertises
   it, names the realm after it, publishes every port on `0.0.0.0`, and signs a TLS
   certificate naming it with the snakeoil CA. Do not leave it up unattended.
@@ -121,11 +126,11 @@ settings.
 
 `--admin` mounts the admin client's build read-only and turns `http.files` on, so the
 node serves the console and its softphone. The build comes from
-`../athenasip-admin/build`, or `ATHENA_INTEROP_ADMIN_DIR`. `up.sh` stops if there is no
+`console/build`, or `ATHENA_INTEROP_ADMIN_DIR`. `up.sh` stops if there is no
 build to serve.
 
 ```bash
-(cd ../athenasip-admin && npm run build)
+(cd console && npm run build)
 test/interop/up.sh --rtpengine --admin
 ```
 
@@ -144,13 +149,13 @@ test/interop/browser.sh --relay  # only the relay phase
 
 Two headless Chromium contexts open the softphone, register, call each other through
 rtpengine and read their own media counters. The page and the Playwright spec live in
-`../athenasip-admin` (`ATHENA_INTEROP_ADMIN_REPO` moves it); this script brings the
+`console/` (`ATHENA_INTEROP_ADMIN_REPO` moves it); this script brings the
 fixture up with `--rtpengine --admin` and passes `generated/fixture.env` to the spec.
 
 It checks its prerequisites first:
 
 ```bash
-(cd ../athenasip-admin && npm install && npm run build && npx playwright install chromium)
+(cd console && npm install && npm run build && npx playwright install chromium)
 ```
 
 There are two phases, with the fixture restarted between them, because no single

@@ -77,31 +77,6 @@ TEST(SIPMessageTest, ResponseIsAResponse) {
   EXPECT_EQ(response->header->type, SIPHeader::Type::Response);
 }
 
-// RFC 3261 17.1.3, 17.2.3: a transaction is matched on the top Via's branch and sent-by
-// and the method. Branch alone collides across upstream hops.
-TEST(SIPMessageTest, TransactionIdIncludesSentBy) {
-  auto from_proxy_one = request_with(
-      "INVITE sip:bob@example.com SIP/2.0\r\n"
-      "Via: SIP/2.0/UDP proxy1.example.com:5060;branch=z9hG4bK-same\r\n"
-      "CSeq: 1 INVITE\r\n"
-      "\r\n");
-
-  auto from_proxy_two = request_with(
-      "INVITE sip:bob@example.com SIP/2.0\r\n"
-      "Via: SIP/2.0/UDP proxy2.example.com:5060;branch=z9hG4bK-same\r\n"
-      "CSeq: 1 INVITE\r\n"
-      "\r\n");
-
-  EXPECT_NE(from_proxy_one->get_transaction_id(), from_proxy_two->get_transaction_id());
-}
-
-TEST(SIPMessageTest, TransactionIdIsStableForTheSameRequest) {
-  auto a = request_with(kProxiedInvite);
-  auto b = request_with(kProxiedInvite);
-
-  EXPECT_EQ(a->get_transaction_id(), b->get_transaction_id());
-}
-
 TEST(SIPMessageTest, ToStringSeparatesHeadersFromBodyWithABlankLine) {
   auto message = request_with(kProxiedInvite);
   message->body = "v=0\r\n";

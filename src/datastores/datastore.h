@@ -16,6 +16,7 @@
 
 #include "../call.h"
 #include "../loggers/logger.h"
+#include "../media/reoffers.h"
 #include "../plugins/plugin.h"
 #include "../plugins/plugin_registry.h"
 #include "../types/location.h"
@@ -74,7 +75,7 @@ class Datastore : public plugins::Plugin {
   // registered on a realm (docs/authentication.md). Optional: the defaults answer
   // "unsupported", and a deployment that wants admin logins needs a driver that implements
   // them.
-  virtual void user_get(plugins::Executor on, std::string username, plugins::Handler<std::shared_ptr<types::User>> handler) {
+  virtual void user_get(plugins::Executor on, std::string /*username*/, plugins::Handler<std::shared_ptr<types::User>> handler) {
     _unsupported<std::shared_ptr<types::User>>(std::move(on), std::move(handler), "user_get");
   }
 
@@ -148,6 +149,37 @@ class Datastore : public plugins::Plugin {
     _unsupported<std::vector<std::shared_ptr<types::Trunk>>>(std::move(on), std::move(handler), "trunk_list");
   }
 
+  // The callees that refused the media profile they were first offered and took the other (media::Reoffer): one
+  // record per subscriber and refused profile, its count raised and its time moved on each report, kept for a
+  // while (thirty days is the measure) so an operator on any node sees which subscribers want a media_profile set.
+  // Optional; a node without it keeps none.
+  virtual void reoffer_record(plugins::Executor on, std::string subscriber, media::Profile rejected, std::optional<media::Profile> took,
+                              plugins::StatusHandler handler) {
+    (void)subscriber;
+    (void)rejected;
+    (void)took;
+    _unsupported(std::move(on), std::move(handler), "reoffer_record");
+  }
+
+  // Most recent first.
+  virtual void reoffer_list(plugins::Executor on, plugins::Handler<std::vector<media::Reoffer>> handler) {
+    _unsupported<std::vector<media::Reoffer>>(std::move(on), std::move(handler), "reoffer_list");
+  }
+
+  // What the node registering a trunk last reported of it: {node, state, detail, expires_at, at}, written by the
+  // holder of the trunk's lease and read by the API on any node. One record per trunk, replaced whole; gone with
+  // the trunk. Optional, as trunks are.
+  virtual void trunk_status_set(plugins::Executor on, std::string name, boost::json::object status, plugins::StatusHandler handler) {
+    (void)name;
+    (void)status;
+    _unsupported(std::move(on), std::move(handler), "trunk_status_set");
+  }
+
+  virtual void trunk_status_get(plugins::Executor on, std::string name, plugins::Handler<std::optional<boost::json::object>> handler) {
+    (void)name;
+    _unsupported<std::optional<boost::json::object>>(std::move(on), std::move(handler), "trunk_status_get");
+  }
+
   // A named lease, held by one holder at a time until it lapses: how one node of a cluster takes a job, such as
   // registering to a trunk. Answers whether `holder` holds it now; a holder that already did has it renewed for
   // `seconds`. Optional; a node without it does the job itself.
@@ -193,8 +225,6 @@ class Datastore : public plugins::Plugin {
   // Every unexpired binding for a subscriber (RFC 3261 16.5 needs them all).
   virtual void location_list(plugins::Executor on, std::uint64_t subscriber_id, plugins::Handler<std::vector<types::Location>> handler) = 0;
 
-  virtual void nonce_create(plugins::Executor on, std::string nonce, std::time_t expires_at, plugins::StatusHandler handler) = 0;
-  virtual void nonce_check(plugins::Executor on, std::string nonce, plugins::Handler<bool> handler) = 0;
 
   // Calls.
   virtual void call_create(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) = 0;

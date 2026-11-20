@@ -1,0 +1,74 @@
+name: CI
+
+# Prose builds nothing: the plan, the documentation and any Markdown are left out. docs/api stays in, because the
+# OpenAPI document there is checked by the unit suite and by the console.
+on:
+  push:
+    branches: [develop, main]
+    paths:
+      - '**'
+      - '!TODO/**'
+      - '!docs/**'
+      - 'docs/api/**'
+      - '!**/*.md'
+  pull_request:
+    paths:
+      - '**'
+      - '!TODO/**'
+      - '!docs/**'
+      - 'docs/api/**'
+      - '!**/*.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node:
+    name: ${{ matrix.step }} (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    container: debian:trixie
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04]
+        step: [check, release, clang, asan, tsan, coverage]
+        include:
+          - runner: ubuntu-24.04-arm
+            step: release
+    env:
+      ATHENA_DEPS: /opt/athenasip-deps
+      BOOST_VERSION: 1.89.0
+    steps:
+      - run: apt-get update -qq && apt-get install -y -qq --no-install-recommends ca-certificates git curl gnupg
+      - uses: actions/checkout@v4
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: actions/cache@v4
+        with:
+          path: /opt/athenasip-deps
+          key: boost-${{ env.BOOST_VERSION }}-trixie-${{ runner.arch }}
+      - run: tools/ci.sh deps
+      - run: tools/ci.sh ${{ matrix.step }}
+      - if: matrix.step == 'coverage'
+        uses: codecov/codecov-action@v5
+        with:
+          files: build-ci-coverage/coverage.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+  console:
+    name: console
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+      - run: tools/ci.sh console
