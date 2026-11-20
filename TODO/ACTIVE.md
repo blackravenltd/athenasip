@@ -478,6 +478,14 @@ as part of the feature (decision 3).
 
 ### First after 0.13.0
 
+- [ ] Leaks at exit. The first ASan run on Linux (2026-11-20, the build cluster; macOS has no
+      LeakSanitizer, so no earlier gate looked) reported 366,785 bytes in 20,922 allocations when the
+      unit suite ended, with no other ASan or UBSan finding. One is direct and the test's own
+      (`tests/api/events_api_test.cpp:37`, an executor kept for the process); the rest are indirect,
+      which is how a cycle of `shared_ptr` reads, and the largest stacks are messages cloned in
+      `Proxy::_forward_to` (`src/proxy.cpp:1121`). Not yet known: whether a fixture abandons calls in
+      flight or a proxy context and its transactions hold each other in the node. `tools/ci.sh asan`
+      runs with `detect_leaks=0` until this is sorted; turn it back on with the fix.
 - [ ] Sanitizer runs build what they link with the same sanitizer (the maintainer, 2026-11-20): the three
       static Boost libraries (thread, json, charconv) are built plain today, which is why UBSan's
       `vptr` check on Boost.JSON is suppressed (`docs/testing.md`). `tools/ci.sh deps` builds an
