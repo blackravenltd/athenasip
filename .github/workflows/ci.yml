@@ -47,7 +47,7 @@ jobs:
       - run: apt-get update -qq && apt-get install -y -qq --no-install-recommends ca-certificates git curl gnupg
       - uses: actions/checkout@v7
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: /opt/athenasip-deps
           key: boost-${{ env.BOOST_VERSION }}-trixie-${{ runner.arch }}
