@@ -127,7 +127,9 @@ As asked, before those answers arrived:
 
 Tagged 2026-11-20 (Dannan's session): pin `GIT_TAG 0.10.0` or `find_package(dannan 0.10.0 CONFIG
 REQUIRED)`; the library package is `libdannan0.10`; read "Adopting 0.10.0" in its `CHANGELOG.md`
-before pinning. This part is open for work after AthenaSIP 0.13.0.
+before pinning. This part is open for work after AthenaSIP 0.13.0. Dannan 0.10.1 followed the
+same day with 0.10.0's ABI (a node's stop waits for a scheduled step already running); pin 0.10.1,
+and read its changelog entry too.
 
 - Inter-node SIP over Dannan's listener and connector (`dannan::listen`, no node in-process),
   with certificates from `dannan-ca` in place of `--ca-init` and `--ca-node` and
