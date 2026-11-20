@@ -233,7 +233,7 @@ describe('PhoneHost', () => {
     await registered(sip, api, ['view-cluster-status', 'manage-realm-subscribers']);
 
     const recent = await screen.findByRole('list', { name: 'Recent calls' });
-    expect([...recent.querySelectorAll('li')].map((row) => row.querySelector('.phone-list-detail')!.textContent!.replace(/, [^,]+ago$|, \d+ \w+$/, ''))).toEqual(['Outgoing, 3:04', 'Missed']);
+    expect([...recent.querySelectorAll('li')].map((row) => row.querySelector('.phone-list-detail')!.textContent!.replace(/, [^,]+ago$|, (\d+ \w+|\w+ \d+)$/, ''))).toEqual(['Outgoing, 3:04', 'Missed']);
     const directory = await screen.findByRole('list', { name: 'Directory' });
     expect(within(directory).getAllByRole('listitem').map((row) => row.querySelector('.phone-list-detail')!.textContent)).toEqual(['Not registered', 'Registered']);
 
