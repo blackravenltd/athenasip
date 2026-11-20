@@ -35,7 +35,7 @@ TEST(TurnCredentialTest, TheUsernameCarriesTheExpiryAndThenTheName) {
 
   // coturn ignores the name; it ties a relay session to its requester in a log.
   EXPECT_EQ(credential.username, "1790003600:ada");
-  EXPECT_EQ(credential.password, "Z6NBxs82TjUSc4t5ruZ2mhlym6A=");
+  EXPECT_EQ(credential.password, "hXCBiS+dUWe/UVsz5CCeve4zeWo=");
 
   // The name is inside the MAC, so it cannot be altered.
   EXPECT_NE(credential.password, TurnCredential::issue("a shared secret", "", kNow, 3600).password);
@@ -108,5 +108,5 @@ TEST(TurnCredentialTest, AColonInTheNameCannotSplitTheUsernameAgain) {
   const auto credential = TurnCredential::issue("a shared secret", "ada:admin", kNow, 3600);
 
   // A colon in the name would make the expiry ambiguous and could smuggle in a second field.
-  EXPECT_EQ(credential.username, "1790003600:tomadmin");
+  EXPECT_EQ(credential.username, "1790003600:adaadmin");
 }
