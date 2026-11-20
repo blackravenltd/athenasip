@@ -476,6 +476,13 @@ step 1 built (decision 2), then `/api/v1/focuses` as a view on the trunks with a
 attribute (decision 1), then step 5 with FreeSWITCH and step 6, the roster from the focus,
 as part of the feature (decision 3).
 
+### First after 0.13.0
+
+- [ ] The sipp, cluster and trunk harnesses (`test/e2e/`) run AthenaSIP nodes and sipp directly
+      on claimed machines of the build cluster, not under docker compose (the maintainer, 2026-11-20:
+      "They should use the cluster as the other projects do"). `0.13.0` was gated without them,
+      and its release notes say so.
+
 ### The stack, now (2026-11-20)
 
 From `TODO/2026-11-20-stack-integration.md`, part A: what needs no decision and nobody else.
