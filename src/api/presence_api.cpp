@@ -6,6 +6,8 @@
 //
 #include "presence_api.h"
 
+#include <boost/asio/post.hpp>
+#include <string>
 #include <utility>
 
 #include "../core.h"
@@ -15,6 +17,10 @@
 #include "api_json.h"
 
 namespace athenasip::api {
+
+namespace {
+void write_state(RouteContext& context, const std::string& aor, const plugins::Result<Notifier::State>& state);
+}  // namespace
 
 PresenceAPI::PresenceAPI(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<Core> core, plugins::Executor executor)
     : _logger(std::make_shared<loggers::LoggerScoped>("presence_api", std::move(logger))), _core(core), _executor(std::move(executor)) {}
@@ -39,26 +45,30 @@ void PresenceAPI::_subscriptions(RouteContext context) {
     return context.done();
   }
 
-  core->post([core, context]() mutable {
-    core->notifier()->subscriptions([context](plugins::Result<std::vector<Notifier::Watch>> found) mutable {
-      if (!found.ok) {
-        write_error(context.response, http::status::internal_server_error, "datastore_error", found.error);
-        return context.done();
-      }
+  // The strand finds; the answer is written on the API's executor, where the connection lives. The context is
+  // moved at each hop, so the strand holds nothing of the connection once it has handed the answer over.
+  core->post([core, executor = _executor, context = std::move(context)]() mutable {
+    core->notifier()->subscriptions([executor, context = std::move(context)](plugins::Result<std::vector<Notifier::Watch>> found) mutable {
+      boost::asio::post(executor, [context = std::move(context), found = std::move(found)]() mutable {
+        if (!found.ok) {
+          write_error(context.response, http::status::internal_server_error, "datastore_error", found.error);
+          return context.done();
+        }
 
-      boost::json::array out;
-      for (const auto& watch : found.value) {
-        boost::json::object entry;
-        entry["id"] = watch.id;
-        entry["watcher"] = watch.watcher;
-        entry["presentity"] = watch.presentity;
-        entry["package"] = watch.package;
-        entry["node_id"] = watch.node_id;
-        entry["expires_at"] = static_cast<std::int64_t>(watch.expires_at);
-        out.push_back(std::move(entry));
-      }
-      write_json(context.response, http::status::ok, out);
-      context.done();
+        boost::json::array out;
+        for (const auto& watch : found.value) {
+          boost::json::object entry;
+          entry["id"] = watch.id;
+          entry["watcher"] = watch.watcher;
+          entry["presentity"] = watch.presentity;
+          entry["package"] = watch.package;
+          entry["node_id"] = watch.node_id;
+          entry["expires_at"] = static_cast<std::int64_t>(watch.expires_at);
+          out.push_back(std::move(entry));
+        }
+        write_json(context.response, http::status::ok, out);
+        context.done();
+      });
     });
   });
 }
@@ -78,58 +88,70 @@ void PresenceAPI::_state(RouteContext context) {
 
   const auto aor = "sip:" + context.parameter("user") + "@" + context.parameter("realm");
 
-  core->post([core, context, aor]() mutable {
-    core->subscriber_get(std::make_shared<types::SIPIdentity>(aor), [core, context, aor](plugins::Result<std::shared_ptr<types::Subscriber>> found) mutable {
-      if (!found.ok) {
-        write_error(context.response, http::status::internal_server_error, "datastore_error", found.error);
-        return context.done();
+  auto identity = std::make_shared<types::SIPIdentity>(aor);
+  core->post([core, executor = _executor, context = std::move(context), aor, identity]() mutable {
+    auto found_subscriber = [core, executor, context = std::move(context), aor](plugins::Result<std::shared_ptr<types::Subscriber>> found) mutable {
+      if (!found.ok || !found.value) {
+        return boost::asio::post(executor, [context = std::move(context), found = std::move(found)]() mutable {
+          if (!found.ok) {
+            write_error(context.response, http::status::internal_server_error, "datastore_error", found.error);
+          } else {
+            write_error(context.response, http::status::not_found, "not_found", "no such subscriber");
+          }
+          context.done();
+        });
       }
-      if (!found.value) {
-        write_error(context.response, http::status::not_found, "not_found", "no such subscriber");
-        return context.done();
-      }
 
-      core->notifier()->state(aor, [context, aor](plugins::Result<Notifier::State> state) mutable {
-        if (!state.ok) {
-          write_error(context.response, http::status::internal_server_error, "datastore_error", state.error);
-          return context.done();
-        }
-
-        boost::json::object out;
-        out["subscriber"] = aor;
-        out["basic"] = state.value.basic;
-        out["source"] = state.value.source;
-        out["document"] = state.value.document;
-
-        boost::json::array publications;
-        for (const auto& record : state.value.publications) {
-          boost::json::object entry;
-          entry["etag"] = record.id;
-          entry["content_type"] = record.content_type;
-          entry["expires_at"] = static_cast<std::int64_t>(record.expires_at);
-          entry["document"] = record.body;
-          publications.push_back(std::move(entry));
-        }
-        out["publications"] = std::move(publications);
-
-        boost::json::array dialogs;
-        for (const auto& dialog : state.value.dialogs) {
-          boost::json::object entry;
-          entry["id"] = dialog.id;
-          entry["call_id"] = dialog.call_id;
-          entry["state"] = dialog.state;
-          entry["direction"] = dialog.direction;
-          entry["local"] = dialog.local;
-          entry["remote"] = dialog.remote;
-          dialogs.push_back(std::move(entry));
-        }
-        out["dialogs"] = std::move(dialogs);
-
-        write_json(context.response, http::status::ok, out);
-        context.done();
+      core->notifier()->state(aor, [executor, context = std::move(context), aor](plugins::Result<Notifier::State> state) mutable {
+        boost::asio::post(executor, [context = std::move(context), aor, state = std::move(state)]() mutable { write_state(context, aor, state); });
       });
-    });
+    };
+    core->subscriber_get(identity, std::move(found_subscriber));
   });
 }
+
+namespace {
+
+void write_state(RouteContext& context, const std::string& aor, const plugins::Result<Notifier::State>& state) {
+  if (!state.ok) {
+    write_error(context.response, http::status::internal_server_error, "datastore_error", state.error);
+    return context.done();
+  }
+
+  boost::json::object out;
+  out["subscriber"] = aor;
+  out["basic"] = state.value.basic;
+  out["source"] = state.value.source;
+  out["document"] = state.value.document;
+
+  boost::json::array publications;
+  for (const auto& record : state.value.publications) {
+    boost::json::object entry;
+    entry["etag"] = record.id;
+    entry["content_type"] = record.content_type;
+    entry["expires_at"] = static_cast<std::int64_t>(record.expires_at);
+    entry["document"] = record.body;
+    publications.push_back(std::move(entry));
+  }
+  out["publications"] = std::move(publications);
+
+  boost::json::array dialogs;
+  for (const auto& dialog : state.value.dialogs) {
+    boost::json::object entry;
+    entry["id"] = dialog.id;
+    entry["call_id"] = dialog.call_id;
+    entry["state"] = dialog.state;
+    entry["direction"] = dialog.direction;
+    entry["local"] = dialog.local;
+    entry["remote"] = dialog.remote;
+    dialogs.push_back(std::move(entry));
+  }
+  out["dialogs"] = std::move(dialogs);
+
+  write_json(context.response, http::status::ok, out);
+  context.done();
+}
+
+}  // namespace
 
 }  // namespace athenasip::api

@@ -8,13 +8,17 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/post.hpp>
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/json.hpp>
+#include <future>
 #include <map>
 #include <memory>
 #include <string>
+#include <thread>
 
 #include "../helpers/proxy_fixture_helper.h"
 #include "../helpers/signed_in_users_helper.h"
@@ -44,6 +48,10 @@ struct PresenceApiFixture : ProxyFixture {
   std::shared_ptr<MockConnection> carol_connection;
   std::shared_ptr<Channel> carol;
 
+  // The API's one thread, and the thread the last answer was handed back on.
+  std::thread::id api_thread;
+  std::atomic<std::thread::id> answered_on{};
+
   struct Response {
     unsigned status = 0;
     boost::json::value json;
@@ -62,8 +70,19 @@ struct PresenceApiFixture : ProxyFixture {
     router = std::make_shared<api::Router>(bearer);
     presence = std::make_shared<api::PresenceAPI>(logger, core, admin->executor());
     presence->register_routes(*router);
-    admin->middlewares.push_back(router->middleware("/api/"));
+    admin->middlewares.push_back([this, routes = router->middleware("/api/")](const http::request<http::string_body>& request, const std::string& remote,
+                                                                              std::shared_ptr<http::response<http::string_body>> response,
+                                                                              std::function<void(bool)> next) {
+      routes(request, remote, std::move(response), [this, next = std::move(next)](bool more) {
+        answered_on = std::this_thread::get_id();
+        next(more);
+      });
+    });
     admin->start();
+
+    std::promise<std::thread::id> running;
+    boost::asio::post(admin->executor(), [&running]() { running.set_value(std::this_thread::get_id()); });
+    api_thread = running.get_future().get();
     signed_in = SignedInUsers(sessions, *store);
   }
 
@@ -149,6 +168,22 @@ TEST(PresenceApiTest, ListsEverySubscriptionInTheCluster) {
   EXPECT_EQ(here.at("id").as_string(), records[0].id);
   EXPECT_GT(here.at("expires_at").to_number<std::int64_t>(), 0);
   EXPECT_EQ(by_node["node-b"].at("id").as_string(), "held-by-b");
+}
+
+// The Core strand is the call path. What it found is written on the API's executor, where the connection lives
+// (docs/architecture.md); answered from the strand, the connection would be used by two threads at once.
+TEST(PresenceApiTest, AnswersAreWrittenOnTheApisExecutorNotTheCoreStrand) {
+  PresenceApiFixture f;
+  f.watch_bob("dialog");
+
+  ASSERT_EQ(f.get("/api/v1/presence/subscriptions").status, 200u);
+  EXPECT_EQ(f.answered_on.load(), f.api_thread);
+
+  ASSERT_EQ(f.get("/api/v1/realms/example.com/subscribers/bob/presence").status, 200u);
+  EXPECT_EQ(f.answered_on.load(), f.api_thread);
+
+  ASSERT_EQ(f.get("/api/v1/realms/example.com/subscribers/nobody/presence").status, 404u);
+  EXPECT_EQ(f.answered_on.load(), f.api_thread);
 }
 
 // Who watches whom is the cluster's status, as /nodes and /registrations are.
