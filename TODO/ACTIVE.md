@@ -2,13 +2,22 @@
 
 Work happens on `develop`; `main` carries the last release, `0.12.0` (2026-10-13). Every
 release from `0.5.0` to `0.12.0` is tagged (`0.10.0` was tagged late, on 2026-10-12, dated
-at its merge). Nothing has landed on `develop` since `0.12.0` but this plan. Line numbers
-refer to the current tree; update them as files move.
+at its merge). Since `0.12.0`, `develop` carries the external review's fixes (Milestone 8),
+conferencing steps 1 to 4, DTMF conversion and `mqtts://`, none released. Line numbers refer to
+the current tree; update them as files move.
+
+**Resume here (2026-11-20).** The maintainer asked for a plan to take what is useful from the Cluster
+Stack (Dannan, Dagda, Lir, Mimir, Lugh): it is `TODO/2026-11-20-stack-integration.md`, made by
+asking those sessions, and it stops at seven decisions that are the maintainer's (Waiting on the maintainer, 1).
+Nothing of the stack that AthenaSIP's datastore or bus would use is ready: all of it waits on
+Dagda's leases, register map and logs and on Dannan's atomic commit. What can be done now is
+under Next, "The stack, now".
 
 Milestones 1 to 6 are complete, and so is presence, the first part of Milestone 7
 (`COMPLETED.md` has every item with what shipped, and its Releases section the tags). This
 file was rationalised against the tree on 2026-10-26: every open item below was checked
-against the code that day, and the done milestones' scaffolding is gone. What is open is in
+against the code that day, and the done milestones' scaffolding is gone. On 2026-11-20 it was
+brought up to date with node-b, the stack and the build cluster, without re-checking the code. What is open is in
 two lists: **Next**, which nothing blocks, in the order to work it, and **Waiting on
 something**, each item with what it waits on.
 
@@ -58,28 +67,43 @@ Nothing below can move until these are settled, and each one has somebody or som
 stopped against it. They are here rather than scattered through the lists because a
 session that has lost its context needs to see them first.
 
-1. **The rest of the `0.11.0` and `0.12.0` releases.** Both tagged and pushed (step 1 of
+1. **The stack's seven decisions** (`TODO/2026-11-20-stack-integration.md`, Decisions for the maintainer):
+   whether AthenaSIP is a hosted system of the stack or a product beside it; a native `dagda://`
+   driver or `redis://` at Mimir; `mqtt://` at Lir; whether Dannan is linked into the node at
+   all (built from source against Boost 1.89); the group rules against this plan's decisions
+   (hosted CI and badges, coverage, debs in releases, squash merges, builds on the build cluster, the
+   dashboard rule); admin users local with Lugh as an option, or Lugh only; and no SIP Digest
+   credentials in Lugh. Each has a recommendation there.
+   The coordinator session relayed answers to the first and fifth the same day (AthenaSIP
+   joins the stack; hosted CI, CodeQL, debs and the dashboard rule apply): they are in that
+   document as relayed, and reverse "No hosted CI" under Decisions only once the maintainer confirms here.
+2. **node-b** (2026-11-01): the router forwards to 10.102.1.20 (TCP 5061, 8089, 5349; UDP and
+   TCP 3478; UDP 22000-22200 and 24000-24100) and TCP 80 to 10.102.1.50, after which the node is
+   tested from outside; PROXY protocol v2 (Next, Found setting up node-b); and the
+   certificate's renewal, by hand with a TXT record or automated with Route 53 credentials. It
+   expires 2027-01-30.
+3. **The rest of the `0.10.0`, `0.11.0` and `0.12.0` releases.** The GitHub releases wait on
+   `gh auth login` on this machine (notes for all three are written). And:
+    Both tagged and pushed (step 1 of
    `docs/releasing.md`). Left, from step 2: the images built from the tags, the
    `blackravenltd/homebrew-athenasip` tap repository, and the GitHub releases, which the maintainer
-   makes. No Debian packages for now (the maintainer, 2026-10-12): `docs/releasing.md` says so, and the
+   makes. Whether images go to Docker Hub is asked and unanswered. No Debian packages for now (the maintainer, 2026-10-12): `docs/releasing.md` says so, and the
    `deb` target in the Dockerfile and `packaging/debian/` stay for when they return.
-2. **The phone, when the maintainer lends it**: the browser call to AthenaPhone with
+4. **The phone, when the maintainer lends it**: the browser call to AthenaPhone with
    `ATHENA_INTEROP_PAGE_URL=https://10.102.1.50:8443` (plain http gives the page no
    microphone), and the hold, DTMF and transfer checks under Waiting on something.
    `phone.py` taps only while AthenaPhone is in front; its wireless adb port is found by
    mDNS.
-3. **`../athenasip-admin` is not checked out on this machine** (2026-10-26). The console
+5. **`../athenasip-admin` is not checked out on this machine** (2026-10-26; it is on the Mac). The console
    items under Waiting on something are that repository's, and `test/suite/run.sh` reports
    its spec as missing rather than failing until it is.
-4. (Answered 2026-10-26: the console lists the bans in force and lifts one; `security/#` stays
-   off `/api/v1/events`. Built: `/api/v1/security/...`, `COMPLETED.md`.)
-5. **The GitHub About line and athenasip.org** (review findings 46, 48). The About line says
+6. **The GitHub About line and athenasip.org** (review findings 46, 48). The About line says
    "TLS-only", which the node is not by default (`sip.allow_unencrypted` is true and UDP and
    TCP listen); suggested: "Multi-master SIP proxy and registrar: RFC 3261 transactions and
    proxying, WebRTC through rtpengine, clusters over Redis and MQTT, scriptable in Lua." The
    site's "Where it stands" says presence is not built and AthenaPhone is iOS and Android;
    the README has presence built and AthenaPhone on Android. Both are outside the repo.
-6. **Docker on this machine**: installed 2026-10-26, and the `docker` group given; a shell started
+7. **Docker on this machine**: installed 2026-10-26, and the `docker` group given; a shell started
    before that reaches the daemon with `sg docker -c "docker ..."`. It
    unlocks the sipp harnesses, Redis and MQTT for the full suite, the ASan and TSan release
    checks, FreeSWITCH for conferencing step 5, the DTMF and push scenarios and the arm64
@@ -452,6 +476,30 @@ step 1 built (decision 2), then `/api/v1/focuses` as a view on the trunks with a
 attribute (decision 1), then step 5 with FreeSWITCH and step 6, the roster from the focus,
 as part of the feature (decision 3).
 
+### The stack, now (2026-11-20)
+
+From `TODO/2026-11-20-stack-integration.md`, part A: what needs no decision and nobody else.
+
+- [ ] Send Dagda AthenaSIP's requirements per shape (sizes, counts, rates, latency, durability,
+      TTL ranges, any true compare-and-set, CDR volume and scans, counters), so it enters
+      Dagda's needs table and TTL, counters and the time-scanned log get a second user.
+- [ ] Send Mimir the exact Redis command list with options and the ten Lua scripts
+      (`src/datastores/redis_datastore.cpp`), for its conformance and differential gates.
+- [ ] Write the liveness pattern for Lir as a scenario: retained `nodes/<id>/status` plus a
+      will on the same topic, node death, split and heal.
+- [ ] Audit the Redis scripts: every key touched is declared in `KEYS` (Redis Cluster's rule
+      as well as Mimir's), and name the records that truly need compare-and-set.
+- [ ] Move heavy builds and test runs to the shared build cluster (arm64, Debian trixie), under
+      `/root/athenasip-*`, by the claim board's rules: claim only the cores `-j` uses, nice 19,
+      wait in the queue, release at once. Ask the coordinator about Docker there for the sipp
+      harnesses. It supplies clang and libFuzzer (review item 6) and an arm64 build.
+- [ ] `mqtt://` takes a list of brokers and moves to the next with backoff and jitter.
+- [ ] `test/interop/live.json` still describes the old node-b (the the carrier trunk, the node-a trunk
+      to it): bring it to node-b as it is, or `verify.py` fails there.
+
+Later, each gated in that document: inter-node TLS and the CA from Dannan, `dannan::config`,
+Lugh sign-in, a `dagda://` driver, Lir in place of Mosquitto, the `redis://` tests against Mimir.
+
 ### Found setting up node-b (2026-11-01)
 
 - [ ] `websocket.tls: true` refuses to start without `websocket.cert_pem_filename` and
@@ -462,7 +510,7 @@ as part of the feature (decision 3).
       engine are already dropped; bind it to the address that reaches the engine (loopback
       for a local one) so a node told to use one address uses only that.
 - [ ] **PROXY protocol v2 from a trusted proxy**, on the HTTP and WebSocket listeners
-      (asked of the maintainer, not yet answered). Behind HAProxy every connection comes from HAProxy, so
+      (asked of the maintainer, not yet answered: Waiting on the maintainer, 2). Behind HAProxy every connection comes from HAProxy, so
       the per-source API limits are shared by everyone, and SIP over `wss://athenasip.com/ws`
       on 443 would put every browser behind one address for the Digest guessing bans.
 
@@ -482,7 +530,8 @@ to 5 and 9 here; 6 needs clang (libFuzzer), 7 needs GitHub, 8 is partly the main
 - [x] **5. SIP-side rate limiting** (24): done 2026-10-26 (`COMPLETED.md`).
 - [ ] **6. Fuzzing** (7): libFuzzer targets for `SIPHeader::parse`, `SIPUri`, the
       Authorization header, stream and datagram framing, STUN and bencode, seeded from the
-      sipp scenarios, under ASan and UBSan. Needs clang on this machine (Waiting on the maintainer).
+      sipp scenarios, under ASan and UBSan. The build cluster has clang 19 (with
+      `libclang-rt-19-dev` for libFuzzer), so this is no longer blocked (The stack, now).
 - [x] **7. Warnings** (44): done 2026-10-26 (`COMPLETED.md`). Hosted CI (43) is declined: the maintainer
       had the GitHub workflow removed the same day, so the release checklist on a developer
       machine stays the gate.
@@ -594,7 +643,7 @@ After the above. The order is the milestone's own:
 
 Each with what it waits on. None is forgotten; none can be worked here today.
 
-**The phone (Waiting on the maintainer, 2):**
+**The phone (Waiting on the maintainer, 4):**
 
 - [ ] The phone's media across the internet: AthenaPhone on mobile data to
       node-b.example.com. The 2026-10-04 run's phone leg went over the link between
@@ -607,7 +656,7 @@ Each with what it waits on. None is forgotten; none can be worked here today.
 - [ ] Interop matrix documented: AthenaPhone, JsSIP in Chrome, Firefox and Safari,
       Linphone, a hardware desk phone, Asterisk as a trunk.
 
-**The console, `../athenasip-admin` (Waiting on the maintainer, 3):**
+**The console, `../athenasip-admin` (Waiting on the maintainer, 5):**
 
 - [ ] Ring the automated browser call: `browser.sh` answers within milliseconds and so
       never rang long enough to hit the DTLS-role bug the live call found; a delay of a
