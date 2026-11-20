@@ -1,5 +1,7 @@
 # Contributing to AthenaSIP
 
+Everyone taking part is expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Branches
 
 - `main` is the last stable state. Nothing is committed to it directly; stable states
