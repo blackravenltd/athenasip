@@ -2,7 +2,7 @@
 
 ## Dependencies
 
-CMake 3.23 or newer, a C++20 compiler, Boost 1.87 or newer (`thread`, `json` and
+CMake 3.23 or newer, a C++20 compiler, Boost 1.87.0 or newer (`thread`, `json` and
 `charconv` are linked; the rest is header-only), OpenSSL, yaml-cpp, nghttp2, which
 APNs needs because it speaks only HTTP/2, and Lua 5.4, for [scripting](scripting.md).
 CMake finds nghttp2 through pkg-config.
@@ -20,7 +20,7 @@ Debian and Ubuntu:
 apt install build-essential cmake pkg-config libssl-dev libyaml-cpp-dev libnghttp2-dev liblua5.4-dev libgtest-dev
 ```
 
-Where the distribution's Boost is older than 1.87, build Boost from source; `Dockerfile`
+Where the distribution's Boost is older than 1.87.0, build Boost from source; `Dockerfile`
 shows how.
 
 ## Build

@@ -52,13 +52,13 @@ A second set followed, of which the datastore route and the backends are confirm
   the login limiter move to Dannan's credential helper and signed session tokens; roles and
   subscriber Digest stay AthenaSIP's.
 - The HTTP server, router, OpenAPI check and SPA serving move onto Dannan's HTTP core as it lands.
-- Boost: with `redis://` and `mqtt://` kept, the 1.89 conflict is to be settled with Dannan.
+- Boost: with `redis://` and `mqtt://` kept, the 1.89.0 conflict is to be settled with Dannan.
   Options: those two backends as build options so a stack build uses the system Boost; the two
-  header-only libraries from 1.89 over the system Boost; or Dannan and Dagda from source on 1.89.
+  header-only libraries from 1.89.0 over the system Boost; or Dannan and Dagda from source on 1.89.0.
 
-Settled with Dannan the same day, subject to the above: try the system Boost (trixie's 1.83) for
+Settled with Dannan the same day, subject to the above: try the system Boost (trixie's 1.83.0) for
 everything, with boost::redis and boost::mqtt5 alone as pinned header-only sources over it, and
-prove on a build machine that both build against 1.83's Asio (any_completion_handler, cancellation,
+prove on a build machine that both build against 1.83.0's Asio (any_completion_handler, cancellation,
 consign, and what mqtt5 takes from Beast's websocket) before committing. Dannan takes headers
 only (Asio, Asio SSL, Beast), and Boost.JSON with its HTTP core. Dannan's minors: 0.10.0 close
 (clock rules, stream carrier); 0.11.0 agreement's stamped requests and certificate expiry;
@@ -85,9 +85,9 @@ As asked, before those answers arrived:
    standard protocol to a broker, as Mosquitto is today; switch when Lir has retained, wills and
    QoS 1, with no driver of AthenaSIP's own.
 4. **Linking Dannan into the node at all.** Lugh sign-in, Dannan's listener, Dannan's config and
-   a `dagda://` driver each put Dannan in the binary, built from source against Boost 1.89 (the
-   debs are built on 1.83 and cannot be mixed; boost::redis and boost::mqtt5 need 1.84 and
-   1.88). It is a new dependency under the minimal-dependencies rule.
+   a `dagda://` driver each put Dannan in the binary, built from source against Boost 1.89.0 (the
+   debs are built on 1.83.0 and cannot be mixed; boost::redis and boost::mqtt5 need 1.84.0 and
+   1.88.0). It is a new dependency under the minimal-dependencies rule.
 5. **The group rules against AthenaSIP's decisions.** Hosted CI green with all badges on public
    repos, against "No hosted CI" (2026-10-26). About 100% coverage with Codecov, against none
    measured. Debs in every release, against "No Debian packages for now" (2026-10-12). Squash

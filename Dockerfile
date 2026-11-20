@@ -22,7 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Debian's Boost is older than the 1.87 that boost::redis and boost::mqtt5 need, so it
+# Debian's Boost is older than the 1.87.0 that boost::redis and boost::mqtt5 need, so it
 # is built here: only the compiled libraries the server links, plus the headers. Its own layer, because it is slow and
 # changes only with BOOST_VERSION.
 RUN set -eux; \
