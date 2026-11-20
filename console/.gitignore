@@ -1,0 +1,15 @@
+node_modules/
+build/
+dist/
+.vite/
+.env.local
+.DS_Store
+
+# TypeScript build metadata; builds are no-emit for source.
+*.tsbuildinfo
+
+# CodeGraph index; rebuilt locally with `codegraph init`.
+.codegraph/
+
+# End-to-end run output; the record of a passing run is pasted into the server's plan, not kept here.
+e2e/results/

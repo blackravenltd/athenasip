@@ -39,7 +39,7 @@ every external piece it can use is a plugin behind one contract.
 * **API-driven.** Realms, subscribers and administrators are provisioned over a JSON API
   described by [an OpenAPI document](docs/api/openapi.yaml). Administrators sign in for a
   session token and hold roles; there are no configured tokens to leak. The React admin
-  console is [AthenaSIP Admin](https://github.com/blackravenltd/athenasip-admin).
+  console is in [console/](console/).
 * **Easy to configure.** One annotated YAML file. `athenasip --check` tries every
   dependency and certificate before you start, a misspelt key is named with the one you
   meant, and `athenasip --print-schema` gives your editor a schema to check the file as you
@@ -66,9 +66,8 @@ next step:
 
 ## Companion projects
 
-* [AthenaSIP Admin](https://github.com/blackravenltd/athenasip-admin) - the administration
-  console, with a phone in the browser. A static React bundle the node serves beside its
-  admin API (`docker/up.sh --console`). Alpha.
+* [The console](console/) - the administration console, with a phone in the browser. A
+  static React bundle the node serves beside its admin API (`docker/up.sh --console`). Alpha.
 * [AthenaPhone](https://github.com/blackravenltd/athenaphone) - an open source SIP
   softphone for Android, audio and video over UDP, TCP, TLS or WebSocket with WebRTC
   media, for AthenaSIP or any standards-compliant SIP server. Working, not yet released.
@@ -117,7 +116,12 @@ next step:
 * [Releasing](docs/releasing.md) - the tag, the image and the Homebrew formula
 * [Admin API](docs/api/openapi.yaml)
 * [Interop fixture](test/interop/README.md) - a node to point a real SIP client at
-* [Contributing](CONTRIBUTING.md)
+* [Contributing](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md)
+
+## Code of conduct
+
+Everyone taking part in this project is expected to follow the
+[Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 

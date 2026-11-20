@@ -6,7 +6,7 @@
 | [Sanitizers](#sanitizers) | is it memory- and thread-safe under the same tests | not routine, see below |
 | [sipp harness](#the-sipp-harness) | does a real client on a real socket agree | Docker |
 | [Interop fixture](#the-interop-fixture) | does a particular SIP client work, on every transport | Docker |
-| [Browser call](#the-browser-call) | does a browser agree, with media through rtpengine | Docker, `../athenasip-admin` |
+| [Browser call](#the-browser-call) | does a browser agree, with media through rtpengine | Docker, `console/` |
 | [Live call](#the-live-call) | did a person hear it | a device |
 | [The whole suite](#the-whole-suite) | do the node, the console and AthenaPhone agree | Docker, the sibling repositories |
 
@@ -42,7 +42,7 @@ test/suite/run.sh --device     # also what needs a phone and a person
 
 It runs the unit tests and the sipp harnesses, then brings the interop fixture up twice,
 with direct media and relayed through coturn, and runs each sibling project's suite against
-it: `npm run test:athenasip` in `../athenasip-admin` and `../athenaphone`
+it: `npm run test:athenasip` in `console/` and `../athenaphone`
 (`ATHENA_SUITE_ADMIN_REPO` and `ATHENA_SUITE_PHONE_REPO` move them). Results, with each
 project's `summary.json` and the machine's load every ten seconds (`load.log`), are under `test/suite/results/`.
 
@@ -205,11 +205,11 @@ test/interop/browser.sh --relay  # only media relayed through coturn
 ```
 
 Two headless Chromium contexts register, call each other through rtpengine and check
-their own media counters. The page and the Playwright spec live in `../athenasip-admin`;
+their own media counters. The page and the Playwright spec live in `console/`;
 `browser.sh` owns the fixture and passes its environment to the spec. See
 [`test/interop/README.md`](../test/interop/README.md#the-browser-call).
 
-`e2e/phone-call.spec.ts` in `../athenasip-admin` is the same browser calling a real
+`e2e/phone-call.spec.ts` in `console/` is the same browser calling a real
 phone, with video, through whatever node it is pointed at. Somebody has to answer the
 phone.
 

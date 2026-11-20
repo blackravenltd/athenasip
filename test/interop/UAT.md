@@ -9,7 +9,7 @@ rtpengine on the media path, and a person listens. The browser half is automated
 - A device with AthenaPhone on the same network as this machine: not a guest network,
   and no VPN routing its traffic elsewhere.
 - Docker running, and a build of the admin client:
-  `(cd ../athenasip-admin && npm run build)`.
+  `(cd console && npm run build)`.
 - Free ports. AthenaPhone's Asterisk fixture uses 5060, 5061 and 8088 too, so stop it or
   move this fixture (step 1).
 - On macOS, allow incoming connections when asked, or the phone's REGISTER never arrives.

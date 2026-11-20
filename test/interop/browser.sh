@@ -16,7 +16,7 @@
 # other and read their media counters; rtpengine's counters confirm it from the other
 # side.
 #
-# The page and the Playwright spec live in ../athenasip-admin. This script owns the node,
+# The page and the Playwright spec live in console/. This script owns the node,
 # the engine, the subscribers and the environment that tells the spec where they are.
 #
 # Every ATHENA_INTEROP_* variable up.sh takes is passed through. Effective values are
@@ -52,7 +52,7 @@ for argument in "$@"; do
   esac
 done
 
-ADMIN_REPO="${ATHENA_INTEROP_ADMIN_REPO:-$HERE/../../../athenasip-admin}"
+ADMIN_REPO="${ATHENA_INTEROP_ADMIN_REPO:-$HERE/../../console}"
 
 if [[ ! -d "$ADMIN_REPO" ]]; then
   echo "No admin client checkout at ${ADMIN_REPO} - set ATHENA_INTEROP_ADMIN_REPO." >&2

@@ -103,7 +103,7 @@ else
 fi
 
 # The console is built in its own repository and mounted when present.
-export ATHENA_CONSOLE_DIR="${ATHENA_CONSOLE_DIR:-$ROOT/../athenasip-admin/build}"
+export ATHENA_CONSOLE_DIR="${ATHENA_CONSOLE_DIR:-$ROOT/console/build}"
 
 if [[ "$SERVE_CONSOLE" == "yes" ]]; then
   if [[ ! -f "$ATHENA_CONSOLE_DIR/index.html" ]]; then
@@ -112,7 +112,7 @@ No admin console to serve at ${ATHENA_CONSOLE_DIR}
 
 Build it first:
 
-  (cd ../athenasip-admin && npm run build)
+  (cd console && npm run build)
 
 or point ATHENA_CONSOLE_DIR at a directory that has one. Starting a node that serves
 nothing would only fail later and further away.

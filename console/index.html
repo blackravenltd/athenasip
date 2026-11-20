@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0e0e0f" />
+    <!-- An administration console has no business in a search index, and the
+         directive has to live in the markup: a crawler blocked by robots.txt
+         never fetches the page, so it never reads a rule stated inside it,
+         yet the URL can still be indexed from a link elsewhere. -->
+    <meta name="robots" content="noindex, nofollow, noarchive" />
+    <meta name="description" content="AthenaSIP Admin" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon/favicon-16x16.png" />
+    <link rel="icon" href="/favicon/favicon.ico" />
+    <link rel="manifest" href="/favicon/site.webmanifest" />
+    <title>AthenaSIP Admin</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
