@@ -10,7 +10,7 @@
 | [Live call](#the-live-call) | did a person hear it | a device |
 | [The whole suite](#the-whole-suite) | do the node, the console and AthenaPhone agree | Docker, the sibling repositories |
 
-Every push runs `tools/ci.sh` on GitHub ([Warnings and CI](#warnings-and-ci)); the layers that
+A push to `develop` or `main` runs `tools/ci.sh` on GitHub ([Warnings and CI](#warnings-and-ci)); the layers that
 need Docker, a device or a person are run by hand.
 
 ## Before a release
@@ -160,9 +160,12 @@ kind with a sample of each on 2026-10-26, and none read was a mistake. Pass `-Ws
 container: `deps` (the packages, and Boost built once into `/opt/athenasip-deps`), `check`
 (the header block on every source), `release` (g++, warnings as errors, the unit suite with a
 Redis and a broker of its own), `clang`, `asan`, `tsan`, `coverage` (lcov over `src/`),
-`fuzz` and `console`. `.github/workflows/ci.yml` runs them on every push, with `release` on
-arm64 as well, and `codeql.yml` scans the C++ and the console. The release checklist above
-stays the gate for what a runner cannot reach.
+`fuzz` and `console`. `.github/workflows/ci.yml` runs them on a push to `develop` or `main` and
+on a pull request, with `release` on arm64 as well; a change to prose alone (`TODO/`, `docs/`
+apart from `docs/api/`, any Markdown) builds nothing. `codeql.yml` scans the C++ and the
+console on a push to `main` and once a week. A feature branch is checked on a build machine
+with the same script. The release checklist above stays the gate for what a runner cannot
+reach.
 
 ## Fuzzing
 

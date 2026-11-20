@@ -1,15 +1,29 @@
 name: CI
 
+# Prose builds nothing: the plan, the documentation and any Markdown are left out. docs/api stays in, because the
+# OpenAPI document there is checked by the unit suite and by the console.
 on:
   push:
-    branches: [main, develop]
+    branches: [develop, main]
+    paths:
+      - '**'
+      - '!TODO/**'
+      - '!docs/**'
+      - 'docs/api/**'
+      - '!**/*.md'
   pull_request:
+    paths:
+      - '**'
+      - '!TODO/**'
+      - '!docs/**'
+      - 'docs/api/**'
+      - '!**/*.md'
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

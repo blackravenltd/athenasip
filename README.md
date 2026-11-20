@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/blackravenltd/athenasip/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/blackravenltd/athenasip/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/blackravenltd/athenasip/branch/develop/graph/badge.svg)](https://codecov.io/gh/blackravenltd/athenasip)
-[![CodeQL](https://github.com/blackravenltd/athenasip/actions/workflows/codeql.yml/badge.svg?branch=develop)](https://github.com/blackravenltd/athenasip/actions/workflows/codeql.yml)
+[![CodeQL](https://github.com/blackravenltd/athenasip/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/blackravenltd/athenasip/actions/workflows/codeql.yml)
 [![Release](https://img.shields.io/github/v/release/blackravenltd/athenasip)](https://github.com/blackravenltd/athenasip/releases)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
