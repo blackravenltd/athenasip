@@ -137,8 +137,9 @@ before pinning. This part is open for work after AthenaSIP 0.13.0.
   it came from) in place of `src/config.*`, which also takes the secrets out of `config.yaml`.
   With it, the stack's names for a node's log settings (the coordinating session, 2026-11-20):
   `log.level` (all, debug, info, warn, error; `dannan::status::parse_log_level`) and `log.format`
-  (text, json; `parse_log_format`). Flags and environment variables for them only if the binary
-  keeps those layers, which is open with the maintainer.
+  (text, json; `parse_log_format`). Ruled the same day (the maintainer, through the coordinating
+  session): YAML is the source of truth, and a flag or an environment variable may override any
+  key, by one pattern: the key `a.b` is the flag `--a-b` and the variable `<PREFIX>_A_B`.
 - Trunk takeover on Dannan's agreement register works today, but only a split's majority side
   keeps its trunks registered. Not taken: Dagda's lease serves both sides and is the design.
 
