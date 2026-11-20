@@ -17,8 +17,10 @@
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size) {
   const std::string input(reinterpret_cast<const char*>(data), size);
   try {
-    athenasip::types::SIPUri uri;
-    uri.parse(input);
+    const athenasip::types::SIPUri uri(input);
+    (void)uri.to_string();
+    (void)uri.canonical_address();
+    (void)uri.equivalent_to(uri);
   } catch (const std::exception&) {
   }
   return 0;
