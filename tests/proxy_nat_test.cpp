@@ -335,8 +335,8 @@ TEST(ProxyNatTest, ATimeoutOnOneHopTriesTheNextHopOfTheSameTarget) {
 
   ASSERT_NE(f.listener->opened_to("198.51.100.1", 5060), nullptr);
 
-  // Timer B, 64*T1.
-  f.timers->advance(std::chrono::seconds(33));
+  // Timer B, 64*T1, moved on the strand where Core's timers fire.
+  f.advance(std::chrono::seconds(33));
   f.settle();
 
   auto second = f.listener->opened_to("198.51.100.2", 5060);
