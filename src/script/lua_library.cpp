@@ -510,112 +510,128 @@ std::function<int(lua_State*)> push_failure(const plugins::Result<T>& result) {
   return [error = result.error](lua_State* L) { return push_text(L, "the store failed - " + error), 1; };
 }
 
+// Each lookup's prepare checks its arguments and finds the host before it builds anything, since a check that
+// fails raises (LuaEngine::await).
 int store_realm(lua_State* L) {
-  std::string name = luaL_checkstring(L, 1);
-  auto& host = host_of(L);
-  return LuaEngine::await(L, [&host, name](LuaEngine::Answer answer) {
-    host.realm(name, [answer](plugins::Result<std::shared_ptr<types::Realm>> found) {
-      if (!found.ok) return answer(false, push_failure(found));
-      answer(true, [realm = found.value](lua_State* L) {
-        if (!realm) return lua_pushnil(L), 1;
-        return push_box(L, realm, nullptr, kRealm), 1;
+  return LuaEngine::await(L, [](lua_State* L) -> LuaEngine::Start {
+    const char* text = luaL_checkstring(L, 1);
+    auto& host = host_of(L);
+    return [&host, name = std::string(text)](LuaEngine::Answer answer) {
+      host.realm(name, [answer](plugins::Result<std::shared_ptr<types::Realm>> found) {
+        if (!found.ok) return answer(false, push_failure(found));
+        answer(true, [realm = found.value](lua_State* L) {
+          if (!realm) return lua_pushnil(L), 1;
+          return push_box(L, realm, nullptr, kRealm), 1;
+        });
       });
-    });
+    };
   });
 }
 
 int store_subscriber(lua_State* L) {
-  auto uri = to_uri(L, 1);
-  if (!uri) return luaL_argerror(L, 1, "an address of record, as a URI or its text");
+  return LuaEngine::await(L, [](lua_State* L) -> LuaEngine::Start {
+    auto& host = host_of(L);
+    // An empty pointer holds nothing, so raising with it alive abandons nothing.
+    auto uri = to_uri(L, 1);
+    if (!uri) luaL_argerror(L, 1, "an address of record, as a URI or its text");
 
-  auto identity = std::make_shared<types::SIPIdentity>(uri->to_string());
-  auto& host = host_of(L);
-  return LuaEngine::await(L, [&host, identity](LuaEngine::Answer answer) {
-    host.subscriber(identity, [answer](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
-      if (!found.ok) return answer(false, push_failure(found));
-      answer(true, [subscriber = found.value](lua_State* L) {
-        if (!subscriber) return lua_pushnil(L), 1;
-        return push_box(L, subscriber, nullptr, kSubscriber), 1;
+    return [&host, identity = std::make_shared<types::SIPIdentity>(uri->to_string())](LuaEngine::Answer answer) {
+      host.subscriber(identity, [answer](plugins::Result<std::shared_ptr<types::Subscriber>> found) {
+        if (!found.ok) return answer(false, push_failure(found));
+        answer(true, [subscriber = found.value](lua_State* L) {
+          if (!subscriber) return lua_pushnil(L), 1;
+          return push_box(L, subscriber, nullptr, kSubscriber), 1;
+        });
       });
-    });
+    };
   });
 }
 
 int store_locations(lua_State* L) {
-  const auto subscriber = check_box<types::Subscriber>(L, 1, kSubscriber)->value;
-  auto& host = host_of(L);
-  return LuaEngine::await(L, [&host, id = subscriber->id](LuaEngine::Answer answer) {
-    host.locations(id, [answer](plugins::Result<std::vector<types::Location>> found) {
-      if (!found.ok) return answer(false, push_failure(found));
-      answer(true, [bindings = std::make_shared<std::vector<types::Location>>(std::move(found.value))](lua_State* L) {
-        return push_box(L, bindings, nullptr, kBindings), 1;
+  return LuaEngine::await(L, [](lua_State* L) -> LuaEngine::Start {
+    const auto id = check_box<types::Subscriber>(L, 1, kSubscriber)->value->id;
+    auto& host = host_of(L);
+    return [&host, id](LuaEngine::Answer answer) {
+      host.locations(id, [answer](plugins::Result<std::vector<types::Location>> found) {
+        if (!found.ok) return answer(false, push_failure(found));
+        answer(true, [bindings = std::make_shared<std::vector<types::Location>>(std::move(found.value))](lua_State* L) {
+          return push_box(L, bindings, nullptr, kBindings), 1;
+        });
       });
-    });
+    };
   });
 }
 
 int store_trunk(lua_State* L) {
-  std::string name = luaL_checkstring(L, 1);
-  auto& host = host_of(L);
-  return LuaEngine::await(L, [&host, name](LuaEngine::Answer answer) {
-    host.trunk(name, [answer](plugins::Result<std::shared_ptr<types::Trunk>> found) {
-      if (!found.ok) return answer(false, push_failure(found));
-      answer(true, [trunk = found.value](lua_State* L) {
-        if (!trunk) return lua_pushnil(L), 1;
-        return push_box(L, trunk, nullptr, kTrunk), 1;
+  return LuaEngine::await(L, [](lua_State* L) -> LuaEngine::Start {
+    const char* text = luaL_checkstring(L, 1);
+    auto& host = host_of(L);
+    return [&host, name = std::string(text)](LuaEngine::Answer answer) {
+      host.trunk(name, [answer](plugins::Result<std::shared_ptr<types::Trunk>> found) {
+        if (!found.ok) return answer(false, push_failure(found));
+        answer(true, [trunk = found.value](lua_State* L) {
+          if (!trunk) return lua_pushnil(L), 1;
+          return push_box(L, trunk, nullptr, kTrunk), 1;
+        });
       });
-    });
+    };
   });
 }
 
 // A shared counter changed by delta, 1 when not given, lapsing `seconds` after it was made when given: the new value.
 int store_counter_add(lua_State* L) {
-  std::string name = luaL_checkstring(L, 1);
-  const auto delta = static_cast<std::int64_t>(luaL_optinteger(L, 2, 1));
-  const auto seconds = luaL_optinteger(L, 3, 0);
-  luaL_argcheck(L, !name.empty(), 1, "a counter needs a name");
-  luaL_argcheck(L, seconds >= 0 && seconds <= 31536000, 3, "seconds is 0 to a year");
+  return LuaEngine::await(L, [](lua_State* L) -> LuaEngine::Start {
+    const char* text = luaL_checkstring(L, 1);
+    const auto delta = static_cast<std::int64_t>(luaL_optinteger(L, 2, 1));
+    const auto seconds = luaL_optinteger(L, 3, 0);
+    luaL_argcheck(L, *text != '\0', 1, "a counter needs a name");
+    luaL_argcheck(L, seconds >= 0 && seconds <= 31536000, 3, "seconds is 0 to a year");
 
-  auto& host = host_of(L);
-  return LuaEngine::await(L, [&host, name, delta, seconds](LuaEngine::Answer answer) {
-    host.counter_add(name, delta, static_cast<std::uint32_t>(seconds), [answer](plugins::Result<std::int64_t> added) {
-      if (!added.ok) return answer(false, push_failure(added));
-      answer(true, [value = added.value](lua_State* L) { return lua_pushinteger(L, static_cast<lua_Integer>(value)), 1; });
-    });
+    auto& host = host_of(L);
+    return [&host, name = std::string(text), delta, seconds](LuaEngine::Answer answer) {
+      host.counter_add(name, delta, static_cast<std::uint32_t>(seconds), [answer](plugins::Result<std::int64_t> added) {
+        if (!added.ok) return answer(false, push_failure(added));
+        answer(true, [value = added.value](lua_State* L) { return lua_pushinteger(L, static_cast<lua_Integer>(value)), 1; });
+      });
+    };
   });
 }
 
 // A shared counter's value: 0 for one never made, or lapsed.
 int store_counter(lua_State* L) {
-  std::string name = luaL_checkstring(L, 1);
-  auto& host = host_of(L);
-  return LuaEngine::await(L, [&host, name](LuaEngine::Answer answer) {
-    host.counter_get(name, [answer](plugins::Result<std::int64_t> read) {
-      if (!read.ok) return answer(false, push_failure(read));
-      answer(true, [value = read.value](lua_State* L) { return lua_pushinteger(L, static_cast<lua_Integer>(value)), 1; });
-    });
+  return LuaEngine::await(L, [](lua_State* L) -> LuaEngine::Start {
+    const char* text = luaL_checkstring(L, 1);
+    auto& host = host_of(L);
+    return [&host, name = std::string(text)](LuaEngine::Answer answer) {
+      host.counter_get(name, [answer](plugins::Result<std::int64_t> read) {
+        if (!read.ok) return answer(false, push_failure(read));
+        answer(true, [value = read.value](lua_State* L) { return lua_pushinteger(L, static_cast<lua_Integer>(value)), 1; });
+      });
+    };
   });
 }
 
 // Every trunk, in name order.
 int store_trunks(lua_State* L) {
-  auto& host = host_of(L);
-  return LuaEngine::await(L, [&host](LuaEngine::Answer answer) {
-    host.trunks([answer](plugins::Result<std::vector<std::shared_ptr<types::Trunk>>> found) {
-      if (!found.ok) return answer(false, push_failure(found));
+  return LuaEngine::await(L, [](lua_State* L) -> LuaEngine::Start {
+    auto& host = host_of(L);
+    return [&host](LuaEngine::Answer answer) {
+      host.trunks([answer](plugins::Result<std::vector<std::shared_ptr<types::Trunk>>> found) {
+        if (!found.ok) return answer(false, push_failure(found));
 
-      auto trunks = std::move(found.value);
-      std::sort(trunks.begin(), trunks.end(), [](const auto& a, const auto& b) { return a->key() < b->key(); });
-      answer(true, [trunks = std::move(trunks)](lua_State* L) {
-        lua_createtable(L, static_cast<int>(trunks.size()), 0);
-        lua_Integer i = 0;
-        for (const auto& trunk : trunks) {
-          push_box(L, trunk, nullptr, kTrunk);
-          lua_rawseti(L, -2, ++i);
-        }
-        return 1;
+        auto trunks = std::move(found.value);
+        std::sort(trunks.begin(), trunks.end(), [](const auto& a, const auto& b) { return a->key() < b->key(); });
+        answer(true, [trunks = std::move(trunks)](lua_State* L) {
+          lua_createtable(L, static_cast<int>(trunks.size()), 0);
+          lua_Integer i = 0;
+          for (const auto& trunk : trunks) {
+            push_box(L, trunk, nullptr, kTrunk);
+            lua_rawseti(L, -2, ++i);
+          }
+          return 1;
+        });
       });
-    });
+    };
   });
 }
 
