@@ -1,3 +1,12 @@
+athenasip (0.13.1) trixie; urgency=medium
+
+  * Leaks fixed: every store lookup from a routing script, and every listing
+    of the registrations or the trunks over the API. A stopped node releases
+    its servers and flows. websocket.tls takes the tls section's certificate,
+    and the rtpengine control socket is bound to the address that reaches it.
+
+ -- tomdionysus <tomdionysus@users.noreply.github.com>  Sun, 22 Nov 2026 22:00:00 +0000
+
 athenasip (0.13.0) trixie; urgency=medium
 
   * The external review's fixes, conferencing by a focus behind a trunk, DTMF
