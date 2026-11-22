@@ -252,6 +252,16 @@ Capabilities RtpengineMediaEngine::capabilities() const {
 
 bool RtpengineMediaEngine::is_connected() const { return _up.load(std::memory_order_relaxed) > 0; }
 
+std::optional<boost::asio::ip::udp::endpoint> RtpengineMediaEngine::control_endpoint() const {
+  std::lock_guard<std::mutex> lock(_socket_mutex);
+  if (!_socket || !_socket->is_open()) return std::nullopt;
+
+  boost::system::error_code ec;
+  const auto bound = _socket->local_endpoint(ec);
+  if (ec) return std::nullopt;
+  return bound;
+}
+
 void RtpengineMediaEngine::_look_up(std::size_t index, std::function<void()> then) {
   // Past the last engine: carry on, on the strand.
   if (index >= _engines.size()) return boost::asio::dispatch(_strand, std::move(then));
@@ -322,6 +332,33 @@ void RtpengineMediaEngine::connect(plugins::Executor on, plugins::StatusHandler 
     socket->open(*protocol, ec);
     if (ec) {
       return _complete(std::move(on), std::move(handler), plugins::Status::failure("could not open a socket - " + ec.message()));
+    }
+
+    // Bound to the address the system routes to the engines from, loopback for a local one, so the socket is not on
+    // every interface. One socket speaks to the pool, so when the engines are reached from different addresses it is
+    // left to the system to choose per datagram.
+    std::optional<boost::asio::ip::address> source;
+    bool one_source = true;
+    for (const auto& engine : _engines) {
+      if (!engine.resolved) continue;
+
+      boost::asio::ip::udp::socket probe(detail::get_global_io_context());
+      boost::system::error_code probe_ec;
+      probe.open(*protocol, probe_ec);
+      if (!probe_ec) probe.connect(engine.endpoint, probe_ec);
+      const auto local = probe_ec ? boost::asio::ip::address() : probe.local_endpoint(probe_ec).address();
+
+      if (probe_ec || (source && *source != local)) {
+        one_source = false;
+        break;
+      }
+      source = local;
+    }
+
+    if (one_source && source) {
+      socket->bind(boost::asio::ip::udp::endpoint(*source, 0), ec);
+      if (ec) _logger->warn("Cannot bind the control socket to " + source->to_string() + " - " + ec.message() + " - the system chooses the address");
+      ec.clear();
     }
 
     {

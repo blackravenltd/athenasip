@@ -86,6 +86,9 @@ class RtpengineMediaEngine : public MediaEngine, public std::enable_shared_from_
   void start_recording(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) override;
   void stop_recording(plugins::Executor on, std::shared_ptr<Call> call, plugins::StatusHandler handler) override;
 
+  // Where the control socket is bound, once connect has opened it.
+  std::optional<boost::asio::ip::udp::endpoint> control_endpoint() const;
+
   // rtpengine's default UDP control port.
   static constexpr std::uint16_t kDefaultPort = 2223;
 
