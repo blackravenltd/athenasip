@@ -20,8 +20,8 @@ exactly what the tag says.
 
 ## 1. Cut the release
 
-On `develop`, with everything for the release merged and [Testing](testing.md#before-a-release)
-passing:
+On `develop`, with everything for the release merged, [Testing](testing.md#before-a-release)
+passing and `ci.yml` green on GitHub. What the gate did not run goes in the release notes.
 
 ```bash
 VERSION=x.y.z                        # the next version, no v
@@ -56,6 +56,17 @@ checkout of the tag:
 ```bash
 sudo tools/ci.sh deps && dpkg-buildpackage -us -uc -b && lintian ../athenasip_*.changes
 ```
+
+The build cluster is arm64 only. For amd64, in a container on any x86_64 machine with Docker:
+
+```bash
+mkdir -p /tmp/deb/athenasip && git archive "$VERSION" | tar -x -C /tmp/deb/athenasip
+docker run --rm --platform linux/amd64 -v /tmp/deb:/work -w /work/athenasip debian:trixie sh -c \
+  'apt-get update -qq && apt-get install -y -qq ca-certificates curl debhelper lintian dpkg-dev &&
+   tools/ci.sh deps && dpkg-buildpackage -us -uc -b && lintian ../*.changes'
+```
+
+Before staging, install each in a clean `debian:trixie` container and run `athenasip --version`.
 
 They go into the apt repository's `incoming/athenasip/$VERSION/`, and the repository's owner
 signs and uploads it.
