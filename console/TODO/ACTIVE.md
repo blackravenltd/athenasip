@@ -6,8 +6,8 @@ node serves. Move items to `COMPLETE.md` as they land.
 
 ## Resume here
 
-**The tree.** Work on `develop`; `main` is the last release, tags are bare `x.y.z`. `0.4.2` is
-the last release. Commit or
+**The tree.** Part of AthenaSIP's repository since `0.13.0`: it is released with the server, on
+its `develop` and `main` and under its tags; `0.4.2` was its last release of its own. Commit or
 push only when the maintainer asks, never with Claude attribution (his global rule). Run tests with
 `npx vitest run --maxWorkers=4`; the test timeout is 20 s because a file's first screen test
 can take 5 s.

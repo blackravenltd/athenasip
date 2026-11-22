@@ -49,6 +49,9 @@ struct Harness {
   std::shared_ptr<MockLogger> logger = std::make_shared<MockLogger>();
   std::shared_ptr<ManualTimerSource> timers = std::make_shared<ManualTimerSource>();
 
+  // A transaction left with a timer pending and the clock hold each other: the clock stops with the test.
+  ~Harness() { timers->cancel_all(); }
+
   std::vector<std::shared_ptr<SIPMessage>> sent;
   std::vector<std::shared_ptr<SIPMessage>> to_tu;
   int timeouts = 0;

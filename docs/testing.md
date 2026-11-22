@@ -15,15 +15,16 @@ need Docker, a device or a person are run by hand.
 
 ## Before a release
 
-All of these pass on `develop` before it is merged to `main` and tagged:
+All of these pass on `develop` before it is merged to `main` and tagged. The first five are
+`tools/ci.sh` steps, run one at a time on a Debian 13 build machine (each starts its own Redis
+and broker), with `ci.yml` green on GitHub as well:
 
 ```bash
-cmake --preset tests && cmake --build build-tests -j8
-ATHENA_TEST_REDIS_URL=redis://127.0.0.1:6399 \
-ATHENA_TEST_MQTT_URL=mqtt://127.0.0.1:1883 ./build-tests/athenasip_tests
-
-cmake --preset asan && cmake --build build-asan -j8 && ./build-asan/athenasip_tests
-cmake --preset tsan && cmake --build build-tsan -j8 && ./build-tsan/athenasip_tests
+tools/ci.sh deps        # once per machine: the packages, and Boost into $ATHENA_DEPS
+tools/ci.sh check
+tools/ci.sh release     # the unit suite, warnings as errors
+tools/ci.sh asan        # with UBSan and LeakSanitizer
+tools/ci.sh tsan
 tools/ci.sh fuzz
 
 test/e2e/run.sh

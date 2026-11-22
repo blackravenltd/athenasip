@@ -12,7 +12,7 @@ A node uses certificates in two places:
 | Listener | Keys | Without its own |
 |---|---|---|
 | SIP over TLS | `tls.cert_pem_filename`, `tls.key_pem_filename` | Required when `tls` is enabled |
-| Secure WebSocket, `websocket.tls: true` | `websocket.cert_pem_filename`, `websocket.key_pem_filename` | Required |
+| Secure WebSocket, `websocket.tls: true` | `websocket.cert_pem_filename`, `websocket.key_pem_filename` | The `tls` section's |
 | Secure WebSocket, `websocket.secure_port` | `websocket.cert_pem_filename`, `websocket.key_pem_filename` | The `tls` section's |
 | Admin API and console over HTTPS (`http.tls.enable`) | `http.tls.cert_pem_filename`, `http.tls.key_pem_filename` | The `tls` section's |
 

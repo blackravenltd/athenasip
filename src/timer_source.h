@@ -91,10 +91,11 @@ class ManualTimerSource : public TimerSource {
  public:
   std::shared_ptr<Timer> schedule(std::chrono::milliseconds delay, std::function<void()> fn) override {
     auto entry = std::make_shared<Entry>();
-    entry->due = _now + delay;
     entry->fn = std::move(fn);
 
+    // _now is read under the lock advance() writes it under: a test's thread and the strand it drives both use the clock.
     std::lock_guard<std::mutex> lock(_mutex);
+    entry->due = _now + delay;
     _entries.push_back(entry);
     return entry;
   }
@@ -138,8 +139,19 @@ class ManualTimerSource : public TimerSource {
       }
 
       bool expected = false;
-      if (next->fired.compare_exchange_strong(expected, true) && next->fn) next->fn();
+      if (!next->fired.compare_exchange_strong(expected, true)) continue;
+      if (auto fn = next->take()) fn();
     }
+  }
+
+  // Cancels every timer still pending, as destroying an io_context destroys its handlers: for a test's teardown.
+  void cancel_all() {
+    std::vector<std::shared_ptr<Entry>> entries;
+    {
+      std::lock_guard<std::mutex> lock(_mutex);
+      entries.swap(_entries);
+    }
+    for (const auto& entry : entries) entry->cancel();
   }
 
   std::size_t pending() const {
@@ -153,17 +165,29 @@ class ManualTimerSource : public TimerSource {
   }
 
  private:
+  // A timer done with, fired or cancelled, lets go of its function, as an asio timer lets go of its handler: the
+  // function often holds what holds the timer.
   struct Entry : public Timer {
     std::chrono::steady_clock::time_point due;
     std::function<void()> fn;
+    std::mutex fn_mutex;
     std::atomic<bool> fired{false};
     std::atomic<bool> cancelled{false};
+
+    std::function<void()> take() {
+      std::lock_guard<std::mutex> lock(fn_mutex);
+      return std::exchange(fn, nullptr);
+    }
 
     bool cancel() override {
       if (fired.load()) return false;
 
       bool expected = false;
-      return cancelled.compare_exchange_strong(expected, true);
+      if (!cancelled.compare_exchange_strong(expected, true)) return false;
+
+      // Destroyed here, outside the lock: what it holds may cancel other timers as it goes.
+      auto dropped = take();
+      return true;
     }
   };
 

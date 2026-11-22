@@ -45,16 +45,16 @@ jobs:
       BOOST_VERSION: 1.89.0
     steps:
       - run: apt-get update -qq && apt-get install -y -qq --no-install-recommends ca-certificates git curl gnupg
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: /opt/athenasip-deps
           key: boost-${{ env.BOOST_VERSION }}-trixie-${{ runner.arch }}
       - run: tools/ci.sh deps
       - run: tools/ci.sh ${{ matrix.step }}
       - if: matrix.step == 'coverage'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: build-ci-coverage/coverage.info
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -65,8 +65,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm

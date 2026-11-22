@@ -38,7 +38,12 @@ struct RestartedFixture : ProxyFixture {
     node_b->timer_source_set(timers);
   }
 
-  ~RestartedFixture() { settle_b(); }
+  // Node B shares node A's clock, which CoreFixture stops.
+  ~RestartedFixture() {
+    if (!stop_node(node_b, nullptr, made_b)) ADD_FAILURE() << "node B outlived its fixture: something it holds holds it";
+  }
+
+  std::vector<std::weak_ptr<Channel>> made_b;
 
   void settle_b(int rounds = 32) {
     for (int i = 0; i < rounds; ++i) node_b->call_on_strand([]() {});
@@ -49,6 +54,7 @@ struct RestartedFixture : ProxyFixture {
     auto connection = std::make_shared<MockConnection>("udp", from_address, 5060);
     auto channel = std::make_shared<Channel>(logger, node_b, connection);
     node_b->call_on_strand([&channel]() { channel->start(); });
+    made_b.push_back(channel);
 
     const auto split = raw.find("\r\n\r\n");
     auto message = std::make_shared<SIPMessage>();

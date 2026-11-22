@@ -121,6 +121,19 @@ TEST(TrunksApiTest, ATrunkIsCreatedAndItsPasswordNeverComesBack) {
   EXPECT_EQ(f.request(http::verb::get, "/api/v1/trunks").body.find("s3cret"), std::string::npos);
 }
 
+// Listing keeps nothing once it has answered: a step that held itself would keep the API and the HTTP session it
+// answered on, one more each time the list was asked for.
+TEST(TrunksApiTest, ListingTheTrunksLeavesNothingBehind) {
+  std::weak_ptr<api::TrunksAPI> trunks;
+  {
+    TrunksFixture f;
+    trunks = f.trunks;
+    ASSERT_EQ(f.request(http::verb::post, "/api/v1/trunks", TrunksFixture::acme()).status, 201u);
+    EXPECT_EQ(f.request(http::verb::get, "/api/v1/trunks").status, 200u);
+  }
+  EXPECT_TRUE(trunks.expired()) << "something still holds the trunks API after listing the trunks";
+}
+
 TEST(TrunksApiTest, ATakenNameIsAConflict) {
   TrunksFixture f;
   ASSERT_EQ(f.request(http::verb::post, "/api/v1/trunks", TrunksFixture::acme()).status, 201u);

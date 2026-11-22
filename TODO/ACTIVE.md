@@ -1,42 +1,51 @@
 # AthenaSIP - Active Work
 
-Work happens on `develop`; `main` carries the last release, `0.12.0` (2026-10-13). Every
-release from `0.5.0` to `0.12.0` is tagged (`0.10.0` was tagged late, on 2026-10-12, dated
-at its merge). Since `0.12.0`, `develop` carries the external review's fixes (Milestone 8),
-conferencing steps 1 to 4, DTMF conversion and `mqtts://`, none released. Line numbers refer to
-the current tree; update them as files move.
+Work happens on `develop`; `main` carries the last release, `0.13.0` (2026-11-20), tagged,
+released on GitHub and in the apt repository for amd64 and arm64. Every release from `0.5.0`
+on is tagged. Line numbers refer to the current tree; update them as files move.
 
-**Resume here (2026-11-20).** The maintainer asked for a plan to take what is useful from the Cluster
-Stack (Dannan, Dagda, Lir, Mimir, Lugh): it is `TODO/2026-11-20-stack-integration.md`, made by
-asking those sessions, and it stops at seven decisions that are the maintainer's (Waiting on the maintainer, 1).
-Nothing of the stack that AthenaSIP's datastore or bus would use is ready: all of it waits on
-Dagda's leases, register map and logs and on Dannan's atomic commit. What can be done now is
-under Next, "The stack, now".
+**Resume here (2026-11-22, evening).** `0.13.0` is out (`COMPLETED.md`, Releases). On `develop`
+since: the leaks at exit are gone and LeakSanitizer is back on in `tools/ci.sh asan`; two of them
+leaked in a running node too (every store lookup from a script, and the registrations and trunks
+listings). `websocket.tls` takes the `tls` section's certificate, the rtpengine control socket is
+bound, and the workflow actions are bumped with Dependabot pointed at `develop` (`COMPLETED.md`,
+After 0.13.0). Next is the harnesses on the build cluster (Next, First after 0.13.0). Every build
+and test run is on the build cluster, never on the maintainer's Mac (the maintainer, 2026-11-22).
+What is waiting on the maintainer is the first list below; read it before anything else.
 
-Milestones 1 to 6 are complete, and so is presence, the first part of Milestone 7
-(`COMPLETED.md` has every item with what shipped, and its Releases section the tags). This
-file was rationalised against the tree on 2026-10-26: every open item below was checked
-against the code that day, and the done milestones' scaffolding is gone. On 2026-11-20 it was
-brought up to date with node-b, the stack and the build cluster, without re-checking the code. What is open is in
-two lists: **Next**, which nothing blocks, in the order to work it, and **Waiting on
+The stack: AthenaSIP is one of the Cluster Stack's projects (Decisions, 2026-11-20), and
+`TODO/2026-11-20-stack-integration.md` is the plan for what it takes from Dannan, Dagda, Lir,
+Mimir and Lugh. Dannan `0.10.1` is tagged and is the release to pin when inter-node TLS and the
+configuration move onto it; the datastore and the bus wait on Dagda's leases, register map and log.
+
+Working rules from the stack (2026-11-20, the maintainer through the coordinating session):
+heavy builds and test runs go to the shared build cluster by the claim board, claimed only for
+a job ready to run and released when it ends, work other projects wait on first; versions are
+written in full, `x.y.z`, Boost's too; on a dependency's new version, read its release notes and
+look again at what of ours it replaces; refer to other sessions by role in anything tracked.
+
+Milestones 1 to 6 are complete, presence and the review's perimeter work too (`COMPLETED.md`
+has every item with what shipped). This file was rationalised against the tree on 2026-10-26,
+and against the record and the docs on 2026-11-22, without re-checking the code. What is open is
+in two lists: **Next**, which nothing blocks, in the order to work it, and **Waiting on
 something**, each item with what it waits on.
 
-**Two live nodes**, neither production, both on `0.12.0` (deployed 2026-10-13, the binary
+**Two live nodes**, neither production, both still on `0.12.0` (deployed 2026-10-13, the binary
 built on node-a and copied to node-b with the systemd unit; the previous binary kept as
-`/usr/local/bin/athenasip.previous` on each; `verify.py` 15 of 15 after):
+`/usr/local/bin/athenasip.previous` on each; `verify.py` 15 of 15 after). Neither has `0.13.0`.
 - `node-a` (10.101.1.20): `lua://` with `athenasip.trunks` from
   `/etc/athenasip/scripts/main.lua` (previous configuration `config.yaml.before-lua`), and a
-  trunk `node-b` to node-b, registering as node-b's subscriber 1003 through 10.102.1.50.
+  trunk to node-b, registering as node-b's subscriber 1003 through 10.102.1.50.
   Deploying there is standing-authorised; touch the files changed since the last deploy
   before building (a stale object crash-looped it on 2026-10-09).
-- `node-b`, now **node-b** on 10.102.1.20 (the maintainer reinstalled the host; AthenaSIP set up
-  again on 2026-11-01 at his request, `develop` at `1b1c3c5` built on the host): the realm
-  `athenasip.com`, secure transports only (TLS 5061 and WSS 8089 on 10.102.1.20; nothing
-  unencrypted), Redis and Mosquitto on loopback, rtpengine and coturn (3478, TLS 5349) on
-  10.102.1.20, the admin API and console on loopback behind the shared HAProxy at
-  `https://athenasip.com` (Let's Encrypt, DNS-01 by hand). Each deploy there needs the maintainer's yes.
-  The old node's `lua://` trunk to the carrier, its subscribers and the node-a trunk to it are gone
-  with the reinstall; `test/interop/live.json` still describes them.
+- `node-b` on 10.102.1.20 (the maintainer reinstalled the host; AthenaSIP set up again on
+  2026-11-01 at his request, `develop` at `1b1c3c5` built on the host): the realm
+  `athenasip.com`, secure transports only (TLS 5061 and WSS 8089; nothing unencrypted), Redis and
+  Mosquitto on loopback, rtpengine and coturn (3478, TLS 5349), the admin API and console on
+  loopback behind the shared HAProxy at `https://athenasip.com` (Let's Encrypt, DNS-01 by hand).
+  Each deploy there needs the maintainer's yes. The old node's trunk to the carrier, its
+  subscribers and node-a's trunk to it are gone with the reinstall; `test/interop/live.json`
+  still describes them (Next).
 - A probe on node-a (`athenasip-probe.timer`) runs `test/interop/verify.py
   test/interop/live.json` every 15 minutes and publishes `athenasip/probes/node-a/calls`.
   A manual run at the same time as the probe fails some checks: both use subscribers 1901
@@ -44,16 +53,14 @@ built on node-a and copied to node-b with the systemd unit; the previous binary 
 - TURN on both (2026-10-11): native coturn on 3478 UDP/TCP, relay 24000-24100, credentials
   minted by each node under `http.api.turn_shared_secret` and handed out by
   `/api/v1/subscriber/{realm}/config`. node-a's is reachable only where 10.101.1.20 is; node-b's
-  from anywhere, its router forwarding 3478 and 24000-24100 (proved from node-a on
-  2026-10-12: an allocation over UDP and over TCP, 20 of 20 relayed).
+  from anywhere once its router forwards the ports (Waiting on the maintainer, 3).
 
-**What passes at `0.12.0`** (2026-10-13, the whole of `docs/testing.md`'s Before a release):
-the unit suite 1529 of 1530 with Redis and MQTT set (one skipped without a resolver); ASan
-with UBSan clean, and TSan clean after the one race it found was fixed (`0398fb2`, the Redis
-connection cancelled off its own thread on close: the first TSan run with the Redis tests
-in); the sipp harnesses, one node 16 of 16, with rtpengine 18 of 18, under `--lua` 16 of 16,
-two nodes 19 of 19 and again under `--lua` 19 of 19, trunks 4 of 4; the suite's smoke over
-every transport, the console (263 direct, 5 relayed) and AthenaPhone (93 each) specs.
+**What passed for `0.13.0`** (2026-11-20, on an arm64 build machine, Debian 13): `tools/ci.sh`
+`check`, `release`, `asan` (with UBSan, leak checking off), `tsan` (1644 tests each, with Redis and
+a broker), `fuzz` (nine targets, 60 s each, nothing found), the Debian package with lintian; and
+every job of `ci.yml` on GitHub, amd64 and arm64. **Not run since `0.12.0`:** the sipp, cluster
+and trunk harnesses, the interop fixture and the suite with AthenaPhone. They need Docker Compose
+and are being moved onto the build cluster (Next). The release notes say so.
 
 **Once things are stable, video calling is a primary feature** (the maintainer, 2026-10-03): nothing
 built may assume a call is audio only.
@@ -63,45 +70,38 @@ of turn. Move items to `COMPLETED.md` as they land, with a note on what shipped.
 
 ## Waiting on the maintainer
 
-Nothing below can move until these are settled, and each one has somebody or something
-stopped against it. They are here rather than scattered through the lists because a
-session that has lost its context needs to see them first.
+Nothing below can move until these are settled. They are here rather than scattered through
+the lists because a session that has lost its context needs to see them first.
 
-1. **What is left of the stack's decisions** (`TODO/2026-11-20-stack-integration.md`): whether
-   admin users stay local beside Lugh or move to Lugh alone, and the Boost version (agreed
-   with Dannan to try the system Boost with the Redis and MQTT clients as pinned sources).
-   The rest are answered (Decisions, 2026-11-20).
-2. **node-b** (2026-11-01): the router forwards to 10.102.1.20 (TCP 5061, 8089, 5349; UDP and
+1. **`athenasip-admin` on GitHub** still has its history from before the 2026-11-20 scrub, in
+   public. Its code is in `console/`. The maintainer deletes the repository (decided 2026-11-22);
+   until then it stays here.
+2. **The router forwards for a two-site cluster** (decided 2026-11-22: node-c joins node-b's
+   cluster over port forwards with TLS, serving signalling and media; Next, The third node). At
+   node-b's site, to node-b: Redis over TLS and MQTT over TLS (ports chosen when node-b is
+   configured), the inter-node listener 5062/tcp, and what item 3 already lists. At node-c's
+   site, to node-c: 5062/tcp, TLS 5061 and WSS 8089, TURN 3478 udp and tcp and 5349, RTP
+   22000-22200/udp and relay 24000-24100/udp.
+3. **node-b** (2026-11-01): the router forwards to 10.102.1.20 (TCP 5061, 8089, 5349; UDP and
    TCP 3478; UDP 22000-22200 and 24000-24100) and TCP 80 to 10.102.1.50, after which the node is
    tested from outside; PROXY protocol v2 (Next, Found setting up node-b); and the
    certificate's renewal, by hand with a TXT record or automated with Route 53 credentials. It
-   expires 2027-01-30.
-3. **The rest of the `0.10.0`, `0.11.0` and `0.12.0` releases.** The GitHub releases wait on
-   `gh auth login` on this machine (notes for all three are written). And:
-    Both tagged and pushed (step 1 of
-   `docs/releasing.md`). Left, from step 2: the images built from the tags, the
-   `blackravenltd/homebrew-athenasip` tap repository, and the GitHub releases, which the maintainer
-   makes. Whether images go to Docker Hub is asked and unanswered. No Debian packages for now (the maintainer, 2026-10-12): `docs/releasing.md` says so, and the
-   `deb` target in the Dockerfile and `packaging/debian/` stay for when they return.
-4. **The phone, when the maintainer lends it**: the browser call to AthenaPhone with
+   expires 2027-01-30. `0.13.1` is to be deployed there and to node-c (the maintainer, 2026-11-22).
+4. **GitHub housekeeping**: the `CODECOV_TOKEN` secret (until it exists the upload cannot fail the
+   run; then `fail_ci_if_error: true` in `ci.yml`).
+5. **What is left of the stack's decisions** (`TODO/2026-11-20-stack-integration.md`): whether
+   admin users stay local beside Lugh or move to Lugh alone, and the Boost version (agreed
+   with Dannan to try the system Boost with the Redis and MQTT clients as pinned sources).
+6. **Review finding 30**: subscriber ids are FNV-1a-64 (`Util::stable_id`); a new id is a
+   migration of every stored subscriber and binding key, so it waits for a decision on how.
+7. **Releases before `0.13.0`**: GitHub releases for `0.10.0` to `0.12.0` (notes written); the
+   Docker image and the Homebrew tap (`blackravenltd/homebrew-athenasip`) for any release; whether
+   images go to Docker Hub at all. athenasip.org's "Where it stands" says presence is not built
+   and AthenaPhone is iOS and Android (review finding 48); the site is outside the repo.
+8. **The phone, when the maintainer lends it**: the browser call to AthenaPhone with
    `ATHENA_INTEROP_PAGE_URL=https://10.102.1.50:8443` (plain http gives the page no
    microphone), and the hold, DTMF and transfer checks under Waiting on something.
-   `phone.py` taps only while AthenaPhone is in front; its wireless adb port is found by
-   mDNS.
-5. **`../athenasip-admin` is not checked out on this machine** (2026-10-26; it is on the Mac). The console
-   items under Waiting on something are that repository's, and `test/suite/run.sh` reports
-   its spec as missing rather than failing until it is.
-6. **The GitHub About line and athenasip.org** (review findings 46, 48). The About line says
-   "TLS-only", which the node is not by default (`sip.allow_unencrypted` is true and UDP and
-   TCP listen); suggested: "Multi-master SIP proxy and registrar: RFC 3261 transactions and
-   proxying, WebRTC through rtpengine, clusters over Redis and MQTT, scriptable in Lua." The
-   site's "Where it stands" says presence is not built and AthenaPhone is iOS and Android;
-   the README has presence built and AthenaPhone on Android. Both are outside the repo.
-7. **Docker on this machine**: installed 2026-10-26, and the `docker` group given; a shell started
-   before that reaches the daemon with `sg docker -c "docker ..."`. It
-   unlocks the sipp harnesses, Redis and MQTT for the full suite, the ASan and TSan release
-   checks, FreeSWITCH for conferencing step 5, the DTMF and push scenarios and the arm64
-   image. The harnesses have not been run here yet (Waiting on something, Docker).
+   `phone.py` taps only while AthenaPhone is in front; its wireless adb port is found by mDNS.
 
 ## How to prove it
 
@@ -109,6 +109,8 @@ session that has lost its context needs to see them first.
 before it cannot, and the exact commands. The short version, cheapest first:
 
 ```
+tools/ci.sh check|release|asan|tsan|fuzz   the release gate, on a build machine (CI runs
+                                 the same steps on GitHub for develop and main)
 ./build-tests/athenasip_tests    the unit suite, with Redis and MQTT set or they skip
 test/e2e/run.sh [--rtpengine]    the sipp scenarios, the second with a real engine
 test/e2e/cluster.sh              the same call across two nodes of a cluster
@@ -119,18 +121,17 @@ test/interop/verify.py live.json both live nodes, every transport and the trunk
 test/interop/phone.py            calls to and from AthenaPhone on the test phone, over adb
 test/interop/up.sh --rtpengine   a node to point a real client at
 test/interop/browser.sh          two browsers calling, direct then relayed through coturn
-e2e/phone-call.spec.ts           (../athenasip-admin) a headless browser calls a real phone
+e2e/phone-call.spec.ts           (console/) a headless browser calls a real phone
                                  through a named node, with video; somebody answers it
 test/interop/UAT.md              the call a person has to make
 ```
 
-All of them pass before anything is tagged.
+All of them pass before anything is tagged; `0.13.0` was the exception, gated without the
+harnesses (What passed, above).
 
-**The sanitizers are not on that list.** The maintainer, 2026-09-30, and directly again on
-2026-10-03: they have a place before a release, or to hunt an especially intractable bug,
-and running them on every change is a waste of time. `docs/testing.md`'s Sanitizers section
-says the same. (This plan and `docs/design/presence.md` used to cite a `CLAUDE.md` for it;
-no such file has ever been in the tree.)
+**The sanitizers by hand are for a release or an intractable bug** (the maintainer, 2026-09-30
+and 2026-10-03), never routinely on a change. Hosted CI runs `asan` and `tsan` on every push to
+`develop` and `main` since 2026-11-20, which is the stack's rule, not a reason to run them locally.
 
 What replaces them is the thing they were standing in for: reason about lifetimes and
 threading directly, and exercise the change against a running node. Nearly every bug found
@@ -464,38 +465,38 @@ none of them is mistaken for compliance. **Re-checked against the tree on 2026-1
 
 ## Next
 
-Nothing here waits on a device, a carrier, the maintainer or another repository. In order. The six
-trunk findings from the the carrier run went first (2026-10-26, `COMPLETED.md`), ahead of DTMF and
-the rest of Milestone 7, because each was a defect in a shipped feature found by a real
-carrier, and small.
-
-**Taken out of turn on 2026-10-26 (the maintainer): the external review**, below, ahead of everything
-else. After it, the conferencing work resumes with the maintainer's four answers (Decisions,
-2026-10-26): first taking back the `builtin://` conference routing and REGISTER refusal that
-step 1 built (decision 2), then `/api/v1/focuses` as a view on the trunks with a `focus`
-attribute (decision 1), then step 5 with FreeSWITCH and step 6, the roster from the focus,
-as part of the feature (decision 3).
+Nothing here waits on a device, a carrier, the maintainer or another repository. In order.
 
 ### First after 0.13.0
 
-- [ ] Leaks at exit. The first ASan run on Linux (2026-11-20, the build cluster; macOS has no
-      LeakSanitizer, so no earlier gate looked) reported 366,785 bytes in 20,922 allocations when the
-      unit suite ended, with no other ASan or UBSan finding. One is direct and the test's own
-      (`tests/api/events_api_test.cpp:37`, an executor kept for the process); the rest are indirect,
-      which is how a cycle of `shared_ptr` reads, and the largest stacks are messages cloned in
-      `Proxy::_forward_to` (`src/proxy.cpp:1121`). Not yet known: whether a fixture abandons calls in
-      flight or a proxy context and its transactions hold each other in the node. `tools/ci.sh asan`
-      runs with `detect_leaks=0` until this is sorted; turn it back on with the fix.
-- [ ] Sanitizer runs build what they link with the same sanitizer (the maintainer, 2026-11-20): the three
-      static Boost libraries (thread, json, charconv) are built plain today, which is why UBSan's
-      `vptr` check on Boost.JSON is suppressed (`docs/testing.md`). `tools/ci.sh deps` builds an
-      instrumented copy for `asan` and one for `tsan`, and the suppressions go. When Dannan and
-      Dagda are linked, they are built from source with the same flags: `DANNAN_SANITIZE=address`
-      or `thread`, from Dannan `0.10.0`, set before `FetchContent_MakeAvailable(dannan)`.
-- [ ] The sipp, cluster and trunk harnesses (`test/e2e/`) run AthenaSIP nodes and sipp directly
-      on claimed machines of the build cluster, not under docker compose (the maintainer, 2026-11-20:
-      "They should use the cluster as the other projects do"). `0.13.0` was gated without them,
-      and its release notes say so.
+- [ ] **The sipp, cluster and trunk harnesses on the build cluster** (`test/e2e/`), running
+      AthenaSIP nodes and sipp directly on claimed machines, not under Docker Compose (the
+      maintainer, 2026-11-20: "They should use the cluster as the other projects do"). Docker is
+      there for a single container (rtpengine, a broker). A node dropping is normal there. Then
+      everything changed since `0.12.0` gets its sipp run: the CANCEL scenarios' 487 CSeq, the
+      trunk harness against `trunks/changed` and the OPTIONS answer.
+- [ ] **Sanitizer runs build what they link with the same sanitizer** (the maintainer, 2026-11-20):
+      the three static Boost libraries (thread, json, charconv) are built plain today, which is why
+      UBSan's `vptr` check on Boost.JSON is suppressed (`docs/testing.md`). `tools/ci.sh deps` builds
+      an instrumented copy for `asan` and one for `tsan`, and the suppressions go. Dannan and Dagda,
+      when linked, are built from source with `DANNAN_SANITIZE=address` or `thread`, set before
+      `FetchContent_MakeAvailable(dannan)`.
+
+### The third node (2026-11-22)
+
+node-c is a second machine, at a second site, that already runs another of the maintainer's
+services. It joins node-b's cluster (the maintainer, 2026-11-22). Nothing is compiled on it, or on
+node-b: both install the arm64 package built on the build cluster. The other service's session is
+told before either machine is touched.
+
+- [ ] `0.13.1` on node-b and node-c from the package, the previous binary kept to roll back to.
+- [ ] node-b's Redis and broker reachable from node-c over TLS, with passwords; the cluster CA
+      made on node-b (`--ca-init`), a node certificate for each, the inter-node listener on both.
+- [ ] node-c with rtpengine and coturn as node-b has them; its own public name; the realm's
+      subscriber config listing both nodes.
+- [ ] A call each way between a phone on node-b and one on node-c, and a REGISTER through either
+      reaching the other: `verify.py` with a `live.json` for the two.
+- [ ] The router forwards (Waiting on the maintainer, 2) are what this waits on from outside.
 
 ### The stack, now (2026-11-20)
 
@@ -510,109 +511,55 @@ From `TODO/2026-11-20-stack-integration.md`, part A: what needs no decision and 
       will on the same topic, node death, split and heal.
 - [ ] Audit the Redis scripts: every key touched is declared in `KEYS` (Redis Cluster's rule
       as well as Mimir's), and name the records that truly need compare-and-set.
-- [ ] Move heavy builds and test runs to the shared build cluster (arm64, Debian trixie), under
-      `/root/athenasip-*`, by the claim board's rules: claim only the cores `-j` uses, nice 19,
-      wait in the queue, release at once. Ask the coordinator about Docker there for the sipp
-      harnesses. It supplies clang and libFuzzer (review item 6) and an arm64 build.
 - [ ] `mqtt://` takes a list of brokers and moves to the next with backoff and jitter.
-- [ ] `test/interop/live.json` still describes the old node-b (the the carrier trunk, the node-a trunk
+- [ ] `test/interop/live.json` still describes the old node-b (the carrier trunk, node-a's trunk
       to it): bring it to node-b as it is, or `verify.py` fails there.
 
-Later, each gated in that document: inter-node TLS and the CA from Dannan, `dannan::config`,
-Lugh sign-in, a `dagda://` driver, Lir in place of Mosquitto, the `redis://` tests against Mimir.
+Then part B, now that Dannan `0.10.1` is tagged: inter-node TLS and the CA from Dannan, and
+`dannan::config` with the stack's naming (the integration plan has both). Later, each gated in
+that document: Lugh sign-in, a `dagda://` driver, Lir in place of Mosquitto, the `redis://`
+tests against Mimir.
 
 ### Found setting up node-b (2026-11-01)
 
-- [ ] `websocket.tls: true` refuses to start without `websocket.cert_pem_filename` and
-      `key_pem_filename`, though the reference says an empty one uses the `tls` section's.
-      The reference is the intent; the config check is what to fix.
-- [ ] The rtpengine control socket (`src/media/rtpengine_media_engine.cpp:320`) is opened
-      unbound, so it sits on `0.0.0.0` at an ephemeral port. Replies from anything but the
-      engine are already dropped; bind it to the address that reaches the engine (loopback
-      for a local one) so a node told to use one address uses only that.
 - [ ] **PROXY protocol v2 from a trusted proxy**, on the HTTP and WebSocket listeners
-      (asked of the maintainer, not yet answered: Waiting on the maintainer, 2). Behind HAProxy every connection comes from HAProxy, so
-      the per-source API limits are shared by everyone, and SIP over `wss://athenasip.com/ws`
-      on 443 would put every browser behind one address for the Digest guessing bans.
+      (asked of the maintainer, not yet answered: Waiting on the maintainer, 3). Behind HAProxy
+      every connection comes from HAProxy, so the per-source API limits are shared by everyone,
+      and SIP over `wss://athenasip.com/ws` on 443 would put every browser behind one address
+      for the Digest guessing bans.
 
-### The perimeter: the external review of 2026-10-25 (Milestone 8)
+### Left from the external review (2026-10-25)
 
-`reviews/2026-10-25/athenasip-review.md`: a hostile static review of `abfe320` (0.12.0),
-48 findings, nothing run. Checked against `develop` on 2026-10-26: every finding spot-checked
-still holds. Its verdict is that the engineering is sound and the perimeter has never been
-reviewed adversarially; its order is below, and is the order to work. Each fix lands with
-a regression test from the finding (its item 10), and the unit suite proves all of items 1
-to 5 and 9 here; 6 needs clang (libFuzzer), 7 needs GitHub, 8 is partly the maintainer's.
-
-- [x] **1. Size caps and the scan offset** (findings 1, 2, 6) and **2. Strict
-      Content-Length** (4, 5): done 2026-10-26 (`COMPLETED.md`).
-- [x] **3. Idle timeouts and connection caps** (3, 10): done 2026-10-26 (`COMPLETED.md`).
-- [x] **4. Nonces and Digest** (20, 21, 22, 23, 25, 26): done 2026-10-26 (`COMPLETED.md`).
-- [x] **5. SIP-side rate limiting** (24): done 2026-10-26 (`COMPLETED.md`).
-- [ ] **6. Fuzzing** (7): libFuzzer targets for `SIPHeader::parse`, `SIPUri`, the
-      Authorization header, stream and datagram framing, STUN and bencode, seeded from the
-      sipp scenarios, under ASan and UBSan. The build cluster has clang 19 (with
-      `libclang-rt-19-dev` for libFuzzer), so this is no longer blocked (The stack, now).
-- [x] **7. Warnings** (44): done 2026-10-26 (`COMPLETED.md`). Hosted CI (43) is declined: the maintainer
-      had the GitHub workflow removed the same day, so the release checklist on a developer
-      machine stays the gate.
-- [x] **8. Public claims** (47): the README says what of RFC 3261 is built and lists the
-      departures, the review and what is not yet in Limits (2026-10-26). The GitHub About
-      text (46, "TLS-only") and athenasip.org (48) are the maintainer's: Waiting on the maintainer.
-- [x] **9. Protocol gaps** (11, 12, 13, 14, 16): done 2026-10-26 (`COMPLETED.md`).
-- [x] **The rest**, done 2026-10-26 and 27 (`COMPLETED.md`): 8, 9, 15, 17, 18, 19, 27, 28, 29,
-      31, 33, 34, 35, 36, 37, 38, 39, 40, 41, each with a regression test but 27 (documented).
-- [ ] **Still open from the review:** 30, subscriber ids are FNV-1a-64 (`Util::stable_id`): a
-      new id is a migration of every stored subscriber and binding key, so it waits for a
-      decision on how (Waiting on the maintainer). 32 is done (2026-10-27, `mqtts://`). 42, comments that restate code: as files are touched. 45, adversarial
-      tests: each fix above brought its own; a fuzz corpus comes with item 6.
-
-
-
-**This machine** (2026-10-26) builds the node with Lua and nghttp2 from `external/`
-(gitignored, built from source: `cmake --preset tests -DCMAKE_PREFIX_PATH=$PWD/external/prefix`
-with `PKG_CONFIG_PATH=$PWD/external/prefix/lib/pkgconfig`) and runs the unit suite, with the
-Redis, MQTT and resolver tests skipped. It has no Docker, so no sipp harness, no cluster
-and no interop fixture run here; what they alone would prove is under Waiting on something.
-A build takes long enough here that editing a source while it compiles leaves an object
-newer than the source, which the next build trusts (seen 2026-10-26: a test failing on code
-that was plainly there); after editing during a build, `touch` what changed before building
-again.
+`reviews/2026-10-25/athenasip-review.md`. Every finding but these is done (`COMPLETED.md`, The
+perimeter, and fuzzing and hosted CI with `0.13.0`): 30 waits on the maintainer (5); 42, comments
+that restate code, as files are touched; 45, adversarial tests, a corpus kept from the fuzz runs
+and replayed as unit tests (each fix brought its own test already).
 
 ### DTMF, every flavour (Milestone 3, decided 2026-10-12)
 
-RFC 4733 telephone-events, SIP INFO (`application/dtmf-relay` and `application/dtmf`) and
-in-band tones, passed through when both ends agree and converted when they differ.
-Pass-through is proved on the test phone against the carrier (2026-10-12: "3", "*", "0" reached the
-voicemail menu, WebRTC to plain RTP). Built on 2026-10-26 (`COMPLETED.md`): the `dtmf`
-setting on realms, subscribers and trunks, each leg's method on the call, rtpengine's
-conversion every way (events and tones by its transcoding, INFO played in, and the key
-presses it hears sent on as INFO through `rtpengine.dtmf_events`), and the documentation.
-Unit-proven only; left:
+Built 2026-10-26 (`COMPLETED.md`) and unit-proven only. Left:
 
 - [ ] A sipp scenario sending RFC 4733 events through the node, with and without
-      rtpengine, and one sending INFO to a leg that takes events (Docker: Waiting on
-      something).
+      rtpengine, and one sending INFO to a leg that takes events (with the harnesses, above).
 - [ ] Each conversion against a real rtpengine and a phone: an INFO phone to the carrier's
-      voicemail, and the carrier's events to an INFO phone (the test phone or a desk phone set to INFO).
-      The `block DTMF` flag on the offer towards an INFO leg and `DTMF-log-dest` per call
-      are from rtpengine's ng documentation and `daemon/dtmf.c`, not yet seen working.
+      voicemail, and the carrier's events to an INFO phone. The `block DTMF` flag on the offer
+      towards an INFO leg and `DTMF-log-dest` per call are from rtpengine's ng documentation and
+      `daemon/dtmf.c`, not yet seen working.
 
-### State into the datastore (Milestone 7, decided 2026-10-11)
+### The console (`console/`, its own plan in `console/TODO/ACTIVE.md`)
 
-What the decision finds in the tree, re-checked 2026-10-26. Each item is small on its own;
-together they are what lets a node be replaced without anything being lost. All three are
-done (2026-10-26, `COMPLETED.md`): the trunk registration status and the re-offer reports
-are records, and the call record carries the dialog whole, so a request inside a dialog
-reaching a node that does not hold it finds it there. What does not move with it is the
-media and the signalling path (Parked).
+Unblocked since the console moved into this repository (2026-11-20):
 
-Per node by design, and not items: rate-limit buckets (`src/api/rate_limiter.h`, a node
-protecting itself), metrics counters (scraped per node), the DNS cache, address
-discovery (a node's own address), the qualifier's and push refresher's timers (derived
-from bindings in the store), channels and flow tokens (transport), the live `Call` and
-`Channel` objects (caches of records with sockets attached), and the node directory
-(liveness from the bus, as decided).
+- [ ] Ring the automated browser call: `browser.sh` answers within milliseconds and so
+      never rang long enough to hit the DTLS-role bug the live call found; a delay of a
+      few seconds before the callee answers would have caught it. A knob on the spec.
+- [ ] Flag a node whose `policy.fingerprint` differs from the others'.
+- [ ] Pages for trunks and for attributes.
+- [ ] The presence screens, from the API (`docs/design/presence.md`, The API and the console).
+- [ ] A client generated from the OpenAPI document in place of the hand-written one; every
+      operation in `docs/api/openapi.yaml` carries an `operationId` for it.
+- [ ] The console's styling from Lugh's admin UI and sign-in through Lugh (the stack's dashboard
+      rule), when Lugh tags `0.1.0` (integration plan, part C).
 
 ### Smaller, unblocked
 
@@ -620,39 +567,26 @@ from bindings in the store), channels and flow tokens (transport), the live `Cal
       what `tests/push/` proves only in units: a sleeping client woken, then the INVITE
       delivered down the flow it opens.
 - [ ] An arm64 Docker image beside the amd64 one, and the SDK headers in the packages.
+- [ ] A manual page for `athenasip` (lintian's `no-manual-page`).
 
 ### Milestone 7, the rest - conferencing and the web client
 
-After the above. The order is the milestone's own:
+The order is the milestone's own:
 
-- [ ] RFC 4579 conference focus routing: conference URIs per realm, authorisation, route
-      to a focus. FreeSWITCH `conference` as the first focus, configured by the admin API.
-      `Call` already carries a focus URI and per-participant legs (`src/call.h:94`).
-      **Designed 2026-10-26: `docs/design/conferencing.md`**, a focus as a trunk with an
-      `attributes.focus`, eight steps, the first four provable without a focus. Its four
-      questions are answered (Decisions, 2026-10-26). Steps 1 to 4 are in (`COMPLETED.md`): the
-      routing and the REGISTER refusal in `athenasip.standard` alone, the room on the call by
-      its canonical name and in `/api/v1/conferences`, a BLF key for a room, a participant
-      removed over the API, and the rooms in the subscriber's configuration. Still to do before
-      step 5: `/api/v1/focuses` as a view on the trunks with a `focus` attribute (decision 1),
-      and the quick start's `conf-` prefix with the numeric-prefix note (decision 4), which
-      waits for a focus to show. Step 5 onward needs a FreeSWITCH in the compose files and
-      sipp (Docker is now installed: Waiting on something).
+- [ ] RFC 4579 conference focus routing (`docs/design/conferencing.md`, a focus as a trunk with
+      an `attributes.focus`, eight steps). Steps 1 to 4 are in (`COMPLETED.md`). Still to do
+      before step 5: `/api/v1/focuses` as a view on the trunks with a `focus` attribute
+      (decision 1), and the quick start's `conf-` prefix with the numeric-prefix note
+      (decision 4), which waits for a focus to show. Step 5 onward needs a FreeSWITCH as the
+      focus and sipp with three participants (with the harnesses, above).
 - [ ] RFC 4575 conference event package proxied to participants; roster in the admin
       and client APIs (the design's step 6, and its decision 3).
 - [ ] `MediaEngine::conference` capability implemented for rtpengine publish/subscribe
       (basic SFU), then an SFU driver (Janus / mediasoup / LiveKit) behind the same URI
-      scheme. The builtin relay stays `bridge` only: three legs on one latching port
-      would forward each to the other two, which works and is not mixing.
-- [ ] RFC 6080 client configuration (SUBSCRIBE to `ua-profile`, NOTIFY pointing at
-      `/api/v1/subscriber/{realm}/config`): one more package on the notifier, which now
-      exists. The profile format is each vendor's, so only our own clients would read it
-      (the maintainer, 2026-10-05: if it costs little). Looked at on 2026-10-26: it does not cost
-      little. The notifier keeps a subscription's package alone, and `ua-profile` needs the
-      `Event` parameters (`profile-type`) echoed on every NOTIFY (RFC 6080 5.3.2) and a
-      `message/external-body` content type carrying the URL, which the package model and
-      `_content_type(package)` have no room for. A day's work, for clients that do not exist
-      yet; left until the web client wants it.
+      scheme. The builtin relay stays `bridge` only.
+- [ ] RFC 6080 client configuration: looked at on 2026-10-26, a day's work (the notifier's
+      package model has no room for `Event` parameters or `message/external-body`), for clients
+      that do not exist yet; left until the web client wants it.
 - [ ] RFC 8599 section 6, `pn-purr` for long-lived dialogs, which nothing needs yet.
 - [ ] Web client repository: video calling and conferencing, JsSIP over WSS, served by
       AthenaSIP, configured from `/api/v1/subscriber/{realm}/config` with the subscriber's
@@ -664,64 +598,36 @@ After the above. The order is the milestone's own:
 
 Each with what it waits on. None is forgotten; none can be worked here today.
 
-**The phone (Waiting on the maintainer, 4):**
+**The phone (Waiting on the maintainer, 8):**
 
-- [ ] The phone's media across the internet: AthenaPhone on mobile data to
-      node-b.example.com. The 2026-10-04 run's phone leg went over the link between
-      the two sites.
+- [ ] The phone's media across the internet: AthenaPhone on mobile data to node-b.
 - [ ] Hold and resume, and blind transfer (REFER proxying), verified against AthenaPhone.
-- [ ] DTMF conversion and in-band proved on the test phone against the carrier, once built (Next).
+- [ ] DTMF conversion and in-band proved on the test phone against the carrier.
 - [ ] Presence with a real client. AthenaPhone agreed on 2026-10-11 to be it once its PJSIP
       engine has presence: one subscription per buddy for `presence` and `dialog`, PUBLISH
       of PIDF, BLF pickup with Replaces from the dialog ids the node sends.
 - [ ] Interop matrix documented: AthenaPhone, JsSIP in Chrome, Firefox and Safari,
       Linphone, a hardware desk phone, Asterisk as a trunk.
 
-**The console, `../athenasip-admin` (Waiting on the maintainer, 5):**
+**The harnesses on the build cluster (Next):**
 
-- [ ] Ring the automated browser call: `browser.sh` answers within milliseconds and so
-      never rang long enough to hit the DTLS-role bug the live call found; a delay of a
-      few seconds before the callee answers would have caught it. A knob on the spec.
-- [ ] Flag a node whose `policy.fingerprint` differs from the others'.
-- [ ] Pages for trunks and for attributes.
-- [ ] The presence screens, from the API (`docs/design/presence.md`, The API and the
-      console).
-- [ ] A client generated from the OpenAPI document in place of the hand-written one; every
-      operation in `docs/api/openapi.yaml` carries an `operationId` for it.
-
-**Docker on this machine** (the sipp harnesses, Redis and MQTT):
-
-- [ ] Two RFC 5626 flows on two nodes: the console Phone now registers reg-id 1 and 2 with one
-      +sip.instance, each flow preferring a different node (console 9be5a40). Unit tests prove
-      both bindings side by side and one flow at a time per instance on one node
+- [ ] Two RFC 5626 flows on two nodes: the console phone registers reg-id 1 and 2 with one
+      +sip.instance, each flow preferring a different node. Unit tests prove both bindings side
+      by side and one flow at a time per instance on one node
       (`RegistrarTest.ASecondRegIdIsASecondFlow`, `ProxyOutboundTest`); an interop case with
       two nodes proves a call reaches the flow held by the other node, and that a 430 or a
       closed flow there moves to the flow here.
-- [ ] Everything changed since `0.12.0` run through `docs/testing.md`'s Before a release:
-      the CANCEL scenarios now assert the 487's CSeq (`cancel_after_180.xml`, one node and
-      `across-cancel-ringing`), which only sipp proves; the trunk harness against the
-      `trunks/changed` scan and the OPTIONS answer; the Redis and MQTT unit tests ran on
-      2026-10-26 in containers (`docs/testing.md`): 1622, 1619 passed, the round trips written
-      since `0.12.0` among them.
-- [ ] Conferencing step 5 (`docs/design/conferencing.md`): FreeSWITCH in the compose files,
-      a dialplan for `conf-*`, and a sipp scenario with three participants; then steps 6 to 8.
-
-**A reproduction:**
-
-- [ ] `across-cancel-ringing` failed once in five runs at `5986eaa` (once in the full run,
-      not in four runs on its own; it passed at `67a4b75`). Cause unknown: the logs were
-      overwritten by the next harness run before they were read. Not reproduced since
-      (2026-10-06, at `ed9141f`): 15 runs on its own and three of the full harness. Left
-      open, so the next failure's logs (`cluster-across-cancel-ringing*.log` and both
-      nodes') are kept and read before naming a cause.
+- [ ] `across-cancel-ringing` failed once in five runs at `5986eaa`, not reproduced since
+      (2026-10-06: 15 runs on its own, three of the full harness). Keep the next failure's logs
+      (`cluster-across-cancel-ringing*.log` and both nodes') and read them before naming a cause.
 
 **The maintainer's word (not now, 2026-10-12: do not ask):**
 
 - [ ] Push proved against the real Apple, Firebase and Web Push services.
 
-**A tag to build from:**
+**The Homebrew tap (Waiting on the maintainer, 7):**
 
-- [ ] The Homebrew formula tried against a published tag, once the tap exists.
+- [ ] The Homebrew formula tried against a published tag.
 
 ---
 

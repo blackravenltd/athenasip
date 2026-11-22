@@ -76,6 +76,28 @@ TEST(ConfigTest, ReadsASecureWebsocketListener) {
   EXPECT_EQ(config->websocket_key_pem_filename, "../tls/snakeoil.key");
 }
 
+// websocket.tls without a certificate of its own serves the tls section's, as the reference says; with neither it
+// is refused rather than falling back to ws://.
+TEST(ConfigTest, ASecureWebsocketListenerUsesTheTlsSectionsCertificate) {
+  ConfigFile shared(
+      "sip:\n  node_id: test-node\n"
+      "tls:\n  enable: true\n  port: 5061\n  cert_pem_filename: /tls/node.cer\n  key_pem_filename: /tls/node.key\n"
+      "websocket:\n  enable: true\n  port: 8089\n  tls: true\n");
+
+  bool ok = false;
+  auto config = shared.load(ok);
+
+  ASSERT_TRUE(ok);
+  EXPECT_TRUE(config->websocket_tls);
+  EXPECT_EQ(config->websocket_cert(), "/tls/node.cer");
+  EXPECT_EQ(config->websocket_key(), "/tls/node.key");
+
+  ConfigFile bare("sip:\n  node_id: test-node\nwebsocket:\n  enable: true\n  port: 8089\n  tls: true\n");
+  ok = true;
+  bare.load(ok);
+  EXPECT_FALSE(ok);
+}
+
 // The WebSocket listener is plain ws:// unless websocket.tls is set.
 TEST(ConfigTest, AWebsocketListenerIsPlainUnlessItSaysOtherwise) {
   ConfigFile file(

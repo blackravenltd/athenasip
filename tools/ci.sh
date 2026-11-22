@@ -76,12 +76,7 @@ case "${1:-}" in
   check) check ;;
   release) suite release -DCMAKE_BUILD_TYPE=Release -DATHENA_WERROR=ON ;;
   clang) suite clang -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++ ;;
-  asan)
-    # LeakSanitizer is off until what the unit suite leaves behind at exit is sorted into fixtures that abandon
-    # calls and anything the node itself leaks (TODO/ACTIVE.md). Every other check stays on.
-    export ASAN_OPTIONS="detect_leaks=0${ASAN_OPTIONS:+:$ASAN_OPTIONS}"
-    suite asan -DCMAKE_BUILD_TYPE=RelWithDebInfo -DATHENA_SANITIZE=address
-    ;;
+  asan) suite asan -DCMAKE_BUILD_TYPE=RelWithDebInfo -DATHENA_SANITIZE=address ;;
   tsan) suite tsan -DCMAKE_BUILD_TYPE=RelWithDebInfo -DATHENA_SANITIZE=thread ;;
   coverage)
     suite coverage -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS=--coverage -DCMAKE_EXE_LINKER_FLAGS=--coverage

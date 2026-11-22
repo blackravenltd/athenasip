@@ -16,6 +16,7 @@
 #include "datastores/memory_datastore.h"
 #include "events/local_event_system.h"
 #include "headers/via_header.h"
+#include "helpers/core_fixture_helper.h"
 #include "helpers/sync_datastore_helper.h"
 #include "helpers/sync_event_system_helper.h"
 #include "mocks/connection_mock.h"
@@ -55,8 +56,10 @@ struct Fixture {
     core->timer_source_set(timers);
   }
 
-  // Drain the strand first: in-flight handlers hold the channel and connection being destroyed.
-  ~Fixture() { settle(); }
+  // Stopped as main() stops a node, and then freed.
+  ~Fixture() {
+    if (!stop_node(core, timers, made)) ADD_FAILURE() << "the Core outlived its fixture: something it holds holds it";
+  }
 
   void settle(int rounds = 32) {
     for (int i = 0; i < rounds; ++i) core->call_on_strand([]() {});
@@ -97,8 +100,11 @@ struct Fixture {
 
     auto channel = std::make_shared<Channel>(logger, core, connection);
     on_strand([&channel]() { channel->start(); });
+    made.push_back(channel);
     return channel;
   }
+
+  std::vector<std::weak_ptr<Channel>> made;
 
   // A transaction wired as Core wires its own: terminating removes it from the registry.
   std::shared_ptr<transactions::TransactionBase> make_transaction(const std::string& key) {

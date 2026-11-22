@@ -57,6 +57,7 @@ void UDPServer::start() {
 
 void UDPServer::stop() {
   _logger->debug("Stopping...");
+  _stopping = true;
 
   if (_thread) {
     _io_context.stop();
@@ -68,9 +69,20 @@ void UDPServer::stop() {
   } else {
     _logger->debug("Already Stopped");
   }
+
+  // Nothing else runs the io_context now. The pending receive holds this server, and the server holds it and the
+  // flows that hold the server back, so the socket is closed, the flows let go, and the aborted receive run to its
+  // end here, where it does not ask again.
+  boost::system::error_code ignored;
+  _socket.close(ignored);
+  _connections.clear();
+  _io_context.restart();
+  _io_context.poll();
 }
 
 void UDPServer::start_receive() {
+  if (_stopping) return;
+
   auto self = this->shared_from_this();
 
   auto buffer = std::make_shared<std::vector<char>>(MAX_PACKET_SIZE);
@@ -88,6 +100,8 @@ void UDPServer::start_receive() {
 
 void UDPServer::handle_receive_from(const boost::system::error_code& error, std::size_t bytes_transferred, std::shared_ptr<std::vector<char>> buffer,
                                     std::shared_ptr<udp::endpoint> sender_endpoint) {
+  if (_stopping) return;
+
   auto self = std::static_pointer_cast<UDPServer>(this->shared_from_this());
 
   auto sender_endpoint_str = sender_endpoint->address().to_string() + ":" + std::to_string(sender_endpoint->port());

@@ -111,7 +111,9 @@ Settings build() {
   s.push_back(text("tls.cert_pem_filename", "", "The certificate, PEM."));
   s.push_back(text("tls.key_pem_filename", "", "The certificate's key, PEM."));
   add_listener(s, "websocket", "SIP over WebSocket (RFC 7118), for browsers. No section, no listener.");
-  s.push_back(boolean("websocket.tls", "false", "Serve wss on port. Needs this section's own certificate and key. A page served over https can only use wss."));
+  s.push_back(boolean(
+      "websocket.tls", "false",
+      "Serve wss on port, with this section's certificate and key or, where those are empty, the tls section's. A page served over https can only use wss."));
   s.push_back(port("websocket.secure_port", "0", "A second, wss listener beside a plain one. 0 is none. Unused when tls is true."));
   s.push_back(text("websocket.cert_pem_filename", "", "The wss certificate, PEM. Empty uses the tls section's."));
   s.push_back(text("websocket.key_pem_filename", "", "The wss certificate's key, PEM. Empty uses the tls section's."));

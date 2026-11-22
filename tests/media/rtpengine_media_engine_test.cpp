@@ -99,6 +99,27 @@ TEST(RtpengineMediaEngineTest, ConnectPingsAndWaitsForAPong) {
   engine->close();
 }
 
+// The control socket is bound to the address that reaches the engine, so a node told to use one address uses only
+// that: a local engine is spoken to from loopback, not from every interface.
+TEST(RtpengineMediaEngineTest, TheControlSocketIsBoundToTheAddressThatReachesTheEngine) {
+  FakeRtpengine fake;
+  fake.answer("ping", Bencode::dictionary({{"result", Bencode(std::string("pong"))}}));
+
+  auto logger = std::make_shared<MockLogger>();
+  auto driver = std::make_shared<RtpengineMediaEngine>(logger, std::make_shared<types::URL>("rtpengine://127.0.0.1:" + std::to_string(fake.port())));
+  auto engine = std::make_shared<SyncMediaEngine>(driver);
+  ASSERT_TRUE(engine->configure(YAML::Load("timeout_ms: 100\nattempts: 3"), Config(logger)));
+
+  ASSERT_TRUE(engine->connect());
+
+  const auto bound = driver->control_endpoint();
+  ASSERT_TRUE(bound.has_value());
+  EXPECT_EQ(bound->address().to_string(), "127.0.0.1");
+  EXPECT_EQ(fake.client().port(), bound->port());
+
+  engine->close();
+}
+
 TEST(RtpengineMediaEngineTest, ConnectFailsWhenNothingAnswers) {
   FakeRtpengine fake;
   fake.swallow(5);

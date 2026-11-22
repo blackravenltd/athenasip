@@ -13,6 +13,7 @@
 #include <lua.hpp>
 #include <memory>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -81,11 +82,22 @@ class LuaEngine : public std::enable_shared_from_this<LuaEngine> {
   // Calls a global hook. finish is called once, on `on`.
   void call(plugins::Executor on, const std::string& hook, Push push, Finish finish);
 
-  // A store lookup from inside a hook: called by the library with the coroutine that asked. `start` issues the
-  // lookup and answers through the function it is given, with whether it succeeded and a pusher for its value (or
-  // its error message). The coroutine yields until then.
+  // A store lookup from inside a hook: called by the library with the coroutine that asked. `prepare` reads the
+  // arguments and returns the start of the lookup, which issues it and answers through the function it is given,
+  // with whether it succeeded and a pusher for its value (or its error message). The coroutine yields until then.
+  //
+  // The yield, like any Lua error, leaves by longjmp, which runs no C++ destructor. So prepare runs in a frame that
+  // has returned before the yield, it may raise only before it has built anything, and it captures nothing: nothing
+  // with a destructor is alive in any frame here when the coroutine yields.
   using Answer = std::function<void(bool ok, std::function<int(lua_State*)> push)>;
-  static int await(lua_State* thread, std::function<void(Answer)> start);
+  using Start = std::function<void(Answer)>;
+
+  template <typename Prepare>
+  static int await(lua_State* thread, Prepare prepare) {
+    static_assert(std::is_empty_v<Prepare>, "a lookup's prepare captures nothing: it would be abandoned by the yield");
+    if (!_begin(thread, prepare)) return lua_error(thread);
+    return lua_yieldk(thread, 0, static_cast<lua_KContext>(lua_gettop(thread)), &LuaEngine::_resumed);
+  }
 
   // The engine and the hook call a Lua state belongs to.
   static LuaEngine* of(lua_State* L);
@@ -98,6 +110,14 @@ class LuaEngine : public std::enable_shared_from_this<LuaEngine> {
  private:
   struct Generation;
   struct Call;
+
+  // Runs prepare and starts the lookup it returns. On a refusal the message is left on the stack and false
+  // returned, for the caller to raise once this frame is gone.
+  template <typename Prepare>
+  static bool _begin(lua_State* thread, Prepare prepare) {
+    return _start(thread, prepare(thread));
+  }
+  static bool _start(lua_State* thread, Start start);
 
   void _step(const std::shared_ptr<Call>& call, int arguments);
   void _end(std::shared_ptr<Call> call, int results, const std::string& error);

@@ -133,7 +133,7 @@ SIP over WebSocket (RFC 7118), for browsers. No section, no listener.
 | `websocket.address` | text | `0.0.0.0` | The address to bind. |
 | `websocket.port` | integer, 0 to 65535 | required | The port to bind. Required unless enable is false. |
 | `websocket.public_port` | integer, 0 to 65535 | `0` | The port a router forwards to this listener, for what the node tells others. 0 is the bound port. |
-| `websocket.tls` | true or false | `false` | Serve wss on port. Needs this section's own certificate and key. A page served over https can only use wss. |
+| `websocket.tls` | true or false | `false` | Serve wss on port, with this section's certificate and key or, where those are empty, the tls section's. A page served over https can only use wss. |
 | `websocket.secure_port` | integer, 0 to 65535 | `0` | A second, wss listener beside a plain one. 0 is none. Unused when tls is true. |
 | `websocket.cert_pem_filename` | text | none | The wss certificate, PEM. Empty uses the tls section's. |
 | `websocket.key_pem_filename` | text | none | The wss certificate's key, PEM. Empty uses the tls section's. |

@@ -376,14 +376,22 @@ int LuaEngine::_resumed(lua_State* L, int status, lua_KContext base) {
   return lua_gettop(L) - ok;
 }
 
-int LuaEngine::await(lua_State* thread, std::function<void(Answer)> start) {
+bool LuaEngine::_start(lua_State* thread, Start start) {
+  // Refused with the message on the stack, raised by await once this frame has gone.
+  const auto refuse = [thread](const char* why) {
+    luaL_where(thread, 1);
+    lua_pushstring(thread, why);
+    lua_concat(thread, 2);
+    return false;
+  };
+
   Call* raw = _call_of(thread);
-  if (raw == nullptr) return luaL_error(thread, "the store can be read only inside a hook, not while loading");
-  if (!lua_isyieldable(thread)) return luaL_error(thread, "the store cannot be read here: not inside a metamethod or a module's own body");
+  if (raw == nullptr) return refuse("the store can be read only inside a hook, not while loading");
+  if (!lua_isyieldable(thread)) return refuse("the store cannot be read here: not inside a metamethod or a module's own body");
 
   auto* engine = of(thread);
   const auto found = engine->_calls.find(raw);
-  if (found == engine->_calls.end()) return luaL_error(thread, "this hook call has ended");
+  if (found == engine->_calls.end()) return refuse("this hook call has ended");
 
   auto call = found->second;
   call->waiting = true;
@@ -407,7 +415,7 @@ int LuaEngine::await(lua_State* thread, std::function<void(Answer)> start) {
     });
   });
 
-  return lua_yieldk(thread, 0, static_cast<lua_KContext>(lua_gettop(thread)), &LuaEngine::_resumed);
+  return true;
 }
 
 void LuaEngine::_step(const std::shared_ptr<Call>& call, int arguments) {

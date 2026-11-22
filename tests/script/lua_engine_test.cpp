@@ -48,7 +48,11 @@ class FakeHost final : public policy::Host {
     });
   }
 
-  void subscriber(std::shared_ptr<types::SIPIdentity>, plugins::Handler<std::shared_ptr<types::Subscriber>> handler) override {
+  // The identities asked for, held weakly: a lookup that has been answered must not keep its question alive.
+  std::vector<std::weak_ptr<types::SIPIdentity>> asked;
+
+  void subscriber(std::shared_ptr<types::SIPIdentity> identity, plugins::Handler<std::shared_ptr<types::Subscriber>> handler) override {
+    asked.push_back(identity);
     boost::asio::post(_io, [handler]() { handler(plugins::Result<std::shared_ptr<types::Subscriber>>::success(nullptr)); });
   }
 
@@ -186,6 +190,34 @@ TEST(LuaEngineTest, AStoreLookupYieldsAndResumesWithTheAnswer) {
   EXPECT_EQ(outcome.error, "");
   EXPECT_EQ(outcome.values, (std::vector<std::string>{"example.com", "nil"}));
   EXPECT_EQ(f.engine->calls_running(), 0u);
+}
+
+// A lookup yields from C++ into Lua, which leaves by longjmp unless Lua was built as C++: nothing the lookup made may
+// be abandoned on the way, or every lookup a script makes keeps its question and its hook call in memory for good.
+TEST(LuaEngineTest, AHookThatLookedSomethingUpLeavesNothingBehind) {
+  EngineFixture f;
+  ASSERT_EQ(f.load(R"(
+    function answer()
+      local found = athenasip.store.subscriber("sip:alice@example.com")
+      return tostring(found)
+    end
+  )"),
+            "");
+
+  std::weak_ptr<bool> live;
+  const auto outcome = f.call("answer", [&live](lua_State*, const std::shared_ptr<bool>& flag) {
+    live = flag;
+    return 0;
+  });
+  ASSERT_TRUE(outcome.finished);
+  EXPECT_EQ(outcome.error, "");
+
+  f.io.restart();
+  f.io.poll();
+
+  ASSERT_EQ(f.host->asked.size(), 1u);
+  EXPECT_TRUE(f.host->asked.front().expired()) << "the identity asked for outlived the lookup";
+  EXPECT_TRUE(live.expired()) << "the hook call outlived the hook";
 }
 
 // A store that cannot answer is an error in the script, which pcall can catch like any other.
