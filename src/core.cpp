@@ -216,7 +216,9 @@ void Core::server_start_all() {
 }
 
 void Core::server_stop_all() {
-  for (auto& server : _servers) server->stop();
+  // A server holds the Core and the Core its servers: stopped, they are let go.
+  auto servers = std::exchange(_servers, {});
+  for (auto& server : servers) server->stop();
 }
 
 void Core::realm_get_by_name(std::string realm_name, plugins::Handler<std::shared_ptr<Realm>> handler) {

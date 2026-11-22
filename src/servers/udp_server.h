@@ -6,6 +6,7 @@
 //
 #pragma once
 
+#include <atomic>
 #include <boost/asio.hpp>
 #include <memory>
 #include <string>
@@ -59,6 +60,9 @@ class UDPServer : public Server {
 
   // Keyed by remote host:port.
   std::unordered_map<std::string, std::shared_ptr<UDPConnection>> _connections;
+
+  // Set by stop(): the receive loop does not ask again.
+  std::atomic<bool> _stopping{false};
 };
 
 }  // namespace athenasip::servers
