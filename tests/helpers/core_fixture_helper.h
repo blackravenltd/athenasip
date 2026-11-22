@@ -26,6 +26,46 @@
 #include "sync_event_system_helper.h"
 #include "timer_source.h"
 
+// Lets work already handed to the global io_context finish: a closed socket's aborted read, and the hops it takes
+// back to a strand.
+inline void settle_detached(int rounds = 8) {
+  for (int i = 0; i < rounds; ++i) {
+    std::promise<void> done;
+    boost::asio::post(athenasip::detail::get_global_io_context(), [&done]() { done.set_value(); });
+    done.get_future().wait();
+  }
+}
+
+// Stops a node as main() does on SIGTERM, for a test's teardown, and says whether it was then freed. A filed channel
+// and the Core hold each other until it is closed, as do a server and the Core; `made` are channels the test opened,
+// which a second flow to the same address may have pushed out of the registry. What still holds the node once the
+// caller has dropped its own reference is a cycle: in a running node, memory never returned.
+inline bool stop_node(std::shared_ptr<athenasip::Core>& core, const std::shared_ptr<athenasip::ManualTimerSource>& timers,
+                      const std::vector<std::weak_ptr<athenasip::Channel>>& made = {}) {
+  const auto drain = [&core]() {
+    for (int i = 0; i < 32; ++i) core->call_on_strand([]() {});
+  };
+
+  drain();
+  core->call_on_strand([&]() {
+    core->transaction_end_all();
+    core->channel_close_all();
+    for (const auto& weak : made) {
+      if (auto channel = weak.lock()) channel->close();
+    }
+  });
+  core->server_stop_all();
+  drain();
+
+  // The clock stops, taking with it whatever the timers still pending hold.
+  if (timers) timers->cancel_all();
+
+  std::weak_ptr<athenasip::Core> stopped = core;
+  core.reset();
+  settle_detached();
+  return stopped.expired();
+}
+
 // A Core with a memory datastore, a local event system and a manual clock, driven as a transport drives it:
 // raw SIP in through a Channel, raw SIP out through the connection under it.
 struct CoreFixture {
@@ -126,8 +166,13 @@ struct CoreFixture {
 
     auto channel = std::make_shared<athenasip::Channel>(logger, core, connection);
     on_strand([&channel]() { channel->start(); });
+    _made.push_back(channel);
     return channel;
   }
+
+  // Every channel this fixture made, closed with it: a second flow to the same address replaces the first in the
+  // node's registry, so channel_close_all no longer finds it.
+  std::vector<std::weak_ptr<athenasip::Channel>> _made;
 
   std::shared_ptr<athenasip::types::Realm> seed_realm(const std::string& name) {
     auto realm = std::make_shared<athenasip::types::Realm>(name);
@@ -166,18 +211,9 @@ struct CoreFixture {
     settle();
   }
 
-  // Nothing may be in flight at destruction: the chain holds the channel and the connection. Then the node is
-  // stopped as main() stops it, since a filed channel and the Core hold each other until it is closed.
+  // The node is stopped and must then be freed; anything a derived fixture held is gone by now.
   ~CoreFixture() {
-    settle();
-    on_strand([this]() {
-      core->transaction_end_all();
-      core->channel_close_all();
-    });
-    settle();
-
-    // And the clock stops, taking with it whatever the timers still pending hold.
-    timers->cancel_all();
+    if (!stop_node(core, timers, _made)) ADD_FAILURE() << "the Core outlived its fixture: something it holds holds it";
   }
 
   // A transaction user's work is a chain of strand hops, and handing a message in only starts it. Each round
