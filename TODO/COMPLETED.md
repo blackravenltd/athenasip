@@ -3975,3 +3975,43 @@ Findings 43 and 44.
       ThreadSanitizer races in the tests' own code (the flow sweep's clock moved off the strand,
       a fake DNS server's mode); a fuzz target calling a private parser; the cluster CA's subject
       name for OpenSSL 4; the example configuration marked executable.
+
+### After 0.13.0 (2026-11-22)
+
+- [x] **Leaks at exit, and the ones that were not only at exit** (7eecbfe..002ab51 and the four
+      before). The first Linux ASan run had reported 366,785 bytes at the suite's end. The suite
+      now leaves nothing: 1659 passed with LeakSanitizer on, each of the 139 suites clean in a
+      process of its own, on an arm64 build machine; `tools/ci.sh asan` runs with leak checking
+      again. Found on the way, each with a test that failed first:
+      - Every store lookup from a script leaked (`LuaEngine::await`): the yield leaves C++ by
+        longjmp, abandoning the hook call's `shared_ptr` and the lookup with it. The C++ work now
+        happens in a frame that has returned before the yield
+        (`LuaEngineTest.AHookThatLookedSomethingUpLeavesNothingBehind`).
+      - `GET /api/v1/registrations` and `GET /api/v1/trunks` each kept a self-held step, and with
+        it the API and the HTTP session, on every request
+        (`ProvisioningApiTest.ListingRegistrationsLeavesNothingBehind`,
+        `TrunksApiTest.ListingTheTrunksLeavesNothingBehind`).
+      - A terminated transaction kept its callbacks, so a node stopped with a request unanswered
+        kept the request and its proxy context (RFC 3261 17 forgets a terminated transaction).
+      - A stopped node kept its servers, and the UDP server its queued receive and its flows.
+      - The test clock kept a fired or cancelled timer's function; it now drops it, as asio does.
+      - The fixtures never stopped their node. `stop_node` (tests/helpers/core_fixture_helper.h)
+        stops it as `main()` does and fails a test whose `Core` outlives it, which finds a cycle
+        on any machine without LeakSanitizer. `tests/core_lifetime_test.cpp` says what a running
+        node lets go of: an ended call, its requests, a closed flow. Under `lua://` a request
+        handed to a hook is freed when Lua's collector next runs, not at once (shown with a
+        forced collection); that one case skips there.
+- [x] **`websocket.tls` takes the `tls` section's certificate** when its own is empty, as the
+      reference said; found setting up node-b (10c0911). The reference is generated from
+      `src/config_schema.cpp`, so the schema, the reference and `docs/certificates.md` say it.
+- [x] **The rtpengine control socket is bound** to the local address the system routes to the
+      engines from, loopback for a local one, when the whole pool is reached from one address
+      (03e19e0, `RtpengineMediaEngineTest.TheControlSocketIsBoundToTheAddressThatReachesTheEngine`).
+- [x] **The workflow actions bumped**: `actions/checkout` 7, `actions/cache` 6, `actions/setup-node`
+      7, `codecov/codecov-action` 7, after reading each major release's notes against our inputs
+      (none needed a change). Dependabot's pull requests went to `main`; the four were taken onto
+      `develop` and closed, and Dependabot now targets `develop`. CI green on all jobs, amd64 and
+      arm64 (run 45055096431).
+- [x] **This machine's test build** no longer matters: every build and test run is on the build
+      cluster, never on the maintainer's Mac (the maintainer, 2026-11-22). Its GoogleTest mismatch
+      (headers from one install, library from another) was a reconfigure.

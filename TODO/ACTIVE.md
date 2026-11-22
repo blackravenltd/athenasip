@@ -4,10 +4,14 @@ Work happens on `develop`; `main` carries the last release, `0.13.0` (2026-11-20
 released on GitHub and in the apt repository for amd64 and arm64. Every release from `0.5.0`
 on is tagged. Line numbers refer to the current tree; update them as files move.
 
-**Resume here (2026-11-22).** `0.13.0` is out (`COMPLETED.md`, Releases) and `develop` is green
-on GitHub. Work stopped on 2026-11-21 on the maintainer's word, relayed by the coordinating
-session, with the leak triage half run (Next, First after 0.13.0): start there when told to
-carry on. What is waiting on the maintainer is the first list below; read it before anything else.
+**Resume here (2026-11-22, evening).** `0.13.0` is out (`COMPLETED.md`, Releases). On `develop`
+since: the leaks at exit are gone and LeakSanitizer is back on in `tools/ci.sh asan`; two of them
+leaked in a running node too (every store lookup from a script, and the registrations and trunks
+listings). `websocket.tls` takes the `tls` section's certificate, the rtpengine control socket is
+bound, and the workflow actions are bumped with Dependabot pointed at `develop` (`COMPLETED.md`,
+After 0.13.0). Next is the harnesses on the build cluster (Next, First after 0.13.0). Every build
+and test run is on the build cluster, never on the maintainer's Mac (the maintainer, 2026-11-22).
+What is waiting on the maintainer is the first list below; read it before anything else.
 
 The stack: AthenaSIP is one of the Cluster Stack's projects (Decisions, 2026-11-20), and
 `TODO/2026-11-20-stack-integration.md` is the plan for what it takes from Dannan, Dagda, Lir,
@@ -79,9 +83,7 @@ the lists because a session that has lost its context needs to see them first.
    certificate's renewal, by hand with a TXT record or automated with Route 53 credentials. It
    expires 2027-01-30. And whether to deploy `0.13.0` there.
 3. **GitHub housekeeping**: the `CODECOV_TOKEN` secret (until it exists the upload cannot fail the
-   run; then `fail_ci_if_error: true` in `ci.yml`); the four Dependabot pull requests bumping
-   the workflow actions (`actions/checkout`, `actions/setup-node`, `actions/cache`,
-   `codecov/codecov-action`), whether this session takes them.
+   run; then `fail_ci_if_error: true` in `ci.yml`).
 4. **What is left of the stack's decisions** (`TODO/2026-11-20-stack-integration.md`): whether
    admin users stay local beside Lugh or move to Lugh alone, and the Boost version (agreed
    with Dannan to try the system Boost with the Redis and MQTT clients as pinned sources).
@@ -462,20 +464,6 @@ Nothing here waits on a device, a carrier, the maintainer or another repository.
 
 ### First after 0.13.0
 
-- [ ] **Leaks at exit.** The first ASan run on Linux (2026-11-20, the build cluster; macOS has no
-      LeakSanitizer, so no earlier gate looked) reported 366,785 bytes in 20,922 allocations when the
-      unit suite ended, and no other ASan or UBSan finding. One is direct and the test's own
-      (`tests/api/events_api_test.cpp:37`, an executor kept for the process); the rest are indirect,
-      which is how a cycle of `shared_ptr` reads, the largest stacks messages cloned in
-      `Proxy::_forward_to` (`src/proxy.cpp:1121`). A run suite by suite (2026-11-21, stopped after
-      63 of 138 suites; script and logs in `/root/athenasip-gate/leaks/` on the build machine) found
-      42 clean and 21 leaking, and the leaking ones are those that build a whole `Core`:
-      `MediaProfileTest` 10.7 MB, `DialogsTest` 4.6 MB, `MediaPolicyTest` 2.4 MB, then the API,
-      sweep and local UA suites; parsers and types alone are clean. So either the fixtures never
-      stop a `Core`, or `Core` and what it holds keep each other alive, which would be a leak in a
-      running node too. Run the other 75, then find which with one small test (a `Core` made and
-      dropped, then one call through it). `tools/ci.sh asan` runs with `detect_leaks=0` until this
-      is sorted; turn it back on with the fix.
 - [ ] **The sipp, cluster and trunk harnesses on the build cluster** (`test/e2e/`), running
       AthenaSIP nodes and sipp directly on claimed machines, not under Docker Compose (the
       maintainer, 2026-11-20: "They should use the cluster as the other projects do"). Docker is
@@ -488,10 +476,6 @@ Nothing here waits on a device, a carrier, the maintainer or another repository.
       an instrumented copy for `asan` and one for `tsan`, and the suppressions go. Dannan and Dagda,
       when linked, are built from source with `DANNAN_SANITIZE=address` or `thread`, set before
       `FetchContent_MakeAvailable(dannan)`.
-- [ ] **This machine's test build** (macOS, x86_64) no longer links: GoogleTest's headers and
-      library disagree after a package upgrade (`AssertHelper` and `PrintStringTo` undefined), and
-      Lua moved to `/opt/local` (a reconfigure finds it). Builds and runs went to the build cluster
-      meanwhile. Docker works here, and built the amd64 package on 2026-11-20.
 
 ### The stack, now (2026-11-20)
 
@@ -517,13 +501,6 @@ tests against Mimir.
 
 ### Found setting up node-b (2026-11-01)
 
-- [ ] `websocket.tls: true` refuses to start without `websocket.cert_pem_filename` and
-      `key_pem_filename`, though the reference says an empty one uses the `tls` section's.
-      The reference is the intent; the config check is what to fix.
-- [ ] The rtpengine control socket (`src/media/rtpengine_media_engine.cpp:320`) is opened
-      unbound, so it sits on `0.0.0.0` at an ephemeral port. Replies from anything but the
-      engine are already dropped; bind it to the address that reaches the engine (loopback
-      for a local one) so a node told to use one address uses only that.
 - [ ] **PROXY protocol v2 from a trusted proxy**, on the HTTP and WebSocket listeners
       (asked of the maintainer, not yet answered: Waiting on the maintainer, 2). Behind HAProxy
       every connection comes from HAProxy, so the per-source API limits are shared by everyone,
