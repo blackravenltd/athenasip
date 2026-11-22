@@ -53,7 +53,7 @@ built on node-a and copied to node-b with the systemd unit; the previous binary 
 - TURN on both (2026-10-11): native coturn on 3478 UDP/TCP, relay 24000-24100, credentials
   minted by each node under `http.api.turn_shared_secret` and handed out by
   `/api/v1/subscriber/{realm}/config`. node-a's is reachable only where 10.101.1.20 is; node-b's
-  from anywhere once its router forwards the ports (Waiting on the maintainer, 2).
+  from anywhere once its router forwards the ports (Waiting on the maintainer, 3).
 
 **What passed for `0.13.0`** (2026-11-20, on an arm64 build machine, Debian 13): `tools/ci.sh`
 `check`, `release`, `asan` (with UBSan, leak checking off), `tsan` (1644 tests each, with Redis and
@@ -74,26 +74,31 @@ Nothing below can move until these are settled. They are here rather than scatte
 the lists because a session that has lost its context needs to see them first.
 
 1. **`athenasip-admin` on GitHub** still has its history from before the 2026-11-20 scrub, in
-   public. Its code is in `console/`. Either the maintainer deletes the repository, or allows a
-   force push of a rewritten history (the local rewrite is gone with the working copy; it would
-   be redone from a fresh clone; the backup is in `devroot/backups/`).
-2. **node-b** (2026-11-01): the router forwards to 10.102.1.20 (TCP 5061, 8089, 5349; UDP and
+   public. Its code is in `console/`. The maintainer deletes the repository (decided 2026-11-22);
+   until then it stays here.
+2. **The router forwards for a two-site cluster** (decided 2026-11-22: node-c joins node-b's
+   cluster over port forwards with TLS, serving signalling and media; Next, The third node). At
+   node-b's site, to node-b: Redis over TLS and MQTT over TLS (ports chosen when node-b is
+   configured), the inter-node listener 5062/tcp, and what item 3 already lists. At node-c's
+   site, to node-c: 5062/tcp, TLS 5061 and WSS 8089, TURN 3478 udp and tcp and 5349, RTP
+   22000-22200/udp and relay 24000-24100/udp.
+3. **node-b** (2026-11-01): the router forwards to 10.102.1.20 (TCP 5061, 8089, 5349; UDP and
    TCP 3478; UDP 22000-22200 and 24000-24100) and TCP 80 to 10.102.1.50, after which the node is
    tested from outside; PROXY protocol v2 (Next, Found setting up node-b); and the
    certificate's renewal, by hand with a TXT record or automated with Route 53 credentials. It
-   expires 2027-01-30. And whether to deploy `0.13.0` there.
-3. **GitHub housekeeping**: the `CODECOV_TOKEN` secret (until it exists the upload cannot fail the
+   expires 2027-01-30. `0.13.1` is to be deployed there and to node-c (the maintainer, 2026-11-22).
+4. **GitHub housekeeping**: the `CODECOV_TOKEN` secret (until it exists the upload cannot fail the
    run; then `fail_ci_if_error: true` in `ci.yml`).
-4. **What is left of the stack's decisions** (`TODO/2026-11-20-stack-integration.md`): whether
+5. **What is left of the stack's decisions** (`TODO/2026-11-20-stack-integration.md`): whether
    admin users stay local beside Lugh or move to Lugh alone, and the Boost version (agreed
    with Dannan to try the system Boost with the Redis and MQTT clients as pinned sources).
-5. **Review finding 30**: subscriber ids are FNV-1a-64 (`Util::stable_id`); a new id is a
+6. **Review finding 30**: subscriber ids are FNV-1a-64 (`Util::stable_id`); a new id is a
    migration of every stored subscriber and binding key, so it waits for a decision on how.
-6. **Releases before `0.13.0`**: GitHub releases for `0.10.0` to `0.12.0` (notes written); the
+7. **Releases before `0.13.0`**: GitHub releases for `0.10.0` to `0.12.0` (notes written); the
    Docker image and the Homebrew tap (`blackravenltd/homebrew-athenasip`) for any release; whether
    images go to Docker Hub at all. athenasip.org's "Where it stands" says presence is not built
    and AthenaPhone is iOS and Android (review finding 48); the site is outside the repo.
-7. **The phone, when the maintainer lends it**: the browser call to AthenaPhone with
+8. **The phone, when the maintainer lends it**: the browser call to AthenaPhone with
    `ATHENA_INTEROP_PAGE_URL=https://10.102.1.50:8443` (plain http gives the page no
    microphone), and the hold, DTMF and transfer checks under Waiting on something.
    `phone.py` taps only while AthenaPhone is in front; its wireless adb port is found by mDNS.
@@ -477,6 +482,22 @@ Nothing here waits on a device, a carrier, the maintainer or another repository.
       when linked, are built from source with `DANNAN_SANITIZE=address` or `thread`, set before
       `FetchContent_MakeAvailable(dannan)`.
 
+### The third node (2026-11-22)
+
+node-c is a second machine, at a second site, that already runs another of the maintainer's
+services. It joins node-b's cluster (the maintainer, 2026-11-22). Nothing is compiled on it, or on
+node-b: both install the arm64 package built on the build cluster. The other service's session is
+told before either machine is touched.
+
+- [ ] `0.13.1` on node-b and node-c from the package, the previous binary kept to roll back to.
+- [ ] node-b's Redis and broker reachable from node-c over TLS, with passwords; the cluster CA
+      made on node-b (`--ca-init`), a node certificate for each, the inter-node listener on both.
+- [ ] node-c with rtpengine and coturn as node-b has them; its own public name; the realm's
+      subscriber config listing both nodes.
+- [ ] A call each way between a phone on node-b and one on node-c, and a REGISTER through either
+      reaching the other: `verify.py` with a `live.json` for the two.
+- [ ] The router forwards (Waiting on the maintainer, 2) are what this waits on from outside.
+
 ### The stack, now (2026-11-20)
 
 From `TODO/2026-11-20-stack-integration.md`, part A: what needs no decision and nobody else.
@@ -502,7 +523,7 @@ tests against Mimir.
 ### Found setting up node-b (2026-11-01)
 
 - [ ] **PROXY protocol v2 from a trusted proxy**, on the HTTP and WebSocket listeners
-      (asked of the maintainer, not yet answered: Waiting on the maintainer, 2). Behind HAProxy
+      (asked of the maintainer, not yet answered: Waiting on the maintainer, 3). Behind HAProxy
       every connection comes from HAProxy, so the per-source API limits are shared by everyone,
       and SIP over `wss://athenasip.com/ws` on 443 would put every browser behind one address
       for the Digest guessing bans.
@@ -577,7 +598,7 @@ The order is the milestone's own:
 
 Each with what it waits on. None is forgotten; none can be worked here today.
 
-**The phone (Waiting on the maintainer, 7):**
+**The phone (Waiting on the maintainer, 8):**
 
 - [ ] The phone's media across the internet: AthenaPhone on mobile data to node-b.
 - [ ] Hold and resume, and blind transfer (REFER proxying), verified against AthenaPhone.
@@ -604,7 +625,7 @@ Each with what it waits on. None is forgotten; none can be worked here today.
 
 - [ ] Push proved against the real Apple, Firebase and Web Push services.
 
-**The Homebrew tap (Waiting on the maintainer, 6):**
+**The Homebrew tap (Waiting on the maintainer, 7):**
 
 - [ ] The Homebrew formula tried against a published tag.
 
