@@ -23,7 +23,7 @@ and broker), with `ci.yml` green on GitHub as well:
 tools/ci.sh deps        # once per machine: the packages, and Boost into $ATHENA_DEPS
 tools/ci.sh check
 tools/ci.sh release     # the unit suite, warnings as errors
-tools/ci.sh asan        # with UBSan; leak checking off until the leaks at exit are sorted
+tools/ci.sh asan        # with UBSan and LeakSanitizer
 tools/ci.sh tsan
 tools/ci.sh fuzz
 
