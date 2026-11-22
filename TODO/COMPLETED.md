@@ -3945,3 +3945,33 @@ Findings 43 and 44.
       unchanged. `MqttEventSystemTest.TlsCarriesAMessageToABrokerItTrusts` and
       `...TlsRefusesABrokerItDoesNotTrust`, against a Mosquitto with a TLS listener in Docker
       (`ATHENA_TEST_MQTTS_URL`). With Redis, MQTT and MQTT over TLS the suite is 1648, 1645 passed.
+
+### Joining the stack, and the `0.13.0` gate (2026-11-20)
+
+- [x] **The plan for the Cluster Stack**: `TODO/2026-11-20-stack-integration.md`, made by asking
+      each project's session; AthenaSIP joins the stack (Decisions, 2026-11-20).
+- [x] **The scrub**: no tracked file or commit message names a person, host, address, carrier or
+      phone; the history rewritten and force pushed, every tag with it. Placeholders from now on
+      (node-a, node-b, the maintainer, documentation ranges). Two fixture names the rewrite broke
+      were fixed forward; the old tags still carry them.
+- [x] **The console in this repository** (`console/`), from `athenasip-admin` without its history;
+      the scripts that looked for `../athenasip-admin` look in `console/`.
+- [x] **Hosted CI** (review finding 43, declined on 2026-10-26, taken with the stack's rules):
+      `tools/ci.sh` with `deps`, `check`, `release`, `clang`, `asan`, `tsan`, `coverage`, `fuzz`
+      and `console`; `ci.yml` on `develop`, `main` and pull requests, never for prose alone, a
+      newer run cancelling an older; CodeQL on `main` and weekly; Dependabot monthly; Codecov; the
+      README's badges. First green run on `develop`: 44813033261.
+- [x] **Fuzzing** (review item 6): nine libFuzzer targets under `fuzz/` (the SIP head, URIs,
+      name-addrs, Authorization, Via, URLs, bencode, STUN, DNS), ASan and UBSan, `ATHENA_BUILD_FUZZING`.
+      60 s each in the gate, nothing found.
+- [x] **Debian packages by debhelper** (`debian/`), replacing the Dockerfile's deb stage: built
+      on the build cluster for arm64 and in a `debian:trixie` container on an x86_64 machine for
+      amd64, staged in the apt repository's `incoming/athenasip/0.13.0/`, published by the
+      maintainer. The README's install lines proved in a clean container.
+- [x] **The code of conduct**, and the GitHub description and topics.
+- [x] **Found by the gate**: the presence routes answered from the Core strand, a double free one
+      run in five on arm64 (now answered on the API's executor,
+      `PresenceApiTest.AnswersAreWrittenOnTheApisExecutorNotTheCoreStrand`, failing first); three
+      ThreadSanitizer races in the tests' own code (the flow sweep's clock moved off the strand,
+      a fake DNS server's mode); a fuzz target calling a private parser; the cluster CA's subject
+      name for OpenSSL 4; the example configuration marked executable.
