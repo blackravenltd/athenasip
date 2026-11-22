@@ -348,9 +348,9 @@ bool Config::load_from_yaml(const std::string& filename) {
     if (websocket["cert_pem_filename"]) websocket_cert_pem_filename = websocket["cert_pem_filename"].as<std::string>();
     if (websocket["key_pem_filename"]) websocket_key_pem_filename = websocket["key_pem_filename"].as<std::string>();
 
-    // Never fall back to ws:// when wss was asked for.
-    if (websocket_tls && (websocket_cert_pem_filename.empty() || websocket_key_pem_filename.empty())) {
-      _logger->error("'websocket.tls' is set but 'websocket.cert_pem_filename' or 'websocket.key_pem_filename' is missing");
+    // Never fall back to ws:// when wss was asked for. An empty certificate is the tls section's.
+    if (websocket_tls && (websocket_cert().empty() || websocket_key().empty())) {
+      _logger->error("'websocket.tls' is set but there is no certificate and key for it: set them in the websocket section or the tls section");
       return false;
     }
   }

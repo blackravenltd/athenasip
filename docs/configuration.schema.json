@@ -460,7 +460,7 @@
           "default": 0
         },
         "tls": {
-          "description": "Serve wss on port. Needs this section's own certificate and key. A page served over https can only use wss.",
+          "description": "Serve wss on port, with this section's certificate and key or, where those are empty, the tls section's. A page served over https can only use wss.",
           "type": "boolean",
           "default": false
         },

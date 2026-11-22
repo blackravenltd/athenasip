@@ -176,7 +176,7 @@ class Config {
   // when websocket.tls is set.
   std::uint16_t websocket_secure_port = 0;
 
-  // The secure_port listener's certificate: the websocket section's, or the tls section's.
+  // The wss certificate, for websocket.tls or secure_port: the websocket section's, or the tls section's.
   std::string websocket_cert() const { return websocket_cert_pem_filename.empty() ? tls_cert_pem_filename : websocket_cert_pem_filename; }
   std::string websocket_key() const { return websocket_key_pem_filename.empty() ? tls_key_pem_filename : websocket_key_pem_filename; }
   std::string websocket_cert_pem_filename;

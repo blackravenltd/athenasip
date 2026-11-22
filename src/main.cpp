@@ -663,7 +663,7 @@ int main(int argc, char* argv[]) {
     auto websocketServer = std::make_shared<servers::WebsocketServer>(logger, core, config->websocket_address, config->websocket_port);
 
     // Never fall back to ws:// when wss was asked for.
-    if (config->websocket_tls && !websocketServer->set_certificates(config->websocket_cert_pem_filename, config->websocket_key_pem_filename)) {
+    if (config->websocket_tls && !websocketServer->set_certificates(config->websocket_cert(), config->websocket_key())) {
       logger->error("Cannot load WebSocket TLS certificates");
       datastore->close();
       return -4;
