@@ -91,10 +91,11 @@ class ManualTimerSource : public TimerSource {
  public:
   std::shared_ptr<Timer> schedule(std::chrono::milliseconds delay, std::function<void()> fn) override {
     auto entry = std::make_shared<Entry>();
-    entry->due = _now + delay;
     entry->fn = std::move(fn);
 
+    // _now is read under the lock advance() writes it under: a test's thread and the strand it drives both use the clock.
     std::lock_guard<std::mutex> lock(_mutex);
+    entry->due = _now + delay;
     _entries.push_back(entry);
     return entry;
   }

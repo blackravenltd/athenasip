@@ -6,8 +6,10 @@
 //
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <memory>
+#include <thread>
 #include <vector>
 
 #include "delayed_task.h"
@@ -53,6 +55,22 @@ TEST(ManualTimerSourceTest, ATimerDoneWithLetsGoOfItsFunction) {
 
   timers->advance(100ms);
   EXPECT_TRUE(fires_held.expired()) << "a fired timer still holds its function";
+}
+
+// The clock is shared between a test's thread and the strand it drives, so scheduling on one while the other moves
+// time is safe. ThreadSanitizer is what proves it: a plain build passes either way.
+TEST(ManualTimerSourceTest, ScheduleAndAdvanceFromTwoThreads) {
+  auto timers = std::make_shared<ManualTimerSource>();
+  std::atomic<int> fired{0};
+
+  std::thread scheduler([&]() {
+    for (int i = 0; i < 1000; ++i) timers->schedule(1ms, [&fired]() { fired++; });
+  });
+  for (int i = 0; i < 1000; ++i) timers->advance(1ms);
+  scheduler.join();
+
+  timers->advance(10ms);
+  EXPECT_EQ(fired.load(), 1000);
 }
 
 // At a test's end the clock stops, as an io_context destroyed takes its handlers with it.
