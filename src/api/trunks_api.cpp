@@ -141,21 +141,34 @@ void TrunksAPI::_list(RouteContext context) {
       return context.done();
     }
 
-    // One status read per trunk, in order, then the list.
-    auto trunks = std::make_shared<std::vector<std::shared_ptr<types::Trunk>>>(std::move(found.value));
-    auto out = std::make_shared<boost::json::array>();
-    auto next = std::make_shared<std::function<void(std::size_t)>>();
-    *next = [self, context, trunks, out, next](std::size_t index) mutable {
-      if (index >= trunks->size()) {
-        write_json(context.response, http::status::ok, *out);
-        return context.done();
+    // One status read per trunk, in order, then the list. Held only by the read in flight: a step that held itself
+    // would never be freed, and with it the session it answers on.
+    struct Walk : std::enable_shared_from_this<Walk> {
+      std::shared_ptr<TrunksAPI> api;
+      RouteContext context;
+      std::vector<std::shared_ptr<types::Trunk>> trunks;
+      boost::json::array out;
+      std::size_t index = 0;
+
+      void step() {
+        if (index >= trunks.size()) {
+          write_json(context.response, http::status::ok, out);
+          return context.done();
+        }
+
+        auto self = shared_from_this();
+        api->_shown(trunks[index++], [self](boost::json::object shown) {
+          self->out.push_back(std::move(shown));
+          self->step();
+        });
       }
-      self->_shown((*trunks)[index], [out, next, index](boost::json::object shown) {
-        out->push_back(std::move(shown));
-        (*next)(index + 1);
-      });
     };
-    (*next)(0);
+
+    auto walk = std::make_shared<Walk>();
+    walk->api = self;
+    walk->context = context;
+    walk->trunks = std::move(found.value);
+    walk->step();
   });
 }
 

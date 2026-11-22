@@ -540,6 +540,21 @@ TEST(ProvisioningApiTest, DeletingARealmDeletesItsSubscribersAndRegistrations) {
   EXPECT_EQ(f.get("/api/v1/realms/example.com/subscribers/alice").status, 404u);
 }
 
+// The registrations walk keeps nothing once it has answered: a step that held itself would keep the API, and every
+// realm it read, for the life of the node, one more each time the route was asked.
+TEST(ProvisioningApiTest, ListingRegistrationsLeavesNothingBehind) {
+  std::weak_ptr<api::ProvisioningAPI> provisioning;
+  {
+    ApiFixture f;
+    provisioning = f.provisioning;
+    ASSERT_EQ(f.post("/api/v1/realms", R"({"name":"example.com"})").status, 201u);
+    ASSERT_EQ(f.post("/api/v1/realms/example.com/subscribers", R"({"user":"alice","password":"secret"})").status, 201u);
+
+    EXPECT_EQ(f.get("/api/v1/registrations", "client-token").status, 200u);
+  }
+  EXPECT_TRUE(provisioning.expired()) << "something still holds the provisioning API after listing the registrations";
+}
+
 // The id is derived from the URI, so every node agrees which subscriber a binding belongs to.
 TEST(ProvisioningApiTest, ASubscriberIdIsDerivedFromItsUri) {
   ApiFixture f;

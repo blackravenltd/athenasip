@@ -591,25 +591,34 @@ void ProvisioningAPI::_registration_list(RouteContext context) {
       return context.done();
     }
 
-    auto realms = std::make_shared<std::vector<std::shared_ptr<types::Realm>>>(std::move(result.value));
-    auto index = std::make_shared<std::size_t>(0);
+    // Held only by the lookup in flight, as the subscriber walk is: a step that held itself would never be freed.
+    struct RealmWalk : std::enable_shared_from_this<RealmWalk> {
+      std::shared_ptr<ProvisioningAPI> api;
+      std::vector<std::shared_ptr<types::Realm>> realms;
+      std::function<void(std::vector<std::shared_ptr<types::Subscriber>>, std::function<void()>)> walk_subscribers;
+      std::function<void()> finish;
+      std::size_t index = 0;
 
-    auto next = std::make_shared<std::function<void()>>();
-    *next = [self, realms, index, walk_subscribers, finish, next]() mutable {
-      if (*index >= realms->size()) return finish();
+      void step() {
+        if (index >= realms.size()) return finish();
 
-      auto realm = (*realms)[(*index)++];
-      if (!realm) return (*next)();
+        auto realm = realms[index++];
+        if (!realm) return step();
 
-      self->_datastore->subscriber_list(self->_executor, realm->name,
-                                        [walk_subscribers, next](plugins::Result<std::vector<std::shared_ptr<types::Subscriber>>> subscribers) mutable {
-                                          if (!subscribers.ok) return (*next)();
-
-                                          walk_subscribers(std::move(subscribers.value), [next]() { (*next)(); });
-                                        });
+        auto self = shared_from_this();
+        api->_datastore->subscriber_list(api->_executor, realm->name, [self](plugins::Result<std::vector<std::shared_ptr<types::Subscriber>>> subscribers) {
+          if (!subscribers.ok) return self->step();
+          self->walk_subscribers(std::move(subscribers.value), [self]() { self->step(); });
+        });
+      }
     };
 
-    (*next)();
+    auto walk = std::make_shared<RealmWalk>();
+    walk->api = self;
+    walk->realms = std::move(result.value);
+    walk->walk_subscribers = walk_subscribers;
+    walk->finish = finish;
+    walk->step();
   });
 }
 
