@@ -33,6 +33,46 @@ TEST(ManualTimerSourceTest, NothingFiresUntilTimeMoves) {
   EXPECT_EQ(timers->pending(), 0u);
 }
 
+// A timer that has fired or been cancelled lets go of its function, as an asio timer lets go of its handler: what
+// the function holds is often what holds the timer, and kept it would be a cycle that is never freed.
+TEST(ManualTimerSourceTest, ATimerDoneWithLetsGoOfItsFunction) {
+  auto timers = std::make_shared<ManualTimerSource>();
+
+  auto fires = std::make_shared<int>(0);
+  auto cancelled = std::make_shared<int>(0);
+  std::weak_ptr<int> fires_held = fires;
+  std::weak_ptr<int> cancelled_held = cancelled;
+
+  auto first = timers->schedule(100ms, [fires]() { (*fires)++; });
+  auto second = timers->schedule(100ms, [cancelled]() { (*cancelled)++; });
+  fires.reset();
+  cancelled.reset();
+
+  EXPECT_TRUE(second->cancel());
+  EXPECT_TRUE(cancelled_held.expired()) << "a cancelled timer still holds its function";
+
+  timers->advance(100ms);
+  EXPECT_TRUE(fires_held.expired()) << "a fired timer still holds its function";
+}
+
+// At a test's end the clock stops, as an io_context destroyed takes its handlers with it.
+TEST(ManualTimerSourceTest, CancelAllStopsEveryPendingTimer) {
+  auto timers = std::make_shared<ManualTimerSource>();
+  auto held = std::make_shared<int>(0);
+  std::weak_ptr<int> weak = held;
+  bool fired = false;
+
+  timers->schedule(100ms, [held, &fired]() { fired = true; });
+  held.reset();
+
+  timers->cancel_all();
+  EXPECT_EQ(timers->pending(), 0u);
+  EXPECT_TRUE(weak.expired());
+
+  timers->advance(200ms);
+  EXPECT_FALSE(fired);
+}
+
 TEST(ManualTimerSourceTest, FiresInDueOrder) {
   auto timers = std::make_shared<ManualTimerSource>();
   std::vector<int> order;
