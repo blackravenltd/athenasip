@@ -10,6 +10,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "../config.h"
 #include "../loggers/logger.h"
@@ -143,7 +144,14 @@ class TransactionBase : public std::enable_shared_from_this<TransactionBase> {
 
     if (_state == State::Terminated) {
       _cancel_all_timers();
-      if (_on_terminated) _on_terminated(_id);
+
+      // A terminated transaction is forgotten (RFC 3261 17), so it lets go of its callbacks: they reach back to what
+      // holds it, such as the proxy's context for the request, and kept they would keep each other alive.
+      auto terminated = std::exchange(_on_terminated, nullptr);
+      _send = nullptr;
+      _to_tu = nullptr;
+      _on_timeout = nullptr;
+      if (terminated) terminated(_id);
     }
   }
 
