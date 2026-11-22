@@ -18,59 +18,62 @@ namespace {
 
 using namespace athenasip;
 
-// The node's store and addresses, through Core as the real host reaches them, or a store that has failed.
+// The node's store and addresses, through Core as the real host reaches them, or a store that has failed. It holds
+// the Core weakly, as the real host does: the Core holds the policy, which holds its host.
 class TestHost final : public policy::Host {
  public:
-  TestHost(std::shared_ptr<Core> core) : _core(std::move(core)) {}
+  TestHost(const std::shared_ptr<Core>& core) : _core(core) {}
 
   bool down = false;
 
   void realm(std::string name, plugins::Handler<std::shared_ptr<types::Realm>> handler) override {
     if (down) return fail(handler);
-    _core->realm_get_by_name(std::move(name), std::move(handler));
+    core()->realm_get_by_name(std::move(name), std::move(handler));
   }
 
   void subscriber(std::shared_ptr<types::SIPIdentity> identity, plugins::Handler<std::shared_ptr<types::Subscriber>> handler) override {
     if (down) return fail(handler);
-    _core->subscriber_get(std::move(identity), std::move(handler));
+    core()->subscriber_get(std::move(identity), std::move(handler));
   }
 
   void locations(std::uint64_t subscriber_id, plugins::Handler<std::vector<types::Location>> handler) override {
     if (down) return fail(handler);
-    _core->location_list(subscriber_id, std::move(handler));
+    core()->location_list(subscriber_id, std::move(handler));
   }
 
   void trunk(std::string name, plugins::Handler<std::shared_ptr<types::Trunk>> handler) override {
     if (down) return fail(handler);
-    _core->datastore->trunk_get(_core->strand(), std::move(name), std::move(handler));
+    core()->datastore->trunk_get(core()->strand(), std::move(name), std::move(handler));
   }
 
   void trunks(plugins::Handler<std::vector<std::shared_ptr<types::Trunk>>> handler) override {
     if (down) return fail(handler);
-    _core->datastore->trunk_list(_core->strand(), std::move(handler));
+    core()->datastore->trunk_list(core()->strand(), std::move(handler));
   }
 
   void counter_add(std::string name, std::int64_t delta, std::uint32_t seconds, plugins::Handler<std::int64_t> handler) override {
     if (down) return fail(handler);
-    _core->datastore->counter_add(_core->strand(), std::move(name), delta, seconds, std::move(handler));
+    core()->datastore->counter_add(core()->strand(), std::move(name), delta, seconds, std::move(handler));
   }
 
   void counter_get(std::string name, plugins::Handler<std::int64_t> handler) override {
     if (down) return fail(handler);
-    _core->datastore->counter_get(_core->strand(), std::move(name), std::move(handler));
+    core()->datastore->counter_get(core()->strand(), std::move(name), std::move(handler));
   }
 
-  bool names_this_node(const std::string& host, std::uint16_t port) const override { return _core->is_local_address(host, port); }
+  bool names_this_node(const std::string& host, std::uint16_t port) const override { return core()->is_local_address(host, port); }
 
-  const Config& config() const override { return *_core->config; }
+  const Config& config() const override { return *core()->config; }
 
  private:
   template <typename T>
   void fail(plugins::Handler<T> handler) {
-    _core->post([handler]() { handler(plugins::Result<T>::failure("the store is down")); });
+    core()->post([handler]() { handler(plugins::Result<T>::failure("the store is down")); });
   }
 
-  std::shared_ptr<Core> _core;
+  std::shared_ptr<Core> core() const { return _core.lock(); }
+
+  std::weak_ptr<Core> _core;
 };
 
 // Asks a policy one question from the strand, as the node does, and waits for the answer.

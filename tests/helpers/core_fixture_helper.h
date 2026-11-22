@@ -166,8 +166,19 @@ struct CoreFixture {
     settle();
   }
 
-  // Nothing may be in flight at destruction: the chain holds the channel and the connection.
-  ~CoreFixture() { settle(); }
+  // Nothing may be in flight at destruction: the chain holds the channel and the connection. Then the node is
+  // stopped as main() stops it, since a filed channel and the Core hold each other until it is closed.
+  ~CoreFixture() {
+    settle();
+    on_strand([this]() {
+      core->transaction_end_all();
+      core->channel_close_all();
+    });
+    settle();
+
+    // And the clock stops, taking with it whatever the timers still pending hold.
+    timers->cancel_all();
+  }
 
   // A transaction user's work is a chain of strand hops, and handing a message in only starts it. Each round
   // drains the strand; a REGISTER is about six hops deep, and a round on an empty queue costs nothing.

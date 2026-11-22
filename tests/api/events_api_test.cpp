@@ -29,19 +29,13 @@ using namespace athenasip;
 
 namespace {
 
-// The local bus answers on whatever executor it is given; this one runs on its own thread for the connect.
-// For the life of the process and never destroyed: its thread is detached, and an io_context destroyed at exit
-// would be destroyed under it.
-plugins::Executor admin_executor() {
-  static auto* io = new boost::asio::io_context;
-  static auto* guard = new boost::asio::executor_work_guard<boost::asio::io_context::executor_type>(io->get_executor());
-  static bool started = (std::thread([]() { io->run(); }).detach(), true);
-  (void)guard;
-  (void)started;
-  return io->get_executor();
-}
-
 struct EventsFixture {
+  // The local bus answers on whatever executor it is given; this one runs on its own thread for the connect. It is
+  // declared first so it outlives everything that might post to it, and its thread is joined before it goes.
+  boost::asio::io_context bus_io;
+  boost::asio::executor_work_guard<boost::asio::io_context::executor_type> bus_work{bus_io.get_executor()};
+  std::thread bus_thread{[this]() { bus_io.run(); }};
+
   std::shared_ptr<MockLogger> logger = std::make_shared<MockLogger>();
   std::shared_ptr<datastores::MemoryDatastore> datastore;
   std::shared_ptr<SyncDatastore> store;
@@ -58,7 +52,7 @@ struct EventsFixture {
     store->connect();
     bus = std::make_shared<events::LocalEventSystem>(logger);
     std::promise<void> connected;
-    bus->connect(admin_executor(), [&connected](plugins::Status) { connected.set_value(); });
+    bus->connect(bus_io.get_executor(), [&connected](plugins::Status) { connected.set_value(); });
     connected.get_future().wait();
 
     admin = std::make_shared<api::AdminAPI>(logger, "127.0.0.1", 0);
@@ -75,7 +69,11 @@ struct EventsFixture {
     signed_in = SignedInUsers(sessions, *store);
   }
 
-  ~EventsFixture() { admin->stop(); }
+  ~EventsFixture() {
+    admin->stop();
+    bus_work.reset();
+    bus_thread.join();
+  }
 
   // Opens the stream and returns the socket with the response read up to the end of its headers.
   struct Open {
