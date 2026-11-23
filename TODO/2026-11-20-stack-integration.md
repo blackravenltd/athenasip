@@ -68,7 +68,10 @@ through the coordinating session.
   log keys are `log.level` (all, debug, info, warn, error) and `log.format` (text, json).
 - **No Docker Compose on the build cluster**: the harnesses run nodes and sipp directly on claimed
   machines; Docker only for a single container.
-- **Boost**, open: AthenaSIP links Boost `1.89.0` statically for `boost::redis` (needs `1.84.0`) and
+- **Boost**, decided 2026-11-23: Debian 13's Boost 1.83, with `boost::mqtt5` pinned over it, and
+  `redis://` on a RESP client written by hand in place of `boost::redis` (the proof above). What
+  follows is the history of the question.
+- **Boost**, as it stood: AthenaSIP links Boost `1.89.0` statically for `boost::redis` (needs `1.84.0`) and
   `boost::mqtt5` (`1.88.0`); the stack builds on trixie's `1.83.0`. Agreed with Dannan to try the
   system Boost with those two header-only libraries as pinned sources over it, proved on a build
   machine first (against `1.83.0`'s Asio: `any_completion_handler`, cancellation, `consign`, and

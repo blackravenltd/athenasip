@@ -173,6 +173,13 @@ was silently skipped, a TURN username no browser could use.
 
 Dated, and not reopened without asking.
 
+- (2026-11-23) **`redis://` gets a RESP client written by hand on Asio, in place of `boost::redis`**
+  (the maintainer, on the Boost proof: `boost::redis` needs Asio from Boost 1.86, `boost::mqtt5`
+  builds on Debian's 1.83). It drops a dependency and lets AthenaSIP build on Debian 13's Boost
+  1.83 and the packaged libdannan, with only `boost::mqtt5` pinned over it, as the rest of the
+  stack does (Dannan's option (a)). Dannan leans the same way; Mimir's RESP code is a reference
+  for the parsing.
+
 - (2026-11-23) **In the stack, AthenaSIP uses Dagda and Dannan and nothing else for storage and
   messaging, linked in-process** (the maintainer, directly). A `dagda://` datastore and a
   `dannan://` event system are plugins, in-process as `memory://` and `local://` are: each node
@@ -543,6 +550,11 @@ From `TODO/2026-11-20-stack-integration.md`, part A: what needs no decision and 
 - [ ] `presence_put` and `presence_delete` declare every key: read the old record first, pass all
       keys in `KEYS` and the old value in `ARGV`, write only if it still holds, retry with a bound
       and a backoff (the audit's recommendation). Multi-key stays, for Mimir and Dagda to answer.
+- [ ] **A RESP client by hand for `redis://`** (decided 2026-11-23): framing, pipelining, `AUTH`
+      and `SELECT`, TLS with the verification `rediss://` has now, reconnect with backoff; only
+      what the driver sends (`TODO/2026-11-23-redis-scripts-audit.md`). Tested against Redis and
+      Mimir. Then the build moves to Debian's Boost 1.83 with `boost::mqtt5` pinned over it, and
+      Boost.JSON comes from libdannan once part B links it.
 - [x] `mqtt://` takes a list of brokers and moves to the next with backoff and jitter (2026-11-23):
       `mqtt://h1:1883,h2:1883`, boost.mqtt5's reconnect (1 to 16 s, half a second of jitter);
       `types::URL` keeps the text as given, since RFC 3986 holds one host
