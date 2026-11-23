@@ -4,10 +4,12 @@ Work happens on `develop`; `main` carries the last release, `0.13.0` (2026-11-20
 released on GitHub and in the apt repository for amd64 and arm64. Every release from `0.5.0`
 on is tagged. Line numbers refer to the current tree; update them as files move.
 
-**Resume here (2026-11-23).** `0.13.2` is tagged and on node-b and node-c from the arm64 package
-(GitHub release and apt staging wait for the maintainer). node-c joining node-b's cluster is half
-done (Next, The third node): node-b is ready for it; node-c waits on its DNS name, its
-certificate and the router forwards (Waiting on the maintainer, 2). Then stack part A.
+**Resume here (2026-11-23, evening).** `0.13.2` is tagged and on node-b and node-c from the arm64
+package (GitHub release and apt staging wait for the maintainer). Stack part A is done but for
+`live.json`. Decided today (Decisions, 2026-11-23): in the stack, AthenaSIP uses Dagda and Dannan
+in-process for storage and messaging, and every existing backend stays. So node-c does not join
+node-b over cross-site Redis and MQTT: it waits, stopped, for the in-process drivers (Next, The
+third node). Nine commits on `develop` wait for the maintainer's word to push.
 
 **Before that (2026-11-22, evening).** `0.13.0` is out (`COMPLETED.md`, Releases). On `develop`
 since: the leaks at exit are gone and LeakSanitizer is back on in `tools/ci.sh asan`; two of them
@@ -81,12 +83,10 @@ the lists because a session that has lost its context needs to see them first.
 1. **`athenasip-admin` on GitHub** still has its history from before the 2026-11-20 scrub, in
    public. Its code is in `console/`. The maintainer deletes the repository (decided 2026-11-22);
    until then it stays here.
-2. **The router forwards for a two-site cluster** (decided 2026-11-22: node-c joins node-b's
-   cluster over port forwards with TLS, serving signalling and media; Next, The third node). At
-   node-b's site, to node-b: Redis over TLS and MQTT over TLS (ports chosen when node-b is
-   configured), the inter-node listener 5062/tcp, and what item 3 already lists. At node-c's
-   site, to node-c: 5062/tcp, TLS 5061 and WSS 8089, TURN 3478 udp and tcp and 5349, RTP
-   22000-22200/udp and relay 24000-24100/udp.
+2. **The router forwards for node-c**, when it is to serve: at node-c's site, to node-c, TLS 5061
+   and WSS 8089, TURN 3478 udp and tcp and 5349, RTP 22000-22200/udp and relay 24000-24100/udp,
+   and whatever port Dannan's listener takes for the cluster. No Redis or MQTT forwards: the
+   cross-site plan is set aside (Decisions, 2026-11-23).
 3. **node-b** (2026-11-01): the router forwards to 10.102.1.20 (TCP 5061, 8089, 5349; UDP and
    TCP 3478; UDP 22000-22200 and 24000-24100) and TCP 80 to 10.102.1.50, after which the node is
    tested from outside; PROXY protocol v2 (Next, Found setting up node-b); and the
@@ -171,6 +171,17 @@ was silently skipped, a TURN username no browser could use.
 ## Decisions
 
 Dated, and not reopened without asking.
+
+- (2026-11-23) **In the stack, AthenaSIP uses Dagda and Dannan and nothing else for storage and
+  messaging, linked in-process** (the maintainer, directly). A `dagda://` datastore and a
+  `dannan://` event system are plugins, in-process as `memory://` and `local://` are: each node
+  is a member of a Dannan cluster, Dagda replicates the records among the nodes, and the nodes
+  find each other over Dannan, with no broker and no external store. **AthenaSIP must remain
+  usable with Redis and MQTT, or memory**: every existing backend stays, and a single node still
+  needs nothing. This supersedes the 2026-11-20 route for the bus through Lir, for the stack's own
+  deployments, and the idea of running AthenaSIP on Lir and Mimir on its nodes. Linking Dannan and
+  Dagda is a new dependency, taken because the stack links rather than duplicates.
+  `TODO/2026-11-20-stack-integration.md`, parts D and E.
 
 - (2026-11-20) **AthenaSIP is part of the cluster stack** (the maintainer, confirmed in session), and
   takes its group rules: hosted CI kept green with badges, coverage and CodeQL (`tools/ci.sh`,
@@ -496,13 +507,18 @@ told before either machine is touched.
 
 - [x] `0.13.2` on node-b and node-c from the package (2026-11-23); node-b's build from source kept
       to roll back to. node-c has AthenaSIP, rtpengine and coturn installed, stopped and disabled.
-- [x] node-b ready (2026-11-23): Redis over TLS on 6380 and the broker over TLS on 8883, each with a
-      password and the node's public certificate, which `rediss://` now verifies (0.13.2); the
-      cluster CA made on node-b, a certificate for each node installed; node-b's inter-node
-      listener up, `--check` clean. Redis capped at 256 MB.
-- [ ] node-c's inter-node listener, datastore and bus over TLS to node-b.
-- [ ] node-c with rtpengine and coturn as node-b has them; its own public name; the realm's
-      subscriber config listing both nodes.
+- [x] node-b: the cluster CA made on it, a certificate for each node installed, its inter-node
+      listener up; Redis capped at 256 MB. Redis and the broker over TLS for node-c were set up
+      and then taken out again the same day, when the maintainer chose the in-process route
+      (Decisions, 2026-11-23): both are on loopback only, as before.
+- [x] node-c prepared (2026-11-23): its own name `inverbeg.athenasip.com`, kept current by the
+      other service's DNS updater; a Let's Encrypt certificate by DNS-01 (hooks in
+      `/etc/letsencrypt/athenasip/`); rtpengine and coturn configured as node-b's. AthenaSIP,
+      rtpengine and coturn all stopped and disabled; its configuration holds placeholders for the
+      datastore and bus.
+- [ ] node-c joins node-b on the in-process `dagda://` and `dannan://` drivers once they exist
+      (integration plan, part D). Until then it waits (the maintainer, 2026-11-23).
+- [ ] The realm's subscriber config listing both nodes.
 - [ ] A call each way between a phone on node-b and one on node-c, and a REGISTER through either
       reaching the other: `verify.py` with a `live.json` for the two.
 - [ ] The router forwards (Waiting on the maintainer, 2) are what this waits on from outside.
@@ -540,8 +556,9 @@ From `TODO/2026-11-20-stack-integration.md`, part A: what needs no decision and 
 
 Then part B, now that Dannan `0.10.1` is tagged: inter-node TLS and the CA from Dannan, and
 `dannan::config` with the stack's naming (the integration plan has both). Later, each gated in
-that document: Lugh sign-in, a `dagda://` driver, Lir in place of Mosquitto, the `redis://`
-tests against Mimir.
+that document: Lugh sign-in; the in-process `dagda://` datastore and `dannan://` event system on
+one Dannan instance per process (Decisions, 2026-11-23); `mqtt://` proved against Lir and the
+`redis://` tests against Mimir.
 
 ### Found setting up node-b (2026-11-01)
 

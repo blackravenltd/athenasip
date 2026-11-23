@@ -26,8 +26,21 @@ Dagda's D5, D6 and D9, and Dannan's atomic commit across replica sets.
 
 ## Decisions
 
-All from 2026-11-20, the maintainer, confirmed in session where they came through the
-coordinating session.
+From 2026-11-20 unless dated otherwise, the maintainer, confirmed in session where they came
+through the coordinating session.
+
+- **(2026-11-23) In the stack, AthenaSIP uses Dagda and Dannan and nothing else for storage and
+  messaging, linked in-process** (the maintainer, directly). A `dagda://` datastore and a
+  `dannan://` event system are plugins like the others, but in-process as `memory://` and
+  `local://` are: each AthenaSIP node is a member of a Dannan cluster, Dagda replicates the
+  records among the nodes themselves, and the nodes find each other and carry their status over
+  Dannan. No broker and no external store. **AthenaSIP must remain usable with Redis and MQTT, or
+  memory**: `memory://`, `local://`, `redis://` and `mqtt://` all stay, and a single node still
+  needs nothing. This supersedes, for the stack's own deployments, the route through Lir (the bus
+  decision below) and the idea of running AthenaSIP on Lir and Mimir; Lir and Mimir remain
+  brokers and stores in their own right that the `mqtt://` and `redis://` plugins can point at.
+  The `athenasip` binary then links Dannan and Dagda: a new dependency, taken because the stack's
+  rule is to link rather than duplicate.
 
 - **AthenaSIP is one of the stack's projects**, under its group rules and its no-duplication
   audit: hosted CI green with badges, coverage and CodeQL; Debian packages at each release to
@@ -39,7 +52,9 @@ coordinating session.
 - **All four existing backends stay**: `memory://`, `redis://`, `local://`, `mqtt://`, beside the
   stack's. A single node still needs nothing.
 - **The bus**: `mqtt://` is the standard protocol to a broker; it points at Lir when Lir has
-  retained messages, wills and QoS 1. No driver of AthenaSIP's own for Lir.
+  retained messages, wills and QoS 1. No driver of AthenaSIP's own for Lir. *Superseded for the
+  stack's own deployments on 2026-11-23 by the in-process `dannan://` event system; `mqtt://`
+  stays, and may still point at Lir.*
 - **Admin users**: password users stay beside Lugh sign-in, but hashing, sessions and the login
   limiter move to Dannan's credential helper and signed session tokens (its `0.12.0`); roles and
   subscriber Digest stay AthenaSIP's. Whether password users go altogether later (Lugh only, as
@@ -114,14 +129,21 @@ own it replaces.
   signs in through the node (code flow with PKCE, the node as confidential client, its own
   session cookie); the provisioning user as a service app with `client_credentials`.
 
-### D. When Dagda releases D5, D6, D9 and TTL
+### D. When Dagda releases D5, D6, D9 and TTL: the in-process datastore
 
-- A `dagda://` datastore driver, copied in shape from Lugh: records as register-map keys
-  `realm/id` with `walk_from` paging; expiry as Dagda's TTL option; bindings merged by Call-ID
-  and CSeq; the trunk lease as a D5 lease with its epoch on every REGISTER; CDRs on a D9 log
-  keyed by hybrid clock; counters merged by sum. The contract's version moves if its shape does.
+- A `dagda://` datastore driver that links the Dagda library and holds a Dannan instance in the
+  `athenasip` process (Decisions, 2026-11-23), copied in shape from Lugh: records as register-map
+  keys `realm/id` with `walk_from` paging; expiry as Dagda's TTL option; bindings merged by
+  Call-ID and CSeq; the trunk lease as a D5 lease with its epoch on every REGISTER; CDRs on a D9
+  log keyed by hybrid clock; counters merged by sum. What it needs is
+  `TODO/2026-11-23-dagda-requirements.md`. The contract's version moves if its shape does.
+- A `dannan://` event system on the same Dannan instance: node status and liveness from Dannan's
+  membership rather than a retained topic and a will, and presence and trunk changes over its
+  channels. The bus stays never storage and never on the call path.
+- One Dannan instance per process, shared by both plugins and by inter-node TLS (part B), so the
+  nodes of a cluster are exactly the members of one Dannan cluster.
 
-### E. When Lir tags a release with retained, wills and QoS 1
+### E. Lir, for `mqtt://`
 
 Lir has the liveness scenario (2026-11-23, `TODO/2026-11-23-lir-liveness-scenario.md`) as its own
 acceptance tests, disabled until Dagda's register map (D6, for retained messages) and leases (D5,
@@ -129,8 +151,10 @@ for wills) ship; until then its broker refuses both, in MQTT's own terms, and of
 will carries the client's lease epoch, so one from an older connection never overwrites a newer
 `ok`; the order of retained values after a heal is an open point between Lir and the maintainer.
 
-- Run the unit suite and the cluster harness with `ATHENA_TEST_MQTT_URL` at a Lir cluster, then
-  the node-death scenario; measure how long a will takes, since that is the node-down signal.
+- When Lir tags a release with retained messages, wills and QoS 1: run the `mqtt://` driver's
+  tests and the cluster harness with `ATHENA_TEST_MQTT_URL` at a Lir cluster, then the
+  node-death scenario. This proves `mqtt://` against Lir; it is no longer the stack's route for
+  AthenaSIP (Decisions, 2026-11-23).
 
 ### F. When Mimir has atomic commit and persistence
 
@@ -139,4 +163,5 @@ will carries the client's lease epoch, so one from an older connection never ove
 ## What does not change
 
 SIP stays native and on the call path alone; the bus is never storage and never on the call
-path; a single node needs no external service; the plugin contract stays the product.
+path; a single node needs no external service; every existing backend (`memory://`, `local://`,
+`redis://`, `mqtt://`) stays usable; the plugin contract stays the product.
