@@ -514,8 +514,8 @@ From `TODO/2026-11-20-stack-integration.md`, part A: what needs no decision and 
 - [ ] Send Dagda AthenaSIP's requirements per shape (sizes, counts, rates, latency, durability,
       TTL ranges, any true compare-and-set, CDR volume and scans, counters), so it enters
       Dagda's needs table and TTL, counters and the time-scanned log get a second user.
-- [ ] Send Mimir the exact Redis command list with options and the ten Lua scripts
-      (`src/datastores/redis_datastore.cpp`), for its conformance and differential gates.
+- [x] Send Mimir the exact Redis command list with options and the five Lua scripts (2026-11-23, from
+      the audit), for its conformance and differential gates.
 - [ ] Write the liveness pattern for Lir as a scenario: retained `nodes/<id>/status` plus a
       will on the same topic, node death, split and heal.
 - [x] Audit the Redis scripts (2026-11-23, `TODO/2026-11-23-redis-scripts-audit.md`): three of five
