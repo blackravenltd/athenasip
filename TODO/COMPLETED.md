@@ -14,6 +14,19 @@ week, under Milestone 1. Everything after that is dated as it landed.
 
 Newest first. The detail is below, oldest first.
 
+- **0.13.2** (2026-11-23): `rediss://` checks who answers. boost.redis's own TLS context verified
+  nothing, so the connection was encrypted but the password went to whatever answered; the
+  server's certificate is now checked against the system's roots and `datastore.redis.ca_file`,
+  and its name against the URL's host. Found preparing node-c, which reaches the datastore across
+  the internet. Gate on the build cluster: release, ASan with LeakSanitizer, TSan twice (1663
+  each), fuzz (nine targets); CI green. arm64 package only (amd64 and the image follow, the
+  maintainer's call). Not in the gate: the sipp and cluster harnesses.
+- **0.13.1** (2026-11-22): the leaks. Every store lookup from a routing script and every listing
+  of the registrations or trunks leaked in a running node; a stopped node kept its servers and
+  flows; LeakSanitizer is back in the gate. `websocket.tls` takes the `tls` section's
+  certificate, and the rtpengine control socket is bound. Same gate as 0.13.2 (1660 each).
+  Deployed to node-b from the package, replacing the build from source.
+
 - **0.13.0** (2026-11-20): the external review's fixes, conferencing, and the project's
   housekeeping as one of the cluster stack. From the review: streams and flows held within
   limits, Content-Length as one number or nothing, Digest nonces that carry their own proof and

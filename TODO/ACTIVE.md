@@ -4,7 +4,12 @@ Work happens on `develop`; `main` carries the last release, `0.13.0` (2026-11-20
 released on GitHub and in the apt repository for amd64 and arm64. Every release from `0.5.0`
 on is tagged. Line numbers refer to the current tree; update them as files move.
 
-**Resume here (2026-11-22, evening).** `0.13.0` is out (`COMPLETED.md`, Releases). On `develop`
+**Resume here (2026-11-23).** `0.13.2` is tagged and on node-b and node-c from the arm64 package
+(GitHub release and apt staging wait for the maintainer). node-c joining node-b's cluster is half
+done (Next, The third node): node-b is ready for it; node-c waits on its DNS name, its
+certificate and the router forwards (Waiting on the maintainer, 2). Then stack part A.
+
+**Before that (2026-11-22, evening).** `0.13.0` is out (`COMPLETED.md`, Releases). On `develop`
 since: the leaks at exit are gone and LeakSanitizer is back on in `tools/ci.sh asan`; two of them
 leaked in a running node too (every store lookup from a script, and the registrations and trunks
 listings). `websocket.tls` takes the `tls` section's certificate, the rtpengine control socket is
@@ -489,9 +494,13 @@ services. It joins node-b's cluster (the maintainer, 2026-11-22). Nothing is com
 node-b: both install the arm64 package built on the build cluster. The other service's session is
 told before either machine is touched.
 
-- [ ] `0.13.1` on node-b and node-c from the package, the previous binary kept to roll back to.
-- [ ] node-b's Redis and broker reachable from node-c over TLS, with passwords; the cluster CA
-      made on node-b (`--ca-init`), a node certificate for each, the inter-node listener on both.
+- [x] `0.13.2` on node-b and node-c from the package (2026-11-23); node-b's build from source kept
+      to roll back to. node-c has AthenaSIP, rtpengine and coturn installed, stopped and disabled.
+- [x] node-b ready (2026-11-23): Redis over TLS on 6380 and the broker over TLS on 8883, each with a
+      password and the node's public certificate, which `rediss://` now verifies (0.13.2); the
+      cluster CA made on node-b, a certificate for each node installed; node-b's inter-node
+      listener up, `--check` clean. Redis capped at 256 MB.
+- [ ] node-c's inter-node listener, datastore and bus over TLS to node-b.
 - [ ] node-c with rtpengine and coturn as node-b has them; its own public name; the realm's
       subscriber config listing both nodes.
 - [ ] A call each way between a phone on node-b and one on node-c, and a REGISTER through either
