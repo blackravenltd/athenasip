@@ -1,3 +1,11 @@
+athenasip (0.13.2) trixie; urgency=high
+
+  * rediss:// now checks the server's certificate and name, against the
+    system's roots and the new datastore.redis.ca_file. Before, it encrypted
+    the connection but sent the password to whatever answered.
+
+ -- tomdionysus <tomdionysus@users.noreply.github.com>  Mon, 23 Nov 2026 11:00:00 +0000
+
 athenasip (0.13.1) trixie; urgency=medium
 
   * Leaks fixed: every store lookup from a routing script, and every listing
