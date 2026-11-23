@@ -518,8 +518,13 @@ From `TODO/2026-11-20-stack-integration.md`, part A: what needs no decision and 
       (`src/datastores/redis_datastore.cpp`), for its conformance and differential gates.
 - [ ] Write the liveness pattern for Lir as a scenario: retained `nodes/<id>/status` plus a
       will on the same topic, node death, split and heal.
-- [ ] Audit the Redis scripts: every key touched is declared in `KEYS` (Redis Cluster's rule
-      as well as Mimir's), and name the records that truly need compare-and-set.
+- [x] Audit the Redis scripts (2026-11-23, `TODO/2026-11-23-redis-scripts-audit.md`): three of five
+      declare every key; `presence_put` and `presence_delete` build index keys inside the script.
+      Only a trunk's lease is a true compare-and-set; counters, the call index and presence need
+      atomicity, not CAS; a binding needs neither (higher CSeq wins, RFC 3261 10.3).
+- [ ] `presence_put` and `presence_delete` declare every key: read the old record first, pass all
+      keys in `KEYS` and the old value in `ARGV`, write only if it still holds, retry with a bound
+      and a backoff (the audit's recommendation). Multi-key stays, for Mimir and Dagda to answer.
 - [ ] `mqtt://` takes a list of brokers and moves to the next with backoff and jitter.
 - [ ] `test/interop/live.json` still describes the old node-b (the carrier trunk, node-a's trunk
       to it): bring it to node-b as it is, or `verify.py` fails there.
