@@ -123,6 +123,12 @@ own it replaces.
 
 ### E. When Lir tags a release with retained, wills and QoS 1
 
+Lir has the liveness scenario (2026-11-23, `TODO/2026-11-23-lir-liveness-scenario.md`) as its own
+acceptance tests, disabled until Dagda's register map (D6, for retained messages) and leases (D5,
+for wills) ship; until then its broker refuses both, in MQTT's own terms, and offers no interim. A
+will carries the client's lease epoch, so one from an older connection never overwrites a newer
+`ok`; the order of retained values after a heal is an open point between Lir and the maintainer.
+
 - Run the unit suite and the cluster harness with `ATHENA_TEST_MQTT_URL` at a Lir cluster, then
   the node-death scenario; measure how long a will takes, since that is the node-down signal.
 
