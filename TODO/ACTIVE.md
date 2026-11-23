@@ -550,11 +550,18 @@ From `TODO/2026-11-20-stack-integration.md`, part A: what needs no decision and 
 - [ ] `presence_put` and `presence_delete` declare every key: read the old record first, pass all
       keys in `KEYS` and the old value in `ARGV`, write only if it still holds, retry with a bound
       and a backoff (the audit's recommendation). Multi-key stays, for Mimir and Dagda to answer.
-- [ ] **A RESP client by hand for `redis://`** (decided 2026-11-23): framing, pipelining, `AUTH`
-      and `SELECT`, TLS with the verification `rediss://` has now, reconnect with backoff; only
-      what the driver sends (`TODO/2026-11-23-redis-scripts-audit.md`). Tested against Redis and
-      Mimir. Then the build moves to Debian's Boost 1.83 with `boost::mqtt5` pinned over it, and
-      Boost.JSON comes from libdannan once part B links it.
+- [x] **A RESP client by hand for `redis://`** (decided 2026-11-23, built the same day on
+      `feature/resp-client`): `src/datastores/resp.*` (RESP2, bounded, RESP3 refused, a fuzz
+      target) and `src/datastores/resp_connection.*` (TCP or verified TLS, `AUTH` and `SELECT`
+      first, pipelining, a deadline per request, reconnect with backoff and jitter). The driver's
+      requests and scripts are unchanged; `boost::redis` is gone. `RespTest`, `RespConnectionTest`
+      failing first against a stub; the suite with a real Redis 1684 on a build machine. Left: run
+      the driver's tests against Mimir when it can take them.
+- [ ] **The build on Debian 13's Boost 1.83**, with `boost::mqtt5` pinned over it (decided
+      2026-11-23): how it is pinned (its own repository at the 1.89 tag, header-only, by
+      FetchContent or vendored), `find_package(Boost 1.83 ...)` without Charconv, `tools/ci.sh
+      deps` without building Boost, and the package's Build-Depends. Boost.JSON comes from libdannan
+      once part B links it.
 - [x] `mqtt://` takes a list of brokers and moves to the next with backoff and jitter (2026-11-23):
       `mqtt://h1:1883,h2:1883`, boost.mqtt5's reconnect (1 to 16 s, half a second of jitter);
       `types::URL` keeps the text as given, since RFC 3986 holds one host

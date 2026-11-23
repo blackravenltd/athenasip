@@ -13,7 +13,7 @@ Louhi, Mimir, Kvasir, Macha, and AthenaSIP since 2026-11-20. Dagda's stack maste
 | Project | What it is | Version | For AthenaSIP today |
 |---|---|---|---|
 | Dannan | The substrate: membership, agreement (CASPaxos registers), hybrid clock, channels, identity and CA, a mutual-TLS listener, layered config | 0.11.1 (as of 2026-11-23) | Usable. ABI kept within a minor; pin the exact release. Its listener and its config stand alone, without a node in-process |
-| Dagda | The store: heads with an owner's merge, objects, claims, node-local spaces, leases | 0.3.2 (as of 2026-11-20) | Usable but 0.x, any minor may change a call. Missing what AthenaSIP needs: durable leases (D5), the register map (D6, in its gate), logs (D9), TTL, counters |
+| Dagda | The store: heads with an owner's merge, objects, claims, node-local spaces, leases | 0.4.0 (2026-11-23, on Dannan 0.11.1; arm64 packages `libdagda0.4.0`, `libdagda-dev`, `dagda-tools` in the apt repository, amd64 to follow) | Usable but 0.x, any minor may change a call. Missing what AthenaSIP needs: durable leases (D5), the register map (D6, in its gate), logs (D9), TTL, counters |
 | Lir | The MQTT broker | none; rewritten from scratch | Not usable. No retained messages, wills or QoS 1 until Dagda's D5, D6, D9 |
 | Mimir | Redis-protocol store | 0.1.0 untagged | Not usable. In memory only; multi-key writes refused until Dannan's atomic commit |
 | Lugh | Directory and sign-on (OIDC) | 0.1.0 coming (as of 2026-11-20) | Usable on one node. Its client library links Dannan |
