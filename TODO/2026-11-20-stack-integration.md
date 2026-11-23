@@ -178,6 +178,15 @@ goes to Dannan to check against `node_config()` when part B is drawn. Existing n
 - Trunk takeover on Dannan's agreement register works today, but only a split's majority side
   keeps its trunks registered. Not taken: Dagda's lease serves both sides and is the design.
 
+### B2. When Dannan 0.13.0 ships its DNS client (about 2026-12-05)
+
+- Dannan's DNS client (the maintainer's ruling, 2026-11-23: asynchronous with a deadline, A, AAAA,
+  SRV and TXT cached by TTL, the system's or named servers, UDP with TCP on truncation) gets NAPTR
+  at AthenaSIP's asking. By the no-duplication rule, AthenaSIP's own resolver (`src/dns/resolver.*`
+  and `message.*`) then goes and the SIP locator (RFC 3263) runs on Dannan's, behind the same
+  `query(name, type)` interface so its tests stay. Dannan sends the shape before any code; ours
+  was offered as a reference (RFC 5452 checks, negative caching, the fuzz target).
+
 ### C. When Lugh tags 0.1.0
 
 - Lugh as a second identity source for the admin API, one code path for both: the six roles
