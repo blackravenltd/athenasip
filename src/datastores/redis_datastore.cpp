@@ -10,7 +10,6 @@
 #include <boost/asio/detached.hpp>
 #include <boost/asio/ssl.hpp>
 #include <boost/json.hpp>
-#include <boost/redis/src.hpp>
 #include <boost/system/system_error.hpp>
 #include <cstdlib>
 #include <iomanip>
@@ -145,12 +144,9 @@ void RedisDatastore::close() {
     return;
   }
 
-  // boost::redis::connection is not thread safe: it is cancelled on its executor, as every
-  // operation starts there, and the IO thread stops once it has.
-  boost::asio::post(_io_context, [this, connection = _connection]() {
-    if (connection) connection->cancel();
-    _io_context.stop();
-  });
+  // The connection answers everything still waiting on its own thread, and the thread stops once it has.
+  if (_connection) _connection->stop();
+  boost::asio::post(_io_context, [this]() { _io_context.stop(); });
 
   _work_guard.reset();
 
@@ -175,39 +171,11 @@ void RedisDatastore::connect(plugins::Executor on, plugins::StatusHandler handle
 
   try {
     _work_guard = std::make_unique<boost::asio::executor_work_guard<boost::asio::io_context::executor_type>>(_io_context.get_executor());
-    // Routes the library's logging through this node's logger: its info is this node's
-    // debug, warnings and worse keep their level. The logger is captured by value because
-    // the library calls it from the IO thread, possibly after this object begins to close.
-    using Level = boost::redis::logger::level;
 
-    auto logger = _logger;
-    boost::redis::logger forward(Level::debug, [logger](Level level, std::string_view message) {
-      const auto line = "connection: " + std::string(message);
-
-      if (level <= Level::err) return logger->error(line);
-      if (level == Level::warning) return logger->warn(line);
-      logger->debug(line);
-    });
-
-    // rediss:// checks who answers, as mqtts:// does: the server's certificate against the system's roots and
-    // redis.ca_file, and its name against the URL's host. boost.redis's own context checks nothing.
-    boost::asio::ssl::context tls(boost::asio::ssl::context::tls_client);
-    if (_use_ssl) {
-      tls.set_options(boost::asio::ssl::context::default_workarounds | boost::asio::ssl::context::no_tlsv1 | boost::asio::ssl::context::no_tlsv1_1);
-      tls.set_default_verify_paths();
-      if (!_ca_file.empty()) {
-        boost::system::error_code failed;
-        tls.load_verify_file(_ca_file, failed);
-        if (failed) _logger->error("redis.ca_file: could not load " + _ca_file + " - " + failed.message());
-      }
-      tls.set_verify_mode(boost::asio::ssl::verify_peer);
-      tls.set_verify_callback(boost::asio::ssl::host_name_verification(_host));
-    }
-
-    _connection = std::make_shared<boost::redis::connection>(_io_context.get_executor(), std::move(tls), std::move(forward));
-
-    auto cfg = _make_config();
-    _connection->async_run(cfg, boost::asio::consign(boost::asio::detached, _connection));
+    // The connection checks who answers rediss://, as mqtts:// does: the server's certificate against the system's
+    // roots and redis.ca_file, and its name against the URL's host.
+    _connection = std::make_shared<resp::Connection>(_io_context, _logger, _settings_from_url());
+    _connection->start();
 
     _io_thread = std::thread([this]() {
       try {
@@ -468,7 +436,7 @@ void RedisDatastore::lease(plugins::Executor on, std::string name, std::string h
     return 0
   )lua";
 
-  boost::redis::request request;
+  resp::Request request;
   request.push("EVAL", kTake, 1, "athena:lease:" + name, holder, seconds);
 
   _async_integer("EVAL", std::move(request), [this, on, handler](RedisError error, std::int64_t taken) mutable {
@@ -488,7 +456,7 @@ void RedisDatastore::counter_add(plugins::Executor on, std::string name, std::in
     return value
   )lua";
 
-  boost::redis::request request;
+  resp::Request request;
   request.push("EVAL", kAdd, 1, "athena:counter:" + name, delta, seconds);
 
   _async_integer("EVAL", std::move(request), [this, on, handler](RedisError error, std::int64_t value) mutable {
@@ -1116,21 +1084,21 @@ void RedisDatastore::call_list(plugins::Executor on, plugins::Handler<std::vecto
 }
 
 void RedisDatastore::_async_sadd(std::string key, std::string member, BoolCallback callback) {
-  boost::redis::request request;
+  resp::Request request;
   request.push("SADD", key, member);
 
   _async_integer("SADD", std::move(request), [callback = std::move(callback)](RedisError error, std::int64_t value) mutable { callback(error, value >= 0); });
 }
 
 void RedisDatastore::_async_srem(std::string key, std::string member, BoolCallback callback) {
-  boost::redis::request request;
+  resp::Request request;
   request.push("SREM", key, member);
 
   _async_integer("SREM", std::move(request), [callback = std::move(callback)](RedisError error, std::int64_t value) mutable { callback(error, value > 0); });
 }
 
 void RedisDatastore::_async_smembers(std::string key, StringsCallback callback) {
-  boost::redis::request request;
+  resp::Request request;
   request.push("SMEMBERS", key);
 
   _async_strings("SMEMBERS", std::move(request), std::move(callback));
@@ -1443,255 +1411,158 @@ void RedisDatastore::_apply_url(std::shared_ptr<types::URL> url) {
   }
 }
 
-boost::redis::config RedisDatastore::_make_config() const {
-  boost::redis::config cfg;
-  cfg.addr.host = _host;
-  cfg.addr.port = std::to_string(_port);
-  cfg.username = _username;
-  cfg.password = _password;
-  cfg.database_index = _database_index;
-  cfg.use_ssl = _use_ssl;
-  return cfg;
+resp::Connection::Settings RedisDatastore::_settings_from_url() const {
+  resp::Connection::Settings settings;
+  settings.host = _host;
+  settings.port = _port;
+  settings.username = _username;
+  settings.password = _password;
+  settings.database = _database_index;
+  settings.tls = _use_ssl;
+  settings.ca_file = _ca_file;
+  return settings;
+}
+
+void RedisDatastore::_exec(std::string operation, resp::Request request, RepliesCallback callback) {
+  if (!_connection) return callback(_not_connected_error(), {});
+
+  const auto start = std::chrono::high_resolution_clock::now();
+  auto logger = _logger;
+  _connection->exec(std::move(request), [logger, operation = std::move(operation), callback = std::move(callback), start](
+                                            boost::system::error_code ec, std::string what, std::vector<resp::Reply> replies) mutable {
+    if (ec) {
+      logger->error("Error during: " + operation + ": " + what);
+      return callback(RedisError(ec, what), {});
+    }
+    for (const auto& reply : replies) {
+      if (reply.is_error()) {
+        logger->error("Error during: " + operation + ": " + reply.text);
+        return callback(make_redis_response_error(reply.text), {});
+      }
+    }
+
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(3)
+        << static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count()) / 1000.0;
+    logger->debug(operation + " (" + oss.str() + "ms)");
+    callback(RedisError{}, std::move(replies));
+  });
 }
 
 void RedisDatastore::_async_ping(BoolCallback callback) {
-  boost::redis::request req;
+  resp::Request req;
   req.push("PING");
   _async_ok("PING", std::move(req), std::move(callback));
 }
 
 void RedisDatastore::_async_set(std::string key, std::string value, BoolCallback callback) {
-  boost::redis::request req;
+  resp::Request req;
   req.push("SET", key, value);
   _async_ok("SET", std::move(req), std::move(callback));
 }
 
 void RedisDatastore::_async_set_ex(std::string key, std::string value, std::chrono::seconds expiry, BoolCallback callback) {
-  boost::redis::request req;
+  resp::Request req;
   req.push("SET", key, value, "EX", expiry.count());
   _async_ok("SET EX", std::move(req), std::move(callback));
 }
 
 void RedisDatastore::_async_get(std::string key, StringCallback callback) {
-  boost::redis::request req;
+  resp::Request req;
   req.push("GET", key);
   _async_string("GET", std::move(req), std::move(callback));
 }
 
 void RedisDatastore::_async_del(std::string key, IntegerCallback callback) {
-  boost::redis::request req;
+  resp::Request req;
   req.push("DEL", key);
   _async_integer("DEL", std::move(req), std::move(callback));
 }
 
 void RedisDatastore::_async_exists(std::string key, BoolCallback callback) {
-  boost::redis::request req;
+  resp::Request req;
   req.push("EXISTS", key);
 
   _async_integer("EXISTS", std::move(req),
                  [callback = std::move(callback)](RedisError error, std::int64_t value) mutable { callback(std::move(error), value > 0); });
 }
 
-void RedisDatastore::_async_ok(std::string operation, boost::redis::request request, BoolCallback callback) {
-  if (!_connection) {
-    callback(_not_connected_error(), false);
-    return;
-  }
+namespace {
 
-  auto start = std::chrono::high_resolution_clock::now();
-  auto logger = _logger;
-  auto conn = _connection;
-  auto req = std::make_shared<boost::redis::request>(std::move(request));
-  auto resp = std::make_shared<boost::redis::response<std::string>>();
+RedisError unexpected(const std::string& operation, const std::string& wanted) {
+  return make_redis_response_error(operation + ": Redis answered with something other than " + wanted);
+}
 
-  // boost::redis::connection is not thread safe: every operation starts on its executor.
-  boost::asio::post(_io_context, [conn, req, resp, logger, operation = std::move(operation), callback = std::move(callback), start]() mutable {
-    conn->async_exec(
-        *req, *resp,
-        [logger, operation = std::move(operation), req, resp, callback = std::move(callback), start](boost::system::error_code ec, std::size_t) mutable {
-          if (ec) {
-            logger->error("Error during: " + operation + ": " + ec.message());
-            callback(RedisError(ec), false);
-            return;
-          }
+}  // namespace
 
-          auto& result = std::get<0>(*resp);
-          if (!result.has_value()) {
-            auto error = make_redis_response_error(result.error().diagnostic);
-            logger->error("Error during: " + operation + ": " + error.message());
-            callback(std::move(error), false);
-            return;
-          }
-
-          const auto& value = result.value();
-          const bool ok = value == "OK" || value == "PONG";
-
-          std::ostringstream oss;
-          oss << std::fixed << std::setprecision(3)
-              << static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count()) / 1000.0;
-          logger->debug(operation + " (" + oss.str() + "ms)");
-
-          callback(RedisError{}, ok);
-        });
+void RedisDatastore::_async_ok(std::string operation, resp::Request request, BoolCallback callback) {
+  const auto name = operation;
+  _exec(std::move(operation), std::move(request), [name, callback = std::move(callback)](RedisError error, std::vector<resp::Reply> replies) mutable {
+    if (error) return callback(std::move(error), false);
+    const auto& reply = replies.at(0);
+    if (reply.type != resp::Reply::Type::SimpleString) return callback(unexpected(name, "a status"), false);
+    callback(RedisError{}, reply.text == "OK" || reply.text == "PONG");
   });
 }
 
-void RedisDatastore::_async_string(std::string operation, boost::redis::request request, StringCallback callback) {
-  if (!_connection) {
-    callback(_not_connected_error(), std::nullopt);
-    return;
-  }
-
-  auto start = std::chrono::high_resolution_clock::now();
-  auto logger = _logger;
-  auto conn = _connection;
-  auto req = std::make_shared<boost::redis::request>(std::move(request));
-  auto resp = std::make_shared<boost::redis::response<std::optional<std::string>>>();
-
-  // boost::redis::connection is not thread safe: every operation starts on its executor.
-  boost::asio::post(_io_context, [conn, req, resp, logger, operation = std::move(operation), callback = std::move(callback), start]() mutable {
-    conn->async_exec(
-        *req, *resp,
-        [logger, operation = std::move(operation), req, resp, callback = std::move(callback), start](boost::system::error_code ec, std::size_t) mutable {
-          if (ec) {
-            logger->error("Error during: " + operation + ": " + ec.message());
-            callback(RedisError(ec), std::nullopt);
-            return;
-          }
-
-          auto& result = std::get<0>(*resp);
-          if (!result.has_value()) {
-            auto error = make_redis_response_error(result.error().diagnostic);
-            logger->error("Error during: " + operation + ": " + error.message());
-            callback(std::move(error), std::nullopt);
-            return;
-          }
-
-          std::ostringstream oss;
-          oss << std::fixed << std::setprecision(3)
-              << static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count()) / 1000.0;
-          logger->debug(operation + " (" + oss.str() + "ms)");
-
-          callback(RedisError{}, result.value());
-        });
+void RedisDatastore::_async_string(std::string operation, resp::Request request, StringCallback callback) {
+  const auto name = operation;
+  _exec(std::move(operation), std::move(request), [name, callback = std::move(callback)](RedisError error, std::vector<resp::Reply> replies) mutable {
+    if (error) return callback(std::move(error), std::nullopt);
+    auto& reply = replies.at(0);
+    if (reply.type == resp::Reply::Type::Null) return callback(RedisError{}, std::nullopt);
+    if (reply.type != resp::Reply::Type::Bulk && reply.type != resp::Reply::Type::SimpleString) return callback(unexpected(name, "a string"), std::nullopt);
+    callback(RedisError{}, std::move(reply.text));
   });
 }
 
-void RedisDatastore::_async_integer(std::string operation, boost::redis::request request, IntegerCallback callback) {
-  if (!_connection) {
-    callback(_not_connected_error(), 0);
-    return;
-  }
-
-  auto start = std::chrono::high_resolution_clock::now();
-  auto logger = _logger;
-  auto conn = _connection;
-  auto req = std::make_shared<boost::redis::request>(std::move(request));
-  auto resp = std::make_shared<boost::redis::response<long long>>();
-
-  // boost::redis::connection is not thread safe: every operation starts on its executor.
-  boost::asio::post(_io_context, [conn, req, resp, logger, operation = std::move(operation), callback = std::move(callback), start]() mutable {
-    conn->async_exec(
-        *req, *resp,
-        [logger, operation = std::move(operation), req, resp, callback = std::move(callback), start](boost::system::error_code ec, std::size_t) mutable {
-          if (ec) {
-            logger->error("Error during: " + operation + ": " + ec.message());
-            callback(RedisError(ec), 0);
-            return;
-          }
-
-          auto& result = std::get<0>(*resp);
-          if (!result.has_value()) {
-            auto error = make_redis_response_error(result.error().diagnostic);
-            logger->error("Error during: " + operation + ": " + error.message());
-            callback(std::move(error), 0);
-            return;
-          }
-
-          std::ostringstream oss;
-          oss << std::fixed << std::setprecision(3)
-              << static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count()) / 1000.0;
-          logger->debug(operation + " (" + oss.str() + "ms)");
-
-          callback(RedisError{}, static_cast<std::int64_t>(result.value()));
-        });
+void RedisDatastore::_async_integer(std::string operation, resp::Request request, IntegerCallback callback) {
+  const auto name = operation;
+  _exec(std::move(operation), std::move(request), [name, callback = std::move(callback)](RedisError error, std::vector<resp::Reply> replies) mutable {
+    if (error) return callback(std::move(error), 0);
+    const auto& reply = replies.at(0);
+    if (reply.type != resp::Reply::Type::Integer) return callback(unexpected(name, "an integer"), 0);
+    callback(RedisError{}, reply.integer);
   });
 }
 
-void RedisDatastore::_async_strings(std::string operation, boost::redis::request request, StringsCallback callback) {
-  if (!_connection) {
-    callback(_not_connected_error(), {});
-    return;
-  }
-
-  auto start = std::chrono::high_resolution_clock::now();
-  auto logger = _logger;
-  auto conn = _connection;
-  auto req = std::make_shared<boost::redis::request>(std::move(request));
-  auto resp = std::make_shared<boost::redis::response<std::vector<std::string>>>();
-
-  // boost::redis::connection is not thread safe: every operation starts on its executor.
-  boost::asio::post(_io_context, [conn, req, resp, logger, operation = std::move(operation), callback = std::move(callback), start]() mutable {
-    conn->async_exec(
-        *req, *resp,
-        [logger, operation = std::move(operation), req, resp, callback = std::move(callback), start](boost::system::error_code ec, std::size_t) mutable {
-          if (ec) {
-            logger->error("Error during: " + operation + ": " + ec.message());
-            callback(RedisError(ec), {});
-            return;
-          }
-
-          auto& result = std::get<0>(*resp);
-          if (!result.has_value()) {
-            auto error = make_redis_response_error(result.error().diagnostic);
-            logger->error("Error during: " + operation + ": " + error.message());
-            callback(std::move(error), {});
-            return;
-          }
-
-          std::ostringstream oss;
-          oss << std::fixed << std::setprecision(3)
-              << static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count()) / 1000.0;
-          logger->debug(operation + " (" + oss.str() + "ms)");
-
-          callback(RedisError{}, result.value());
-        });
+void RedisDatastore::_async_strings(std::string operation, resp::Request request, StringsCallback callback) {
+  const auto name = operation;
+  _exec(std::move(operation), std::move(request), [name, callback = std::move(callback)](RedisError error, std::vector<resp::Reply> replies) mutable {
+    if (error) return callback(std::move(error), {});
+    auto& reply = replies.at(0);
+    if (reply.type != resp::Reply::Type::Array) return callback(unexpected(name, "a list"), {});
+    std::vector<std::string> values;
+    values.reserve(reply.elements.size());
+    for (auto& element : reply.elements) {
+      if (element.type != resp::Reply::Type::Bulk) return callback(unexpected(name, "a list of strings"), {});
+      values.push_back(std::move(element.text));
+    }
+    callback(RedisError{}, std::move(values));
   });
 }
 
 void RedisDatastore::_async_mget(std::vector<std::string> keys, ValuesCallback callback) {
-  if (!_connection) {
-    callback(_not_connected_error(), {});
-    return;
-  }
-  if (keys.empty()) {
-    callback(RedisError{}, {});
-    return;
-  }
+  if (keys.empty()) return callback(RedisError{}, {});
 
-  auto logger = _logger;
-  auto conn = _connection;
-  auto req = std::make_shared<boost::redis::request>();
-  req->push_range("MGET", keys);
-  auto resp = std::make_shared<boost::redis::response<std::vector<std::optional<std::string>>>>();
-
-  // boost::redis::connection is not thread safe: every operation starts on its executor.
-  boost::asio::post(_io_context, [conn, req, resp, logger, callback = std::move(callback)]() mutable {
-    conn->async_exec(*req, *resp, [logger, req, resp, callback = std::move(callback)](boost::system::error_code ec, std::size_t) mutable {
-      if (ec) {
-        logger->error("Error during: MGET: " + ec.message());
-        return callback(RedisError(ec), {});
+  resp::Request request;
+  request.push_range("MGET", keys);
+  _exec("MGET", std::move(request), [callback = std::move(callback)](RedisError error, std::vector<resp::Reply> replies) mutable {
+    if (error) return callback(std::move(error), {});
+    auto& reply = replies.at(0);
+    if (reply.type != resp::Reply::Type::Array) return callback(unexpected("MGET", "a list"), {});
+    std::vector<std::optional<std::string>> values;
+    values.reserve(reply.elements.size());
+    for (auto& element : reply.elements) {
+      if (element.type == resp::Reply::Type::Null) {
+        values.emplace_back(std::nullopt);
+      } else if (element.type == resp::Reply::Type::Bulk) {
+        values.emplace_back(std::move(element.text));
+      } else {
+        return callback(unexpected("MGET", "a list of strings and nulls"), {});
       }
-
-      auto& result = std::get<0>(*resp);
-      if (!result.has_value()) {
-        auto error = make_redis_response_error(result.error().diagnostic);
-        logger->error("Error during: MGET: " + error.message());
-        return callback(std::move(error), {});
-      }
-
-      callback(RedisError{}, std::move(result.value()));
-    });
+    }
+    callback(RedisError{}, std::move(values));
   });
 }
 
@@ -1793,7 +1664,7 @@ void RedisDatastore::_index_call_subscribers(const std::shared_ptr<Call>& call, 
   }
   if (keys.empty()) return _complete(on, handler, plugins::Status::success());
 
-  boost::redis::request request;
+  resp::Request request;
   request.push_range("EVAL", [&] {
     std::vector<std::string> args{kIndex, std::to_string(keys.size())};
     args.insert(args.end(), keys.begin(), keys.end());
@@ -1897,7 +1768,7 @@ void RedisDatastore::presence_put(plugins::Executor on, types::PresenceRecord re
 
   record.expires_at = std::time(nullptr) + static_cast<std::time_t>(seconds);
 
-  boost::redis::request request;
+  resp::Request request;
   request.push("EVAL", kPut, 1, _presence_key(record.kind, record.id), _serialise_presence(record), seconds, record.id, record.aor, record.node_id,
                _presence_aor_index_prefix(record.kind), _presence_node_index_prefix(),
                std::string(types::PresenceRecord::to_string(record.kind)) + ":" + record.id);
@@ -1981,7 +1852,7 @@ void RedisDatastore::presence_delete(plugins::Executor on, types::PresenceRecord
     return 1
   )lua";
 
-  boost::redis::request request;
+  resp::Request request;
   request.push("EVAL", kDelete, 1, _presence_key(kind, id), _presence_aor_index_prefix(kind), _presence_node_index_prefix(), id,
                std::string(types::PresenceRecord::to_string(kind)) + ":" + id);
 

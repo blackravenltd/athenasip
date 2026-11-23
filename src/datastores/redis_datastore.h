@@ -9,9 +9,6 @@
 #include <atomic>
 #include <boost/asio/executor_work_guard.hpp>
 #include <boost/asio/io_context.hpp>
-#include <boost/redis/connection.hpp>
-#include <boost/redis/request.hpp>
-#include <boost/redis/response.hpp>
 #include <boost/system/error_code.hpp>
 #include <chrono>
 #include <cstdint>
@@ -33,6 +30,7 @@
 #include "../types/user.h"
 #include "../util.h"
 #include "datastore.h"
+#include "resp_connection.h"
 
 namespace athenasip::datastores {
 
@@ -151,7 +149,11 @@ class RedisDatastore : public Datastore {
   // How long the record of an ended call is kept, in seconds; zero for ever.
   std::uint32_t _call_retention = 30 * 24 * 60 * 60;
   void _realm_delete_record(plugins::Executor on, plugins::StatusHandler handler, std::string realm_name);
-  boost::redis::config _make_config() const;
+  resp::Connection::Settings _settings_from_url() const;
+
+  // One request on the connection, timed and logged; an error reply or a connection error is a RedisError.
+  using RepliesCallback = std::function<void(RedisError error, std::vector<resp::Reply> replies)>;
+  void _exec(std::string operation, resp::Request request, RepliesCallback callback);
 
   void _async_ping(BoolCallback callback);
   void _async_set(std::string key, std::string value, BoolCallback callback);
@@ -166,11 +168,11 @@ class RedisDatastore : public Datastore {
   void _async_srem(std::string key, std::string member, BoolCallback callback);
   void _async_smembers(std::string key, StringsCallback callback);
   void _async_mget(std::vector<std::string> keys, ValuesCallback callback);
-  void _async_strings(std::string operation, boost::redis::request request, StringsCallback callback);
+  void _async_strings(std::string operation, resp::Request request, StringsCallback callback);
 
-  void _async_ok(std::string operation, boost::redis::request request, BoolCallback callback);
-  void _async_string(std::string operation, boost::redis::request request, StringCallback callback);
-  void _async_integer(std::string operation, boost::redis::request request, IntegerCallback callback);
+  void _async_ok(std::string operation, resp::Request request, BoolCallback callback);
+  void _async_string(std::string operation, resp::Request request, StringCallback callback);
+  void _async_integer(std::string operation, resp::Request request, IntegerCallback callback);
 
   static std::string _realm_key(const std::string& realm_name);
   static std::string _subscriber_key(const std::string& realm_name, const std::string& user);
@@ -244,7 +246,7 @@ class RedisDatastore : public Datastore {
 
   boost::asio::io_context _io_context;
   std::unique_ptr<boost::asio::executor_work_guard<boost::asio::io_context::executor_type>> _work_guard;
-  std::shared_ptr<boost::redis::connection> _connection;
+  std::shared_ptr<resp::Connection> _connection;
   std::thread _io_thread;
   std::atomic_bool _started{false};
 };

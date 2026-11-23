@@ -122,15 +122,14 @@ TEST(RedisDatastoreTest, TheConnectionLogsThroughTheNodesLoggerAndNotTheConsole)
 
   ASSERT_TRUE(connected);
 
-  // "(Boost.Redis) " is the library's default log prefix.
-  EXPECT_EQ(err.find("Boost.Redis"), std::string::npos) << err;
-  EXPECT_EQ(out.find("Boost.Redis"), std::string::npos) << out;
+  EXPECT_EQ(err.find("Redis"), std::string::npos) << err;
+  EXPECT_EQ(out.find("Redis"), std::string::npos) << out;
 
   bool heard = false;
   for (const auto& line : logger->lines()) {
-    if (line.find("connection: ") != std::string::npos) heard = true;
+    if (line.find("Connected to Redis at ") != std::string::npos) heard = true;
   }
-  EXPECT_TRUE(heard) << "nothing from the connection reached the node's logger";
+  EXPECT_TRUE(heard) << "the connection said nothing through the node's logger";
 }
 
 TEST(RedisDatastoreTest, ConnectsAndReportsConnected) {
