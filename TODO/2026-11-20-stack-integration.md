@@ -80,10 +80,16 @@ tagged, needs it or later). `0.11.0` changed the ABI, so a pin moves to it in on
 a patch on the same ABI. Read "Adopting 0.11.0" and the `0.11.1` entry of its `CHANGELOG.md` before
 pinning. What they mean for AthenaSIP, read 2026-11-23:
 
-- **Boost.JSON is carried once in libdannan** (0.11.0). AthenaSIP links its own static Boost
-  1.89 Boost.JSON; linking both risks duplicate or mismatched symbols, and the stack builds on
-  trixie's Boost 1.83. This is the open Boost decision below, and it has to be settled before
-  the pin.
+- **Boost.JSON is carried once in libdannan** (0.11.0), and it is public: `dannan::json`'s types
+  are Boost.JSON's own and its compiled part is exported from libdannan. AthenaSIP's own static
+  Boost.JSON 1.89 beside it would be two definitions of the same symbols from different versions,
+  an ODR violation (Dannan, 2026-11-23). So AthenaSIP takes Boost.JSON only from libdannan. Dannan
+  builds on Boost 1.83 or later, and its apt packages on Debian's 1.83. Its two ways: (a) Debian's
+  1.83 and the packaged libdannan, which Dannan recommends; (b) Dannan from source against 1.89,
+  without the apt package, and 1.89 everywhere it meets Dannan's headers. AthenaSIP needs only
+  `boost::redis` (1.84) and `boost::mqtt5` (1.88) newer than 1.83, both header-only, so (a) with
+  those two pinned over it is the open Boost decision below: prove they compile against 1.83's
+  Asio on a build machine, then the maintainer decides.
 - **The node settings live under `cluster.*`** (`dannan/config/node_settings.h`). AthenaSIP has
   its own `cluster:` section (enable, address, port, advertise, ca, cert, key); the two are
   reconciled when inter-node TLS moves onto Dannan.
