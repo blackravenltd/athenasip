@@ -205,7 +205,8 @@ Lir has the liveness scenario (2026-11-23, `TODO/2026-11-23-lir-liveness-scenari
 acceptance tests, disabled until Dagda's register map (D6, for retained messages) and leases (D5,
 for wills) ship; until then its broker refuses both, in MQTT's own terms, and offers no interim. A
 will carries the client's lease epoch, so one from an older connection never overwrites a newer
-`ok`; the order of retained values after a heal is an open point between Lir and the maintainer.
+`ok`; retained values order by (hybrid clock stamp, node id), settled by the maintainer on
+2026-11-20 (Lir's L1) and carried by Dagda's register map. D5 and D6 come together in Dagda 0.5.0.
 
 - When Lir tags a release with retained messages, wills and QoS 1: run the `mqtt://` driver's
   tests and the cluster harness with `ATHENA_TEST_MQTT_URL` at a Lir cluster, then the
