@@ -332,6 +332,6 @@ TEST(ConfigSchemaTest, EachDriversSectionIsNamedAfterIt) {
     ++sections;
   }
 
-  // mqtt, builtin, rtpengine, apns, fcm, webpush and lua.
-  EXPECT_EQ(sections, 7u);
+  // redis, mqtt, builtin, rtpengine, apns, fcm, webpush and lua.
+  EXPECT_EQ(sections, 8u);
 }

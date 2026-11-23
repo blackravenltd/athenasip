@@ -547,6 +547,17 @@
           "description": "memory:// keeps nothing over a restart and serves one node; a cluster shares redis://.",
           "type": "string",
           "default": "memory://"
+        },
+        "redis": {
+          "description": "The redis:// and rediss:// datastore. The URL names the server; this says how to talk to it.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "ca_file": {
+              "description": "For rediss://: more CA certificates to trust for the server, beside the system's. The server's name is checked against its certificate.",
+              "type": "string"
+            }
+          }
         }
       },
       "required": [
