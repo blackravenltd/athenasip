@@ -26,6 +26,15 @@ Mimir and Lugh. Dannan `0.11.1` is the release to pin (2026-11-23: Dagda `0.4.0`
 later, and the in-process datastore and bus will use Dagda); the datastore and the bus wait on Dagda's
 leases (D5), register map with `walk_from` (D6) and log (D9).
 
+**Do not prefer nodes** (the maintainer, 2026-11-23, through the coordinating session): a job that
+needs cores takes whichever build machine has them free now, never a particular one for its warm
+build tree, an earlier build or habit. rsync the tree there and build from scratch; a missing
+compiler, tool or development package is installed there (claim 1 core, `nice -n 19 apt-get
+install -y <pkg>`, a board note naming the package and the machine). Wait only when no machine has
+the cores, naming every machine (`claim-board wait --any`). The one exception is a job that must
+run on one machine (a service that lives there, or jupiter for TSan with clang 19), said in the
+claim's job text.
+
 Working rules from the stack (2026-11-20, the maintainer through the coordinating session):
 heavy builds and test runs go to the shared build cluster by the claim board, claimed only for
 a job ready to run and released when it ends, work other projects wait on first; versions are
@@ -550,11 +559,18 @@ From `TODO/2026-11-20-stack-integration.md`, part A: what needs no decision and 
 - [ ] `presence_put` and `presence_delete` declare every key: read the old record first, pass all
       keys in `KEYS` and the old value in `ARGV`, write only if it still holds, retry with a bound
       and a backoff (the audit's recommendation). Multi-key stays, for Mimir and Dagda to answer.
-- [ ] **A RESP client by hand for `redis://`** (decided 2026-11-23): framing, pipelining, `AUTH`
-      and `SELECT`, TLS with the verification `rediss://` has now, reconnect with backoff; only
-      what the driver sends (`TODO/2026-11-23-redis-scripts-audit.md`). Tested against Redis and
-      Mimir. Then the build moves to Debian's Boost 1.83 with `boost::mqtt5` pinned over it, and
-      Boost.JSON comes from libdannan once part B links it.
+- [x] **A RESP client by hand for `redis://`** (decided 2026-11-23, built the same day on
+      `feature/resp-client`): `src/datastores/resp.*` (RESP2, bounded, RESP3 refused, a fuzz
+      target) and `src/datastores/resp_connection.*` (TCP or verified TLS, `AUTH` and `SELECT`
+      first, pipelining, a deadline per request, reconnect with backoff and jitter). The driver's
+      requests and scripts are unchanged; `boost::redis` is gone. `RespTest`, `RespConnectionTest`
+      failing first against a stub; the suite with a real Redis 1684 on a build machine. Left: run
+      the driver's tests against Mimir when it can take them.
+- [ ] **The build on Debian 13's Boost 1.83**, with `boost::mqtt5` pinned over it (decided
+      2026-11-23): how it is pinned (its own repository at the 1.89 tag, header-only, by
+      FetchContent or vendored), `find_package(Boost 1.83 ...)` without Charconv, `tools/ci.sh
+      deps` without building Boost, and the package's Build-Depends. Boost.JSON comes from libdannan
+      once part B links it.
 - [x] `mqtt://` takes a list of brokers and moves to the next with backoff and jitter (2026-11-23):
       `mqtt://h1:1883,h2:1883`, boost.mqtt5's reconnect (1 to 16 s, half a second of jitter);
       `types::URL` keeps the text as given, since RFC 3986 holds one host

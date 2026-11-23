@@ -13,7 +13,7 @@ Louhi, Mimir, Kvasir, Macha, and AthenaSIP since 2026-11-20. Dagda's stack maste
 | Project | What it is | Version | For AthenaSIP today |
 |---|---|---|---|
 | Dannan | The substrate: membership, agreement (CASPaxos registers), hybrid clock, channels, identity and CA, a mutual-TLS listener, layered config | 0.11.1 (as of 2026-11-23) | Usable. ABI kept within a minor; pin the exact release. Its listener and its config stand alone, without a node in-process |
-| Dagda | The store: heads with an owner's merge, objects, claims, node-local spaces, leases | 0.3.2 (as of 2026-11-20) | Usable but 0.x, any minor may change a call. Missing what AthenaSIP needs: durable leases (D5), the register map (D6, in its gate), logs (D9), TTL, counters |
+| Dagda | The store: heads with an owner's merge, objects, claims, node-local spaces, leases | 0.4.0 (2026-11-23, on Dannan 0.11.1; arm64 packages `libdagda0.4.0`, `libdagda-dev`, `dagda-tools` in the apt repository, amd64 to follow) | Usable but 0.x, any minor may change a call. Missing what AthenaSIP needs: durable leases (D5), the register map (D6, in its gate), logs (D9), TTL, counters |
 | Lir | The MQTT broker | none; rewritten from scratch | Not usable. No retained messages, wills or QoS 1 until Dagda's D5, D6, D9 |
 | Mimir | Redis-protocol store | 0.1.0 untagged | Not usable. In memory only; multi-key writes refused until Dannan's atomic commit |
 | Lugh | Directory and sign-on (OIDC) | 0.1.0 coming (as of 2026-11-20) | Usable on one node. Its client library links Dannan |
@@ -178,6 +178,15 @@ goes to Dannan to check against `node_config()` when part B is drawn. Existing n
 - Trunk takeover on Dannan's agreement register works today, but only a split's majority side
   keeps its trunks registered. Not taken: Dagda's lease serves both sides and is the design.
 
+### B2. When Dannan 0.13.0 ships its DNS client (about 2026-12-05)
+
+- Dannan's DNS client (the maintainer's ruling, 2026-11-23: asynchronous with a deadline, A, AAAA,
+  SRV and TXT cached by TTL, the system's or named servers, UDP with TCP on truncation) gets NAPTR
+  at AthenaSIP's asking. By the no-duplication rule, AthenaSIP's own resolver (`src/dns/resolver.*`
+  and `message.*`) then goes and the SIP locator (RFC 3263) runs on Dannan's, behind the same
+  `query(name, type)` interface so its tests stay. Dannan sends the shape before any code; ours
+  was offered as a reference (RFC 5452 checks, negative caching, the fuzz target).
+
 ### C. When Lugh tags 0.1.0
 
 - Lugh as a second identity source for the admin API, one code path for both: the six roles
@@ -193,6 +202,13 @@ goes to Dannan to check against `node_config()` when part B is drawn. Existing n
   Call-ID and CSeq; the trunk lease as a D5 lease with its epoch on every REGISTER; CDRs on a D9
   log keyed by hybrid clock; counters merged by sum. What it needs is
   `TODO/2026-11-23-dagda-requirements.md`. The contract's version moves if its shape does.
+- **Available now (2026-11-23):** D6, the register map, is public on Dagda's `develop` (`00e0a9f`),
+  contract version 3 (1 and 2 still served), on Dannan 0.11.1, ahead of 0.5.0, which adds D5.
+  `dagda::Context::registers()` offers `open`, `commit`, `get`, `get_register`, `list` and
+  `changed`, each with a deadline and evidence; registers order by (hybrid clock stamp, node id);
+  a register may carry an expiry (bindings, presence); a commit names each key's new version and a
+  stale expectation answers the conflict. Design: Dagda's `TODO/2026-11-20-register-map.md`,
+  "Going public: 0.5.0". The trunk lease waits for D5 in 0.5.0; D9 (the call log) after.
 - A `dannan://` event system on the same Dannan instance: node status and liveness from Dannan's
   membership rather than a retained topic and a will, and presence and trunk changes over its
   channels. The bus stays never storage and never on the call path.
@@ -205,7 +221,8 @@ Lir has the liveness scenario (2026-11-23, `TODO/2026-11-23-lir-liveness-scenari
 acceptance tests, disabled until Dagda's register map (D6, for retained messages) and leases (D5,
 for wills) ship; until then its broker refuses both, in MQTT's own terms, and offers no interim. A
 will carries the client's lease epoch, so one from an older connection never overwrites a newer
-`ok`; the order of retained values after a heal is an open point between Lir and the maintainer.
+`ok`; retained values order by (hybrid clock stamp, node id), settled by the maintainer on
+2026-11-20 (Lir's L1) and carried by Dagda's register map. D5 and D6 come together in Dagda 0.5.0.
 
 - When Lir tags a release with retained messages, wills and QoS 1: run the `mqtt://` driver's
   tests and the cluster harness with `ATHENA_TEST_MQTT_URL` at a Lir cluster, then the
