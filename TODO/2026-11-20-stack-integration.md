@@ -132,6 +132,29 @@ Pin `GIT_TAG 0.11.1` or `find_package(dannan 0.11.1 CONFIG REQUIRED)`; read "Ado
 the `0.11.1` entry of its `CHANGELOG.md` first (summarised above), settle the Boost.JSON overlap,
 and note in the pinning commit what of AthenaSIP's own it replaces.
 
+**`cluster.*` is Dannan's** (the maintainer, 2026-11-22: it belongs to the node settings, and no
+hosted system uses it for its own listener). Dannan's `add_node_settings` adds, under `cluster.`:
+`key` (the cluster key file), `bootstrap`, `state`, `name`, `domain`, `relay`,
+`listen.address`/`.port`/`.advertise`/`.inbound`, `heartbeat_ms`, `path_class`, `punch_ms`,
+`reprobe_ms`, `custody.passphrase_env`/`.credential`/`.credentials_dir`, and
+`identity.ca`/`.certificate`/`.revocations`/`.no_cluster_key`; flags and variables follow the
+keys (`--cluster-listen-port`, `ATHENASIP_CLUSTER_LISTEN_PORT`). AthenaSIP's present keys map, as
+Dannan proposed on 2026-11-23:
+
+| AthenaSIP today | Becomes |
+|---|---|
+| `cluster.address`, `.port`, `.advertise` | `cluster.listen.address`, `.port`, `.advertise` |
+| `cluster.ca` | `cluster.identity.ca` |
+| `cluster.cert` | `cluster.identity.certificate` |
+| `cluster.key` (a TLS key path) | nothing: the name is Dannan's cluster key file, and a node's private key is held by custody (`cluster.custody.*`), not named by a path |
+| `cluster.enable` | nothing: whether a node joins is the binary's rule |
+
+Open for part B: whether inter-node SIP (the 2026-09-17 decision, SIP proxied between nodes over
+mutual TLS) runs over Dannan's listener and connector, so these keys are all it needs, or keeps a
+listener of AthenaSIP's own, which then leaves `cluster.*` for a section of its own. The mapping
+goes to Dannan to check against `node_config()` when part B is drawn. Existing node configurations
+(node-a, node-b) change with it: a migration note in the release that ships it.
+
 - Inter-node SIP over Dannan's listener and connector (`dannan::listen`, no node in-process),
   with certificates from `dannan-ca` in place of `--ca-init` and `--ca-node` and
   `src/cluster_ca.*`. Dannan has not checked that its CA's files fit the listener as they
