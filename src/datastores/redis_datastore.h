@@ -62,6 +62,9 @@ class RedisDatastore : public Datastore {
   RedisDatastore(std::shared_ptr<loggers::Logger> logger, std::shared_ptr<types::URL> url);
   ~RedisDatastore() override;
 
+  // The redis section: how to talk to the server the URL names.
+  static plugins::Settings settings();
+
   std::string name() const override;
   bool configure(const YAML::Node& own_root, const Config& system) override;
   std::string version() const override;
@@ -235,6 +238,9 @@ class RedisDatastore : public Datastore {
   std::string _password;
   std::int32_t _database_index{0};
   bool _use_ssl{false};
+
+  // For rediss://: more CA certificates to trust beside the system's.
+  std::string _ca_file;
 
   boost::asio::io_context _io_context;
   std::unique_ptr<boost::asio::executor_work_guard<boost::asio::io_context::executor_type>> _work_guard;

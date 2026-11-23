@@ -8,6 +8,7 @@
 
 #include <boost/asio/consign.hpp>
 #include <boost/asio/detached.hpp>
+#include <boost/asio/ssl.hpp>
 #include <boost/json.hpp>
 #include <boost/redis/src.hpp>
 #include <boost/system/system_error.hpp>
@@ -188,7 +189,22 @@ void RedisDatastore::connect(plugins::Executor on, plugins::StatusHandler handle
       logger->debug(line);
     });
 
-    _connection = std::make_shared<boost::redis::connection>(_io_context.get_executor(), std::move(forward));
+    // rediss:// checks who answers, as mqtts:// does: the server's certificate against the system's roots and
+    // redis.ca_file, and its name against the URL's host. boost.redis's own context checks nothing.
+    boost::asio::ssl::context tls(boost::asio::ssl::context::tls_client);
+    if (_use_ssl) {
+      tls.set_options(boost::asio::ssl::context::default_workarounds | boost::asio::ssl::context::no_tlsv1 | boost::asio::ssl::context::no_tlsv1_1);
+      tls.set_default_verify_paths();
+      if (!_ca_file.empty()) {
+        boost::system::error_code failed;
+        tls.load_verify_file(_ca_file, failed);
+        if (failed) _logger->error("redis.ca_file: could not load " + _ca_file + " - " + failed.message());
+      }
+      tls.set_verify_mode(boost::asio::ssl::verify_peer);
+      tls.set_verify_callback(boost::asio::ssl::host_name_verification(_host));
+    }
+
+    _connection = std::make_shared<boost::redis::connection>(_io_context.get_executor(), std::move(tls), std::move(forward));
 
     auto cfg = _make_config();
     _connection->async_run(cfg, boost::asio::consign(boost::asio::detached, _connection));
@@ -1048,8 +1064,17 @@ void RedisDatastore::call_update(plugins::Executor on, std::shared_ptr<Call> cal
   });
 }
 
+plugins::Settings RedisDatastore::settings() {
+  using namespace plugins::define;
+  return {
+      section("redis", "The redis:// and rediss:// datastore. The URL names the server; this says how to talk to it."),
+      text("redis.ca_file", "",
+           "For rediss://: more CA certificates to trust for the server, beside the system's. The server's name is checked against its certificate."),
+  };
+}
+
 bool RedisDatastore::configure(const YAML::Node& own_root, const Config& system) {
-  (void)own_root;
+  if (own_root && own_root["ca_file"]) _ca_file = own_root["ca_file"].as<std::string>();
   _call_retention = system.calls_history_retention;
   return true;
 }

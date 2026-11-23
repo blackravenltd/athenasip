@@ -160,6 +160,14 @@ Where users, registrations and calls are kept. Each driver may have a section of
 |---|---|---|---|
 | `datastore.url` | text | required | memory:// keeps nothing over a restart and serves one node; a cluster shares redis://. |
 
+### `datastore.redis`
+
+The redis:// and rediss:// datastore. The URL names the server; this says how to talk to it.
+
+| Setting | Takes | Default | |
+|---|---|---|---|
+| `datastore.redis.ca_file` | text | none | For rediss://: more CA certificates to trust for the server, beside the system's. The server's name is checked against its certificate. |
+
 ## `events`
 
 The event bus: observability, presence and discovery. Each driver may have a section of its own here.
