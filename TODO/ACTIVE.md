@@ -26,6 +26,15 @@ Mimir and Lugh. Dannan `0.11.1` is the release to pin (2026-11-23: Dagda `0.4.0`
 later, and the in-process datastore and bus will use Dagda); the datastore and the bus wait on Dagda's
 leases (D5), register map with `walk_from` (D6) and log (D9).
 
+**Do not prefer nodes** (the maintainer, 2026-11-23, through the coordinating session): a job that
+needs cores takes whichever build machine has them free now, never a particular one for its warm
+build tree, an earlier build or habit. rsync the tree there and build from scratch; a missing
+compiler, tool or development package is installed there (claim 1 core, `nice -n 19 apt-get
+install -y <pkg>`, a board note naming the package and the machine). Wait only when no machine has
+the cores, naming every machine (`claim-board wait --any`). The one exception is a job that must
+run on one machine (a service that lives there, or jupiter for TSan with clang 19), said in the
+claim's job text.
+
 Working rules from the stack (2026-11-20, the maintainer through the coordinating session):
 heavy builds and test runs go to the shared build cluster by the claim board, claimed only for
 a job ready to run and released when it ends, work other projects wait on first; versions are
