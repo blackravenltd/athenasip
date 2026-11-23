@@ -90,6 +90,15 @@ pinning. What they mean for AthenaSIP, read 2026-11-23:
   `boost::redis` (1.84) and `boost::mqtt5` (1.88) newer than 1.83, both header-only, so (a) with
   those two pinned over it is the open Boost decision below: prove they compile against 1.83's
   Asio on a build machine, then the maintainer decides.
+  **Proved 2026-11-23** on a build machine (Debian 13's Boost 1.83 development packages, the two
+  libraries from 1.89 in an overlay searched first, the whole tree with tests): `boost::mqtt5`
+  compiles against 1.83's Asio; `boost::redis` does not, because 1.89's `redis_stream.hpp`
+  includes `boost/asio/cancel_after.hpp`, which Asio gained in Boost 1.86. Nothing else failed.
+  So option (a) holds for `mqtt://` and not for `redis://` as it is written. Ways on, for the
+  maintainer: a RESP client written by hand on Asio in place of `boost::redis` (the driver sends
+  ten commands and `EVAL`, and the project prefers hand-written to a library); `boost::redis` from
+  1.84 or 1.85, whose API differs from what the driver uses; or option (b), Boost 1.89 everywhere
+  and Dannan from source.
 - **The node settings live under `cluster.*`** (`dannan/config/node_settings.h`). AthenaSIP has
   its own `cluster:` section (enable, address, port, advertise, ca, cert, key); the two are
   reconciled when inter-node TLS moves onto Dannan.
