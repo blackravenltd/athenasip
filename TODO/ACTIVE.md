@@ -526,7 +526,15 @@ From `TODO/2026-11-20-stack-integration.md`, part A: what needs no decision and 
 - [ ] `presence_put` and `presence_delete` declare every key: read the old record first, pass all
       keys in `KEYS` and the old value in `ARGV`, write only if it still holds, retry with a bound
       and a backoff (the audit's recommendation). Multi-key stays, for Mimir and Dagda to answer.
-- [ ] `mqtt://` takes a list of brokers and moves to the next with backoff and jitter.
+- [x] `mqtt://` takes a list of brokers and moves to the next with backoff and jitter (2026-11-23):
+      `mqtt://h1:1883,h2:1883`, boost.mqtt5's reconnect (1 to 16 s, half a second of jitter);
+      `types::URL` keeps the text as given, since RFC 3986 holds one host
+      (`MqttEventSystemTest.AListOfBrokersMovesPastOneThatDoesNotAnswer`, failing first).
+- [ ] `RtpengineMediaEngineTest.ConnectSucceedsWhileAnyEngineAnswers` aborted once in the full
+      suite on a build machine (2026-11-23, "terminate called without an active exception", which
+      is usually a thread destroyed joinable); 20 runs of it alone passed. Log kept on the build
+      machine in `/root/athenasip-gate/findings/`. Read it, and run it in the suite until it fails
+      again, before naming a cause.
 - [ ] `test/interop/live.json` still describes the old node-b (the carrier trunk, node-a's trunk
       to it): bring it to node-b as it is, or `verify.py` fails there.
 
