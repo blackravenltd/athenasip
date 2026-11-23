@@ -516,8 +516,9 @@ From `TODO/2026-11-20-stack-integration.md`, part A: what needs no decision and 
       compare-and-set (the trunk lease), counters by sum, call records as a time-keyed log.
 - [x] Send Mimir the exact Redis command list with options and the five Lua scripts (2026-11-23, from
       the audit), for its conformance and differential gates.
-- [ ] Write the liveness pattern for Lir as a scenario: retained `nodes/<id>/status` plus a
-      will on the same topic, node death, split and heal.
+- [x] Write the liveness pattern for Lir as a scenario (2026-11-23,
+      `TODO/2026-11-23-lir-liveness-scenario.md`): retained status and will on one topic, seven
+      steps from start to heal, each with what AthenaSIP needs of the broker; sent to Lir.
 - [x] Audit the Redis scripts (2026-11-23, `TODO/2026-11-23-redis-scripts-audit.md`): three of five
       declare every key; `presence_put` and `presence_delete` build index keys inside the script.
       Only a trunk's lease is a true compare-and-set; counters, the call index and presence need
