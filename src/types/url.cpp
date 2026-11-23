@@ -42,6 +42,7 @@ void URL::parse(const std::string& url) {
   path.clear();
   query.clear();
   fragment.clear();
+  as_given = url;
 
   // Hand-written, not a regex: a sequence of splits on delimiters, each naming its RFC 3986 rule.
   const auto separator = url.find("://");

@@ -26,6 +26,9 @@ class URL {
   std::string query;
   std::string fragment;
 
+  // The text parsed, exactly. A driver that takes more than RFC 3986 allows, such as a list of brokers, reads this.
+  std::string as_given;
+
   URL();
   URL(const std::string& url);
 

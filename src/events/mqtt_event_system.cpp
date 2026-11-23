@@ -440,6 +440,7 @@ void MQTTEventSystem::unsubscribe_all(plugins::Executor on, plugins::StatusHandl
 void MQTTEventSystem::apply_url(std::shared_ptr<types::URL> url) {
   _broker_host = "127.0.0.1";
   _broker_port = 1883;
+  _brokers.clear();
   _client_id = default_client_id();
   _client_id_was_given = false;
   _username.clear();
@@ -451,7 +452,8 @@ void MQTTEventSystem::apply_url(std::shared_ptr<types::URL> url) {
     return;
   }
 
-  std::string value = url->to_string();
+  // As given: a list of brokers is more than RFC 3986 allows, so the parsed URL holds only the first.
+  std::string value = url->as_given.empty() ? url->to_string() : url->as_given;
   std::string scheme = url->scheme;
 
   const auto scheme_pos = value.find("://");
@@ -497,29 +499,39 @@ void MQTTEventSystem::apply_url(std::shared_ptr<types::URL> url) {
     }
   }
 
-  if (!authority.empty()) {
-    if (authority.front() == '[') {
-      const auto close = authority.find(']');
-      if (close == std::string::npos) {
-        throw std::runtime_error("Invalid MQTT URL IPv6 authority: " + authority);
-      }
-
-      _broker_host = authority.substr(1, close - 1);
-      if (close + 1 < authority.size()) {
-        if (authority[close + 1] != ':') {
-          throw std::runtime_error("Invalid MQTT URL authority: " + authority);
-        }
-        _broker_port = parse_port(authority.substr(close + 2), _broker_port);
-      }
-    } else {
-      const auto colon_pos = authority.rfind(':');
-      if (colon_pos == std::string::npos) {
-        _broker_host = authority;
-      } else {
-        _broker_host = authority.substr(0, colon_pos);
-        _broker_port = parse_port(authority.substr(colon_pos + 1), _broker_port);
-      }
+  // One broker, or several as host:port pairs separated by commas: boost.mqtt5 moves to the next when one does not
+  // answer, backing off with jitter between rounds. The first is the one logs name.
+  const auto default_port = _broker_port;
+  const auto one_broker = [&default_port](const std::string& entry) -> std::pair<std::string, std::uint16_t> {
+    if (entry.front() == '[') {
+      const auto close = entry.find(']');
+      if (close == std::string::npos) throw std::runtime_error("Invalid MQTT URL IPv6 authority: " + entry);
+      if (close + 1 == entry.size()) return {entry.substr(1, close - 1), default_port};
+      if (entry[close + 1] != ':') throw std::runtime_error("Invalid MQTT URL authority: " + entry);
+      return {entry.substr(1, close - 1), parse_port(entry.substr(close + 2), default_port)};
     }
+    const auto colon_pos = entry.rfind(':');
+    if (colon_pos == std::string::npos) return {entry, default_port};
+    return {entry.substr(0, colon_pos), parse_port(entry.substr(colon_pos + 1), default_port)};
+  };
+
+  _brokers.clear();
+  std::size_t start = 0;
+  while (start < authority.size()) {
+    auto end = authority.find(',', start);
+    if (end == std::string::npos) end = authority.size();
+    const auto entry = authority.substr(start, end - start);
+    start = end + 1;
+    if (entry.empty()) continue;
+
+    const auto [host, port] = one_broker(entry);
+    if (_brokers.empty()) {
+      _broker_host = host;
+      _broker_port = port;
+    } else {
+      _brokers += ",";
+    }
+    _brokers += (host.find(':') != std::string::npos ? "[" + host + "]" : host) + ":" + std::to_string(port);
   }
 
   const auto params = parse_query(std::move(query));
@@ -609,7 +621,7 @@ void MQTTEventSystem::configure_client() {
   }
   if (!_tls && !_client.plain) _client.plain = std::make_unique<MQTTClient>(_mqtt_strand);
 
-  _client.brokers(_broker_host, _broker_port).credentials(_client_id).keep_alive(_keep_alive_seconds);
+  _client.brokers(_brokers.empty() ? _broker_host : _brokers, _broker_port).credentials(_client_id).keep_alive(_keep_alive_seconds);
 
   if (!_username.empty()) {
     _client.credentials(_client_id, _username, _password);

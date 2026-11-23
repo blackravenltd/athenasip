@@ -134,6 +134,7 @@ events:
 | Prefix | Prepended on publish and subscribe and stripped on delivery, so one broker can carry several clusters. A missing trailing `/` is added. |
 | Client identifier | Must be unique on the broker, or the broker disconnects the older connection. Defaults to `athenasip-<node_id>`. |
 | Startup | The node waits up to `connect_timeout_ms` for the broker and does not start without it. After that the client reconnects on its own. |
+| More than one broker | `mqtt://broker-1:1883,broker-2:1883` lists brokers, `host:port` pairs separated by commas, each port defaulting to the scheme's. The node connects to the first that answers and, when it loses that one, tries each in turn, waiting 1, 2, 4, 8 and then 16 seconds between rounds, each with up to half a second of jitter. A pair of brokers needs no load balancer. Credentials and query parameters apply to every broker. |
 | TLS | `mqtts://host` speaks TLS 1.2 or later to the broker, on 8883 unless a port is given, verifying its certificate against the system's roots and `mqtt.ca_file`, and its name against the host. Without it, cluster events and the broker credentials cross the network in clear: keep a plain `mqtt://` broker on a private network with ACLs. |
 
 `client_id`, `keep_alive`, `connect_timeout_ms` and `prefix` are also accepted as URL query

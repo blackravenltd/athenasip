@@ -152,6 +152,8 @@ class MQTTEventSystem final : public EventSystem, public std::enable_shared_from
 
   std::string _broker_host;
   std::uint16_t _broker_port;
+  // Every broker in the URL, as boost.mqtt5 takes them: host:port pairs separated by commas.
+  std::string _brokers;
   // A broker disconnects the older of two connections sharing a client id, so there is no
   // shared default: unconfigured, it is this node's id, and failing that a unique value.
   std::string _client_id;

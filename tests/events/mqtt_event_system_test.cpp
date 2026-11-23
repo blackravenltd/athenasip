@@ -118,6 +118,31 @@ TEST(MqttEventSystemTest, ConnectFailsWhenNoBrokerIsThere) {
   bus.close();
 }
 
+// mqtt:// takes a list of brokers, host:port pairs separated by commas, and moves to the next when one does not answer,
+// backing off with jitter between rounds (boost.mqtt5's reconnect). A pair of brokers needs no load balancer.
+TEST(MqttEventSystemTest, AListOfBrokersMovesPastOneThatDoesNotAnswer) {
+  const auto url = broker_url();
+  if (url.empty()) GTEST_SKIP() << "set ATHENA_TEST_MQTT_URL to a broker to run the MQTT event system tests";
+
+  // The test broker's host and port, after the scheme and before any path.
+  auto authority = url.substr(url.find("://") + 3);
+  authority = authority.substr(0, authority.find('/'));
+
+  // Port 1 on loopback is refused at once; the real broker comes second.
+  auto logger = std::make_shared<MockLogger>();
+  auto events = std::make_shared<MQTTEventSystem>(logger, std::make_shared<types::URL>("mqtt://127.0.0.1:1," + authority + "/"));
+  SyncEventSystem bus(events);
+  ASSERT_TRUE(bus.connect());
+
+  Received received;
+  const auto topic = unique_topic("listed");
+  ASSERT_TRUE(bus.subscribe(topic, [&received](std::string t, std::string m) { received.add(t, m); }) != nullptr);
+  bus.publish(topic, "through the second broker");
+  EXPECT_TRUE(eventually(received, 1));
+
+  bus.close();
+}
+
 TEST(MqttEventSystemTest, ConnectsAndReportsConnected) {
   auto bus = connect_to();
   SKIP_WITHOUT_BROKER(bus);

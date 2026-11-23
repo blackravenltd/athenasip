@@ -206,7 +206,7 @@ the driver for what a URL cannot express. [Plugins](plugins.md) describes the co
 
 | Key | Default | Meaning |
 |---|---|---|
-| `url` | `local://` | `local://` keeps events in-process. `mqtt://[user:password@]host[:port]` publishes to a broker (port 1883 by default), which is also how nodes discover each other. |
+| `url` | `local://` | `local://` keeps events in-process. `mqtt://[user:password@]host[:port][,host[:port]...]` publishes to a broker (port 1883 by default), or the first of several that answers, which is also how nodes discover each other. |
 | `status_interval` | `30` | Seconds between retained node-status messages. `0` publishes once at startup. |
 
 `events.mqtt`:
