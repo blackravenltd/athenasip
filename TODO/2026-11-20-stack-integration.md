@@ -12,7 +12,7 @@ Louhi, Mimir, Kvasir, Macha, and AthenaSIP since 2026-11-20. Dagda's stack maste
 
 | Project | What it is | Version | For AthenaSIP today |
 |---|---|---|---|
-| Dannan | The substrate: membership, agreement (CASPaxos registers), hybrid clock, channels, identity and CA, a mutual-TLS listener, layered config | 0.10.1 | Usable. ABI kept within a minor; pin the exact release. Its listener and its config stand alone, without a node in-process |
+| Dannan | The substrate: membership, agreement (CASPaxos registers), hybrid clock, channels, identity and CA, a mutual-TLS listener, layered config | 0.11.1 (as of 2026-11-23) | Usable. ABI kept within a minor; pin the exact release. Its listener and its config stand alone, without a node in-process |
 | Dagda | The store: heads with an owner's merge, objects, claims, node-local spaces, leases | 0.3.2 (as of 2026-11-20) | Usable but 0.x, any minor may change a call. Missing what AthenaSIP needs: durable leases (D5), the register map (D6, in its gate), logs (D9), TTL, counters |
 | Lir | The MQTT broker | none; rewritten from scratch | Not usable. No retained messages, wills or QoS 1 until Dagda's D5, D6, D9 |
 | Mimir | Redis-protocol store | 0.1.0 untagged | Not usable. In memory only; multi-key writes refused until Dannan's atomic commit |
@@ -75,10 +75,25 @@ through the coordinating session.
   what mqtt5 takes from Beast's websocket). Dannan takes headers only, plus Boost.JSON with its
   HTTP core.
 
-Dannan's releases: `0.10.0` and `0.10.1` (same ABI; pin `0.10.1`, library package
-`libdannan0.10`, read "Adopting 0.10.0" and the `0.10.1` entry of its `CHANGELOG.md` first);
-`0.11.0` stamped agreement requests and certificate expiry; `0.12.0` the HTTP core and the
-credential helper. No dates past `0.10.x`.
+Dannan's releases: pin `0.11.1` (2026-11-23, from the coordinating session: Dagda `0.4.0`, also
+tagged, needs it or later). `0.11.0` changed the ABI, so a pin moves to it in one step; `0.11.1` is
+a patch on the same ABI. Read "Adopting 0.11.0" and the `0.11.1` entry of its `CHANGELOG.md` before
+pinning. What they mean for AthenaSIP, read 2026-11-23:
+
+- **Boost.JSON is carried once in libdannan** (0.11.0). AthenaSIP links its own static Boost
+  1.89 Boost.JSON; linking both risks duplicate or mismatched symbols, and the stack builds on
+  trixie's Boost 1.83. This is the open Boost decision below, and it has to be settled before
+  the pin.
+- **The node settings live under `cluster.*`** (`dannan/config/node_settings.h`). AthenaSIP has
+  its own `cluster:` section (enable, address, port, advertise, ca, cert, key); the two are
+  reconciled when inter-node TLS moves onto Dannan.
+- `Fault::cancelled` is new: every `switch` over `Fault` needs the case.
+- A TSan run passes Dannan's suppressions (`DANNAN_TSAN_SUPPRESSIONS`, installed with
+  libdannan-dev).
+- `0.11.1` adds ordered channel delivery (`Delivery::ordered`), which a `dannan://` event system
+  wants for one node's status reports.
+
+`0.12.0` brings the HTTP core and the credential helper; no date for it.
 
 
 ## The plan, in the order it can be worked
@@ -105,11 +120,11 @@ credential helper. No dates past `0.10.x`.
 - **`mqtt://` takes a list of brokers** and reconnects to the next with backoff and jitter. Useful
   with any broker pair today, and what Lir asks of a client until its DNS name exists.
 
-### B. Dannan 0.10.1, tagged: open now
+### B. Dannan 0.11.1, tagged: open once Boost is settled
 
-Pin `GIT_TAG 0.10.1` or `find_package(dannan 0.10.1 CONFIG REQUIRED)`; read "Adopting 0.10.0" and
-the `0.10.1` entry of its `CHANGELOG.md` first, and note in the pinning commit what of AthenaSIP's
-own it replaces.
+Pin `GIT_TAG 0.11.1` or `find_package(dannan 0.11.1 CONFIG REQUIRED)`; read "Adopting 0.11.0" and
+the `0.11.1` entry of its `CHANGELOG.md` first (summarised above), settle the Boost.JSON overlap,
+and note in the pinning commit what of AthenaSIP's own it replaces.
 
 - Inter-node SIP over Dannan's listener and connector (`dannan::listen`, no node in-process),
   with certificates from `dannan-ca` in place of `--ca-init` and `--ca-node` and

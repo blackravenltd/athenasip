@@ -22,8 +22,9 @@ What is waiting on the maintainer is the first list below; read it before anythi
 
 The stack: AthenaSIP is one of the Cluster Stack's projects (Decisions, 2026-11-20), and
 `TODO/2026-11-20-stack-integration.md` is the plan for what it takes from Dannan, Dagda, Lir,
-Mimir and Lugh. Dannan `0.10.1` is tagged and is the release to pin when inter-node TLS and the
-configuration move onto it; the datastore and the bus wait on Dagda's leases, register map and log.
+Mimir and Lugh. Dannan `0.11.1` is the release to pin (2026-11-23: Dagda `0.4.0` needs `0.11.1` or
+later, and the in-process datastore and bus will use Dagda); the datastore and the bus wait on Dagda's
+leases (D5), register map with `walk_from` (D6) and log (D9).
 
 Working rules from the stack (2026-11-20, the maintainer through the coordinating session):
 heavy builds and test runs go to the shared build cluster by the claim board, claimed only for
@@ -554,7 +555,7 @@ From `TODO/2026-11-20-stack-integration.md`, part A: what needs no decision and 
 - [ ] `test/interop/live.json` still describes the old node-b (the carrier trunk, node-a's trunk
       to it): bring it to node-b as it is, or `verify.py` fails there.
 
-Then part B, now that Dannan `0.10.1` is tagged: inter-node TLS and the CA from Dannan, and
+Then part B, on Dannan `0.11.1`: inter-node TLS and the CA from Dannan, and
 `dannan::config` with the stack's naming (the integration plan has both). Later, each gated in
 that document: Lugh sign-in; the in-process `dagda://` datastore and `dannan://` event system on
 one Dannan instance per process (Decisions, 2026-11-23); `mqtt://` proved against Lir and the
