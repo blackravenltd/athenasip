@@ -61,3 +61,13 @@ Cluster the keys would need one hash slot (a `{presentity}` hash tag on the reco
 presentity index puts those together, but the holder index is per node), and Mimir would need
 multi-key writes, which wait on Dannan's atomic commit across replica sets. So the multi-key part
 is for Mimir and Dagda to answer, not something the driver can remove alone.
+
+## What Mimir's differential gate found (2026-11-23)
+
+Mimir replays the five bodies byte for byte from `docs/redis-scripts.md` against Valkey 8.1.1 and
+itself (`Differential.AthenaSipScripts`, SHA1s pinned). `lease` and `counter_add` match Valkey on
+every path; the call index matches with one key and is refused with two (Mimir's ruling 35, nothing
+written); `presence_delete` matches when there is no record; `presence_put` is refused even for a
+new record, because its `SADD` names an undeclared key. The rewrite above clears the undeclared-key
+refusal; what remains is multi-key, waiting on Dannan's atomic commit. Mimir updates its case when
+`docs/redis-scripts.md` changes.
