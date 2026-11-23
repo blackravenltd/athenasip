@@ -202,6 +202,13 @@ goes to Dannan to check against `node_config()` when part B is drawn. Existing n
   Call-ID and CSeq; the trunk lease as a D5 lease with its epoch on every REGISTER; CDRs on a D9
   log keyed by hybrid clock; counters merged by sum. What it needs is
   `TODO/2026-11-23-dagda-requirements.md`. The contract's version moves if its shape does.
+- **Available now (2026-11-23):** D6, the register map, is public on Dagda's `develop` (`00e0a9f`),
+  contract version 3 (1 and 2 still served), on Dannan 0.11.1, ahead of 0.5.0, which adds D5.
+  `dagda::Context::registers()` offers `open`, `commit`, `get`, `get_register`, `list` and
+  `changed`, each with a deadline and evidence; registers order by (hybrid clock stamp, node id);
+  a register may carry an expiry (bindings, presence); a commit names each key's new version and a
+  stale expectation answers the conflict. Design: Dagda's `TODO/2026-11-20-register-map.md`,
+  "Going public: 0.5.0". The trunk lease waits for D5 in 0.5.0; D9 (the call log) after.
 - A `dannan://` event system on the same Dannan instance: node status and liveness from Dannan's
   membership rather than a retained topic and a will, and presence and trunk changes over its
   channels. The bus stays never storage and never on the call path.
