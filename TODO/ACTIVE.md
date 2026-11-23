@@ -511,9 +511,9 @@ told before either machine is touched.
 
 From `TODO/2026-11-20-stack-integration.md`, part A: what needs no decision and nobody else.
 
-- [ ] Send Dagda AthenaSIP's requirements per shape (sizes, counts, rates, latency, durability,
-      TTL ranges, any true compare-and-set, CDR volume and scans, counters), so it enters
-      Dagda's needs table and TTL, counters and the time-scanned log get a second user.
+- [x] Send Dagda AthenaSIP's requirements per shape (2026-11-23,
+      `TODO/2026-11-23-dagda-requirements.md`): twelve shapes, one read on the call path, one true
+      compare-and-set (the trunk lease), counters by sum, call records as a time-keyed log.
 - [x] Send Mimir the exact Redis command list with options and the five Lua scripts (2026-11-23, from
       the audit), for its conformance and differential gates.
 - [ ] Write the liveness pattern for Lir as a scenario: retained `nodes/<id>/status` plus a
