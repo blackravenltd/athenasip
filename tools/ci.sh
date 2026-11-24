@@ -7,7 +7,7 @@
 #
 # One step of the checks, the same in GitHub's runner and in a local debian:trixie container:
 #
-#   tools/ci.sh deps       the packages and Boost (built once into $ATHENA_DEPS)
+#   tools/ci.sh deps       the packages, Debian 13's Boost 1.83 among them
 #   tools/ci.sh check      the header block on every source
 #   tools/ci.sh release    g++, warnings as errors, the unit suite
 #   tools/ci.sh clang      clang, the unit suite
@@ -21,8 +21,6 @@
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-DEPS="${ATHENA_DEPS:-/opt/athenasip-deps}"
-BOOST_VERSION="${BOOST_VERSION:-1.89.0}"
 JOBS="${JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu)}"
 cd "$ROOT"
 
@@ -30,16 +28,8 @@ deps() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
   apt-get install -y -qq --no-install-recommends build-essential ca-certificates clang cmake git lcov libgtest-dev libgmock-dev \
-    liblua5.4-dev libnghttp2-dev libssl-dev libyaml-cpp-dev mosquitto pkg-config redis-server wget >/dev/null
-  if [ ! -f "$DEPS/lib/libboost_json.a" ]; then
-    underscored="$(echo "$BOOST_VERSION" | tr . _)"
-    work="$(mktemp -d)"
-    wget -q -O "$work/boost.tar.gz" "https://archives.boost.io/release/$BOOST_VERSION/source/boost_$underscored.tar.gz"
-    tar xzf "$work/boost.tar.gz" -C "$work"
-    (cd "$work/boost_$underscored" && ./bootstrap.sh --prefix="$DEPS" --with-libraries=thread,json,charconv >/dev/null &&
-      ./b2 -j"$JOBS" --with-thread --with-json --with-charconv link=static install >/dev/null)
-    rm -rf "$work"
-  fi
+    libboost-dev libboost-thread-dev libboost-json-dev liblua5.4-dev libnghttp2-dev libssl-dev libyaml-cpp-dev mosquitto pkg-config \
+    redis-server >/dev/null
 }
 
 check() {
@@ -59,7 +49,7 @@ suite() {
   name="$1"
   shift
   build="$ROOT/build-ci-$name"
-  cmake -S . -B "$build" -DATHENA_BUILD_TESTING=ON -DBOOST_ROOT="$DEPS" -DBoost_USE_STATIC_LIBS=ON "$@" >/dev/null
+  cmake -S . -B "$build" -DATHENA_BUILD_TESTING=ON "$@" >/dev/null
   cmake --build "$build" -j"$JOBS"
   redis-server --port 6399 --save '' --daemonize yes --dir "$build" >/dev/null
   mosquitto -p 1899 -d >/dev/null 2>&1
@@ -86,8 +76,7 @@ case "${1:-}" in
     ;;
   fuzz)
     build="$ROOT/build-ci-fuzz"
-    cmake -S . -B "$build" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_COMPILER=clang++ -DATHENA_SANITIZE=address -DATHENA_BUILD_FUZZING=ON \
-      -DBOOST_ROOT="$DEPS" -DBoost_USE_STATIC_LIBS=ON >/dev/null
+    cmake -S . -B "$build" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_COMPILER=clang++ -DATHENA_SANITIZE=address -DATHENA_BUILD_FUZZING=ON >/dev/null
     cmake --build "$build" -j"$JOBS"
     for target in "$build"/athenasip_fuzz_*; do
       mkdir -p "$build/corpus/$(basename "$target")"

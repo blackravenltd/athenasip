@@ -40,17 +40,10 @@ jobs:
         include:
           - runner: ubuntu-24.04-arm
             step: release
-    env:
-      ATHENA_DEPS: /opt/athenasip-deps
-      BOOST_VERSION: 1.89.0
     steps:
       - run: apt-get update -qq && apt-get install -y -qq --no-install-recommends ca-certificates git curl gnupg
       - uses: actions/checkout@v7
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - uses: actions/cache@v6
-        with:
-          path: /opt/athenasip-deps
-          key: boost-${{ env.BOOST_VERSION }}-trixie-${{ runner.arch }}
       - run: tools/ci.sh deps
       - run: tools/ci.sh ${{ matrix.step }}
       - if: matrix.step == 'coverage'

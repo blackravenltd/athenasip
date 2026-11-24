@@ -5,19 +5,16 @@
 # Copyright (C) 2026 Tom Cully <mail@tomcully.com>
 # Licensed under the GNU GPLv3 - see <https://www.gnu.org/licenses/gpl-3.0.html>
 #
-# Boost is linked in statically from ATHENA_DEPS (tools/ci.sh deps builds it there), because
-# Debian's is older than the Redis and MQTT clients need. The package then depends only on what
-# Debian ships.
+# Built on Debian's own Boost, as the rest of the stack is; Boost.MQTT5, newer than it, is vendored in
+# third_party/boost-mqtt5. The package depends only on what Debian ships.
 
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all
-ATHENA_DEPS ?= /opt/athenasip-deps
 
 %:
 	dh $@ --buildsystem=cmake
 
 override_dh_auto_configure:
-	dh_auto_configure -- -DCMAKE_BUILD_TYPE=Release -DBOOST_ROOT=$(ATHENA_DEPS) -DBoost_USE_STATIC_LIBS=ON \
-		-DATHENA_SYSTEMD_UNIT_DIR=/usr/lib/systemd/system
+	dh_auto_configure -- -DCMAKE_BUILD_TYPE=Release -DATHENA_SYSTEMD_UNIT_DIR=/usr/lib/systemd/system
 
 # The unit suite is a build of its own (tools/ci.sh release), run before a release rather than here.
 override_dh_auto_test:
