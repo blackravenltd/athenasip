@@ -2,8 +2,8 @@
 
 ## Dependencies
 
-CMake 3.23 or newer, a C++20 compiler, Boost 1.87.0 or newer (`thread`, `json` and
-`charconv` are linked; the rest is header-only), OpenSSL, yaml-cpp, nghttp2, which
+CMake 3.23 or newer, a C++20 compiler, Boost 1.83.0 or newer (`thread` and `json` are
+linked; the rest is header-only), OpenSSL, yaml-cpp, nghttp2, which
 APNs needs because it speaks only HTTP/2, and Lua 5.4, for [scripting](scripting.md).
 CMake finds nghttp2 through pkg-config.
 GoogleTest is needed only for the test build.
@@ -17,11 +17,13 @@ brew install cmake pkg-config boost openssl@3 yaml-cpp libnghttp2 lua@5.4 google
 Debian and Ubuntu:
 
 ```
-apt install build-essential cmake pkg-config libssl-dev libyaml-cpp-dev libnghttp2-dev liblua5.4-dev libgtest-dev
+apt install build-essential cmake pkg-config libboost-dev libboost-thread-dev libboost-json-dev \
+  libssl-dev libyaml-cpp-dev libnghttp2-dev liblua5.4-dev libgtest-dev
 ```
 
-Where the distribution's Boost is older than 1.87.0, build Boost from source; `Dockerfile`
-shows how.
+Debian 13 ships Boost 1.83. The MQTT client, Boost.MQTT5, is newer than that and is vendored in
+`third_party/boost-mqtt5`; the build uses it ahead of any copy in the system's Boost. The Redis
+client is AthenaSIP's own.
 
 ## Build
 
@@ -50,6 +52,6 @@ used. [installation.md](installation.md) covers installing a release build.
 docker build -t athenasip .
 ```
 
-The image builds Boost from source and runs one node with `config/config.example.yaml`.
+The image builds on Debian's Boost and runs one node with `config/config.example.yaml`.
 Each release is published as [`tomcully/athenasip`](https://hub.docker.com/r/tomcully/athenasip),
 tagged with its version and `latest`, for `linux/amd64`.

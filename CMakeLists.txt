@@ -113,7 +113,9 @@ if(APPLE)
     endif()
 endif()
 
-find_package(Boost 1.87.0 CONFIG REQUIRED COMPONENTS thread json charconv)
+# Debian 13's Boost, as the rest of the stack builds on (decided 2026-11-23). Boost.MQTT5 is newer than it and is
+# vendored in third_party/boost-mqtt5; redis:// speaks RESP through src/datastores/resp*, not boost::redis.
+find_package(Boost 1.83.0 CONFIG REQUIRED COMPONENTS thread json)
 find_package(OpenSSL REQUIRED COMPONENTS SSL Crypto)
 
 find_package(yaml-cpp CONFIG REQUIRED)
@@ -172,6 +174,12 @@ target_include_directories(athena_core
         "$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/generated>"
 )
 
+# Searched before the system's Boost, which may be older than Boost.MQTT5 or carry another copy of it.
+target_include_directories(athena_core SYSTEM BEFORE
+    PUBLIC
+        "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/boost-mqtt5/include>"
+)
+
 if(ATHENA_SANITIZE_FLAGS)
     target_compile_options(athena_core PUBLIC ${ATHENA_SANITIZE_FLAGS})
     target_link_options(athena_core PUBLIC ${ATHENA_SANITIZE_FLAGS})
@@ -192,7 +200,6 @@ target_link_libraries(athena_core
     PUBLIC
         Boost::thread
         Boost::json
-        Boost::charconv
         OpenSSL::SSL
         OpenSSL::Crypto
         PkgConfig::NGHTTP2

@@ -8,37 +8,25 @@
 
 FROM debian:trixie-slim AS build
 
-ARG BOOST_VERSION=1.89.0
-
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         ca-certificates \
         cmake \
+        libboost-dev \
+        libboost-json-dev \
+        libboost-thread-dev \
         liblua5.4-dev \
         libnghttp2-dev \
         libssl-dev \
         libyaml-cpp-dev \
         pkg-config \
-        wget \
     && rm -rf /var/lib/apt/lists/*
-
-# Debian's Boost is older than the 1.87.0 that boost::redis and boost::mqtt5 need, so it
-# is built here: only the compiled libraries the server links, plus the headers. Its own layer, because it is slow and
-# changes only with BOOST_VERSION.
-RUN set -eux; \
-    version_underscored="$(echo "${BOOST_VERSION}" | tr '.' '_')"; \
-    wget -q "https://archives.boost.io/release/${BOOST_VERSION}/source/boost_${version_underscored}.tar.gz"; \
-    tar xzf "boost_${version_underscored}.tar.gz"; \
-    cd "boost_${version_underscored}"; \
-    ./bootstrap.sh --with-libraries=thread,json,charconv; \
-    ./b2 -j"$(nproc)" --with-thread --with-json --with-charconv link=static,shared install; \
-    cd ..; \
-    rm -rf "boost_${version_underscored}" "boost_${version_underscored}.tar.gz"
 
 WORKDIR /src
 COPY CMakeLists.txt ./
 COPY src ./src
 COPY scripts ./scripts
+COPY third_party ./third_party
 
 # CMake needs packaging/, config/ and fuzz/ at configure time, though the image copies the
 # binary out rather than installing.
@@ -59,14 +47,13 @@ FROM debian:trixie-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
+        libboost-json1.83.0 \
+        libboost-thread1.83.0 \
         liblua5.4-0 \
         libnghttp2-14 \
         libssl3 \
         libyaml-cpp0.8 \
     && rm -rf /var/lib/apt/lists/*
-
-COPY --from=build /usr/local/lib/libboost_*.so* /usr/local/lib/
-RUN ldconfig
 
 COPY --from=build /src/build/athenasip /usr/local/bin/athenasip
 

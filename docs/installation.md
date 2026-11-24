@@ -13,9 +13,9 @@ sudo curl -fsSLo /etc/apt/sources.list.d/tomcully.sources https://tomcully.com/a
 sudo apt update && sudo apt install athenasip
 ```
 
-Or build one from a checkout, with debhelper. Boost is linked in statically from
-`/opt/athenasip-deps`, which `tools/ci.sh deps` builds once, so the package depends only on
-what Debian ships: OpenSSL, yaml-cpp, nghttp2 and Lua.
+Or build one from a checkout, with debhelper. It builds on Debian's own Boost, so the package
+depends only on what Debian ships: Boost, OpenSSL, yaml-cpp, nghttp2 and Lua. `tools/ci.sh deps`
+installs the build's packages.
 
 ```bash
 sudo tools/ci.sh deps
