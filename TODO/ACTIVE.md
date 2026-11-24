@@ -567,10 +567,18 @@ From `TODO/2026-11-20-stack-integration.md`, part A: what needs no decision and 
       failing first against a stub; the suite with a real Redis 1684 on a build machine. Left: run
       the driver's tests against Mimir when it can take them.
 - [ ] **The build on Debian 13's Boost 1.83**, with `boost::mqtt5` pinned over it (decided
-      2026-11-23): how it is pinned (its own repository at the 1.89 tag, header-only, by
-      FetchContent or vendored), `find_package(Boost 1.83 ...)` without Charconv, `tools/ci.sh
-      deps` without building Boost, and the package's Build-Depends. Boost.JSON comes from libdannan
-      once part B links it.
+      2026-11-23): vendored in `third_party/boost-mqtt5` from the 1.89.0 release (the maintainer,
+      2026-11-24), `find_package(Boost 1.83 ...)` without Charconv, `tools/ci.sh deps` installing
+      Debian's packages, and the package's Build-Depends. On `feature/boost-183`. Needed now so
+      AthenaSIP can link libdannan, which is built on 1.83. Boost.JSON comes from libdannan once
+      part B links it.
+- [ ] **The stack's Boost 1.92.0** (decided 2026-11-24, at AthenaSIP's proposal): Dannan builds
+      and ships the headers, MQTT5 included, as the stack's own package beside Debian's 1.83 in the
+      apt repository, in Dannan 0.14.0 (mid-December), with Dagda following. Boost types are in
+      Dannan's public API, so every project repins together. AthenaSIP then moves onto that
+      Dannan, drops `third_party/boost-mqtt5`, and changes its Build-Depends, `tools/ci.sh deps`
+      and the Dockerfile to the stack's package. Dannan says when the package is staged, to try
+      early.
 - [x] `mqtt://` takes a list of brokers and moves to the next with backoff and jitter (2026-11-23):
       `mqtt://h1:1883,h2:1883`, boost.mqtt5's reconnect (1 to 16 s, half a second of jitter);
       `types::URL` keeps the text as given, since RFC 3986 holds one host
